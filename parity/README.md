@@ -1,27 +1,66 @@
 # Octo HTTP parity harness
 
-A black-box harness for the C# → Rust rewrite (`docs/rust-migration/PLAN.md`, Phase 0). It
-boots one Octo build against a fixture Navidrome and stubs for every upstream, replays a
-hand-written request corpus, records every response, and diffs two recordings after
-normalizing the values that change from run to run.
+A black-box harness for the C# to Rust rewrite (`docs/rust-migration/PLAN.md`; the port's
+working list is [`docs/rust-port/BACKLOG.md`](../docs/rust-port/BACKLOG.md)). It boots one Octo
+build against a fixture Navidrome and stubs for every upstream, replays a hand-written request
+corpus, records every response, and diffs two recordings after normalizing the values that
+change from run to run.
 
 **Dual track.** Both builds live in this repository until the cutover: the C# app in `octo/`,
 the Rust one in `crates/`. The C# side of a comparison is the published image of the release
 the port is held to, `ghcr.io/winters27/octo:2026.10.05` (the default `--image`), pulled, not
-built. [`recordings/csharp/`](recordings/csharp/) still holds the baseline the Rust build was
-first ported against (release `2026.10.03.2`); the Rust golden tests
-(`subsonic_wire_golden_tests.rs`) read it, so it is re-recorded at 2026.10.05 together with
-those tests, once the corpus covers 2026.10.05 (`docs/rust-port/BACKLOG.md`, phase 1). Until
-then, compare the Rust build against a fresh recording of the C# image, as below.
+built. Since phase 1 the corpus covers everything in 2026.10.05, signed in to the dashboard
+(see "Signing in"). [`recordings/csharp/`](recordings/csharp/) still holds the 2026.10.03.2
+baseline that the Rust golden tests (`subsonic_wire_golden_tests.rs`) read; it is not the
+reference for a parity run any more. A run records the C# image afresh (cached on the test box
+per corpus version), so compare against that.
 
 A Rust build passes when its recording diffs clean against the C# one, or when every remaining
-diff is covered by [`allowlist.json`](allowlist.json), which must point at a row in
-[`docs/rust-migration/known-diffs.md`](../docs/rust-migration/known-diffs.md). A deliberate
-improvement over the C# behavior is a known diff too, with its reason.
+diff is covered by [`allowlist.json`](allowlist.json) (a known difference, pointing at a row in
+[`docs/rust-migration/known-diffs.md`](../docs/rust-migration/known-diffs.md)) or by a reviewed
+entry in [`intentional-diffs.json`](intentional-diffs.json) (a deliberate improvement; see
+"Intentional diffs").
 
 Everything is Python 3.10+ standard library plus Docker Compose. No `pip install`.
 
-## Running it
+## For port agents: one command on the test box
+
+There is no Docker on the PC or in WSL. The harness runs on the test box, LXC 131, through the
+Proxmox host (`ssh pmx`). Commit first (only commits travel), then from the checkout of your
+branch, in WSL or Git Bash:
+
+```sh
+parity/lxc131.sh                    # build the Rust image from HEAD, run the corpus, diff with C#
+parity/lxc131.sh --no-build         # same image as last time (corpus or stub changes only)
+parity/lxc131.sh --only '13-*'      # some corpus files (00-setup always runs; C# is recorded again)
+parity/lxc131.sh --bytes            # also the bytes-mode diff
+parity/lxc131.sh --rust-twice       # also Rust against Rust (the determinism gate)
+parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: C# against C#, no Rust
+parity/lxc131.sh --clean            # remove this branch's image and folder on the box
+```
+
+It bundles the commits the box lacks, checks them out in `/opt/octo-parity/runs/<branch>/src`
+and runs [`box-run.sh`](box-run.sh) there: `docker buildx build -f Dockerfile.rust` (own
+builder `octo-parity`, capped at 3.5 GB, its cache kept for the next build and the builder
+stopped after), the corpus against the C# image (recorded once per corpus version and kept in
+`/opt/octo-parity/cs-cache/`) and against the Rust image, then the diff. It prints the summary
+and the diffs per backlog group, and copies the full reports to
+`parity/.run/lxc131-<branch>/report.txt`. A cold build takes about 8 minutes; a C# recording
+of the whole corpus about 25 minutes. One run at a time: a second one waits for the first.
+
+It touches only its own things on the box: `/opt/octo-parity`, the compose projects
+`octo-parity-cs` and `octo-parity-rs`, the images `octo-rust-parity:<branch>` and the builder.
+Never the starter rig (`/opt/octo`, project `octo`). It refuses to build or pull with less than
+8 GB free on the box's disk.
+
+**The Proxmox host is shared, and short of memory.** LXC 111 (Brandon's own Octo) runs on it.
+On 2026-10-07 a run while the host had about 5 GB free pushed it into swap until nothing
+answered for minutes. So `lxc131.sh` starts only with 3.5 GB free on the host
+(`PARITY_MIN_HOST_MB`), and a watchdog takes the parity stacks down if the host falls under
+1.5 GB while it runs. Never run two parity runs side by side, and never raise the limits.
+
+## Running it by hand
+
 
 ```sh
 # Record a build: recreate the stack from scratch, replay the corpus, tear it down again.
@@ -52,9 +91,13 @@ Options: `--image` (also `OCTO_IMAGE`), `--port` (`PARITY_PORT`, default 18480),
 (`PARITY_ND_PORT`, 18453), `--project` (`PARITY_PROJECT`, `parity`), `--settle` (seconds to wait
 after Octo first answers, default 10), `--keep` on `run` to leave the stack up.
 
-A run takes about 90 seconds. The stack is capped at roughly 1.4 GB of RAM (`mem_limit` on each
+A run of the whole corpus takes about 25 minutes against C# (most of it waiting for background
+jobs and Navidrome rescans). The stack is capped at roughly 2.1 GB of RAM (`mem_limit` on each
 service) and needs two small images besides Octo: `deluan/navidrome:0.64.2` and
-`python:3.13-alpine`. Nothing is built; nothing is pruned.
+`python:3.13-alpine`. Nothing is built; nothing is pruned. `run` saves the containers' logs in
+`<out>/logs/` (`stubs.log` lists every upstream call with the mapping row that answered it, or
+`UNMATCHED`). `--until-patience N` (default 3): after N waits in one corpus file time out, its
+other waits get 5 s, so a build missing a feature does not sit out every wait.
 
 **The C# image.** The harness only ever runs a prebuilt image; nothing in `parity/` builds
 one. The released C# image is on ghcr.io (`ghcr.io/winters27/octo:<release>`). To compare a
@@ -65,8 +108,10 @@ docker build -t octo-csharp:dev .
 python3 parity/parity.py run --image octo-csharp:dev --out /tmp/parity/csharp-dev
 ```
 
-**Re-recording the baseline** (only when the corpus, the stubs or the fixtures change, or the
-C# release the port is held to moves; the Rust golden tests read it, so rerun them after):
+**The 2026.10.03.2 baseline** in `recordings/csharp/` is what the Rust golden tests read; a port
+group that changes those answers moves its golden tests onto a fresh 2026.10.05 recording. To
+record one (`parity.py digest` names the corpus version a recording was made from, and `diff`
+warns when two recordings come from different corpus versions):
 
 ```sh
 rm -rf parity/recordings/csharp
@@ -95,9 +140,10 @@ python3 parity/parity.py diff --mode bytes parity/recordings/csharp /tmp/parity/
 
 | Service | What it is |
 |---|---|
-| `octo` | The image under test (`OCTO_IMAGE`). Configured only through env vars in [`docker-compose.yml`](docker-compose.yml); `/app/config` is a fresh volume each run. |
+| `octo` | The image under test (`OCTO_IMAGE`). Configured only through env vars in [`docker-compose.yml`](docker-compose.yml); `/app/config` is a fresh volume each run, seeded by `config-seed` with [`fixtures/config/`](fixtures/config/) (5 fetched songs). The library is a fresh writable copy of the fixtures per run (`parity/.run/<project>/music`), and `fixtures/planted/` is mounted read-only for `19-health` and `20-library-edits` to copy in. |
+| `octo-alt` | The same image with the sign-in off and the dashboard on its own port (see "The second Octo"). |
 | `navidrome` | `deluan/navidrome:0.64.2` over the fixture library (read-only). External agents, insights and the auth rate limiter are off. |
-| `stubs` | [`stubs/stub_server.py`](stubs/stub_server.py), one process answering slskd, Lidarr, the yt-dlp shim and every HTTPS upstream from the JSON mappings in [`stubs/mappings/`](stubs/mappings/). |
+| `stubs` | [`stubs/stub_server.py`](stubs/stub_server.py), one process answering slskd, Lidarr, the yt-dlp shim, octo-sonic, the Soulseek port test and every HTTPS upstream from the JSON mappings in [`stubs/mappings/`](stubs/mappings/). It has the run's library at `/music`, so the slskd stub can "download" a fixture file into the job folder Octo asked for. |
 | `gateway` | [`stubs/gateway.py`](stubs/gateway.py), a TCP forwarder. Docker cannot publish ports from an internal-only network, so this is the one container on both networks. |
 
 ### Fixtures
@@ -157,8 +203,18 @@ Keep the host list in three places in sync: `certs/make-certs.sh` (SANs), the `s
 Each entry names a `service` (the Host header for HTTPS hosts, else `slskd`, `lidarr` or
 `shim`), an optional `method`, a `path` or `pathRegex` (matched against the raw,
 percent-encoded path), optional `query` regexes, and a `body` (JSON), `bodyText` or `bodyFile`
-(served with Range support). Unmatched calls get `404 {"error":"no stub"}` and an `UNMATCHED`
-line in `docker compose -p parity logs stubs`.
+(served with Range support). Rows can also match the request body (`bodyRegex`) or, for slskd,
+the words a search was started with (`searchText`); answer only their first N hits (`times`,
+which gives sequences); copy a file into the shared library on a hit (`writeFile`, with the
+destination taken from the request body); serve a fixture's byte size (`{{size:bodies/x}}`);
+and fill in dates relative to today (`"template": true`, `{{date:-N}}`). The stub server's
+docstring has the details. Unmatched calls get `404 {"error":"no stub"}` and an `UNMATCHED`
+line in the stubs' log (`<out>/logs/stubs.log` after a `run`).
+
+The mapping files are numbered by who uses them: `05-downloads` and `06-acquisition` (13, 95),
+`05-slskd-sharing` (18), `35-covers-explicit` (17, 96), `35-radio` (15), `35-settings-media`
+(14), `36-lists` (16), `50-health` (19), `50-spotify` (12), `51-library-edits` (20). Each keeps to
+its own Deezer ids and names, because a row in an earlier file answers any call it fits.
 
 The data set ([`40-discovery.json`](stubs/mappings/40-discovery.json)): Last.fm `track.search`
 returns three songs by the discovery-only artist **Zephyr Echo** (`Glass Harbor`, `Neon Tide`,
@@ -166,7 +222,8 @@ returns three songs by the discovery-only artist **Zephyr Echo** (`Glass Harbor`
 (external) for "aurora". Deezer knows artist 1001, album 2001 and tracks 3001-3003. LRCLIB has
 synced lyrics for `Polar Night`, lyrics.ovh has `Glass Harbor`. Everything else gets an empty
 or not-found answer in the upstream's own shape ([`90-https-fallbacks.json`](stubs/mappings/90-https-fallbacks.json)).
-The shim answers every search with video `parityVid01` and streams `stubs/bodies/tone.mp3`.
+The shim answers every search with video `parityVid01` and streams `stubs/bodies/tone.mp3`;
+the Zephyr Echo songs have their real lengths (241, 215 and 244 s).
 
 ## The corpus
 
@@ -186,26 +243,41 @@ The shim answers every search with video `parityVid01` and streams `stubs/bodies
      "f": "json",                         // appended after the auth params; null drops a default
      "query": [["id", "{{song_flac1}}"]], // pairs keep order and repeats; or "rawQuery": "..."
      "headers": {"Range": "bytes=0-9"},
-     "body": {"json": {...}},             // or {"form": [[k, v]]} or {"raw": "...", "contentType": "..."}
+     "body": {"json": {...}},             // or {"form": [[k, v]]}, {"raw": "...", "contentType": "..."},
+                                          // or {"multipart": [{"name", "value"} | {"name", "filename",
+                                          // "contentType", "file": "fixtures/..." | "text": "..."}]}
+     "session": "admin",                  // dashboard sign-in: admin | recovery | null (signed out)
+     "server": "main",                    // main | alt | alt-admin (the second Octo, below)
      "capture": {"var": "json:a.b[0].c"}, // also header:Name, cookie:name, regex:(...)
+     "until": {"from": "json:state", "in": ["done"]},  // re-send until true (also "notIn",
+                                          // "regex", "status"); {{vars}} work; the last answer is kept
+     "timeoutMs": 60000, "pollMs": 500,   // for "until"
      "unordered": true,                   // upstream order undefined: sort arrays / children
+     "anyKeyOrder": true,                 // bytes mode compares this JSON parsed (C# member order varies)
+     "keepLengthHeaders": true,           // Content-Length / Transfer-Encoding count in structural mode
      "ignoreKeys": ["positionMs"],        // drop these members/attributes before comparing
+     "backlog": "D,B",                    // the backlog groups this request checks (default "base")
      "delayBeforeMs": 1500,
-     "timeout": 60}
+     "timeout": 60},
+    {"name": "history-file",              // not HTTP: a command in the Octo container (or octo-alt
+     "exec": ["cat", "/app/config/downloads-history.json"]}  // with "server"); exit code + stdout
   ]
 }
 ```
 
 `{{var}}` substitutes a captured value or a built-in (`admin_user`, `admin_pass`,
-`listener_user`, `listener_pass`, `salt`, `token`, `enc_pass`, `api_key`, `host`). A capture
-written as a string is **volatile**: the diff replaces its value with `{{var}}` everywhere in
-that recording (Navidrome's random song, user, playlist and session ids). A capture written as
-`{"from": "...", "normalize": false}` is only reused, and must itself match between builds
-(name-derived album/artist ids, Octo's sha256-derived external ids, static-file ETags).
+`listener_user`, `listener_pass`, `salt`, `token`, `enc_pass`, `api_key`, `host`, `host_alt`,
+`host_alt_admin`). A capture written as a string is **volatile**: the diff replaces its value
+with `{{var}}` everywhere in that recording (Navidrome's random song, user, playlist and session
+ids, run ids, sign-in cookies). A capture written as `{"from": "...", "normalize": false}` is only
+reused, and must itself match between builds (name-derived album/artist ids, Octo's
+sha256-derived external ids, import list ids, static-file ETags). A request that names a
+variable no earlier request captured is recorded as skipped (a diff when the other build ran
+it). `--only GLOB` always keeps `00-setup`, whose captures the rest needs.
 
 | File | Requests | Covers (endpoints.md section) |
 |---|---:|---|
-| `00-setup` | 6 | Captures: album/artist/song ids, Navidrome JWT via `POST /auth/login` through the relay, external ids from a discovery search |
+| `00-setup` | 9 | Captures: album/artist/song ids, Navidrome JWT via `POST /auth/login` through the relay, external ids from a discovery search, the admin and recovery sign-ins |
 | `01-system` | 43 | 3.1 and 2.2-2.4: `ping` in xml/json, `.view`/plain, auth `u/p`, `t/s`, `enc:`, wrong password, non-admin, `apiKey`, `u` only, none; `jsonp`, `f=JSON`, `F=json`, case and trailing slash, POST form/JSON bodies (body overrides query), PUT/HEAD/OPTIONS falling to the catch-all; `getOpenSubsonicExtensions` merge; `jukeboxControl`; system relays |
 | `02-browsing` | 65 | 3.2 and 3.9 relays: `getSong`/`getArtist`/`getAlbum` local (merge with the catalog), external, legacy `ext-`, `pl-`, missing and unknown ids, jsonp; album/artist info v1/v2; random and similar songs (radio off); `getArtists`, `getIndexes`, `getMusicDirectory`, album lists, genres, starred, now playing, top songs, play queue, bookmarks, shares, repeated ids |
 | `03-search` | 25 | 3.3: `search3`/`search2` local-only, mixed, discovery-only, CJK and diacritics, quoted, type-ahead, songs/albums only, album offset, later song page, empty query, Symfonium sync walk, folder, wrong password, jsonp, POST form |
@@ -216,8 +288,22 @@ that recording (Navidrome's random song, user, playlist and session ids). A capt
 | `08-catchall-native` | 34 | 3.9 and 2.2: `GET /`, Octo-owned 404s, external-id safety net and element naming, unknown endpoints, DELETE on a Subsonic route, POST bodies through the faithful relay, native `/api` with JWT (lists, Octo's external song/album/artist answers, discovery appends, radio playlist ids) |
 | `09-admin` | 97 | Section 4 and 2.9: `/admin` redirect, every safe admin GET, the guard (OPTIONS, preflight, writes without `X-Octo-Admin`, CORS stripping), every browse-session endpoint without and with a session (cookie, header, stale cookie hiding a header), browse auth failures and success, validation 400s, side-effect-free POSTs |
 | `10-static-cors` | 25 | Sections 5 and 7: static files plain, HEAD, `If-None-Match`, Range (also unsatisfiable), Brotli/gzip, upper-case path, `/Assets`; CORS on simple requests, preflights, errors and admin 403s; `X-Forwarded-Proto` |
-| `90-mutations` | 58 | Run last: star/unstar/rating/scrobble/now playing/reportPlayback, a playlist create-update-delete round trip, a settings patch and re-read, the side-effect admin POSTs (caches, notifications, update check, Last.fm connect flow, job cancel/resume/undo, lyrics choices), sign-out, and a heart on an external song |
-| **Total** | **453** | |
+| `11-signin` | 132 | Group J: every `/api/admin` GET signed out and signed in, unknown admin paths, bogus sign-ins, the recovery session, the app's Subsonic sign-in on `[AdminAppCall]` routes, the second Octo (written by `tools/admin_routes.py`) |
+| `12-imports` | 206 | Group H: file, zip and link imports and their caps, Spotify connect, finish, callback and reads (stubbed accounts and API), lists, playlists, the trickle controls, `getImports`, `getImport`, `importAction` |
+| `13-downloads` | 111 | Groups D and B: the downloads list and log, acquisitions, `getAcquisition`, `clearAcquisitions`, Find songs from the dashboard and Subsonic (23 stubbed copies that hit each matching rule), picks and their refusals, the relayed download file name |
+| `14-settings-media` | 181 | Groups I, S, O, K, A, J: secret masking and the placeholder rules, transcode lengths, outside albums the library holds, the bare address 302, Last.fm search cleanup, the status cache, recovery, sign out, demoted and deleted admins |
+| `15-radio` | 86 | Group L: song, album, artist and outside-seed radio across Last.fm, YouTube Music, ListenBrainz and Sounds alike (stubbed octo-sonic), bans, learning, weights, `/api/admin/sonic`, `/api/admin/radio-outcomes` |
+| `16-lists` | 68 | Groups G and Q: `getTopSongs`, `getArtistTopSongs`, `getTopChart`, Popular right now, Made for you (New Releases, Rediscover, Deep Cuts), the explicit filter |
+| `17-covers-explicit` | 74 | Groups P and C: the covers upgrade run, explicit or clean outside songs and albums with their own ids, the explicit backfill preview and refusals, Try it with the advisory |
+| `18-dashboard` | 63 | Groups N and E: the activity view, the Afterglow palette, the Sharing card and Share switch against a stubbed slskd, the slskd password and web address rules |
+| `19-health` | 114 | Group R: Library health over 8 planted songs: report, previews, fixes, lookups, stop, undo |
+| `20-library-edits` | 153 | Group F: `libraryAction` edits (retag, joinAlbum, cover, lookup, undo), remove to the trash with its `.lrc`, put back, a second copy, `getLibraryActions`, `getLibraryTrash`, the dashboard's trash and history |
+| `21-static` | 31 | The 2026.10.05 dashboard files with the admin security headers |
+| `90-mutations` | 57 | Run last: star/unstar/rating/scrobble/now playing/reportPlayback, a playlist create-update-delete round trip, a settings patch and re-read, the side-effect admin POSTs (caches, notifications, update check, Last.fm connect flow, job cancel/resume/undo, lyrics choices), sign-out (its heart moved to `95-acquisition`) |
+| `95-acquisition` | 43 | Groups D, B, C, P: two hearts and a pick end to end: slskd search, transfer of a fixture file, length, AcoustID and spectrum checks, tagging, filing, Navidrome scan, logs and state files |
+| `96-covers-explicit-writes` | 42 | Group P: cover replace and explicit marks written into the library files, checked with `ffprobe` and Navidrome, and undone |
+| `99-signed-out-writes` | 77 | Group J: every admin write signed out (written by `tools/admin_routes.py`); runs last, the restart last of all |
+| **Total** | **1836** | |
 
 ## Recordings
 
@@ -243,6 +329,9 @@ Applied to both sides before comparing:
 | HTTP dates dated 2025 or later | `HTTP-DATE` |
 | `Last-Modified` on static files (build time) | `BUILD-TIME` ([`normalize.json`](normalize.json)) |
 | `roles` arrays / `<roles>` runs (Navidrome builds them from Go maps) | sorted |
+| .NET ticks of a run-time instant (18 digits, 2025 on: activity ids, journal keys, state files) | `600000000000000000` ([`normalize.json`](normalize.json)) |
+| The trash's day folder `.octo-trash/<yyyy-MM-dd>/` | `.octo-trash/DAY/` |
+| Radio outcome multipliers (they fade with each play's age) | 4 decimals (`15-radio/outcomes-after-*`) |
 | Requests marked `unordered` | arrays (JSON) and child elements (XML) sorted, recursively |
 | `ignoreKeys` (per request, or global in `normalize.json`) | members/attributes removed |
 
@@ -276,6 +365,118 @@ text that appears in `docs/rust-migration/known-diffs.md`, or `diff` refuses to 
 `header-order`, `body` and `transport`. A request whose every differing aspect is allowed
 counts as explained; the report lists how often each entry was used.
 
+## Signing in
+
+Since 2026.10.05 nothing under `/api/admin` answers without a dashboard sign-in (`AdminSignInGate`),
+so the corpus signs in for real. `00-setup` signs in through `POST /api/admin/browse/auth` with the
+Navidrome admin (the `admin_session` cookie), reads the recovery code from the container
+(`exec cat /app/config/admin-recovery-code`) and signs in with it (`recovery_session`). A request
+with `"session": "admin"` or `"recovery"` then carries `Cookie: octo_browse=...`, like a browser,
+only on `/api/admin` paths and only when it sets no cookie or browse token of its own. Writes also
+need `X-Octo-Admin: 1` (the request guard). A build without a recovery code skips the recovery
+requests, which shows as a diff.
+
+The signed-out answers are compared on purpose:
+[`corpus/11-signin.json`](corpus/11-signin.json) asks every `/api/admin` GET signed out and
+signed in, unknown admin paths, bogus cookies and tokens, the recovery session's limits, the
+Octo app's Subsonic sign-in on the `[AdminAppCall]` routes (admin, token, listener, wrong
+password), and the second Octo. [`corpus/99-signed-out-writes.json`](corpus/99-signed-out-writes.json)
+sends every admin write signed out; a build without the gate would carry them out, so it runs
+last and `POST /api/admin/restart` is the very last request. Both files are written by
+[`tools/admin_routes.py`](tools/admin_routes.py) from the C# controllers: `admin_routes.py write`
+after a route is added, and `admin_routes.py check` fails while a route is missing.
+
+## The second Octo
+
+`octo-alt` is the same image with `Admin__SignIn=off` and the dashboard on a port of its own
+(`Admin__Port=8081`), its own config volume, the same library, Navidrome and stubs. A request
+with `"server": "alt"` goes to its main port (`PARITY_PORT + 1`, which answers 404 for `/admin`
+and `/api/admin`), `"server": "alt-admin"` to its admin port (`PARITY_PORT + 2`, 404 for
+everything else). It also has no Spotify app and a redirect Spotify refuses, for the import
+page's "not set up" answers.
+
+## Determinism rule
+
+C# against C# must give 0 diffs on the whole corpus, in both modes, and Rust against Rust too.
+The C# image is fixed, so only its existing settings can hold it still:
+
+- **Timers off or out of reach.** Radio, stations and mixes are off in the env; `15-radio` and
+  `16-lists` switch radio, Popular right now and New Releases on through the settings API and
+  back off. The trickle fetches nothing (`Imports__SongsPerHour=0`) and lists are not read
+  again on a timer (`Imports__RefreshHours=0`). Sounds alike runs with no pause between songs,
+  and its first look (2 minutes after start) is waited for. Library actions are switched on and
+  off at run time by `19-health` and `20-library-edits`, with their playlists off.
+- **Background work is waited for, never raced.** Every job a request starts (Find songs, a
+  download, a health run, a cover or explicit run, a Spotify read) is followed by an `until` on
+  its end state before anything reads what it changed. Navidrome rescans are waited for the same
+  way. Slow stub answers (`delayMs`, `times`) make the "still running" refusals certain.
+- **Random values are captured or ignored.** Run ids, search ids, OAuth state and PKCE values
+  are captured (volatile). Orders C# itself does not keep are compared `unordered` or
+  `anyKeyOrder`.
+- **Clocks.** Run-time timestamps and .NET ticks are normalized; plays are scrobbled with 2020
+  times; New Releases' stub dates are relative to today (`"template": true`).
+- **Stub data is unique per corpus file.** Every file uses its own Deezer id range and names, so
+  one file's rows never answer another's calls (the first match in file-name order wins across
+  all mapping files).
+
+What still cannot be made repeatable is left out, with the reason:
+
+| Left out | Why |
+| --- | --- |
+| Station contents, station learning, station covers, `radio/stream` playback | Unseeded `new Random()` weighted draw (`LastFmRadioRecommendationService.cs:545`) and `Random.Shared` tune-in (`RadioTuneInSelector.cs:16`) |
+| Library neighbours in song radio (#78) and Sounds alike as a radio source | Unseeded shuffle (`LastFmRadioTrackResolver.cs:147`) and Navidrome's `getRandomSongs`; the fixture songs are also filler-length (under 45 s) |
+| The order of Made for you lists | Shuffled with a seed that changes daily (`ForYouLists.cs:179`); Deep Cuts is compared unordered |
+| The trickle's pacing, `nextUtc`, running and progress | Wall-clock pacing (`TrickleWorker.cs:370-409`); `SongsPerHour=0` keeps it off |
+| A pending Spotify sign-in lapsing, token renewal, 429 and 5xx waits | 15 minute and real retry waits |
+| Opus transcodes | ffmpeg's Ogg muxer picks a random stream serial, so the bytes differ every run |
+| Transcodes with `estimateContentLength` whose estimate is short | Where the body is cut depends on pipe timing |
+| Activity items while running (download fractions, cover run counts) | Racy by nature; only settled states are read |
+| `/api/admin/sonic` in the signed-in sweep of `11-signin` | Its state depends on how fast the run got there; `15-radio` reads it once settled |
+| The hourly role re-check of an admin already checked | Its clock is internal to tests (`AdminRoleCheck.cs:30`); a fresh demoted or deleted admin is covered |
+| `GET /api/admin/discover-servers` signed in | Scans the network; the sandbox's addresses change every run |
+| Stopping a health fix run (a lookup run is covered), the noLength fix | No fix step can be made reliably slow; the upgrade queue ticks every 2 s |
+
+Answers the C# app gives that are timing-dependent but settle (the share switch's 10 minute
+recheck, the 10 s signed-out status cache) are read so that the same answer comes out either way.
+
+## Diffs per backlog group
+
+Each request carries the backlog groups it checks (`"backlog"`, default `base`: behavior the
+Rust port already had at 2026.10.04). [`groups.json`](groups.json) puts some diffs on a group by
+what differs, ahead of the request's own tag: the admin security headers and the gate's `signIn`
+answers are J wherever they show, `explicitStatus` is P, `ownedCount` is O, and so on. The diff
+ends with a table of requests with an unexplained diff per group (one request can count in
+several); `--groups-out FILE` writes the request ids per group as JSON. This table is the port's
+worklist ([`docs/rust-port/BACKLOG.md`](../docs/rust-port/BACKLOG.md)).
+
+## Intentional diffs
+
+The port does not have to stay one to one: Brandon wants it improved. A deliberate improvement
+is an entry in [`intentional-diffs.json`](intentional-diffs.json), reviewed diff by diff:
+
+```json
+{"id": "plain-timeout-words",
+ "backlog": "base",
+ "requests": ["13-downloads/find-*"],
+ "aspects": ["body"],
+ "lines": ["The request was canceled due to the configured HttpClient.Timeout", "took too long"],
+ "reason": "Plain words instead of .NET's exception text.",
+ "knownDiff": "Plain error words",
+ "reviewed": "Brandon 2026-10-08"}
+```
+
+- `requests` names the requests (globs inside one corpus file; never `*`), `aspects` the parts
+  (`status`, `body`, `header:<name>`), and `lines` (regexes) what the diff itself says: every
+  diff line of the aspect must match one, so a different change on the same answer still fails.
+- `reason` says why the Rust answer is better; a change a user or an app can see needs Brandon
+  by name in `reviewed`. Each entry also gets a row in `docs/rust-migration/known-diffs.md`.
+- An entry without `reviewed` is only proposed: the diff lists it as not reviewed and still
+  counts the request as unexplained. The summary lists every intentional entry it applied, so
+  none hides.
+
+`allowlist.json` stays for the differences the port carries from 2026.10.04 that are not
+improvements (framing, the `Server` header, encoder bytes).
+
 ## Facts the baseline settles
 
 From `recordings/csharp/` (these close several **(verify)** items in `endpoints.md`):
@@ -290,34 +491,28 @@ From `recordings/csharp/` (these close several **(verify)** items in `endpoints.
 
 ## Not covered
 
-The harness is only as good as its corpus. Known gaps, roughly by risk:
+The harness is only as good as its corpus. Known gaps, besides the nondeterministic parts
+listed under "Determinism rule":
 
-- **Acquisition pipeline.** Hearting an external song is the last request, so the background
-  Soulseek search, download, tagging, verification (MusicBrainz, AcoustID, Cover Art Archive,
-  fpcalc), file placement and the resulting acquisition rows are not observed. slskd always
-  returns zero search responses. Library actions, quarantine, the upgrade queue and the review
-  sweep run only to their "off" or refusal answers.
-- **Last.fm radio, stations, mixes and `radio/stream` playback** (radio and generated playlists
-  are off, because their background builds run on timers and their timing would leak into
-  `getPlaylists`/`getInternetRadioStations`). Station and mix covers, ICY metadata, Last.fm and
-  ListenBrainz scrobbling, Now Playing submission.
-- **Settings edge cases:** hot reload of `settings.json`, a corrupt file (`409`), `PUT
-  raw-config` success, secret placeholders beyond the admin password, env-var parsing quirks
-  (`config.md`). One settings patch is covered.
-- **Process-level:** `POST /api/admin/restart`, the update helper handshake (`POST
-  /api/admin/update` success), first-run LAN discovery and `GET /api/admin/discover-servers`
-  (it scans the network; the sandbox's addresses change per run).
+- **The update helper and restart:** `POST /api/admin/restart` only signed out (last request),
+  `POST /api/admin/update` only refused; first-run LAN discovery.
+- **Lidarr's side of Find songs and acquisition**, including the stale guid fix (`e3aed24`):
+  Lidarr would have to be set up with a root folder and profile ids and stubbed through album
+  lookup and releases. Picks that replace a library song (the upgrade queue) are not run.
+- **The Find songs list past 300 copies** (57ab90d, 13ec9f9): the answer is over 64 KB, so it
+  would be compared by hash only.
+- **The audit line** "{who} saved settings: {keys}": it goes to the log only.
+- **The 55 shared library health cases** (`docs/library-health-cases.json`) are song rows fed
+  straight to the checks; the Rust unit tests read them. `19-health` plants 8 songs that trip
+  about 11 of them end to end.
+- **The share switch with slskd taking a new list,** Locked, outside shares and upload cancels:
+  the stub's answers do not change after a write.
+- **Spotify import:** the 250,000 songs per person cap, the 64 MB request limit, the refresh
+  token path.
 - **Feature switches left at one value:** `WaitForLosslessOnPlay`, `DownloadOnPlay`,
-  `StorageMode=Cache`, `EnableExternalPlaylists` (so `pl-` ids only hit their not-found paths),
-  notification sinks (none configured), Genre normalization.
-- **apiKey auth:** Navidrome 0.64.2 does not implement it, so only its failure paths and
-  `tokenInfo`'s 404 are recorded.
-- **Images:** binary bodies are compared by SHA-256, so the Rust cover renderer (badged
-  covers, the placeholder) will differ from ImageSharp's bytes even when it looks the same.
-  PLAN.md's SSIM ≥ 0.98 tolerance is not implemented here; allowlist those diffs against a
-  known-diffs row until a perceptual comparator is added.
-- **Timing:** `tags/preview` `stageSeconds` and Now Playing `positionMs`/`minutesAgo` are ignored;
-  fractional-second digit counts of run-time timestamps are not compared; bodies over 64 KB are
-  compared by hash only (the admin UI files, `/Assets` images).
-- **Transport:** keep-alive behavior, chunk boundaries, HTTP/2, request bodies sent as
-  `multipart/form-data`, very large uploads, client disconnects.
+  `StorageMode=Cache`, `EnableExternalPlaylists`, notification sinks, Genre normalization.
+- **apiKey auth:** Navidrome 0.64.2 does not implement it, so only its failure paths.
+- **Images:** binary bodies are compared by SHA-256, so the Rust cover renderer differs from
+  ImageSharp's bytes even when it looks the same (allowlisted); tags written by lofty differ
+  from TagLib#'s in ways the `ffprobe` dumps show.
+- **Transport:** keep-alive behavior, chunk boundaries, HTTP/2, client disconnects.

@@ -247,6 +247,8 @@ impl GeneratedPlaylistService {
                     counts: counts.clone(),
                     counts_utc: Utc::now(),
                     kinds: kinds_of(&settings),
+                    // STUB(Q): Made for you fills its lists here when group Q lands.
+                    ..Default::default()
                 },
             );
             self.save_locked(&state);

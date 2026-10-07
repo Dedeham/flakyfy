@@ -94,6 +94,10 @@ pub struct UpgradeJob {
     /// What a finished job found and did, for a person to read.
     #[serde(default)]
     pub result: Option<UpgradeResult>,
+
+    /// The copy someone picked in Find songs, fetched instead of searching; None to search.
+    #[serde(default)]
+    pub pick: Option<crate::services::common::download_picks::PickedCopy>,
 }
 
 fn default_origin() -> String {
@@ -122,6 +126,7 @@ impl Default for UpgradeJob {
             updated_utc: datetime::min_value(),
             started_utc: None,
             result: None,
+            pick: None,
         }
     }
 }

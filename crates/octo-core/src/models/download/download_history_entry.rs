@@ -53,6 +53,16 @@ pub struct DownloadHistoryEntry {
     /// being fetched joins that transfer instead of starting another. Recording only whoever
     /// got there first would attribute the file to one of them and silently drop the rest.
     pub requested_by: Option<Vec<String>>,
+
+    /// The download's row in the live downloads list ("provider:id"), the key getAcquisition and
+    /// the dashboard read its log by. None for entries written before this existed.
+    pub key: Option<String>,
+
+    /// The download's log, saved when it ended so the dashboard can show it after the live list
+    /// forgets it (three hours). Trimmed to stay small (`DownloadHistoryService.AttachLog`). None
+    /// for entries written before this existed, and for older entries whose log was let go to
+    /// keep the file small.
+    pub log: Option<Vec<super::acquisition_event::AcquisitionEvent>>,
 }
 
 #[cfg(test)]
@@ -71,7 +81,11 @@ mod tests {
         assert!(entries.iter().any(|entry| entry.tagging.is_some()));
         assert!(entries.iter().any(|entry| entry.tagging.is_none()));
 
-        assert_eq!(crate::json::to_string(&entries), text.trim_end_matches('\n'));
+        assert!(entries.iter().any(|entry| entry.log.is_some()));
+        assert_eq!(
+            crate::json::to_string_without_nulls(&entries),
+            text.trim_end_matches('\n')
+        );
     }
 
     #[test]

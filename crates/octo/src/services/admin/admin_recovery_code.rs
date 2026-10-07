@@ -178,6 +178,24 @@ mod tests {
         assert!(recovery.try_use(Some("MYOWNCODE")));
     }
 
+    /// The fixture is the file as the C# wrote it: the code and a line end.
+    #[test]
+    fn the_fixture_reads_as_its_code() {
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/rust-migration/fixtures/state/admin-recovery-code"
+        );
+        let (_dir, path) = temp();
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("creates");
+        std::fs::copy(fixture, &path).expect("copies");
+        let recovery = AdminRecoveryCode::new(&path);
+        assert_eq!(recovery.current().as_deref(), Some("ABCDE-FGHJK-LMNPQ-RSTUV"));
+        assert!(recovery.try_use(Some("abcde fghjk lmnpq rstuv")));
+        let written = std::fs::read_to_string(&path).expect("reads");
+        assert_eq!(written.len(), 24, "a new code and a line end: {written:?}");
+        assert!(written.ends_with('\n'));
+    }
+
     #[cfg(unix)]
     #[test]
     fn the_file_is_readable_by_its_owner_alone() {

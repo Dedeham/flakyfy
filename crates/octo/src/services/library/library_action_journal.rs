@@ -13,7 +13,7 @@ use octo_core::common::dotnet;
 use octo_core::json::datetime;
 use octo_core::settings::LibraryAction;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -40,6 +40,10 @@ pub enum LibraryActionState {
     /// because nothing failed, and a log line saying otherwise about a working dry run is the
     /// kind of thing that makes someone turn rehearsal mode off to "fix" it.
     Rehearsed = 5,
+
+    /// A removed song put back from the trash. Appended: the journal stores states as numbers.
+    /// Neither applied nor skipped, so the same file can be removed again.
+    Restored = 6,
 }
 
 impl LibraryActionState {
@@ -52,6 +56,7 @@ impl LibraryActionState {
             LibraryActionState::Unresolved => "Unresolved",
             LibraryActionState::Skipped => "Skipped",
             LibraryActionState::Rehearsed => "Rehearsed",
+            LibraryActionState::Restored => "Restored",
         }
     }
 }
@@ -68,8 +73,9 @@ pub fn action_name(action: LibraryAction) -> &'static str {
 }
 
 /// One library action, as the journal records it. The fields in the C# record's order, then
-/// the two body properties, which is the order System.Text.Json wrote them in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// the body properties, which is the order System.Text.Json wrote them in. Written by hand
+/// ([`Serialize`] below) because STJ also wrote the computed `BlocksDownloads`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LibraryActionEntry {
     #[serde(default, deserialize_with = "state_file::null_as_default")]
@@ -107,6 +113,78 @@ pub struct LibraryActionEntry {
     /// finds the swap done instead of putting the original back beside it.
     #[serde(default)]
     pub revealed_path: Option<String>,
+    /// A Delete of one copy of a song the library keeps another of, so not a song the person
+    /// never wants again.
+    #[serde(default)]
+    pub copy: bool,
+    /// The admin chose Allow downloading again: a song removed from disk that may be downloaded
+    /// once more, while its file stays in the trash.
+    #[serde(default)]
+    pub download_allowed: bool,
+}
+
+impl LibraryActionEntry {
+    /// Whether this entry keeps the song from being downloaded again.
+    pub fn blocks_downloads(&self) -> bool {
+        self.action == LibraryAction::Delete
+            && self.state == LibraryActionState::Applied
+            && !self.dry_run
+            && !self.copy
+            && !self.download_allowed
+    }
+}
+
+impl Serialize for LibraryActionEntry {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Written<'a> {
+            key: &'a str,
+            #[serde(with = "action_number")]
+            action: LibraryAction,
+            navidrome_id: &'a str,
+            username: &'a str,
+            title: &'a str,
+            artist: &'a str,
+            album: &'a str,
+            source_path: &'a Option<String>,
+            quarantine_path: &'a Option<String>,
+            #[serde(with = "path_source_number")]
+            resolution: Option<PathSource>,
+            state: LibraryActionState,
+            detail: &'a Option<String>,
+            dry_run: bool,
+            #[serde(with = "datetime::utc")]
+            at_utc: DateTime<Utc>,
+            history_kept: Option<bool>,
+            revealed_path: &'a Option<String>,
+            copy: bool,
+            download_allowed: bool,
+            blocks_downloads: bool,
+        }
+        Written {
+            key: &self.key,
+            action: self.action,
+            navidrome_id: &self.navidrome_id,
+            username: &self.username,
+            title: &self.title,
+            artist: &self.artist,
+            album: &self.album,
+            source_path: &self.source_path,
+            quarantine_path: &self.quarantine_path,
+            resolution: self.resolution,
+            state: self.state,
+            detail: &self.detail,
+            dry_run: self.dry_run,
+            at_utc: self.at_utc,
+            history_kept: self.history_kept,
+            revealed_path: &self.revealed_path,
+            copy: self.copy,
+            download_allowed: self.download_allowed,
+            blocks_downloads: self.blocks_downloads(),
+        }
+        .serialize(serializer)
+    }
 }
 
 /// `LibraryAction` as its number, which is how the journal stores it.
@@ -321,10 +399,7 @@ impl LibraryActionJournal {
         // feat. Rihanna - Too Good"), but a live take of a deleted song is still its own song.
         let wanted = SongIdentity::match_key(artist, title);
         self.entries.lock().by_key.values().any(|entry| {
-            entry.action == LibraryAction::Delete
-                && entry.state == LibraryActionState::Applied
-                && !entry.dry_run
-                && SongIdentity::match_key(&entry.artist, &entry.title) == wanted
+            entry.blocks_downloads() && SongIdentity::match_key(&entry.artist, &entry.title) == wanted
         })
     }
 

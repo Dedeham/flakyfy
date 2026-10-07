@@ -43,7 +43,7 @@ impl QuarantineResult {
 
 /// What is written next to a quarantined file so a restore works without the journal. Its
 /// `Action` is the enum's name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct QuarantineManifest {
     #[serde(default, deserialize_with = "state_file::null_as_default")]
@@ -56,6 +56,22 @@ pub struct QuarantineManifest {
     pub username: String,
     #[serde(default = "datetime::min_value", with = "datetime::utc")]
     pub at_utc: DateTime<Utc>,
+    /// The song's own files that went to the trash with it (its lyrics), put back with it.
+    #[serde(default)]
+    pub sidecars: Option<Vec<QuarantinedSidecar>>,
+    /// The outside songs Octo knew the file as, which a removal forgets and a restore puts back.
+    #[serde(default)]
+    pub mappings: Option<Vec<crate::services::local::local_library_service::LocalSongMapping>>,
+}
+
+/// A file of the song's own that went to the trash with it: where it was, and where it waits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct QuarantinedSidecar {
+    #[serde(default, deserialize_with = "state_file::null_as_default")]
+    pub original_path: String,
+    #[serde(default, deserialize_with = "state_file::null_as_default")]
+    pub quarantine_path: String,
 }
 
 /// Moves a verified file out of the library instead of deleting it.
@@ -164,6 +180,9 @@ impl LibraryActionQuarantine {
                 action: action_name(action).to_string(),
                 username: username.to_string(),
                 at_utc: Utc::now(),
+                // STUB(F): the song's lyrics and its outside-song links go with it from group F.
+                sidecars: None,
+                mappings: None,
             },
         );
 

@@ -68,6 +68,16 @@ pub struct SoulseekRouting {
     /// Where [`SoulseekRouting::shown_duration`] came from, so a weaker source never
     /// replaces a stronger one.
     pub shown_duration_source: LengthSource,
+
+    /// Whether the words are explicit (1), the clean edit (3) or neither (0), as the catalog
+    /// said, so every later response for this id carries it. Display only, not part of the id
+    /// (`Octo.Models.Domain.ExplicitStatus`).
+    pub explicit_content: Option<i32>,
+
+    /// "clean" for a clean edit, which gets an id of its own so it can be listed beside the
+    /// explicit original. None for every other song or album, so every id minted before this
+    /// existed (stars, playlists, pins) stays the same.
+    pub version: Option<String>,
 }
 
 impl SoulseekRouting {
@@ -85,7 +95,7 @@ impl SoulseekRouting {
 /// (ignored again on read).
 impl Serialize for SoulseekRouting {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut s = serializer.serialize_struct("SoulseekRouting", 16)?;
+        let mut s = serializer.serialize_struct("SoulseekRouting", 18)?;
         s.serialize_field("Kind", &self.kind)?;
         s.serialize_field("YouTubeId", &self.you_tube_id)?;
         s.serialize_field("Artist", &self.artist)?;
@@ -100,6 +110,8 @@ impl Serialize for SoulseekRouting {
         s.serialize_field("Isrc", &self.isrc)?;
         s.serialize_field("ShownDuration", &self.shown_duration)?;
         s.serialize_field("ShownDurationSource", &self.shown_duration_source)?;
+        s.serialize_field("ExplicitContent", &self.explicit_content)?;
+        s.serialize_field("Version", &self.version)?;
         s.serialize_field("HasYouTube", &self.has_you_tube())?;
         s.serialize_field("HasArtistTitle", &self.has_artist_title())?;
         s.end()
@@ -120,7 +132,9 @@ mod tests {
         };
         let json = crate::json::to_string(&routing);
         assert!(
-            json.ends_with(r#""ShownDurationSource":0,"HasYouTube":true,"HasArtistTitle":false}"#),
+            json.ends_with(
+                r#""ShownDurationSource":0,"ExplicitContent":null,"Version":null,"HasYouTube":true,"HasArtistTitle":false}"#
+            ),
             "{json}"
         );
         let back: SoulseekRouting = serde_json::from_str(&json).expect("reads back");

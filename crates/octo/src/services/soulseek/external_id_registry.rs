@@ -180,13 +180,14 @@ impl ExternalIdRegistry {
         if let Some(previous) = previous.filter(|p| !p.ptr_eq(&routing)) {
             // Read the earlier routing under its own lock, then let it go before taking the
             // new one's, so two registrations never hold both.
-            let (prev_album_id, (seconds, source), prev_isrc, prev_artist_id) = {
+            let (prev_album_id, (seconds, source), prev_isrc, prev_artist_id, prev_explicit) = {
                 let p = previous.lock();
                 (
                     p.external_album_id.clone(),
                     SongLength::shown(&p),
                     p.isrc.clone(),
                     p.external_artist_id.clone(),
+                    p.explicit_content,
                 )
             };
             let mut r = routing.lock();
@@ -213,6 +214,11 @@ impl ExternalIdRegistry {
             // mints its artist again by name alone, and must not undo that choice.
             if r.external_artist_id.is_none() {
                 r.external_artist_id = prev_artist_id;
+            }
+            // And what the catalog said of its words: a search row mints the song again before
+            // the catalog is asked.
+            if r.explicit_content.is_none() {
+                r.explicit_content = prev_explicit;
             }
         }
 
@@ -330,6 +336,8 @@ impl ExternalIdRegistry {
     /// different id than the album "Hotline Bling" or the artist "Drake", or
     /// getCoverArt would return the wrong scope's artwork.
     pub fn make_short_id(r: &SoulseekRouting) -> String {
+        /// `ExplicitStatus.CleanWord`: the version a clean edit carries.
+        const CLEAN_WORD: &str = "clean";
         let text = |s: &Option<String>| s.clone().unwrap_or_default();
         let seed = match r.kind {
             RoutingKind::Album => format!("k:album|a:{}|al:{}", text(&r.artist), text(&r.album)),
@@ -341,6 +349,14 @@ impl ExternalIdRegistry {
                 text(&r.title),
                 r.duration.map(|d| d.to_string()).unwrap_or_default()
             ),
+        };
+        // A clean edit shares its artist, title and often its length with the explicit original,
+        // so it gets a mark of its own. Only a clean one: the explicit and the unknown keep the
+        // seed they always had, and with it every id already handed out.
+        let seed = if r.kind != RoutingKind::Artist && r.version.as_deref() == Some(CLEAN_WORD) {
+            format!("{seed}|v:{CLEAN_WORD}")
+        } else {
+            seed
         };
         let hash = Sha256::digest(seed.as_bytes());
         Self::to_base62(&hash, 22)

@@ -1,0 +1,442 @@
+# Rust port backlog
+
+<!-- markdownlint-configure-file
+{ "MD013": false }
+-->
+
+The Rust server in `crates/` is at parity with C# 2026.10.04. The C# app in
+`octo/` is at 2026.10.05 and moving. This file is the working list for closing
+that gap: every C# change since the Rust baseline, grouped, with its parity
+diffs and its status. Tick a commit when its behavior, its tests (a
+`docs/rust-migration/test-map.md` row each) and its parity cases are on
+`rust/main`.
+
+Baseline: Rust at 2026.10.04 parity. Target: `main` at `ce63143` (release
+2026.10.05 plus a README commit). The gap is `git log --no-merges
+89a4be1..ce63143`, 121 commits, all listed below.
+
+## Working on the port
+
+- **Where cargo runs.** WSL Ubuntu, on its own filesystem (not `/mnt/c`).
+  Windows can `cargo check --workspace --tests` for quick edits (2 min 8 s
+  cold), but the test suite is Linux only.
+- **One worktree, one `target/`.** Each worktree builds into its own
+  `target/`; never point several at one `CARGO_TARGET_DIR`. Incremental
+  builds are on, so a `target/` grows to about 7.3 GB (3.8 GB of it
+  incremental caches). Keep 30 GB free in WSL.
+- **At most 3 agents compile at once** in WSL's 16 GB: a test rebuild peaks
+  at 2.3 to 3.4 GB with incremental caches, 4 to 4.7 GB cold.
+- **The loop.** `cargo test -p <crate> <filter>` while working; the full
+  `cargo test --workspace`, `cargo clippy --workspace --tests -- -D warnings`
+  and `cargo fmt --all --check` before merging into `rust/main`.
+- **Shared files.** The Rust build reads the C# app's own files: the
+  dashboard (`octo/wwwroot`), `octo/Assets`, the cover design
+  (`octo/Services/CoverArt/Design`), `octo/appsettings.json`, the golden
+  cover samples (`octo.Tests/CoverGolden`), the shared case files
+  (`docs/*-cases.json`) and the release number (`octo/octo.csproj`). A debug
+  run serves the dashboard from `octo/wwwroot` with no env vars.
+- **Port behavior, then improve on purpose.** Follow
+  `docs/rust-migration/CONVENTIONS.md`. A deliberate improvement over the
+  C# behavior is fine: give it a `docs/rust-migration/known-diffs.md` row
+  (C#, Rust, why) and a parity allowlist entry pointing at it.
+
+## Phase 0 record (2026-10-06)
+
+| Item | Result |
+| --- | --- |
+| Workspace | Imported at 2026.10.04 parity; `sonic/` excluded (cargo refuses to run in `sonic/` without it; checked) |
+| `cargo build --release` (WSL, 16 cores, cold, crates already downloaded) | 2 min 40 s wall, 16 min CPU; peak memory 3.0 GB over idle (the LTO link alone 3.1 GB); binary 33.7 MB |
+| `cargo test --workspace` cold | 6 min 18 s wall; peak 4.7 GB over idle |
+| Tests | 2,470 pass, 0 fail (octo 1,574 + 3, octo-core 648, octo-media 132, octo-subsonic 113) |
+| The 7 failures seen in planning | Environment only: under WSL mirrored networking a closed port such as 127.0.0.1:1 times out instead of refusing. Fixed: the tests use a port bound and let go, which refuses everywhere; the `octo` tests went from 187 s to 51 s |
+| Shared song identity cases | 26 of the 2026.10.05 cases fail in Rust (group B); skipped by name in `song_identity_tests.rs`, and a skipped case that starts passing fails the test until it is taken off the list |
+| `cargo clippy --workspace --tests -- -D warnings` | Clean, 2 min 41 s cold |
+| Edit and rebuild the tests, incremental off (the fork's setting) | Edit in `octo` 89 s, peak 4.0 GB; edit in `octo-core` 87 s, peak 3.9 GB |
+| Same, incremental on (now the default) | Edit in `octo` 12 s, peak 2.3 GB; edit in `octo-core` 28 s, peak 3.4 GB |
+| `target/` size | 2.8 GB without incremental caches, 7.3 GB with them |
+| Windows | `cargo check --workspace --tests` passes (the symlink test is Unix only) |
+| `Dockerfile.rust` on LXC 131 (4 cores, cold, own buildx builder capped at 3.5 GB) | 5 min 12 s in all: dependencies (cargo-chef cook) 1 min 44 s, the Octo crates 2 min 43 s; image 993 MB |
+| Workflows | `rust.yml`, `docker-rust.yml`, `ci.yml` pass actionlint 1.7.12 with shellcheck, apart from `concurrency.queue`, which actionlint does not know yet (`docker.yml` has the same line and runs) |
+
+Not measured yet, because nothing is pushed: the CI run times on GitHub's
+runners, the GitHub Actions cache sizes for the `octo-rust-amd64` and
+`octo-rust-arm64` scopes against the repository's 10 GB, and the `sonic` job
+on `rust/main`. Record them after the first push of `rust/main` and the first
+manual run of the Rust image workflow.
+
+## Parity: first run against C# 2026.10.05
+
+Run on LXC 131 on 2026-10-06 with the corpus as it came from the Rust port
+(453 requests, 12 files), the published image
+`ghcr.io/winters27/octo:2026.10.05` against `Dockerfile.rust` built from
+`rust/main` (`19b375f`).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against C# (two runs) | 453 identical | 453 identical |
+| Rust against Rust (two runs) | 453 identical | 453 identical |
+| C# against Rust | 172 unexplained, 281 explained by the allowlist | 172 unexplained |
+
+So the corpus as it stands is deterministic on both builds, and every diff is
+a real difference.
+
+Diffs by corpus file:
+
+| Corpus file | Requests | Diffs |
+| --- | ---: | ---: |
+| `00-setup` | 6 | 1 |
+| `01-system` | 43 | 4 |
+| `02-browsing` | 65 | 5 |
+| `03-search` | 25 | 5 |
+| `04-media` | 42 | 2 |
+| `05-playlists` | 19 | 3 |
+| `06-lyrics` | 24 | 0 |
+| `07-octo-extensions` | 15 | 2 |
+| `08-catchall-native` | 34 | 4 |
+| `09-admin` | 97 | 97 |
+| `10-static-cors` | 25 | 18 |
+| `90-mutations` | 58 | 31 |
+| **Total** | **453** | **172** |
+
+Diffs by gap group (one request can show several groups):
+
+| Group | Diffs | What differs |
+| --- | ---: | --- |
+| J | 148 | The sign-in gate (401 with `signIn` where Rust answers), the security headers on admin answers (`Content-Security-Policy`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Cache-Control: no-store`), the `browse/session` fields `recovery`, `signInOff`, `user`; 144 of the 172 are J alone |
+| P | 10 | `explicitStatus` on outside songs and albums |
+| Q | 8 | The Made for you playlist in `getPlaylists`; `octoLists` extension |
+| G | 5 | `octoTopSongs` extension; `getTopSongs` answered by Octo (no relayed `Vary: Origin`) |
+| D | 4 | `octoAcquisitions` extension at versions 1 and 2 |
+| H | 4 | `octoImports` extension |
+| N | 3 | `pending` on `genre/backfill` (the activity view) |
+| B | 2 | `Content-Disposition` on a relayed download |
+| F | 2 | `getLibraryActions` lists 6 actions; `libraryAction` knows retag, joinAlbum, cover, lookup, undo, restore |
+| O | 2 | `ownedCount` on outside albums |
+| K | 1 | `GET /` is a 302 to `app/` |
+| L | 1 | `services.sonic` in `/api/admin/status` |
+
+Read with care: the C# gate answers 401 to almost every admin request, so the
+admin features of other groups (D, E, F, G, H, L, N, P, Q, R) cannot show yet.
+Phase 1 signs the corpus in and adds the corpus groups below; most of the
+backlog only becomes visible then. Groups A, C, E, I, M, R, S, T and U have no
+diff in this corpus.
+
+Repeat it (on a box with Docker; LXC 131 used its own folder and compose
+projects, cleaned up after):
+
+```bash
+docker build -f Dockerfile.rust -t octo-rust:dev .
+python3 parity/parity.py run --project p0cs --out /tmp/parity/cs
+python3 parity/parity.py run --image octo-rust:dev --project p0rs \
+    --port 18580 --nd-port 18553 --out /tmp/parity/rs
+python3 parity/parity.py diff /tmp/parity/cs /tmp/parity/rs
+```
+
+## Phase 1: the harness at 2026.10.05
+
+- [ ] Sign the corpus in (a `browse/auth` cookie for the admin groups) and keep
+  a signed-out pass, so the gate and the features behind it are both
+  compared.
+- [ ] Corpus groups from the plan: `11-signin` (gate on every admin route and
+  on unknown `/api/admin/<x>`, default deny; `ADMIN_SIGN_IN=off`;
+  `ADMIN_PORT` on a second published port), `12-imports`, `13-downloads`,
+  `14-health`, `15-radio`, `16-lists`, `17-covers-explicit`, `18-dashboard`,
+  `19-library-edits`, `20-static`, `95-acquisition` (end to end, a real
+  fixture FLAC through the slskd stub).
+- [ ] Stubs: Spotify accounts and API, ListenBrainz labs, the shim's `/ytm`,
+  octo-sonic, Deezer and Last.fm charts, slskd search results and transfers,
+  the slskd options and YAML endpoints.
+- [ ] Determinism rule: timers off in the harness, randomness seeded through
+  a test-only env var both builds honor, the rest listed under "Not covered"
+  in `parity/README.md`.
+- [ ] Re-record `parity/recordings/csharp` from `ghcr.io/winters27/octo:2026.10.05`
+  twice (0 diffs both modes), and update the Rust golden tests that read it
+  (`subsonic_wire_golden_tests.rs`) in the same commit.
+- [ ] Regenerate the tag and state fixtures with the C# generators at
+  2026.10.05 (`docs/rust-migration/fixtures`).
+
+## Gap groups
+
+Sizes from the migration plan § 2 (C# logic and test lines added, test
+methods). Status: open, in progress, done, or no Rust change.
+
+| Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | open |
+| B Download matching | 8 | 644 | 46 | 0.75 | 2 | open |
+| C Tagging polish | 4 | 465 | 24 | 1.0 | 0 | open |
+| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 4 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 0 | open |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 2 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 5 | open |
+| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 4 | open |
+| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 0 | open |
+| J Admin sign-in | 6 | 921 | 29 | 1.25 | 148 | open |
+| K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 1 | open |
+| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 1 | open |
+| M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 3 | open |
+| O Search album ownership | 1 | 808 | 23 | 0.5 | 2 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 10 | open |
+| Q Made for you lists | 3 | 887 | 26 | 0.75 | 8 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 0 | open |
+| S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | open |
+| T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
+| U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
+
+Port waves, from the plan: G1 is the settings and env vars for every group,
+the 7 new state files with fixtures, then J, I, A, K, S. G2 is B, C, D, E, G,
+O, Q. G3 is F, H, L, P. G4 is R and N.
+
+Things the gap brings besides code: 7 new state files
+(`explicit-backfill.json`, `imports.json`, `imports-trickle.json`,
+`radio-outcomes.json`, `sonic-features.json`, `spotify-accounts.json`,
+`tag-edits.json`) plus `admin-recovery-code`; new fields in
+`downloads-history.json`, the trash notes and `upgrades.json`; 34 new env
+vars; the `zip` crate for imports.
+
+## Commits by group
+
+### A. Last.fm search cleanup polish
+
+- [ ] `6f90ce1` fix(lastfm): the rest of the mislabelled search rows, and a gap inside "Connected as"
+
+### B. Download matching (versions, mash-ups, wider star search, format rename, relay file name)
+
+- [ ] `15087f6` fix(soulseek): a star searches as wide as Better quality, and wider again when the limit fills
+- [ ] `ff46dde` fix(downloads): a song's version tag is not words its file must carry, and the song itself never takes an edit
+- [ ] `39770ed` fix(downloads): a guest credit inside a version tag, "(Radio Edit - feat. X)", no longer makes the version words a file must carry
+- [ ] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
+- [ ] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
+- [ ] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
+- [ ] `0a700c0` fix(relay): a download keeps the file name Navidrome gave it
+- [ ] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
+
+### C. Tagging polish (one album's facts, explicit advisory, Try it)
+
+- [ ] `2463c23` feat(tagging): a download keeps only its own album's facts, one value per field, and says whether it is explicit
+- [ ] `67f56fa` docs(readme): what a download loses from a peer's tags, DISCTOTAL and the explicit advisory
+- [ ] `099fdd3` feat(tagging): Try it on a song shows whether the song is explicit and what a download would take off the file
+- [ ] `a60f06c` docs(readme): Try it on a song shows the advisory and what a download would take off
+
+### D. Download log, drawer, Find songs picks
+
+- [ ] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
+- [ ] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
+- [ ] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
+- [ ] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
+- [ ] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
+- [ ] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
+- [ ] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way
+- [ ] `e24eca1` fix(downloads): a pick is let go when its download ends, so a later download never takes it
+- [ ] `45f4463` fix(downloads): Find songs runs two looks a person at once, never drops a running one, and a library song's look is for the allowed list
+- [ ] `57ab90d` fix(downloads): Find songs keeps a few passed-over files of each reason on a popular song's list, and its fit count matches the rows
+- [ ] `13ec9f9` fix(downloads): Find songs says how many fitting copies its list shows when it has no room for all of them
+- [ ] `696cbff` fix(downloads): a shared download's log names nobody, and import errors show no server paths
+- [ ] `7602787` feat(downloads): keep each finished download's log with its fetched-songs entry
+
+### E. slskd sharing and the Share switch
+
+- [ ] `9f9502d` fix(admin): the slskd password never goes back to the browser
+- [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
+- [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
+- [ ] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd
+- [ ] `e3a5063` feat(soulseek): sharing is a choice, on for new installs and never switched on by an update
+- [ ] `416644b` feat(soulseek): a Share my library switch on the Sharing card, applied to slskd within seconds
+- [ ] `e30b242` docs(readme): the Share my library switch, and how it reaches slskd
+- [ ] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
+
+### F. Library edits from the apps, delete, trash, put back
+
+- [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
+- [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
+- [ ] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
+- [ ] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
+- [ ] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
+- [ ] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
+- [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
+- [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
+- [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
+- [ ] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
+
+### G. Top songs, charts, Popular right now
+
+- [ ] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
+- [ ] `3d5bea4` feat(top-songs): every app's getTopSongs ranked by Octo, the caller's songs as their own
+- [ ] `43d8325` feat(lists): Popular right now, the chart as a playlist in every app
+- [ ] `2397369` docs(lists): US spelling in a Popular right now comment
+
+### H. Spotify import and the trickle
+
+- [ ] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
+- [ ] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
+- [ ] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
+- [ ] `45f730c` fix(imports): a file holds at most 50,000 songs, a zip 200 files and 256 MB unpacked, and a person 500 lists
+
+### I. Secret masking in the admin API
+
+- [ ] `031e563` fix(admin): every key, token and webhook address in the settings reads as the placeholder, and saving it back keeps the stored one
+- [ ] `9210c63` fix(admin): a saved password, key or token never follows a server address it was not typed again for
+- [ ] `d7e8482` docs(readme): saved credentials never come back out of the admin API
+
+### J. Admin sign-in (gate, recovery code, role check, ADMIN_PORT)
+
+- [ ] `a4333f0` feat(admin): the admin API needs a sign-in with a Navidrome admin account
+- [ ] `3b82267` feat(admin): a sign-in screen in front of the whole dashboard
+- [ ] `7a9f753` docs: signing in to the dashboard, the recovery code, and scripts with a cookie jar
+- [ ] `2eb2299` fix(admin): the hourly role check reads Navidrome's user list, since getUser only answers for yourself
+- [ ] `06e9a60` fix(admin): a demoted admin is signed out even when Octo's own Navidrome token came from them
+- [ ] `f591793` fix(admin): Navidrome refuses its user list to a non-admin with 403, and that now means Octo's token is stale
+
+### K. Lidarr stale guid, bare address 302 (#80)
+
+- [ ] `e3aed24` fix(lidarr): a picked release Lidarr forgot is found again by its title, and a pick an album search already covers says it was not grabbed
+- [ ] `4a329aa` fix(proxy): the bare server address sends to the web app, as Navidrome does (#80)
+
+### L. Multi-source radio (#78, sources, blend, learning, bans, Sounds alike client)
+
+- [ ] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
+- [ ] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
+- [ ] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again
+- [ ] `8f5142d` refactor(radio): song radio asks a set of sources and blends them; Last.fm is the first
+- [ ] `c1d701d` feat(radio): every radio song says which source suggested it (octoSuggestedBy, octoRadioSources)
+- [ ] `8346a30` feat(radio): YouTube Music's radio is a source, and a song it suggests plays the video it named
+- [ ] `7b0e226` feat(radio): ListenBrainz's similar recordings are a source, and LB Radio fills artist and genre stations when Octo has a token
+- [ ] `6a119db` feat(admin): radio sources and their weights on the Radio page
+- [ ] `2d04f3f` feat(radio): Sounds alike, library songs that sound like the seed, from Octo's own analysis
+- [ ] `7ba1123` feat(radio): stations draw on every radio source and remember which one suggested each song
+- [ ] `ece2795` feat(radio): radio learns which sources each listener keeps, and weighs them by it
+- [ ] `7a8cc5f` fix(radio): song radio asks fairly and never keeps a failure as an answer
+- [ ] `b446983` fix(radio): stations share per seed and learning counts each serving once
+- [ ] `3de8dde` fix(sonic): the analysis says it is about to start, not that it is off, until its first look
+- [ ] `e4b0327` fix(sonic): Sounds alike never forgets songs on a bad listing, and octo-sonic runs locked down
+- [ ] `7af692c` fix(sonic): the dashboard and comments spell analyzed the US way
+
+### M. octo-sonic (Rust) and the shim's /ytm (Python)
+
+No Rust server change: both are their own images.
+
+- [ ] `0488476` feat(sonic): octo-sonic reads a song and says how it sounds (bliss-rs)
+- [ ] `b900557` feat(shim): YouTube Music search and radio, and every shim test runs in CI
+- [ ] `9ea267a` feat(sonic): octo-sonic starts with the stack, and RADIO_SOUNDS_ALIKE=false turns it off
+
+### N. Afterglow dashboard, activity view, toasts
+
+- [ ] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
+- [ ] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
+- [ ] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
+- [ ] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
+- [ ] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
+- [ ] `d52ae54` feat(admin): Fetched songs in the Afterglow look
+- [ ] `ca47988` feat(admin): one activity view of everything Octo is working on
+- [ ] `af48eb1` feat(admin): live progress toasts for Octo's background work
+
+### O. Search album ownership
+
+- [ ] `f49fb80` fix(search): an outside album the library holds is listed as the library's, and one held in part says how much
+
+### P. Covers keep-or-replace, explicit marks and backfill
+
+- [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
+- [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
+- [ ] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
+- [ ] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
+
+### Q. Made for you lists
+
+- [ ] `f54467a` feat(lists): Made for you, three lists per listener from their own plays
+- [ ] `1f940f2` fix(lists): only artists a listener played or hearted are theirs, and a shared song filed under their artist is their copy
+- [ ] `452f47e` fix(lists): Check Mode on Made for you
+
+### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
+
+- [ ] `69f577f` feat(health): Library health findings and fixes on the server
+- [ ] `e36d823` fix(health): check songs in the order the apps read them
+- [ ] `c156710` feat(admin): Library health page on the dashboard
+- [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+- [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
+
+### S. Estimated stream length fix
+
+- [ ] `67f3c93` fix(stream): a transcode's estimated length is never promised to the client
+
+### T. Starter stack, install.sh, README, CI, sidecar images, updater
+
+Done in the release phase (plan § 9): the compose file, install.sh and the update helper move to the Rust image there.
+
+- [ ] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
+- [ ] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
+- [ ] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
+- [ ] `d1a7e67` fix(install): defaults apply on a fresh install, so pressing Enter no longer makes the Octo folder the music folder
+- [ ] `aba1743` fix(compose): the starter Navidrome is navidrome-starter, so a Navidrome of your own named navidrome in an override no longer merges with it and leaves Octo's dependency undefined
+- [ ] `76684ab` fix(install): a re-run keeps everything in .env, and a first install gets the defaults it shows
+- [ ] `b2e5d9c` ci(images): publish the yt-dlp shim beside Octo, and pull it on image installs
+- [ ] `610dba2` feat(images): updates pull the yt-dlp shim and octo-sonic instead of compiling them
+- [ ] `b2298f5` ci(images): native arm64 builds, latest on releases, and the release waits for its images
+- [ ] `94e30d1` ci(images): the release waits until every image can be pulled without signing in
+- [ ] `0d81d0b` ci(docker): octo's digests are collected apart from octo-sonic's
+- [ ] `c038b87` ci(docker): the Sounds alike image is ghcr.io/winters27/octo-sonic
+- [ ] `25ad530` docs(readme): a 20-second demo at the top, searching, playing and keeping a song
+- [ ] `0adc6b3` release: 2026.10.05
+- [ ] `ce63143` docs(readme): the apps' links point at 1.5.0 [skip ci]
+
+### U. Shared case files, timing tests
+
+The Rust tests read the shared case files as they are.
+
+- [ ] `aae574a` test(identity): the shared song cases gain drumless and other editions, karaoke in the style of, and mash-ups, as the apps have them
+- [ ] `97855f1` test: two timing tests wait for what they check instead of sleeping
+
+## Improvements we want while porting
+
+The port does not have to stay one to one. Each of these is a known diff with
+its reason when it changes an answer.
+
+- [ ] **The admin gate as one router layer, default deny.** Axum has no
+  endpoint attributes to read, so the gate is a layer with an explicit list of
+  open routes; an unknown `/api/admin/<x>` answers 401 too (group J).
+- [ ] **The signed-out status cache** (C# caches it 10 s). Under load the Rust
+  `/api/admin/status` is slower than C# only because it probes five services
+  on every call (group J).
+- [ ] **Plain error words instead of .NET's.** The port copies .NET exception
+  texts the apps can show ("The request was canceled due to the configured
+  HttpClient.Timeout of 100 seconds elapsing.", "Connection refused
+  (host:port)"). Say what happened in plain words, in both builds while the
+  twin rule holds.
+- [ ] **Em dashes in answers.** Two messages shared with the C# app still
+  carry one (the "absolute URL" hint in `subsonic_proxy_service.rs`, the
+  music folder warning in `navidrome_identity_service.rs`). Change them in
+  both builds together.
+- [ ] **US spelling in identifiers.** Comments and the port notes are done;
+  names like `cover_colours`, `COLOURLESS` and `normalise_*` are not. Rename
+  inside the code only, never a stored key or a JSON field.
+- [ ] **`.unwrap()` outside tests** (about 92 in non-test files): turn the
+  reachable ones into errors that are logged and answered.
+- [ ] **Module names from the port's waves** (`tests_6a1`, `helpers_6b1`,
+  `test_support_6a2` and 13 more): name them for what they hold.
+- [ ] **Smaller list cover JPEGs.** The Rust encoder writes 4:4:4 (17.6 KB
+  against C#'s 11.8 KB on the 600 px placeholder); 4:2:0 should match the
+  size with no visible change.
+- [ ] **Cut the .NET compatibility helpers where tests prove the same
+  answers** (`octo_core::common::dotnet`, the `XElement` replica), after the
+  cutover, behind the tests.
+- [ ] **Split the `octo` crate** only if the loop gets slow again: today an
+  edit there rebuilds the tests in 12 s.
+- [ ] **A `VERSION` file at the cutover.** `build.rs` reads it first; until
+  then it reads `octo/octo.csproj`, so a release bump is one edit for both
+  builds.
+- [ ] **Move the shared files beside the crates at the cutover** (dashboard,
+  Assets, cover design, appsettings, golden samples) and drop the `../../octo`
+  paths.
+- [ ] **cargo-deny's two ignored advisories** (`paste` under lofty,
+  `ttf-parser` under cosmic-text): drop each when its parent moves on.
+
+## Before phase 1 can finish
+
+- Push `rust/main` so `rust.yml` and `ci.yml` run, then one manual run of
+  `docker-rust.yml`; record the times and the cache sizes above. The
+  `octo-rust` package starts private on ghcr.io.
+- A box with Docker for the harness (LXC 131 has room: about 9.7 GB free
+  after this run; the Rust build and the images took about 8 GB of disk while it ran).
+- The bridge release (C#, Octo pulled not built, update helper v2) ships
+  before any Rust image reaches an install.

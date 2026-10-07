@@ -5,10 +5,19 @@ boots one Octo build against a fixture Navidrome and stubs for every upstream, r
 hand-written request corpus, records every response, and diffs two recordings after
 normalising the values that change from run to run.
 
-The C# baseline (`octo-csharp:csharp-final`, release `2026.10.03.2`) is recorded in
-[`recordings/csharp/`](recordings/csharp/). A Rust build passes when its recording diffs clean
-against it, or when every remaining diff is covered by [`allowlist.json`](allowlist.json),
-which must point at a row in [`docs/rust-migration/known-diffs.md`](../docs/rust-migration/known-diffs.md).
+**Dual track.** Both builds live in this repository until the cutover: the C# app in `octo/`,
+the Rust one in `crates/`. The C# side of a comparison is the published image of the release
+the port is held to, `ghcr.io/winters27/octo:2026.10.05` (the default `--image`), pulled, not
+built. [`recordings/csharp/`](recordings/csharp/) still holds the baseline the Rust build was
+first ported against (release `2026.10.03.2`); the Rust golden tests
+(`subsonic_wire_golden_tests.rs`) read it, so it is re-recorded at 2026.10.05 together with
+those tests, once the corpus covers 2026.10.05 (`docs/rust-port/BACKLOG.md`, phase 1). Until
+then, compare the Rust build against a fresh recording of the C# image, as below.
+
+A Rust build passes when its recording diffs clean against the C# one, or when every remaining
+diff is covered by [`allowlist.json`](allowlist.json), which must point at a row in
+[`docs/rust-migration/known-diffs.md`](../docs/rust-migration/known-diffs.md). A deliberate
+improvement over the C# behavior is a known diff too, with its reason.
 
 Everything is Python 3.10+ standard library plus Docker Compose. No `pip install`.
 
@@ -16,17 +25,17 @@ Everything is Python 3.10+ standard library plus Docker Compose. No `pip install
 
 ```sh
 # Record a build: recreate the stack from scratch, replay the corpus, tear it down again.
-python3 parity/parity.py run --image octo-csharp:csharp-final --out /tmp/parity/csharp-again
+python3 parity/parity.py run --image ghcr.io/winters27/octo:2026.10.05 --out /tmp/parity/csharp
 
 # Compare two recordings. Exit 0 = no unexplained diff, 1 = diffs (report on stdout).
-python3 parity/parity.py diff parity/recordings/csharp /tmp/parity/csharp-again
-python3 parity/parity.py diff --mode bytes parity/recordings/csharp /tmp/parity/csharp-again
+python3 parity/parity.py diff /tmp/parity/csharp /tmp/parity/csharp-again
+python3 parity/parity.py diff --mode bytes /tmp/parity/csharp /tmp/parity/csharp-again
 
-# The Rust build (docker build -t octo-rust:dev .). A different project and ports let it run
-# beside a C# stack.
+# The Rust build (docker build -f Dockerfile.rust -t octo-rust:dev .). A different project and
+# ports let it run beside a C# stack.
 python3 parity/parity.py run --image octo-rust:dev --project parity-rust --port 18580 --nd-port 18553 \
     --out /tmp/parity/rust
-python3 parity/parity.py diff parity/recordings/csharp /tmp/parity/rust --report /tmp/parity/rust.txt
+python3 parity/parity.py diff /tmp/parity/csharp /tmp/parity/rust --report /tmp/parity/rust.txt
 ```
 
 The steps can also run one at a time, for example to poke at a live stack:
@@ -47,17 +56,17 @@ A run takes about 90 seconds. The stack is capped at roughly 1.4 GB of RAM (`mem
 service) and needs two small images besides Octo: `deluan/navidrome:0.64.2` and
 `python:3.13-alpine`. Nothing is built; nothing is pruned.
 
-**The C# image.** The harness only ever runs a prebuilt `octo-csharp:csharp-final`; nothing in
-`parity/` needs the C# sources, which left this branch at the cutover. If the image is gone,
-rebuild it from the tag (its own Dockerfile, the .NET 9 SDK image) in a scratch worktree:
+**The C# image.** The harness only ever runs a prebuilt image; nothing in `parity/` builds
+one. The released C# image is on ghcr.io (`ghcr.io/winters27/octo:<release>`). To compare a
+C# change that is not released yet, build it from this tree with its own Dockerfile:
 
 ```sh
-git worktree add /tmp/octo-csharp csharp-final
-docker build -t octo-csharp:csharp-final /tmp/octo-csharp
-git worktree remove /tmp/octo-csharp
+docker build -t octo-csharp:dev .
+python3 parity/parity.py run --image octo-csharp:dev --out /tmp/parity/csharp-dev
 ```
 
-**Re-recording the baseline** (only when the corpus, the stubs or the fixtures change):
+**Re-recording the baseline** (only when the corpus, the stubs or the fixtures change, or the
+C# release the port is held to moves; the Rust golden tests read it, so rerun them after):
 
 ```sh
 rm -rf parity/recordings/csharp

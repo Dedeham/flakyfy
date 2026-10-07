@@ -1,10 +1,11 @@
 # Parity harness: one Octo build under test against a fixture Navidrome and stubs for every
-# upstream. Separate from the root docker-compose.yml. Run it through parity/run.sh, or:
+# upstream. Separate from the root docker-compose.yml. Run it through parity/parity.py
+# (README.md), or:
 #
-#   OCTO_IMAGE=octo-csharp:csharp-final PARITY_PORT=18480 \
+#   OCTO_IMAGE=ghcr.io/winters27/octo:2026.10.05 PARITY_PORT=18480 \
 #     docker compose -f parity/docker-compose.yml -p parity up -d
 #
-# OCTO_IMAGE   the build under test (the Rust image later, e.g. octo-rust:dev)
+# OCTO_IMAGE   the build under test: the C# release (default) or the Rust image (octo-rust:dev)
 # PARITY_PORT  host port for Octo (default 18480); PARITY_ND_PORT for Navidrome (18453)
 #
 # Two runs can coexist under different project names (-p) and ports.
@@ -94,7 +95,7 @@ services:
     networks: [sandbox]
 
   octo:
-    image: ${OCTO_IMAGE:-octo-csharp:csharp-final}
+    image: ${OCTO_IMAGE:-ghcr.io/winters27/octo:2026.10.05}
     depends_on:
       stubs:
         condition: service_healthy

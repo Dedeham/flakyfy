@@ -45,7 +45,8 @@ DEFAULT_ALLOWLIST = os.path.join(HERE, "allowlist.json")
 NORMALIZE_FILE = os.path.join(HERE, "normalize.json")
 KNOWN_DIFFS = os.path.join(REPO, "docs", "rust-migration", "known-diffs.md")
 
-DEFAULT_IMAGE = "octo-csharp:csharp-final"
+# The C# release the Rust build is held to: its published image, pulled, never built here.
+DEFAULT_IMAGE = "ghcr.io/winters27/octo:2026.10.05"
 DEFAULT_PORT = 18480
 DEFAULT_ND_PORT = 18453
 

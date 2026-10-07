@@ -1,11 +1,13 @@
 name: CI
 
+# rust/main carries the C# app beside the Rust build until the cutover, so the C#, shim, sonic
+# and helper checks run there too (the Rust checks are in rust.yml).
 on:
   push:
-    branches: [main]
+    branches: [main, rust/main]
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main]
+    branches: [main, rust/main]
 
 # Superseded PR pushes are pointless to finish, so cancel those. Never cancel on
 # main: a run there is the record of whether that commit is good.

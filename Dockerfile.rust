@@ -1,0 +1,86 @@
+# Octo's Rust build, beside the C# Dockerfile until the cutover. The same contract as the C#
+# image: port 8080 (ASPNETCORE_URLS), /app/config for settings and state, /music for the
+# library, /app/downloads created, and the app itself as PID 1 so SIGTERM reaches it and it
+# drains requests and workers within its 10 s budget.
+#
+# The two builds share what the C# app already holds: the dashboard (octo/wwwroot), the logo
+# and social images (octo/Assets), the list cover design (octo/Services/CoverArt/Design, built
+# into the binary), appsettings.json (built in) and the release number (octo/octo.csproj).
+#
+#   docker build -f Dockerfile.rust -t octo-rust:dev .
+#   docker build -f Dockerfile.rust --build-arg OCTO_VERSION=2026.11.01.1 -t octo-rust:dev .
+#   docker build -f Dockerfile.rust --build-arg CARGO_BUILD_JOBS=2 -t octo-rust:dev .   # small machine
+
+ARG RUST_VERSION=1.99
+ARG CHEF_VERSION=0.1.78
+
+# ---- Toolchain + cargo-chef, prebuilt ----
+# Bookworm, like the runtime stage below: a binary linked against a newer glibc (the plain
+# rust-1.99 tags are Debian trixie now) would not start on bookworm-slim.
+FROM lukemathwalker/cargo-chef:${CHEF_VERSION}-rust-${RUST_VERSION}-bookworm AS chef
+ENV CARGO_TERM_COLOR=never \
+    CARGO_INCREMENTAL=0
+WORKDIR /src
+
+# ---- Dependency recipe: changes only when a Cargo.toml or Cargo.lock does ----
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---- Build ----
+FROM chef AS build
+# Unset by default, so cargo uses every core the builder has. A machine short of memory for
+# the LTO link and the heavier crates (lofty, image, cosmic-text) passes 2.
+ARG CARGO_BUILD_JOBS
+COPY --from=planner /src/recipe.json recipe.json
+# Every third-party crate, compiled once and cached in this layer.
+RUN cargo chef cook --release --locked --package octo --recipe-path recipe.json
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+# What the binary compiles in from the C# tree: the list cover design (JSON, Inter fonts,
+# painted backgrounds), appsettings.json, and the release in octo.csproj, which octo-core's
+# build.rs reads when there is no VERSION file and no OCTO_VERSION.
+COPY octo/Services/CoverArt/Design octo/Services/CoverArt/Design
+COPY octo/appsettings.json octo/appsettings.Development.json octo/octo.csproj octo/
+ARG OCTO_VERSION
+RUN cargo build --release --locked --package octo --bin octo \
+    && install -D -m 0755 target/release/octo /out/octo
+
+# ---- Runtime ----
+FROM debian:bookworm-slim
+WORKDIR /app
+
+# ffmpeg: Continuous Subsonic Radio normalizes mixed FLAC/M4A sources into one stable MP3
+# response inside the Octo process, and the loudness and spectrum checks read through it.
+# fpcalc (libchromaprint-tools) is the other half of download verification: it turns a
+# finished download into the Chromaprint fingerprint AcoustID is asked about. Absent, the
+# feature degrades to a no-op and logs once; it never fails a download.
+# Generated list covers set names in Inter (inside the app); Noto CJK and Symbola draw the
+# Chinese, Japanese, Korean and emoji names Inter has no letters for, DejaVu Arabic and Hebrew.
+# ca-certificates: the .NET base image carried a root store; slim Debian does not, and every
+# upstream (Deezer, MusicBrainz, Last.fm, GitHub, ...) is HTTPS.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates ffmpeg fonts-dejavu-core fonts-noto-cjk fonts-symbola libchromaprint-tools \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/downloads /app/config
+
+# The binary looks for wwwroot/ and Assets/ beside itself (StaticRoots::from_env, and the
+# cover service's logo lookup), as the C# app looked in its publish root.
+COPY --from=build /out/octo /app/octo
+COPY octo/wwwroot /app/wwwroot
+COPY octo/Assets /app/Assets
+# Inter is compiled into the binary; its license ships beside it.
+COPY octo/Services/CoverArt/Design/Fonts/OFL.txt /app/licenses/Inter-OFL.txt
+
+# No version label here: the published image gets org.opencontainers.image.version (and the
+# rest) from docker-rust.yml's metadata step, and the release itself is in the binary.
+LABEL org.opencontainers.image.title="octo-rust" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+
+# Exec form: octo is PID 1 and receives SIGTERM from `docker stop` directly.
+ENTRYPOINT ["/app/octo"]

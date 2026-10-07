@@ -1,0 +1,163 @@
+name: Rust image
+
+# Publishes the Rust build of Octo (Dockerfile.rust) for amd64 and arm64 as
+# ghcr.io/<owner>/<repo>-rust, that is ghcr.io/winters27/octo-rust: its own package while the
+# C# image is the release line. docker.yml writes the branch, commit, release and latest tags
+# of ghcr.io/winters27/octo, so a Rust image under that name would overwrite them. This
+# workflow writes only the branch tag (rust-main) and the commit tag (the short sha), never
+# latest or a release, so nothing an install pulls can change. The canary pins
+# octo-rust:<sha> on its octo service directly (not through OCTO_IMAGE_TAG, which the sidecars
+# share).
+#
+# Manual runs from rust/main only (Actions, Rust image, Run workflow). The package starts
+# private on ghcr.io: make it public, or sign the canary host in to ghcr.io, before it pulls.
+# At the cutover docker.yml's octo entry builds Dockerfile.rust and this workflow goes.
+
+on:
+  workflow_dispatch:
+
+# One Rust image build at a time; queued, never cancelled, since a half published image is
+# worse than a slow one. A group of its own: these builds use their own cache scopes
+# (octo-rust-<arch>), so they never fight docker.yml's for the same entries.
+concurrency:
+  group: docker-rust
+  queue: max
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}-rust
+
+jobs:
+  # The same gate as a merge into rust/main: format, clippy, the tests, cargo-deny.
+  checks:
+    if: github.ref == 'refs/heads/rust/main'
+    uses: ./.github/workflows/rust.yml
+
+  # Each platform built on a runner of that platform: arm64 on GitHub's own arm64 runners
+  # rather than under QEMU, where the Rust build takes many times longer. Each pushes its image
+  # by digest only; the merge job below puts the two under the tags.
+  build:
+    needs: checks
+    runs-on: ${{ matrix.platform.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.title=octo-rust
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.rust
+          platforms: linux/${{ matrix.platform.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # mode=max keeps the cargo-chef dependency layer, the one worth caching. GitHub's
+          # cache is 10 GB per repository, least recently used out first; see
+          # docs/rust-port/BACKLOG.md for the sizes to check after the first runs.
+          cache-from: type=gha,scope=octo-rust-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=octo-rust-${{ matrix.platform.arch }}
+
+      - name: Keep the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-rust-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Puts both platforms under the branch and commit tags, once both builds succeeded.
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-rust-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # Branch (rust/main becomes rust-main) and commit only; never latest, never a release.
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+
+      - name: Publish the tags for both platforms
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          refs=()
+          for digest in *; do refs+=("$IMAGE@sha256:$digest"); done
+          if [ "${#refs[@]}" != 2 ]; then
+            echo "::error::Expected an amd64 and an arm64 image of $IMAGE, found ${#refs[@]}."
+            exit 1
+          fi
+          mapfile -t tags < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+
+      - name: Inspect
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"

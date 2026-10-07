@@ -33,7 +33,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
 
     // Subsonic spec: getSimilarSongs.view → key "similarSongs"; getSimilarSongs2.view →
     // "similarSongs2". Clients (Arpeggi) parse the v2 key strictly and ignore v1-shaped
-    // responses when they called v2 — that's why the radio queue showed up empty.
+    // responses when they called v2: that's why the radio queue showed up empty.
     let path = call.path();
     let is_v2_request = dotnet::to_lower_invariant(&path).contains("getsimilarsongs2");
     let response_key = if is_v2_request {

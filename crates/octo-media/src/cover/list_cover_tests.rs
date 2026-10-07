@@ -1,4 +1,4 @@
-//! octo.Tests/ListCoverTests.cs: the colour rules the covers share with the Octo apps and which
+//! octo.Tests/ListCoverTests.cs: the color rules the covers share with the Octo apps and which
 //! painted background a list's music gets (`CoverColourTests`); list covers as the server
 //! serves them (`ListCoverTests`); and how quickly a cover draws (`CoverTimingTests`). The
 //! golden covers (`CoverGoldenTests`) are in golden_tests.rs.
@@ -50,7 +50,7 @@ fn cover_pick_is_fnv1a_then_fmix64_shifted_right() {
 
 /// Numbered lists ("1" to "12", "p1" to "p12"), whose ids differ only in their last letters,
 /// still look apart: with no music every one differs, the turns vary, and twelve lists of one
-/// warm colour repeat a look at most twice.
+/// warm color repeat a look at most twice.
 #[test]
 fn numbered_lists_look_apart() {
     let warm = CoverMusic::from_covers(&[vec![Swatch {
@@ -206,7 +206,7 @@ fn background_for_dull_music_is_the_names_pick() {
     );
 }
 
-/// Music of a colour gets one of a few backgrounds of that colour, the same one for the same list.
+/// Music of a color gets one of a few backgrounds of that color, the same one for the same list.
 #[test]
 fn background_matches_the_musics_colour() {
     for (r, g, b) in [
@@ -276,7 +276,7 @@ fn background_without_music_is_any_one_always_the_same() {
     );
 }
 
-/// The music colours the contact sheet's 24 lists get from its seed covers, or their genre's; -1 for none.
+/// The music colors the contact sheet's 24 lists get from its seed covers, or their genre's; -1 for none.
 const SHEET_LISTS: &[(&str, i32, f64, f64)] = &[
     ("Daft Punk Radio", 261, 0.043, 0.722),
     ("Billie Eilish Radio", 63, 0.061, 0.575),
@@ -574,7 +574,7 @@ fn override_is_used_as_it_is_and_a_replacement_shows_without_a_restart() {
     ));
 }
 
-/// A picture in the covers folder beats colours from the music too.
+/// A picture in the covers folder beats colors from the music too.
 #[tokio::test]
 async fn override_beats_seed_colours_and_is_sized_as_asked() {
     let fixture = Fixture::new();
@@ -744,7 +744,7 @@ async fn seed_covers_colour_the_cover_and_a_new_seed_redraws_it() {
     );
 }
 
-/// Grey seeds, or seeds that cannot be fetched, leave the genre's colour.
+/// Grey seeds, or seeds that cannot be fetched, leave the genre's color.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn grey_or_missing_seeds_fall_back() {
@@ -1025,8 +1025,8 @@ fn unicode_names_draw_their_letters() {
 
 /// On every one of the 48 backgrounds, every pixel behind the words, as painted, reaches the
 /// design's contrast against the words' own white: 3:1 at least for the large name and its
-/// line (the veil aims for 4.5 and may stop at 3 to keep the colour), and 4.25:1 for the foot
-/// line. The design sets the foot line's limit for 85% white over grey; over a vivid colour
+/// line (the veil aims for 4.5 and may stop at 3 to keep the color), and 4.25:1 for the foot
+/// line. The design sets the foot line's limit for 85% white over grey; over a vivid color
 /// that white blends a little darker, so on the most saturated backgrounds the foot line lands
 /// between 4.29 and 4.5 rather than at 4.5.
 #[test]

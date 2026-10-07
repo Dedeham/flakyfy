@@ -95,7 +95,7 @@ pub fn mask_sessions<'a>(sessions: impl IntoIterator<Item = (&'a String, &'a Las
 /// both build it: every section, PascalCase keys (a `Dictionary`/`JsonObject`, so no camelCase),
 /// enums by name, and the admin password, Last.fm secret and session keys as the placeholder.
 /// `raw_config` selects raw-config's one difference: `DiscoveryStations` is always the class
-/// serialised, never the file's.
+/// serialized, never the file's.
 pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     let current = state.settings.current();
     let subsonic = &current.subsonic;
@@ -548,7 +548,7 @@ pub async fn get_settings(State(state): State<AppState>) -> Response {
             ("ConfigFileValid", Node::Bool(state.settings_writer.is_readable())),
             // Restart-only settings whose saved value has not reached the running services.
             ("RestartPending", n_str_array(&pending)),
-            // What a saved-but-hidden secret reads as, so the dashboard can recognise it.
+            // What a saved-but-hidden secret reads as, so the dashboard can recognize it.
             ("SecretPlaceholder", n_str(SECRET_PLACEHOLDER)),
             // So a bug report can name a build.
             ("Version", n_str(octo_core::VERSION)),
@@ -693,7 +693,7 @@ fn parses_as_match_mode(value: &str) -> bool {
 
 /// The POST path is untyped, so nothing checks a mapping table's shape unless this does.
 /// Mirrors `validate_discovery_stations`, and is the second of three layers: the editor
-/// validates in the browser and `effective_mappings()` sanitises again at read time.
+/// validates in the browser and `effective_mappings()` sanitizes again at read time.
 pub fn validate_genre_mappings(mappings: &[Node]) -> Result<Option<String>, AppError> {
     if mappings.len() > 200 {
         return Ok(Some("Genre.Mappings supports at most 200 rules".into()));

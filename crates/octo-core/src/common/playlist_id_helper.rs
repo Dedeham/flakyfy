@@ -34,7 +34,7 @@ pub fn is_known_provider(provider: Option<&str>) -> bool {
 
 /// Checks if an ID represents an external playlist.
 ///
-/// The provider has to be one we recognise, not merely present. Navidrome names its own
+/// The provider has to be one we recognize, not merely present. Navidrome names its own
 /// playlist cover art "pl-{id}_{unixhex}", which carries the same "pl-" prefix, so
 /// matching on the prefix alone claimed every Navidrome playlist cover, failed to parse
 /// a provider out of it, and served Octo's placeholder instead of relaying the request

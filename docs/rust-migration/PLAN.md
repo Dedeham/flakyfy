@@ -108,7 +108,7 @@ Phases are ordered by dependency. Each module task includes porting its xUnit te
 
 ### Phase 7: Cover art
 
-- [ ] Load the embedded design (`Services/CoverArt/Design/*.json`, the Inter fonts, the backgrounds) with `include_bytes!`, and ship `OFL.txt` as a licence file.
+- [ ] Load the embedded design (`Services/CoverArt/Design/*.json`, the Inter fonts, the backgrounds) with `include_bytes!`, and ship `OFL.txt` as a license file.
 - [ ] Build the list-cover renderer with `tiny-skia` and `cosmic-text`: falling back to the system fonts Noto CJK, Symbola and DejaVu for scripts Inter has no letters for, list hues, logo watermark (`ListCoverTests`).
 - [ ] Port `CoverArtService`, `CoverUpgrade` (1.2k lines), `ITunesCoverArtLookup` and the `CoverUpgradeController` routes (`CoverUpgradeTests`).
 - [ ] Add a golden test harness: render `CoverGolden/samples.json`, compare with SSIM ≥ 0.98, and on failure write a diff image as a CI artifact.

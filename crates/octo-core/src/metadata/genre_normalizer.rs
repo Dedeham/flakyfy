@@ -14,7 +14,7 @@ use crate::settings::{
     IgnoreCaseSet,
 };
 
-/// The normalised genres for a set of raw values, and which rule decided the first one.
+/// The normalized genres for a set of raw values, and which rule decided the first one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenreNormalizationResult {
     pub genres: Vec<String>,
@@ -319,8 +319,8 @@ fn title_case_genre(key: &str, original: &str) -> String {
         return trimmed;
     }
 
-    // Already capitalised by whoever wrote it, so leave their spelling alone. Octo has no
-    // business re-capitalising a genre it does not recognise, and doing so counted as a
+    // Already capitalized by whoever wrote it, so leave their spelling alone. Octo has no
+    // business re-capitalizing a genre it does not recognize, and doing so counted as a
     // "change": a whole-library run proposed rewriting a file purely to turn
     // "Alternatif et Indé" into "Alternatif Et Indé". Tidying case is only worth a write
     // when the source clearly did not bother, which is when it is entirely lower case.

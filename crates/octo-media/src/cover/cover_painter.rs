@@ -1,5 +1,5 @@
 //! Paints a composed cover: its painted background at the cover's size, turned as the cover
-//! says, the colour-keeping veil under the words, then the words in white at their lines' baselines.
+//! says, the color-keeping veil under the words, then the words in white at their lines' baselines.
 
 use anyhow::anyhow;
 use image::RgbImage;
@@ -55,7 +55,7 @@ pub fn paint(
         return Ok(image);
     }
 
-    // The words are white over the colours, at their opacity, with eight-or-more steps of edge
+    // The words are white over the colors, at their opacity, with eight-or-more steps of edge
     // smoothing (tiny-skia's anti-aliasing; C# asked ImageSharp for eight).
     let (width, height) = image.dimensions();
     let rgba: Vec<u8> = image
@@ -77,7 +77,7 @@ pub fn paint(
             None,
         );
     }
-    // The background is opaque, so the premultiplied colours are the colours.
+    // The background is opaque, so the premultiplied colors are the colors.
     let rgb: Vec<u8> = pixmap
         .data()
         .as_chunks::<4>()

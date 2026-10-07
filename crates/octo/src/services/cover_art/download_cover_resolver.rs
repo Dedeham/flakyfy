@@ -43,7 +43,7 @@ impl CoverChoice {
 /// least [`Self::SHARP_SIDE`] wide wins at once; otherwise the largest one seen does. Taking the
 /// first usable one let a 500 px archive scan or a peer's 200 px thumbnail beat the catalog's
 /// 1000 px cover. A cover that is not square counts as missing, and a letterboxed video frame
-/// gives up its centre only when nothing else was found.
+/// gives up its center only when nothing else was found.
 pub struct DownloadCoverResolver {
     archive: Arc<CoverArtArchiveLookup>,
     aggregator: Arc<CoverArtAggregator>,

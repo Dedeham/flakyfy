@@ -50,7 +50,7 @@ impl ReplayGainTags {
     /// silence or damage, not a quiet master.
     pub const MAX_GAIN_DB: f64 = 24.0;
 
-    /// The level Opus files are normalised to, with the gain stored in 1/256 dB.
+    /// The level Opus files are normalized to, with the gain stored in 1/256 dB.
     const OPUS_REFERENCE_LUFS: f64 = -23.0;
 
     pub fn new(gain_db: f64, peak: f64, integrated_lufs: f64) -> Self {

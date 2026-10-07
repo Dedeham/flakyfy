@@ -106,7 +106,7 @@ impl ReleaseCheck {
 
     pub const INTERVAL: TimeDelta = TimeDelta::hours(6);
 
-    /// Check now is honoured at most this often, so a busy button cannot spend GitHub's limit.
+    /// Check now is honored at most this often, so a busy button cannot spend GitHub's limit.
     pub const MANUAL_SPACING: TimeDelta = TimeDelta::minutes(1);
 
     const KEPT_RELEASES: usize = 10;

@@ -337,7 +337,7 @@ pub async fn get_lyrics_candidates(State(state): State<AppState>, req: Request) 
 
 /// octoLyrics v1: set a song's lyrics to one candidate from getLyricsCandidates, to "none"
 /// to show no lyrics, or to "auto" to go back to finding them. The choice is the server's,
-/// so every client and every user sees it, and getLyricsBySongId and getLyrics honour it.
+/// so every client and every user sees it, and getLyricsBySongId and getLyrics honor it.
 pub async fn set_lyrics_choice(State(state): State<AppState>, req: Request) -> Response {
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,

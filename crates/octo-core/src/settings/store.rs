@@ -87,7 +87,7 @@ struct Inner {
     tree: ArcSwap<ConfigTree>,
     current: ArcSwap<AppSettings>,
     tx: watch::Sender<Arc<AppSettings>>,
-    /// Serialises reloads, so two never interleave their reads and stores.
+    /// Serializes reloads, so two never interleave their reads and stores.
     reload_lock: Mutex<()>,
     /// The file watcher, kept alive for as long as the store is.
     watcher: Mutex<Option<Box<dyn notify::Watcher + Send>>>,

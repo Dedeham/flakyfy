@@ -1,4 +1,4 @@
-//! Metadata, the pure parts (`Services/Metadata`): the genre normaliser, the Accept-Language
+//! Metadata, the pure parts (`Services/Metadata`): the genre normalizer, the Accept-Language
 //! header, and the Deezer record types the tagging plan holds. The genre backfill's stores and
 //! the Deezer client are `octo::services::metadata`.
 

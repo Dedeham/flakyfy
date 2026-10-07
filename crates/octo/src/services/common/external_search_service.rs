@@ -39,15 +39,15 @@ const ALBUM_BUILD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Builds the external (discovery) half of a search, once per query.
 ///
 /// Every caller for the same query joins one execution and receives the same list. That
-/// is not an optimisation, it is what keeps the search3 fix from re-creating issue #8.
+/// is not an optimization, it is what keeps the search3 fix from re-creating issue #8.
 /// Clients routinely fire several search calls for one typed query, and registry ids are
 /// deterministic, so those calls resolve to the *same* SoulseekRouting objects and would
-/// each run the enrichment pipeline over them concurrently — three writers to a shared
+/// each run the enrichment pipeline over them concurrently: three writers to a shared
 /// int? duration, and three times the Deezer fan-out against a budget that is already the
 /// tightest thing in the system.
 ///
 /// The returned list is FROZEN (an `Arc` nobody can write through). Callers slice it and
-/// serialise it, concurrently, without copying. Both Subsonic serialisers and the native one
+/// serialize it, concurrently, without copying. Both Subsonic serializers and the native one
 /// only read, and the star/download paths rebuild a Song from the registry rather than from a
 /// search result. Any future "top up the enrichment because this caller wanted more rows"
 /// belongs inside the build, not after it.
@@ -149,7 +149,7 @@ impl ExternalSearchService {
 /// Fans out to Last.fm, then fills in the metadata a client needs to render and play
 /// the rows. Order:
 ///   1. track.search hits (best fuzzy matches for the query as typed)
-///   2. canonical artist's top tracks (in case (1) was thin — common for
+///   2. canonical artist's top tracks (in case (1) was thin: common for
 ///      single-word artist queries)
 ///
 /// Deduped by `SongIdentity::match_key`, so the same track cannot appear twice however its
@@ -224,7 +224,7 @@ async fn build(
     //
     // It runs LAST on purpose. It used to run before enrichment, where it wrote a
     // videoId chosen with no duration hint while ResolveTopDurationsAsync was choosing
-    // a different one using the Deezer duration — so for the top rows the two raced and
+    // a different one using the Deezer duration: so for the top rows the two raced and
     // the loser could leave a song advertising the length of a video that would not be
     // the one played.
     //

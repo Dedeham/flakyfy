@@ -103,7 +103,7 @@ pub fn routes() -> RouteSet {
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
-/// genre normalisation, and the `CoverUpgradeController`, `LyricsAdminController` and
+/// genre normalization, and the `CoverUpgradeController`, `LyricsAdminController` and
 /// `UpdateController` routes.
 pub fn routes_6b2() -> RouteSet {
     RouteSet::new()

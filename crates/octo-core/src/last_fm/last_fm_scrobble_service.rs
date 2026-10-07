@@ -30,7 +30,7 @@ impl LastFmTrack {
     }
 }
 
-/// One Navidrome user as the dashboard's Last.fm scrobbling card shows them. Serialised as
+/// One Navidrome user as the dashboard's Last.fm scrobbling card shows them. Serialized as
 /// ASP.NET wrote the record: camelCase, nulls written.
 ///
 /// `approval_url`: the last.fm page that approves Octo, while a Connect is waiting on it.

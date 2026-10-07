@@ -132,7 +132,7 @@ async fn probe(client: &reqwest::Client, ip: &str, port: u16) -> Option<Discover
             if let Some(v) = r.get("serverVersion") {
                 version = string_or_stop(v)?;
             }
-            // A "failed / code 40" ping is still a positive server hit — it just means it
+            // A "failed / code 40" ping is still a positive server hit: it just means it
             // wants credentials, which the user supplies later.
             if let Some(s) = r.get("status") {
                 requires_auth = string_or_stop(s)?.as_deref() == Some("failed");

@@ -19,7 +19,7 @@ pub fn measure(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Decodable and big enough, and square when `require_square`. A cover that is not square is a
-/// video thumbnail: a 16:9 frame with the artist off-centre, which in a grid of square covers is
+/// video thumbnail: a 16:9 frame with the artist off-center, which in a grid of square covers is
 /// the one that looks broken.
 pub fn is_usable(bytes: Option<&[u8]>, require_square: bool) -> bool {
     let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
@@ -52,7 +52,7 @@ pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> 
     Some(output)
 }
 
-/// The centre square. A YouTube "Topic" upload letterboxes the real cover inside a 16:9 frame,
+/// The center square. A YouTube "Topic" upload letterboxes the real cover inside a 16:9 frame,
 /// so for those this IS the cover; for any other video it is the middle of the picture, which
 /// still beats a stretched thumbnail.
 pub fn crop_to_square(bytes: &[u8]) -> Option<Vec<u8>> {
@@ -104,7 +104,7 @@ pub fn fit_within(bytes: &[u8], max_side: u32) -> Vec<u8> {
 }
 
 /// A 64-bit fingerprint of what a picture looks like (a difference hash: the picture shrunk to
-/// 9 by 8 greys, one bit per neighbour pair, set when the left one is darker). The same artwork
+/// 9 by 8 greys, one bit per neighbor pair, set when the left one is darker). The same artwork
 /// at another size or compression comes out within a few bits; a different cover about half of
 /// them apart. sacad checks covers the same way (a block hash, 8 bits of 64). None when the
 /// picture cannot be read.

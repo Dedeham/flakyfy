@@ -42,7 +42,7 @@ impl NotificationMessage {
     }
 }
 
-/// Per-sink outcome of the admin "Send test" button. Serialised as ASP.NET wrote the record.
+/// Per-sink outcome of the admin "Send test" button. Serialized as ASP.NET wrote the record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationTestResult {

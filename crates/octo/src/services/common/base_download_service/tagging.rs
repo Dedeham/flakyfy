@@ -229,7 +229,7 @@ impl BaseDownloadService {
 
     /// A single joining an album folder that is already there takes that album's release facts
     /// from one of its files, when the two agree on the album and its artist, so the album the
-    /// library server shows keeps one label, one catalogue number and one year.
+    /// library server shows keeps one label, one catalog number and one year.
     fn pin_to_sibling(&self, song: &mut Song, requested: &RequestedIdentity, current_path: &str) {
         if dotnet::is_blank(&song.album) || self.download_path().is_empty() {
             return;
@@ -372,7 +372,7 @@ impl BaseDownloadService {
     ///
     /// Gated on `has_api_key`, NOT on radio being on. A user who turned radio off still
     /// configured a key, and tagging is not radio. Last.fm tags are also the rawest input the
-    /// normaliser ever sees, so they go through radio's own vocabulary first: that list filters
+    /// normalizer ever sees, so they go through radio's own vocabulary first: that list filters
     /// Last.fm data, which is exactly what it was written for, without the genre settings having
     /// to own it.
     async fn resolve_genre_fallback(&self, song: &Song, settings: &GenreSettings) -> Vec<String> {
@@ -445,7 +445,7 @@ impl BaseDownloadService {
         // cleared. So when the catalog missed and the source had no genre, whatever multi-value
         // frame the Soulseek peer's file or the yt-dlp output already carried survived untouched:
         // "People & Blogs" and seven-genres-at-once reached the library through the ABSENCE of a
-        // write, not a bad one. The fix has to read the existing frame, normalise it, and write
+        // write, not a bad one. The fix has to read the existing frame, normalize it, and write
         // the result back.
         let genre_settings = self.settings.current().genre.clone();
         let genres = if genre_settings.enabled {
@@ -492,7 +492,7 @@ impl BaseDownloadService {
             }
             write
         } else if let Some(genre) = song.genre.as_deref().filter(|g| !g.is_empty()) {
-            // Feature off: byte-for-byte the behaviour that shipped before this.
+            // Feature off: byte-for-byte the behavior that shipped before this.
             GenreWrite::Write(vec![genre.to_string()])
         } else {
             GenreWrite::Keep
@@ -501,7 +501,7 @@ impl BaseDownloadService {
         // One chain (#51) instead of one Deezer URL: Apple's master of the album, the Cover Art
         // Archive when a fingerprint named the release, the catalog's own cover, then Deezer,
         // iTunes and Last.fm by name, then the file's own art; the largest wins. A cover that is
-        // not square counts as missing, and a letterboxed video frame gives up its centre. The
+        // not square counts as missing, and a letterboxed video frame gives up its center. The
         // file gets it at 1500 px unless full size is asked for; cover.jpg gets it whole.
         let mut chosen_cover = None;
         let mut embed = None;

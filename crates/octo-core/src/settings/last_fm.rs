@@ -88,13 +88,13 @@ pub struct LastFmSettings {
     /// How long a station-list request waits for a cold station's first track before
     /// answering without it. Production keeps going in the background and the station
     /// appears on the client's next refresh. 0 waits for the starter however long it
-    /// takes, which is the original behaviour.
+    /// takes, which is the original behavior.
     pub starter_publish_timeout_seconds: i32,
 
     /// EBU R128 integrated loudness every radio track is brought to before it joins the
     /// stream, in LUFS. Tracks arrive from local FLAC and from YouTube previews at
     /// levels many LU apart; a static gain per track (with a true-peak limiter at
-    /// -1 dBTP) makes the station one level. 0 disables normalisation.
+    /// -1 dBTP) makes the station one level. 0 disables normalization.
     pub radio_loudness_target_lufs: i32,
 
     pub history_retention_days: i32,
@@ -190,7 +190,7 @@ impl LastFmSettings {
     ///
     /// Narrow on purpose. The refresh worker treats an empty build as a provider failure
     /// and keeps the last good snapshot rather than replacing it with nothing, which is
-    /// the behaviour that stops a bad Last.fm response from wiping a listener's stations.
+    /// the behavior that stops a bad Last.fm response from wiping a listener's stations.
     /// Switching every kind off is the one empty build that is a choice rather than a
     /// failure, so only that case is excused; every configuration that predates the
     /// per-type settings keeps the old guard exactly.

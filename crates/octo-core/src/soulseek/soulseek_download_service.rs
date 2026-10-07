@@ -23,7 +23,7 @@ fn rx(pattern: &str) -> Regex {
 
 /// The Soulseek searches for a song, in order, from [`SongIdentity::query_variants`].
 ///
-/// Peers name files, not catalogue entries, so a query carrying a bracket finds nothing:
+/// Peers name files, not catalog entries, so a query carrying a bracket finds nothing:
 /// Last.fm and YouTube titles such as "Adele - Hello" or "Long Season [LIVE][4K]" are
 /// searched as "Adele Hello" and "Long Season". A title that is only an annotation,
 /// Mezzanine's "(Exchange)", keeps it. Then the stylized spelling read as letters

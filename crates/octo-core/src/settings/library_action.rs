@@ -353,7 +353,7 @@ impl LibraryActionSettings {
         &self.playlist_prefix
     }
 
-    /// Sanitised, so a directory traversal cannot be typed into a settings field. One path
+    /// Sanitized, so a directory traversal cannot be typed into a settings field. One path
     /// segment, and a leading dot is preserved because it is what keeps the folder out of
     /// Navidrome's scan.
     pub fn effective_quarantine_directory(&self) -> String {

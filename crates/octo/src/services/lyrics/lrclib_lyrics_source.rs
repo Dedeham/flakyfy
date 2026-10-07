@@ -21,7 +21,7 @@ use super::lyrics_http::{
 };
 
 /// LRCLIB: open, keyless, and wide coverage of synced lyrics for current music. Its docs ask
-/// callers to identify themselves, to go one request at a time with a short gap, and to honour
+/// callers to identify themselves, to go one request at a time with a short gap, and to honor
 /// Retry-After; it sheds load with 503s often enough that all three matter. A few entries also
 /// time their words (hasWordSync); those words live in the entry's Lyricsfile, not its LRC.
 pub struct LrclibLyricsSource {

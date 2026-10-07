@@ -265,7 +265,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
 
     // Track this response as a "queue" so a later scrobble for any of its
     // songs can drive the sliding-window prewarm of upcoming externals.
-    // Order matches the merged response order — local first, external after.
+    // Order matches the merged response order: local first, external after.
     let local_song_ids = extract_local_song_ids(local_body, local_type);
     state.radio_queues.register(
         local_song_ids

@@ -48,7 +48,7 @@ pub async fn answer(state: &AppState, request: &NativeRequest<'_>) -> Result<Opt
 
     // Safety net (client-agnostic): any endpoint we don't explicitly handle,
     // called with one of our external ids, would relay to Navidrome and come
-    // back "data not found" — Navidrome has no such id. Degrade to a graceful
+    // back "data not found": Navidrome has no such id. Degrade to a graceful
     // ok so a client we haven't specifically tested never errors on external
     // tracks. Endpoints that need real external data have their own handlers.
     if has_external_id(state, request.parameters) {
@@ -362,7 +362,7 @@ fn leaf_id(endpoint: &str, prefix: &str) -> Option<String> {
 
 /// Native-API twin of the Subsonic search3 hijack. When a Navidrome-mode client searches songs
 /// (GET /api/song?title=...), relay the real query, then append external discovery results
-/// serialised in Navidrome's native song shape. Play and cover art need no special handling:
+/// serialized in Navidrome's native song shape. Play and cover art need no special handling:
 /// native clients stream via /rest/stream and fetch art via /rest/getCoverArt using the
 /// salt+token from login, and Octo's handlers already resolve its external ids there.
 ///
@@ -468,7 +468,7 @@ fn written_with_upstream_headers(raw: &RawRelayResult, rows: Vec<Node>) -> Respo
     )
 }
 
-/// Serialises one external Song into Navidrome's native song JSON shape. Only the fields a
+/// Serializes one external Song into Navidrome's native song JSON shape. Only the fields a
 /// Navidrome-mode client reads to render and play a row are populated. The id is Octo's
 /// external id, which /rest/stream and /rest/getCoverArt resolve.
 fn native_song_object(state: &AppState, song: &Song) -> Value {
@@ -775,7 +775,7 @@ async fn outside_artist_albums(
     albums
 }
 
-/// Serialises one outside Artist into Navidrome's native artist JSON shape. Counts go out both
+/// Serializes one outside Artist into Navidrome's native artist JSON shape. Counts go out both
 /// flat (older Navidrome) and under "stats" by role (newer Navidrome), since clients read one
 /// or the other. The image URLs are the three getArtistInfo2 gives.
 fn native_artist_object(artist: &Artist, albums: &[Album]) -> Value {
@@ -806,8 +806,8 @@ fn native_artist_object(artist: &Artist, albums: &[Album]) -> Value {
     object
 }
 
-/// Serialises one external Album into Navidrome's native album JSON shape. Navidrome's album
-/// model has NO "artist"/"artistId" field — it uses albumArtist/albumArtistId — and
+/// Serializes one external Album into Navidrome's native album JSON shape. Navidrome's album
+/// model has NO "artist"/"artistId" field, it uses albumArtist/albumArtistId, and
 /// "duration" is seconds as a float.
 pub(crate) fn native_album_object(album: &Album, library_id: i32) -> Value {
     let duration: i64 = album

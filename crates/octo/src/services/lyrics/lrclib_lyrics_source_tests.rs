@@ -69,7 +69,7 @@ async fn lrclib_404_falls_back_to_search_within_two_seconds() {
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
 }
 
-/// A 503 is "not now", never "no lyrics", and LRCLIB asks callers to honour Retry-After.
+/// A 503 is "not now", never "no lyrics", and LRCLIB asks callers to honor Retry-After.
 // LyricsTests.Lrclib_Overloaded_CoolsDownWithoutAnotherRequest
 #[tokio::test]
 async fn lrclib_overloaded_cools_down_without_another_request() {

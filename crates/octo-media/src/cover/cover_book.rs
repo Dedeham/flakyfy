@@ -97,7 +97,7 @@ pub struct VeilYellow {
     pub chroma_lift: f64,
 }
 
-/// How a list's background is picked from the library by its music's colour.
+/// How a list's background is picked from the library by its music's color.
 #[derive(Clone, Debug, Deserialize)]
 pub struct BackgroundRule {
     pub nearest: i32,
@@ -117,7 +117,7 @@ pub struct OrientationRule {
     pub count: i32,
 }
 
-/// How the background is darkened under the words, keeping its colour.
+/// How the background is darkened under the words, keeping its color.
 #[derive(Clone, Debug, Deserialize)]
 pub struct VeilNumbers {
     pub margin: f64,
@@ -134,7 +134,7 @@ pub struct Hue {
     pub h: f64,
 }
 
-/// One painted background: its file and its colours, strongest first.
+/// One painted background: its file and its colors, strongest first.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Background {
     pub file: String,
@@ -146,7 +146,7 @@ pub struct Background {
 }
 
 impl Background {
-    /// Its colours, strongest first (none when the file named none).
+    /// Its colors, strongest first (none when the file named none).
     pub fn hues(&self) -> &[Hue] {
         self.hues.as_deref().unwrap_or_default()
     }
@@ -252,7 +252,7 @@ impl CoverBook {
         })
     }
 
-    /// A stand-in for the music's colour when a list's songs give none: its genre's or decade's
+    /// A stand-in for the music's color when a list's songs give none: its genre's or decade's
     /// hue. A trailing " Mix" or " Radio" is not part of the name, so "Rock Mix" finds Rock's.
     pub fn list_hue(&self, name: Option<&str>) -> Option<(f64, f64)> {
         let name = name?;

@@ -599,7 +599,7 @@ async fn get_cover_art_answers_each_kind_of_id_as_the_csharp_did() {
     assert_eq!(unreachable.header("content-type"), Some("image/jpeg"));
 }
 
-/// Rust-only: a local file served for an outside id under WaitForLosslessOnPlay honours one
+/// Rust-only: a local file served for an outside id under WaitForLosslessOnPlay honors one
 /// byte range as ASP.NET's range processing did, and types the file by its extension.
 #[tokio::test]
 async fn a_lossless_copy_on_disk_is_served_with_ranges() {

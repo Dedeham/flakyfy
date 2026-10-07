@@ -222,7 +222,7 @@ impl SubsonicModelMapper {
     ) -> SearchRows {
         // Local songs first, external (YouTube placeholder) after. The earlier
         // version flipped this to put externals first because Arpeggi's "play
-        // artist radio" feature reused search3 with songCount=2000 — locals
+        // artist radio" feature reused search3 with songCount=2000: locals
         // first would crowd externals out of its top-N. Now Arpeggi/Narjo
         // radio goes through getSimilarSongs2, so search3 is plain search and
         // users expect their owned tracks to top the results, with discovery

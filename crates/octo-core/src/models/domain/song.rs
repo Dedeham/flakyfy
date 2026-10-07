@@ -117,7 +117,7 @@ pub struct Song {
 
     pub is_compilation: bool,
 
-    /// The catalogue number the label gave the release.
+    /// The catalog number the label gave the release.
     pub catalog_number: Option<String>,
 
     /// The release's barcode (UPC or EAN).
@@ -152,13 +152,13 @@ pub struct Song {
     pub replay_gain_album_peak: Option<f64>,
 
     /// How the download was identified and what the tags came from, carried through the download
-    /// so the fetched-songs log can show it. Never serialised.
+    /// so the fetched-songs log can show it. Never serialized.
     #[serde(skip)]
     pub tag_plan: Option<Box<TagPlan>>,
 
     /// What AcoustID said about the downloaded file. Carried on the Song because
     /// DownloadSongInternalAsync threads ONE instance through download, tagging and placement.
-    /// Never serialised.
+    /// Never serialized.
     #[serde(skip)]
     pub verification: Option<Box<VerificationResult>>,
 }

@@ -219,7 +219,7 @@ impl IDownloadService for ShimDownloads {
     }
 }
 
-/// Tune-in start the tests can pin. 0 keeps snapshot order, the pre-rotation behaviour.
+/// Tune-in start the tests can pin. 0 keeps snapshot order, the pre-rotation behavior.
 #[derive(Default)]
 struct FixedTuneIn {
     next: AtomicUsize,

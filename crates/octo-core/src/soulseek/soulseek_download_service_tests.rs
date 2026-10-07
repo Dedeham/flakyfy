@@ -119,7 +119,7 @@ fn a_leading_article_may_drop_from_the_filename() {
 }
 
 /// Dotted acronyms space-normalize into single letters no filename spells out, so
-/// the compact form is accepted — but the anything-goes pass that zero significant
+/// the compact form is accepted: but the anything-goes pass that zero significant
 /// tokens used to grant is exactly what the fallback cannot afford.
 #[test]
 fn dotted_acronyms_match_compact_but_no_longer_match_anything() {
@@ -129,7 +129,7 @@ fn dotted_acronyms_match_compact_but_no_longer_match_anything() {
 
 /// The incident's second gate: the wrong file advertised no length, and unknown
 /// used to pass unconditionally. On the fallback, a known catalog length makes an
-/// unadvertised one disqualifying — rejection after the download still costs the
+/// unadvertised one disqualifying: rejection after the download still costs the
 /// full transfer, and this candidate class is where the 136 MB one came from.
 #[test]
 fn unknown_length_loses_its_free_pass_on_the_title_only_fallback() {

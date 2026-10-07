@@ -51,7 +51,7 @@ pub trait IDownloadService: Send + Sync {
     );
 
     /// Run one queued acquisition to completion. Called only by the acquisition worker,
-    /// which supplies a token unrelated to any HTTP request — that separation is the whole
+    /// which supplies a token unrelated to any HTTP request: that separation is the whole
     /// point, since a client giving up must never cancel a transfer slskd will finish.
     ///
     /// `requested_by`: the users who asked for this track, for the history entry and the
@@ -103,7 +103,7 @@ pub trait IDownloadService: Send + Sync {
     /// Gets a direct stream from the provider CDN (true streaming, no disk).
     /// Returns the stream and content type for proxying to client.
     /// `range_header` if present is the verbatim HTTP Range
-    /// header from the incoming client request — it gets forwarded upstream so
+    /// header from the incoming client request: it gets forwarded upstream so
     /// the response can be a 206 with Content-Range. iOS Subsonic clients
     /// require Range support for non-FLAC audio or they refuse to play.
     async fn get_direct_stream(

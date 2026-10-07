@@ -705,7 +705,7 @@ impl SoulseekClient {
     }
 
     /// Enqueues a download from a specific peer. Returns when the request is accepted by slskd
-    /// (not when the file is fully transferred — caller polls for that).
+    /// (not when the file is fully transferred: caller polls for that).
     pub async fn enqueue_download(
         &self,
         username: &str,
@@ -793,7 +793,7 @@ impl SoulseekClient {
 
     /// Polls a download to completion. Returns Succeeded on success or Errored
     /// on any kind of slskd-side failure (peer rejected, timed out, cancelled,
-    /// or the transfer silently disappeared from slskd's active list — which
+    /// or the transfer silently disappeared from slskd's active list: which
     /// happens after rejection on some slskd versions and would otherwise hang
     /// us forever). Caller decides whether to retry or escalate.
     ///

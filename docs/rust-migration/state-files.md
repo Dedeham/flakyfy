@@ -26,7 +26,7 @@ Fixtures for every JSON file are in [`fixtures/state/`](fixtures/state/). They a
 
 Unless a file says otherwise below, the writer calls `JsonSerializer.Serialize(value)` with **no options**. That means:
 
-| Aspect | Behaviour | Rust note |
+| Aspect | Behavior | Rust note |
 |---|---|---|
 | Property names | **PascalCase, exactly as declared in C#**. There is no naming policy, so it is not camelCase. Only two types use `[JsonPropertyName]`: the journal lines `GenreJournalEntry` (`p`,`b`,`a`,`t`,`r`) and `CoverUpgradeJournal.Entry` (`p`,`k`,`h`,`r`). | `#[serde(rename_all = "PascalCase")]` usually works, but rename fields explicitly where the C# name has odd casing (`ETag`, `YouTubeId`, `IsLocal`...). |
 | Property order | Declaration order. For positional records, the constructor parameters come first, then properties declared in the record body (for example `LibraryActionEntry`: the 14 positional ones, then `HistoryKept`, `RevealedPath`). | Rust struct field order = output order. |
@@ -372,9 +372,9 @@ Map from external id to the local file Octo downloaded. It lives **in the music 
 
 ---
 
-## 5. Non-JSON artefacts
+## 5. Non-JSON artifacts
 
-| Artefact | Path | Writer | Format and rules | Readers |
+| Artifact | Path | Writer | Format and rules | Readers |
 |---|---|---|---|---|
 | Update request | `/app/config/update/request` | `UpdateHost.Request` → `Write` (`Services/Updates/UpdateHost.cs:125-143`, `:175-181`), atomic via `request.tmp` | `key=value\n` lines, in this order: `id` (Guid `D`), `tag`, `by` (matches `^[A-Za-z0-9._@-]{1,64}$`, otherwise `dashboard`), `at` (`yyyy-MM-ddTHH:mm:ssZ`). Deleted when the helper has not picked it up after 90 s. [Fixture](fixtures/state/update/request) | the host helper `scripts/updater/octo-updater.sh` (started by `octo-updater.path` on `PathExists=.../request`), which moves it to `request.taken` |
 | Update status / helper / log | `/app/config/update/{status,helper,log}` | **The host helper**, not Octo (`octo-updater.sh` `write_file`, `write_status`, `log`). status/helper are atomic via `.tmp` + `mv -f`, and log is appended | status: `id, tag, from, state, step, error, started, finished`. helper: `version, mode (build or image), dir, installed`. log: `<UTC time> <message>` lines. [Fixtures](fixtures/state/update/) | `UpdateHost.Status` :75, `Helper` :66, `LogTail` :85 (last 40 lines). The parser splits on the first `=` and trims. Times are parsed as UTC |
@@ -403,7 +403,7 @@ Map from external id to the local file Octo downloaded. It lives **in the music 
 2. **One `serde_json` formatter for STJ compatibility**: the escaping table (upper-case `\uXXXX` for non-ASCII and HTML-sensitive characters, `"` for `"`), the double formatting (`1`, not `1.0`; `1E-05`), and `DateTime` with trimmed 7-digit fractions and a `Z` only when the value had one. Every file goes through it. The indented variant (2 spaces) is needed for `lastfm-radio-state.json`, `.mappings.json` and `settings.json`.
 3. **Emit the computed fields** listed in §2, and ignore them on read.
 4. **Reads are lenient.** Unknown fields are ignored. Missing fields get the C# defaults (spelled out per struct with `#[serde(default = ...)]` where the C# initializer is not `0`/`false`/`null`: `LearnedSignal = true`, `Source = "scrobble"`, `Origin = "app"`, `State = "queued"`, `Pass = 1`, `DryRun = true`, `FolderCovers = true`, `SmallerThan = 1000`, `Version = 1`, `Scope = "OctoDownloads"`, `Has = "none"`, `Result = "weak"`). `null` where C# declares a non-nullable string is accepted.
-5. **Keep the recovery behaviour per file** (§3): start empty, move aside as `.corrupt-<ticks>` (use .NET ticks: 100 ns intervals since 0001-01-01, so log readers see the same scale), refuse to write (`settings.json`), and Running → Interrupted with the exact `Reason` strings.
+5. **Keep the recovery behavior per file** (§3): start empty, move aside as `.corrupt-<ticks>` (use .NET ticks: 100 ns intervals since 0001-01-01, so log readers see the same scale), refuse to write (`settings.json`), and Running → Interrupted with the exact `Reason` strings.
 6. **Load-time pruning** (expired sessions, rejected peers past the TTL, iTunes TTLs, radio retention, `working` → `queued`) means a load followed by a save is *not* byte-identical once the fixture's dates are in the past. The round-trip test must go through the serde structs, not the stores. The store tests should inject a clock.
 7. **JSONL journals:** append `serialize(entry) + "\n"`, skip blank and unparseable lines on read, and rewrite atomically. The short names (`p`/`b`/`a`/`t`/`r` and `p`/`k`/`h`/`r`) apply to two journals only. `lyrics-undo.jsonl` uses full names.
 8. **Decide and document** in `known-diffs.md`: the non-atomic, crash-on-corrupt `.mappings.json`; the non-atomic quarantine manifest and `.lrc` writes; and the dead `PlaylistSyncService`.

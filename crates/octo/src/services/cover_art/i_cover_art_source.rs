@@ -9,7 +9,7 @@ use octo_core::soulseek::soulseek_metadata_service::SoulseekRouting;
 /// the aggregator queries them in order and returns the first hit.
 ///
 /// Implementations should be self-contained (own HTTP client, own caching if
-/// relevant) and never fail out of [`ICoverArtSource::try_fetch`] — return None
+/// relevant) and never fail out of [`ICoverArtSource::try_fetch`]: return None
 /// for any kind of miss or error so the chain can move on.
 #[async_trait]
 pub trait ICoverArtSource: Send + Sync {

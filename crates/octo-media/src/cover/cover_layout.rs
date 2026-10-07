@@ -60,7 +60,7 @@ pub enum WordsRole {
     Footer,
 }
 
-/// Words on a cover: what, how set, the box they are set in, how they sit in it, their colour,
+/// Words on a cover: what, how set, the box they are set in, how they sit in it, their color,
 /// and which block they are.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoverWords {
@@ -89,7 +89,7 @@ impl CoverWords {
 }
 
 /// What a cover is made from: whose it is (its id), the name, the light line, the foot line,
-/// and its music's colours.
+/// and its music's colors.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoverSpec {
     pub id: String,

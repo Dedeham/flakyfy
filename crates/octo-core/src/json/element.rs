@@ -124,7 +124,7 @@ pub fn array_length(value: &Value) -> ElementResult<usize> {
 }
 
 /// `GetRawText()`: the element written back compactly. serde_json does not keep the source
-/// text, so this is a re-serialisation; the C# only parsed it again.
+/// text, so this is a re-serialization; the C# only parsed it again.
 pub fn raw_text(value: &Value) -> String {
     value.to_string()
 }

@@ -319,7 +319,7 @@ fn normalize(dump: &str, flac: bool) -> String {
 }
 
 /// lofty writes a character ID3v1's Latin-1 cannot hold as "?", where .NET's encoder picks a
-/// look-alike ("—" as "-"): an ID3v1 line matches when it differs only where Rust wrote "?".
+/// look-alike ("-" as "-"): an ID3v1 line matches when it differs only where Rust wrote "?".
 fn id3v1_matches(expected: &str, actual: &str) -> bool {
     expected.starts_with("id3v1 ")
         && expected.chars().count() == actual.chars().count()

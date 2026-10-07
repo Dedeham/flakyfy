@@ -73,7 +73,7 @@ impl DeezerRateLimitHandler {
         let lease = self.limiter.acquire(background).await;
         if !lease.is_acquired() {
             // The queue is full. Answering 429 rather than throwing means callers take
-            // their existing "Deezer refused this" path, which never caches the result —
+            // their existing "Deezer refused this" path, which never caches the result:
             // so back-pressure can slow us down but can never poison the cache.
             let lane = if background { "background" } else { "interactive" };
             warn!(

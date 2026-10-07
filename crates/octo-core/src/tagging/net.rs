@@ -1,4 +1,4 @@
-//! The few .NET string and number behaviours the tagging code leans on that
+//! The few .NET string and number behaviors the tagging code leans on that
 //! `common::dotnet` does not carry: `OrdinalIgnoreCase` keys for sets and groupings, ordinal
 //! (UTF-16) ordering, `int.TryParse` and the custom `"0.00"` formats.
 

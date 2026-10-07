@@ -362,7 +362,7 @@ impl SubsonicProxyService {
 
     /// Faithful relay: forwards the caller's HTTP method + body + content-type and returns the
     /// upstream status verbatim (no `EnsureSuccessStatusCode`). This is what makes non-GET /
-    /// body-carrying endpoints work through Octo — e.g. Navidrome's native POST /auth/login
+    /// body-carrying endpoints work through Octo: e.g. Navidrome's native POST /auth/login
     /// that some clients use to sign in. The body is read in full, as the C# buffered it.
     pub async fn relay_raw<I, K, V>(
         &self,

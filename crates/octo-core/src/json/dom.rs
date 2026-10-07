@@ -2,7 +2,7 @@
 //!
 //! settings.json is edited by hand and by the dashboard, and C#'s `JsonNode` writes a number
 //! back with its original text (`1.50` stays `1.50`, `1e3` stays `1e3`). serde_json's
-//! `Value` would normalise those, so the settings writer works on this tree instead. Parsing
+//! `Value` would normalize those, so the settings writer works on this tree instead. Parsing
 //! is lenient the way the config reader is: comments and trailing commas are accepted (and
 //! dropped on the next write).
 

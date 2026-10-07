@@ -213,7 +213,7 @@ pub fn camel_case(name: &str) -> String {
     out.into_iter().collect()
 }
 
-/// A value serialised with its state-file (PascalCase) names, renamed as an API answer writes
+/// A value serialized with its state-file (PascalCase) names, renamed as an API answer writes
 /// it: every property name camelCased, except the keys of the dictionaries named in
 /// `dictionaries` (by their camelCased property name), which STJ left alone.
 pub fn camel_case_value(value: Value, dictionaries: &[&str]) -> Value {

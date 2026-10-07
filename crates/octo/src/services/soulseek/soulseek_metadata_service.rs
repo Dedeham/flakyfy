@@ -47,7 +47,7 @@ pub trait LastFmTrackLengths: Send + Sync {
 /// Music metadata service for the YouTube-first / Soulseek-on-star architecture.
 ///
 /// Radio queue creation is YouTube-only and lightweight: one yt-dlp search per
-/// Last.fm similar track. We do NOT query Soulseek here — Soulseek is reserved
+/// Last.fm similar track. We do NOT query Soulseek here: Soulseek is reserved
 /// for the explicit "user wants to keep this" action (star / permanent download)
 /// in SoulseekDownloadService.
 ///
@@ -814,13 +814,13 @@ impl IMusicMetadataService for SoulseekMetadataService {
             return Vec::new();
         }
 
-        // INSTANT placeholder. We do NOT call YouTube here — at queue-build time we'd
+        // INSTANT placeholder. We do NOT call YouTube here: at queue-build time we'd
         // rate-limit ourselves into oblivion (Arpeggio fans out 5-10 search3 calls
         // per radio session). YouTube resolution is deferred to /rest/stream where
         // it happens once per actual playback, sequentially as the user advances.
         let registry = &self.inner.id_registry;
         let external_id = registry.register(SoulseekRouting {
-            // YouTubeId intentionally null — resolved lazily on play.
+            // YouTubeId intentionally null: resolved lazily on play.
             artist: Some(artist.to_string()),
             title: Some(title.to_string()),
             duration: duration_seconds,
@@ -839,7 +839,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
             .lookup(&external_id)
             .and_then(|routing| SongLength::shown(&routing.lock()).0);
 
-        // 180 is the fallback when we don't know the real duration — most songs
+        // 180 is the fallback when we don't know the real duration: most songs
         // are 3-5 min so it's a less-bad guess than 0 (which would prevent
         // clients from rendering a scrub bar at all). The Octo app knows this
         // value and shows no length for it rather than a wrong one.
@@ -982,7 +982,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 // Shown only inside the sane range. An hour-long upload is a mix or a
                 // live set, and its length is no better than the one the row has.
                 // Only the foreground pass may touch the Song. In the background the list is
-                // already with the client and cached for the next page, being serialised as this
+                // already with the client and cached for the next page, being serialized as this
                 // runs. getSong builds its answer from routing.Duration, so it still gets this length.
                 if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
                     song.duration = Some(shown);
@@ -1029,7 +1029,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
 
     async fn prewarm_you_tube_ids_for_song_ids(&self, song_ids: &[String], top_n: usize) {
         let inner = &self.inner;
-        // Skip ids whose YouTube resolution is already cached on the routing —
+        // Skip ids whose YouTube resolution is already cached on the routing:
         // those are already warm and don't need a yt-dlp roundtrip. This is the
         // path used by the scrobble-driven sliding window: as the user advances
         // through a queue most upcoming items will still be cold, but if they

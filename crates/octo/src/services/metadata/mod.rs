@@ -1,6 +1,6 @@
 //! Metadata with I/O (`Services/Metadata`): the Deezer catalog client with the named client and
 //! rate limiter every Deezer call goes through, and the genre backfill's run state, undo
-//! journal and worker. The genre normaliser and the Accept-Language header are `octo_core::metadata`.
+//! journal and worker. The genre normalizer and the Accept-Language header are `octo_core::metadata`.
 
 pub mod deezer_metadata_service;
 pub mod deezer_rate_limit_handler;

@@ -78,7 +78,7 @@ pub struct AcoustIdRecording {
     /// [`release`](Self::release) stays the one pick the old fields are read from.
     pub releases: Vec<AcoustIdRelease>,
 
-    /// The codes the music database lists for the recording, normalised.
+    /// The codes the music database lists for the recording, normalized.
     pub isrcs: Vec<String>,
 
     /// How many submissions tie the fingerprint to this recording.
@@ -243,7 +243,7 @@ pub struct AcoustIdSubmission {
 /// with a request's code without a second service, and the submission count breaks ties.
 pub const META_FIELDS: &str = "recordings releasegroups releases tracks compress isrcs sources";
 
-/// A recording on a long-lived catalogue can carry hundreds of release groups, and one
+/// A recording on a long-lived catalog can carry hundreds of release groups, and one
 /// fingerprint can match several ids. Both are bounded so a pathological response cannot
 /// turn a download into a CPU burn.
 const MAX_RESULTS: usize = 10;

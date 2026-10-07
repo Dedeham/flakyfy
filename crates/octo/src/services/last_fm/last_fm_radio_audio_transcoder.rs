@@ -172,7 +172,7 @@ async fn measure_loudness(
 ) -> anyhow::Result<Option<(f64, f64, f64)>> {
     // ebur128 prints its summary on stderr at the default log level; nothing else in this
     // invocation writes there. Decode to a fixed format first because a stream whose first
-    // packet probes differently from the rest re-initialises the graph and the scanner with it.
+    // packet probes differently from the rest re-initializes the graph and the scanner with it.
     let spool_text = spool.to_string_lossy();
     let mut sink = tokio::io::sink();
     let report = match run(

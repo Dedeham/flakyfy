@@ -2,7 +2,7 @@
 //!
 //! The C# abstract class held the `HttpClient` and gave its subclasses static helpers. A Rust
 //! validator implements [`super::IStartupValidator`], keeps its own HTTP client, and calls these
-//! helpers. Colour codes are written only when standard output is a terminal, as .NET's console
+//! helpers. Color codes are written only when standard output is a terminal, as .NET's console
 //! did (a container's redirected output got none).
 
 use std::io::{IsTerminal, Write};

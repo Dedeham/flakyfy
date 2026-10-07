@@ -31,7 +31,7 @@ pub struct BindWarning {
 /// conversion problems come back as warnings and leave defaults in place.
 pub fn bind<T: DeserializeOwned + Default>(node: &ConfigNode) -> (T, Vec<BindWarning>) {
     // serde's derived visitors stop at the first bad field, so a bad value is removed and
-    // the bind retried, which leaves that field at its default and keeps its neighbours.
+    // the bind retried, which leaves that field at its default and keeps its neighbors.
     let mut node = node.clone();
     let mut warnings = Vec::new();
     for _ in 0..256 {
@@ -115,7 +115,7 @@ impl de::Error for BindError {
     }
 }
 
-/// Normalises a key or field name for matching: lowercase, without underscores.
+/// Normalizes a key or field name for matching: lowercase, without underscores.
 fn normalise(name: &str) -> String {
     name.chars()
         .filter(|c| *c != '_')

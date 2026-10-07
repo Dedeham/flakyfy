@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Push notifications for the download lifecycle. Subsonic has no notification
 /// mechanism and Navidrome's event stream only reaches its own web UI, so without
 /// this nothing tells the user a starred track landed, settled for a lossy source,
-/// or failed — the SearchWaitSeconds bug went unnoticed for exactly that reason.
+/// or failed: the SearchWaitSeconds bug went unnoticed for exactly that reason.
 ///
 /// A transport is enabled simply by its URL being non-empty. Every value is read
 /// through IOptionsMonitor at send time, so changes apply without a restart.
@@ -41,7 +41,7 @@ pub struct NotificationSettings {
     /// silent quality loss is the failure mode this whole feature exists to expose.
     pub notify_lossless_fallback: bool,
 
-    /// Both sources failed for a starred track. Stars only — a shed
+    /// Both sources failed for a starred track. Stars only: a shed
     /// play-triggered acquisition is a hint, not an unmet promise.
     pub notify_download_failed: bool,
 

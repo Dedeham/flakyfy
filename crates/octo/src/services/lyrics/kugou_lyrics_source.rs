@@ -51,7 +51,7 @@ const INSTRUMENTAL_MARK: &str = "纯音乐";
 ///
 /// Three public endpoints, all unsigned:
 ///   lyrics.kugou.com/search     lyric entries for "artist - title" (and a length, or a song hash)
-///   mobileservice.kugou.com     the song catalogue, asked only when the lyric search has no
+///   mobileservice.kugou.com     the song catalog, asked only when the lyric search has no
 ///                               entry for this song, for the song's hash
 ///   lyrics.kugou.com/download   one entry's lyric: KRC (fmt=krc) or LRC (fmt=lrc), base64
 /// KRC is "krc1", then zlib data XORed with a fixed 16-byte key, giving text with a
@@ -60,7 +60,7 @@ pub struct KugouLyricsSource {
     client: reqwest::Client,
     /// `https://lyrics.kugou.com`: the lyric search and download.
     lyrics_url: String,
-    /// `https://mobileservice.kugou.com`: the song catalogue.
+    /// `https://mobileservice.kugou.com`: the song catalog.
     catalogue_url: String,
     /// The one-at-a-time gate, holding when the last request went out.
     gate: tokio::sync::Mutex<Option<Instant>>,
@@ -83,7 +83,7 @@ impl Answer {
     }
 }
 
-/// A song in KuGou's catalogue.
+/// A song in KuGou's catalog.
 struct Song {
     hash: String,
     title: String,
@@ -204,8 +204,8 @@ impl KugouLyricsSource {
 
     /// The lyric entries for "artist - title", then for the same song written the ways
     /// `SongIdentity.QueryVariants` gives ("suicideboys - SUICIDE" for "$uicideboy$ -
-    /// $UICIDE"), until one of them is this song. When none is, the song catalogue is asked too,
-    /// and the lyric entries for each catalogue song that IS this song are added under that
+    /// $UICIDE"), until one of them is this song. When none is, the song catalog is asked too,
+    /// and the lyric entries for each catalog song that IS this song are added under that
     /// song's name and album.
     async fn search_inner(
         &self,
@@ -258,7 +258,7 @@ impl KugouLyricsSource {
         }
 
         let songs = Self::read_songs(catalogue.json.as_ref())?;
-        // The catalogue names some artists its own way ("Ye (侃爷)" for Kanye West), so a song
+        // The catalog names some artists its own way ("Ye (侃爷)" for Kanye West), so a song
         // with the right title and length is asked about even when its artist reads otherwise;
         // its lyric entries then carry the lyric's own credit, and the identity check decides.
         let mut transient = false;
@@ -344,7 +344,7 @@ impl KugouLyricsSource {
         Ok(songs)
     }
 
-    /// Lyric entries, titled after the catalogue song they were found through when there is
+    /// Lyric entries, titled after the catalog song they were found through when there is
     /// one, and credited to its artist when that artist is the one asked for; otherwise to the
     /// lyric's own singer, so the identity check still judges the artist.
     fn read_lyric_entries(

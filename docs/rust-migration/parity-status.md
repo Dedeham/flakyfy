@@ -24,7 +24,7 @@ The recordings are not checked in; the baseline is the only recording the harnes
   ids) resolved on the Rust side too.
 - **430 requests are identical apart from `Server` and framing** (`Server: Kestrel`, and
   `Transfer-Encoding: chunked` vs `Content-Length` in bytes mode): status, every other header in
-  wire order, and the body byte for byte after normalisation.
+  wire order, and the body byte for byte after normalization.
 - **23 requests differ in an allowlisted, reviewed way** (table below): 7 cover JPEGs re-encoded
   by the `image` crate, and 16 static-file answers (`Accept-Ranges` once instead of twice; the
   Brotli/gzip variants of 3 of them come from a different compressor).

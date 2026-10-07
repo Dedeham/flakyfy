@@ -165,7 +165,7 @@ pub(super) fn merge_xml(
     Some(root.to_xml_string().into_bytes())
 }
 
-/// A serialised value as `JsonSerializer.SerializeToNode` made it: doubles in .NET's shortest
+/// A serialized value as `JsonSerializer.SerializeToNode` made it: doubles in .NET's shortest
 /// form.
 pub(super) fn to_node(value: &Value) -> Node {
     match value {

@@ -17,7 +17,7 @@ pub trait IMusicMetadataService: Send + Sync {
 
     /// Searches for songs given an already-split artist and title. Preferred when
     /// the caller has structured fields (e.g. Last.fm results) so providers don't
-    /// have to reverse-parse a concatenated query — which corrupts multi-word
+    /// have to reverse-parse a concatenated query: which corrupts multi-word
     /// artists like "The Beatles" into artist="The", title="Beatles ...".
     /// `duration_seconds` if known is stored on the placeholder
     /// so the client's scrub bar shows the right total length on first play.
@@ -54,7 +54,7 @@ pub trait IMusicMetadataService: Send + Sync {
     /// for any provider that doesn't need it.
     async fn prewarm_you_tube_ids(&self, _songs: &[Song], _top_n: usize) {}
 
-    /// Same as [`IMusicMetadataService::prewarm_you_tube_ids`] but accepts raw song ids — the
+    /// Same as [`IMusicMetadataService::prewarm_you_tube_ids`] but accepts raw song ids: the
     /// implementation looks each id up in its own routing registry to find the
     /// artist/title to resolve. Used by the scrobble-driven sliding-window
     /// prewarm where the controller only has the scrobbled song id and the

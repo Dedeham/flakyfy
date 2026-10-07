@@ -1,6 +1,6 @@
 //! Ports of `octo.Tests/SongIdentityTests.cs` (the parts that test SongIdentity itself) and
 //! `octo.Tests/SongIdentityCasesTests.cs`, plus targeted checks of the places where Rust's
-//! Unicode and regex behaviour had to be bent to match .NET's.
+//! Unicode and regex behavior had to be bent to match .NET's.
 
 use super::*;
 use serde_json::Value;

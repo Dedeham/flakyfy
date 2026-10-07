@@ -33,7 +33,7 @@ pub struct ReleaseGenre {
     pub count: i32,
 }
 
-/// What one music database release lookup adds to a candidate: its label and catalogue number,
+/// What one music database release lookup adds to a candidate: its label and catalog number,
 /// barcode, status, country and date, its group's kind and first release date, the album
 /// artist's ids, every track's position and ids, and the genres people voted on. A block the
 /// answer lacks is None or empty, never a panic.
@@ -231,7 +231,7 @@ pub(crate) fn credits(element: &Value) -> (Option<String>, Vec<String>) {
     ((!joined.is_empty()).then(|| joined.to_string()), ids)
 }
 
-/// The recording's codes, normalised, each once, in the order listed.
+/// The recording's codes, normalized, each once, in the order listed.
 pub(crate) fn isrcs_of(element: &Value) -> Vec<String> {
     let Some(isrcs) = element.get("isrcs").and_then(Value::as_array) else {
         return Vec::new();

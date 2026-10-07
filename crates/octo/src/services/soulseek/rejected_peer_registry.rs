@@ -194,7 +194,7 @@ impl RejectedPeerRegistry {
     }
 
     /// Expiry is enforced here rather than by a sweep timer: a container that runs for
-    /// months would otherwise honour a lapsed denial forever, which is the exact trap the
+    /// months would otherwise honor a lapsed denial forever, which is the exact trap the
     /// TTL exists to avoid. Called from inside the candidate ranking, so it is a dictionary
     /// hit and nothing more.
     pub fn is_denied(&self, username: Option<&str>, filename: Option<&str>) -> bool {
@@ -298,7 +298,7 @@ impl RejectedPeerRegistry {
         };
         if let Err(e) = state_file::save_atomic(path, &octo_core::json::to_string(&entries)) {
             // Best-effort: losing a flush costs the denials since the last one, which is the
-            // behaviour we had before this existed. It must never take a download down.
+            // behavior we had before this existed. It must never take a download down.
             self.dirty.store(true, Ordering::SeqCst);
             warn!("rejected peer registry could not be written: {e}");
         }

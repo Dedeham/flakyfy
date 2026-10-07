@@ -115,7 +115,7 @@ pub struct CachedMaster {
 
 /// Cover art via Apple's free iTunes Search API. No key, 1200x1200 JPEGs after
 /// CDN substitution (and the full master for downloads, see `try_fetch_album_master`), very
-/// high coverage for mainstream Western releases — weaker for international, indie, and
+/// high coverage for mainstream Western releases: weaker for international, indie, and
 /// underground.
 ///
 /// Improvements over the original implementation:
@@ -574,7 +574,7 @@ impl ITunesCoverArtLookup {
 
     /// Issue a search and rank the up-to-5 results by closeness of the artist
     /// match, returning the artworkUrl100 of the best one. Without scoring,
-    /// "Drake — Hold On, We're Going Home" would frequently come back as the
+    /// "Drake: Hold On, We're Going Home" would frequently come back as the
     /// karaoke version's cover when it appeared first in the index.
     async fn search_and_score(&self, term: &str, entity: &str, expected_artist: &str) -> Option<String> {
         let attempt = async {
@@ -627,7 +627,7 @@ impl ITunesCoverArtLookup {
         }
     }
 
-    /// Singles often have no proper "album" entry on iTunes — the song exists
+    /// Singles often have no proper "album" entry on iTunes: the song exists
     /// but only as a track. Re-query with entity=song so we still get cover art.
     async fn search_song_fallback(&self, artist: &str, album_or_title: &str) -> Option<Bytes> {
         let hit = self
@@ -673,7 +673,7 @@ impl ICoverArtSource for ITunesCoverArtLookup {
                 }
 
                 // Album-style lookup. For our placeholder "singles" the album is the
-                // song title — iTunes may return a song-level hit shaped like an
+                // song title: iTunes may return a song-level hit shaped like an
                 // album anyway, or fall through to song-entity fallback below.
                 if let Some(hit) = self
                     .search_and_score(&format!("{artist} {album}"), "album", artist)
@@ -774,7 +774,7 @@ fn write_rows(path: &Path, rows: &[CachedMaster]) -> anyhow::Result<()> {
 
 /// Cheap case-insensitive substring score. Exact equality is best, then
 /// containment in either direction, then any token overlap. We don't need
-/// a real edit distance — we just need to push wrong-artist hits to the
+/// a real edit distance: we just need to push wrong-artist hits to the
 /// bottom and let a correct-artist hit win.
 fn score_artist_match(expected: &str, actual: &str) -> i32 {
     if actual.is_empty() {

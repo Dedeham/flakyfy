@@ -41,7 +41,7 @@ pub type SeedsFn = Arc<dyn Fn() -> BoxFuture<anyhow::Result<Vec<CoverSeed>>> + S
 pub type FetchFn = Arc<dyn Fn() -> BoxFuture<anyhow::Result<Option<Vec<u8>>>> + Send + Sync>;
 
 /// A list whose cover Octo draws: its name, its genre or decade, its kind, its song count if
-/// known, and the songs whose covers give it its colours.
+/// known, and the songs whose covers give it its colors.
 #[derive(Clone)]
 pub struct ListCover {
     pub name: String,
@@ -63,7 +63,7 @@ impl ListCover {
     }
 }
 
-/// One seed cover: what it is (so its colours can be remembered by it) and how to get it.
+/// One seed cover: what it is (so its colors can be remembered by it) and how to get it.
 #[derive(Clone)]
 pub struct CoverSeed {
     pub identity: String,
@@ -81,7 +81,7 @@ const MUSIC_MISS: Duration = Duration::from_secs(60);
 /// The list covers' JPEG: quality 92, no chroma subsampling (ImageSharp's YCbCrRatio444).
 const JPEG_QUALITY: u8 = 92;
 
-/// The lightness a genre's or decade's stand-in colour is given: the middle of the library's.
+/// The lightness a genre's or decade's stand-in color is given: the middle of the library's.
 pub(crate) const GENRE_LIGHTNESS: f64 = 0.62;
 
 /// Draws list covers, the placeholder and the Octo badge.
@@ -193,14 +193,14 @@ impl CoverArtService {
         // Top-left placement: most album covers concentrate visual content and text along the
         // center/bottom (artist name, track titles, overlay UI from clients), so top-left is
         // consistently the "quietest" region. Also matches Western reading-order so it's the
-        // first thing the eye picks up — exactly what a source indicator wants.
+        // first thing the eye picks up: exactly what a source indicator wants.
         image::imageops::overlay(&mut image, &badge, padding, padding);
         cover_image::encode_jpeg(&DynamicImage::ImageRgba8(image), 90)
             .unwrap_or_else(|| original_art.to_vec())
     }
 
     /// Returns a 600x600 placeholder JPEG with the Octo logo centered on a black background.
-    /// Used when iTunes lookup whiffs so we never 404 a cover-art request — Subsonic clients
+    /// Used when iTunes lookup whiffs so we never 404 a cover-art request: Subsonic clients
     /// drop entries whose cover fetch fails.
     ///
     /// `branded`: whether to stamp the Octo logo. True for external tracks, where the badge
@@ -250,7 +250,7 @@ impl CoverArtService {
         self.get_named_cover(name, None, size, list_kinds::RADIO)
     }
 
-    /// A list's cover from its name alone: its genre's or decade's colour, or its design's own.
+    /// A list's cover from its name alone: its genre's or decade's color, or its design's own.
     pub fn get_named_cover(&self, name: &str, label: Option<&str>, size: Option<i32>, kind: &str) -> Vec<u8> {
         let list = ListCover {
             name: name.to_string(),
@@ -267,8 +267,8 @@ impl CoverArtService {
     }
 
     /// A list's cover. In order: a picture in the covers folder named after the list or its
-    /// genre or decade; a painted background matched to the colours of its seed songs' covers,
-    /// else to its genre's or decade's colour, else picked by its name; and last a plain
+    /// genre or decade; a painted background matched to the colors of its seed songs' covers,
+    /// else to its genre's or decade's color, else picked by its name; and last a plain
     /// placeholder, never the logo. A replaced picture or a new seed cover shows without a
     /// restart. Dropping the future cancels it, as C#'s token did.
     pub async fn get_list_cover(&self, list: &ListCover, requested_size: Option<i32>) -> Vec<u8> {
@@ -445,7 +445,7 @@ impl CoverArtService {
         }
     }
 
-    /// Colours from the list's seed covers: fetched until two pictures are in hand, all within
+    /// Colors from the list's seed covers: fetched until two pictures are in hand, all within
     /// a few seconds. Remembered by which seeds they were, so a new seed can change the cover
     /// and an unchanged one costs nothing. None when there are none to read. An error only when
     /// the list could not say what its seeds are.
@@ -504,12 +504,12 @@ impl CoverArtService {
         };
         match tokio::time::timeout(SEED_WAIT, work).await {
             Ok(result) => result,
-            // Out of time: the fallback colours now, the seeds on a later request.
+            // Out of time: the fallback colors now, the seeds on a later request.
             Err(_) => Ok(None),
         }
     }
 
-    /// A picture's main colours, read from a small copy of it.
+    /// A picture's main colors, read from a small copy of it.
     pub(crate) fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
         let image = cover_image::decode(picture)?;
         // C# asked ImageSharp's decoder for a 64 by 64 target, which shrinks the picture to fit
@@ -557,7 +557,7 @@ impl CoverArtService {
         None
     }
 
-    /// Someone's own picture, cropped to its centre square and sized like every cover.
+    /// Someone's own picture, cropped to its center square and sized like every cover.
     fn load_override(&self, path: &Path, size: i32) -> Option<Vec<u8>> {
         let image = match image::open(path) {
             Ok(image) => image,

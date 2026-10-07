@@ -482,7 +482,7 @@ async fn mix_spreads_across_seeds_instead_of_letting_the_first_seed_fill_it() {
     }
     fixture.service.set_randomizer(flat_random());
 
-    // Every seed answers fifteen neighbours at the same match scores, and the newest seed
+    // Every seed answers fifteen neighbors at the same match scores, and the newest seed
     // carries the most affinity. Without a share per source the flat draw would take the newest
     // seed's list and most of the second's; with it, no seed holds more than a share and a half
     // (three of twelve).

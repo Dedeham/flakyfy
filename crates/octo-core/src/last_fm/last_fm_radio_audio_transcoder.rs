@@ -13,7 +13,7 @@ use crate::common::dotnet;
 /// What one radio track sounds like and what it is, gathered while it was prepared. Loudness
 /// fields describe the SOURCE; `gain_db` is what was applied to reach the target. The spectral
 /// fields are means over the track and describe its character (brightness, noisiness,
-/// bandwidth), which survive the gain unchanged. `genre` is the catalogue genre the track
+/// bandwidth), which survive the gain unchanged. `genre` is the catalog genre the track
 /// resolved with and `tags` its Last.fm top tags (sub-genre), so the flow picker can judge
 /// kinship alongside sound rather than by sound alone.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

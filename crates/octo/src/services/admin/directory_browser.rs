@@ -17,8 +17,8 @@ pub struct BrowseEntry {
 
 /// A directory listing: where we are, where up is, and what is here.
 /// `audio_files` counts audio files directly in this folder. It exists because listing
-/// directories alone makes a flat library — thousands of loose tracks and a handful of album
-/// folders — look almost empty, giving no way to tell the right folder from a stray one.
+/// directories alone makes a flat library: thousands of loose tracks and a handful of album
+/// folders: look almost empty, giving no way to tell the right folder from a stray one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseResult {

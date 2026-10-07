@@ -86,7 +86,7 @@ fn is_usable_too_small_or_not_an_image_fails() {
     assert!(!cover_image::is_usable(None, false));
 }
 
-/// A YouTube "Topic" frame letterboxes the real cover; its centre square is that cover.
+/// A YouTube "Topic" frame letterboxes the real cover; its center square is that cover.
 #[test]
 fn crop_to_square_letterbox_returns_the_centre() {
     let cropped = cover_image::crop_to_square(&video_frame()).expect("cropped");

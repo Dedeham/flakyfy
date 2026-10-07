@@ -696,7 +696,7 @@ fn veils_match_the_csharp_renderer() {
 
 /// The finished covers (background, veil and words) against the C# ones, by SSIM: the words'
 /// edges are smoothed by another rasteriser (tiny-skia, not ImageSharp), so they may differ by
-/// a few levels where they meet the colours.
+/// a few levels where they meet the colors.
 #[test]
 fn covers_look_like_the_csharp_renderer() {
     let _heavy = HEAVY.read();

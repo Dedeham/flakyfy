@@ -26,7 +26,7 @@ use crate::services::framework::{InFlight, MemoryCache};
 const MAX_CACHE: u64 = 4096;
 
 /// The only Deezer error code meaning "this genuinely does not exist". Everything
-/// else, including quota (code 4) and any code we do not recognise, is treated as
+/// else, including quota (code 4) and any code we do not recognize, is treated as
 /// transient. Caching an error we do not understand is exactly how one throttled
 /// call turned into an album that reported zero tracks for the life of the process.
 const DEFINITIVE_ERROR_CODE: i32 = 800;
@@ -94,7 +94,7 @@ impl DeezerResponse {
 }
 
 /// Enriches external (YouTube-resolved) tracks with real album/artist metadata
-/// from Deezer's public API. Keyless and no ARL — the ARL that expires on the
+/// from Deezer's public API. Keyless and no ARL: the ARL that expires on the
 /// music bot is only for Deezer AUDIO; metadata endpoints are open.
 ///
 /// Everything here is best-effort and cached: a Deezer outage, throttle, or miss

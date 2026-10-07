@@ -261,7 +261,7 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
 /// Selects the station's tracks from its weighted candidates. One weighted draw orders the pool
 /// (see [`weighted_order`]), then the walk applies the spacing rules: nothing unavailable,
 /// nothing just played when asked, never the same artist twice in a row, no artist past its cap
-/// for this station kind, no source list (one seed's neighbours, one tag, one artist) past its
+/// for this station kind, no source list (one seed's neighbors, one tag, one artist) past its
 /// share, and when a familiar quota is set, that many tracks from the listener's own history and
 /// the rest from discovery. The caps are the marginal-relevance idea applied greedily, with
 /// artist and source repetition as the redundancy.

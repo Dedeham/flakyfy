@@ -1,7 +1,7 @@
 //! LibraryActionSettingsTests.cs, plus the settings-only half of DuplicateTests.cs
 //! (DuplicateSettingsTests).
 //!
-//! Every part of library actions is configurable, which means the sanitising has to be too.
+//! Every part of library actions is configurable, which means the sanitizing has to be too.
 //! The defaults are the cautious reading of every choice, because the feature removes files
 //! Octo did not create.
 
@@ -175,7 +175,7 @@ fn effective_actions_keep_comes_on_with_review_unless_configured() {
     }));
 }
 
-/// Auto keeps the behaviour ratings had before the setting existed until Review is on, and
+/// Auto keeps the behavior ratings had before the setting existed until Review is on, and
 /// then a star only counts on a track Octo asked about.
 #[test]
 fn effective_ratings_scope_auto_follows_notices() {

@@ -80,7 +80,7 @@ pub const MAX_PEER_ATTEMPTS: usize = 5;
 pub struct InvalidOperationException(pub String);
 
 /// `FileNotFoundException`: no copy found, or the copy found is gone. Reported as an `io::Error`
-/// of kind `NotFound`, which is how the library-action executor recognises "no copy here".
+/// of kind `NotFound`, which is how the library-action executor recognizes "no copy here".
 fn file_not_found(message: String) -> anyhow::Error {
     std::io::Error::new(std::io::ErrorKind::NotFound, message).into()
 }
@@ -888,7 +888,7 @@ impl SoulseekDownloadService {
     /// the same wrong file again.
     ///
     /// Gated on VerifyDownloads so that with the flag off, which is the default, nothing about
-    /// the existing behaviour changes, including the memory.
+    /// the existing behavior changes, including the memory.
     fn deny_candidate(&self, hit: &SoulseekFileHit, routing: &SoulseekRouting, reason: &str) {
         if !self.verification.remembers_rejections() {
             return;
@@ -1551,7 +1551,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 .await;
             video_id = hit.map(|h| h.video_id).filter(|v| !v.is_empty());
             // Cache back on the routing so a second click on the same placeholder
-            // skips the yt-dlp ytsearch1: round trip — that 3-8s saving is the
+            // skips the yt-dlp ytsearch1: round trip: that 3-8s saving is the
             // difference between Arpeggi (~10s HTTP timeout) playing the song or
             // canceling and falling back to a local one. The routing is shared via
             // the registry, so this change is visible to every subsequent stream

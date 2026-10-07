@@ -39,7 +39,7 @@ Details and the per-group table: [`parity-status.md`](parity-status.md).
 
 The parity stack, with Octo's `/music` a writable copy of the fixture library, library actions
 on (not a dry run; Delete, BetterQuality and Keep enabled; Review, sweep and duplicates on), genre
-normalisation on, a Last.fm secret, and a stub answering `auth.getToken`/`auth.getSession`.
+normalization on, a Last.fm secret, and a stub answering `auth.getToken`/`auth.getSession`.
 
 1. **C# writes state.** The full corpus (453 requests, including `90-mutations`), then these
    extra flows: a heart on a local song and on a discovery-only song, a rating on an outside
@@ -146,16 +146,16 @@ builds within ±3% (the stub floor dominates).
 | Measure | C# | Rust | Target | Result |
 |---|---|---|---|---|
 | Idle RSS, lone container (`docker stats`, 10 s and 30 s after start) | 209.5 MiB | 41.0 MiB (**19.6%**) | ≤ 50% of C# | met |
-| Idle RSS in the stack, before load | 218-222 MiB | 27-42 MiB | — | — |
-| Peak RSS under the load above | 310-325 MiB | 32-47 MiB (**~13%**) | — | — |
+| Idle RSS in the stack, before load | 218-222 MiB | 27-42 MiB | - | - |
+| Peak RSS under the load above | 310-325 MiB | 32-47 MiB (**~13%**) | - | - |
 | Cold start, `docker run -d` → first `200` (6 runs) | 0.96-1.03 s, median 1.01 s | 0.50-0.55 s, median **0.51 s** | ≤ 1 s | met |
 | Image size | 1,126,336,765 B | 998,961,594 B (**88.7%**) | ≤ C# | met |
 | p95 on the four endpoints | see above | 10-19% lower | no worse | met |
-| Graceful `docker stop`, no job in flight | 0.16 s | 0.11 s | — | — |
+| Graceful `docker stop`, no job in flight | 0.16 s | 0.11 s | - | - |
 
 With a Soulseek search in flight both builds take ~10 s to stop: each waits out its 10 s worker
 shutdown budget for the acquisition worker (Rust logs `Abandoned background workers at shutdown:
-AcquisitionWorker`). Same behaviour, nothing lost (the job resumes, see 2.1).
+AcquisitionWorker`). Same behavior, nothing lost (the job resumes, see 2.1).
 
 ## 4. Tests and flakes
 

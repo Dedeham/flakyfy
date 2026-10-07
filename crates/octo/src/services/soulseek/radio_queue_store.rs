@@ -44,7 +44,7 @@ impl RadioQueueStore {
     }
 
     /// Find the most-recently-registered queue containing `song_id` and return up to `count`
-    /// ids that come after it. Returns an empty list when the song isn't tracked — caller
+    /// ids that come after it. Returns an empty list when the song isn't tracked: caller
     /// should treat that as "nothing to prewarm" rather than an error.
     pub fn get_upcoming_from(&self, song_id: &str, count: i32) -> Vec<String> {
         if song_id.is_empty() || count <= 0 {

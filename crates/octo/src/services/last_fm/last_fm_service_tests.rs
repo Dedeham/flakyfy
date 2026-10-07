@@ -213,7 +213,7 @@ async fn radio_methods_propagate_caller_cancellation() {
     assert!(outcome.is_err(), "the call answered instead of being cancelled");
 }
 
-/// Last.fm as it files a renamed artist: the catalogue under "Kanye West" only.
+/// Last.fm as it files a renamed artist: the catalog under "Kanye West" only.
 /// Records every request's method and artist.
 fn renamed_artist_last_fm(asked: Arc<Mutex<Vec<(String, String)>>>, knows_song: bool) -> Fixture {
     answer(move |request| {

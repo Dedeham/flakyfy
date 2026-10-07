@@ -42,7 +42,7 @@ pub enum SettingsWriteError {
 #[derive(Debug)]
 pub struct SettingsFileWriter {
     path: PathBuf,
-    // One lock serialises every read-modify-write, and the fixed temp file name needs it.
+    // One lock serializes every read-modify-write, and the fixed temp file name needs it.
     lock: Mutex<()>,
 }
 

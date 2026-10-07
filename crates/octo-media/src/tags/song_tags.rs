@@ -70,7 +70,7 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
     }
 
     // Only write the track number when we actually have one, and only pair the total with it
-    // — avoids a bogus "0/11" when Deezer's search result carried the album total but not this
+    //: avoids a bogus "0/11" when Deezer's search result carried the album total but not this
     // track's position.
     if let Some(track @ 1..) = song.track {
         file.set_track(track as u32);
@@ -135,7 +135,7 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
         extras::set_compilation(file, false);
     }
 
-    // The rest of what a release is: its code, its label and catalogue number, its barcode, its
+    // The rest of what a release is: its code, its label and catalog number, its barcode, its
     // kind and status, where and when it came out, and the ids that name it. The code has its
     // own field now; the "ISRC: x" comment is no longer written, and a comment the file arrived
     // with is left alone. Every setter skips an empty value.

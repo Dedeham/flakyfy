@@ -23,7 +23,7 @@ pub struct SoulseekSettings {
     ///
     /// This was 6, which measurement showed is simply too short: polling slskd's
     /// /responses for the same query returned nothing at 6s, 10s or 15s, then 14
-    /// responses including 5 FLACs at 20s — reproducibly, across three runs. The
+    /// responses including 5 FLACs at 20s: reproducibly, across three runs. The
     /// effect was that every star fell back to YouTube MP3 while lossless copies
     /// were sitting there unseen. Note that the search status object reports a
     /// responseCount well before /responses will hand the files over, so a status
@@ -147,7 +147,7 @@ pub struct SoulseekSettings {
     /// How many downloads may transfer at once. Each Soulseek download lands in its own folder,
     /// which is what makes this safe; until slskd has put one there, Octo keeps to one at a time
     /// whatever this says. Placing files into the library stays one at a time either way. 1 is the
-    /// old behaviour exactly. Read live.
+    /// old behavior exactly. Read live.
     /// Environment variable: SLSKD_PARALLEL_DOWNLOADS
     pub parallel_downloads: i32,
 

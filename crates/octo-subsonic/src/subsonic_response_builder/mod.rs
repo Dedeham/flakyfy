@@ -52,7 +52,7 @@ pub const ACQUISITIONS_EXTENSION: &str = "octoAcquisitions";
 pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 1;
 
 /// The extensions Octo answers itself, with their versions. songLyrics is here because Octo
-/// answers getLyricsBySongId for every song, and for the ones it answers itself it honours
+/// answers getLyricsBySongId for every song, and for the ones it answers itself it honors
 /// enhanced=true (version 2) with word cues; a Navidrome that lists fewer versions has them
 /// added, never removed.
 pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
@@ -570,7 +570,7 @@ impl SubsonicResponseBuilder {
         // request 404s, so making these ids resolvable is what gets external songs
         // queued and played at all.
         // External (radio) songs stream as YouTube format-140 audio: m4a / AAC LC
-        // inside an mp4 container, ~128kbps. The shim does NOT transcode — it
+        // inside an mp4 container, ~128kbps. The shim does NOT transcode: it
         // proxies the googlevideo bytes directly. Declared metadata MUST match the
         // real bytes, otherwise Subsonic clients prep the wrong decoder and the
         // play silently fails (Feishin holds at "loading", Arpeggi drops the entry
@@ -618,7 +618,7 @@ impl SubsonicResponseBuilder {
         // track.search/getsimilar don't include album names, so song.Album is
         // the empty string for nearly every external song. iOS Subsonic
         // clients (Arpeggi, Narjo) silently drop songs with album="" because
-        // their library views index by album — invisible album = invisible
+        // their library views index by album: invisible album = invisible
         // song. Apple Music represents singles as "song-name = album-name", so
         // doing the same here makes each placeholder look like a single and
         // satisfies the album-required filter.
@@ -645,7 +645,7 @@ impl SubsonicResponseBuilder {
             })
         });
 
-        // Avoid empty path segments — clients that lex on '/' (Arpeggio in
+        // Avoid empty path segments: clients that lex on '/' (Arpeggio in
         // particular) treat double-slash as malformed and quietly drop the entry.
         let path = format!("{}/{}/{}.{}", song.artist, album_name, song.title, suffix);
         let artist_list = json!([{ "id": artist_id, "name": song.artist }]);
@@ -934,7 +934,7 @@ pub fn json_shape_to_xml(ns: Option<&str>, name: &str, value: &Value) -> XElemen
 /// The two serializers used to be written out by hand, separately, and drifted badly:
 /// XML emitted nine attributes for a song where JSON emitted twenty-seven, so an
 /// XML-only client received external tracks with no `suffix`, `contentType`
-/// or `bitRate` at all — the fields a client picks its decoder from, and the ones
+/// or `bitRate` at all: the fields a client picks its decoder from, and the ones
 /// this file already warns must describe the bytes that will actually arrive. Deriving
 /// one from the other is what stops that happening again.
 pub(crate) fn attributes(element: &mut XElement, fields: &Fields) {

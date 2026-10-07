@@ -239,7 +239,7 @@ pub enum ArtistAgreement {
 /// One reading of song titles and artist credits for every place Octo decides whether two
 /// songs are the same: lyrics, AcoustID and MusicBrainz, Soulseek candidates, the library and
 /// radio matchers, search merging, and the Deezer and Last.fm lookups. Each of those used to
-/// carry its own normalizer, and they disagreed, so a song one of them recognised another did
+/// carry its own normalizer, and they disagreed, so a song one of them recognized another did
 /// not.
 ///
 /// The rules, in the order a title is read:
@@ -1367,7 +1367,7 @@ impl SongIdentity {
     // ---- titles -------------------------------------------------------------------------
 
     /// A title read into its core, its key, its version markers and its guests. The
-    /// artist, when given, lets a leading "Artist - " be recognised; an artist given as empty
+    /// artist, when given, lets a leading "Artist - " be recognized; an artist given as empty
     /// means the song has none, and then any "X - Y" title is read as artist X and title Y. None
     /// reads the title alone.
     pub fn parse_title(title: &str, artist: Option<&str>) -> SongTitle {
@@ -1685,7 +1685,7 @@ impl SongIdentity {
         ISRC_SHAPE.is_match(&isrc).then_some(isrc)
     }
 
-    /// Every valid ISRC among the values, normalised, in the order first seen.
+    /// Every valid ISRC among the values, normalized, in the order first seen.
     pub fn isrcs<I, S>(values: I) -> IndexSet<String>
     where
         I: IntoIterator<Item = S>,

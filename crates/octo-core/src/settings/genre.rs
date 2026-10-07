@@ -13,7 +13,7 @@ pub enum GenreFallbackSource {
     MusicBrainz,
 }
 
-/// What to write when everything normalises away to nothing.
+/// What to write when everything normalizes away to nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize, Serialize)]
 pub enum GenreEmptyBehavior {
     #[default]
@@ -59,7 +59,7 @@ impl Default for GenreMappingSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct GenreSettings {
-    /// Normalise genres on every download. Off by default: this rewrites a tag the user may
+    /// Normalize genres on every download. Off by default: this rewrites a tag the user may
     /// have curated.
     /// Environment variable: GENRE_NORMALIZE
     pub enabled: bool,
@@ -83,7 +83,7 @@ pub struct GenreSettings {
     /// How many genres a track may keep.
     ///
     /// Defaults to the ceiling, which means "keep what is there". A low default would make
-    /// simply switching normalisation on destructive: with no mapping table at all, a track
+    /// simply switching normalization on destructive: with no mapping table at all, a track
     /// tagged "Cloud Rap, Emo, Hip Hop, Trap" would silently become "Cloud Rap". Dropping junk,
     /// years and duplicates is what the feature is for; throwing away accurate genres is not,
     /// and nobody asked for it as a default.
@@ -93,11 +93,11 @@ pub struct GenreSettings {
     /// Environment variable: GENRE_MAX
     pub max_genres: i32,
 
-    /// What to write when everything normalises away to nothing.
+    /// What to write when everything normalizes away to nothing.
     ///
     /// Clear is the default when the feature is on, and it is the whole point: genre was only
     /// ever written when non-empty and never cleared, so a file that arrived tagged
-    /// "People & Blogs" kept it forever. A normaliser that cannot delete cannot fix that.
+    /// "People & Blogs" kept it forever. A normalizer that cannot delete cannot fix that.
     /// Environment variable: GENRE_ON_EMPTY
     pub on_empty: GenreEmptyBehavior,
 
@@ -186,7 +186,7 @@ impl GenreSettings {
         }
     }
 
-    /// Normalised to a leading dot and lowercase, so a user typing "FLAC" works.
+    /// Normalized to a leading dot and lowercase, so a user typing "FLAC" works.
     pub fn effective_backfill_extensions(&self) -> IgnoreCaseSet {
         let configured: Vec<String> = self
             .backfill_extensions
@@ -210,7 +210,7 @@ impl GenreSettings {
     }
 
     // Bounds are computed at READ time, hand-written, no data annotations: the house pattern.
-    // A value that arrived from a hand-edited settings.json is sanitised where it is used.
+    // A value that arrived from a hand-edited settings.json is sanitized where it is used.
     pub fn effective_max_genres(&self) -> i32 {
         self.max_genres.clamp(1, 10)
     }
@@ -235,7 +235,7 @@ impl GenreSettings {
         set
     }
 
-    /// Rows in the order the user put them, sanitised. Order is meaning here, so a duplicate
+    /// Rows in the order the user put them, sanitized. Order is meaning here, so a duplicate
     /// pattern keeps the FIRST occurrence: the later one could never fire anyway.
     pub fn effective_mappings(&self) -> Vec<GenreMappingSettings> {
         let mut seen_patterns = IgnoreCaseSet::new();
@@ -250,7 +250,7 @@ impl GenreSettings {
             }
 
             // Genre is kept VERBATIM apart from trimming: the user typed "Hip-Hop" and that
-            // exact spelling is what lands in the file. Normalising it here would write
+            // exact spelling is what lands in the file. Normalizing it here would write
             // "hip-hop" into a genre browser.
             let genre = source.genre.trim().to_string();
             if utf16_len(&genre) > 60 {

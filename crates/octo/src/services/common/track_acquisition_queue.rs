@@ -19,8 +19,8 @@ pub type AcquisitionOutcome = Result<String, Arc<anyhow::Error>>;
 
 /// The C# `TaskCompletionSource<string>`: completed once, by the worker or by a drop, and
 /// awaited by everyone who joined the request. Waiters are woken as tasks of their own, so
-/// completing this never runs a waiting request's continuation — response headers, body writes,
-/// the client's whole download — inline on the worker (`RunContinuationsAsynchronously`).
+/// completing this never runs a waiting request's continuation: response headers, body writes,
+/// the client's whole download: inline on the worker (`RunContinuationsAsynchronously`).
 #[derive(Clone)]
 pub struct Completion {
     outcome: Arc<watch::Sender<Option<AcquisitionOutcome>>>,
@@ -194,7 +194,7 @@ struct Receivers {
     plays: mpsc::Receiver<Arc<AcquisitionRequest>>,
 }
 
-/// Serialises permanent-copy downloads onto a single background worker.
+/// Serializes permanent-copy downloads onto a single background worker.
 ///
 /// The point is that a download must never be tied to the HTTP request that asked for it.
 /// Playing a track used to run the whole Soulseek transfer inside the stream request, so a

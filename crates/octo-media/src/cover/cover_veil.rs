@@ -1,4 +1,4 @@
-//! The colour-keeping veil under a cover's words, exactly as cover-design.json "veil" says and
+//! The color-keeping veil under a cover's words, exactly as cover-design.json "veil" says and
 //! tools/cover-art/reference.py does: only what is too bright for white words is darkened, by
 //! OKLab lightness with hue and chroma kept (yellows turned toward amber or green, never olive),
 //! and only as far as each block of words asks.
@@ -163,7 +163,7 @@ fn bands(side: usize) -> usize {
 }
 
 fn veil_pixels(pixels: &mut [u8], side: usize, regions: &[Region], veil: &VeilNumbers) {
-    // Each region's reach at every pixel centre, across and down.
+    // Each region's reach at every pixel center, across and down.
     let weights: Vec<(Vec<f64>, Vec<f64>)> = regions.iter().map(|r| weights(r, side)).collect();
     let yellow = &veil.yellow;
     let levels = &*LEVELS;
@@ -269,7 +269,7 @@ fn veil_pixels(pixels: &mut [u8], side: usize, regions: &[Region], veil: &VeilNu
                     let b2 = c2 * (h2 * std::f64::consts::PI / 180.0).sin();
 
                     // Lightness for the target luminance: exact for greys at first, then refined
-                    // against what the colour settles to after gamut mapping.
+                    // against what the color settles to after gamut mapping.
                     let mut l2 = l * (t / y0).cbrt();
                     for _ in 0..veil.refine {
                         let (sr, sg, sb) = settle(l2, a2, b2);

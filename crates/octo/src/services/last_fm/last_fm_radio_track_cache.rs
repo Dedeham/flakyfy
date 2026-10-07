@@ -174,7 +174,7 @@ impl LastFmRadioTrackCache {
         let mut temporary = sidecar.as_os_str().to_owned();
         temporary.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
         let temporary = PathBuf::from(temporary);
-        // The profile is an optimisation; the audio is what matters.
+        // The profile is an optimization; the audio is what matters.
         let written = std::fs::write(&temporary, octo_core::json::to_string(profile))
             .and_then(|()| std::fs::rename(&temporary, &sidecar));
         if written.is_err() {

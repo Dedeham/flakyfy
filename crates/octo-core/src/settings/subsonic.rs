@@ -139,7 +139,7 @@ pub struct SubsonicSettings {
 
     /// Which Navidrome library to download into, given as its folder path, for
     /// servers that serve more than one. Empty (the default) keeps the historical
-    /// behaviour of taking the first library Navidrome reports. A value that no
+    /// behavior of taking the first library Navidrome reports. A value that no
     /// longer matches any reported library is ignored with a warning rather than
     /// leaving downloads with nowhere to go.
     /// Environment variable: SUBSONIC__LIBRARYPATH
@@ -272,7 +272,7 @@ pub struct SubsonicSettings {
     /// request waits for it.
     ///
     /// Off by default because a Soulseek fetch routinely runs for minutes, and no client
-    /// waits that long — turning it on means the first play of each track appears to fail
+    /// waits that long: turning it on means the first play of each track appears to fail
     /// while the file lands in the background.
     pub wait_for_lossless_on_play: bool,
 

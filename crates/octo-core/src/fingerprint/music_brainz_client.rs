@@ -166,7 +166,7 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
     Ok(group_id)
 }
 
-/// The "isrcs" list of a recording lookup, each one normalised; invalid ones dropped.
+/// The "isrcs" list of a recording lookup, each one normalized; invalid ones dropped.
 pub fn parse_isrcs(root: &Value) -> ElementResult<Vec<String>> {
     let mut codes: Vec<String> = Vec::new();
     if let Some(isrcs @ Value::Array(_)) = try_get_property(root, "isrcs")? {

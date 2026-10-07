@@ -28,7 +28,7 @@ pub struct ShimStream {
 }
 
 /// Pure HTTP client for the yt-dlp-shim sidecar service. Octo never spawns
-/// yt-dlp itself — the shim wraps it behind /search and /stream endpoints
+/// yt-dlp itself: the shim wraps it behind /search and /stream endpoints
 /// in its own container, so any process-management quirks stay isolated.
 pub struct YouTubeResolver {
     /// `yt-dlp-shim-search`: 60 s rather than 30 s because back-to-back search3 prewarm

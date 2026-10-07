@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(AudioFingerprinter::parse_fpcalc_json(None), None);
     }
 
-    /// The contract under test is "verification never fails a download", not which flavour of
+    /// The contract under test is "verification never fails a download", not which flavor of
     /// failure a given machine produces: there may be no fpcalc on the machine and there is no
     /// audio file at this path on any of them.
     #[tokio::test]

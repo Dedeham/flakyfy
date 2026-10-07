@@ -19,12 +19,12 @@ use crate::services::framework::http::client_builder;
 
 /// Cover art via Last.fm's `track.getInfo` / `album.getInfo`. Uses
 /// the API key Octo already has configured for radio. Coverage overlaps a lot
-/// with iTunes/Deezer — included as the third fallback so we still get
+/// with iTunes/Deezer: included as the third fallback so we still get
 /// something for tracks the other two whiffed (often live recordings, remixes,
 /// or very recent releases that haven't been indexed yet by streaming APIs).
 ///
 /// Notable wart: Last.fm *artist* images were officially deprecated in
-/// 2019 — the API now returns a star-shaped placeholder for `artist.getInfo`
+/// 2019: the API now returns a star-shaped placeholder for `artist.getInfo`
 /// images. We don't bother calling that endpoint for artist routings.
 pub struct LastFmCoverArtLookup {
     client: reqwest::Client,
@@ -119,7 +119,7 @@ impl LastFmCoverArtLookup {
         if direct.as_deref().is_some_and(|d| !d.is_empty()) {
             return Ok(direct);
         }
-        // Singles often don't have an album entry — fall back to track-level lookup
+        // Singles often don't have an album entry: fall back to track-level lookup
         // using the album name as if it were the title.
         self.get_track_image_url(artist, album).await
     }
@@ -183,7 +183,7 @@ fn pick_image(doc: &Value, outer_key: &str, inner_key: Option<&str>) -> anyhow::
             continue;
         }
         // Last.fm's "deprecated artist image" placeholder is hosted at
-        // /i/u/2a96cbd8b46e442fc41c2b86b821562f.png — explicitly skip it
+        // /i/u/2a96cbd8b46e442fc41c2b86b821562f.png: explicitly skip it
         // so we don't return a star icon as cover art.
         if text.contains("2a96cbd8b46e442fc41c2b86b821562f") {
             continue;

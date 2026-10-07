@@ -9,7 +9,7 @@
 //!   `ETag: "<base64 SHA-256 of the body>"` and `Last-Modified` (the file's modification time);
 //! - `If-Match` / `If-Unmodified-Since` → 412, `If-None-Match` (weak comparison against the
 //!   served variant's first ETag) / `If-Modified-Since` → 304, `Range` (one range, any unit
-//!   name, `If-Range` honoured) → 206 or 416;
+//!   name, `If-Range` honored) → 206 or 416;
 //! - Brotli and gzip variants of the text files, compressed once at startup, served when
 //!   `Accept-Encoding` allows (highest q wins, Brotli on a tie), with `Content-Encoding`,
 //!   `Vary: Content-Encoding`, and two ETags: the compressed body's, then `W/` the original's.
@@ -527,7 +527,7 @@ pub(crate) enum RangeOutcome {
     Unsatisfiable,
 }
 
-/// `RangeHelper.ParseRange` + `NormalizeRange`: exactly one range is honoured (several, or a
+/// `RangeHelper.ParseRange` + `NormalizeRange`: exactly one range is honored (several, or a
 /// malformed header, mean the whole body), and the unit name is not checked.
 pub(crate) fn parse_range(value: &str, length: u64) -> RangeOutcome {
     let Some((unit, spec)) = value.split_once('=') else {

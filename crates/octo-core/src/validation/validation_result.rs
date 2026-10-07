@@ -2,7 +2,7 @@
 
 use indexmap::IndexMap;
 
-/// `System.ConsoleColor`, which the startup report colours its statuses with.
+/// `System.ConsoleColor`, which the startup report colors its statuses with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ConsoleColor {
     Black,
@@ -25,7 +25,7 @@ pub enum ConsoleColor {
 }
 
 impl ConsoleColor {
-    /// The ANSI foreground code .NET's terminal driver sets for this colour.
+    /// The ANSI foreground code .NET's terminal driver sets for this color.
     pub fn ansi_code(self) -> u8 {
         match self {
             ConsoleColor::Black => 30,
@@ -82,7 +82,7 @@ impl ValidationResult {
         }
     }
 
-    /// Creates a failed validation result. (C#'s default colour is red.)
+    /// Creates a failed validation result. (C#'s default color is red.)
     pub fn failure(status: impl Into<String>, details: impl Into<String>, color: ConsoleColor) -> Self {
         Self {
             is_valid: false,

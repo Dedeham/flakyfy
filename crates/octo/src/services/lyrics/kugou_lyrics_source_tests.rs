@@ -194,7 +194,7 @@ fn lyrics_a_clean_edits_words_fit_the_song() {
     }
 }
 
-/// LyricsWordTimingTests.FakeKugou: the lyric search, the catalogue, the search by hash and the
+/// LyricsWordTimingTests.FakeKugou: the lyric search, the catalog, the search by hash and the
 /// downloads, each answered from what the test set, on one local server.
 #[derive(Clone, Default)]
 struct FakeKugou {

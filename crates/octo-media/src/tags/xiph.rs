@@ -281,7 +281,7 @@ impl XiphComment {
     }
 
     /// `StorePictures`: the picture fields go, then one METADATA_BLOCK_PICTURE per picture, its
-    /// sizes and colours zero as TagLib# writes them.
+    /// sizes and colors zero as TagLib# writes them.
     fn store_pictures(&mut self) {
         let Some(pictures) = self.pending_pictures.take() else {
             return;

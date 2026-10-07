@@ -63,7 +63,7 @@ impl From<SoulseekRouting> for SharedRouting {
 }
 
 /// Server-side registry that maps short opaque IDs (Navidrome-shaped 22-char base62)
-/// to Soulseek/YouTube routing info. Subsonic clients are picky about song-id format —
+/// to Soulseek/YouTube routing info. Subsonic clients are picky about song-id format:
 /// some quietly drop entries with long pipe-delimited IDs from their play queues.
 /// Translating to a short, alphabetic-looking key avoids that whole class of issue.
 ///
@@ -347,7 +347,7 @@ impl ExternalIdRegistry {
     }
 
     /// Treat the first 16 bytes as a big integer and base62-encode it, least significant digit
-    /// first. We don't need strict cryptographic uniqueness — just collision resistance within
+    /// first. We don't need strict cryptographic uniqueness: just collision resistance within
     /// ~10k items.
     fn to_base62(bytes: &[u8], length: usize) -> String {
         let mut head = [0u8; 16];
@@ -435,7 +435,7 @@ impl ExternalIdRegistry {
             .collect();
         if let Err(e) = state_file::save_atomic(path, &octo_core::json::to_string(&entries)) {
             // Best-effort: losing a flush costs the ids minted since the last one, which
-            // is the behaviour we already had. It must never take a request down.
+            // is the behavior we already had. It must never take a request down.
             self.dirty.store(true, Ordering::SeqCst);
             warn!("external id registry could not be written: {e}");
         }

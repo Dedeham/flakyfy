@@ -72,7 +72,7 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
 
     // Verbose entry log: every stream call gets a single line tagged with
     // the client + id + isExternal + Range + UA + key headers. Diagnostics
-    // for "client X never plays external songs" — if a tap doesn't even
+    // for "client X never plays external songs": if a tap doesn't even
     // reach this log line, the client is filtering on its side.
     let client_name = call.param_opt("c").unwrap_or("?").to_string();
     let range_in = call.header("Range").unwrap_or_else(|| "(none)".into());
@@ -267,7 +267,7 @@ async fn try_direct_stream(
     // Forward the client's Range header up the chain so the shim can
     // ask googlevideo for the requested byte range and we can return
     // a proper 206. iOS Subsonic clients refuse to play non-FLAC
-    // audio without working byte-range support — our prior 200/none
+    // audio without working byte-range support: our prior 200/none
     // response was what was making Arpeggi/Narjo silently drop
     // every external song from the queue.
     let range_header = call.header("Range");
@@ -458,7 +458,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(file(bytes, "image/jpeg"));
     }
 
-    // Playlist covers haven't changed — keep the existing path.
+    // Playlist covers haven't changed: keep the existing path.
     if playlist_id_helper::is_external_playlist(Some(&id)) {
         return Ok(match external_playlist_cover(&state, &id).await {
             Ok(Some(response)) => response,
@@ -552,7 +552,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(missing_cover(&state, plain).await);
     }
 
-    // Local library — proxy to Navidrome unchanged.
+    // Local library: proxy to Navidrome unchanged.
     match call.proxy.relay("rest/getCoverArt", &call.parameters).await {
         Ok(result) => Ok(file(
             result.body,
@@ -563,7 +563,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
             // logo on it makes Octo look like it is claiming a track the user
             // already owned. Reading embedded art off a cloud-backed mount can take
             // seconds cold, so this path is reached by ordinary slowness, not just
-            // by missing art — all the more reason not to brand it.
+            // by missing art: all the more reason not to brand it.
             debug!("cover art relay failed for local id {id}: {e}");
             Ok(serve_placeholder(&state, false).await)
         }
@@ -612,7 +612,7 @@ fn requested_cover_size(call: &SubsonicCall) -> Option<i32> {
     call.param("size").parse::<i32>().ok().filter(|size| *size > 0)
 }
 
-/// A genre or pinned station's tag, which stands in for its colour when its songs give none.
+/// A genre or pinned station's tag, which stands in for its color when its songs give none.
 fn station_cover_label(station: &LastFmRadioStation) -> Option<String> {
     match station.kind {
         LastFmRadioStationKind::Genre
@@ -622,7 +622,7 @@ fn station_cover_label(station: &LastFmRadioStation) -> Option<String> {
     }
 }
 
-/// The songs whose covers colour a station's cover: its seed artists' songs first (the
+/// The songs whose covers color a station's cover: its seed artists' songs first (the
 /// artist of an artist station, the top seeds of Your Mix), then its first songs, one per
 /// album, four at most. Looked up like any song's cover outside the library.
 pub(crate) fn station_cover_seeds(state: &AppState, station: &LastFmRadioStation) -> Vec<CoverSeed> {
@@ -693,7 +693,7 @@ pub(crate) fn station_cover_seeds(state: &AppState, station: &LastFmRadioStation
     seeds
 }
 
-/// The songs whose covers colour a mix's cover: the first of this period's draw, one per
+/// The songs whose covers color a mix's cover: the first of this period's draw, one per
 /// album cover, four at most, read from Navidrome as the listener. A period's first draw is
 /// made only for a caller Navidrome accepts, as opening the mix would.
 async fn mix_cover_seeds(
@@ -790,7 +790,7 @@ pub(crate) fn draws_its_own_marks_in(parameters: &octo_subsonic::Parameters) -> 
 }
 
 /// Returns a 200 response with the Octo placeholder JPEG. Used in every code path that
-/// previously returned 404 — Subsonic clients (Arpeggio especially) drop play-queue entries
+/// previously returned 404: Subsonic clients (Arpeggio especially) drop play-queue entries
 /// whose cover-art request fails, so we always serve something rather than fail.
 pub(crate) async fn serve_placeholder(state: &AppState, branded: bool) -> Response {
     let service = Arc::clone(&state.cover_art_service);
@@ -810,7 +810,7 @@ pub(crate) async fn serve_placeholder(state: &AppState, branded: bool) -> Respon
 /// OpenSubsonic transcoding extension. Feishin posts here before /rest/stream to ask the
 /// server "should I transcode this or play it directly?" Navidrome implements this for local
 /// songs. For external (Octo placeholder) songs the upstream relay returns nothing useful and
-/// Feishin gets stuck — won't even issue the /rest/stream call. So we hijack: external IDs
+/// Feishin gets stuck: won't even issue the /rest/stream call. So we hijack: external IDs
 /// always direct-play, local IDs pass through to Navidrome's real implementation.
 pub async fn get_transcode_decision(State(state): State<AppState>, req: Request) -> AppResult {
     let call = match SubsonicCall::read(&state, req).await {
@@ -845,7 +845,7 @@ pub async fn get_transcode_decision(State(state): State<AppState>, req: Request)
     }
 }
 
-/// canDirectPlay:true is the only field Feishin's controller checks on the happy path — see
+/// canDirectPlay:true is the only field Feishin's controller checks on the happy path: see
 /// Feishin's subsonic-controller.ts: requiresTranscoding = !td?.canDirectPlay. Returning the
 /// minimal envelope lets it advance to /rest/stream which is where our own controller takes
 /// over for externals.

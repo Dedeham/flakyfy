@@ -28,7 +28,7 @@ pub struct MetadataSettings {
     pub use_cover_art_archive: bool,
 
     /// Treat a cover that is not square as missing. A 16:9 cover is a video thumbnail; when
-    /// nothing better turns up its centre square is used, which for a YouTube "Topic" upload is
+    /// nothing better turns up its center square is used, which for a YouTube "Topic" upload is
     /// the real cover inside the letterbox. Off keeps whatever the source embedded.
     /// Environment variable: REPLACE_VIDEO_COVERS
     pub replace_video_covers: bool,
@@ -56,7 +56,7 @@ pub struct MetadataSettings {
     pub fetch_lyrics: bool,
 
     /// Lyrics sources, in order: song (the lyrics the song already has, in its tags or a file
-    /// beside it, as Navidrome serves them), kugou (word-timed, deep catalogue, an unofficial
+    /// beside it, as Navidrome serves them), kugou (word-timed, deep catalog, an unofficial
     /// API), lrclib (open, line-synced), netease (synced and deep on non-Western and older music,
     /// but an unofficial API, so it only runs when listed), lyricsovh (plain text). Timed beats
     /// plain, so a later source is only asked while nothing earlier had timing. Leaving a source
@@ -101,7 +101,7 @@ pub struct MetadataSettings {
     /// Environment variable: PREFERRED_COUNTRIES
     pub preferred_countries: String,
 
-    /// Ask the music database for the chosen release's label, catalogue number, barcode, status
+    /// Ask the music database for the chosen release's label, catalog number, barcode, status
     /// and track ids (one request per download, about a second), and search it by name when
     /// the fingerprint named nothing. Needs no key. Off tags from the fingerprint and the
     /// catalog alone.

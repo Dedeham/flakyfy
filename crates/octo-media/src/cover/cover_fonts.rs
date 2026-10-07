@@ -418,7 +418,7 @@ impl Fonts {
     }
 
     /// How far below the top of its line SixLabors set a baseline, with the line's fonts'
-    /// largest ascent and descent centred in a line one size tall (VerticalAlignment.Top).
+    /// largest ascent and descent centerd in a line one size tall (VerticalAlignment.Top).
     fn top_to_baseline(&self, ids: impl IntoIterator<Item = fontdb::ID>, size: f32) -> f32 {
         let (mut ascent, mut descent) = (f32::MIN, f32::MIN);
         for id in ids {
@@ -620,7 +620,7 @@ pub struct PlacedLine {
 
 /// The design's text engine: lines broken between words (and between Chinese, Japanese and
 /// Korean characters), each line's height the size times the line height with the letters
-/// centred in it, and an ellipsis where words are cut, as the apps set them.
+/// centerd in it, and an ellipsis where words are cut, as the apps set them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CoverTypesetter;
 
@@ -689,7 +689,7 @@ impl CoverTypesetter {
     }
 
     /// Where each line's letters go: its left edge and baseline. A line is the size times the
-    /// line height tall, with the font's ascent and descent centred in it.
+    /// line height tall, with the font's ascent and descent centerd in it.
     pub fn place(&self, words: &CoverWords) -> Vec<PlacedLine> {
         let type_ = &words.type_;
         let (lines, _) = self.lines(&words.text, type_, words.width);

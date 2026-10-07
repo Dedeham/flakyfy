@@ -36,7 +36,7 @@ impl SearchBudget {
     /// together so the two can never drift apart at a call site.
     ///
     /// `requested_songs` is the client's songCount; negative values are treated as zero (the
-    /// previous expression sanitised those only by accident, through its flat floor).
+    /// previous expression sanitized those only by accident, through its flat floor).
     /// `discovery_enabled` is `SubsonicSettings.EnableSearchDiscovery`: false sends the whole
     /// request to the local target and skips discovery entirely, which is what lets the call
     /// site skip its Last.fm/Deezer fan-out too instead of just discarding it.
@@ -50,7 +50,7 @@ impl SearchBudget {
         }
 
         // Locals still scale with big requests through the quarter rule, which is what keeps
-        // behaviour identical for the large counts radio-style clients send. The floor only
+        // behavior identical for the large counts radio-style clients send. The floor only
         // decides small requests, and capping it at the request is the fix.
         let local = Self::LOCAL_SONG_FLOOR.min(requested).max(requested / 4);
 

@@ -45,7 +45,7 @@ How the Subsonic routes split across the groups in section 3:
 
 ---
 
-## 2. Cross-cutting behaviour (applies to every route below)
+## 2. Cross-cutting behavior (applies to every route below)
 
 ### 2.1 Pipeline order (`Program.cs` L550-607)
 
@@ -92,7 +92,7 @@ When the dictionary is relayed to Navidrome (`BuildQueryAsync` / `RestoreRepeate
 ### 2.5 Envelopes Octo builds itself
 
 - `version` is always `"1.16.1"`. Octo-built envelopes carry no `type`, `serverVersion` or `openSubsonic`. The exceptions add `"type":"octo"`: `getAcquisitions`, the fallback list in `getOpenSubsonicExtensions`, and the octoLibraryActions and octoLyrics replies.
-- **XML** uses namespace `http://subsonic.org/restapi`. The root `<subsonic-response status=".." version="1.16.1">` is written by `XDocument.ToString()`, which means **pretty-printed with two-space indents and no `<?xml?>` declaration**. Content type: `application/xml`, no charset (`ContentResult`). The `getPlaylists` and `getInternetRadioStations` merges re-serialise Navidrome's XML the same way (`File(..., "application/xml")`).
+- **XML** uses namespace `http://subsonic.org/restapi`. The root `<subsonic-response status=".." version="1.16.1">` is written by `XDocument.ToString()`, which means **pretty-printed with two-space indents and no `<?xml?>` declaration**. Content type: `application/xml`, no charset (`ContentResult`). The `getPlaylists` and `getInternetRadioStations` merges re-serialize Navidrome's XML the same way (`File(..., "application/xml")`).
 - **JSON** is `{"subsonic-response":{...}}`, written by `JsonResult`. That means compact output, content type `application/json; charset=utf-8`, and the web defaults: camelCase for anonymous-type members, dictionary keys left as they are, nulls written, and enums written as numbers unless the code calls `.ToString()`.
 - **The empty "ok" differs by format.** `CreateResponse(format, element, {})` in **JSON omits the element entirely** (`{"subsonic-response":{"status":"ok","version":"1.16.1"}}`), while XML includes an empty `<element/>`. Every "synthetic ok" in this document behaves this way.
 - Errors: `{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":N,"message":"..."}}}`, or `<error code="N" message="..."/>`. Subsonic errors always go out with **HTTP 200**.
@@ -108,7 +108,7 @@ Mixed cases:
 
 ### 2.7 Relay mechanics (`SubsonicProxyService`)
 
-| Method | Upstream request | Failure behaviour | Used by |
+| Method | Upstream request | Failure behavior | Used by |
 |---|---|---|---|
 | `RelayAsync(endpoint, params)` | `GET {Url.TrimEnd('/')}/{endpoint}?{query}` with no forwarded headers and no body | Throws `OctoNotConfiguredException` when the URL is missing or invalid. A non-2xx answer throws `HttpRequestException` (`EnsureSuccessStatusCode`). | most passthroughs |
 | `RelaySafeAsync` | same | Any exception becomes `(null, null, false)` | most "safe" passthroughs |
@@ -188,7 +188,7 @@ How Octo names the user:
 
 ### 2.10 ID taxonomy (decides local, proxied or mixed)
 
-| Shape | Meaning | Recognised by |
+| Shape | Meaning | Recognized by |
 |---|---|---|
 | any id present in `ExternalIdRegistry` (pure base62 with no prefix, persisted) | Octo external song, album or artist (provider `"soulseek"`, type `"song"` from `ParseSongId`). The registry's `Kind` tells songs, albums and artists apart. | `ParseExternalId` checks the registry first |
 | `ext-{provider}-{song\|album\|artist}-{id...}` | Legacy external id | `ParseExternalId` |
@@ -222,7 +222,7 @@ Abbreviations used in the Response column:
 | Endpoint | Action (line) | Parameters | Handling | Auth | Response |
 |---|---|---|---|---|---|
 | `ping` | `Ping` (L207) | all relayed | **Proxied** as `rest/ping.view` with `RelaySafeAsync` | R | PT on success. The URL check runs **before** any relay: a blank or non-absolute `Subsonic:Url` gives SX error code 0 `Octo isn't configured yet. Open {scheme}://{host}/admin and set your Navidrome URL (SUBSONIC_URL), then point this client at Octo instead of Navidrome.` A relay failure gives SX error code 0 `Octo can't reach Navidrome at {Url}. Check the URL is correct and reachable from the Octo container (use a LAN IP or service name, not localhost).` A Navidrome auth failure passes through as Navidrome's envelope. |
-| `getOpenSubsonicExtensions` | `GetOpenSubsonicExtensions` (L2568) | all relayed | **Mixed**: relayed, then merged | none (spec) | When upstream says ok, Octo adds or extends `octoAcquisitions [1]`, `octoLyrics [1]` (only while `LyricsChoiceService` is registered **and** `Metadata:FetchLyrics`), `octoLibraryActions [1,2]` (only while `LibraryActions:Enabled`) and `songLyrics [1,2]`. Versions are added and never removed. In JSON the result is the upstream document re-serialised with `application/json`. In XML it is the re-serialised upstream with the upstream content type. An upstream `failed` envelope passes through unchanged. An unparseable body goes back as-is. With no upstream answer, Octo lists only its own extensions (JSON includes `"type":"octo"`). Format check is case-insensitive. |
+| `getOpenSubsonicExtensions` | `GetOpenSubsonicExtensions` (L2568) | all relayed | **Mixed**: relayed, then merged | none (spec) | When upstream says ok, Octo adds or extends `octoAcquisitions [1]`, `octoLyrics [1]` (only while `LyricsChoiceService` is registered **and** `Metadata:FetchLyrics`), `octoLibraryActions [1,2]` (only while `LibraryActions:Enabled`) and `songLyrics [1,2]`. Versions are added and never removed. In JSON the result is the upstream document re-serialized with `application/json`. In XML it is the re-serialized upstream with the upstream content type. An upstream `failed` envelope passes through unchanged. An unparseable body goes back as-is. With no upstream answer, Octo lists only its own extensions (JSON includes `"type":"octo"`). Format check is case-insensitive. |
 | `jukeboxControl` | `JukeboxControl` (L3237) | `f` | **Local** | N | Always SX error code 0 `Jukebox is not supported`. Nothing is relayed. |
 
 ### 3.2 Browsing
@@ -292,7 +292,7 @@ The placeholder is a 200 JPEG. When the cover service returns no bytes, the answ
 
 | Endpoint | Action (line) | Parameters | Handling | Auth | Response and quirks |
 |---|---|---|---|---|---|
-| `getPlaylists` | `GetPlaylists` (L357) | `u`, all relayed | **Mixed**: relay, then append | R | A relay failure, an empty body, or a body that is not `ok` (format-aware) is passed through as-is; with no body at all the client gets SX code 0 `Unable to authenticate with Navidrome`. On success Octo, without delaying the reply, makes sure this user's library-action playlists exist; on a user's first request it also seeds the radio profile from starred, frequent and recent songs. It then appends the visible **radio stations** (`ExposeRadioAsPlaylists`) and the **generated mixes** (`GeneratedPlaylists:Enabled`) as extra `playlist` rows. Output: `application/json` or `application/xml` (XML re-serialised, pretty-printed). If the merge throws, the upstream body goes back unchanged. |
+| `getPlaylists` | `GetPlaylists` (L357) | `u`, all relayed | **Mixed**: relay, then append | R | A relay failure, an empty body, or a body that is not `ok` (format-aware) is passed through as-is; with no body at all the client gets SX code 0 `Unable to authenticate with Navidrome`. On success Octo, without delaying the reply, makes sure this user's library-action playlists exist; on a user's first request it also seeds the radio profile from starred, frequent and recent songs. It then appends the visible **radio stations** (`ExposeRadioAsPlaylists`) and the **generated mixes** (`GeneratedPlaylists:Enabled`) as extra `playlist` rows. Output: `application/json` or `application/xml` (XML re-serialized, pretty-printed). If the merge throws, the upstream body goes back unchanged. |
 | `getPlaylist` | `GetPlaylist` (L426) | `id`, `u` | **Mixed** | mix and station P (client's `f`), others R | A generated mix id for `u`: `rest/ping` is relayed with `id` removed (failure gives SX code 40 `Wrong username or password`), then the mix is materialised and returned with `CreateGeneratedPlaylistResponse`. A station id among `u`'s playlist stations: the same ping check, then the tracks are resolved (concurrency 4, explicit filter applied, back-to-back repeats of an artist or album dropped), blended into discovery, durations completed, rows swapped for the sync-catalog version where one exists, the queue registered, and `CreateRadioPlaylistResponse` returned. Any other id is relayed with `RelaySafeAsync` and returns PT; a failure gives SX code 0 `Playlist not found`. |
 | `createPlaylist`, `updatePlaylist`, `deletePlaylist` | `MutatePlaylist` (L710) | `playlistId` (falls back to `id`) | **Mixed** | R | An Octo playlist id (22 characters starting `or` or `og`) gives SX code 70 `Octo's generated playlists are read-only`. Otherwise the request is relayed as `"rest/" + <last path segment without .view>`, keeping the client's casing, and returns PT. A failure gives SX code 0 `Unable to update playlist`. |
 | `getInternetRadioStations` | `GetInternetRadioStations` (L484) | `u`, all relayed | **Mixed** | R | Same pass-through rules as `getPlaylists` (code 0 `Unable to authenticate with Navidrome`). On success, the profile bootstrap runs, then the visible stream stations (`ExposeRadioAsStreams`) are listed. A stream session token is issued for each station whose ready pool is warm. When none is warm, Octo prepares **one** starter, bounded by `EffectiveStarterPublishTimeout`, and warms the rest in the background. Each published station is appended as `internetRadioStation {id, name, streamUrl: "{scheme}://{host}{pathBase}/radio/stream/{token}", coverArt: id}` (attributes in XML). If the merge throws, the upstream body goes back unchanged. |
@@ -452,7 +452,7 @@ Every write route (POST, PUT, DELETE) is also behind G. Bodies are JSON; binding
 | POST | `/api/admin/upgrades/cancel` | `CancelUpgrades` (L1406) | body `{ids:[...]}` | S | `200 {"ok":true,"cancelled":...}`, or `404` |
 | POST | `/api/admin/upgrades/clear` | `ClearUpgrades` (L1416) | none | S | `200 {"ok":true,"cleared":...}`, or `404` |
 
-### 4.7 Genre normalisation
+### 4.7 Genre normalization
 
 | Method | Path | Action (line) | Parameters | Gate | Response |
 |---|---|---|---|---|---|
@@ -523,7 +523,7 @@ All routes are **S**, using `Validate`.
 4. **Local `stream` relay.** The upstream 206, `Content-Range` and `Content-Length` copied onto a non-seekable `FileStreamResult` with range processing on: confirm the status and headers the client actually gets, including when `Subsonic:Url` ends in `/` and `RelayStreamAsync` builds `//rest/stream` (2.7).
 5. **`getSimilarSongs*` with radio off.** The relay goes to `{Url}//rest/...` (3.2). Does Navidrome accept the double slash?
 6. **The `busy`/`Busy` name collision** in `GET /api/admin/lyrics/library`, which is probably answered as a 400 "Operation not valid" today (4.9).
-7. **XML serialisation.** Octo-built XML is indented and has no declaration, while relayed XML is byte-for-byte Navidrome's. The differ must not normalise one into the other.
+7. **XML serialization.** Octo-built XML is indented and has no declaration, while relayed XML is byte-for-byte Navidrome's. The differ must not normalize one into the other.
 8. **Content-Type spellings.** These must be reproduced exactly: `application/xml` with no charset (ContentResult and File), `application/json` with no charset (File), and `application/json; charset=utf-8` (JsonResult/Ok).
 9. **CORS on `/api/admin*`.** Every `Access-Control-*` header is stripped, including on errors, and OPTIONS gets 204 with no allow headers.
 

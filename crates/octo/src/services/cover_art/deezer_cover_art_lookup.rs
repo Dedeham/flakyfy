@@ -17,7 +17,7 @@ use crate::services::framework::HttpAnswer;
 use crate::services::metadata::DeezerRateLimitHandler;
 
 /// Cover art via Deezer's public search API. No key, no auth, very broad
-/// catalog including international/non-Western releases — fills the gaps
+/// catalog including international/non-Western releases: fills the gaps
 /// where iTunes' US-skewed catalog whiffs.
 ///
 /// Endpoints used:

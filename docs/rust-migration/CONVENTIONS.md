@@ -4,14 +4,14 @@ Read this before porting any part of `octo/` to Rust. The contract documents sit
 [`endpoints.md`](endpoints.md) (routes), [`config.md`](config.md) (settings),
 [`state-files.md`](state-files.md) (files on disk, with byte-exact fixtures in `fixtures/state/`) and
 [`packages.md`](packages.md). The C# code at tag `csharp-final` (commit `15d6840`) is the
-behaviour to match. It is frozen. Since the cutover it is no longer in the working tree: read it
+behavior to match. It is frozen. Since the cutover it is no longer in the working tree: read it
 with `git show csharp-final:octo/<path>`, or check it out somewhere else
 (`git worktree add ../octo-csharp csharp-final`).
 
 ## The rule
 
-**Port behaviour, not design.** Each C# type becomes a Rust type that does the same thing,
-quirks included, and the C# tests become Rust tests that pass. When the C# behaviour looks like a
+**Port behavior, not design.** Each C# type becomes a Rust type that does the same thing,
+quirks included, and the C# tests become Rust tests that pass. When the C# behavior looks like a
 bug, keep it. Then add a row to [`known-diffs.md`](known-diffs.md) only if you deliberately
 diverged, saying why. Don't silently "fix" anything.
 
@@ -19,7 +19,7 @@ diverged, saying why. Don't silently "fix" anything.
 
 | Crate | Holds | C# sources |
 |---|---|---|
-| `octo-core` | `config` and `json` (done). Also `settings`, `models`, and the pure logic: `common`, `tagging`, `lyrics` (text/identity/choices), `metadata` (genre normaliser, accept-language), `fingerprint` (comparers, verification types), `soulseek` (candidate matching, search profile, song length), `updates` (release version), `validation` | `Models/**`, and the pure parts of `Services/**` |
+| `octo-core` | `config` and `json` (done). Also `settings`, `models`, and the pure logic: `common`, `tagging`, `lyrics` (text/identity/choices), `metadata` (genre normalizer, accept-language), `fingerprint` (comparers, verification types), `soulseek` (candidate matching, search profile, song length), `updates` (release version), `validation` | `Models/**`, and the pure parts of `Services/**` |
 | `octo-media` | `tags` (lofty), `audio` (ffmpeg/fpcalc: loudness, spectrum, fingerprint), `cover` (list-cover rendering, cover image files) | `Services/Audio`, `Services/Fingerprint/{AudioFingerprinter,SpectrumAnalyzer}`, `Services/Common/TagWriterExtras`, `Services/CoverArt/{CoverBook,CoverPainter,CoverLayout,CoverFonts,CoverColours,CoverBackgrounds,CoverVeil,CoverImage,CoverFiles}` |
 | `octo-subsonic` | The Subsonic wire format: the XML/JSON response model, request parsing, credentials | `Services/Subsonic/{SubsonicRequestParser,SubsonicCredential}`, and the format-only parts of `SubsonicResponseBuilder` |
 | `octo` | Everything with I/O or service wiring: HTTP clients, stores, workers, the acquisition pipeline, controllers, middleware, `main` | the rest |
@@ -75,7 +75,7 @@ better that way (`SongIdentity::key(..)`). Pick one per type and stay with it.
   `\b`, `\d`, `\w` and `\p{L}` only see the 16-bit range in .NET; see how
   `common::song_identity` handles that before porting a regex.
 - **Checking against the real C#:** the .NET 9 SDK image (`mcr.microsoft.com/dotnet/sdk:9.0`) is
-  available in Docker, and there is a local SDK at `~/.cache/octo-verify-dotnet`. When behaviour is
+  available in Docker, and there is a local SDK at `~/.cache/octo-verify-dotnet`. When behavior is
   subtle, run the original C# beside your Rust on generated inputs instead of guessing.
 - Time: services that the C# gave a `Func<DateTime>` clock or a `TimeProvider` take
   `octo_core::common::clock::Clock` (an `Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>` wrapper with
@@ -112,7 +112,7 @@ In tests, build settings with struct literals plus `..Default::default()`, and a
   `docs/rust-migration/fixtures/state/` with a read → write → compare test. Dates go through
   `octo_core::json::datetime` (`#[serde(with = "...::utc")]` and the related helpers). Enums are
   written as numbers unless `state-files.md` says otherwise. Computed C# properties that STJ
-  serialised must still be written (implement `Serialize` by hand or add a serialised field).
+  serialized must still be written (implement `Serialize` by hand or add a serialized field).
 - **API answers** (controllers) used ASP.NET's Web defaults: camelCase names
   (`#[serde(rename_all = "camelCase")]`), nulls written, enums as numbers unless a
   `JsonStringEnumConverter` was in play, and the default encoder's escaping. Answer with

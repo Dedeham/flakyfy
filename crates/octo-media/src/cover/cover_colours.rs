@@ -1,10 +1,10 @@
-//! The colour rules of the cover design, the same maths as the Octo apps' covers
-//! (app.winters.octo.covers) so a list looks the same wherever it is drawn. Colours
+//! The color rules of the cover design, the same maths as the Octo apps' covers
+//! (app.winters.octo.covers) so a list looks the same wherever it is drawn. Colors
 //! are 0xAARRGGBB ints; rounding is half up, as the apps round.
 
 use std::collections::HashMap;
 
-/// A colour as OKLCH: lightness 0 to 1, chroma (0 grey, about 0.3 at the most vivid), hue in degrees.
+/// A color as OKLCH: lightness 0 to 1, chroma (0 grey, about 0.3 at the most vivid), hue in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lch {
     pub l: f64,
@@ -12,7 +12,7 @@ pub struct Lch {
     pub h: f64,
 }
 
-/// One colour of a picture and how much of it that colour covers, 0 to 1.
+/// One color of a picture and how much of it that color covers, 0 to 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Swatch {
     pub argb: i32,
@@ -32,7 +32,7 @@ pub(crate) fn round_f32(v: f32) -> i32 {
     (v + 0.5f32).floor() as i32
 }
 
-/// `#rrggbb` (the `#` optional) as an opaque colour.
+/// `#rrggbb` (the `#` optional) as an opaque color.
 pub fn hex(hex: &str) -> Result<i32, std::num::ParseIntError> {
     let value = u32::from_str_radix(hex.trim_start_matches('#'), 16)?;
     Ok((0xFF00_0000 | value) as i32)
@@ -90,7 +90,7 @@ pub fn hue_distance(a: f64, b: f64) -> f64 {
     if d > 180.0 { 360.0 - d } else { d }
 }
 
-/// How far apart two colours look (0 the same).
+/// How far apart two colors look (0 the same).
 pub fn distance(x: Lch, y: Lch) -> f64 {
     let ra = x.h * std::f64::consts::PI / 180.0;
     let rb = y.h * std::f64::consts::PI / 180.0;
@@ -99,12 +99,12 @@ pub fn distance(x: Lch, y: Lch) -> f64 {
     ((x.l - y.l).powi(2) + da * da + db * db).sqrt()
 }
 
-/// The colour with this opacity.
+/// The color with this opacity.
 pub fn alpha(argb: i32, a: f32) -> i32 {
     (round_f32(a.clamp(0.0, 1.0) * 255.0) << 24) | (argb & 0xFF_FFFF)
 }
 
-/// One colour laid over another at the first one's opacity.
+/// One color laid over another at the first one's opacity.
 pub fn over(top: i32, under: i32) -> i32 {
     let a = self::a(top) as f32 / 255.0;
     if a >= 1.0 {
@@ -131,7 +131,7 @@ pub fn relative_luminance(argb: i32) -> f64 {
     0.2126 * lin(r(argb)) + 0.7152 * lin(g(argb)) + 0.0722 * lin(b(argb))
 }
 
-/// How far apart two colours are for reading, from 1 (the same) to 21.
+/// How far apart two colors are for reading, from 1 (the same) to 21.
 pub fn contrast_ratio(a: i32, b: i32) -> f64 {
     let la = relative_luminance(a);
     let lb = relative_luminance(b);
@@ -181,8 +181,8 @@ impl Bucket {
     }
 }
 
-/// A picture's main colours, most of the picture first, up to `most`: pixels counted in coarse
-/// buckets (4 bits a channel), every `step`th one, each bucket joining the first colour it looks
+/// A picture's main colors, most of the picture first, up to `most`: pixels counted in coarse
+/// buckets (4 bits a channel), every `step`th one, each bucket joining the first color it looks
 /// like or starting one of its own. (C# defaults: step 3, most 6.)
 pub fn swatches(pixels: &[i32], step: usize, most: usize) -> Vec<Swatch> {
     if pixels.is_empty() {
@@ -208,7 +208,7 @@ pub fn swatches(pixels: &[i32], step: usize, most: usize) -> Vec<Swatch> {
     let total = found.iter().map(|b| i64::from(b.count)).sum::<i64>() as f32;
     let mut groups: Vec<(Lch, Bucket)> = Vec::new();
     for bucket in &found {
-        // Specks of a colour (under 0.2% of the picture) are left out.
+        // Specks of a color (under 0.2% of the picture) are left out.
         if (bucket.count as f32) < total * 0.002 {
             break;
         }
@@ -235,8 +235,8 @@ pub fn swatches(pixels: &[i32], step: usize, most: usize) -> Vec<Swatch> {
         .collect()
 }
 
-/// The colour of a list's music that picks its cover's background: hue (whole degrees), chroma
-/// and lightness (OKLCH, to 0.001) of the strongest colour of its first covers, rounded as the
+/// The color of a list's music that picks its cover's background: hue (whole degrees), chroma
+/// and lightness (OKLCH, to 0.001) of the strongest color of its first covers, rounded as the
 /// Octo apps round it so both pick the same background.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoverMusic {
@@ -246,10 +246,10 @@ pub struct CoverMusic {
 }
 
 impl CoverMusic {
-    /// Colours under this chroma read as grey, and give no hue to work from.
+    /// Colors under this chroma read as grey, and give no hue to work from.
     const COLOURLESS: f64 = 0.035;
 
-    /// The colour as short text, for cache keys.
+    /// The color as short text, for cache keys.
     pub fn key(&self) -> String {
         format!(
             "{}.{}.{}",
@@ -267,7 +267,7 @@ impl CoverMusic {
         }
     }
 
-    /// The music's colour from the main colours of some covers (a list of swatches for each):
+    /// The music's color from the main colors of some covers (a list of swatches for each):
     /// the strongest by how much of its cover it fills and how vivid it is. None with no covers
     /// or only grey ones.
     pub fn from_covers(covers: &[Vec<Swatch>]) -> Option<CoverMusic> {

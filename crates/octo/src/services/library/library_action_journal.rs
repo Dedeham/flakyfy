@@ -503,7 +503,7 @@ impl LibraryActionJournal {
 
     /// Write the journal to disk now rather than on the next timer tick. The executor calls this
     /// around moving a file, because an entry that only exists in memory when Octo stops cannot
-    /// be reconciled. Serialised, since the timer can flush at the same moment.
+    /// be reconciled. Serialized, since the timer can flush at the same moment.
     ///
     /// False only when there was something to write and it could not be written.
     pub fn flush(&self) -> bool {

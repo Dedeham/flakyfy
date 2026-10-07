@@ -304,7 +304,7 @@ impl ILocalLibraryService for LocalLibraryService {
     }
 
     fn parse_external_id(&self, id: &str) -> ParsedExternalId {
-        // First check the registry — IDs we generated for YouTube/Soulseek
+        // First check the registry: IDs we generated for YouTube/Soulseek
         // entries are pure base62 (no prefix) so they look identical to local
         // Navidrome IDs to clients but we still know they're ours.
         if self.id_registry.lookup(id).is_some() {
@@ -423,7 +423,7 @@ impl ILocalLibraryService for LocalLibraryService {
     }
 
     async fn trigger_library_scan(&self, force: bool) -> bool {
-        // Debounce: avoid triggering too many successive scans. A forced call skips it —
+        // Debounce: avoid triggering too many successive scans. A forced call skips it:
         // otherwise the last track of a batch can have its scan swallowed and stay
         // invisible until some unrelated trigger happens along.
         let now = Utc::now();

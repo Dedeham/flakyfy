@@ -1,5 +1,5 @@
 //! The .NET framework pieces the ported services were built on, which have no Rust
-//! counterpart with the same behaviour: `SlidingWindowRateLimiter`, a size-limited
+//! counterpart with the same behavior: `SlidingWindowRateLimiter`, a size-limited
 //! `MemoryCache`, the `Lazy<Task<T>>` single-flight pattern, and a buffered `HttpClient` call.
 
 pub mod dotnet_dictionary;

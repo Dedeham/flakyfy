@@ -31,7 +31,7 @@ pub fn kinship_tags<S: AsRef<str>>(tags: &[S], artist: &str) -> Vec<String> {
         .filter(|tag| {
             !tag.is_empty()
                 && !dotnet::eq_ignore_case(tag, &artist_tag)
-                // One year rule, shared with the genre normaliser. Two hand-rolled copies is how
+                // One year rule, shared with the genre normalizer. Two hand-rolled copies is how
                 // one of them quietly stops dropping "2020s" when someone fixes the other.
                 && !GenreNormalizer::is_year_like(tag)
         })
@@ -40,10 +40,10 @@ pub fn kinship_tags<S: AsRef<str>>(tags: &[S], artist: &str) -> Vec<String> {
         .collect()
 }
 
-/// How far apart two tracks are as neighbours in a stream, as one score with two halves.
+/// How far apart two tracks are as neighbors in a stream, as one score with two halves.
 /// Sound: brightness as octaves between spectral centroids, dynamics as loudness range, texture
 /// as spectral flatness (loudness itself is not a term because every track has been brought to
-/// the same level). Kinship: one minus the overlap of their Last.fm tags, the catalogue genre
+/// the same level). Kinship: one minus the overlap of their Last.fm tags, the catalog genre
 /// when tags are missing, and a neutral middle when nothing is known so an unmeasured track is
 /// neither favored nor punished.
 pub fn flow_distance(current: &RadioAudioProfile, next: &RadioAudioProfile) -> f64 {
@@ -236,7 +236,7 @@ mod tests {
     }
 
     /// GenreNormalizerTests.IsYearLike_MatchesWhatTheRadioKinshipFilterAlsoDrops, the radio
-    /// half: kinship drops exactly the tags the genre normaliser calls a year.
+    /// half: kinship drops exactly the tags the genre normalizer calls a year.
     #[test]
     fn is_year_like_matches_what_the_radio_kinship_filter_also_drops() {
         for (tag, expected) in [

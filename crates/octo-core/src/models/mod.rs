@@ -1,6 +1,6 @@
 //! The domain, search, download and Subsonic models: `Models/**` in the C#.
 //!
-//! Field names serialise as the C# PascalCase property names, since System.Text.Json wrote them
+//! Field names serialize as the C# PascalCase property names, since System.Text.Json wrote them
 //! with no naming policy wherever these reach a file.
 
 use serde::{Deserialize, Deserializer};

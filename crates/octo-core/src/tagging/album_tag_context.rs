@@ -31,7 +31,7 @@ pub struct SettledRelease {
 /// What one album walk has settled, so every track of the walk shares the album-level fields:
 /// the release the first track matched, its facts, and each track's measured loudness for the
 /// album gain at the end. Two tracks of one album matched to two pressings would otherwise
-/// carry two labels and two catalogue numbers, and the library server shows one album's facts
+/// carry two labels and two catalog numbers, and the library server shows one album's facts
 /// from whichever track it reads first.
 ///
 /// Shared by the tracks of a walk, so its state sits behind locks. `L` is the loudness type

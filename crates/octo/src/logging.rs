@@ -2,7 +2,7 @@
 //! filter, and the credential redaction `Program.cs` wrapped around the whole logger factory
 //! (`builder.Logging.AddCredentialRedaction()`).
 //!
-//! Levels come from `RUST_LOG` when it is set. Otherwise the .NET variables are honoured:
+//! Levels come from `RUST_LOG` when it is set. Otherwise the .NET variables are honored:
 //! `Logging__LogLevel__Default` and `Logging__LogLevel__<Category>`, with the .NET level names
 //! (Trace, Debug, Information, Warning, Error, Critical, None). With neither, everything logs
 //! at Information, as the shipped `appsettings.json` (no `Logging` section) did.

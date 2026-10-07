@@ -163,7 +163,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
 
         // No storage-mode gate any more. It used to exclude Permanent on the grounds
         // that playing a track there already downloads it, but that was only ever true
-        // through the blocking play path — so in Permanent mode a star fell through to
+        // through the blocking play path: so in Permanent mode a star fell through to
         // the relay and errored on an id Navidrome has never seen.
         //
         // Stars ride the queue's own channel: explicit user intent is never shed under
@@ -246,7 +246,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
 ///    runs inside a request.
 ///
 /// Before this there was no handler at all and setRating fell through to the catch-all,
-/// where an Octo id became a synthetic OK that never reached Navidrome. That behaviour is
+/// where an Octo id became a synthetic OK that never reached Navidrome. That behavior is
 /// preserved exactly.
 pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResult {
     let call = match SubsonicCall::read(&state, req).await {
@@ -422,7 +422,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
     match outcome {
         Ok(response) => Ok(response),
         // Even if upstream is briefly unhappy, return 200 so the client
-        // doesn't think scrobble is broken — the prewarm side already fired.
+        // doesn't think scrobble is broken: the prewarm side already fired.
         Err(RelayError::Http(_)) => Ok(state
             .subsonic_response_builder
             .create_response(&format, "scrobble")

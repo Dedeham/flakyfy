@@ -7,12 +7,12 @@
 //! with no content and `<name></name>` for one holding an empty string, the namespace
 //! declaration after the element's own attributes, attribute values with `<`, `>`, `&`, `"`
 //! and line breaks escaped (but not `'`), text with `<`, `>` and `&` escaped and its line breaks
-//! normalised to `\n`, and an element holding text written inline.
+//! normalized to `\n`, and an element holding text written inline.
 //!
-//! Octo also re-serialised Navidrome's XML (the search merge, the OpenSubsonic extensions,
+//! Octo also re-serialized Navidrome's XML (the search merge, the OpenSubsonic extensions,
 //! the sync catalog page), so [`XElement::parse`] reads a document the way
 //! `XDocument.Parse(text)` (`LoadOptions.None`) does: whitespace-only text is dropped,
-//! `<a></a>` stays distinct from `<a/>`, attribute values are normalised, and an `xmlns`
+//! `<a></a>` stays distinct from `<a/>`, attribute values are normalized, and an `xmlns`
 //! declaration is kept as an attribute in its place.
 
 use std::borrow::Cow;
@@ -306,10 +306,10 @@ impl XElement {
     /// reads it.
     ///
     /// - Text made only of whitespace is dropped, and text is kept with its line breaks
-    ///   normalised to `\n` and its references resolved.
+    ///   normalized to `\n` and its references resolved.
     /// - An element written `<a></a>` (or holding only whitespace) keeps an empty string as
     ///   its content, so it is written back as `<a></a>`, not `<a />`.
-    /// - Attribute values are normalised: a literal tab or line break becomes a space, while
+    /// - Attribute values are normalized: a literal tab or line break becomes a space, while
     ///   `&#xA;` stays a line break.
     /// - `xmlns` declarations stay attributes in their place, and every unprefixed element
     ///   takes the default namespace in scope.

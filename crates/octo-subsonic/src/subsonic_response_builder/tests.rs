@@ -341,7 +341,7 @@ fn external_song_with_no_valid_isrc_lists_none() {
 }
 
 /// A library song Octo rebuilt from Navidrome's answer goes back out with the
-/// codes it came in with, untouched, not normalised and not dropped.
+/// codes it came in with, untouched, not normalized and not dropped.
 #[test]
 fn library_song_keeps_navidromes_isrcs_untouched() {
     let song = Song {

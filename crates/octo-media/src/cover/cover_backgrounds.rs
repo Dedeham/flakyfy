@@ -11,7 +11,7 @@ use super::cover_book::{Background, BackgroundRule, CoverBook};
 use super::cover_colours::{self, CoverMusic};
 use super::design;
 
-/// The background for a list, by cover-design.json "background": with its music's colour,
+/// The background for a list, by cover-design.json "background": with its music's color,
 /// the nearest few (ties in file order) and among them the one the list's id picks; without,
 /// or with music too dull to say much (chroma under lowChromaAsGrey), any one, picked by the
 /// id alone. The same list with the same music always gets the same.
@@ -59,7 +59,7 @@ pub fn turn(image: &mut RgbImage, orientation: i32) {
     }
 }
 
-/// How far a background is from the music's colour: the hue distance to its nearest strong
+/// How far a background is from the music's color: the hue distance to its nearest strong
 /// hue (a later, weaker hue counts a little less, a near-grey one hardly at all) and how
 /// differently vivid that hue is, plus the difference in lightness.
 pub(crate) fn distance(background: &Background, music: &CoverMusic, rule: &BackgroundRule) -> f64 {

@@ -5,7 +5,7 @@
 //! Two of these guard against a drift that bit the C# four times: GET settings pre-fills the
 //! forms and GET raw-config is what the Raw editor writes back WHOLESALE, so a setting missing
 //! from either is a setting the next save silently blanks or deletes. Checking every settings
-//! property (here: every field the settings structs serialise) makes the next one fail here.
+//! property (here: every field the settings structs serialize) makes the next one fail here.
 
 use axum::http::{Method, StatusCode};
 use octo_core::settings::{AppSettings, SubsonicSettings};

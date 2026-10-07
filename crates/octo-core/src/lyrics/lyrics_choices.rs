@@ -13,7 +13,7 @@ use super::lyrics_text::LyricsText;
 /// What someone chose for one song's lyrics: a candidate, kept with its lyrics so the pin still
 /// answers when the source is down or has changed, or none, which hides the song's lyrics. Held
 /// for the whole server, so every client sees the same choice, and named by artist and title
-/// too, so the legacy getLyrics call (which knows nothing else) honours it.
+/// too, so the legacy getLyrics call (which knows nothing else) honors it.
 ///
 /// One entry of `lyrics-choices.json`, written with its computed `IsHidden` and `Lyrics`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

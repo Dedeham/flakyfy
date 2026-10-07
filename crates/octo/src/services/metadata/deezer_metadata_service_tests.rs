@@ -522,7 +522,7 @@ async fn enrich_track_full_async_reads_contributors_and_position_from_the_track(
 }
 
 /// Deezer reports most compilations as record_type "album" (checked live on three), so the
-/// album artist is the signal a compilation is recognised by, and it is the album artist
+/// album artist is the signal a compilation is recognized by, and it is the album artist
 /// rather than the track's that belongs in the album-artist tag.
 #[tokio::test]
 async fn enrich_track_full_async_reads_the_album_artist_and_record_type() {

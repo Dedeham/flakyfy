@@ -159,7 +159,7 @@ fn normalize_unmapped_genres_are_title_cased_but_acronyms_survive() {
 /// Found by a whole-library preview against a real 2,364-file library: the only proposed
 /// change for one file was "Alternatif et Indé" -> "Alternatif Et Indé". No rule matched;
 /// title-casing alone counted as a change, so the backfill would have rewritten the file
-/// purely to capitalise "et". Tidying case is only worth a write when the source clearly
+/// purely to capitalize "et". Tidying case is only worth a write when the source clearly
 /// did not bother.
 #[test]
 fn normalize_unmapped_genre_that_is_already_capitalised_keeps_its_own_spelling() {
@@ -188,7 +188,7 @@ fn normalize_caps_at_max_genres_and_dedupes() {
 }
 
 /// The whole point of the feature. Without a Clear, "People & Blogs" survives
-/// normalisation and the library keeps it forever.
+/// normalization and the library keeps it forever.
 #[test]
 fn plan_everything_normalises_away_clears() {
     let plan = plan(&["People & Blogs", "Music"], None, &preset());
@@ -292,7 +292,7 @@ fn normalize_is_culture_invariant() {
     assert_eq!(primary("EDM", &shipped()).as_deref(), Some("EDM"));
 }
 
-/// Switching normalisation on, with nothing else configured, must not throw away accurate
+/// Switching normalization on, with nothing else configured, must not throw away accurate
 /// genres. The default used to be one genre per track, so simply enabling the feature turned
 /// "Cloud Rap, Emo, Hip Hop, Trap" into "Cloud Rap" with no mapping table involved at all.
 /// Dropping junk is what this is for; minifying real tags is a choice the user has to make.

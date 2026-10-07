@@ -11,7 +11,7 @@ use crate::services::state_file;
 /// Persistent, bounded log of songs Octo has fetched. Written to a JSON file next
 /// to the settings file so it survives restarts and container recreation (the
 /// config dir is a host bind-mount). Newest entries first; capped so it can't grow
-/// without limit. Best-effort — a write failure never breaks a download.
+/// without limit. Best-effort: a write failure never breaks a download.
 pub struct DownloadHistoryService {
     path: PathBuf,
     /// Loaded on first use.

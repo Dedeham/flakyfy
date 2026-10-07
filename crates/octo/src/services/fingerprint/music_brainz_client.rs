@@ -84,7 +84,7 @@ impl MusicBrainzClient {
         }
     }
 
-    /// One release in full: its label and catalogue number, barcode, status, country, date, its
+    /// One release in full: its label and catalog number, barcode, status, country, date, its
     /// group's kind and first release date, every track's position and id, and the genres people
     /// voted on. Remembered a day, since an album's tracks ask one by one.
     pub async fn lookup_release(

@@ -6,14 +6,17 @@
 //! initializers in its `Default`; [`crate::config::bind`] fills it from a configuration
 //! section. `Effective*` properties are methods that clamp at read time, as the C# did.
 
+pub mod admin;
 pub mod generated_playlist;
 pub mod genre;
+pub mod import;
 pub mod last_fm;
 pub mod library_action;
 pub mod lidarr;
 pub mod listen_brainz;
 pub mod metadata;
 pub mod notification;
+pub mod radio_source;
 pub mod restart_tracker;
 pub mod server;
 pub mod soulseek;
@@ -28,10 +31,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{BindWarning, ConfigTree, bind};
 
+pub use admin::AdminSettings;
 pub use generated_playlist::GeneratedPlaylistSettings;
 pub use genre::{
     GenreEmptyBehavior, GenreFallbackSource, GenreMappingSettings, GenreMatchMode, GenreSettings,
 };
+pub use import::ImportSettings;
 pub use last_fm::{DiscoveryStationSettings, LastFmSettings, LastFmUserSession};
 pub use library_action::{
     LibraryAction, LibraryActionDefinition, LibraryActionSettings, LibraryActionTrigger, LibraryRatingScope,
@@ -41,6 +46,7 @@ pub use lidarr::{LidarrCompletionMode, LidarrSettings};
 pub use listen_brainz::ListenBrainzSettings;
 pub use metadata::{LyricsSaveTo, MetadataSettings};
 pub use notification::NotificationSettings;
+pub use radio_source::RadioSourceSettings;
 pub use restart_tracker::RestartTracker;
 pub use server::ServerSettings;
 pub use soulseek::SoulseekSettings;
@@ -63,6 +69,7 @@ pub struct AppSettings {
     pub soulseek: SoulseekSettings,
     pub lidarr: LidarrSettings,
     pub last_fm: LastFmSettings,
+    pub radio_sources: RadioSourceSettings,
     pub genre: GenreSettings,
     pub library_actions: LibraryActionSettings,
     pub generated_playlists: GeneratedPlaylistSettings,
@@ -71,11 +78,13 @@ pub struct AppSettings {
     pub server: ServerSettings,
     pub listen_brainz: ListenBrainzSettings,
     pub updates: UpdateSettings,
+    pub admin: AdminSettings,
+    pub imports: ImportSettings,
 }
 
 impl AppSettings {
     /// The configuration section names, in `Program.cs` registration order.
-    pub const SECTIONS: [&'static str; 12] = [
+    pub const SECTIONS: [&'static str; 15] = [
         "Genre",
         "LibraryActions",
         "GeneratedPlaylists",
@@ -83,11 +92,14 @@ impl AppSettings {
         "Soulseek",
         "Lidarr",
         "LastFm",
+        "RadioSources",
         "Notifications",
         "Metadata",
         "Server",
         "ListenBrainz",
         "Updates",
+        "Admin",
+        "Imports",
     ];
 
     /// Binds every section from the merged configuration. A value that does not convert
@@ -103,11 +115,14 @@ impl AppSettings {
             soulseek: bind_section(tree, "Soulseek", &mut warnings),
             lidarr: bind_section(tree, "Lidarr", &mut warnings),
             last_fm: bind_section(tree, "LastFm", &mut warnings),
+            radio_sources: bind_section(tree, "RadioSources", &mut warnings),
             notifications: bind_section(tree, "Notifications", &mut warnings),
             metadata: bind_section(tree, "Metadata", &mut warnings),
             server: bind_section(tree, "Server", &mut warnings),
             listen_brainz: bind_section(tree, "ListenBrainz", &mut warnings),
             updates: bind_section(tree, "Updates", &mut warnings),
+            admin: bind_section(tree, "Admin", &mut warnings),
+            imports: bind_section(tree, "Imports", &mut warnings),
         };
         (settings, warnings)
     }

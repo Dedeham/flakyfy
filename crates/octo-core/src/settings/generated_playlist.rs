@@ -50,6 +50,37 @@ pub struct GeneratedPlaylistSettings {
     /// How a mix is named; "{0}" is the genre or decade. Empty means "{0} Mix".
     /// Environment variable: MIX_NAME_FORMAT
     pub name_format: String,
+
+    // ---- Made for you: three lists per listener, on whether or not the genre and decade mixes
+    // are. Each is rebuilt once a RefreshHours period from that listener's own plays.
+    /// New releases from the listener's most-played artists, from Deezer.
+    /// Environment variable: FOR_YOU_NEW_RELEASES
+    pub new_releases: bool,
+
+    /// Songs the listener loved and has not played for RediscoverMonths.
+    /// Environment variable: FOR_YOU_REDISCOVER
+    pub rediscover: bool,
+
+    /// Songs played at most once, from the listener's most-played artists.
+    /// Environment variable: FOR_YOU_DEEP_CUTS
+    pub deep_cuts: bool,
+
+    /// How far back New Releases looks. Environment variable: NEW_RELEASE_WEEKS
+    pub new_release_weeks: i32,
+
+    /// How many of the listener's most-played artists New Releases follows.
+    /// Environment variable: NEW_RELEASE_ARTISTS
+    pub new_release_artists: i32,
+
+    /// How long since a loved song was last played before Rediscover brings it back.
+    /// Environment variable: REDISCOVER_MONTHS
+    pub rediscover_months: i32,
+
+    /// "Popular right now": the chart of the moment as a read-only playlist for every listener,
+    /// in every app, on whether or not the mixes are. Songs a listener has are their library's
+    /// own; the rest play right away and are added with a heart. Made again every few hours.
+    /// Environment variable: POPULAR_NOW
+    pub popular_now: bool,
 }
 
 impl Default for GeneratedPlaylistSettings {
@@ -67,11 +98,35 @@ impl Default for GeneratedPlaylistSettings {
             new_share: 0,
             new_days: 30,
             name_format: "{0} Mix".to_string(),
+            new_releases: true,
+            rediscover: true,
+            deep_cuts: true,
+            new_release_weeks: 8,
+            new_release_artists: 50,
+            rediscover_months: 6,
+            popular_now: true,
         }
     }
 }
 
 impl GeneratedPlaylistSettings {
+    pub fn effective_new_release_weeks(&self) -> i32 {
+        self.new_release_weeks.clamp(1, 26)
+    }
+
+    pub fn effective_new_release_artists(&self) -> i32 {
+        self.new_release_artists.clamp(10, 200)
+    }
+
+    pub fn effective_rediscover_months(&self) -> i32 {
+        self.rediscover_months.clamp(3, 24)
+    }
+
+    /// Whether any of the three Made for you lists is on.
+    pub fn any_for_you(&self) -> bool {
+        self.new_releases || self.rediscover || self.deep_cuts
+    }
+
     pub fn effective_track_count(&self) -> i32 {
         self.track_count.clamp(10, 500)
     }
@@ -275,5 +330,32 @@ mod tests {
         };
         assert_eq!(s.effective_remove_below(), 5);
         assert_eq!(s.effective_refresh_hours(), 336);
+    }
+
+    #[test]
+    fn made_for_you_values_are_clamped_and_on_by_default() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert!(defaults.any_for_you() && defaults.popular_now);
+        assert_eq!(
+            (
+                defaults.effective_new_release_weeks(),
+                defaults.effective_new_release_artists(),
+                defaults.effective_rediscover_months()
+            ),
+            (8, 50, 6)
+        );
+        let s = GeneratedPlaylistSettings {
+            new_release_weeks: 0,
+            new_release_artists: 1000,
+            rediscover_months: 1,
+            new_releases: false,
+            rediscover: false,
+            deep_cuts: false,
+            ..Default::default()
+        };
+        assert_eq!(s.effective_new_release_weeks(), 1);
+        assert_eq!(s.effective_new_release_artists(), 200);
+        assert_eq!(s.effective_rediscover_months(), 3);
+        assert!(!s.any_for_you());
     }
 }

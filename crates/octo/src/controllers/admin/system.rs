@@ -456,12 +456,11 @@ pub async fn test_lidarr_connection(
         Ok(request) => request,
         Err(res) => return res,
     };
+    let current = state.settings.current();
+    let key = lidarr_test_key(request.api_key.as_deref(), current.lidarr.api_key.as_deref());
     match state
         .lidarr_client
-        .test_connection(
-            request.base_url.as_deref().unwrap_or(""),
-            request.api_key.as_deref().unwrap_or(""),
-        )
+        .test_connection(request.base_url.as_deref().unwrap_or(""), key.unwrap_or(""))
         .await
     {
         Ok(options) => ok(&json!({
@@ -473,6 +472,22 @@ pub async fn test_lidarr_connection(
             StatusCode::BAD_REQUEST,
             &json!({ "ok": false, "error": e.to_string() }),
         ),
+    }
+}
+
+/// The key `lidarr/test` sends: the page only ever holds the placeholder for a saved key, and
+/// testing it means the saved one; anything else is the key as typed.
+///
+/// As the C# does it, the saved key then goes to whatever address the request names, unlike a
+/// save, where a saved credential never follows a new address (`secrets::secret_sent_elsewhere`).
+/// BACKLOG "Found while building the harness" lists this for Brandon to decide; the fix, if he
+/// wants it, belongs here: take the address too, and keep the saved key only when the address is
+/// the saved `Lidarr:BaseUrl` (the same comparison `secret_sent_elsewhere` makes).
+fn lidarr_test_key<'a>(typed: Option<&'a str>, saved: Option<&'a str>) -> Option<&'a str> {
+    if typed == Some(super::helpers_6b1::SECRET_PLACEHOLDER) {
+        saved
+    } else {
+        typed
     }
 }
 

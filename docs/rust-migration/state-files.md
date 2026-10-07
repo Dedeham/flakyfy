@@ -1,6 +1,6 @@
 # State files: what Octo persists on disk
 
-Phase 0 inventory for the Rust rewrite, taken at commit `15d6840` (release `2026.10.03.2`). It lists every file the C# app writes or reads back as state. For each one it gives the path and the root it lives under, the writer, the readers, the exact serialized shape, whether the write is atomic, locking, and what happens when the file is missing, partial or corrupt.
+Phase 0 inventory for the Rust rewrite, taken at commit `15d6840` (release `2026.10.03.2`). Wave G1 added the files and fields of release 2026.10.05: §4.26 to §4.32, `admin-recovery-code` in §5, and the notes marked 2026.10.05 under the files that gained fields. It lists every file the C# app writes or reads back as state. For each one it gives the path and the root it lives under, the writer, the readers, the exact serialized shape, whether the write is atomic, locking, and what happens when the file is missing, partial or corrupt.
 
 Fixtures for every JSON file are in [`fixtures/state/`](fixtures/state/). They are **not hand-written**. A small C# program, [`fixtures/generator/`](fixtures/generator/), builds sample objects with the real Octo types and serializes them with exactly the options each writer uses. Some fixtures come out of the real store class itself: `external-ids.json` from `ExternalIdRegistry`, `settings.json` from `SettingsFileWriter`, `genre-backfill-journal.jsonl` from `GenreBackfillJournal` and `update/request` from `UpdateHost`. Every JSON fixture was then deserialized back into its C# type and re-serialized, and the output was byte-identical in every case. See [Regenerating the fixtures](#regenerating-the-fixtures).
 
@@ -77,6 +77,14 @@ Unless a file says otherwise below, the writer calls `JsonSerializer.Serialize(v
 | `*.octo-action.json` (quarantine) | **NO** | none | once per quarantined file | none | restore refused ("no manifest") | `null` (restore refused) |
 | radio `<key>.mp3.json` | yes | `<sidecar>.<guid>.tmp` | after a transcode | none | profile unknown | `null` |
 | `update/request` | yes | `request.tmp` | Update now | `lock` | no pending request | key=value parser skips bad lines |
+| `imports.json` (2026.10.05) | yes | `.tmp` | every change | `lock` | empty | warn, empty |
+| `imports-trickle.json` (2026.10.05) | yes | `.tmp` | every change | `lock` | empty | warn, empty. A job `downloading` at load → `queued` |
+| `spotify-accounts.json` (2026.10.05) | yes, mode 0600 | `.tmp` | every change | `lock` | no sign-ins | warn, no sign-ins |
+| `radio-outcomes.json` (2026.10.05) | yes | `.tmp` | at most every few seconds, plus on shutdown | `_lock` + `_fileLock` | learning starts again | warn, learning starts again; null entries dropped |
+| `sonic-features.json` (2026.10.05) | yes | `.tmp` | at most every few seconds | `_lock` + `_fileLock` | nothing analyzed | warn, start over; null entries dropped |
+| `tag-edits.json` (2026.10.05) | yes | `.tmp` | every edit (a library-wide run every few files) | `lock` | no undo | warn, no undo |
+| `explicit-backfill.json` (2026.10.05) | yes | `.tmp` | coalesced, 10 s, plus on `Replace` | `lock` | Idle run | warn, Idle run. `Running` at load → `Interrupted` |
+| `admin-recovery-code` (2026.10.05, text) | yes, mode 0600 | `.tmp` | first read, and each time the code is used | `lock` | a new code is written | an unreadable file: no code (sign in with Navidrome) |
 
 ---
 
@@ -372,7 +380,67 @@ Map from external id to the local file Octo downloaded. It lives **in the music 
 
 ---
 
+### 4.26 `imports.json` (2026.10.05)
+
+- **Writer:** `ImportStore` (`Services/Imports/ImportStore.cs`), Rust `services::imports::import_store` (the file; the store's methods are group H's).
+- **Format:** `{"Lists":[ImportList...]}`, no options. `ImportList`: `Id, Owner, Name, Source` (`spotifyLiked`, `spotifyPlaylist`, `link`, `file`), `SourceRef?, By?, ImageUrl?, SnapshotId?, Total, Tracks[ImportTrack], Partial?, ReadUtc, MatchedUtc?, KeepPlaylist, PlaylistId?, PlaylistNote?, GetMissing, Gone`. `ImportTrack`: `Key, Title, Artist, Album?, Seconds?, Isrc?, LibraryId?`.
+- **Fixture:** [`imports.json`](fixtures/state/imports.json)
+
+### 4.27 `imports-trickle.json` (2026.10.05)
+
+- **Writer:** `TrickleQueue` (`Services/Imports/TrickleQueue.cs`), Rust `services::imports::trickle_queue`.
+- **Format:** `{"Jobs":[TrickleJob...],"Paused":[user...],"LastStartUtc":date?}`. `TrickleJob`: `Owner, Key, Title, Artist, Album?, Seconds?, Isrc?, State` (`queued`, `downloading`, `done`, `notFound`, `skipped`), `Detail?, AcquisitionKey?, LibraryId?, Attempts, QueuedUtc, UpdatedUtc, StartedUtc?`.
+- **Load:** a job `downloading` is `queued` again with the detail "Octo restarted while this was running; it goes again." Done jobs older than 7 days are pruned; not-found ones are retried after 14 days (the queue's own work).
+- **Fixture:** [`imports-trickle.json`](fixtures/state/imports-trickle.json)
+
+### 4.28 `spotify-accounts.json` (2026.10.05)
+
+- **Writer:** `SpotifyAccountStore` (`Services/Imports/SpotifyAccountStore.cs`), Rust `services::imports::spotify_account_store`. Its own file rather than settings.json: the access token changes every hour, and settings.json is watched and shown on the dashboard.
+- **Format:** `{"<user>":{"AccessToken","RefreshToken","ExpiresUtc","ConnectedUtc","SpotifyId"?,"DisplayName"?,"Problem"?}}`; users compared ignoring case. The temporary file is made 0600 before the rename (not on Windows).
+- **Fixture:** [`spotify-accounts.json`](fixtures/state/spotify-accounts.json) (synthetic tokens)
+
+### 4.29 `radio-outcomes.json` (2026.10.05)
+
+- **Writer:** `RadioOutcomeStore` (`Services/Radio/RadioOutcomeStore.cs`), Rust `services::radio::radio_outcome_store`. Its folder is `Octo:StateDirectory` when set (tests), else beside settings.json.
+- **Format:** `{"Listeners":{"<listener>":{"<provider>":{"Kept":double,"Skipped":double,"UpdatedUtc":date}}}}`. Counts are faded by age; doubles in STJ's shortest round-trip form.
+- **Load:** a blank listener, a listener whose value is null or has no non-null counts, and a null count are dropped.
+- **Fixture:** [`radio-outcomes.json`](fixtures/state/radio-outcomes.json)
+
+### 4.30 `sonic-features.json` (2026.10.05)
+
+- **Writer:** `SonicStore` (`Services/Sonic/SonicStore.cs`), Rust `services::sonic::sonic_store`. Same folder rule as 4.29.
+- **Format:** `{"Paused","Pass","PassFinishedUtc"?,"NextPassUtc"?,"Songs":{"<navidrome id>":{"Stamp","Title","Artist","Album"?,"Duration"?,"Version","F":[float...]}},"Failed":{"<id>":{"Stamp","Error","AtUtc"}}}`. `F` holds `float` (single) values, written by STJ as the shortest text that reads back to the same single (`1E-05`, `3.4028235E+38`); `octo_core::json::format_single` reproduces it.
+- **Load:** a song whose `F` or `Stamp` is null, and a failure whose `Stamp` is null, are dropped.
+- **Fixture:** [`sonic-features.json`](fixtures/state/sonic-features.json)
+
+### 4.31 `tag-edits.json` (2026.10.05)
+
+- **Writer:** `TagEditJournal` (`Services/Library/LibraryTagEdits.cs`), Rust `services::library::library_tag_edits`. Rewritten whole on every change, at most 20,000 entries (the oldest go).
+- **Format:** `[TagEditEntry...]`: `Id, NavidromeId, Path, Kind` (`retag`, `joinAlbum`, `cover`, `advisory`), `Username, Before{tag: value?}, After{tag: value?}, SizeAfter, WriteTicksAfter, AtUtc, AlbumBefore?` (a `KeptIdentity`: `Title, Album?, AlbumArtist[], AlbumArtists[], AlbumVersion?, ReleaseDate?, AlbumId?, ReleaseTrackId?, Track, TrackCount, Disc, DiscCount, Compilation`), `Undone, RunId?`.
+- **Fixture:** [`tag-edits.json`](fixtures/state/tag-edits.json)
+
+### 4.32 `explicit-backfill.json` (2026.10.05)
+
+- **Writer:** `ExplicitBackfillStore` (`Services/Library/ExplicitBackfill.cs`), Rust `services::library::explicit_backfill_store`. Coalesced every 10 s and on `Replace`, like `genre-backfill.json`.
+- **Format:** `ExplicitBackfillRun`: `RunId, Status` (number: Idle 0, Running 1, Completed 2, Cancelled 3, Interrupted 4, Failed 5), `Mode` (Preview 0, Apply 1, Undo 2), `StartedUtc?, FinishedUtc?, Total, Processed, Explicit, Clean, NotExplicit, Unsure, AlreadyMarked, Failed, StepTotal, StepDone, Written, LeftAlone, LastSong?, Reason?, Errors[], Rows[ExplicitBackfillRow], Queue[{Path, NavidromeId?}], Cursor, AppliedRunId?`, then the computed **`CanResume`** and **`CanApply`**, which STJ writes too. Errors keep the newest 20, rows the first 50,000.
+- **Load:** a `Running` run becomes `Interrupted` with the reason "Octo restarted while this run was going."
+- **Fixture:** [`explicit-backfill.json`](fixtures/state/explicit-backfill.json)
+
+### New fields in the existing files (2026.10.05)
+
+| File | What changed | Rust |
+|---|---|---|
+| `downloads-history.json` (4.2) | `Key?` (the live row's `provider:id`) and `Log?` (`[{At, Kind, Text, Detail?, Candidates?[{Source, Peer?, File?, Folder?, Format?, BitRate?, BitDepth?, SampleRate?, Size?, Length?, QueueLength?, FreeSlot?, Speed?, Rank?, Note?, Title?, Album?, Quality?}]}]`, `Quality` computed). **The file is now written with `DefaultIgnoreCondition = WhenWritingNull`**: every null member is left out, at every depth. | `models::download::acquisition_event`; `json::to_string_without_nulls` |
+| `lastfm-radio-state.json` (4.3) | `RadioBans[{Key, SongId, Artist, Title, BannedAtUtc}]` after `UnavailableTracks`. | `LastFmRadioBan` |
+| `external-ids.json` (4.5) | `ExplicitContent?` (1 explicit, 3 clean, 0 neither) and `Version?` after `ShownDurationSource`. A routing whose `Version` is `clean` (not an artist) mints its id from the seed plus `|v:clean`, so a clean edit has an id of its own; every other id is unchanged. A re-registration keeps the previous `ExplicitContent` when the new one has none. | `SoulseekRouting`, `ExternalIdRegistry::make_short_id` |
+| `library-actions.json` (4.12) | `Copy`, `DownloadAllowed` and the computed `BlocksDownloads` after `RevealedPath`; `State` 6 = `Restored` (a removed song put back). Only `BlocksDownloads` entries keep a song from downloading again. | `LibraryActionEntry::blocks_downloads` |
+| `generated-playlists.json` (4.14) | `ForYou{kind: [song JSON...]}` and `ForYouCovers[url...]` per user. | `UserMixes` |
+| `upgrades.json` (4.16) | `Pick?` (a `PickedCopy`: `Source, Peer?, File?, Size, Format?, BitRate?, BitDepth?, SampleRate?, Length?, ReleaseGuid?, IndexerId?, ReleaseTitle?`; its derived fields are `[JsonIgnore]`) after `Result`. | `services::common::download_picks` |
+| Quarantine manifest (4.24) | `Sidecars?[{OriginalPath, QuarantinePath}]` (the song's lyrics files that went with it) and `Mappings?` (its `.mappings.json` entries, put back on restore). | `QuarantineManifest`, `QuarantinedSidecar` |
+
 ## 5. Non-JSON artifacts
+
+- **`admin-recovery-code`** (2026.10.05): the dashboard's one-time recovery code, `AdminRecoveryCode` (`Services/Admin/AdminRecoveryCode.cs`), Rust `services::admin::admin_recovery_code`. One line: four groups of five characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` joined with `-`, then `\n`. Written through `admin-recovery-code.tmp`, made 0600 (best effort: a failure is a warning), then renamed. Read trimmed; a missing or blank file gets a new code. Typed codes are compared ignoring spaces, dashes and case, in fixed time; a used code is replaced at once. Fixture: [`admin-recovery-code`](fixtures/state/admin-recovery-code) (a fixed code).
 
 | Artifact | Path | Writer | Format and rules | Readers |
 |---|---|---|---|---|
@@ -432,4 +500,4 @@ docker run --rm -v "$PWD":/repo -w /repo/docs/rust-migration/fixtures/generator 
   mcr.microsoft.com/dotnet/sdk:9.0 dotnet run -- /repo/docs/rust-migration/fixtures/state-new
 ```
 
-Building writes `bin/` and `obj/` under `fixtures/generator/` and `octo/`, which are git-ignored. The files under `update/status`, `update/helper`, `update/log` and the `.lrc`/`.txt` sidecars were written by hand in the formats documented in §5, because their writers are a shell script or need real audio files.
+Building writes `bin/` and `obj/` under `fixtures/generator/` and `octo/`, which are git-ignored. Run on Windows (the 2026.10.05 regeneration was), STJ's indented writer ends lines with CRLF: turn `lastfm-radio-state.json` back to LF before copying it, and leave `lyrics-undo.jsonl` and `update/request` (a fresh id each run) as they are. The files under `update/status`, `update/helper`, `update/log` and the `.lrc`/`.txt` sidecars were written by hand in the formats documented in §5, because their writers are a shell script or need real audio files.

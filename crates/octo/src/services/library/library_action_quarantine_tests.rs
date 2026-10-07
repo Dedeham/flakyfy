@@ -265,7 +265,11 @@ fn a_move_writes_the_manifest_the_csharp_wrote() {
     assert_eq!(manifest.navidrome_id, "song-id");
     assert!(written.starts_with(r#"{"OriginalPath":""#), "{written}");
     assert!(written.contains(r#"Sigur R\u00F3s"#), "{written}");
-    assert!(written.ends_with(r#"Z"}"#), "{written}");
+    // 2026.10.05: the sidecars and links follow, null until group F fills them.
+    assert!(
+        written.ends_with(r#"Z","Sidecars":null,"Mappings":null}"#),
+        "{written}"
+    );
     assert!(written.contains(r#","Action":"WrongSong","Username":"brandon","AtUtc":""#));
 }
 

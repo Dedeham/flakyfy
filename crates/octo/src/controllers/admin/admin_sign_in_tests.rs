@@ -330,11 +330,9 @@ async fn only_the_marked_endpoints_answer_without_a_sign_in() {
     // Default deny: every method on every admin route, apart from the open ones, asks for a
     // sign-in (a method a route lacks too, which reaches the catch-all).
     let mut checked = 0;
+    let parameter = regex::Regex::new(r"\{[^}]+\}").expect("a pattern");
     for template in &templates {
-        let path = regex::Regex::new(r"\{[^}]+\}")
-            .expect("a pattern")
-            .replace_all(template, "x")
-            .to_string();
+        let path = parameter.replace_all(template, "x").to_string();
         for method in [Method::GET, Method::POST, Method::PUT, Method::DELETE] {
             if OPEN_ENDPOINTS.iter().any(|(m, t)| *m == method && t == template) {
                 continue;

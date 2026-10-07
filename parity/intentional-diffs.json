@@ -1,0 +1,4 @@
+{
+  "description": "Deliberate improvements in the Rust build over C# 2026.10.05: answers that are meant to differ. Policy (parity/README.md, Intentional diffs): one entry per reviewed change, never a wildcard over all requests; \"requests\" names the requests (globs allowed inside one corpus file), \"aspects\" the parts that differ, and \"lines\" (regexes) pins what the diff says, so a different change on the same answer still fails. \"reason\" says why the Rust answer is better, \"backlog\" the group, and \"reviewed\" who approved it and when (\"Brandon 2026-10-08\"). An entry without \"reviewed\" is only proposed: the diff lists it as not reviewed and still counts the request as unexplained. A change a user or an app can see needs Brandon by name. Each entry also gets a row in docs/rust-migration/known-diffs.md.",
+  "diffs": []
+}

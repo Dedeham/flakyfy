@@ -92,3 +92,6 @@ __pycache__/
 
 # Rust build output. Each worktree keeps its own target/; never share one CARGO_TARGET_DIR.
 /target/
+
+# Parity harness runs: the writable library copies and the box reports.
+parity/.run/

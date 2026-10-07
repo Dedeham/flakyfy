@@ -13,7 +13,7 @@ Commands (stdlib only, Python 3.10+):
       one JSON file per corpus file.
   parity.py diff    A B [--mode structural|bytes] [--allowlist FILE] [--report FILE] [--only GLOB]
       Compare two recordings after normalisation. Exit 1 on any diff not covered by the
-      allowlist, 0 otherwise.
+      allowlist or the intentional diffs, 0 otherwise. Ends with the diffs per backlog group.
   parity.py run     --out recordings/<name>/ [up options] [--keep]
       up + record + down in one go.
 
@@ -49,6 +49,16 @@ KNOWN_DIFFS = os.path.join(REPO, "docs", "rust-migration", "known-diffs.md")
 DEFAULT_IMAGE = "ghcr.io/winters27/octo:2026.10.05"
 DEFAULT_PORT = 18480
 DEFAULT_ND_PORT = 18453
+INTENTIONAL = os.path.join(HERE, "intentional-diffs.json")
+GROUPS_FILE = os.path.join(HERE, "groups.json")
+# Each run works on a fresh, writable copy of the fixture library (library edits, the trash,
+# explicit marks and downloads write to it), kept under parity/.run/<project>/.
+RUN_DIR = os.path.join(HERE, ".run")
+# The second Octo ("alt": sign-in off, the dashboard on a port of its own) listens on these
+# host ports by default: the main port plus one and plus two.
+ALT_OFFSET, ALT_ADMIN_OFFSET = 1, 2
+# A fixed multipart boundary, so an upload's bytes are the same in every run.
+MULTIPART_BOUNDARY = "octo-parity-boundary-7c1e2f"
 
 # Fixture credentials (docker-compose.yml and `up` create these users).
 ADMIN_USER, ADMIN_PASS = "admin", "parity-admin"
@@ -137,17 +147,42 @@ def subsonic_qs(user: str = ADMIN_USER, password: str = ADMIN_PASS) -> str:
     return urllib.parse.urlencode({"u": user, "p": password, "v": "1.16.1", "c": "parity-setup", "f": "json"})
 
 
-def cmd_up(args) -> None:
-    env = {
+def stack_env(args) -> dict:
+    """The compose variables of one stack. The alt ports follow the main port unless given."""
+    return {
         "OCTO_IMAGE": args.image,
         "PARITY_PORT": str(args.port),
         "PARITY_ND_PORT": str(args.nd_port),
+        "PARITY_ALT_PORT": str(args.port + ALT_OFFSET),
+        "PARITY_ALT_ADMIN_PORT": str(args.port + ALT_ADMIN_OFFSET),
+        "PARITY_MUSIC": run_music_dir(args.project),
     }
-    compose(args.project, "down", "-v", "--remove-orphans", env=env, check=False)
-    for root, dirs, files in os.walk(FIXTURE_MUSIC, topdown=False):
+
+
+def run_music_dir(project: str) -> str:
+    return os.path.join(RUN_DIR, project, "music")
+
+
+def fresh_music(project: str) -> None:
+    """A writable copy of the fixture library for this run, every file and folder at the
+    baseline's instant (git does not keep mtimes, and Navidrome relays them)."""
+    import shutil
+    dest = run_music_dir(project)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(FIXTURE_MUSIC, dest)
+    for root, dirs, files in os.walk(dest, topdown=False):
         for name in files + dirs:
             os.utime(os.path.join(root, name), (FIXTURE_MTIME, FIXTURE_MTIME))
-    os.utime(FIXTURE_MUSIC, (FIXTURE_MTIME, FIXTURE_MTIME))
+    os.utime(dest, (FIXTURE_MTIME, FIXTURE_MTIME))
+    # The containers run as root and as other users (Navidrome); let every one of them write.
+    os.chmod(dest, 0o777)
+
+
+def cmd_up(args) -> None:
+    env = stack_env(args)
+    compose(args.project, "down", "-v", "--remove-orphans", env=env, check=False)
+    fresh_music(args.project)
     compose(args.project, "up", "-d", env=env)
     nd = f"http://127.0.0.1:{args.nd_port}"
 
@@ -176,21 +211,24 @@ def cmd_up(args) -> None:
         raise SystemExit(f"creating the listener user failed: {status} {made}")
     log(f"  navidrome user '{LISTENER_USER}' created")
 
-    octo = f"http://127.0.0.1:{args.port}"
+    for label, port in (("octo", args.port), ("octo-alt", args.port + ALT_OFFSET)):
+        octo = f"http://127.0.0.1:{port}"
 
-    def octo_ping():
-        status, doc = http_get_json(f"{octo}/rest/ping?{subsonic_qs()}")
-        return status == 200 and doc["subsonic-response"]["status"] == "ok"
+        def octo_ping(octo=octo):
+            status, doc = http_get_json(f"{octo}/rest/ping?{subsonic_qs()}")
+            return status == 200 and doc["subsonic-response"]["status"] == "ok"
 
-    wait_for("octo ping (relayed to navidrome)", octo_ping, 180)
+        wait_for(f"{label} ping (relayed to navidrome)", octo_ping, 180)
     if args.settle > 0:
         log(f"  settling {args.settle}s for startup work (library detection, slskd checks)")
         time.sleep(args.settle)
-    log(f"up: target {octo} (image {args.image}, project {args.project})")
+    log(f"up: target http://127.0.0.1:{args.port} (image {args.image}, project {args.project})")
 
 
 def cmd_down(args) -> None:
+    import shutil
     compose(args.project, "down", "-v", "--remove-orphans", check=False)
+    shutil.rmtree(os.path.join(RUN_DIR, args.project), ignore_errors=True)
 
 
 # --------------------------------------------------------------------------------------
@@ -209,7 +247,7 @@ def load_corpus(only: str | None) -> list[tuple[str, dict]]:
             if req["name"] in names:
                 raise SystemExit(f"{path}: duplicate request name {req['name']}")
             names.add(req["name"])
-        if only:
+        if only and stem != "00-setup":
             doc = dict(doc)
             doc["requests"] = [r for r in doc["requests"] if fnmatch.fnmatch(f"{stem}/{r['name']}", only)
                                or fnmatch.fnmatch(stem, only)]
@@ -258,6 +296,37 @@ def auth_params(kind: str | None, client: str) -> list[tuple[str, str]]:
     raise SystemExit(f"unknown auth kind {kind!r}")
 
 
+# Dashboard sign-ins the corpus can use ("session": "<name>"), by the variable holding the
+# session token. 00-setup captures them.
+ADMIN_COOKIE = "octo_browse"
+SESSIONS = {"admin": "admin_session", "recovery": "recovery_session"}
+
+
+def multipart_body(parts: list[dict], vars_: dict) -> bytes:
+    """multipart/form-data with a fixed boundary. A part is {"name", "value"} or
+    {"name", "filename", "contentType", "file"} (a path under parity/) or the same with "text"
+    (inline file content)."""
+    out = bytearray()
+    for part in parts:
+        out += f"--{MULTIPART_BOUNDARY}\r\n".encode()
+        name = subst(part["name"], vars_)
+        if "filename" in part:
+            out += (f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{subst(part["filename"], vars_)}"\r\n').encode()
+            out += f"Content-Type: {part.get('contentType', 'application/octet-stream')}\r\n\r\n".encode()
+            if "file" in part:
+                with open(os.path.join(HERE, part["file"]), "rb") as fh:
+                    out += fh.read()
+            else:
+                out += subst(part.get("text", ""), vars_).encode()
+        else:
+            out += f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+            out += subst(str(part.get("value", "")), vars_).encode()
+        out += b"\r\n"
+    out += f"--{MULTIPART_BOUNDARY}--\r\n".encode()
+    return bytes(out)
+
+
 def build_request(req: dict, defaults: dict, vars_: dict) -> tuple[str, str, dict, bytes | None]:
     merged = dict(defaults)
     merged.update(req)
@@ -276,10 +345,22 @@ def build_request(req: dict, defaults: dict, vars_: dict) -> tuple[str, str, dic
         query = urllib.parse.urlencode(pairs, quote_via=urllib.parse.quote)
     target = path + (("?" + query) if query else "")
     headers = {k: subst(v, vars_) for k, v in (merged.get("headers") or {}).items()}
+    # "session": sign the request in to the dashboard with a session made earlier in the corpus
+    # (00-setup), unless it carries its own cookie or browse token. Like a browser, only on the
+    # cookie's path (/api/admin).
+    session = merged.get("session")
+    if (session and path.startswith("/api/admin")
+            and not any(k.lower() in ("cookie", "x-octo-browse-token") for k in headers)):
+        if session not in SESSIONS:
+            raise SystemExit(f"unknown session {session!r} in {req['name']}")
+        headers["Cookie"] = f"{ADMIN_COOKIE}={subst('{{' + SESSIONS[session] + '}}', vars_)}"
     body = None
     spec = merged.get("body")
     if spec is not None:
-        if "json" in spec:
+        if "multipart" in spec:
+            body = multipart_body(spec["multipart"], vars_)
+            headers.setdefault("Content-Type", f"multipart/form-data; boundary={MULTIPART_BOUNDARY}")
+        elif "json" in spec:
             body = json.dumps(subst(spec["json"], vars_), ensure_ascii=False).encode()
             headers.setdefault("Content-Type", "application/json")
         elif "form" in spec:
@@ -345,7 +426,8 @@ def do_capture(spec: str, headers: list[tuple[str, str]], data: bytes) -> str | 
     kind, _, expr = spec.partition(":")
     try:
         if kind == "json":
-            return str(json_get(json.loads(data), expr))
+            value = json_get(json.loads(data), expr)
+            return None if value is None else str(value)
         if kind == "header":
             for k, v in headers:
                 if k.lower() == expr.lower():
@@ -366,6 +448,32 @@ def do_capture(spec: str, headers: list[tuple[str, str]], data: bytes) -> str | 
     raise SystemExit(f"bad capture spec {spec!r}")
 
 
+def continue_or_answer(sock, wait: float) -> str:
+    """After headers with Expect: 100-continue: "continue" once the interim 100 is read off the
+    socket, "answer" when the server sent its final answer without asking for the body, "silent"
+    when it said nothing in time (the body is then sent anyway, as RFC 9110 allows)."""
+    import select
+
+    if not select.select([sock], [], [], wait)[0]:
+        return "silent"
+    head = sock.recv(12, socket_peek_flag())
+    if not head.startswith(b"HTTP/1.1 100") and not head.startswith(b"HTTP/1.0 100"):
+        return "answer"
+    seen = b""
+    while not seen.endswith(b"\r\n\r\n"):
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        seen += chunk
+    return "continue"
+
+
+def socket_peek_flag() -> int:
+    import socket
+
+    return socket.MSG_PEEK
+
+
 def send(base: urllib.parse.SplitResult, method: str, target: str, headers: dict, body: bytes | None,
          timeout: float) -> tuple[int, str, list[tuple[str, str]], bytes, float]:
     conn = http.client.HTTPConnection(base.hostname, base.port or 80, timeout=timeout)
@@ -377,7 +485,16 @@ def send(base: urllib.parse.SplitResult, method: str, target: str, headers: dict
             conn.putheader(k, v)
         if body is not None and "content-length" not in sent:
             conn.putheader("Content-Length", str(len(body)))
-        conn.endheaders(body)
+        if body is not None and len(body) > MAX_STORED_TEXT:
+            # A big upload asks first (Expect: 100-continue). A server that answers without
+            # reading the body (a route that does not exist) would otherwise close the socket
+            # under the client's feet, and whether the answer or a reset arrives would be luck.
+            conn.putheader("Expect", "100-continue")
+            conn.endheaders()
+            if continue_or_answer(conn.sock, 2.0) != "answer":
+                conn.sock.sendall(body)
+        else:
+            conn.endheaders(body)
         resp = conn.getresponse()
         data = resp.read()
         return resp.status, resp.reason, list(resp.getheaders()), data, time.time() - start
@@ -385,14 +502,69 @@ def send(base: urllib.parse.SplitResult, method: str, target: str, headers: dict
         conn.close()
 
 
+def run_exec(project: str, service: str, cmd: list[str], timeout: float) -> tuple[int, bytes]:
+    """Run a command in a container of the stack under test: exit code and stdout."""
+    full = ["docker", "compose", "-f", COMPOSE_FILE, "-p", project, "exec", "-T", service, *cmd]
+    done = subprocess.run(full, capture_output=True, timeout=timeout, check=False)
+    return done.returncode, done.stdout
+
+
+def until_met(spec: dict, status: int, headers: list[tuple[str, str]], data: bytes) -> bool:
+    """The condition of an "until": the answer's status is one of "status" (default: any), and
+    the value at "from" is one of "in" (or none of "notIn"), and the body matches "regex"."""
+    if "status" in spec and status not in spec["status"]:
+        return False
+    if "regex" in spec and not re.search(spec["regex"], data.decode("utf-8", "replace")):
+        return False
+    if "from" in spec:
+        value = do_capture(spec["from"], headers, data)
+        if "in" in spec and value not in [str(v) for v in spec["in"]]:
+            return False
+        if "notIn" in spec and value in [str(v) for v in spec["notIn"]]:
+            return False
+    return True
+
+
+def server_targets(args, base: urllib.parse.SplitResult) -> dict[str, urllib.parse.SplitResult]:
+    """Where "server": main, alt and alt-admin send their requests."""
+    alt = getattr(args, "alt_port", None) or (base.port + ALT_OFFSET)
+    alt_admin = getattr(args, "alt_admin_port", None) or (base.port + ALT_ADMIN_OFFSET)
+    return {
+        "main": base,
+        "alt": urllib.parse.urlsplit(f"http://{base.hostname}:{alt}"),
+        "alt-admin": urllib.parse.urlsplit(f"http://{base.hostname}:{alt_admin}"),
+    }
+
+
+# The compose service behind each "server", for "exec" requests.
+EXEC_SERVICES = {"main": "octo", "alt": "octo-alt", "alt-admin": "octo-alt"}
+
+
+def send_once(args, servers, server, method, cmd, target, headers, body, timeout):
+    """One attempt: (status, reason, headers, body bytes, seconds)."""
+    if method == "EXEC":
+        start = time.time()
+        status, data = run_exec(args.project, EXEC_SERVICES[server], cmd, timeout)
+        try:
+            json.loads(data)
+            rheaders = [("Content-Type", "application/json")]
+        except ValueError:
+            rheaders = [("Content-Type", "text/plain")]
+        return status, "", rheaders, data, time.time() - start
+    return send(servers[server], method, target, headers, body, timeout)
+
+
 def cmd_record(args) -> None:
     base = urllib.parse.urlsplit(args.target.rstrip("/"))
     if base.scheme != "http":
         raise SystemExit("--target must be an http:// URL")
+    servers = server_targets(args, base)
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
     vars_: dict[str, str] = dict(BUILTIN_VARS)
     vars_["host"] = base.netloc
+    vars_["host_alt"] = servers["alt"].netloc
+    vars_["host_alt_admin"] = servers["alt-admin"].netloc
     captured: dict[str, str] = {}
     kept: dict[str, str] = {}
     corpus = load_corpus(args.only)
@@ -401,20 +573,57 @@ def cmd_record(args) -> None:
     for stem, doc in corpus:
         defaults = doc.get("defaults", {})
         entries = []
+        # A build that lacks a file's feature would sit out every wait in it. After
+        # --until-patience waits in one file time out, the rest of that file's waits get at most
+        # 20 s (enough for the timers a build that has the feature would be waiting on).
+        timeouts_here = 0
         for req in doc["requests"]:
             rid = f"{stem}/{req['name']}"
+            merged = dict(defaults)
+            merged.update(req)
+            server = merged.get("server") or "main"
+            if server not in servers:
+                raise SystemExit(f"{rid}: unknown server {server!r}")
+            if req.get("delayBeforeMs"):
+                time.sleep(req["delayBeforeMs"] / 1000.0)
+            timeout = req.get("timeout", args.timeout)
+            cmd: list[str] = []
             try:
-                method, target, headers, body = build_request(req, defaults, vars_)
+                if "exec" in req:
+                    cmd = subst(req["exec"], vars_)
+                    method, target, headers, body = "EXEC", " ".join(cmd), {}, None
+                else:
+                    method, target, headers, body = build_request(req, defaults, vars_)
             except KeyError as exc:
                 log(f"  SKIP {rid}: {exc}")
                 entries.append({"name": req["name"], "skipped": str(exc)})
                 continue
-            if req.get("delayBeforeMs"):
-                time.sleep(req["delayBeforeMs"] / 1000.0)
+            until = req.get("until")
+            if until:
+                try:
+                    until = subst(until, vars_)
+                except KeyError as exc:
+                    log(f"  SKIP {rid}: {exc}")
+                    entries.append({"name": req["name"], "skipped": str(exc)})
+                    continue
+            wait_ms = req.get("timeoutMs", 60000)
+            if timeouts_here >= args.until_patience:
+                wait_ms = min(wait_ms, 20000)
+            deadline = time.time() + wait_ms / 1000.0
+            timed_out = False
             try:
-                status, reason, rheaders, data, elapsed = send(base, method, target, headers, body,
-                                                               req.get("timeout", args.timeout))
-            except (OSError, http.client.HTTPException) as exc:
+                while True:
+                    status, reason, rheaders, data, elapsed = send_once(
+                        args, servers, server, method, cmd, target, headers, body, timeout)
+                    if not until or until_met(until, status, rheaders, data):
+                        break
+                    if time.time() >= deadline:
+                        timed_out = True
+                        timeouts_here += 1
+                        log(f"  WAIT {rid}: condition not met in {wait_ms} ms")
+                        break
+                    time.sleep(req.get("pollMs", 500) / 1000.0)
+            except (OSError, http.client.HTTPException, subprocess.TimeoutExpired) as exc:
                 failures += 1
                 log(f"  ERR  {rid}: {exc}")
                 entries.append({"name": req["name"], "request": {"method": method, "target": target},
@@ -451,6 +660,10 @@ def cmd_record(args) -> None:
                 "headers": [[k, v] for k, v in rheaders],
                 "body": encode_body(rheaders, data),
             }
+            if server != "main":
+                entry["server"] = server
+            if timed_out:
+                entry["untilTimedOut"] = True
             entries.append(entry)
             if args.verbose:
                 log(f"  {status} {method} {target[:110]} ({elapsed * 1000:.0f} ms)")
@@ -461,7 +674,9 @@ def cmd_record(args) -> None:
     meta = {
         "target": args.target,
         "host": base.netloc,
+        "hosts": {"host_alt": servers["alt"].netloc, "host_alt_admin": servers["alt-admin"].netloc},
         "image": args.image_label,
+        "inputs": inputs_digest(),
         "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "vars": captured,
         "keptVars": kept,
@@ -474,6 +689,29 @@ def cmd_record(args) -> None:
     log(f"recorded {total} responses into {out_dir} ({failures} transport errors)")
     if failures:
         sys.exit(2)
+
+
+def inputs_digest() -> str:
+    """One hash over everything a recording depends on besides the image: the corpus, the stubs,
+    the fixtures, the certificates and the compose file. A recording made from other inputs is
+    stale (lxc131.sh records the C# side again when it changes)."""
+    h = hashlib.sha256()
+    for sub in ("corpus", "stubs", "fixtures", "certs"):
+        for root, dirs, files in os.walk(os.path.join(HERE, sub)):
+            dirs.sort()
+            for name in sorted(files):
+                if name.endswith((".pyc",)):
+                    continue
+                path = os.path.join(root, name)
+                h.update(os.path.relpath(path, HERE).replace(os.sep, "/").encode())
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                if b"\0" not in data:  # text: the same digest on a Windows checkout (CRLF)
+                    data = data.replace(b"\r\n", b"\n")
+                h.update(hashlib.sha256(data).digest())
+    with open(COMPOSE_FILE, "rb") as fh:
+        h.update(fh.read().replace(b"\r\n", b"\n"))
+    return h.hexdigest()
 
 
 # --------------------------------------------------------------------------------------
@@ -522,6 +760,7 @@ class Normalizer:
     def __init__(self, meta: dict, rules: dict, mode: str = "structural"):
         self.mode = mode
         self.host = meta.get("host", "")
+        self.other_hosts = sorted((meta.get("hosts") or {}).items(), key=lambda kv: -len(kv[1]))
         # Longest values first, so a value that contains another is replaced whole.
         self.vars = sorted(((k, v) for k, v in (meta.get("vars") or {}).items() if v and len(v) >= 6),
                            key=lambda kv: -len(kv[1]))
@@ -544,6 +783,9 @@ class Normalizer:
             enc = urllib.parse.quote(value, safe="")
             if enc != value:
                 s = s.replace(enc, "{{" + name + "}}")
+        for name, value in self.other_hosts:
+            if value:
+                s = s.replace(value, "{{" + name + "}}")
         if self.host:
             s = s.replace(self.host, "{{host}}")
         s = TRACE_RE.sub("00-TRACE-00", s)
@@ -574,9 +816,9 @@ class Normalizer:
             s = rx.sub(fix, s)
         return s
 
-    def headers(self, entry: dict, rid: str, mode: str) -> list[tuple[str, str]]:
+    def headers(self, entry: dict, rid: str, mode: str, keep_length: bool = False) -> list[tuple[str, str]]:
         drop = set(ALWAYS_DROP_HEADERS)
-        if mode == "structural":
+        if mode == "structural" and not keep_length:
             drop |= STRUCTURAL_DROP_HEADERS
         out = []
         for k, v in entry.get("headers", []):
@@ -686,7 +928,9 @@ def body_view(entry: dict, norm: Normalizer, rid: str, mode: str, req: dict) -> 
     unordered = req.get("unordered", False)
     # Bytes mode compares the normalised text exactly, except where the corpus says the upstream
     # order is undefined: there only the structure can be compared.
-    if kind == "text" or (mode == "bytes" and not unordered):
+    # "anyKeyOrder": an object whose member order the C# build itself does not keep from run to
+    # run (a dictionary filled in parallel); bytes mode compares it as parsed JSON instead.
+    if kind == "text" or (mode == "bytes" and not unordered and not req.get("anyKeyOrder")):
         return "text", normalised_text(entry, norm, rid, req)
     if kind == "json":
         try:
@@ -799,10 +1043,16 @@ def compare_entry(rid: str, ea: dict, eb: dict, na: Normalizer, nb: Normalizer, 
             diffs["transport"] = [f"A: {ea.get('error') or ea.get('skipped') or 'ok'}",
                                   f"B: {eb.get('error') or eb.get('skipped') or 'ok'}"]
         return diffs
+    if ea.get("untilTimedOut") != eb.get("untilTimedOut"):
+        diffs["until"] = [f"A: {'timed out' if ea.get('untilTimedOut') else 'condition met'}",
+                          f"B: {'timed out' if eb.get('untilTimedOut') else 'condition met'}"]
     if ea["status"] != eb["status"]:
         diffs["status"] = [f"{ea['status']} != {eb['status']}"]
-    ha, hb = na.headers(ea, rid, mode), nb.headers(eb, rid, mode)
-    if mode == "bytes" and not length_is_meaningful(ea, eb, na, nb, rid, req):
+    # "keepLengthHeaders": whether a length is promised is the point of the request (a transcode's
+    # estimated length), so Content-Length and Transfer-Encoding count in structural mode too.
+    keep = bool(req.get("keepLengthHeaders"))
+    ha, hb = na.headers(ea, rid, mode, keep), nb.headers(eb, rid, mode, keep)
+    if (mode == "bytes" or keep) and not length_is_meaningful(ea, eb, na, nb, rid, req):
         # The bodies' lengths moved with volatile values (timestamps, Go's trimmed fractions,
         # ids), so Content-Length says nothing the body comparison does not.
         ha = [(k, v) for k, v in ha if k != "content-length"]
@@ -880,11 +1130,88 @@ def allowed(rid: str, aspect: str, allow: list[dict]) -> str | None:
 
 
 def corpus_index() -> dict[str, dict]:
+    """Every corpus request with its file's defaults merged in, by "<file>/<name>"."""
     idx = {}
     for stem, doc in load_corpus(None):
+        defaults = doc.get("defaults", {})
         for req in doc["requests"]:
-            idx[f"{stem}/{req['name']}"] = req
+            merged = dict(defaults)
+            merged.update(req)
+            idx[f"{stem}/{req['name']}"] = merged
     return idx
+
+
+def backlog_of(req: dict) -> list[str]:
+    """The backlog groups a request checks ("backlog": "D" or "D,B"); "base" when untagged, for
+    the 2026.10.04 behavior the Rust port already had."""
+    tag = req.get("backlog") or "base"
+    return [t.strip() for t in str(tag).split(",") if t.strip()]
+
+
+def load_groups() -> list[dict]:
+    """groups.json: rules that put a diff on a backlog group by what differs, ahead of the
+    request's own tag (the admin security headers are group J whatever the request checks)."""
+    if not os.path.exists(GROUPS_FILE):
+        return []
+    with open(GROUPS_FILE, encoding="utf-8") as fh:
+        rows = json.load(fh)["rules"]
+    for row in rows:
+        row["_re"] = re.compile(row["match"]) if "match" in row else None
+    return rows
+
+
+def groups_of(rid: str, aspect: str, lines: list[str], req: dict, rules: list[dict]) -> set[str]:
+    """The backlog groups one differing aspect belongs to. A rule takes the whole aspect by its
+    name, or single diff lines by a regex; whatever no rule takes falls to the request's tag."""
+    found: set[str] = set()
+    left = list(lines)
+    for row in rules:
+        if not any(fnmatch.fnmatch(rid, pat) for pat in row.get("requests", ["*"])):
+            continue
+        if not any(fnmatch.fnmatch(aspect, pat) for pat in row.get("aspects", ["*"])):
+            continue
+        if row["_re"] is None:
+            found.add(row["backlog"])
+            left = []
+            break
+        hit = [line for line in left if row["_re"].search(line)]
+        if hit:
+            found.add(row["backlog"])
+            left = [line for line in left if line not in hit]
+    if left or not found:
+        found.update(backlog_of(req))
+    return found
+
+
+def load_intentional(path: str | None) -> list[dict]:
+    """intentional-diffs.json: deliberate improvements in the Rust build, each reviewed by name.
+    An entry without "reviewed" is only proposed and explains nothing."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        rows = json.load(fh)["diffs"]
+    for row in rows:
+        for key in ("id", "backlog", "requests", "aspects", "reason"):
+            if not row.get(key):
+                raise SystemExit(f"intentional diff {row.get('id')!r} has no {key!r}")
+        if any(pat == "*" for pat in row["requests"]):
+            raise SystemExit(f"intentional diff {row['id']!r}: name the requests, never '*'")
+        row["_lines"] = [re.compile(x) for x in row.get("lines", [])]
+    return rows
+
+
+def intended(rid: str, aspect: str, lines: list[str], rows: list[dict]) -> tuple[str, bool] | None:
+    """The intentional diff that covers this aspect, and whether it is reviewed. With "lines",
+    every diff line must match one of them, so a different change on the same aspect still shows."""
+    for row in rows:
+        if not any(fnmatch.fnmatch(rid, pat) for pat in row["requests"]):
+            continue
+        if not any(fnmatch.fnmatch(aspect, pat) for pat in row["aspects"]):
+            continue
+        if row["_lines"] and not all(any(rx.search(line) for rx in row["_lines"]) for line in lines):
+            continue
+        return row["id"], bool(row.get("reviewed"))
+    return None
 
 
 def cmd_diff(args) -> None:
@@ -893,41 +1220,66 @@ def cmd_diff(args) -> None:
     rules = load_normalize_rules()
     na, nb = Normalizer(meta_a, rules, args.mode), Normalizer(meta_b, rules, args.mode)
     allow = load_allowlist(args.allowlist)
+    intent = load_intentional(args.intentional)
+    group_rules = load_groups()
     reqs = corpus_index()
     report: list[str] = []
-    unexplained = explained = same = 0
+    unexplained = explained = intentional = same = 0
     used_allow: dict[str, int] = {}
+    used_intent: dict[str, int] = {}
+    pending: dict[str, int] = {}
+    by_group: dict[str, set[str]] = {}
+    diffed: set[str] = set()
 
     ids = [i for i in order_a if not args.only or fnmatch.fnmatch(i, args.only)]
     missing_b = [i for i in ids if i not in eb]
     extra_b = [i for i in order_b if i not in ea and (not args.only or fnmatch.fnmatch(i, args.only))]
-    for rid in missing_b:
-        report.append(f"MISSING in B: {rid}")
+    for rid in missing_b + extra_b:
+        report.append(f"MISSING in {'B' if rid in missing_b else 'A'}: {rid}")
         unexplained += 1
-    for rid in extra_b:
-        report.append(f"MISSING in A: {rid}")
-        unexplained += 1
+        diffed.add(rid)
+        for g in backlog_of(reqs.get(rid, {})):
+            by_group.setdefault(g, set()).add(rid)
 
     for rid in ids:
         if rid not in eb:
             continue
-        diffs = compare_entry(rid, ea[rid], eb[rid], na, nb, args.mode, reqs.get(rid, {}))
+        req_spec = reqs.get(rid, {})
+        diffs = compare_entry(rid, ea[rid], eb[rid], na, nb, args.mode, req_spec)
         if not diffs:
             same += 1
             continue
         open_aspects = {}
+        by_intent = False
         for aspect, lines in diffs.items():
             hit = allowed(rid, aspect, allow)
             if hit:
                 used_allow[hit] = used_allow.get(hit, 0) + 1
-            else:
-                open_aspects[aspect] = lines
+                continue
+            meant = intended(rid, aspect, lines, intent)
+            if meant and meant[1]:
+                used_intent[meant[0]] = used_intent.get(meant[0], 0) + 1
+                by_intent = True
+                continue
+            if meant:
+                pending[meant[0]] = pending.get(meant[0], 0) + 1
+            open_aspects[aspect] = lines
         if not open_aspects:
-            explained += 1
+            if by_intent:
+                intentional += 1
+            else:
+                explained += 1
             continue
         unexplained += 1
+        diffed.add(rid)
+        groups: set[str] = set()
+        for aspect, lines in open_aspects.items():
+            groups |= groups_of(rid, aspect, lines, req_spec, group_rules)
+        for g in groups:
+            by_group.setdefault(g, set()).add(rid)
         req = ea[rid].get("request", {})
-        report.append(f"DIFF {rid}  [{req.get('method', '?')} {short(req.get('target', '?'), 140)}]")
+        report.append(f"DIFF {rid}  [{req.get('method', '?')} {short(req.get('target', '?'), 140)}]"
+                      f"  groups: {','.join(sorted(groups))}")
         for aspect, lines in open_aspects.items():
             report.append(f"  {aspect}:")
             for line in lines:
@@ -937,16 +1289,49 @@ def cmd_diff(args) -> None:
         f"parity diff ({args.mode}): A={args.a} ({meta_a.get('image') or meta_a.get('target')})",
         f"                       B={args.b} ({meta_b.get('image') or meta_b.get('target')})",
         f"  compared {len(ids) - len(missing_b)} requests: {same} identical, {explained} explained by the "
-        f"allowlist, {unexplained} unexplained",
+        f"allowlist, {intentional} intentional, {unexplained} unexplained",
     ]
+    if meta_a.get("inputs") and meta_b.get("inputs") and meta_a["inputs"] != meta_b["inputs"]:
+        summary.append("  WARNING: the recordings were made from different corpus, stub or fixture files")
     for aid, n in sorted(used_allow.items()):
         summary.append(f"  allowlist {aid}: {n} aspect(s)")
-    text = "\n".join(summary + ([""] + report if report else [])) + "\n"
-    sys.stdout.write(text)
+    for iid, n in sorted(used_intent.items()):
+        summary.append(f"  intentional {iid}: {n} aspect(s)")
+    for iid, n in sorted(pending.items()):
+        summary.append(f"  intentional {iid} NOT REVIEWED, so not applied: {n} aspect(s)")
+    table = group_table(reqs, ids, by_group, diffed)
+    text = "\n".join(summary + ([""] + report if report else []) + [""] + table) + "\n"
+    sys.stdout.write(text if not args.summary else "\n".join(summary + [""] + table) + "\n")
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
             fh.write(text)
+    if args.groups_out:
+        with open(args.groups_out, "w", encoding="utf-8") as fh:
+            json.dump({g: sorted(r) for g, r in sorted(by_group.items())}, fh, indent=1)
+            fh.write("\n")
     sys.exit(1 if unexplained else 0)
+
+
+def group_table(reqs: dict[str, dict], ids: list[str], by_group: dict[str, set[str]],
+                diffed: set[str]) -> list[str]:
+    """Per backlog group: the requests tagged with it, how many of those have an unexplained
+    diff ("own"), and how many requests anywhere have a diff the group explains ("diffs": its
+    own, plus other requests whose differing part groups.json puts on it, such as the admin
+    security headers on every admin answer for J). One request can count in several groups."""
+    tagged: dict[str, int] = {}
+    own: dict[str, int] = {}
+    for rid in ids:
+        for g in backlog_of(reqs.get(rid, {})):
+            tagged[g] = tagged.get(g, 0) + 1
+            if rid in diffed:
+                own[g] = own.get(g, 0) + 1
+    names = sorted(set(tagged) | set(by_group), key=lambda g: (g == "base", g))
+    out = ["Diffs by backlog group (tagged: requests tagged with the group; own: of those, with an unexplained",
+           "diff; diffs: requests anywhere with a diff put on the group):",
+           f"  {'group':<6} {'tagged':>6} {'own':>6} {'diffs':>6}"]
+    for g in names:
+        out.append(f"  {g:<6} {tagged.get(g, 0):>6} {own.get(g, 0):>6} {len(by_group.get(g, ())):>6}")
+    return out
 
 
 def cmd_show(args) -> None:
@@ -970,14 +1355,28 @@ def cmd_show(args) -> None:
             print("    " + (text if len(text) <= args.max else text[: args.max] + " ..."))
 
 
+def save_logs(args) -> None:
+    """The containers' logs beside the recording (<out>/logs/), for reading a run afterwards: the
+    stubs' log lists every upstream call and the mapping row that answered it (UNMATCHED ones too)."""
+    logs = os.path.join(args.out, "logs")
+    os.makedirs(logs, exist_ok=True)
+    for service in ("stubs", "octo", "octo-alt", "navidrome"):
+        with open(os.path.join(logs, f"{service}.log"), "wb") as fh:
+            subprocess.run(["docker", "compose", "-f", COMPOSE_FILE, "-p", args.project, "logs", "--no-color",
+                            "--no-log-prefix", service], stdout=fh, stderr=subprocess.DEVNULL, check=False)
+
+
 def cmd_run(args) -> None:
     cmd_up(args)
     try:
         args.target = f"http://127.0.0.1:{args.port}"
         cmd_record(args)
     finally:
-        if not args.keep:
-            cmd_down(args)
+        try:
+            save_logs(args)
+        finally:
+            if not args.keep:
+                cmd_down(args)
 
 
 def main() -> None:
@@ -993,6 +1392,10 @@ def main() -> None:
 
     def record_opts(p):
         p.add_argument("--out", required=True)
+        p.add_argument("--alt-port", type=int, default=None, help="the alt Octo's main port (default --port + 1)")
+        p.add_argument("--until-patience", type=int, default=3,
+                       help="after this many timed-out waits in one corpus file, its other waits get at most 20 s")
+        p.add_argument("--alt-admin-port", type=int, default=None, help="its admin port (default --port + 2)")
         p.add_argument("--only", help="glob over <corpus-file>/<request-name>")
         p.add_argument("--timeout", type=float, default=60.0)
         p.add_argument("--image-label", default=None, help="label stored in meta.json (default: --image)")
@@ -1008,6 +1411,7 @@ def main() -> None:
 
     p = sub.add_parser("record")
     p.add_argument("--target", required=True)
+    p.add_argument("--project", default=os.environ.get("PARITY_PROJECT", "parity"), help="for exec requests")
     record_opts(p)
     p.set_defaults(func=cmd_record)
 
@@ -1016,9 +1420,15 @@ def main() -> None:
     p.add_argument("b")
     p.add_argument("--mode", choices=["structural", "bytes"], default="structural")
     p.add_argument("--allowlist", default=DEFAULT_ALLOWLIST)
+    p.add_argument("--intentional", default=INTENTIONAL, help="reviewed intentional diffs (intentional-diffs.json)")
     p.add_argument("--report")
+    p.add_argument("--groups-out", help="write {group: [request ids with diffs]} as JSON")
+    p.add_argument("--summary", action="store_true", help="print the summary and the group table only")
     p.add_argument("--only")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("digest", help="print the hash of the corpus, stubs, fixtures and compose file")
+    p.set_defaults(func=lambda _args: print(inputs_digest()))
 
     p = sub.add_parser("show", help="print recorded entries matching a glob")
     p.add_argument("recording")

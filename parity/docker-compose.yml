@@ -7,6 +7,10 @@
 #
 # OCTO_IMAGE   the build under test: the C# release (default) or the Rust image (octo-rust:dev)
 # PARITY_PORT  host port for Octo (default 18480); PARITY_ND_PORT for Navidrome (18453)
+# PARITY_ALT_PORT, PARITY_ALT_ADMIN_PORT  host ports of the second Octo, "octo-alt" (sign-in
+#              off, the dashboard on a port of its own); parity.py uses PARITY_PORT + 1 and + 2
+# PARITY_MUSIC the library folder; parity.py up makes a fresh writable copy of fixtures/music
+#              for every run (library edits, the trash and downloads write to it)
 #
 # Two runs can coexist under different project names (-p) and ports.
 #
@@ -24,6 +28,7 @@ networks:
 
 volumes:
   octo-config: {}
+  octo-alt-config: {}
   navidrome-data: {}
 
 services:
@@ -34,6 +39,8 @@ services:
     volumes:
       - ./stubs:/stubs:ro
       - ./certs:/certs:ro
+      # The slskd stub "downloads" a file by writing it into the job folder Octo asked for.
+      - ${PARITY_MUSIC:-./fixtures/music}:/music
     mem_limit: 128m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
@@ -66,6 +73,13 @@ services:
           - github.com
           - api.listenbrainz.org
           - ntfy.sh
+          - labs.api.listenbrainz.org
+          - accounts.spotify.com
+          - api.spotify.com
+          - open.spotify.com
+          # Plain http: the Soulseek port test, and octo-sonic (Sounds alike).
+          - tools.slsknet.org
+          - octo-sonic
 
   navidrome:
     image: deluan/navidrome:0.64.2
@@ -89,9 +103,20 @@ services:
       # Creates the admin user `admin` on first start (setup.py adds the others).
       ND_DEVAUTOCREATEADMINPASSWORD: parity-admin
     volumes:
-      - ./fixtures/music:/music:ro
+      - ${PARITY_MUSIC:-./fixtures/music}:/music:ro
       - navidrome-data:/data
     mem_limit: 384m
+    networks: [sandbox]
+
+  # Puts state files from C# 2026.10.05 into Octo's config before it starts: the fetched songs
+  # the Afterglow palette and the downloads list read (Octo reads that file once at start).
+  config-seed:
+    image: python:3.13-alpine
+    command: ["sh", "-c", "cp /seed/* /config/ && chmod 666 /config/*"]
+    volumes:
+      - ./fixtures/config:/seed:ro
+      - octo-config:/config
+    mem_limit: 64m
     networks: [sandbox]
 
   octo:
@@ -101,7 +126,9 @@ services:
         condition: service_healthy
       navidrome:
         condition: service_started
-    environment:
+      config-seed:
+        condition: service_completed_successfully
+    environment: &octo-env
       ASPNETCORE_ENVIRONMENT: Production
       TZ: UTC
       # The parity CA is the only trusted root: honoured by OpenSSL (.NET on Linux) and by
@@ -143,20 +170,82 @@ services:
       Updates__Check: "false"
       Notifications__NtfyUrl: ""
       Notifications__DiscordWebhookUrl: ""
+      # Secrets that do nothing in this stack (no ntfy address, no listener named ghost), so the
+      # admin API's masking shows for each kind of secret (14-settings-media).
+      Notifications__NtfyToken: parity-ntfy-token
+      LastFm__UserSessions__ghost__SessionKey: parity-lastfm-session-ghost
+      LastFm__UserSessions__ghost__LastFmUser: ghost-on-lastfm
+      ListenBrainz__UserTokens__ghost: parity-lb-ghost-token
+      # Downloads (13-downloads, 95-acquisition): the deny list and the AcoustID check run, the
+      # fixture FLAC (0.9 MB) is big enough to be a whole song, and songs are filed by artist and
+      # album.
+      Soulseek__VerifyDownloads: "true"
+      Soulseek__AcoustIdApiKey: parity-acoustid-key
+      Soulseek__MinFileSizeBytes: "700000"
+      Subsonic__FolderStructure: Organized
+      # Sharing (18-dashboard): what the slskd stub's slskd.yml already holds, so the share
+      # switch's startup check only reads and then sleeps for 10 minutes.
+      Soulseek__ShareLibrary: "true"
+      Soulseek__SharedFolders: "[Music]/music"
+      Soulseek__CheckListenPort: "true"
+      # Imports (12-imports): a Spotify app id (PKCE, not a secret), and the trickle and the
+      # list refresh off, so nothing is fetched or read again on a timer.
+      Imports__SpotifyClientId: parity-spotify-client
+      Imports__SongsPerHour: "0"
+      Imports__RefreshHours: "0"
+      # Library actions are switched on and off by 19-health and 20-library-edits through the
+      # settings API; their playlists stay off, so getPlaylists never creates them meanwhile.
+      LibraryActions__PlaylistsEnabled: "false"
+      # Sounds alike asks the octo-sonic stub, with no pause between songs (15-radio). Popular
+      # right now and New Releases are switched on by 16-lists only: built at start, they would
+      # race 05-playlists' first getPlaylists.
+      RadioSources__SonicUrl: http://octo-sonic
+      RadioSources__SonicPauseSeconds: "0"
+      GeneratedPlaylists__PopularNow: "false"
+      GeneratedPlaylists__NewReleases: "false"
     volumes:
       - ./certs/ca.crt:/parity-ca/ca.crt:ro
-      - ./fixtures/music:/music:ro
+      - ${PARITY_MUSIC:-./fixtures/music}:/music
       - octo-config:/app/config
+      # Songs with planted problems that 19-health and 20-library-edits copy into the library.
+      - ./fixtures/planted:/parity-planted:ro
     mem_limit: 768m
+    networks: [sandbox]
+
+  # The same Octo with the dashboard sign-in off and the dashboard on a port of its own
+  # (Admin__Port): its main port (8080) answers 404 for /admin and /api/admin, its admin port
+  # (8081) answers 404 for everything else. Own config volume; same library, Navidrome and stubs.
+  octo-alt:
+    image: ${OCTO_IMAGE:-ghcr.io/winters27/octo:2026.10.05}
+    depends_on:
+      stubs:
+        condition: service_healthy
+      navidrome:
+        condition: service_started
+    environment:
+      <<: *octo-env
+      Admin__SignIn: "off"
+      Admin__Port: "8081"
+      # No Spotify app, and a redirect Spotify refuses: the import page's "not set up" answers.
+      Imports__SpotifyClientId: ""
+      Imports__SpotifyRedirectUri: http://localhost/callback
+    volumes:
+      - ./certs/ca.crt:/parity-ca/ca.crt:ro
+      - ${PARITY_MUSIC:-./fixtures/music}:/music:ro
+      - octo-alt-config:/app/config
+    mem_limit: 512m
     networks: [sandbox]
 
   gateway:
     image: python:3.13-alpine
-    command: ["python", "-u", "/stubs/gateway.py", "8080:octo:8080", "4533:navidrome:4533"]
+    command: ["python", "-u", "/stubs/gateway.py", "8080:octo:8080", "4533:navidrome:4533",
+              "8081:octo-alt:8080", "8082:octo-alt:8081"]
     volumes:
       - ./stubs:/stubs:ro
     ports:
       - "127.0.0.1:${PARITY_PORT:-18480}:8080"
       - "127.0.0.1:${PARITY_ND_PORT:-18453}:4533"
+      - "127.0.0.1:${PARITY_ALT_PORT:-18481}:8081"
+      - "127.0.0.1:${PARITY_ALT_ADMIN_PORT:-18482}:8082"
     mem_limit: 64m
     networks: [sandbox, edge]

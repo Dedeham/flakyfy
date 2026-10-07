@@ -20,7 +20,8 @@ hosts=(
   ws.audioscrobbler.com www.last.fm lastfm.freetls.fastly.net
   lrclib.net lyrics.kugou.com mobileservice.kugou.com music.163.com api.lyrics.ovh
   api.github.com github.com
-  api.listenbrainz.org ntfy.sh
+  api.listenbrainz.org labs.api.listenbrainz.org ntfy.sh
+  accounts.spotify.com api.spotify.com open.spotify.com
 )
 
 san=""

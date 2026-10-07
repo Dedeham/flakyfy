@@ -7,3 +7,4 @@ target
 .claude
 # Parity recordings are for the harness on the host, not an image.
 parity/recordings
+parity/.run

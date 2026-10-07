@@ -15,12 +15,31 @@ then in list order; the first match wins.
       "path": "/search",                   # exact path, or
       "pathRegex": "^/album/\\d+$",        # a regex searched in the path
       "query": {"q": "(?i)aurora"},        # optional: each param must exist and match
+      "bodyRegex": "\"username\":\"alpha\"",  # optional: searched in the request body
+      "searchText": "(?i)neon tide",       # slskd only: the search this call is about was
+                                           # started with words that match (Octo picks a
+                                           # random search id and sends the words only in
+                                           # the POST that starts the search)
       "status": 200,                       # default 200
       "headers": {"Content-Type": "..."},  # optional; JSON bodies default to application/json
-      "body": {...},                       # a JSON value, serialised compactly, or
+      "body": {...},                       # a JSON value, serialised compactly; a string that
+                                           # is exactly "{{size:bodies/x.flac}}" is served as
+                                           # that file's size in bytes, or
       "bodyText": "...",                   # a literal string, or
       "bodyFile": "bodies/tone.mp3",       # a file under the stubs dir (Range supported)
-      "delayMs": 0                         # optional
+      "template": true,                    # optional: {{date:+N}} / {{date:-N}} in the served
+                                           # body become today's UTC date plus N days
+                                           # (YYYY-MM-DD), for answers judged against today
+      "delayMs": 0,                        # optional
+      "times": 2,                          # optional: match only the first N hits, then fall
+                                           # through to later rows (a sequence of answers)
+      "writeFile": {"from": "bodies/x.flac", "to": "/music/{{json:options.destination}}/x.flac"}
+                                           # optional: on a hit, copy a file there first (a
+                                           # folder the stub shares with Octo). "to" may name
+                                           # members of the request's JSON body, {{json:a.b}},
+                                           # and "|leaf" keeps the last path segment of one
+                                           # ({{json:files[0].filename|leaf}}). Written to a
+                                           # .part file first, then renamed, so it appears whole.
     }
 
 Unmatched requests answer 404 {"error":"no stub"} and are logged with UNMATCHED, so a
@@ -33,6 +52,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import ssl
 import sys
 import threading
@@ -42,6 +62,10 @@ from urllib.parse import parse_qs, urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOCK = threading.Lock()
+# Hits per mapping row (for "times"), and the words each slskd search was started with.
+HITS: dict[str, int] = {}
+SEARCHES: dict[str, str] = {}
+SEARCH_ID = re.compile(r"^/api/v0/searches/([^/]+)")
 
 
 def load_mappings() -> list[dict]:
@@ -53,6 +77,8 @@ def load_mappings() -> list[dict]:
                 if "pathRegex" in row:
                     row["_re"] = re.compile(row["pathRegex"])
                 row["_q"] = {k: re.compile(v) for k, v in (row.get("query") or {}).items()}
+                row["_body"] = re.compile(row["bodyRegex"], re.S) if "bodyRegex" in row else None
+                row["_st"] = re.compile(row["searchText"]) if "searchText" in row else None
                 rows.append(row)
     return rows
 
@@ -66,25 +92,99 @@ def log(event: dict) -> None:
         sys.stdout.flush()
 
 
-def match(service: str, method: str, path: str, query: dict[str, list[str]]) -> dict | None:
-    for row in MAPPINGS:
-        if row.get("service") != service:
-            continue
-        if row.get("method") and row["method"].upper() != method:
-            continue
-        if "path" in row and row["path"] != path:
-            continue
-        if "_re" in row and not row["_re"].search(path):
-            continue
-        ok = True
-        for key, rx in row["_q"].items():
-            values = query.get(key)
-            if not values or not any(rx.search(v) for v in values):
-                ok = False
-                break
-        if ok:
+def search_text_of(method: str, path: str, body: bytes) -> str | None:
+    """The words of the slskd search a call is about: from the body of the POST that starts it,
+    or remembered from that POST for the calls that name its id."""
+    if method == "POST" and path == "/api/v0/searches":
+        try:
+            return str(json.loads(body or b"{}").get("searchText") or "")
+        except ValueError:
+            return None
+    m = SEARCH_ID.match(path)
+    with LOCK:
+        return SEARCHES.get(m.group(1)) if m else None
+
+
+def remember_search(method: str, path: str, body: bytes) -> None:
+    if method == "POST" and path == "/api/v0/searches":
+        try:
+            doc = json.loads(body or b"{}")
+        except ValueError:
+            return
+        with LOCK:
+            SEARCHES[str(doc.get("id"))] = str(doc.get("searchText") or "")
+
+
+def match(service: str, method: str, path: str, query: dict[str, list[str]], body: bytes) -> dict | None:
+    """The first row that fits, counting the hit (under the lock, so "times" holds with
+    concurrent requests)."""
+    text = search_text_of(method, path, body) if service == "slskd" else None
+    raw = body.decode("utf-8", "replace")
+    with LOCK:
+        for row in MAPPINGS:
+            if row.get("service") != service:
+                continue
+            if row.get("method") and row["method"].upper() != method:
+                continue
+            if "path" in row and row["path"] != path:
+                continue
+            if "_re" in row and not row["_re"].search(path):
+                continue
+            if any(not (query.get(k) and any(rx.search(v) for v in query[k])) for k, rx in row["_q"].items()):
+                continue
+            if row["_body"] is not None and not row["_body"].search(raw):
+                continue
+            if row["_st"] is not None and (text is None or not row["_st"].search(text)):
+                continue
+            if "times" in row and HITS.get(row["_src"], 0) >= int(row["times"]):
+                continue
+            HITS[row["_src"]] = HITS.get(row["_src"], 0) + 1
             return row
     return None
+
+
+def json_member(doc, expr: str) -> str:
+    leaf = expr.endswith("|leaf")
+    expr = expr[:-5] if leaf else expr
+    cur = doc
+    for part in re.findall(r"[^.\[\]]+|\[\d+\]", expr):
+        cur = cur[int(part[1:-1])] if part.startswith("[") else cur[part]
+    s = str(cur)
+    return re.split(r"[\\/]", s)[-1] if leaf else s
+
+
+def write_file(spec: dict, body: bytes) -> str:
+    try:
+        doc = json.loads(body) if body else {}
+    except ValueError:
+        doc = {}
+    to = re.sub(r"\{\{json:([^}]+)\}\}", lambda m: json_member(doc, m.group(1)), spec["to"])
+    os.makedirs(os.path.dirname(to), exist_ok=True)
+    shutil.copyfile(os.path.join(HERE, spec["from"]), to + ".part")
+    os.replace(to + ".part", to)  # appears whole, as slskd's move out of its incomplete folder does
+    return to
+
+
+def sized(value):
+    """{{size:bodies/x}} strings become the file's byte count, so an advertised size always
+    equals the fixture's."""
+    if isinstance(value, str):
+        m = re.fullmatch(r"\{\{size:([^}]+)\}\}", value)
+        return os.path.getsize(os.path.join(HERE, m.group(1))) if m else value
+    if isinstance(value, list):
+        return [sized(v) for v in value]
+    if isinstance(value, dict):
+        return {k: sized(v) for k, v in value.items()}
+    return value
+
+
+def dated(payload: bytes) -> bytes:
+    """{{date:+N}} and {{date:-N}}: today's UTC date plus N days, as YYYY-MM-DD."""
+    import datetime
+
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    return re.sub(rb"\{\{date:([+-]\d+)\}\}",
+                  lambda m: (today + datetime.timedelta(days=int(m.group(1)))).isoformat().encode(), payload)
 
 
 def make_handler(fixed_service: str | None):
@@ -108,8 +208,10 @@ def make_handler(fixed_service: str | None):
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length > 0 else b""
             service = self._service()
-            row = match(service, self.command, parts.path, query)
-            log({
+            row = match(service, self.command, parts.path, query, body)
+            if service == "slskd":
+                remember_search(self.command, parts.path, body)
+            event = {
                 "t": "UNMATCHED" if row is None else "hit",
                 "service": service,
                 "method": self.command,
@@ -117,16 +219,23 @@ def make_handler(fixed_service: str | None):
                 "query": parts.query,
                 "body": body[:300].decode("utf-8", "replace") if body else None,
                 "stub": row.get("_src") if row else None,
-            })
+            }
             if row is None:
+                log(event)
                 self._send(404, {"Content-Type": "application/json"}, b'{"error":"no stub"}')
                 return
             if row.get("delayMs"):
                 time.sleep(row["delayMs"] / 1000.0)
+            if row.get("writeFile"):
+                try:
+                    event["wrote"] = write_file(row["writeFile"], body)
+                except (OSError, KeyError, IndexError, TypeError) as exc:
+                    event["writeError"] = f"{type(exc).__name__}: {exc}"
+            log(event)
             headers = dict(row.get("headers") or {})
             status = int(row.get("status", 200))
             if "body" in row:
-                payload = json.dumps(row["body"], ensure_ascii=False, separators=(",", ":")).encode()
+                payload = json.dumps(sized(row["body"]), ensure_ascii=False, separators=(",", ":")).encode()
                 headers.setdefault("Content-Type", "application/json")
             elif "bodyFile" in row:
                 with open(os.path.join(HERE, row["bodyFile"]), "rb") as fh:
@@ -152,6 +261,8 @@ def make_handler(fixed_service: str | None):
                     status = 206
             else:
                 payload = str(row.get("bodyText", "")).encode()
+            if row.get("template"):
+                payload = dated(payload)
             self._send(status, headers, payload)
 
         def _send(self, status: int, headers: dict, payload: bytes) -> None:

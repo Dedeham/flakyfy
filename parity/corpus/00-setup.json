@@ -1,6 +1,6 @@
 {
   "group": "setup",
-  "description": "Learn the ids the rest of the corpus uses. Navidrome mints random song, user, playlist and session ids on every fresh start, so those captures are normalised back to {{name}} in the diff. Album and artist ids (name-derived) and Octo external ids (sha256-derived) are deterministic, so they are only reused (normalize: false) and must match between builds. These requests are recorded and compared like any other.",
+  "description": "Learn the ids the rest of the corpus uses. Navidrome mints random song, user, playlist and session ids on every fresh start, so those captures are normalised back to {{name}} in the diff. Album and artist ids (name-derived) and Octo external ids (sha256-derived) are deterministic, so they are only reused (normalize: false) and must match between builds. Also the dashboard sign-ins the rest of the corpus uses (\"session\": \"admin\" and \"recovery\"): a Navidrome admin through browse/auth, and the recovery code read from the container. These requests are recorded and compared like any other.",
   "defaults": {"auth": "p", "f": "json"},
   "requests": [
     {"name": "album-list-alpha", "path": "/rest/getAlbumList2", "query": [["type", "alphabeticalByName"]],
@@ -29,6 +29,14 @@
      "body": {"json": {"username": "{{admin_user}}", "password": "{{admin_pass}}"}},
      "capture": {"nd_token": "json:token", "nd_user_id": "json:id",
                  "nd_salt": "json:subsonicSalt", "nd_subtoken": "json:subsonicToken"}},
+    {"name": "admin-sign-in", "method": "POST", "path": "/api/admin/browse/auth", "auth": "none", "f": null,
+     "headers": {"X-Octo-Admin": "1"}, "body": {"json": {"username": "{{admin_user}}", "password": "{{admin_pass}}"}},
+     "backlog": "J", "capture": {"admin_session": "cookie:octo_browse"}},
+    {"name": "recovery-code-file", "exec": ["cat", "/app/config/admin-recovery-code"], "backlog": "J",
+     "capture": {"recovery_code": "regex:(\\S+)"}},
+    {"name": "recovery-sign-in", "method": "POST", "path": "/api/admin/auth/recovery", "auth": "none", "f": null,
+     "headers": {"X-Octo-Admin": "1"}, "body": {"json": {"code": "{{recovery_code}}"}},
+     "backlog": "J", "capture": {"recovery_session": "cookie:octo_browse"}},
     {"name": "discovery-zephyr", "path": "/rest/search3", "query": [["query", "zephyr"]],
      "capture": {"ext_song": {"from": "json:subsonic-response.searchResult3.song[0].id", "normalize": false},
                  "ext_song2": {"from": "json:subsonic-response.searchResult3.song[1].id", "normalize": false},

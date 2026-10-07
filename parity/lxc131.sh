@@ -129,9 +129,12 @@ watchdog=$!
 trap 'kill $watchdog 2> /dev/null || true' EXIT
 
 # The run itself. Its output streams here; the summary and the per-group table end it.
+# One run at a time on the box: every branch's run uses the same stack names, and two at
+# once would push the host into swap. A second run waits here for the first to finish.
 quoted=""
 for a in "${args[@]+"${args[@]}"}"; do quoted+=" $(printf '%q' "$a")"; done
-on_box "bash /opt/octo-parity/runs/$name/src/parity/box-run.sh $name$quoted" || true
+on_box "flock -n /opt/octo-parity/run.lock true || echo 'box: another parity run is going; waiting for it'
+flock /opt/octo-parity/run.lock bash /opt/octo-parity/runs/$name/src/parity/box-run.sh $name$quoted" || true
 kill $watchdog 2> /dev/null || true
 
 # The full reports, for reading the diffs themselves.

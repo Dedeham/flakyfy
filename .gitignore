@@ -89,3 +89,6 @@ navidrome-data/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Rust build output. Each worktree keeps its own target/; never share one CARGO_TARGET_DIR.
+/target/

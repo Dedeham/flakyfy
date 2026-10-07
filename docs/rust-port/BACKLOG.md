@@ -170,9 +170,11 @@ Done 2026-10-07 (`parity/README.md` has the details):
   has today. A group that changes those answers moves its golden tests onto a
   fresh 2026.10.05 recording in its own commit (`parity.py run`, then copy the
   corpus files it needs).
-- [ ] Regenerate the tag and state fixtures with the C# generators at
-  2026.10.05 (`docs/rust-migration/fixtures`): not part of the harness work;
-  wave G1 does it with the 7 new state files.
+- [x] Regenerate the state fixtures with the C# generator at 2026.10.05
+  (`docs/rust-migration/fixtures/state`): done in wave G1, with the 7 new
+  files, `admin-recovery-code` and the new fields (state-files.md §4.26 on).
+- [ ] Regenerate the tag fixtures (`fixtures/tags`) at 2026.10.05: group C
+  (the explicit advisory, `ITUNESADVISORY` and `rtng`), with its tagging.
 
 ## Phase 1 record (2026-10-07)
 
@@ -262,9 +264,19 @@ diff.
 - **The explicit backfill accepts a recovery code session**
   (`ExplicitBackfillController.cs:30`, `UserOf`), so the recovery code can
   write explicit marks into music files; the cover upgrade refuses it.
+  *Port (G1):* not fixed. `BrowseSessionStore::user_of` accepts the recovery
+  session and `navidrome_user_of` does not; when group P ports the
+  controller it calls `user_of` as the C# does, and the fix is that one call
+  becoming `navidrome_user_of` (or `helpers_6b2::signed`, which already
+  refuses it).
 - **`lidarr/test` sends the saved Lidarr key to any address typed in** when the
   placeholder is sent (`AdminController.cs:2372`); the "a secret never follows
   a new address" rule covers saves only.
+  *Port (G1):* not fixed; the placeholder is read as the saved key, as the C#
+  does, in one function, `lidarr_test_key` (`controllers/admin/system.rs`).
+  The fix is to give it the typed address and keep the saved key only when
+  that address is the saved `Lidarr:BaseUrl` (the comparison
+  `secrets::secret_sent_elsewhere` makes).
 - **A Navidrome address saved with a trailing slash** passes the same-address
   rule, and the stream relay then calls `//rest/stream`
   (`SubsonicProxyService.cs:344`).
@@ -299,8 +311,8 @@ progress, done, or no Rust change.
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 140 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 55 | open |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 208 | open |
-| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 76 | open |
-| J Admin sign-in | 6 | 921 | 29 | 1.25 | 252 | open |
+| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 76 | done (G1) |
+| J Admin sign-in | 6 | 921 | 29 | 1.25 | 252 | done (G1) |
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 5 | open |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 75 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
@@ -323,6 +335,29 @@ Things the gap brings besides code: 7 new state files
 `tag-edits.json`) plus `admin-recovery-code`; new fields in
 `downloads-history.json`, the trash notes and `upgrades.json`; 34 new env
 vars; the `zip` crate for imports.
+
+**Done in wave G1 (branch `port/g1-core`):** every 2026.10.05 setting and
+env var (config.md §3.6, §3.12, §3.15 to §3.18), bound and clamped, and
+listed by GET settings, raw-config and config-sources. The 7 new state
+files and `admin-recovery-code`, read and written as the C# stores did, each
+with a regenerated fixture and a round trip (state-files.md §4.26 on). The
+new fields in the files Octo already kept, including three the list above
+missed: `external-ids.json` (`ExplicitContent`, `Version`, and a clean
+edit's own id), `generated-playlists.json` (`ForYou`, `ForYouCovers`) and
+`library-actions.json` (`Copy`, `DownloadAllowed`, `BlocksDownloads`, state
+`Restored`); `downloads-history.json` is now written without nulls, as the C#
+writer does. What the later groups find waiting for them:
+
+| Group | Already there |
+| --- | --- |
+| B, D | `DownloadHistoryEntry.key` and `log` (`octo_core::models::download::{AcquisitionEvent, AcquisitionCandidate}`, with `Quality`); `PickedCopy` (`services::common::download_picks`) and `UpgradeJob.pick`. `base_download_service` records `key: None` (STUB(D)). `GET /api/admin/downloads` already drops `log` and says `hasLog`. |
+| E | `Soulseek.WebUrl` (`safe_web_url`), `CheckListenPort`, `ShareLibrary`, `SharedFolders` (`shared_folder_list`); the save's WebUrl check and the slskd password rules (9f9502d's admin side). |
+| F | `services::library::library_tag_edits` (`TagEditEntry`, the file); `LibraryActionEntry.copy`, `download_allowed`, `blocks_downloads()` (the journal's never-requested check uses it); `LibraryActionState::Restored`; `QuarantineManifest.sidecars` and `mappings` (written null, STUB(F)). |
+| G, Q | `GeneratedPlaylists.PopularNow`, the Made for you switches and clamps (`any_for_you`); `UserMixes.for_you` and `for_you_covers` (empty, STUB(Q)). |
+| H | `Imports` settings; `services::imports` (`ImportList`, `ImportTrack`, `TrickleJob`, the three files' load and save). |
+| L | `RadioSources` settings (`effective_weight`); `services::radio::radio_outcome_store` and `services::sonic::sonic_store`; `LastFmRadioBan`; the status page's octo-sonic probe. |
+| P | `SoulseekRouting.explicit_content` and `version`, the clean id rule and the explicit mark kept across registrations; `services::library::explicit_backfill_store`. |
+| H, N, R, D | Their controllers call `BrowseSessionStore::navidrome_user_of` (never the recovery code) and read who called from the gate's `AdminCaller` extension (`middleware::admin_sign_in_gate::{Caller, caller_of}`), as `LibraryHealthController` and `AdminDownloadsController` did. |
 
 ## Commits by group
 
@@ -366,7 +401,7 @@ vars; the `zip` crate for imports.
 
 ### E. slskd sharing and the Share switch
 
-- [ ] `9f9502d` fix(admin): the slskd password never goes back to the browser
+- [x] `9f9502d` fix(admin): the slskd password never goes back to the browser (ported in G1 with group I)
 - [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
 - [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
 - [ ] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd
@@ -404,18 +439,24 @@ vars; the `zip` crate for imports.
 
 ### I. Secret masking in the admin API
 
-- [ ] `031e563` fix(admin): every key, token and webhook address in the settings reads as the placeholder, and saving it back keeps the stored one
-- [ ] `9210c63` fix(admin): a saved password, key or token never follows a server address it was not typed again for
-- [ ] `d7e8482` docs(readme): saved credentials never come back out of the admin API
+Done in G1 (`controllers::admin::secrets`). `d7e8482` is the README.
+
+- [x] `031e563` fix(admin): every key, token and webhook address in the settings reads as the placeholder, and saving it back keeps the stored one
+- [x] `9210c63` fix(admin): a saved password, key or token never follows a server address it was not typed again for
+- [x] `d7e8482` docs(readme): saved credentials never come back out of the admin API
 
 ### J. Admin sign-in (gate, recovery code, role check, ADMIN_PORT)
 
-- [ ] `a4333f0` feat(admin): the admin API needs a sign-in with a Navidrome admin account
-- [ ] `3b82267` feat(admin): a sign-in screen in front of the whole dashboard
-- [ ] `7a9f753` docs: signing in to the dashboard, the recovery code, and scripts with a cookie jar
-- [ ] `2eb2299` fix(admin): the hourly role check reads Navidrome's user list, since getUser only answers for yourself
-- [ ] `06e9a60` fix(admin): a demoted admin is signed out even when Octo's own Navidrome token came from them
-- [ ] `f591793` fix(admin): Navidrome refuses its user list to a non-admin with 403, and that now means Octo's token is stale
+Done in G1. `3b82267` is the dashboard (`octo/wwwroot`, served as is by both
+builds) and `7a9f753` the README, compose, `.env.example` and installer: no
+Rust change beyond the settings they name.
+
+- [x] `a4333f0` feat(admin): the admin API needs a sign-in with a Navidrome admin account
+- [x] `3b82267` feat(admin): a sign-in screen in front of the whole dashboard
+- [x] `7a9f753` docs: signing in to the dashboard, the recovery code, and scripts with a cookie jar
+- [x] `2eb2299` fix(admin): the hourly role check reads Navidrome's user list, since getUser only answers for yourself
+- [x] `06e9a60` fix(admin): a demoted admin is signed out even when Octo's own Navidrome token came from them
+- [x] `f591793` fix(admin): Navidrome refuses its user list to a non-admin with 403, and that now means Octo's token is stale
 
 ### K. Lidarr stale guid, bare address 302 (#80)
 
@@ -521,12 +562,17 @@ The Rust tests read the shared case files as they are.
 The port does not have to stay one to one. Each of these is a known diff with
 its reason when it changes an answer.
 
-- [ ] **The admin gate as one router layer, default deny.** Axum has no
+- [x] **The admin gate as one router layer, default deny.** Axum has no
   endpoint attributes to read, so the gate is a layer with an explicit list of
-  open routes; an unknown `/api/admin/<x>` answers 401 too (group J).
-- [ ] **The signed-out status cache** (C# caches it 10 s). Under load the Rust
+  open routes; an unknown `/api/admin/<x>` answers 401 too (group J). Done in
+  G1 (`middleware::admin_sign_in_gate`). No answer changes: the C# gate also
+  answered 401 to an unknown admin path (its catch-all endpoint carries no
+  `[AdminOpen]`), so it needs no intentional-diff entry; a test walks every
+  admin route with four methods.
+- [x] **The signed-out status cache** (C# caches it 10 s). Under load the Rust
   `/api/admin/status` is slower than C# only because it probes five services
-  on every call (group J).
+  on every call (group J). Done in G1, as the C# does it (ten seconds, one
+  probe round at a time).
 - [ ] **Plain error words instead of .NET's.** The port copies .NET exception
   texts the apps can show ("The request was canceled due to the configured
   HttpClient.Timeout of 100 seconds elapsing.", "Connection refused

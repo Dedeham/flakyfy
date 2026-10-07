@@ -1,7 +1,7 @@
 {
   "group": "mutations",
-  "description": "State-changing requests, run last. Every run starts from fresh containers and volumes, so these replay deterministically: stars, ratings, scrobbles and now-playing in Navidrome, a playlist round trip, an Octo settings patch, the side-effect admin POSTs, and finally a heart on an external song (which starts a background acquisition against the slskd stub). Ids Navidrome mints here are captured and normalised.",
-  "defaults": {"auth": "p"},
+  "description": "State-changing requests, run last. Every run starts from fresh containers and volumes, so these replay deterministically: stars, ratings, scrobbles and now-playing in Navidrome, a playlist round trip, an Octo settings patch, the side-effect admin POSTs, and a heart refused for a wrong password (the real hearts and their downloads are in 95-acquisition). Ids Navidrome mints here are captured and normalised.",
+  "defaults": {"auth": "p", "session": "admin"},
   "requests": [
     {"name": "star-local-song-json", "path": "/rest/star", "f": "json", "query": [["id", "{{song_flac3}}"]]},
     {"name": "star-local-album-xml", "path": "/rest/star.view", "query": [["albumId", "{{album_mp3}}"]]},
@@ -72,7 +72,6 @@
      "headers": {"X-Octo-Admin": "1", "Cookie": "octo_browse={{browse_token}}"}},
     {"name": "browse-session-after-signout", "path": "/api/admin/browse/session", "auth": "none", "headers": {"Cookie": "octo_browse={{browse_token}}"}},
 
-    {"name": "star-external-song-heart", "path": "/rest/star", "f": "json", "query": [["id", "{{ext_song2}}"]]},
     {"name": "star-external-badpass", "path": "/rest/star", "auth": "bad", "f": "json", "query": [["id", "{{ext_song}}"]]}
   ]
 }

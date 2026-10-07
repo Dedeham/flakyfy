@@ -32,7 +32,9 @@ use octo_media::tags::TagWriterExtras;
 use octo_subsonic::SubsonicResponseBuilder;
 use tokio_util::sync::CancellationToken;
 
-use crate::services::admin::{BrowseSessionStore, DirectoryBrowser};
+use crate::services::admin::{
+    AdminRecoveryCode, AdminRoleCheck, BrowseSessionStore, DirectoryBrowser, SignInThrottle,
+};
 use crate::services::common::{
     AcquisitionActivity, AcquisitionTracker, AcquisitionWorker, CacheCleanupService, CatalogBlanks,
     DownloadConcurrency, DownloadCore, DownloadServices, ExternalSearchService, HeartAcquisitionCoordinator,
@@ -238,6 +240,15 @@ pub struct AppInner {
     pub directory_browser: Arc<DirectoryBrowser>,
     /// `BrowseSessionStore`: dashboard sign-ins, `browse-sessions.json`.
     pub browse_sessions: Arc<BrowseSessionStore>,
+    /// `SignInThrottle`: ten wrong sign-ins per address per fifteen minutes, then a wait.
+    pub sign_in_throttle: Arc<SignInThrottle>,
+    /// `AdminRecoveryCode`: the one-time way in when Navidrome cannot vouch for anyone,
+    /// `<config>/admin-recovery-code`.
+    pub admin_recovery_code: Arc<AdminRecoveryCode>,
+    /// `AdminRoleCheck`: ends the sign-ins of someone Navidrome no longer counts as an admin.
+    pub admin_role_check: Arc<AdminRoleCheck>,
+    /// The signed-out `GET /api/admin/status` answer, kept ten seconds (a static in C#).
+    pub anonymous_status: crate::controllers::admin::system::AnonymousStatusCache,
     /// `RejectedPeerRegistry`: peer files that proved wrong, `rejected-peers.json` (flushed by
     /// a worker), with `Soulseek:RejectedPeerTtlDays` read live.
     pub rejected_peers: Arc<RejectedPeerRegistry>,
@@ -773,6 +784,34 @@ impl NavidromeServices {
 
 /// The stores and clients of task 3-F, over the config directory every state file sits in
 /// (`Path.GetDirectoryName(SettingsFilePath)`).
+/// The dashboard sign-in's services (`Program.cs`, a4333f0): the throttle, the recovery code
+/// beside the settings, and the hourly role check.
+struct AdminSignIn {
+    throttle: Arc<SignInThrottle>,
+    recovery_code: Arc<AdminRecoveryCode>,
+    role_check: Arc<AdminRoleCheck>,
+}
+
+impl AdminSignIn {
+    fn build(
+        settings: &Arc<SettingsStore>,
+        stores: &Stores,
+        navidrome: &NavidromeServices,
+        config_dir: &Path,
+    ) -> AdminSignIn {
+        AdminSignIn {
+            throttle: Arc::new(SignInThrottle::new()),
+            recovery_code: Arc::new(AdminRecoveryCode::new(config_dir.join("admin-recovery-code"))),
+            role_check: Arc::new(AdminRoleCheck::new(
+                navidrome.navidrome_identity.clone(),
+                stores.browse_sessions.clone(),
+                navidrome.http.clone(),
+                settings.clone(),
+            )),
+        }
+    }
+}
+
 struct Stores {
     download_history: Arc<DownloadHistoryService>,
     download_concurrency: Arc<DownloadConcurrency>,
@@ -1369,6 +1408,10 @@ pub struct TestServices {
     pub raw_settings: Vec<(String, String)>,
     /// `IDownloadService` (the real one is task 4-C's).
     pub download_service: Option<Arc<dyn IDownloadService>>,
+    /// `Admin:SignIn`. None runs the test with the sign-in off, as the C# suite's
+    /// `TestDefaults` did for every web test written before the sign-in (they test what an
+    /// endpoint does, not who may call it); the sign-in tests set it.
+    pub sign_in: Option<String>,
 }
 
 /// The queues and sweeps of 5-B: the upgrade queue's worker, the weekly quality upgrade, the
@@ -1599,6 +1642,7 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1628,6 +1672,10 @@ impl AppState {
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
+            sign_in_throttle: admin_sign_in.throttle,
+            admin_recovery_code: admin_sign_in.recovery_code,
+            admin_role_check: admin_sign_in.role_check,
+            anonymous_status: Default::default(),
             rejected_peers: stores.rejected_peers,
             release_check: stores.release_check,
             http: navidrome.http,
@@ -1721,6 +1769,8 @@ impl AppState {
 
     /// [`AppState::for_tests`] with some services swapped for a test's fakes.
     pub fn for_tests_with(settings: AppSettings, overrides: TestServices) -> AppState {
+        let mut settings = settings;
+        settings.admin.sign_in = overrides.sign_in.clone().unwrap_or_else(|| "off".to_string());
         let store = SettingsStore::for_tests(settings);
         for (key, value) in &overrides.raw_settings {
             store.set_raw(key, Some(value));
@@ -1823,6 +1873,7 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -1852,6 +1903,10 @@ impl AppState {
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
+            sign_in_throttle: admin_sign_in.throttle,
+            admin_recovery_code: admin_sign_in.recovery_code,
+            admin_role_check: admin_sign_in.role_check,
+            anonymous_status: Default::default(),
             rejected_peers: stores.rejected_peers,
             release_check: stores.release_check,
             http: navidrome.http,

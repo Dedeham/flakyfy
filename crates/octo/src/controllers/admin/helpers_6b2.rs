@@ -55,12 +55,16 @@ pub fn browse_user(state: &AppState, parts: &Parts) -> BrowseUser {
     )
 }
 
-/// `CoverUpgradeController.Signed` / `LyricsAdminController.Signed`: `_sessions.Validate(cookie
-/// ?? header)`. It slides the server-side expiry but, unlike `BrowseUser`, never re-issues the
-/// cookie.
+/// `CoverUpgradeController.Signed` / `LyricsAdminController.Signed`:
+/// `_sessions.NavidromeUserOf(cookie ?? header) is not null`. It slides the server-side expiry
+/// but, unlike `BrowseUser`, never re-issues the cookie. A recovery-code session is not signed
+/// in here: these endpoints read or change library files.
 pub fn signed(state: &AppState, parts: &Parts) -> bool {
     let token = request_cookie(&parts.headers, BROWSE_COOKIE_NAME).or_else(|| header_token(parts));
-    state.browse_sessions.validate(token.as_deref())
+    state
+        .browse_sessions
+        .navidrome_user_of(token.as_deref())
+        .is_some()
 }
 
 /// `[FromQuery] string?`: the first value, matched ignoring case; empty binds as null.

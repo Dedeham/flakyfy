@@ -42,7 +42,7 @@ impl Reply {
 }
 
 fn app(state: &AppState) -> App {
-    build(state.clone(), &StaticAssets::default())
+    build(state.clone(), &StaticAssets::default(), 0)
 }
 
 /// A request as the dashboard sends it: writes carry `X-Octo-Admin`, a body is JSON.

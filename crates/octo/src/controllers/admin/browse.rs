@@ -1,11 +1,13 @@
-//! `AdminController`'s browse sign-in and the endpoints that read files (L439–L637): the
-//! Navidrome admin sign-in (`browse/auth`), the folder picker (`browse`), who is signed in
-//! (`browse/session`), signing out, and the tag preview.
+//! `AdminController`'s sign-in and the endpoints that read files: the Navidrome admin sign-in
+//! (`browse/auth`), the recovery code (`auth/recovery`), the folder picker (`browse`), who is
+//! signed in (`browse/session`), signing out, and the tag preview.
+
+use std::net::SocketAddr;
 
 use axum::Extension;
 use axum::body::Bytes;
-use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{ConnectInfo, RawQuery, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use octo_core::common::dotnet::is_blank;
 use serde::Deserialize;
@@ -14,11 +16,33 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::helpers_6b1::{
-    BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, bind_body, browse_cookie, browse_cookie_deleted,
-    camel_case_value, error_json, header_value, is_https, ok, query_value, request_cookie,
+    BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, bind_body, bind_optional_body, browse_cookie,
+    browse_cookie_deleted, browse_cookie_for, camel_case_value, error_json, header_value, is_https, ok,
+    query_value, request_cookie,
 };
 use crate::app::AppState;
 use crate::middleware::forwarded::RequestScheme;
+use crate::services::admin::sign_in_throttle::key_of;
+use crate::services::admin::{BrowseSessionStore, SignInThrottle};
+
+/// The address a request came from, for the sign-in throttle and the log.
+pub type Remote = Option<Extension<ConnectInfo<SocketAddr>>>;
+
+fn remote_key(remote: &Remote) -> String {
+    key_of(remote.as_ref().map(|Extension(ConnectInfo(addr))| *addr))
+}
+
+/// A 429 with `Retry-After` in whole seconds, as the sign-in endpoints answer a wait.
+fn too_many(wait: chrono::TimeDelta, words: &str) -> Response {
+    let mut res = error_json(
+        StatusCode::TOO_MANY_REQUESTS,
+        &format!("{words} Try again in {}.", SignInThrottle::minutes(wait)),
+    );
+    if let Ok(value) = HeaderValue::from_str(&SignInThrottle::retry_after_seconds(wait).to_string()) {
+        res.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    res
+}
 
 /// Credentials for `browse/auth`. Body-only by design.
 #[derive(Debug, Default, Deserialize)]
@@ -28,7 +52,8 @@ pub struct BrowseAuthRequest {
     pub password: Option<String>,
 }
 
-/// `POST /api/admin/browse/auth`: exchanges Navidrome admin credentials for a browse session.
+/// `POST /api/admin/browse/auth`: exchanges Navidrome admin credentials for a dashboard sign-in,
+/// remembered by this browser.
 ///
 /// Credentials arrive in the body, never the query string, so they cannot end up in access
 /// logs or a referrer. Verification is delegated to the Navidrome Octo already fronts: no new
@@ -37,6 +62,7 @@ pub struct BrowseAuthRequest {
 pub async fn browse_auth(
     State(state): State<AppState>,
     scheme: Option<Extension<RequestScheme>>,
+    remote: Remote,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -56,13 +82,19 @@ pub async fn browse_auth(
     if url.is_empty() {
         return error_json(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Navidrome URL is not configured yet.",
+            "Navidrome URL is not configured yet. Use the recovery code instead.",
         );
     }
     let username = request.username.unwrap_or_default();
     let password = request.password.unwrap_or_default();
     if is_blank(&username) || is_blank(&password) {
         return error_json(StatusCode::UNAUTHORIZED, "Username and password are required.");
+    }
+
+    let throttle = &state.sign_in_throttle;
+    let try_key = remote_key(&remote);
+    if let Some(wait) = throttle.retry_after(&try_key) {
+        return too_many(wait, "Too many wrong sign-ins.");
     }
 
     let payload = octo_core::json::to_string(&json!({ "username": username, "password": password }));
@@ -73,16 +105,31 @@ pub async fn browse_auth(
         .body(payload)
         .send()
         .await;
-    let outcome: Result<Option<&str>, String> = match reply {
+    /// What Navidrome's answer means for the sign-in.
+    enum Outcome {
+        /// Navidrome's own limit (5 sign-ins per 20 seconds per address) counts every sign-in
+        /// through Octo as Octo's, so it is said rather than calling the password wrong.
+        Limited,
+        /// Wrong credentials: counts toward the wait.
+        Rejected,
+        NotAdmin,
+        Admin(Bytes),
+    }
+    let outcome: Result<Outcome, String> = match reply {
         Err(e) => Err(crate::services::http_client_factory::connect_failure_message(&e)),
-        Ok(response) if !response.status().is_success() => Ok(Some("Navidrome rejected those credentials.")),
+        Ok(response) if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => Ok(Outcome::Limited),
+        Ok(response) if !response.status().is_success() => Ok(Outcome::Rejected),
         Ok(response) => match response.bytes().await {
             Err(e) => Err(e.to_string()),
             Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
                 Err(e) => Err(e.to_string()),
                 Ok(document) => {
                     let is_admin = document.get("isAdmin") == Some(&serde_json::Value::Bool(true));
-                    Ok((!is_admin).then_some("That account is not a Navidrome admin."))
+                    Ok(if is_admin {
+                        Outcome::Admin(bytes)
+                    } else {
+                        Outcome::NotAdmin
+                    })
                 }
             },
         },
@@ -92,11 +139,25 @@ pub async fn browse_auth(
             warn!("Browse auth against Navidrome failed: {message}");
             error_json(
                 StatusCode::BAD_GATEWAY,
-                "Could not reach Navidrome to verify credentials.",
+                "Could not reach Navidrome to verify credentials. If it is down, use the recovery code.",
             )
         }
-        Ok(Some(refusal)) => error_json(StatusCode::UNAUTHORIZED, refusal),
-        Ok(None) => {
+        Ok(Outcome::Limited) => error_json(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Navidrome is limiting sign-ins right now. Wait half a minute and try again.",
+        ),
+        Ok(Outcome::Rejected) => {
+            throttle.failed(&try_key);
+            error_json(StatusCode::UNAUTHORIZED, "Navidrome rejected those credentials.")
+        }
+        Ok(Outcome::NotAdmin) => {
+            error_json(StatusCode::UNAUTHORIZED, "That account is not a Navidrome admin.")
+        }
+        Ok(Outcome::Admin(login_body)) => {
+            // Octo's own admin identity, as a relayed admin login already sets it: rescans and
+            // the hourly role check need one, and a fresh install may have no other.
+            state.navidrome_identity.capture_login(&login_body);
+            throttle.succeeded(&try_key);
             info!("Browse session opened for Navidrome admin {username}");
             let token = state.browse_sessions.create(&username);
             // Hand the session back as an HttpOnly cookie rather than something the page has
@@ -144,28 +205,122 @@ pub async fn browse(
     signed_in.finish(ok(&answer))
 }
 
-/// `GET /api/admin/browse/session`: who this browser is signed in as, for the dashboard's
-/// footer. Never prompts. The cookie alone counts here.
+/// The recovery code, typed on the sign-in screen. Body-only, like the password.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct RecoveryRequest {
+    pub code: Option<String>,
+}
+
+/// `POST /api/admin/auth/recovery`: sign in with the one-time code from `admin-recovery-code`,
+/// for when Navidrome cannot vouch for anyone. The session lasts an hour, is never written to
+/// disk, and cannot reach the endpoints that change library files. The code is replaced as soon
+/// as it works.
+pub async fn recovery_sign_in(
+    State(state): State<AppState>,
+    scheme: Option<Extension<RequestScheme>>,
+    remote: Remote,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request: Option<RecoveryRequest> = match bind_optional_body(&headers, &body) {
+        Ok(request) => request,
+        Err(res) => return res,
+    };
+    let throttle = &state.sign_in_throttle;
+    let recovery = &state.admin_recovery_code;
+    let try_key = remote_key(&remote);
+    if let Some(wait) = throttle.retry_after(&try_key) {
+        return too_many(wait, "Too many wrong tries.");
+    }
+    if !recovery.try_use(request.and_then(|r| r.code).as_deref()) {
+        throttle.failed(&try_key);
+        return error_json(
+            StatusCode::UNAUTHORIZED,
+            "That is not the recovery code. Each code works once, so read the file again.",
+        );
+    }
+    throttle.succeeded(&try_key);
+    warn!(
+        "The dashboard was opened with the recovery code from {try_key}. A new code is in {}.",
+        recovery.file_path().display()
+    );
+    let token = state.browse_sessions.create_recovery();
+    let mut res = ok(&json!({
+        "ok": true,
+        "user": BrowseSessionStore::RECOVERY_USER,
+        "recovery": true,
+    }));
+    res.headers_mut().append(
+        header::SET_COOKIE,
+        browse_cookie_for(
+            &token,
+            is_https(scheme.as_deref()),
+            BrowseSessionStore::RECOVERY_TTL,
+        ),
+    );
+    res
+}
+
+/// `GET /api/admin/browse/session`: who this browser is signed in as, and whether the sign-in is
+/// off. Never prompts; answers without a sign-in. The cookie alone counts here.
 pub async fn browse_session(
     State(state): State<AppState>,
     scheme: Option<Extension<RequestScheme>>,
     headers: HeaderMap,
 ) -> Response {
-    let signed_in = BrowseUser::check(&state, &headers, scheme.as_deref(), None);
-    let answer = match &signed_in.user {
-        Some(user) => ok(&json!({ "signedIn": true, "user": user })),
-        None => ok(&json!({ "signedIn": false })),
-    };
-    signed_in.finish(answer)
+    let cookie = request_cookie(&headers, BROWSE_COOKIE_NAME);
+    let user = state.browse_sessions.user_of(cookie.as_deref());
+    let recovery = user.as_deref() == Some(BrowseSessionStore::RECOVERY_USER);
+    let off = state.settings.current().admin.sign_in_off();
+    let mut res = ok(&json!({
+        "signedIn": user.is_some(),
+        "user": user,
+        "recovery": recovery,
+        "signInOff": off,
+    }));
+    if user.is_some()
+        && let Some(cookie) = cookie
+    {
+        let age = if recovery {
+            BrowseSessionStore::RECOVERY_TTL
+        } else {
+            BrowseSessionStore::TTL
+        };
+        res.headers_mut().append(
+            header::SET_COOKIE,
+            browse_cookie_for(&cookie, is_https(scheme.as_deref()), age),
+        );
+    }
+    res
 }
 
 /// `POST /api/admin/browse/signout`: signs this browser out; the session is forgotten and the
-/// cookie removed.
-pub async fn browse_sign_out(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    state
-        .browse_sessions
-        .revoke(request_cookie(&headers, BROWSE_COOKIE_NAME).as_deref());
-    let mut res = ok(&json!({ "ok": true }));
+/// cookie removed. With `everywhere`, every browser and script signed in as the same person is
+/// signed out too.
+pub async fn browse_sign_out(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    let everywhere = match super::helpers_6b2::query_bool(&uri, "everywhere") {
+        Ok(everywhere) => everywhere,
+        Err(res) => return *res,
+    };
+    let cookie = request_cookie(&headers, BROWSE_COOKIE_NAME);
+    let mut ended = 0;
+    let user = everywhere
+        .then(|| state.browse_sessions.user_of(cookie.as_deref()))
+        .flatten()
+        .filter(|user| user != BrowseSessionStore::RECOVERY_USER);
+    match user {
+        Some(user) => {
+            ended = state.browse_sessions.revoke_user(&user);
+            info!("{user} signed out everywhere ({ended} sign-ins ended)");
+        }
+        None => state.browse_sessions.revoke(cookie.as_deref()),
+    }
+    let mut res = ok(&json!({ "ok": true, "ended": ended }));
     res.headers_mut()
         .append(header::SET_COOKIE, browse_cookie_deleted());
     res

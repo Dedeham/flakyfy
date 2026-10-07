@@ -19,6 +19,7 @@ use super::helpers_6b2::{BROWSE_COOKIE_NAME, bind_body, error, ok, request_cooki
 use crate::app::AppState;
 use crate::http::error::AppError;
 use crate::http::routes::RouteSet;
+use crate::services::admin::AdminCaller;
 use crate::services::updates::release_check::{ReleaseCheckView, ReleaseNote};
 use crate::services::updates::update_host::{
     UpdateHost, UpdateRequestError, UpdateRunStates, UpdateRunStatus,
@@ -82,10 +83,14 @@ async fn update(State(state): State<AppState>, request: Request) -> Response {
         return error(StatusCode::CONFLICT, "An update is already under way.");
     }
 
-    let user = state
-        .browse_sessions
-        .user_of(request_cookie(&parts.headers, BROWSE_COOKIE_NAME).as_deref())
-        .unwrap_or_else(|| "dashboard".to_string());
+    // Who asked, for the update log: a script signed in with a cookie jar or a header counts too.
+    let user = match parts.extensions.get::<AdminCaller>() {
+        Some(caller) => AdminCaller::describe(Some(caller)),
+        None => state
+            .browse_sessions
+            .user_of(request_cookie(&parts.headers, BROWSE_COOKIE_NAME).as_deref())
+            .unwrap_or_else(|| "dashboard".to_string()),
+    };
     match host.request(&latest, &user) {
         Ok(id) => status(
             StatusCode::ACCEPTED,

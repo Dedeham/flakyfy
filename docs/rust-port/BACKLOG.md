@@ -134,53 +134,182 @@ python3 parity/parity.py diff /tmp/parity/cs /tmp/parity/rs
 
 ## Phase 1: the harness at 2026.10.05
 
-- [ ] Sign the corpus in (a `browse/auth` cookie for the admin groups) and keep
-  a signed-out pass, so the gate and the features behind it are both
-  compared.
-- [ ] Corpus groups from the plan: `11-signin` (gate on every admin route and
-  on unknown `/api/admin/<x>`, default deny; `ADMIN_SIGN_IN=off`;
-  `ADMIN_PORT` on a second published port), `12-imports`, `13-downloads`,
-  `14-health`, `15-radio`, `16-lists`, `17-covers-explicit`, `18-dashboard`,
-  `19-library-edits`, `20-static`, `95-acquisition` (end to end, a real
-  fixture FLAC through the slskd stub).
-- [ ] Stubs: Spotify accounts and API, ListenBrainz labs, the shim's `/ytm`,
-  octo-sonic, Deezer and Last.fm charts, slskd search results and transfers,
-  the slskd options and YAML endpoints.
-- [ ] Determinism rule: timers off in the harness, randomness seeded through
-  a test-only env var both builds honor, the rest listed under "Not covered"
-  in `parity/README.md`.
-- [ ] Re-record `parity/recordings/csharp` from `ghcr.io/winters27/octo:2026.10.05`
-  twice (0 diffs both modes), and update the Rust golden tests that read it
-  (`subsonic_wire_golden_tests.rs`) in the same commit.
+Done 2026-10-07 (`parity/README.md` has the details):
+
+- [x] The corpus signs in for real (`00-setup` makes an admin and a recovery
+  code sign-in; `"session"` on a request sends the cookie), and keeps the
+  signed-out answers: `11-signin` asks every `/api/admin` GET signed out and
+  signed in, `99-signed-out-writes` every write signed out (last, the restart
+  last of all). Both are written from the C# controllers by
+  `parity/tools/admin_routes.py`, whose `check` fails when a route is missing.
+- [x] `ADMIN_SIGN_IN=off` and `ADMIN_PORT`: a second Octo in the parity stack
+  (`octo-alt`, `"server": "alt"` and `"alt-admin"`).
+- [x] Corpus groups for every 2026.10.05 group: `12-imports`, `13-downloads`,
+  `14-settings-media`, `15-radio`, `16-lists`, `17-covers-explicit`,
+  `18-dashboard`, `19-health`, `20-library-edits`, `21-static`,
+  `95-acquisition` (two hearts and a pick end to end through the slskd stub,
+  with a real fixture FLAC and M4A), `96-covers-explicit-writes`. 1,836
+  requests in 25 files (453 before).
+- [x] Stubs: Spotify accounts, API and embed pages, ListenBrainz labs, the
+  shim's YouTube Music answers, octo-sonic, Deezer and Last.fm charts, slskd
+  search results, transfers (the stub writes the file into Octo's job folder),
+  options, YAML, shares and uploads, the Soulseek port test. New stub features:
+  `times`, `bodyRegex`, `searchText`, `writeFile`, `{{size:...}}`, dated
+  templates.
+- [x] Determinism rule: timers off or waited for, random values captured,
+  C#'s own unordered answers compared unordered; what cannot be made
+  repeatable is listed in `parity/README.md` ("Determinism rule"). No
+  test-only seed env var: the C# image is the published one, so only its own
+  settings can hold it still.
+- [x] Gate: C# against C# 0 diffs and Rust against Rust 0 diffs on the whole
+  corpus, structural and bytes (record below).
+- [x] One script for the test box: `parity/lxc131.sh` (README, "For port
+  agents").
+- [ ] `parity/recordings/csharp` stays the 2026.10.03.2 baseline: the Rust
+  golden tests (`subsonic_wire_golden_tests.rs`) pin the wire format the port
+  has today. A group that changes those answers moves its golden tests onto a
+  fresh 2026.10.05 recording in its own commit (`parity.py run`, then copy the
+  corpus files it needs).
 - [ ] Regenerate the tag and state fixtures with the C# generators at
-  2026.10.05 (`docs/rust-migration/fixtures`).
+  2026.10.05 (`docs/rust-migration/fixtures`): not part of the harness work;
+  wave G1 does it with the 7 new state files.
+
+## Phase 1 record (2026-10-07)
+
+Run on LXC 131 from `rust/main` with `parity/lxc131.sh --csharp-twice
+--rust-twice --bytes`: the published `ghcr.io/winters27/octo:2026.10.05`
+against the Rust build of this branch (still at 2026.10.04 behavior).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against C# | 1,836 identical | 1,836 identical |
+| Rust against Rust | 1,836 identical | 1,836 identical |
+| C# against Rust | 1,458 unexplained, 360 explained by the allowlist, 18 identical | the same |
+
+A C# recording of the whole corpus takes about 25 minutes, a Rust one about
+30 (the waits for features it lacks time out; `--until-patience` keeps that
+bounded). The two gate runs were also made on the corpus before its last
+compare-only fixes (ignored keys, member order), then compared again with the
+final corpus: 0 in all four comparisons.
+
+**The port's worklist.** Requests with an unexplained diff, per backlog group.
+"Own": requests tagged with the group that differ. "Diffs": requests anywhere
+whose differing part `parity/groups.json` puts on the group (J counts the
+missing admin security headers on every admin answer; L, P, Q count settings
+and extension lines in other groups' answers). One request can count in
+several groups. Single: requests whose only differing group is this one, so
+porting the group alone makes them pass.
+
+| Group | Tagged | Own | Diffs | Single |
+| --- | ---: | ---: | ---: | ---: |
+| A Last.fm search cleanup | 5 | 5 | 5 | 5 |
+| B Download matching | 19 | 18 | 22 | 9 |
+| C Tagging polish | 16 | 15 | 15 | 3 |
+| D Download log, Find songs | 144 | 133 | 131 | 64 |
+| E slskd sharing | 45 | 45 | 45 | 1 |
+| F Library edits, trash | 157 | 140 | 145 | 110 |
+| G Top songs, charts | 57 | 55 | 56 | 37 |
+| H Spotify import | 208 | 208 | 207 | 96 |
+| I Secret masking | 78 | 76 | 76 | 2 |
+| J Admin sign-in | 262 | 252 | 927 | 225 |
+| K Bare address 302 | 6 | 5 | 6 | 5 |
+| L Multi-source radio | 87 | 75 | 136 | 29 |
+| N Activity, Afterglow | 48 | 48 | 44 | 6 |
+| O Album ownership | 21 | 20 | 26 | 1 |
+| P Covers, explicit | 114 | 106 | 145 | 38 |
+| Q Made for you | 20 | 14 | 63 | 6 |
+| R Library health | 150 | 137 | 130 | 45 |
+| S Stream length | 25 | 5 | 4 | 5 |
+| base (2026.10.04 behavior) | 479 | 204 | 164 | 18 |
+
+The 18 single "base" diffs are knock-on effects of the groups, not
+regressions: the OpenSubsonic extensions list (2026.10.05 lists 12, Rust
+9), the Made for you playlists in `getPlaylists`, the relayed download file
+name, and `90-mutations`
+reading a library that `20-library-edits` changed. J goes first (wave G1): 225
+requests differ only by the gate and the admin security headers.
+
+Diffs per corpus file: 00-setup 4, 01-system 4, 02-browsing 5, 03-search 5,
+04-media 2, 05-playlists 3, 07-octo-extensions 2, 08-catchall-native 4,
+09-admin 97, 10-static-cors 18, 11-signin 130, 12-imports 206, 13-downloads
+108, 14-settings-media 149, 15-radio 74, 16-lists 60, 17-covers-explicit 74,
+18-dashboard 63, 19-health 101, 20-library-edits 136, 21-static 31,
+90-mutations 36, 95-acquisition 35, 96-covers-explicit-writes 34,
+99-signed-out-writes 77. 06-lyrics has none.
+
+**Intentional diffs.** `parity/intentional-diffs.json` holds the deliberate
+improvements, one reviewed entry per change (requests named, the diff lines
+pinned by regex, a reason, and `reviewed` by Brandon for anything a user or an
+app sees). It is empty: no improvement has landed yet. The list under
+"Improvements we want while porting" below is where the entries come from.
+
+### Found while building the harness
+
+C# 2026.10.05 behavior the corpus records as it is. Each needs a decision:
+fix C# (and the port follows), or fix it in the port only, as an intentional
+diff.
+
+- **"Keep as playlist" on an import answers 500** against Navidrome 0.64.2:
+  Octo reads Navidrome's answer to the playlist create as JSON, and it is not
+  (`NavidromePlaylistApi.cs:143`; likely the `application/json; charset=utf-8`
+  content type, so Navidrome takes the body as an M3U import). Navidrome makes
+  an empty playlist named after the time, the list stays marked as kept, and
+  the 30 s import loop makes another one on every retry. `12-imports` turns
+  each playlist off at once and deletes what it leaves.
+- **Clearing an ISRC does nothing on disk** (`TagWriterExtras.cs:98-101` returns
+  on an empty value), so undoing an ISRC retag answers `isrc: null` and leaves
+  the tag in the file.
+- **The explicit backfill accepts a recovery code session**
+  (`ExplicitBackfillController.cs:30`, `UserOf`), so the recovery code can
+  write explicit marks into music files; the cover upgrade refuses it.
+- **`lidarr/test` sends the saved Lidarr key to any address typed in** when the
+  placeholder is sent (`AdminController.cs:2372`); the "a secret never follows
+  a new address" rule covers saves only.
+- **A Navidrome address saved with a trailing slash** passes the same-address
+  rule, and the stream relay then calls `//rest/stream`
+  (`SubsonicProxyService.cs:344`).
+- **Section names in a settings save:** the secret checks ignore case, the file
+  writer does not, so `"lidarr"` writes a second section the config loader
+  rejects on reload.
+- **`config-sources` shows a secret's length** (up to 16 bullets).
+- **Resuming a cancelled cover run counts `kept` and `albumsDone` again**
+  ("6 of 3 albums", `CoverUpgrade.cs:696,744`).
+- **The cover scan walks into `/music/.octo-trash`**, and the album id of a
+  trashed song depends on the dated folder.
+- **An outside song's registry id ignores its album** (`ExternalIdRegistry.cs`,
+  `MakeShortId`): radio registers the Zephyr Echo songs from Last.fm without an
+  album and replaces the search's entry, so later answers lose the album until
+  a search registers them again (`95-acquisition` starts with that search).
+- **The Soulseek web address is saved with the spaces it was typed with.**
 
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
-methods). Status: open, in progress, done, or no Rust change.
+methods). "Diffs now" is the phase 1 record's "own" count (requests
+tagged with the group that differ from C# 2026.10.05). Status: open, in
+progress, done, or no Rust change.
 
 | Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | open |
-| B Download matching | 8 | 644 | 46 | 0.75 | 2 | open |
-| C Tagging polish | 4 | 465 | 24 | 1.0 | 0 | open |
-| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 4 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 0 | open |
-| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 2 | open |
-| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 5 | open |
-| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 4 | open |
-| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 0 | open |
-| J Admin sign-in | 6 | 921 | 29 | 1.25 | 148 | open |
-| K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 1 | open |
-| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 1 | open |
+| A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 5 | open |
+| B Download matching | 8 | 644 | 46 | 0.75 | 18 | open |
+| C Tagging polish | 4 | 465 | 24 | 1.0 | 15 | open |
+| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 133 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 45 | open |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 140 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 55 | open |
+| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 208 | open |
+| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 76 | open |
+| J Admin sign-in | 6 | 921 | 29 | 1.25 | 252 | open |
+| K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 5 | open |
+| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 75 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 3 | open |
-| O Search album ownership | 1 | 808 | 23 | 0.5 | 2 | open |
-| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 10 | open |
-| Q Made for you lists | 3 | 887 | 26 | 0.75 | 8 | open |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 0 | open |
-| S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 48 | open |
+| O Search album ownership | 1 | 808 | 23 | 0.5 | 20 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 106 | open |
+| Q Made for you lists | 3 | 887 | 26 | 0.75 | 14 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 137 | open |
+| S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 5 | open |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
 
@@ -431,12 +560,16 @@ its reason when it changes an answer.
 - [ ] **cargo-deny's two ignored advisories** (`paste` under lofty,
   `ttf-parser` under cosmic-text): drop each when its parent moves on.
 
-## Before phase 1 can finish
+## Before the port can be gated in CI
 
 - Push `rust/main` so `rust.yml` and `ci.yml` run, then one manual run of
   `docker-rust.yml`; record the times and the cache sizes above. The
-  `octo-rust` package starts private on ghcr.io.
-- A box with Docker for the harness (LXC 131 has room: about 9.7 GB free
-  after this run; the Rust build and the images took about 8 GB of disk while it ran).
+  `octo-rust` package starts private on ghcr.io. (Nothing is pushed until
+  Brandon says so.)
+- The test box: LXC 131 had 11 GB free on its disk after the phase 1 runs (the
+  parity builder's cache, about 6 GB at most, and one Rust image of 1 GB are
+  kept). The Proxmox host is the tight part: it had 4 to 5 GB of memory free,
+  and a run pushed it into swap once (see `parity/README.md`); `lxc131.sh`
+  checks the host before it starts and stops the run if the host runs short.
 - The bridge release (C#, Octo pulled not built, update helper v2) ships
-  before any Rust image reaches an install.
+  together with the Rust release, not before (Brain, "MISTAKE AND UNDO").

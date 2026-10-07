@@ -38,6 +38,12 @@ fn playback_settings(url: &str, wait_for_lossless: bool, download_on_play: bool)
         download_on_play,
         ..settings.subsonic
     };
+    // A play first looks at slskd's login; nothing answers there, and it must say so at once
+    // (slskd's default, localhost:5030, can wait out a timeout instead; see refused_address).
+    settings.soulseek.base_url = Some(format!(
+        "http://{}",
+        crate::services::test_support::refused_address()
+    ));
     settings
 }
 

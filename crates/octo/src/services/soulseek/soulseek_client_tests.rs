@@ -809,7 +809,10 @@ async fn without_a_login_no_session_is_asked_for_and_an_unreachable_slskd_is_sai
     );
 
     let nowhere = SoulseekClient::new(&SoulseekSettings {
-        base_url: Some("http://127.0.0.1:1".into()),
+        base_url: Some(format!(
+            "http://{}",
+            crate::services::test_support::refused_address()
+        )),
         ..Default::default()
     });
     assert!(!nowhere.is_reachable().await);

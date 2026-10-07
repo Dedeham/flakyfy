@@ -95,15 +95,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_connection_names_the_endpoint() {
-        // Port 1 on loopback: nothing listens there.
+        let address = crate::services::test_support::refused_address();
         let error = default_client()
-            .get("http://127.0.0.1:1/x")
+            .get(format!("http://{address}/x"))
             .send()
             .await
-            .expect_err("nothing listens on port 1");
+            .expect_err("nothing listens there");
         assert_eq!(
             connect_failure_message(&error),
-            "Connection refused (127.0.0.1:1)"
+            format!("Connection refused ({address})")
         );
     }
 }

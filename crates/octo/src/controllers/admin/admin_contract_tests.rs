@@ -33,13 +33,16 @@ fn factory_settings() -> AppSettings {
 }
 
 fn factory() -> (AppState, App) {
-    let state = AppState::for_tests(factory_settings());
-    state
-        .settings
-        .set_raw("Soulseek:BaseUrl", Some("http://127.0.0.1:1"));
-    state
-        .settings
-        .set_raw("YouTube:ShimUrl", Some("http://127.0.0.1:1"));
+    factory_at("http://127.0.0.1:1")
+}
+
+/// [`factory`] with Navidrome, slskd and the shim at `url`.
+fn factory_at(url: &str) -> (AppState, App) {
+    let mut settings = factory_settings();
+    settings.subsonic.url = Some(url.into());
+    let state = AppState::for_tests(settings);
+    state.settings.set_raw("Soulseek:BaseUrl", Some(url));
+    state.settings.set_raw("YouTube:ShimUrl", Some(url));
     (state.clone(), app(state))
 }
 
@@ -760,7 +763,9 @@ async fn the_side_effect_posts_answer_as_recorded() {
 
 #[tokio::test]
 async fn status_reports_each_service() {
-    let (_, app) = factory();
+    // A port that refuses at once: the status probes wait out a timeout on one that does not.
+    let address = crate::services::test_support::refused_address();
+    let (_, app) = factory_at(&format!("http://{address}"));
     let body = get(&app, "/api/admin/status").await.json();
     assert_eq!(
         body["octo"],
@@ -769,13 +774,13 @@ async fn status_reports_each_service() {
     assert_eq!(body["services"]["navidrome"]["ok"], false);
     assert_eq!(
         body["services"]["navidrome"]["detail"],
-        "Connection refused (127.0.0.1:1)"
+        format!("Connection refused ({address})")
     );
     assert_eq!(body["services"]["lidarr"]["detail"], "Not set up. Optional.");
     assert_eq!(body["services"]["lidarr"]["configured"], false);
     assert_eq!(
         body["services"]["ytDlpShim"]["detail"],
-        "Connection refused (127.0.0.1:1)"
+        format!("Connection refused ({address})")
     );
     assert_eq!(body["services"]["lastfm"]["configured"], false);
     let time = body["time"].as_str().expect("a time");

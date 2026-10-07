@@ -260,7 +260,8 @@ async fn relay_stream_http_error_returns_status_code_result() {
 
 #[tokio::test]
 async fn relay_stream_exception_returns_object_result_with_500() {
-    let response = scoped("http://127.0.0.1:1", &[])
+    let address = crate::services::test_support::refused_address();
+    let response = scoped(&format!("http://{address}"), &[])
         .relay_stream(&params(&[("id", "song123")]))
         .await;
 
@@ -268,7 +269,7 @@ async fn relay_stream_exception_returns_object_result_with_500() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         String::from_utf8_lossy(&body),
-        r#"{"error":"Error streaming from Subsonic: Connection refused (127.0.0.1:1)"}"#
+        format!(r#"{{"error":"Error streaming from Subsonic: Connection refused ({address})"}}"#)
     );
 }
 

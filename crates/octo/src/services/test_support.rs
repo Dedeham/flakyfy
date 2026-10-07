@@ -15,6 +15,17 @@ use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+/// A loopback address that refuses a connection at once on any machine, as `host:port`: a port
+/// the system handed out and let go again. Not port 1: under WSL's mirrored networking a
+/// connection to a closed port outside Linux's own ephemeral range is passed to Windows and
+/// waits out the client's timeout instead of being refused.
+pub(crate) fn refused_address() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free loopback port");
+    let address = listener.local_addr().expect("its address");
+    drop(listener);
+    address.to_string()
+}
+
 /// How a route's needle is compared with the request URL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Matching {

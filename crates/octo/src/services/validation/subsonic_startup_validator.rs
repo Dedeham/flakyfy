@@ -154,10 +154,12 @@ mod tests {
         let result = validate(Some(server.uri())).await;
         assert_eq!((result.is_valid, result.status.as_str()), (false, "HTTP 503"));
 
-        let result = validate(Some("http://127.0.0.1:1".into())).await;
+        let address = crate::services::test_support::refused_address();
+        let result = validate(Some(format!("http://{address}"))).await;
+        let refused = format!("Connection refused ({address})");
         assert_eq!(
             (result.status.as_str(), result.details.as_deref()),
-            ("UNREACHABLE", Some("Connection refused (127.0.0.1:1)"))
+            ("UNREACHABLE", Some(refused.as_str()))
         );
     }
 }

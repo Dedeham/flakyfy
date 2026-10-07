@@ -363,7 +363,9 @@ mod tests {
         let _ = std::fs::remove_file(&outside);
     }
 
-    /// A link inside the folder that points outside is refused.
+    /// A link inside the folder that points outside is refused. Unix only: making a symlink on
+    /// Windows needs another API and, usually, an elevated process; Octo runs on Linux.
+    #[cfg(unix)]
     #[test]
     fn resolve_under_root_refuses_a_symlink() {
         let root = temp("octo-root-");

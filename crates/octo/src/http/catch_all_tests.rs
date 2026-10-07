@@ -203,14 +203,17 @@ async fn a_native_admin_login_passing_through_is_captured() {
 
 #[tokio::test]
 async fn an_unreachable_navidrome_is_the_error_envelope() {
-    let app = app(state("http://127.0.0.1:1"));
+    let address = crate::services::test_support::refused_address();
+    let app = app(state(&format!("http://{address}")));
 
     let r = send(&app, Method::GET, "/rest/getArtists?f=json", &[], "").await;
 
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(
         r.body,
-        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Error connecting to Subsonic server: Connection refused (127.0.0.1:1)"}}}"#
+        format!(
+            r#"{{"subsonic-response":{{"status":"failed","version":"1.16.1","error":{{"code":0,"message":"Error connecting to Subsonic server: Connection refused ({address})"}}}}}}"#
+        )
     );
 }
 

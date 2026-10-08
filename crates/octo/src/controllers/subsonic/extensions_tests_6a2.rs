@@ -509,10 +509,12 @@ async fn get_open_subsonic_extensions_adds_it_in_xml_too() {
 // ---------------------------------------------------------------------------------------
 
 /// Navidrome as far as these calls need it: a ping that accepts the token "good" or the API
-/// key "goodkey", an admin login for Octo's own identity, one song the native API knows, and
-/// a short extension list in either format.
+/// key "goodkey", getUser saying whether the caller is an admin (removing needs it), an admin
+/// login for Octo's own identity, one song the native API knows, and a short extension list in
+/// either format.
 struct LibraryNavidrome {
     library_path: String,
+    admin: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Respond for LibraryNavidrome {
@@ -523,6 +525,15 @@ impl Respond for LibraryNavidrome {
             let ok = query.get("t").map(String::as_str) == Some("good")
                 || query.get("apiKey").map(String::as_str) == Some("goodkey");
             return if ok { ok_json() } else { wrong_password() };
+        }
+        if path.ends_with("/rest/getUser") {
+            return navidrome_json(
+                &json!({"subsonic-response": {"status": "ok", "version": "1.16.1", "user": {
+                    "username": query.get("username"),
+                    "adminRole": self.admin.load(std::sync::atomic::Ordering::SeqCst),
+                }}})
+                .to_string(),
+            );
         }
         if path == "/auth/login" {
             return navidrome_json(
@@ -556,6 +567,16 @@ struct LibraryApp {
     app: App,
     navidrome: MockServer,
     directory: tempfile::TempDir,
+    /// Whether getUser says the caller is an admin. Removing needs it.
+    admin: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Version 3's edits, listed after remove and upgrade whenever library actions are on.
+const EDITS: [&str; 6] = ["retag", "joinAlbum", "lookup", "undo", "restore", "cover"];
+
+/// `["remove", .. Edits]` and the like.
+fn actions_then_edits(first: &[&str]) -> Value {
+    json!(first.iter().chain(EDITS.iter()).collect::<Vec<_>>())
 }
 
 impl LibraryApp {
@@ -566,9 +587,11 @@ impl LibraryApp {
         std::fs::write(&song, SONG_BYTES).expect("written");
 
         let navidrome = MockServer::start().await;
+        let admin = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         Mock::given(any())
             .respond_with(LibraryNavidrome {
                 library_path: directory.path().to_string_lossy().into_owned(),
+                admin: admin.clone(),
             })
             .mount(&navidrome)
             .await;
@@ -609,6 +632,7 @@ impl LibraryApp {
             state,
             navidrome,
             directory,
+            admin,
         }
     }
 
@@ -708,7 +732,7 @@ async fn extensions_list_octo_library_actions_only_while_they_are_on() {
         if listed {
             assert_eq!(
                 extension(&extensions, "octoLibraryActions"),
-                Some(&vec![1, 2]),
+                Some(&vec![1, 2, 3]),
                 "enabled={enabled}"
             );
         } else {
@@ -766,6 +790,7 @@ async fn get_library_actions_describes_what_the_caller_may_do_in_the_apps_shape(
         sorted_keys(actions),
         [
             "actions",
+            "admin",
             "allowed",
             "dryRun",
             "enabled",
@@ -777,7 +802,8 @@ async fn get_library_actions_describes_what_the_caller_may_do_in_the_apps_shape(
     assert_eq!(actions["enabled"], true);
     assert_eq!(actions["allowed"], true);
     assert_eq!(actions["dryRun"], false);
-    assert_eq!(actions["actions"], json!(["remove"]));
+    assert_eq!(actions["actions"], actions_then_edits(&["remove"]));
+    assert_eq!(actions["admin"], true);
     assert_eq!(actions["keepDays"], 14);
 }
 
@@ -795,6 +821,25 @@ async fn get_library_actions_someone_not_on_the_allowlist_is_not_allowed() {
 }
 
 #[tokio::test]
+async fn get_library_actions_remove_is_offered_only_to_a_navidrome_admin() {
+    let t = LibraryApp::new(|_| {}).await;
+    t.admin.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let doc = t
+        .get_json(&format!("/rest/getLibraryActions.view?{}", lib_auth("alice")))
+        .await;
+
+    let actions = &envelope(&doc)["libraryActions"];
+    assert_eq!(actions["admin"], false);
+    assert!(
+        !actions["actions"]
+            .as_array()
+            .expect("actions")
+            .contains(&json!("remove"))
+    );
+}
+
+#[tokio::test]
 async fn get_library_actions_dry_run_on_delete_off_kept_forever() {
     let t = LibraryApp::new(|s| {
         s.library_actions.dry_run = true;
@@ -809,7 +854,8 @@ async fn get_library_actions_dry_run_on_delete_off_kept_forever() {
 
     let actions = &envelope(&doc)["libraryActions"];
     assert_eq!(actions["dryRun"], true);
-    assert_eq!(actions["actions"], json!([]));
+    // Remove is off; the edits are listed, and the app reads dryRun before offering them.
+    assert_eq!(actions["actions"], json!(EDITS));
     assert_eq!(actions["keepDays"], 0);
 }
 
@@ -1076,7 +1122,7 @@ async fn get_library_actions_lists_upgrade_only_while_better_quality_is_on() {
             .get_json(&format!("/rest/getLibraryActions.view?{}", lib_auth("alice")))
             .await;
         let actions = &envelope(&doc)["libraryActions"];
-        assert_eq!(actions["actions"], json!(["remove"]));
+        assert_eq!(actions["actions"], actions_then_edits(&["remove"]));
         assert_eq!(actions["parallel"], 1);
     }
     {
@@ -1086,7 +1132,7 @@ async fn get_library_actions_lists_upgrade_only_while_better_quality_is_on() {
             .await;
         assert_eq!(
             envelope(&doc)["libraryActions"]["actions"],
-            json!(["remove", "upgrade"])
+            actions_then_edits(&["remove", "upgrade"])
         );
     }
 }

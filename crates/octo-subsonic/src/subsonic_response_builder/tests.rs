@@ -1067,9 +1067,9 @@ fn library_actions_offer_what_is_enabled() {
     let off = LibraryActionSettings::default();
     assert_eq!(
         builder()
-            .create_library_actions_response(&off, Some("admin"), 1, true, "Soulseek")
+            .create_library_actions_response(&off, Some("admin"), 1, true, "Soulseek", false, false, false)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"admin":false,"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
     );
     let mut on = LibraryActionSettings {
         enabled: true,
@@ -1084,16 +1084,43 @@ fn library_actions_offer_what_is_enabled() {
             definition
         })
         .collect();
-    let json = json_of(&builder().create_library_actions_response(&on, Some(" admin "), 3, true, "Lidarr"));
+    let json = json_of(&builder().create_library_actions_response(
+        &on,
+        Some(" admin "),
+        3,
+        true,
+        "Lidarr",
+        true,
+        false,
+        false,
+    ));
     assert_eq!(json["subsonic-response"]["libraryActions"]["allowed"], true);
+    assert_eq!(json["subsonic-response"]["libraryActions"]["admin"], true);
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove", "upgrade"])
     );
-    let json = json_of(&builder().create_library_actions_response(&on, None, 3, false, "Lidarr"));
+    let json = json_of(
+        &builder().create_library_actions_response(&on, None, 3, false, "Lidarr", true, false, false),
+    );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove"])
+    );
+    // Version 3 (374dac8, f2c6a65): remove only for a Navidrome admin; the edits whenever the
+    // server can make them, cover last and only with a cover finder.
+    let json =
+        json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
+    assert_eq!(
+        json["subsonic-response"]["libraryActions"]["actions"],
+        json!(["upgrade", "retag", "joinAlbum", "lookup", "undo", "restore"])
+    );
+    let json = json_of(
+        &builder().create_library_actions_response(&off, None, 1, false, "Soulseek", true, true, true),
+    );
+    assert_eq!(
+        json["subsonic-response"]["libraryActions"]["actions"],
+        json!(["retag", "joinAlbum", "lookup", "undo", "restore", "cover"])
     );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["upgradeSource"],
@@ -1124,7 +1151,7 @@ fn extensions_json_adds_octos_own_and_missing_versions() {
     assert_eq!(reply.content_type, "application/json");
     assert_eq!(
         reply.text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1]},{"name":"octoLibraryActions","versions":[1,2]},{"name":"octoLists","versions":[1]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"octoLists","versions":[1]}]}}"#
     );
     // Lyrics choices off and library actions off leave those two out.
     let reply = builder().merge_open_subsonic_extensions(
@@ -1216,7 +1243,7 @@ fn extensions_without_an_answer_list_octos_own() {
         builder()
             .merge_open_subsonic_extensions("json", None, None, true, true)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1]},{"name":"octoLyrics","versions":[1]},{"name":"octoLibraryActions","versions":[1,2]},{"name":"songLyrics","versions":[1,2]},{"name":"octoLists","versions":[1]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1]},{"name":"octoLyrics","versions":[1]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"octoLists","versions":[1]}]}}"#
     );
     assert_eq!(
         builder()

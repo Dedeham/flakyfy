@@ -1044,14 +1044,27 @@ fn octo_extensions_match_the_recordings() {
             name,
         );
     }
-    assert_golden(
+    // Octo 2026.10.05 (group F, 374dac8) adds "admin" after the actions and offers the six
+    // edits even while library actions are off, as the parity corpus records it; the 2026.10.03.2
+    // recording is kept and those two changes made to it.
+    let mut want = recorded("07-octo-extensions", "library-actions-json");
+    want.body = want.body.replace(
+        r#""actions":[],"#,
+        r#""actions":["retag","joinAlbum","lookup","undo","restore","cover"],"admin":true,"#,
+    );
+    want.content_length = None;
+    assert_recorded(
         builder().create_library_actions_response(
             &LibraryActionSettings::default(),
             Some("admin"),
             1,
             true,
             "Soulseek",
+            true,
+            true,
+            true,
         ),
+        want,
         "07-octo-extensions",
         "library-actions-json",
     );

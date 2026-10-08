@@ -64,6 +64,9 @@ use crate::services::last_fm::{
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
+use crate::services::library::library_edit_service::{
+    LibraryEditService, LibraryEditServices, LibraryRescan,
+};
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
@@ -397,6 +400,40 @@ pub struct AppInner {
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `FingerprintSweepVerifier`: the sweep's check, over the download verification service.
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
+    /// `LibraryRescan` (singleton): one normal Navidrome scan a few seconds after a run of
+    /// library changes.
+    pub library_rescan: Arc<LibraryRescan>,
+    /// `LibraryEditService` (singleton): the apps' Library health fixes, tags written in place,
+    /// albums joined, covers added, and a removed song put back.
+    pub library_edits: Arc<LibraryEditService>,
+}
+
+/// The apps' Library health fixes (`Program.cs`, 374dac8): the rescan and the edit service, over
+/// the resolver, the quarantine, both journals and the services a lookup and a cover ask.
+fn library_edits(
+    settings: &Arc<SettingsStore>,
+    stores: &Stores,
+    navidrome: &NavidromeServices,
+    quarantine: &Arc<LibraryActionQuarantine>,
+    tagging: &Tagging,
+    cover_finder: Arc<dyn IAlbumCoverFinder>,
+) -> (Arc<LibraryRescan>, Arc<LibraryEditService>) {
+    let rescan = Arc::new(LibraryRescan::new(Some(navidrome.local_library.clone())));
+    let edits = Arc::new(LibraryEditService::new(
+        navidrome.navidrome_song_path_resolver.clone(),
+        quarantine.clone(),
+        stores.library_action_journal.clone(),
+        stores.tag_edit_journal.clone(),
+        rescan.clone(),
+        settings.clone(),
+        LibraryEditServices {
+            library: Some(navidrome.local_library.clone()),
+            identifier: Some(tagging.release_identifier.clone()),
+            verification: Some(tagging.download_verification.clone()),
+            cover_finder: Some(cover_finder),
+        },
+    ));
+    (rescan, edits)
 }
 
 /// The tagging and verification services of task 4-B, which the download base
@@ -1435,6 +1472,8 @@ pub struct TestServices {
     pub download_service: Option<Arc<dyn IDownloadService>>,
     /// `LibrarySnapshot` (the C# tests swapped its `ReadPage`).
     pub library_snapshot: Option<Arc<LibrarySnapshot>>,
+    /// `IAlbumCoverFinder` as the library edits ask it (the C# `FixedFinder`).
+    pub album_cover_finder: Option<Arc<dyn IAlbumCoverFinder>>,
     /// `Admin:SignIn`. None runs the test with the sign-in off, as the C# suite's
     /// `TestDefaults` did for every web test written before the sign-in (they test what an
     /// endpoint does, not who may call it); the sign-in tests set it.
@@ -1679,6 +1718,14 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        let (library_rescan, library_edits) = library_edits(
+            &settings,
+            &stores,
+            &navidrome,
+            &library_actions.quarantine,
+            &tagging,
+            genre_cover_jobs.album_cover_finder.clone(),
+        );
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1793,6 +1840,8 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            library_rescan,
+            library_edits,
         };
         AppState {
             inner: Arc::new(inner),
@@ -1924,6 +1973,17 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        let (library_rescan, library_edits) = library_edits(
+            &settings,
+            &stores,
+            &navidrome,
+            &library_actions.quarantine,
+            &tagging,
+            overrides
+                .album_cover_finder
+                .clone()
+                .unwrap_or_else(|| genre_cover_jobs.album_cover_finder.clone()),
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2038,6 +2098,8 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            library_rescan,
+            library_edits,
         };
         AppState {
             inner: Arc::new(inner),

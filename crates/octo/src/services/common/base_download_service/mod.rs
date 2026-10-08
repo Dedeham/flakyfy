@@ -703,12 +703,14 @@ impl BaseDownloadService {
             && journal.is_never_requested(Some(&song.artist), Some(&song.title))
         {
             info!(
-                "Skipping '{} - {}': it was removed with a library action, so it is not requested again. \
-                 Clear that entry from the dashboard to allow it.",
+                "Skipping '{} - {}': it was removed with Delete from disk, so it is not downloaded again. \
+                 Put it back from the trash, or choose Allow downloading again beside it in the Library \
+                 actions history on the dashboard.",
                 song.artist, song.title
             );
             anyhow::bail!(
-                "'{} - {}' was deleted with a library action",
+                "'{} - {}' was removed with Delete from disk, so it is not downloaded again; put it back \
+                 from the trash, or allow downloading it again in the dashboard's Library actions history",
                 song.artist,
                 song.title
             );

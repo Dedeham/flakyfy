@@ -36,7 +36,9 @@ use serde_json::{Map, Number, Value, json};
 use crate::xml::{XElement, XValue};
 
 pub use library_actions::{
-    LIBRARY_ACTIONS_EXTENSION, LIBRARY_ACTIONS_EXTENSION_VERSION, REMOVE_ACTION, UPGRADE_ACTION,
+    COVER_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LIBRARY_ACTIONS_EXTENSION,
+    LIBRARY_ACTIONS_EXTENSION_VERSION, LOOKUP_ACTION, REMOVE_ACTION, RESTORE_ACTION, RETAG_ACTION,
+    UNDO_ACTION, UPGRADE_ACTION,
 };
 pub use lyrics::{CueLineOut, CueWord, LYRICS_EXTENSION, LYRICS_EXTENSION_VERSION};
 pub use reply::{ReplyKind, SubsonicReply};
@@ -58,7 +60,10 @@ pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 1;
 pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (ACQUISITIONS_EXTENSION, &[ACQUISITIONS_EXTENSION_VERSION]),
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
-    (LIBRARY_ACTIONS_EXTENSION, &[1, LIBRARY_ACTIONS_EXTENSION_VERSION]),
+    (
+        LIBRARY_ACTIONS_EXTENSION,
+        &[1, 2, LIBRARY_ACTIONS_EXTENSION_VERSION],
+    ),
     ("songLyrics", &[1, 2]),
     // The other groups' extensions (octoTopSongs, octoImports, octoRadioSources) come before
     // this one, as the C# lists them, when those groups land.

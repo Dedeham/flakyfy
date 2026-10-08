@@ -13,6 +13,7 @@ pub mod library_action_playlist_provisioner;
 pub mod library_action_playlist_worker;
 pub mod library_action_quarantine;
 pub mod library_action_rating_worker;
+pub mod library_edit_service;
 pub mod library_ownership;
 pub mod library_review_sweep_worker;
 pub mod library_snapshot;
@@ -46,6 +47,9 @@ pub use library_action_playlist_provisioner::LibraryActionPlaylistProvisioner;
 pub use library_action_playlist_worker::LibraryActionPlaylistWorker;
 pub use library_action_quarantine::{LibraryActionQuarantine, QuarantineManifest, QuarantineResult};
 pub use library_action_rating_worker::{LibraryActionRatingWorker, RatingActionRequest};
+pub use library_edit_service::{
+    LibraryEditOutcome, LibraryEditService, LibraryRescan, SongLookup, TrashedSong,
+};
 pub use library_ownership::{LibraryOwnership, OwnedCopy, OwnedDecision, OwnershipNavidrome};
 pub use library_review_sweep_worker::{
     FingerprintSweepVerifier, IReviewSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,

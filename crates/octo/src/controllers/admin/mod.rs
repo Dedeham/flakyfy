@@ -25,6 +25,7 @@ pub mod raw_config;
 pub mod secrets;
 pub mod settings;
 pub mod system;
+pub mod trash;
 pub mod update;
 pub mod upgrades;
 
@@ -112,6 +113,7 @@ pub fn routes() -> RouteSet {
 pub fn routes_6b2() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
+        .merge(trash::routes())
         .merge(upgrades::routes())
         .merge(genre::routes())
         .merge(cover_upgrade::routes())
@@ -125,11 +127,15 @@ mod tests_6b2;
 
 #[cfg(test)]
 #[path = "test_support_6b1.rs"]
-mod test_support_6b1;
+pub(crate) mod test_support_6b1;
 
 #[cfg(test)]
 #[path = "admin_contract_tests.rs"]
 mod admin_contract_tests;
+
+#[cfg(test)]
+#[path = "library_action_allow_download_tests.rs"]
+mod library_action_allow_download_tests;
 
 #[cfg(test)]
 #[path = "lastfm_admin_tests.rs"]

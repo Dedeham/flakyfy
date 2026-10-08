@@ -9,9 +9,8 @@
 //! ended. Behind the same guard as the rest of `/api/admin`.
 //!
 //! Some jobs are read through small views of their own ([`FindLook`], [`ImportsActivity`],
-//! [`HealthActivity`], [`RescanReport`]). Those of groups not yet on this branch (Find songs, D;
-//! Library health, R) each land as a conversion and one call in [`get_activity`] where its
-//! `STUB` marks the place.
+//! [`HealthActivity`], [`RescanReport`]). Library health (group R, not on this branch yet) lands
+//! as a conversion and one call in [`get_activity`] where its `STUB` marks the place.
 
 use axum::extract::{Request, State};
 use axum::response::Response;
@@ -28,6 +27,7 @@ use super::helpers_6b2::ok;
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, AcquisitionState};
+use crate::services::common::song_finder::FindSnapshot;
 use crate::services::cover_art::{CoverUpgradeMode, CoverUpgradeRun, CoverUpgradeStatus};
 use crate::services::imports::import_views::ImportOverview;
 use crate::services::library::duplicate_scan_worker::DuplicateScanResult;
@@ -152,8 +152,15 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
             let overview = state.imports.overview(&user);
             items.extend(imports(&ImportsActivity::from(&overview), now));
         }
-        // STUB(D): with `SongFinder` in, for `sessions.navidrome_user_of(browse)` when there is
-        // one: `items.extend(find(&finder.for_user(admin) as FindLooks, now))`.
+        if let Some(admin) = sessions.navidrome_user_of(browse) {
+            let looks: Vec<FindLook> = state
+                .song_finder
+                .for_user(&admin)
+                .iter()
+                .map(FindLook::from)
+                .collect();
+            items.extend(find(&looks, now));
+        }
         // STUB(R): with `LibraryHealthService` in:
         // `items.extend(health(run.as_ref().map(HealthActivity::from), checking_since, now))`.
     }
@@ -596,6 +603,25 @@ pub struct FindLook {
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub error: Option<String>,
+}
+
+impl From<&FindSnapshot> for FindLook {
+    fn from(look: &FindSnapshot) -> Self {
+        FindLook {
+            id: look.id.clone(),
+            state: look.state.clone(),
+            target_title: look.target.title.clone(),
+            copies: look.copies.len(),
+            sources: look
+                .sources
+                .iter()
+                .map(|source| (source.name.clone(), source.state.clone()))
+                .collect(),
+            started_at: look.started_at,
+            updated_at: look.updated_at,
+            error: look.error.clone(),
+        }
+    }
 }
 
 const FIND_SEARCHING: &str = "searching";

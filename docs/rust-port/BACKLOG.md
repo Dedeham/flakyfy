@@ -874,6 +874,15 @@ No Rust server change: both are their own images.
 - [x] `452f47e` fix(lists): Check Mode on Made for you
   (the Made for you settings came from g1-core's `generated_playlist.rs` as it wrote them, with its
   admin settings and raw-config rows, so the two merge cleanly)
+- [x] Lists off in the dashboard (2026-10-08, `fix/q-lists-off`): the parity run's
+  `16-lists/listener-playlists-lists-off-json` kept New Releases. The getPlaylists right after
+  the save came in before the file watcher read settings.json again (250 ms later), so it
+  answered from the settings before the save. With Popular right now's chart calls that one
+  request took 15 s, the whole wait, so no second ask came. A settings save and a Raw config
+  save now read the file again before they answer, and the next request sees the save.
+  Rediscover, Deep Cuts and the list settings (weeks, artists, months) had the same lag and the
+  same fix. C# still waits for its watcher; a request inside those 250 ms is the only place the
+  two can answer differently.
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 

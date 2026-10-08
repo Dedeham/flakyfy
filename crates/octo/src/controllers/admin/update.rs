@@ -28,6 +28,20 @@ use crate::services::updates::update_host::{
     UpdateHost, UpdateRequestError, UpdateRunStates, UpdateRunStatus,
 };
 
+/// The images Octo publishes with every release, and the docker-compose.yml services that
+/// build them from the folder instead.
+const IMAGES: &str = "octo yt-dlp-shim octo-sonic";
+const SOURCES: &str = "octo-source yt-dlp-shim-source octo-sonic-source";
+
+/// Reinstalls the helper from the Octo folder, which holds the release now running.
+const REINSTALL_COMMAND: &str = "scripts/updater/install-updater.sh";
+
+/// An update reinstalls the helper as its last step. When that failed, the old helper stays,
+/// and it would pull the release its old compose file names, restart the same Octo and call the
+/// update done, so Update now is refused until it is reinstalled.
+const HELPER_OUTDATED: &str = "The update helper on this server's host is an old one that cannot move Octo to a new release. \
+     Reinstall it from the Octo folder (scripts/updater/install-updater.sh), then press Update now again.";
+
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/update", get(get_update).post(update))
@@ -44,11 +58,6 @@ struct UpdateRequest {
 impl FromBody for UpdateRequest {
     const SHAPE: &'static Shape = text_record!("Octo.Controllers.UpdateController+UpdateRequest", "tag");
 }
-
-/// The sidecars Octo publishes with every release, and the docker-compose.yml services that
-/// build them from the folder instead.
-const SIDECARS: &str = "yt-dlp-shim octo-sonic";
-const SIDECAR_SOURCES: &str = "yt-dlp-shim-source octo-sonic-source";
 
 async fn get_update(State(state): State<AppState>) -> Response {
     ok(&view(&state, state.release_check.view()))
@@ -85,11 +94,14 @@ async fn update(State(state): State<AppState>, request: Request) -> Response {
         );
     }
     let host = &state.update_host;
-    if host.helper().is_none() {
+    let Some(helper) = host.helper() else {
         return error(
             StatusCode::CONFLICT,
             "The update helper is not installed on this server's host. Run the command shown instead.",
         );
+    };
+    if helper.outdated() {
+        return error(StatusCode::CONFLICT, HELPER_OUTDATED);
     }
     if host.busy() {
         return error(StatusCode::CONFLICT, "An update is already under way.");
@@ -142,6 +154,7 @@ fn view(state: &AppState, view: ReleaseCheckView) -> Value {
             "mode": h.mode,
             "dir": h.dir,
             "installedUtc": utc_opt(&h.installed_utc),
+            "outdated": h.outdated(),
         }),
     };
     json!({
@@ -155,17 +168,18 @@ fn view(state: &AppState, view: ReleaseCheckView) -> Value {
         "checkedUtc": utc_opt(&view.checked_utc),
         "error": view.error,
         "helper": helper,
+        "reinstallCommand": REINSTALL_COMMAND,
         "pending": pending.is_some(),
         "pendingId": pending,
         "unanswered": host.unanswered(),
         "run": run,
-        // What to run by hand, from the Octo folder: the built-from-source install, and the image one.
-        // The built install pulls the sidecars and builds only Octo; a sidecar that will not pull
-        // (no ghcr.io) is built from the folder instead.
+        // What to run by hand, from the Octo folder: a git clone, and a folder copied by hand.
+        // A clone checks out the release and pulls the images it names; when they will not pull
+        // (no ghcr.io), they are built from the folder instead.
         "command": format!(
-            "git fetch --tags && git checkout --detach {tag} && (docker compose pull {SIDECARS} || docker compose build {SIDECAR_SOURCES}) && docker compose build octo && docker compose up -d"
+            "git fetch --tags && git checkout --detach {tag} && (docker compose pull {IMAGES} || docker compose --profile source build {SOURCES}) && docker compose up -d"
         ),
-        "imageCommand": format!("docker compose pull octo {SIDECARS} && docker compose up -d octo {SIDECARS}"),
+        "imageCommand": format!("docker compose pull {IMAGES} && docker compose up -d {IMAGES}"),
     })
 }
 

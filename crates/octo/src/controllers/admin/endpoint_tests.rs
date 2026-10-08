@@ -449,9 +449,13 @@ impl UpdateFixture {
     }
 
     fn helper(&self) {
+        self.helper_of("2", "git");
+    }
+
+    fn helper_of(&self, version: &str, mode: &str) {
         std::fs::write(
             self.update_dir().join("helper"),
-            "version=1\nmode=build\ndir=/opt/octo\n",
+            format!("version={version}\nmode={mode}\ndir=/opt/octo\n"),
         )
         .unwrap();
     }
@@ -500,7 +504,7 @@ async fn the_card_says_what_is_new_and_what_to_run() {
     assert_eq!(
         view["command"],
         json!(
-            "git fetch --tags && git checkout --detach 2026.10.02.1 && (docker compose pull yt-dlp-shim octo-sonic || docker compose build yt-dlp-shim-source octo-sonic-source) && docker compose build octo && docker compose up -d"
+            "git fetch --tags && git checkout --detach 2026.10.02.1 && (docker compose pull octo yt-dlp-shim octo-sonic || docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source) && docker compose up -d"
         )
     );
     assert_eq!(
@@ -509,6 +513,37 @@ async fn the_card_says_what_is_new_and_what_to_run() {
             "docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"
         )
     );
+}
+
+#[tokio::test]
+async fn an_old_helper_is_not_asked_and_the_card_says_to_reinstall_it() {
+    let f = UpdateFixture::start("2026.10.01").await;
+    // The helper of 2026.10.05 and before, left in place when reinstalling it failed.
+    f.helper_of("1", "build");
+    let reply = f.post("2026.10.02.1").await;
+    assert_eq!(reply.status, StatusCode::CONFLICT);
+    assert!(
+        reply.json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("scripts/updater/install-updater.sh")
+    );
+    assert!(!f.requested());
+    let view = f.get().await;
+    assert_eq!(view["helper"]["outdated"], json!(true));
+    assert_eq!(
+        view["reinstallCommand"],
+        json!("scripts/updater/install-updater.sh")
+    );
+}
+
+#[tokio::test]
+async fn the_current_helper_is_not_called_outdated() {
+    let f = UpdateFixture::start("2026.10.01").await;
+    f.helper();
+    let helper = f.get().await["helper"].clone();
+    assert_eq!(helper["outdated"], json!(false));
+    assert_eq!(helper["mode"], json!("git"));
 }
 
 #[tokio::test]
@@ -609,9 +644,10 @@ async fn a_failed_run_carries_the_end_of_the_log() {
     assert_eq!(log[39], json!("line 60"));
 }
 
-/// Rust-only: the card with checks off, byte for byte as the parity baseline has it
-/// (`09-admin/update`: an `ObjectResult`, so `&` and `<` go out unescaped), and the refusal it
-/// gives an update.
+/// Rust-only: the card with checks off, byte for byte (`09-admin/update`: an `ObjectResult`, so
+/// `&` and `<` go out unescaped), and the refusal it gives an update. The commands and
+/// `reinstallCommand` are the bridge release's (Octo pulled, helper version 2), so this answer
+/// differs from C# 2026.10.05's on purpose (intentional diff `update-card-pulls-octo`).
 #[tokio::test]
 async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     let mut settings = AppSettings::default();
@@ -623,7 +659,7 @@ async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && (docker compose pull yt-dlp-shim octo-sonic || docker compose build yt-dlp-shim-source octo-sonic-source) && docker compose build octo && docker compose up -d","imageCommand":"docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"}}"#
+            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"reinstallCommand":"scripts/updater/install-updater.sh","pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && (docker compose pull octo yt-dlp-shim octo-sonic || docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source) && docker compose up -d","imageCommand":"docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"}}"#
         )
     );
     let reply = send(

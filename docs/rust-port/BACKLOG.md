@@ -1232,28 +1232,31 @@ tests.
 
 ### T. Starter stack, install.sh, README, CI, sidecar images, updater
 
-Done in the release phase (plan § 9): the compose file, install.sh and the update helper move to the Rust image there.
+Done in the release phase (plan § 9) on `release/rust`: the compose file, install.sh and the update
+helper move to the Rust image there. These 2026.10.05 commits were already in the tree (`rust/main`
+holds 2026.10.05's compose, install.sh, README and workflows); what changed with them for Rust is the
+release branch's: the Rust server is the root `Dockerfile` and `ghcr.io/winters27/octo`, `docker.yml`
+builds it after `ci.yml` (Rust checks) passes, `VERSION` is the release number, and the C# bridge
+branch's packaging came across (Octo pulled with `octo-source`, helper version 2 and the dashboard's
+warning for an older helper, log rotation, quiet request lines, install.sh executable and waiting).
+The update card's hand command and `reinstallCommand` (from `610dba2`, `b2e5d9c` and the bridge) are
+ported with their tests (intentional diff `update-card-pulls-octo`).
 
-The update card's hand commands (`610dba2`'s `UpdateController` half, after `b2e5d9c`'s) are
-ported in the final parity round (`7f55c32`): pull the yt-dlp shim and octo-sonic, build a
-sidecar from its `-source` service only when it will not pull, build Octo; the image command
-pulls and restarts Octo with both sidecars.
-
-- [ ] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
-- [ ] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
-- [ ] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
-- [ ] `d1a7e67` fix(install): defaults apply on a fresh install, so pressing Enter no longer makes the Octo folder the music folder
-- [ ] `aba1743` fix(compose): the starter Navidrome is navidrome-starter, so a Navidrome of your own named navidrome in an override no longer merges with it and leaves Octo's dependency undefined
-- [ ] `76684ab` fix(install): a re-run keeps everything in .env, and a first install gets the defaults it shows
-- [ ] `b2e5d9c` ci(images): publish the yt-dlp shim beside Octo, and pull it on image installs
-- [ ] `610dba2` feat(images): updates pull the yt-dlp shim and octo-sonic instead of compiling them
-- [ ] `b2298f5` ci(images): native arm64 builds, latest on releases, and the release waits for its images
-- [ ] `94e30d1` ci(images): the release waits until every image can be pulled without signing in
-- [ ] `0d81d0b` ci(docker): octo's digests are collected apart from octo-sonic's
-- [ ] `c038b87` ci(docker): the Sounds alike image is ghcr.io/winters27/octo-sonic
-- [ ] `25ad530` docs(readme): a 20-second demo at the top, searching, playing and keeping a song
-- [ ] `0adc6b3` release: 2026.10.05
-- [ ] `ce63143` docs(readme): the apps' links point at 1.5.0 [skip ci]
+- [x] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
+- [x] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
+- [x] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
+- [x] `d1a7e67` fix(install): defaults apply on a fresh install, so pressing Enter no longer makes the Octo folder the music folder
+- [x] `aba1743` fix(compose): the starter Navidrome is navidrome-starter, so a Navidrome of your own named navidrome in an override no longer merges with it and leaves Octo's dependency undefined
+- [x] `76684ab` fix(install): a re-run keeps everything in .env, and a first install gets the defaults it shows
+- [x] `b2e5d9c` ci(images): publish the yt-dlp shim beside Octo, and pull it on image installs
+- [x] `610dba2` feat(images): updates pull the yt-dlp shim and octo-sonic instead of compiling them
+- [x] `b2298f5` ci(images): native arm64 builds, latest on releases, and the release waits for its images
+- [x] `94e30d1` ci(images): the release waits until every image can be pulled without signing in
+- [x] `0d81d0b` ci(docker): octo's digests are collected apart from octo-sonic's
+- [x] `c038b87` ci(docker): the Sounds alike image is ghcr.io/winters27/octo-sonic
+- [x] `25ad530` docs(readme): a 20-second demo at the top, searching, playing and keeping a song
+- [x] `0adc6b3` release: 2026.10.05
+- [x] `ce63143` docs(readme): the apps' links point at 1.5.0 [skip ci]
 
 ### U. Shared case files, timing tests
 
@@ -1261,6 +1264,53 @@ The Rust tests read the shared case files as they are.
 
 - [ ] `aae574a` test(identity): the shared song cases gain drumless and other editions, karaoke in the style of, and mash-ups, as the apps have them
 - [ ] `97855f1` test: two timing tests wait for what they check instead of sleeping
+
+## Release packaging record (`release/rust`, 2026-10-08)
+
+Local only: nothing pushed, tagged or published; no workflow run. VERSION says 2026.10.08 as a
+placeholder for the real date.
+
+- **Gate:** `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace`: 3,325 passed,
+  0 failed (3,320 on `rust/main` plus the update card's and the helper's new tests).
+  `test-updater.sh` 66/66, `test-install.sh` all passed, shellcheck 0.11.0 clean, actionlint
+  1.7.12 clean apart from docker.yml's `concurrency.queue`.
+- **Image:** the root Dockerfile built cold in WSL (16 cores) in 297 s (cargo-chef cook 62 s,
+  the Octo crates 204 s); a rebuild with only `OCTO_VERSION` changed 215 s. 1.0 GB on disk,
+  302 MB compressed (C# 2026.10.05: 1.12 GB, 340 MB). The cargo-chef and bookworm-slim bases
+  publish linux/arm64 too; the arm64 build itself was not run (CI's native runners do it).
+- **Upgrade, WSL Docker** (own folder `/root/rr-test`, project names `rr<x>`, a `registry:2` on
+  127.0.0.1:5000 standing in for ghcr.io: each test tag is the real commit with
+  `ghcr.io/winters27/` changed to `localhost:5000/winters27/` in docker-compose.yml only; the
+  2026.10.05 install's own C# build is the published `ghcr.io/winters27/octo:2026.10.05` tagged
+  with the name compose gives the build). A 2026.10.05 clone with the starter Navidrome, the
+  10-song parity library, sign-in required and 2026.10.05's own helper (version 1, systemd):
+  Update now (a request file, as the dashboard writes it) to 2026.10.08 was done in 29 s
+  (`docker compose build octo` built nothing, `up -d` pulled the Rust image, the helper
+  reinstalled itself as version 2, `mode=git`). The dashboard cookie made on C# stayed signed in,
+  `settings.json`, `browse-sessions.json` and `admin-recovery-code` were untouched, the dashboard
+  files and Subsonic (ping, getArtists, getAlbumList2, search3, stream, getCoverArt) answered as
+  on C#. Version 2 then moved it to 2026.10.09 in 30 s (pulls only).
+- **Rollback:** `git checkout --detach 2026.10.05 && docker compose up -d` brought C# back in 5 s
+  on the same config folder: still signed in, settings the same, no state file warning in its log.
+  Update now from there to 2026.10.09 again: done in 29 s. A copied-compose rollback
+  (`OCTO_IMAGE_TAG=2026.10.05` in `.env`, `pull` + `up -d`) ran C# 2026.10.05 in 10 s.
+- **Fresh install:** a clone at 2026.10.08 and `./install.sh` with Enter for every answer
+  (starter Navidrome): pulled all three images, built nothing, everything up, helper version 2.
+  octo-sonic reads "not reachable" while the music folder is empty, as on 2026.10.05 (by design).
+- **Memory and start** (WSL, busy with other lanes, load 5 to 12; each Octo `--cpus 2 --memory
+  768m`, starter Navidrome, 10 songs, 12,000 requests at 16 threads, two runs in both orders):
+  C# 2026.10.05 idle 265 to 281 MiB, peak 367 to 441, 29 to 31 CPU-s, 1,863 log bytes per
+  request; Rust idle 67 MiB at 10 s and 90 to 94 at 2 min, peak 92 to 95, 6 CPU-s, 24 log bytes
+  per request (all of it the status probe's warning about the test's absent slskd; with slskd
+  up, 600 requests logged nothing). Process start to "Now listening on": C# 1.74 s median, Rust
+  0.89 s. Per path (2,000 requests each): Rust ahead on ping, getArtists, search3, status and
+  admin.js, level on getAlbumList2 (both wait on Navidrome). Against the plan's targets (LXC 131,
+  idle at most 60, peak at most 80, start at most 0.4 s) this box reads high for both builds
+  (C# idles 265 to 281 here against 213 there), so the targets are judged on the LXC 131 rerun.
+- **Parity** (WSL lane, built as 2026.10.05): `21-static` 0 unexplained with the re-pinned
+  dashboard entry; `09-admin` and `11-signin`'s update requests differ only by the update card
+  (entry `update-card-pulls-octo`, proposed, waiting for Brandon) and, in 09, the Charts settings
+  rows that `rust/main` already has.
 
 ## Improvements we want while porting
 
@@ -1320,12 +1370,16 @@ its reason when it changes an answer.
   cutover, behind the tests.
 - [ ] **Split the `octo` crate** only if the loop gets slow again: today an
   edit there rebuilds the tests in 12 s.
-- [ ] **A `VERSION` file at the cutover.** `build.rs` reads it first; until
+- [x] **A `VERSION` file at the cutover.** `build.rs` reads it first; until
   then it reads `octo/octo.csproj`, so a release bump is one edit for both
-  builds.
+  builds. Done on `release/rust`: `VERSION` is the release (docker.yml checks a tag and the
+  compose image tags against it; install.sh and the update helper read it first). `octo.csproj`
+  stays at 2026.10.05, the last C# release, which the C# code in the tree still is, and is
+  `build.rs`'s fallback for a tree without `VERSION`.
 - [ ] **Move the shared files beside the crates at the cutover** (dashboard,
   Assets, cover design, appsettings, golden samples) and drop the `../../octo`
-  paths.
+  paths. Not at the release: the plan moves them with the C# app's removal (§ 6.4 phase 6,
+  "move `wwwroot` and assets into `crates/`"), since the C# app reads them from `octo/` until then.
 - [ ] **cargo-deny's two ignored advisories** (`paste` under lofty,
   `ttf-parser` under cosmic-text): drop each when its parent moves on.
 
@@ -1333,7 +1387,9 @@ its reason when it changes an answer.
 
 - Push `rust/main` so `rust.yml` and `ci.yml` run, then one manual run of
   `docker-rust.yml`; record the times and the cache sizes above. The
-  `octo-rust` package starts private on ghcr.io. (Nothing is pushed until
+  `octo-rust` package starts private on ghcr.io. Superseded on `release/rust`: `rust.yml`'s jobs are
+  in `ci.yml`, `docker-rust.yml` is gone (the `octo` entry of `docker.yml` builds the Rust server),
+  and no `octo-rust` package is needed; the first CI and image runs happen when Brandon ships. (Nothing is pushed until
   Brandon says so.)
 - The test box: LXC 131 had 11 GB free on its disk after the phase 1 runs (the
   parity builder's cache, about 6 GB at most, and one Rust image of 1 GB are

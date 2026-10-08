@@ -351,23 +351,45 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"h26dNsyVlzJjYyCpRqpiIUmsgnpxJOmN2LHJHHVZsaw=\"'\\]$",
+        "^B:\\ \\['\"yjR4ryJm9lY6bGoVZNFSXKKejskPwMRhybCcQCj3hF0=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ 876e9d36cc959732636320a946aa622149ac827a7124e98dd8b1c91c7559b1ac\\ \\(194100\\ bytes,\\ text\\)$",
+        "^B:\\ ca3478af2266f6563a6c6a1564d1525ca29e8ec90fc0c461c9b09c4028f7845d\\ \\(194962\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"z22B4a4ywBh\\+9GwKouPeUkxwM8pVBoxppR8ypUsjRMU=\"'\\]$",
+        "^B:\\ \\['\"xSqbbTYY/VFFLx8P7sZ3aOk3FR5gDMFqUHalu3TCXW4=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ cf6d81e1ae32c0187ef46c0aa2e3de524c7033ca55068c69a51f32a54b2344c5\\ \\(375408\\ bytes,\\ text\\)$",
+        "^B:\\ c52a9b6d3618fd51452f1f0feec67768e937151e600cc16a5076a5bb74c25d6e\\ \\(376499\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
-        "^B:\\ \\['\"pKMT13WilxLRcMhFjVwv977Bz5byNk73fmmLZ9iG58Q=\"'\\]$",
+        "^B:\\ \\['\"FnxtuSHIv503E2td0ee\\+1JM5x09YrKdZckZJrgZ\\+wxs=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
-        "^B:\\ a4a313d775a29712d170c8458d5c2ff7bec1cf96f2364ef77e698b67d886e7c4\\ \\(115954\\ bytes,\\ text\\)$",
+        "^B:\\ 167c6db921c8bf9d37136b5dd1e7bed49339c74f58aca759724649ae067ec31b\\ \\(116170\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/194100'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/194962'\\]$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated.",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo).",
       "knownDiff": "Dashboard Charts card",
       "reviewed": "Brandon 2026-10-08"
+    },
+    {
+      "id": "update-card-pulls-octo",
+      "backlog": "T",
+      "requests": [
+        "09-admin/update",
+        "11-signin/in-get-update"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.command: git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull yt-dlp-shim octo-sonic \\|\\| docker compose .* != git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull octo yt-dlp-shim octo-sonic \\|\\| .*$",
+        "^\\$\\.reinstallCommand: only in B \\(scripts/updater/install-updater\\.sh\\)$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"enabled\":",
+        "^\\+\\{\"enabled\":"
+      ],
+      "reason": "Octo is pulled from this release on (the bridge release, shipped with the Rust one): docker compose build octo builds nothing, so the hand command pulls Octo with its sidecars and builds the -source services only when the pull fails. reinstallCommand is what the card shows when the update helper is older than version 2, which would otherwise restart the same Octo and call it an update.",
+      "knownDiff": "Update card: Octo pulled, helper version 2"
     },
     {
       "id": "charts-settings-listed",

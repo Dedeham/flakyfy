@@ -35,7 +35,7 @@
 # run's exit status (0: the run went through, diffs or not; 143: it was stopped). If this
 # script is stopped, --attach follows the run again.
 #
-# The run: the image octo-rust-lane:<name> from Dockerfile.rust's runtime stage around the
+# The run: the image octo-rust-lane:<name> from Dockerfile's runtime stage around the
 # binary; the corpus against the C# image (kept per corpus version and shard plan in
 # ~/.octo-parity/cs-cache/, recorded again only when they change) and against the Rust image;
 # then the diffs. Every recording is cut into the shards of parity/shards.json (parity.py run
@@ -519,7 +519,7 @@ for s in plan["shards"] if isinstance(plan, dict) else plan:
     {
       echo "FROM scratch AS build"
       echo "COPY .parity-bin/octo /out/octo"
-      sed -n '/^# ---- Runtime ----/,$p' Dockerfile.rust
+      sed -n '/^# ---- Runtime ----/,$p' Dockerfile
     } > .parity-bin/Dockerfile
     start=$(date +%s)
     docker build -q -f .parity-bin/Dockerfile -t "$RS_IMAGE" . > "$RUN/build.log" 2>&1 || {
@@ -838,7 +838,11 @@ wsl_lane() { # repo name mode clean prebuilt options...
   binary="$repo/target/$musl_target/release/octo"
   if [ "$prebuilt" = 1 ]; then
     echo "building octo for $musl_target here"
-    "$SLOT" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
+    # The harness compares with C# 2026.10.05, so the binary claims that release (build.rs reads
+    # OCTO_VERSION first). A VERSION ahead of it, as on a release branch, would otherwise differ in
+    # every answer that names the release. PARITY_OCTO_VERSION picks another.
+    OCTO_VERSION="${PARITY_OCTO_VERSION:-2026.10.05}" \
+      "$SLOT" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
     echo "built $(du -h "$binary" | cut -f1) binary from $(git rev-parse --short HEAD)"
   fi
 

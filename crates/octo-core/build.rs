@@ -2,11 +2,12 @@
 //! dashboard, the User-Agent and the update check show it (`2026.10.05`).
 //!
 //! `OCTO_VERSION` in the build's environment wins (a CI or Docker build can stamp a release
-//! without editing a file). Otherwise the repository's `VERSION` file, once the C# app is gone;
-//! while both builds live side by side there is none, and the release is the one the C# app
-//! carries, `InformationalVersion` in `octo/octo.csproj`, so a release bump is one edit for
-//! both. `CARGO_PKG_VERSION` cannot carry the tag: semver drops the leading zero of `05`, and
-//! the dashboard compares the tag name verbatim.
+//! without editing a file). Otherwise the repository's `VERSION` file, the release number since
+//! the Rust server became Octo (docker.yml checks a tag against it, and docker-compose.yml's
+//! image tags with it). A tree without one, from before, falls back to `InformationalVersion`
+//! in `octo/octo.csproj`; that file now names the last C# release (2026.10.05) and stays until
+//! the C# app is removed. `CARGO_PKG_VERSION` cannot carry the tag: semver drops the leading
+//! zero of `05`, and the dashboard compares the tag name verbatim.
 
 use std::path::Path;
 

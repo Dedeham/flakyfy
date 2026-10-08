@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::song_identity::SongIdentity;
 use crate::fingerprint::verification::VerificationResult;
+use crate::tagging::release_fact_tags::AlbumGrouping;
 use crate::tagging::tag_plan::TagPlan;
 
 /// Represents a song (local or external)
@@ -141,6 +142,19 @@ pub struct Song {
     /// The ids of the release's album artists, one per credit.
     pub music_brainz_album_artist_ids: Vec<String>,
 
+    /// How many discs the release has, when the chosen release said.
+    pub total_discs: Option<i32>,
+
+    /// What the downloaded version's words are, as the advisory tag holds it: 1 explicit, 2 the
+    /// clean edit, 0 neither. None when nothing that matched this exact version said.
+    pub advisory: Option<i32>,
+
+    /// The album grouping values the album this track joins already carries in the library (its
+    /// release id, release date and version), copied exactly so the library server keeps the two
+    /// as one album. None when there is no such album to join. Never serialized.
+    #[serde(skip)]
+    pub joins_album: Option<AlbumGrouping>,
+
     /// The fingerprint service's id for the audio, once it confirmed the recording.
     pub acoust_id: Option<String>,
 
@@ -222,13 +236,15 @@ mod tests {
             json.ends_with(r#""ReplayGainAlbumGainDb":null,"ReplayGainAlbumPeak":null}"#),
             "{json}"
         );
-        assert!(!json.contains("TagPlan") && !json.contains("Verification"));
+        assert!(!json.contains("TagPlan") && !json.contains("Verification") && !json.contains("JoinsAlbum"));
         for name in [
             "\"BitRate\"",
             "\"CoverArtUrlLarge\"",
             "\"MusicBrainzReleaseTrackId\"",
             "\"AcoustId\"",
             "\"IsCompilation\"",
+            "\"TotalDiscs\"",
+            "\"Advisory\"",
         ] {
             assert!(json.contains(name), "{name}");
         }

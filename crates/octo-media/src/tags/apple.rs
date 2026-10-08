@@ -37,6 +37,8 @@ pub(crate) mod names {
     pub(crate) const CPRT: [u8; 4] = *b"cprt";
     pub(crate) const CPIL: [u8; 4] = *b"cpil";
     pub(crate) const COVR: [u8; 4] = *b"covr";
+    /// The rating atom, which holds the explicit advisory as one byte.
+    pub(crate) const RTNG: [u8; 4] = *b"rtng";
 }
 
 /// One `data` box: its type code (TagLib#'s flags) and its bytes.
@@ -166,6 +168,11 @@ impl AppleTag {
         })
     }
 
+    /// `DataBoxes(type).FirstOrDefault()`: the first data box with the name.
+    pub(crate) fn first_data(&self, name: [u8; 4]) -> Option<&DataBox> {
+        self.data_boxes(name).next()
+    }
+
     /// `GetText`: every text value, split at ";" and trimmed.
     pub(crate) fn text(&self, name: [u8; 4]) -> Vec<String> {
         self.data_boxes(name)
@@ -259,6 +266,14 @@ impl AppleTag {
                 name: name.to_string(),
                 data: vec![DataBox::text(value)],
             }),
+        }
+    }
+
+    /// Removes the first freeform box with the mean and (ignoring case) the name, whatever it
+    /// holds.
+    pub(crate) fn remove_dash_box(&mut self, mean: &str, name: &str) {
+        if let Some(at) = self.dash_position(mean, name) {
+            self.boxes.remove(at);
         }
     }
 

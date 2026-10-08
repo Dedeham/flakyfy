@@ -168,6 +168,7 @@ impl CandidateSources {
             cover_url: meta.album_cover_url.clone(),
             genre: meta.genre.clone(),
             explicit: meta.explicit_lyrics,
+            explicit_content: meta.explicit_content,
             catalog_album_id: meta.album_id.clone(),
             catalog_track_id: meta.track_id.clone(),
             ..ReleaseCandidate::new(

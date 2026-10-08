@@ -126,6 +126,7 @@ struct Inner {
     /// once a request is back, so two callers asking the same thing at once each asked.
     in_flight_artists: InFlight<Vec<ArtistHit>>,
     in_flight_counts: InFlight<Option<i32>>,
+    in_flight_albums: InFlight<AlbumLookup>,
 }
 
 /// Flow out of a C# `try` block that could `return` early.
@@ -156,6 +157,7 @@ impl DeezerMetadataService {
                 album_year_tasks: InFlight::new(),
                 in_flight_artists: InFlight::new(),
                 in_flight_counts: InFlight::new(),
+                in_flight_albums: InFlight::new(),
             }),
         }
     }
@@ -445,6 +447,7 @@ impl DeezerMetadataService {
             Some(Value::Bool(flag)) => Some(*flag),
             _ => None,
         };
+        let mut explicit_content = int(t, "explicit_content_lyrics")?;
         let mut gain = None;
         let mut track_id = None;
         if let Some(tid @ Value::Number(_)) = try_get_property(t, "id")? {
@@ -465,6 +468,7 @@ impl DeezerMetadataService {
                 if let Some(Value::Bool(flag)) = try_get_property(track, "explicit_lyrics")? {
                     explicit_lyrics = Some(*flag);
                 }
+                explicit_content = int(track, "explicit_content_lyrics")?.or(explicit_content);
                 if let Some(gn @ Value::Number(_)) = try_get_property(track, "gain")? {
                     gain = Some(get_double(gn)?);
                 }
@@ -507,6 +511,7 @@ impl DeezerMetadataService {
             album_id: (alb_id > 0).then(|| alb_id.to_string()),
             barcode: barcode.filter(|b| !is_blank(b)),
             explicit_lyrics,
+            explicit_content,
             catalog_gain: gain,
         };
         Ok((meta, detail_unresolved))
@@ -559,6 +564,12 @@ impl DeezerMetadataService {
     /// Search the catalog for artists. Plain query: the artist endpoint takes a bare name
     /// and the qualified form is dead everywhere now.
     pub async fn search_artists(&self, query: &str, limit: i32) -> Vec<ArtistHit> {
+        self.search_artists_on(query, limit, false).await
+    }
+
+    /// [`Self::search_artists`] on the catalog's background lane when `background` (New
+    /// Releases), behind anything a listener is waiting on.
+    pub async fn search_artists_on(&self, query: &str, limit: i32, background: bool) -> Vec<ArtistHit> {
         if is_blank(query) || limit <= 0 {
             return Vec::new();
         }
@@ -574,19 +585,26 @@ impl DeezerMetadataService {
         self.inner
             .in_flight_artists
             .run(&key, async move {
-                this.fetch_artist_search(&query, limit, fetch_key).await
+                this.fetch_artist_search(&query, limit, fetch_key, background)
+                    .await
             })
             .await
     }
 
-    async fn fetch_artist_search(&self, query: &str, limit: i32, key: String) -> Vec<ArtistHit> {
+    async fn fetch_artist_search(
+        &self,
+        query: &str,
+        limit: i32,
+        key: String,
+        background: bool,
+    ) -> Vec<ArtistHit> {
         let mut hits = Vec::new();
         let attempt = async {
             let q = escape_data_string(query);
             let r = self
                 .get_json(
                     &format!("{}/search/artist?q={q}&limit={limit}", self.base()),
-                    false,
+                    background,
                 )
                 .await;
             // Caching an empty list on a refusal is what would make external artists
@@ -696,6 +714,7 @@ impl DeezerMetadataService {
                         year: None,
                         track_count,
                         record_type: record_type.map(str::to_string),
+                        release_date: None,
                     });
                 }
             }
@@ -726,10 +745,30 @@ impl DeezerMetadataService {
     /// singles; grouped after the records, they no longer bury them. The artist's name is not
     /// on this listing, so every hit carries the one given.
     pub async fn get_artist_albums(&self, deezer_artist_id: &str, artist_name: &str) -> Vec<AlbumHit> {
+        self.get_artist_albums_on(deezer_artist_id, artist_name, false, 1)
+            .await
+    }
+
+    /// [`Self::get_artist_albums`] on the catalog's background lane when `background`, reading
+    /// up to `pages` of the catalog's pages of 100 for a long career. The catalog lists albums
+    /// before singles, so a new single of an artist with more than a page of releases is on a
+    /// later page; New Releases reads up to three.
+    pub async fn get_artist_albums_on(
+        &self,
+        deezer_artist_id: &str,
+        artist_name: &str,
+        background: bool,
+        pages: i32,
+    ) -> Vec<AlbumHit> {
         if is_blank(deezer_artist_id) {
             return Vec::new();
         }
-        let key = dotnet::to_lower_invariant(&format!("ara|{deezer_artist_id}"));
+        let pages = pages.clamp(1, 5);
+        let key = dotnet::to_lower_invariant(&if pages > 1 {
+            format!("ara|{deezer_artist_id}|p{pages}")
+        } else {
+            format!("ara|{deezer_artist_id}")
+        });
         if let Some(Cached::AlbumHits(cached)) = self.get_cached(&key) {
             return cached;
         }
@@ -739,23 +778,42 @@ impl DeezerMetadataService {
         let mut by_title: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut total: Option<i32> = None;
         let mut listed = 0usize;
+        let mut partial = false;
         let attempt = async {
             let id = escape_data_string(deezer_artist_id);
-            let r = self
-                .get_json(
-                    &format!("{}/artist/{id}/albums?limit={ARTIST_ALBUMS_LIMIT}", self.base()),
-                    false,
-                )
-                .await;
-            // Caching an empty list on a refusal would leave the artist's page empty for hours.
-            if r.transient {
-                return anyhow::Ok(Flow::Return(()));
-            }
-            if let Some(root) = &r.doc
-                && let Some(data) = data_array(Some(root))?
-            {
-                total = int(root, "total")?;
-                listed = array_length(data)?;
+            for page in 0..pages {
+                let index = if page > 0 {
+                    format!("&index={}", page * ARTIST_ALBUMS_LIMIT)
+                } else {
+                    String::new()
+                };
+                let r = self
+                    .get_json(
+                        &format!(
+                            "{}/artist/{id}/albums?limit={ARTIST_ALBUMS_LIMIT}{index}",
+                            self.base()
+                        ),
+                        background,
+                    )
+                    .await;
+                // Caching an empty list on a refusal would leave the artist's page empty for
+                // hours. A later page refused keeps the first pages, briefly.
+                if r.transient {
+                    if page == 0 {
+                        return anyhow::Ok(Flow::Return(()));
+                    }
+                    partial = true;
+                    break;
+                }
+                let Some(root) = &r.doc else { break };
+                let Some(data) = data_array(Some(root))? else {
+                    break;
+                };
+                if total.is_none() {
+                    total = int(root, "total")?;
+                }
+                let count = array_length(data)?;
+                listed += count;
                 for a in enumerate_array(data)? {
                     let album_id = match try_get_property(a, "id")? {
                         Some(aid @ Value::Number(_)) => Some(get_int64(aid)?.to_string()),
@@ -779,6 +837,11 @@ impl DeezerMetadataService {
                         year,
                         track_count: int(a, "nb_tracks")?.unwrap_or(0),
                         record_type,
+                        release_date: released
+                            .filter(|date| date.encode_utf16().count() >= 10)
+                            .map(|date| {
+                                String::from_utf16_lossy(&date.encode_utf16().take(10).collect::<Vec<_>>())
+                            }),
                     };
 
                     let title_key = SongIdentity::key(title);
@@ -795,6 +858,10 @@ impl DeezerMetadataService {
                             }
                         }
                     }
+                }
+                match total {
+                    Some(known) if count > 0 && listed < usize::try_from(known).unwrap_or(0) => {}
+                    _ => break,
                 }
             }
             Ok(Flow::Done)
@@ -821,7 +888,9 @@ impl DeezerMetadataService {
                 .cmp(&release_rank(b.record_type.as_deref()))
                 .then_with(|| b.year.unwrap_or(0).cmp(&a.year.unwrap_or(0)))
         });
-        let ttl = if hits.is_empty() {
+        let ttl = if partial {
+            PARTIAL_TTL
+        } else if hits.is_empty() {
             NEGATIVE_TTL
         } else {
             POSITIVE_TTL
@@ -945,6 +1014,47 @@ impl DeezerMetadataService {
     /// Deezer has no such album, it has the album but no tracks for it, or it did not answer
     /// this time. Only the last may come right on its own a moment later.
     pub async fn look_up_album_detail(&self, deezer_id: &str) -> AlbumLookup {
+        self.look_up_album_detail_on(deezer_id, false).await
+    }
+
+    /// The album's detail when it is already cached, without asking Deezer.
+    pub fn cached_album_detail(&self, deezer_id: &str) -> Option<AlbumLookup> {
+        if is_blank(deezer_id) {
+            return None;
+        }
+        match self.get_cached(&format!("ad|{deezer_id}")) {
+            Some(Cached::Album(cached)) => Some(cached),
+            _ => None,
+        }
+    }
+
+    /// [`Self::look_up_album_detail`] from the cache, or from one request shared by every caller
+    /// asking at once. The request runs without any one caller, so a search that stops waiting
+    /// still leaves the answer cached for the next one. `background` puts it behind anything a
+    /// listener is waiting on.
+    pub async fn shared_album_detail(&self, deezer_id: &str, background: bool) -> AlbumLookup {
+        if is_blank(deezer_id) {
+            return AlbumLookup {
+                detail: None,
+                answer: AlbumAnswer::NoSuchAlbum,
+            };
+        }
+        let cache_key = format!("ad|{deezer_id}");
+        if let Some(Cached::Album(cached)) = self.get_cached(&cache_key) {
+            return cached;
+        }
+        let this = self.clone();
+        let id = deezer_id.to_string();
+        self.inner
+            .in_flight_albums
+            .run(&cache_key, async move {
+                this.look_up_album_detail_on(&id, background).await
+            })
+            .await
+    }
+
+    /// [`Self::look_up_album_detail`] on the catalog's background lane when `background`.
+    pub async fn look_up_album_detail_on(&self, deezer_id: &str, background: bool) -> AlbumLookup {
         if is_blank(deezer_id) {
             return AlbumLookup {
                 detail: None,
@@ -978,10 +1088,17 @@ impl DeezerMetadataService {
             // album that genuinely has no tracks.
             let mut nb_tracks = None;
 
+            // Both calls at once: the tracklist does not depend on the album's answer, and an
+            // album opened or counted from a search waits on the slower of the two rather than on
+            // both in turn. When the album call says there is nothing, the tracklist's answer is
+            // dropped unread.
+            let album_url = format!("{}/album/{deezer_id}", self.base());
+            let tracks_url = format!("{}/album/{deezer_id}/tracks?limit=300", self.base());
+            let (r, tr) = tokio::join!(
+                self.get_json(&album_url, background),
+                self.get_json(&tracks_url, background)
+            );
             {
-                let r = self
-                    .get_json(&format!("{}/album/{deezer_id}", self.base()), false)
-                    .await;
                 if r.transient {
                     return anyhow::Ok(Flow::Return(unavailable.clone()));
                 }
@@ -1018,12 +1135,6 @@ impl DeezerMetadataService {
 
             let mut tracks = Vec::new();
             {
-                let tr = self
-                    .get_json(
-                        &format!("{}/album/{deezer_id}/tracks?limit=300", self.base()),
-                        false,
-                    )
-                    .await;
                 // The album call can succeed while the tracklist call is throttled. That
                 // built a perfectly valid AlbumDetail carrying title, year and genre with
                 // an empty tracklist, cached it permanently, and is why getAlbum reported
@@ -1049,6 +1160,8 @@ impl DeezerMetadataService {
                             track_position: int(t, "track_position")?,
                             disc_number: int(t, "disk_number")?,
                             isrc: str_prop(t, "isrc")?.map(str::to_string),
+                            rank: int(t, "rank")?,
+                            explicit_content: explicit_of(t)?,
                         });
                     }
 
@@ -1479,6 +1592,18 @@ fn first_genre(root: &Value) -> ElementResult<Option<String>> {
 
 /// The C# `Int` helper: `GetInt32()` of a number, which throws for one that is not an
 /// integer in range.
+/// A track's explicit state as the catalog's number, from its yes or no when the number is
+/// missing.
+fn explicit_of(track: &Value) -> ElementResult<Option<i32>> {
+    if let Some(number) = int(track, "explicit_content_lyrics")? {
+        return Ok(Some(number));
+    }
+    Ok(match try_get_property(track, "explicit_lyrics")? {
+        Some(Value::Bool(said)) => Some(i32::from(*said)),
+        _ => None,
+    })
+}
+
 fn int(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     match try_get_property(element, name)? {
         Some(value @ Value::Number(_)) => Ok(Some(get_int32(value)?)),

@@ -177,6 +177,7 @@ fn row_of(id: &str, path: &str, suffix: &str, size: i64) -> LibrarySongRow {
         artist: "A".to_string(),
         duration: Some(200),
         album: None,
+        ..Default::default()
     }
 }
 

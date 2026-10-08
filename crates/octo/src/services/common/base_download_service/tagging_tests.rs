@@ -16,8 +16,9 @@ use octo_core::models::download::DownloadHistoryEntry;
 use octo_core::settings::{
     AppSettings, FolderStructure, MetadataSettings, SoulseekSettings, SubsonicSettings,
 };
+use octo_core::tagging::FieldDecision;
 use octo_media::audio::{ILoudnessMeter, Loudness, ReplayGainTags};
-use octo_media::tags::{TagField, TagFile, tag_writer_extras};
+use octo_media::tags::{KeptIdentityTags, TagField, TagFile, tag_writer_extras};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use wiremock::matchers::any;
@@ -577,6 +578,11 @@ const NOW_LOOKUP: &str = r#"
 "#;
 
 async fn compilation_rip(prefer_original_album: bool) -> Tagging {
+    compilation_rip_tagged(prefer_original_album, None).await
+}
+
+/// `CompilationRip(preferOriginalAlbum, peer)`: `peer` adds what the peer wrote to the file.
+async fn compilation_rip_tagged(prefer_original_album: bool, peer: Option<fn(&mut TagFile)>) -> Tagging {
     let routes = vec![
         ("release/r-mezz?", MEZZANINE_DETAILS.to_string()),
         ("/search?q=", r#"{"data":[]}"#.to_string()),
@@ -608,9 +614,339 @@ async fn compilation_rip(prefer_original_album: bool) -> Tagging {
             file.set_album(Some("Now That's What I Call Music! 42"));
             file.set_album_artists(&["Various Artists".to_string()]);
             tag_writer_extras::set_compilation(file, true);
+            if let Some(peer) = peer {
+                peer(file);
+            }
         })
     });
     tagging
+}
+
+/// A Vorbis field set the way the C# tests set one (`xiph.SetField`), through the writer's own
+/// field setter.
+fn set_vorbis(file: &mut TagFile, name: &'static str, value: &str) {
+    let field = TagField {
+        id3_frame: None,
+        id3_description: Some(name),
+        vorbis: name,
+        mp4: name,
+    };
+    tag_writer_extras::set_text(file, field, Some(value));
+}
+
+/// What a peer who tagged the compilation wrote about it: every one of these names the
+/// compilation, not the studio album the song is filed under.
+fn tagged_for_the_compilation(file: &mut TagFile) {
+    set_vorbis(
+        file,
+        "MUSICBRAINZ_ALBUMID",
+        "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+    );
+    set_vorbis(file, "MUSICBRAINZ_RELEASETRACKID", "t-now");
+    set_vorbis(file, "MUSICBRAINZ_RELEASEGROUPID", "g-now42");
+    set_vorbis(file, "RELEASEDATE", "1999-04-12");
+    set_vorbis(file, "UPC", "0724352168227");
+    set_vorbis(file, "ORGANIZATION", "EMI");
+    set_vorbis(file, "TRACKNUMBER", "9");
+    set_vorbis(file, "TRACKTOTAL", "21");
+    set_vorbis(file, "DISCNUMBER", "2");
+    set_vorbis(file, "TOTALDISCS", "2");
+    set_vorbis(file, "REPLAYGAIN_ALBUM_GAIN", "-9.40 dB");
+}
+
+// ---- 2463c23: a download keeps only its own album's facts --------------------------------
+
+#[tokio::test]
+async fn compilation_rip_filed_under_the_studio_album_keeps_none_of_the_compilations_facts() {
+    let tagging = compilation_rip_tagged(true, Some(tagged_for_the_compilation)).await;
+
+    let path = tagging.download("1").await.expect("downloaded");
+
+    assert_eq!(vorbis(&path, "ALBUM").as_deref(), Some("Mezzanine"));
+    let number = |field: &str| vorbis(&path, field).and_then(|text| text.parse::<i32>().ok());
+    assert_eq!(
+        (
+            number("TRACKNUMBER"),
+            number("TRACKTOTAL"),
+            number("DISCNUMBER"),
+            number("DISCTOTAL")
+        ),
+        (Some(3), Some(11), Some(1), Some(1))
+    );
+    assert_eq!(vorbis(&path, "BARCODE").as_deref(), Some("724384559922"));
+    assert_eq!(vorbis_all(&path, "LABEL"), ["Virgin"]);
+    for field in [
+        "MUSICBRAINZ_ALBUMID",
+        "RELEASEDATE",
+        "UPC",
+        "ORGANIZATION",
+        "TOTALDISCS",
+        "REPLAYGAIN_ALBUM_GAIN",
+        "COMPILATION",
+    ] {
+        assert_eq!(vorbis(&path, field), None, "{field} should have gone");
+    }
+    assert_ne!(
+        vorbis(&path, "MUSICBRAINZ_RELEASETRACKID").as_deref(),
+        Some("t-now")
+    );
+    assert_ne!(
+        vorbis(&path, "MUSICBRAINZ_RELEASEGROUPID").as_deref(),
+        Some("g-now42")
+    );
+    let report = tagging.last_entry().tagging.expect("a report");
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("Now That's What I Call Music! 42") && note.contains("UPC")),
+        "{:?}",
+        report.notes
+    );
+}
+
+#[tokio::test]
+async fn compilation_kept_loses_only_the_grouping_values() {
+    let tagging = compilation_rip_tagged(false, Some(tagged_for_the_compilation)).await;
+
+    let path = tagging.download("1").await.expect("downloaded");
+
+    assert_eq!(
+        vorbis(&path, "ALBUM").as_deref(),
+        Some("Now That's What I Call Music! 42")
+    );
+    assert_eq!(vorbis(&path, "MUSICBRAINZ_ALBUMID"), None);
+    assert_eq!(vorbis(&path, "RELEASEDATE"), None);
+    // Still the compilation, so what the peer wrote about it stays.
+    assert_eq!(vorbis(&path, "ORGANIZATION").as_deref(), Some("EMI"));
+    assert_eq!(vorbis(&path, "COMPILATION").as_deref(), Some("1"));
+    assert_eq!(
+        vorbis(&path, "REPLAYGAIN_ALBUM_GAIN").as_deref(),
+        Some("-9.40 dB")
+    );
+}
+
+#[tokio::test]
+async fn same_album_from_a_peer_ends_with_one_label_one_barcode_and_no_grouping_values() {
+    let tagging = build_with(
+        vec![("1", teardrop())],
+        serve(mezzanine_routes("Mezzanine")).await,
+        Options::default(),
+    )
+    .await;
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |song, _| {
+        confirm(song, confirmed_teardrop());
+        landed_flac(&root, "peer share", |file| {
+            file.set_album(Some("Mezzanine"));
+            set_vorbis(
+                file,
+                "MUSICBRAINZ_ALBUMID",
+                "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+            );
+            set_vorbis(file, "RELEASEDATE", "2019-08-23");
+            set_vorbis(file, "ORGANIZATION", "Circa");
+            set_vorbis(file, "UPC", "724384559922");
+            set_vorbis(file, "MUSICBRAINZ_ALBUMTYPE", "album");
+        })
+    });
+
+    let path = tagging.download("1").await.expect("downloaded");
+
+    let view = KeptIdentityTags::navidrome_view(&TagFile::open(&path).expect("opens"));
+    assert_eq!(view["label"], ["Virgin"]);
+    assert!(!view.contains_key("organization"));
+    assert_eq!(view["barcode"], ["724384559922"]);
+    assert!(!view.contains_key("upc"));
+    assert!(!view.contains_key("musicbrainz_albumtype"));
+    let identity = KeptIdentityTags::read(Path::new(&path), None).expect("reads");
+    assert_eq!(identity.album_id, None);
+    assert_eq!(identity.release_date, None);
+}
+
+#[tokio::test]
+async fn joining_an_album_folder_carries_the_albums_own_grouping_values() {
+    const THEIRS: &str = "99999999-8888-4777-8666-555555555555";
+    let tagging = build_with(
+        vec![("1", teardrop())],
+        serve(mezzanine_routes("Collected")).await,
+        Options {
+            layout: FolderStructure::Organized,
+            metadata: MetadataSettings {
+                tag_rehearsal: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .await;
+    let target = octo_core::common::PathHelper::build_layout_path(
+        FolderStructure::Organized,
+        &tagging.root().to_string_lossy(),
+        "Massive Attack",
+        "Collected",
+        "Teardrop",
+        Some(4),
+        ".flac",
+    );
+    let folder = Path::new(&target).parent().expect("a folder").to_path_buf();
+    std::fs::create_dir_all(&folder).expect("made");
+    let sibling = folder.join("01 - Unfinished Sympathy.flac");
+    std::fs::write(&sibling, flac()).expect("written");
+    {
+        let mut file = TagFile::open(&sibling).expect("opens");
+        file.set_title(Some("Unfinished Sympathy"));
+        file.set_album(Some("Collected"));
+        file.set_album_artists(&["Massive Attack".to_string()]);
+        set_vorbis(&mut file, "MUSICBRAINZ_ALBUMID", THEIRS);
+        set_vorbis(&mut file, "RELEASEDATE", "2006-03-27");
+        file.save().expect("saved");
+    }
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |song, _| {
+        confirm(song, confirmed_teardrop());
+        // A peer's own release id for another pressing of the same compilation.
+        landed_flac(&root, "peer share", |file| {
+            set_vorbis(
+                file,
+                "MUSICBRAINZ_ALBUMID",
+                "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+            );
+        })
+    });
+
+    // A rehearsal files it under the catalog's album, the one the folder holds.
+    let path = tagging.download("1").await.expect("downloaded");
+
+    assert_eq!(Path::new(&path).parent(), Some(folder.as_path()));
+    let identity = KeptIdentityTags::read(Path::new(&path), None).expect("reads");
+    assert_eq!(
+        (identity.album_id.as_deref(), identity.release_date.as_deref()),
+        (Some(THEIRS), Some("2006-03-27"))
+    );
+}
+
+/// "Money Trees" twice in the catalog: the explicit copy first, then the clean edit, each with
+/// its own code.
+fn money_trees_routes() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "/album/7",
+            r#"{"id":7,"record_type":"album","release_date":"2012-10-22","nb_tracks":12,"artist":{"name":"Kendrick Lamar"}}"#.to_string(),
+        ),
+        (
+            "/album/8",
+            r#"{"id":8,"record_type":"album","release_date":"2012-10-22","nb_tracks":12,"artist":{"name":"Kendrick Lamar"}}"#.to_string(),
+        ),
+        (
+            "/track/71",
+            r#"{"id":71,"track_position":5,"disk_number":1,"isrc":"USUM71210782","explicit_lyrics":true,"explicit_content_lyrics":1}"#.to_string(),
+        ),
+        (
+            "/track/81",
+            r#"{"id":81,"track_position":5,"disk_number":1,"isrc":"USUM71210787","explicit_lyrics":false,"explicit_content_lyrics":3}"#.to_string(),
+        ),
+        (
+            "/search?q=",
+            r#"{"data":[
+              {"id":71,"title":"Money Trees","duration":386,"explicit_lyrics":true,"album":{"id":7,"title":"good kid, m.A.A.d city"},"artist":{"name":"Kendrick Lamar"}},
+              {"id":81,"title":"Money Trees","duration":386,"explicit_lyrics":false,"album":{"id":8,"title":"good kid, m.A.A.d city"},"artist":{"name":"Kendrick Lamar"}}]}"#
+                .to_string(),
+        ),
+    ]
+}
+
+fn money_trees() -> Song {
+    Song {
+        artist: "Kendrick Lamar".into(),
+        title: "Money Trees".into(),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn the_explicit_copy_that_landed_is_tagged_explicit_and_the_clean_one_clean() {
+    async fn landing(isrc: &'static str) -> (String, octo_core::tagging::TagReport) {
+        let tagging = build_with(
+            vec![("1", money_trees())],
+            serve(money_trees_routes()).await,
+            Options::default(),
+        )
+        .await;
+        let root = tagging.root().to_path_buf();
+        tagging.harness.backend.land(move |_, _| {
+            landed_flac(&root, "peer share", |file| {
+                file.set_title(Some("Money Trees"));
+                file.set_performers(&["Kendrick Lamar".to_string()]);
+                tag_writer_extras::set_text(file, octo_media::tags::TagFields::ISRC, Some(isrc));
+            })
+        });
+        let path = tagging.download("1").await.expect("downloaded");
+        let report = tagging.last_entry().tagging.expect("a report");
+        let advisory = vorbis(&path, "ITUNESADVISORY");
+        (advisory.unwrap_or_default(), report)
+    }
+
+    let (explicit_copy, report) = landing("USUM71210782").await;
+    assert_eq!(explicit_copy, "1");
+    assert_eq!(
+        report.fields.get("advisory"),
+        Some(&FieldDecision::new(Some("explicit"), Some("Catalog")))
+    );
+
+    // The catalog's first hit is the explicit one; the file's own code says it is the edit.
+    let (clean_copy, _) = landing("USUM71210787").await;
+    assert_eq!(clean_copy, "2");
+}
+
+/// 099fdd3: Try it on a song shows the advisory and what a download would take off, and writes
+/// nothing.
+#[tokio::test]
+async fn try_it_on_a_song_shows_the_advisory_and_what_a_download_would_take_off_and_writes_nothing() {
+    let tagging = build_with(vec![], serve(money_trees_routes()).await, Options::default()).await;
+    let path = landed_flac(tagging.root(), "library", |file| {
+        file.set_title(Some("Money Trees"));
+        file.set_performers(&["Kendrick Lamar".to_string()]);
+        file.set_album(Some("Kendrick Lamar Mixtape Vol. 2"));
+        set_vorbis(file, "ISRC", "USUM71210787");
+        set_vorbis(
+            file,
+            "MUSICBRAINZ_ALBUMID",
+            "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+        );
+        set_vorbis(file, "CATALOGNUMBER", "MIX-2");
+    });
+    let before = std::fs::read(&path).expect("read");
+    let service = &tagging.harness.service;
+    let preview = octo_core::tagging::TagPreview::new(
+        Arc::clone(&service.settings),
+        Arc::clone(service.identifier()),
+        Arc::new(octo_media::tags::TagWriterExtras),
+        None,
+        None,
+        Arc::new(CatalogBlanks),
+    );
+
+    let report = preview
+        .preview(Some(&path), None, None, None, &CancellationToken::new())
+        .await
+        .expect("a report");
+
+    assert_eq!(
+        report.fields.get("advisory"),
+        Some(&FieldDecision::new(Some("clean edit"), Some("Catalog")))
+    );
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("a download would take off")
+                && note.contains("MUSICBRAINZ_ALBUMID")
+                && note.contains("CATALOGNUMBER")),
+        "{:?}",
+        report.notes
+    );
+    assert_eq!(std::fs::read(&path).expect("read"), before);
 }
 
 #[tokio::test]

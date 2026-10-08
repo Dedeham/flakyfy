@@ -13,7 +13,7 @@
 //! let embedded = file.pictures().into_iter().find(|p| p.picture_type == FRONT_COVER)
 //!     .or_else(|| file.pictures().into_iter().next());
 //! // ... the genre plan and the cover chain, awaited ...
-//! write_song(&mut file, &song, &genres);
+//! write_song(&mut file, &song, &genres, filed_elsewhere);
 //! if let Some((bytes, mime)) = embed { embed_cover(&mut file, bytes, &mime); }
 //! file.save()?;
 //! ```
@@ -25,6 +25,9 @@ use octo_core::models::domain::Song;
 
 use octo_core::common::song_identity::SongIdentity;
 
+use octo_core::common::dotnet::is_null_or_white_space;
+
+use super::release_fact_tags;
 use super::tag_file::{TagError, TagFile, TagPicture};
 use super::tag_writer_extras::{self as extras, TagFields};
 
@@ -41,8 +44,10 @@ pub enum GenreWrite {
 }
 
 /// The tag body of `WriteMetadataAsync`: the Song's fields onto the open file, in the C#
-/// order. The genre frame takes `genres`; the cover is [`embed_cover`]'s.
-pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
+/// order. The genre frame takes `genres`; the cover is [`embed_cover`]'s. `filed_elsewhere`
+/// says the file arrived filed under another album (`release_fact_tags::filed_elsewhere`), whose
+/// facts the caller took off first with `release_fact_tags::tidy`.
+pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite, filed_elsewhere: bool) {
     // Basic metadata. Title/artist we always have; only overwrite album + album-artist when we
     // actually resolved them, so a well-tagged Soulseek FLAC keeps its own album if Deezer had
     // no match.
@@ -80,7 +85,11 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
     }
     if let Some(disc) = song.disc_number {
         file.set_disc(disc as u32);
+        if let Some(discs) = song.total_discs.filter(|discs| *discs > 0 && *discs >= disc) {
+            file.set_disc_count(discs as u32);
+        }
     }
+    release_fact_tags::drop_other_totals(file);
     if let Some(year) = song.year {
         file.set_year(year as u32);
     }
@@ -127,10 +136,11 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
     // compilation the file was ripped from would file the studio album as one.
     if song.is_compilation {
         extras::set_compilation(file, true);
-    } else if song
-        .tag_plan
-        .as_ref()
-        .is_some_and(|plan| plan.album_from_candidate() && !plan.rehearsed)
+    } else if filed_elsewhere
+        || song
+            .tag_plan
+            .as_ref()
+            .is_some_and(|plan| plan.album_from_candidate() && !plan.rehearsed)
     {
         extras::set_compilation(file, false);
     }
@@ -171,6 +181,20 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite) {
         song.replay_gain_album_gain_db,
         song.replay_gain_album_peak,
     );
+    // A value Octo wrote under one name is the only one: a peer's copy under another name the
+    // library server also reads would be a second label or a second barcode.
+    for (field, value) in [
+        (TagFields::BARCODE, &song.barcode),
+        (TagFields::LABEL, &song.label),
+        (TagFields::RELEASE_TYPE, &song.release_type),
+        (TagFields::RELEASE_STATUS, &song.release_status),
+        (TagFields::RELEASE_COUNTRY, &song.release_country),
+    ] {
+        if !is_null_or_white_space(value.as_deref()) {
+            release_fact_tags::drop_other_names(file, field);
+        }
+    }
+    extras::set_advisory(file, song.advisory);
 }
 
 /// The cover the chain chose, as the only picture: a front cover described as "Cover", with
@@ -249,7 +273,7 @@ mod tests {
                 ..Default::default()
             };
             let mut file = TagFile::open(&path).expect("opens");
-            write_song(&mut file, &song, &GenreWrite::Keep);
+            write_song(&mut file, &song, &GenreWrite::Keep, false);
             file.save().expect("saved");
             assert_eq!(
                 extras::is_compilation(&TagFile::open(&path).expect("opens")),
@@ -276,7 +300,7 @@ mod tests {
             ..Default::default()
         };
         let mut file = TagFile::open(&path).expect("opens");
-        write_song(&mut file, &song, &GenreWrite::Clear);
+        write_song(&mut file, &song, &GenreWrite::Clear, false);
         file.save().expect("saved");
 
         let mut file = TagFile::open(&path).expect("opens");

@@ -131,6 +131,9 @@ pub struct ReleaseCandidate {
     pub cover_url: Option<String>,
     pub genre: Option<String>,
     pub explicit: Option<bool>,
+    /// The catalog's word for this version's lyrics: 0 not explicit, 1 explicit, 3 the clean
+    /// edit; any other value says it does not know.
+    pub explicit_content: Option<i32>,
     pub catalog_album_id: Option<String>,
     pub catalog_track_id: Option<String>,
 }

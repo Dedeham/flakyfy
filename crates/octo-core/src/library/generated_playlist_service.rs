@@ -21,7 +21,7 @@ use crate::last_fm::last_fm_radio_state_store::to_base62;
 use crate::metadata::GenreNormalizer;
 use crate::models::domain::Song;
 use crate::models::null_as_default;
-use crate::settings::{DiscoveryStationSettings, GeneratedPlaylistSettings, IgnoreCaseSet};
+use crate::settings::{DiscoveryStationSettings, ExplicitFilter, GeneratedPlaylistSettings, IgnoreCaseSet};
 
 pub const POOL_PAGE: i32 = 500;
 pub const FIRST_DECADE: i32 = 1950;
@@ -97,19 +97,67 @@ pub fn dotnet_ticks(value: DateTime<Utc>) -> i64 {
     UNIX_EPOCH_TICKS + value.timestamp() * 10_000_000 + i64::from(value.timestamp_subsec_nanos() / 100)
 }
 
-/// "genre,decade", "genre,", ",decade" or ",": which kinds the counts were made for.
-pub fn kinds_of(settings: &GeneratedPlaylistSettings) -> String {
-    format!(
-        "{},{}",
-        if settings.genres { "genre" } else { "" },
-        if settings.decades { "decade" } else { "" }
-    )
+/// Which kinds the counts and lists were made for: "genre,decade" for the mixes (each only when
+/// the mixes are on), then the Made for you lists that are on ("newReleases+rediscover+deepCuts"),
+/// and what decides their contents: New Releases' weeks, artists and the server's explicit
+/// filter, Rediscover's months. A change to any of them makes the lists again (f54467a, 452f47e).
+pub fn kinds_of(settings: &GeneratedPlaylistSettings, explicit_filter: ExplicitFilter) -> String {
+    let mixes = mixes_on(settings);
+    let for_you: Vec<&str> = crate::library::for_you_lists::KINDS
+        .iter()
+        .copied()
+        .filter(|kind| for_you_on(settings, kind))
+        .collect();
+    let mut kinds = format!(
+        "{},{},{}",
+        if mixes && settings.genres { "genre" } else { "" },
+        if mixes && settings.decades { "decade" } else { "" },
+        for_you.join("+")
+    );
+    if settings.new_releases {
+        // `(int)explicitFilter`: the C# enum's order.
+        let filter = match explicit_filter {
+            ExplicitFilter::All => 0,
+            ExplicitFilter::ExplicitOnly => 1,
+            ExplicitFilter::CleanOnly => 2,
+        };
+        kinds.push_str(&format!(
+            ",w{}a{}x{filter}",
+            settings.effective_new_release_weeks(),
+            settings.effective_new_release_artists()
+        ));
+    }
+    if settings.rediscover {
+        kinds.push_str(&format!(",m{}", settings.effective_rediscover_months()));
+    }
+    kinds
+}
+
+/// The genre and decade mixes are on: the switch, and one of the two kinds.
+pub fn mixes_on(settings: &GeneratedPlaylistSettings) -> bool {
+    settings.enabled && (settings.genres || settings.decades)
+}
+
+/// Whether this Made for you list is switched on.
+pub fn for_you_on(settings: &GeneratedPlaylistSettings, kind: &str) -> bool {
+    use crate::library::for_you_lists::{DEEP_CUTS_KIND, NEW_RELEASES_KIND, REDISCOVER_KIND};
+    match kind {
+        NEW_RELEASES_KIND => settings.new_releases,
+        REDISCOVER_KIND => settings.rediscover,
+        DEEP_CUTS_KIND => settings.deep_cuts,
+        _ => false,
+    }
 }
 
 /// The counts are older than the refresh period, or were made for other kinds.
-pub fn is_stale(state: &UserMixes, settings: &GeneratedPlaylistSettings, now_utc: DateTime<Utc>) -> bool {
+pub fn is_stale(
+    state: &UserMixes,
+    settings: &GeneratedPlaylistSettings,
+    explicit_filter: ExplicitFilter,
+    now_utc: DateTime<Utc>,
+) -> bool {
     now_utc - state.counts_utc >= TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
-        || state.kinds != kinds_of(settings)
+        || state.kinds != kinds_of(settings, explicit_filter)
 }
 
 /// ("decade", "1990s") for "decade:1990", ("genre", "Rock") for "genre:Rock".

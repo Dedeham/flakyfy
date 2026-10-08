@@ -51,6 +51,9 @@ pub struct FullTrackMeta {
     pub album_id: Option<String>,
     pub barcode: Option<String>,
     pub explicit_lyrics: Option<bool>,
+    /// The catalog's word for this version's lyrics: 0 not explicit, 1 explicit, 3 the clean
+    /// edit; any other value says it does not know.
+    pub explicit_content: Option<i32>,
     pub catalog_gain: Option<f64>,
 }
 
@@ -72,9 +75,13 @@ pub struct AlbumHit {
     pub year: Option<i32>,
     pub track_count: i32,
     pub record_type: Option<String>,
+    /// The release date (yyyy-MM-dd), filled by an artist's album list, which New Releases sorts
+    /// and filters by.
+    pub release_date: Option<String>,
 }
 
-/// One track of an album, with the real length and position.
+/// One track of an album, with the real length and position. Rank is the catalog's popularity
+/// score, which picks an album's best songs for New Releases.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AlbumTrack {
     pub title: String,
@@ -83,6 +90,9 @@ pub struct AlbumTrack {
     pub track_position: Option<i32>,
     pub disc_number: Option<i32>,
     pub isrc: Option<String>,
+    pub rank: Option<i32>,
+    /// 1 explicit, 3 the clean edit, 0 neither, None not said.
+    pub explicit_content: Option<i32>,
 }
 
 /// An album plus its full tracklist. RecordType is the catalog's own word for it:
@@ -118,6 +128,16 @@ pub enum AlbumAnswer {
 pub struct AlbumLookup {
     pub detail: Option<AlbumDetail>,
     pub answer: AlbumAnswer,
+}
+
+/// No answer: what a shared lookup that failed outright stands for.
+impl Default for AlbumLookup {
+    fn default() -> Self {
+        Self {
+            detail: None,
+            answer: AlbumAnswer::Unavailable,
+        }
+    }
 }
 
 /// One artist from a catalog search. Fans is how many follow them, which is what

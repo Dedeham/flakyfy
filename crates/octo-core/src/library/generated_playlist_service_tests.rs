@@ -325,23 +325,50 @@ fn the_state_fixture_round_trips_byte_for_byte() {
 #[test]
 fn kinds_and_staleness_follow_the_settings() {
     let settings = GeneratedPlaylistSettings {
+        enabled: true,
         genres: true,
         decades: false,
+        new_releases: false,
+        rediscover: false,
+        deep_cuts: false,
         ..Default::default()
     };
-    assert_eq!(kinds_of(&settings), "genre,");
+    let all = ExplicitFilter::All;
+    assert_eq!(kinds_of(&settings, all), "genre,,");
     let state = UserMixes {
         counts_utc: now(),
-        kinds: "genre,".into(),
+        kinds: "genre,,".into(),
         ..Default::default()
     };
-    assert!(!is_stale(&state, &settings, now()));
+    assert!(!is_stale(&state, &settings, all, now()));
     assert!(is_stale(
         &state,
         &settings,
+        all,
         now() + TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
     ));
-    assert!(is_stale(&UserMixes::default(), &settings, now()));
+    assert!(is_stale(&UserMixes::default(), &settings, all, now()));
+    // Made for you (f54467a, 452f47e): on by default whatever the mixes switch says, and what
+    // decides each list is part of the kinds, the explicit filter too.
+    let defaults = GeneratedPlaylistSettings::default();
+    assert_eq!(
+        kinds_of(&defaults, all),
+        ",,newReleases+rediscover+deepCuts,w8a50x0,m6"
+    );
+    assert_eq!(
+        kinds_of(&defaults, ExplicitFilter::CleanOnly),
+        ",,newReleases+rediscover+deepCuts,w8a50x2,m6"
+    );
+    assert_eq!(
+        kinds_of(
+            &GeneratedPlaylistSettings {
+                new_releases: false,
+                ..defaults.clone()
+            },
+            all
+        ),
+        ",,rediscover+deepCuts,m6"
+    );
     assert_eq!(
         describe("decade:1990"),
         ("decade".to_string(), "1990s".to_string())

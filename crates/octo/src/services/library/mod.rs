@@ -1,8 +1,10 @@
 //! `Services/Library` in the C#: library actions, the upgrade queue, the generated mixes and the
 //! Navidrome song and playlist plumbing.
 
+pub mod album_ownership;
 pub mod duplicate_scan_worker;
 pub mod explicit_backfill_store;
+pub mod for_you_lists;
 pub mod generated_playlist_service;
 pub mod heart_ownership;
 pub mod library_action_executor;
@@ -13,6 +15,7 @@ pub mod library_action_quarantine;
 pub mod library_action_rating_worker;
 pub mod library_ownership;
 pub mod library_review_sweep_worker;
+pub mod library_snapshot;
 pub mod library_tag_edits;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
@@ -30,6 +33,7 @@ mod library_action_keep_file_tests;
 #[cfg(test)]
 pub(crate) mod library_action_test_support;
 
+pub use album_ownership::{AlbumOwnership, CatalogTrack, LibraryAlbum, LibraryAlbumIndex, Standing};
 pub use duplicate_scan_worker::{DuplicateGroup, DuplicateScanResult, DuplicateScanWorker, LibraryTrack};
 pub use generated_playlist_service::{GeneratedPlaylist, GeneratedPlaylistService};
 pub use heart_ownership::HeartOwnership;
@@ -47,6 +51,7 @@ pub use library_review_sweep_worker::{
     FingerprintSweepVerifier, IReviewSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
     ReviewSweepState, ReviewSweepStatus, ReviewSweepStore, SweepVerification,
 };
+pub use library_snapshot::LibrarySnapshot;
 pub use navidrome_playlist_api::NavidromePlaylistApi;
 pub use navidrome_song_list::NavidromeSongEntry;
 pub use navidrome_song_path_resolver::{NavidromeSongPathResolver, PathSource, ResolvedSongFile};

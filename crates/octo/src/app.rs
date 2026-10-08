@@ -63,8 +63,10 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
-use crate::services::library::GeneratedPlaylistService;
+use crate::services::library::for_you_lists::NewReleasesBuilder;
+use crate::services::library::generated_playlist_service::ForYouServices;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
+use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
     NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker, ReviewSweepStore, UpgradeWorker,
@@ -195,6 +197,11 @@ pub struct AppInner {
     pub navidrome_song_path_resolver: Arc<NavidromeSongPathResolver>,
     /// `AddSingleton<NavidromePlaylistApi>()`.
     pub navidrome_playlist_api: Arc<NavidromePlaylistApi>,
+    /// `AddSingleton<LibrarySnapshot>()` (f49fb80): the whole library through Navidrome's song
+    /// list, kept 5 minutes.
+    pub library_snapshot: Arc<LibrarySnapshot>,
+    /// `AddSingleton<AlbumOwnership>()` (f49fb80): how much of an outside album the library holds.
+    pub album_ownership: Arc<AlbumOwnership>,
     /// `AddHostedService<StartupValidationOrchestrator>()` over the `IStartupValidator`s
     /// (`SubsonicStartupValidator`, then `SoulseekStartupValidator`). Run by
     /// [`crate::host::run`] before the listener binds, as the host started it.
@@ -1260,6 +1267,7 @@ impl Radio {
         music_metadata: Arc<dyn IMusicMetadataService>,
         downloads: Arc<dyn IDownloadService>,
         overrides: &TestServices,
+        deezer: &Arc<DeezerMetadataService>,
     ) -> Radio {
         let state = Arc::new(LastFmRadioStateStore::new(
             config_dir.join("lastfm-radio-state.json"),
@@ -1309,11 +1317,22 @@ impl Radio {
             settings.clone(),
             Some(warmup.clone()),
         ));
-        let generated_playlists = Arc::new(GeneratedPlaylistService::new(
-            Some(config_dir.join("generated-playlists.json")),
-            navidrome.subsonic_proxy.clone(),
-            settings.clone(),
+        // Made for you's New Releases: the listener's artists found in the catalog, and their latest.
+        let new_releases = Arc::new(NewReleasesBuilder::new(
+            Arc::clone(deezer),
+            stores.external_id_registry.clone(),
         ));
+        let generated_playlists = Arc::new(
+            GeneratedPlaylistService::new(
+                Some(config_dir.join("generated-playlists.json")),
+                navidrome.subsonic_proxy.clone(),
+                settings.clone(),
+            )
+            .with_for_you(ForYouServices {
+                builder: new_releases,
+                responses: stores.subsonic_response_builder.clone(),
+            }),
+        );
         Radio {
             state,
             refresh_queue,
@@ -1439,6 +1458,8 @@ pub struct TestServices {
     pub raw_settings: Vec<(String, String)>,
     /// `IDownloadService` (the real one is task 4-C's).
     pub download_service: Option<Arc<dyn IDownloadService>>,
+    /// `LibrarySnapshot` (the C# tests swapped its `ReadPage`).
+    pub library_snapshot: Option<Arc<LibrarySnapshot>>,
     /// `Admin:SignIn`. None runs the test with the sign-in off, as the C# suite's
     /// `TestDefaults` did for every web test written before the sign-in (they test what an
     /// endpoint does, not who may call it); the sign-in tests set it.
@@ -1660,6 +1681,7 @@ impl AppState {
             metadata_service.clone(),
             acquisition.download_service.clone(),
             &TestServices::default(),
+            &clients.deezer_metadata,
         );
         radio.register_workers(&workers);
         let sync_catalog = Arc::new(SyncCatalogService::new(
@@ -1674,6 +1696,14 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let library_snapshot = Arc::new(LibrarySnapshot::new(Arc::clone(
+            &navidrome.navidrome_playlist_api,
+        )));
+        let album_ownership = Arc::new(AlbumOwnership::over(
+            Arc::clone(&library_snapshot),
+            Arc::clone(&clients.deezer_metadata),
+            Arc::clone(&stores.external_id_registry),
+        ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
         let inner = AppInner {
             settings_writer,
@@ -1721,6 +1751,8 @@ impl AppState {
             local_library: navidrome.local_library,
             navidrome_song_path_resolver: navidrome.navidrome_song_path_resolver,
             navidrome_playlist_api: navidrome.navidrome_playlist_api,
+            library_snapshot,
+            album_ownership,
             startup_validation: navidrome.startup_validation,
             deezer_rate_limiter: clients.deezer_rate_limiter,
             deezer_client: clients.deezer_client,
@@ -1894,6 +1926,7 @@ impl AppState {
             metadata_service.clone(),
             acquisition.download_service.clone(),
             &overrides,
+            &clients.deezer_metadata,
         );
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
@@ -1907,6 +1940,16 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let library_snapshot = overrides.library_snapshot.clone().unwrap_or_else(|| {
+            Arc::new(LibrarySnapshot::new(Arc::clone(
+                &navidrome.navidrome_playlist_api,
+            )))
+        });
+        let album_ownership = Arc::new(AlbumOwnership::over(
+            Arc::clone(&library_snapshot),
+            Arc::clone(&clients.deezer_metadata),
+            Arc::clone(&stores.external_id_registry),
+        ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
         let inner = AppInner {
             restart_tracker,
@@ -1954,6 +1997,8 @@ impl AppState {
             local_library: navidrome.local_library,
             navidrome_song_path_resolver: navidrome.navidrome_song_path_resolver,
             navidrome_playlist_api: navidrome.navidrome_playlist_api,
+            library_snapshot,
+            album_ownership,
             startup_validation: navidrome.startup_validation,
             deezer_rate_limiter: clients.deezer_rate_limiter,
             deezer_client: clients.deezer_client,

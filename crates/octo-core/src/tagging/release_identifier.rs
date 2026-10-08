@@ -78,6 +78,13 @@ pub trait CatalogLookup: Send + Sync {
 /// reader in `octo-media` (task 3-D). A file that cannot be read is `FileFacts::unknown`.
 pub trait FileFactsReader: Send + Sync {
     fn read_facts(&self, path: &str, tags_are_evidence: bool) -> FileFacts;
+
+    /// `TagPreview.WouldTakeOff` (099fdd3): what the download writer's
+    /// `ReleaseFactTags.Tidy` would take off the file for a song filed under `album`, worked out
+    /// on the file in memory and never saved. Nothing when the file cannot be read.
+    fn would_take_off(&self, _path: &str, _album: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// The caller's token was cancelled while the release lookup was being asked (the C#

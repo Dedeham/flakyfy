@@ -61,7 +61,8 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     let stations = playlist_stations(&state, &username);
     queue_refresh_if_stale(&state, &username);
     let mix_settings = state.settings.current().generated_playlists.clone();
-    let generated = if mix_settings.enabled {
+    // The mixes, and Made for you, which is on by default whatever the mixes switch says.
+    let generated = if mix_settings.enabled || mix_settings.any_for_you() {
         state.generated_playlists.list(&username, &call.parameters).await
     } else {
         Vec::new()

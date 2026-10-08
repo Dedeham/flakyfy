@@ -341,6 +341,10 @@ impl TagPlan {
                     song.release_country = Some(country.to_string());
                     self.set("releaseCountry", Some(country), from);
                 }
+                if let Some(discs) = c.disc_count.filter(|&n| n > 0) {
+                    song.total_discs = Some(discs);
+                    self.set("discCount", Some(&discs.to_string()), from);
+                }
                 if matches!(c.source, TagSource::Fingerprint | TagSource::Database) {
                     song.music_brainz_release_id = c.release_id.clone();
                     song.music_brainz_release_group_id = c.release_group_id.clone();

@@ -70,6 +70,21 @@
       ],
       "reason": "The C# showed a set secret as one bullet per character, up to 16, which told its length; the Rust build shows eight bullets for every set secret.",
       "knownDiff": "`config-sources` secrets"
+    },
+    {
+      "id": "isrc-clear-takes-the-tag-off",
+      "backlog": "F",
+      "requests": [
+        "20-library-edits/tags-copy-undone"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$"
+      ],
+      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); applies once group F's library edits land.",
+      "knownDiff": "Clearing a tag field"
     }
   ]
 }

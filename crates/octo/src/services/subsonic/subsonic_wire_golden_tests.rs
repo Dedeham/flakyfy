@@ -71,26 +71,34 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
     assert_recorded(reply, recorded(file, name), file, name);
 }
 
-/// A recorded extensions list with octoAcquisitions at versions 1 and 2, as Octo 2026.10.05
-/// lists it (D, 9ac4e5a: the log, the key and Find songs). Until the groups that add the other
-/// 2026.10.05 extensions land, a fresh recording would differ for their sake, so these golden
-/// tests keep the old recording and add D's one version to it.
-fn recorded_with_acquisitions_v2(file: &str, name: &str) -> Recorded {
+/// A recorded extensions list as Octo 2026.10.05 lists the extensions the ported groups added:
+/// octoLists (Q, f54467a) after the extensions the 2026.10.03.2 recording lists, as 2026.10.05
+/// lists it last, and octoAcquisitions at versions 1 and 2 (D, 9ac4e5a: the log, the key and
+/// Find songs). Until the groups that add the other 2026.10.05 extensions land, a fresh
+/// recording would differ for their sake, so these golden tests keep the old recording and add
+/// the ported groups' entries to it.
+fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);
     let (old, new) = if want.content_type.contains("json") {
+        let at = want.body.rfind("]}}").expect("the end of the list");
+        want.body
+            .insert_str(at, r#",{"name":"octoLists","versions":[1]}"#);
         (
             r#"{"name":"octoAcquisitions","versions":[1]}"#,
             r#"{"name":"octoAcquisitions","versions":[1,2]}"#,
         )
     } else {
+        let at = want
+            .body
+            .rfind("</subsonic-response>")
+            .expect("the end of the answer");
+        want.body.insert_str(
+            at,
+            "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+        );
         (
-            "<openSubsonicExtensions name=\"octoAcquisitions\">
-    <versions>1</versions>
-",
-            "<openSubsonicExtensions name=\"octoAcquisitions\">
-    <versions>1</versions>
-    <versions>2</versions>
-",
+            "<openSubsonicExtensions name=\"octoAcquisitions\">\n    <versions>1</versions>\n",
+            "<openSubsonicExtensions name=\"octoAcquisitions\">\n    <versions>1</versions>\n    <versions>2</versions>\n",
         )
     };
     assert!(
@@ -930,7 +938,7 @@ fn extensions_match_the_recordings() {
                 true,
                 false,
             ),
-            recorded_with_acquisitions_v2("01-system", name),
+            recorded_with_ported_extensions("01-system", name),
             "01-system",
             name,
         );
@@ -963,7 +971,7 @@ fn extensions_match_the_recordings() {
                 true,
                 false,
             ),
-            recorded_with_acquisitions_v2("01-system", name),
+            recorded_with_ported_extensions("01-system", name),
             "01-system",
             name,
         );

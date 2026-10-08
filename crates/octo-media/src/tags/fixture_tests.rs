@@ -108,6 +108,7 @@ fn run_scenarios(dir: &Path) -> Vec<PathBuf> {
             &mut file,
             &full_song(),
             &GenreWrite::Write(strings(&["Trip Hop", "Rock"])),
+            false,
         );
         embed_cover(&mut file, cover.clone(), cover_image::mime_type(&cover));
         save(file);
@@ -120,7 +121,7 @@ fn run_scenarios(dir: &Path) -> Vec<PathBuf> {
             genre: Some("Pop".into()),
             ..Default::default()
         };
-        write_song(&mut file, &song, &GenreWrite::Write(strings(&["Pop"])));
+        write_song(&mut file, &song, &GenreWrite::Write(strings(&["Pop"])), false);
         save(file);
 
         let peer = fresh("peer");

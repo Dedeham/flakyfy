@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::common::dotnet;
 use crate::common::dotnet_random::DotnetRandom;
 use crate::last_fm::SimilarTrack;
+use crate::last_fm::last_fm_radio_placement::{self, Spacing};
 use crate::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use crate::last_fm::last_fm_radio_state_store::station_id;
 use crate::last_fm::radio_filler;
@@ -286,7 +287,8 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
 /// [`HEARD_LATELY`], or one the gaps refused, waits; if the walk falls short they fill the rest,
 /// never the same artist twice in a row. The caps are the marginal-relevance idea applied
 /// greedily, with artist and source repetition as the redundancy; and, with a familiar quota,
-/// the two halves placed at random at the discovery share.
+/// the two halves placed at random at the discovery share, keeping the walk's artist and title
+/// gaps.
 pub fn shape(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
@@ -395,27 +397,44 @@ pub fn shape(
     let Walk {
         output,
         familiar_flags,
+        output_artists,
+        output_titles,
         ..
     } = walk;
     // Your Mix: the familiar tracks and the discoveries take turns at random at the discovery
     // share (last_fm_radio_placement), instead of the walk's order putting the familiar first.
+    // The placement keeps the walk's own artist and title gaps, on the walk's own keys.
     if let Some(quota) = familiar_quota.filter(|_| target > 0) {
         let share = f64::from(target - quota) / f64::from(target);
-        let flagged: Vec<(LastFmRadioTrack, bool)> = output.into_iter().zip(familiar_flags).collect();
-        return super::last_fm_radio_placement::place(
+        let flagged: Vec<Placed> = output
+            .into_iter()
+            .zip(familiar_flags)
+            .zip(output_artists.into_iter().zip(output_titles))
+            .map(|((track, familiar), (artist, title))| (track, familiar, artist, title))
+            .collect();
+        let title_of = |(_, _, _, title): &Placed| title.clone();
+        return last_fm_radio_placement::place(
             &flagged,
-            |(_, familiar): &(LastFmRadioTrack, bool)| !*familiar,
-            |(track, _): &(LastFmRadioTrack, bool)| Some(track.artist.clone()),
+            |(_, familiar, _, _): &Placed| !*familiar,
+            |(_, _, artist, _): &Placed| Some(artist.clone()),
             None,
+            Spacing {
+                artist_gap,
+                title: Some((&title_of, TITLE_GAP)),
+            },
             share,
             random,
         )
         .into_iter()
-        .map(|(track, _)| track)
+        .map(|(track, _, _, _)| track)
         .collect();
     }
     output
 }
+
+/// A Your Mix track with what its placement needs: whether it is familiar, and the walk's
+/// artist and title keys.
+type Placed = (LastFmRadioTrack, bool, String, String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict {
@@ -884,6 +903,73 @@ mod tests {
         ];
         suppress_station_overlap(&mut stations);
         assert_eq!(stations[1].tracks.len(), 12);
+    }
+
+    /// Placement keeps the walk's gaps: with plenty of artists, no artist comes back within
+    /// [`ARTIST_GAP`] songs of itself and no title within [`TITLE_GAP`], in any build.
+    #[test]
+    fn your_mix_keeps_its_artist_and_title_gaps_after_placement() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        // Sixty artists with two songs each, and every title sung by two of them: enough that the walk
+        // itself keeps every gap, as a real listener's many artists let it.
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..60)
+            .map(|i| {
+                candidate(
+                    format!("Familiar {}", i % 30),
+                    format!("Song {}", i / 2),
+                    2.0,
+                    FAMILIAR_SOURCE,
+                )
+            })
+            .chain(
+                (0..60)
+                    .map(|i| candidate(format!("New {}", i % 30), format!("Tune {}", i / 2), 0.3, "tag:x")),
+            )
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..100 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                artist_cap(&settings, LastFmRadioStationKind::YourMix),
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            assert_eq!(tracks.len(), 50, "seed {seed}");
+            let artists: Vec<String> = tracks.iter().map(|track| artist_key(&track.artist)).collect();
+            let titles: Vec<String> = tracks
+                .iter()
+                .map(|track| dotnet::to_lower_invariant(&seed_normalizer::title(&track.title)))
+                .collect();
+            for i in 0..tracks.len() {
+                for j in i + 1..tracks.len() {
+                    assert!(
+                        !(j - i <= ARTIST_GAP as usize && artists[i] == artists[j]),
+                        "seed {seed}: {} at {i} and {j}",
+                        artists[i]
+                    );
+                    assert!(
+                        !(j - i <= TITLE_GAP && titles[i] == titles[j]),
+                        "seed {seed}: {} at {i} and {j}",
+                        titles[i]
+                    );
+                }
+            }
+        }
     }
 
     /// Decision D10 (radio placement, 2026-10-08): Your Mix places its familiar tracks and its

@@ -6,9 +6,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use octo_core::last_fm::last_fm_radio_placement::{self, Spacing};
 use octo_core::last_fm::last_fm_radio_recommendation_service::{IgnoreCaseKeys, default_randomizer};
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
-use octo_core::last_fm::{last_fm_radio_placement, last_fm_radio_spacing};
+use octo_core::last_fm::last_fm_radio_spacing;
 use octo_core::models::domain::Song;
 use octo_core::radio::radio_blend::{self, RadioPick};
 use octo_core::radio::radio_provider::{self, LIBRARY};
@@ -218,8 +219,8 @@ impl SongRadioService {
             )
         } else {
             // For every other app this order is the radio, so outside songs are placed at random
-            // at the Discovery balance (last_fm_radio_placement), spaced by artist as spread
-            // spaces them.
+            // at the Discovery balance (last_fm_radio_placement), artists spaced as spread spaces
+            // them, and no title gap.
             let share = f64::from(self.settings.current().last_fm.effective_discovery_percent()) / 100.0;
             let mut random = default_randomizer()();
             last_fm_radio_placement::place(
@@ -227,6 +228,7 @@ impl SongRadioService {
                 |song: &Song| !song.is_local,
                 |song: &Song| Some(song.artist.clone()),
                 Some(&seed.artist),
+                Spacing::artists(last_fm_radio_spacing::GAP),
                 share,
                 &mut *random,
             )

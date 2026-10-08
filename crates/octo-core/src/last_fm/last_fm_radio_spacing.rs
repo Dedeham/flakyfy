@@ -34,7 +34,7 @@ where
     spread
 }
 
-pub(crate) fn played(recent: &mut Vec<String>, artist: Option<&str>) {
+fn played(recent: &mut Vec<String>, artist: Option<&str>) {
     let key = artist_key(artist);
     if key.is_empty() {
         return;

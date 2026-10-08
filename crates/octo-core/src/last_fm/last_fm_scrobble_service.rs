@@ -153,7 +153,7 @@ mod tests {
 
     /// Rust-only: the dashboard records as ASP.NET wrote them.
     #[test]
-    fn the_dashboard_records_serialise_in_camel_case_with_nulls() {
+    fn the_dashboard_records_serialize_in_camel_case_with_nulls() {
         let user = LastFmScrobbleUser {
             user: "alice".into(),
             connected: true,

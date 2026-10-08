@@ -78,7 +78,7 @@ impl ISonicClient for Sidecar {
         })
     }
 
-    async fn analyse(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
         let name = std::path::Path::new(path)
             .file_name()
             .expect("a file name")
@@ -285,7 +285,7 @@ fn make(settings: Option<RadioSourceSettings>) -> T {
     }
 }
 
-fn analysed_song() -> SonicSong {
+fn analyzed_song() -> SonicSong {
     SonicSong {
         stamp: "1:1".into(),
         version: 2,
@@ -344,7 +344,7 @@ async fn without_a_navidrome_sign_in_it_says_so() {
 
 // SonicAnalysisWorkerTests.ItAnalysesEachSongOnce_ThenFinishesThePass
 #[tokio::test]
-async fn it_analyses_each_song_once_then_finishes_the_pass() {
+async fn it_analyzes_each_song_once_then_finishes_the_pass() {
     let t = make(None);
     t.library.add("a", "a.flac", Some(200), true);
     t.library.add("b", "b.flac", Some(200), true);
@@ -366,7 +366,7 @@ async fn it_analyses_each_song_once_then_finishes_the_pass() {
 
 // SonicAnalysisWorkerTests.ANewFeatureVersion_IsAnalysedAgain
 #[tokio::test]
-async fn a_new_feature_version_is_analysed_again() {
+async fn a_new_feature_version_is_analyzed_again() {
     let t = make(None);
     t.library.add("a", "a.flac", Some(200), true);
     t.tick().await;
@@ -461,7 +461,7 @@ async fn a_long_mix_is_never_read() {
 async fn at_the_pass_end_gone_songs_are_forgotten_and_start_over_clears_everything() {
     let t = make(None);
     t.store.write(|s| {
-        s.songs.insert("gone".into(), analysed_song());
+        s.songs.insert("gone".into(), analyzed_song());
     });
     t.library.add("a", "a.flac", Some(200), true);
     t.tick().await;
@@ -482,7 +482,7 @@ async fn a_page_that_fails_forgets_nothing() {
         t.library.add_listed(&format!("s{i}"));
     }
     t.store.write(|s| {
-        s.songs.insert(format!("s{}", PAGE_SIZE + 2), analysed_song());
+        s.songs.insert(format!("s{}", PAGE_SIZE + 2), analyzed_song());
     });
     *t.library.failing_page.lock() = Some(PAGE_SIZE);
 
@@ -502,7 +502,7 @@ async fn a_page_with_a_missing_song_is_not_the_end_of_the_list() {
     t.library.missing_ids.lock().insert("s3".into());
     let later = format!("s{}", PAGE_SIZE + 2);
     t.store.write(|s| {
-        s.songs.insert(later.clone(), analysed_song());
+        s.songs.insert(later.clone(), analyzed_song());
     });
 
     t.ticks_until_done().await;

@@ -924,8 +924,8 @@ fn directory_name(path: &str) -> Option<String> {
 
 // ".octo-trash/2026-10-03", the part of the quarantine path a person can find again.
 fn kept_folder(path: &str) -> String {
-    let normalised = path.replace('\\', "/");
-    let parts: Vec<&str> = normalised.split('/').filter(|p| !p.is_empty()).collect();
+    let normalized = path.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty()).collect();
     match parts
         .iter()
         .position(|p| p.starts_with('.') && dotnet::to_lower_invariant(p).contains("trash"))

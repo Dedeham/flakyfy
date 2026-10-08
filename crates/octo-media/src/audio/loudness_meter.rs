@@ -435,7 +435,7 @@ mod tests {
 
     /// A caller that has already given up gets nothing, and the process is not waited on.
     #[tokio::test]
-    async fn measure_cancelled_is_null() {
+    async fn measure_canceled_is_null() {
         require_ffmpeg!();
         let dir = tempfile::tempdir().expect("a temp dir");
         run_ffmpeg(

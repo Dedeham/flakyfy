@@ -110,9 +110,9 @@ pub fn fit_within(bytes: &[u8], max_side: u32) -> Vec<u8> {
 /// picture cannot be read.
 pub fn looks_hash(bytes: Option<&[u8]>) -> Option<u64> {
     let bytes = bytes.filter(|b| !b.is_empty())?;
-    let grey = decode(bytes)?.to_luma8();
+    let gray = decode(bytes)?.to_luma8();
     // ImageSharp's default resampler is bicubic (Catmull-Rom).
-    let small = image::imageops::resize(&grey, 9, 8, FilterType::CatmullRom);
+    let small = image::imageops::resize(&gray, 9, 8, FilterType::CatmullRom);
     let mut hash = 0u64;
     let mut bit = 0;
     for y in 0..8 {
@@ -142,9 +142,9 @@ pub fn detail(bytes: &[u8], side: u32) -> Option<f64> {
     if side < 16 {
         return None;
     }
-    let grey = decode(bytes)?.to_luma8();
+    let gray = decode(bytes)?.to_luma8();
     // ImageSharp's bicubic resampler is Catmull-Rom.
-    let image = image::imageops::resize(&grey, side, side, FilterType::CatmullRom);
+    let image = image::imageops::resize(&gray, side, side, FilterType::CatmullRom);
     let half = image::imageops::resize(&image, side / 2, side / 2, FilterType::CatmullRom);
     let round = image::imageops::resize(&half, side, side, FilterType::CatmullRom);
     let total: u64 = image
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn marked_covers_are_recognised_and_marked_once() {
+    fn marked_covers_are_recognized_and_marked_once() {
         let plain = jpeg(200, 200);
         assert!(!is_octo_cover(&plain));
         let marked = mark_as_octo(&plain);

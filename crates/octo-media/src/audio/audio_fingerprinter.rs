@@ -215,7 +215,7 @@ mod tests {
     /// None means "this is not fpcalc's shape at all", which the caller must tell apart from
     /// "this file has no audio": one keeps the file, the other deletes it.
     #[test]
-    fn parse_fpcalc_json_unrecognised_output_returns_null_rather_than_throwing() {
+    fn parse_fpcalc_json_unrecognized_output_returns_null_rather_than_throwing() {
         let cases = [
             "",
             "   ",

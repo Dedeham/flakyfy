@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_label_and_counts_are_sanitised() {
+    fn unknown_label_and_counts_are_sanitized() {
         let s = GenreSettings {
             unknown_label: "  ".into(),
             max_genres: 0,

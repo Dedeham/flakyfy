@@ -437,7 +437,7 @@ async fn a_whole_library_preview_apply_and_undo() {
 /// A cancelled run resumes where it stopped under the same settings, and starts afresh once
 /// the rules changed.
 #[tokio::test]
-async fn a_cancelled_run_resumes_unless_the_rules_changed() {
+async fn a_canceled_run_resumes_unless_the_rules_changed() {
     let bytes = audio_or_skip!("mp3");
     let dir = Dir::new();
     let music = library(

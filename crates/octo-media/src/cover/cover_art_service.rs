@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
-use super::cover_colours::{self, CoverMusic, Swatch};
+use super::cover_colors::{self, CoverMusic, Swatch};
 use super::cover_fonts::{self, CoverTypesetter};
 use super::cover_image;
 use super::cover_layout::{self, CoverSpec};
@@ -82,7 +82,7 @@ pub(crate) const MAX_COVER_SIZE: i32 = 1200;
 
 const SEED_WAIT: Duration = Duration::from_secs(4);
 const MUSIC_HIT: Duration = Duration::from_secs(12 * 60 * 60);
-const MUSIC_GREY: Duration = Duration::from_secs(10 * 60);
+const MUSIC_GRAY: Duration = Duration::from_secs(10 * 60);
 const MUSIC_MISS: Duration = Duration::from_secs(60);
 /// The list covers' JPEG: quality 92, no chroma subsampling (ImageSharp's YCbCrRatio444).
 const JPEG_QUALITY: u8 = 92;
@@ -499,7 +499,7 @@ impl CoverArtService {
             let ttl = if music.is_some() {
                 MUSIC_HIT
             } else if !covers.is_empty() {
-                MUSIC_GREY
+                MUSIC_GRAY
             } else {
                 MUSIC_MISS
             };
@@ -532,13 +532,10 @@ impl CoverArtService {
         let pixels: Vec<i32> = rgba
             .pixels()
             .map(|p| {
-                cover_colours::BLACK
-                    | (i32::from(p.0[0]) << 16)
-                    | (i32::from(p.0[1]) << 8)
-                    | i32::from(p.0[2])
+                cover_colors::BLACK | (i32::from(p.0[0]) << 16) | (i32::from(p.0[1]) << 8) | i32::from(p.0[2])
             })
             .collect();
-        Some(cover_colours::swatches(&pixels, 3, 6))
+        Some(cover_colors::swatches(&pixels, 3, 6))
     }
 
     /// A picture in the covers folder named after the playlist or its genre or decade. Only

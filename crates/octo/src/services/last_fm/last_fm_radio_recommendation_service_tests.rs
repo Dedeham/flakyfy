@@ -641,7 +641,7 @@ async fn artist_station_count_decides_how_many_artist_radios_are_built() {
 /// Rust-only: switching radio off builds nothing, and a cancelled caller sees the cancellation
 /// rather than a partial build.
 #[tokio::test]
-async fn radio_off_builds_nothing_and_a_cancelled_caller_is_told() {
+async fn radio_off_builds_nothing_and_a_canceled_caller_is_told() {
     let fixture = fixture(
         LastFmSettings {
             enable_radio: false,

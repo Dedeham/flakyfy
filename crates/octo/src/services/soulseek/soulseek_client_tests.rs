@@ -245,7 +245,7 @@ async fn a_search_that_ends_on_its_own_returns_its_responses() {
 }
 
 #[tokio::test]
-async fn a_search_still_running_at_the_ceiling_is_cancelled_and_its_responses_kept() {
+async fn a_search_still_running_at_the_ceiling_is_canceled_and_its_responses_kept() {
     let slskd = FakeSearchSlskd::new(None);
     let (client, _server) = search_client(&slskd).await;
     let hits = client
@@ -264,7 +264,7 @@ async fn a_search_still_running_at_the_ceiling_is_cancelled_and_its_responses_ke
 }
 
 #[tokio::test]
-async fn a_search_slskd_will_not_stop_is_cancelled_again_before_it_is_deleted() {
+async fn a_search_slskd_will_not_stop_is_canceled_again_before_it_is_deleted() {
     let mut slskd = FakeSearchSlskd::new(None);
     slskd.ignores_cancel = true;
     let (client, _server) = search_client(&slskd).await;
@@ -444,7 +444,7 @@ async fn a_slow_peer_that_keeps_sending_is_waited_for_past_the_window() {
 }
 
 #[tokio::test]
-async fn a_peer_that_sends_nothing_is_cancelled_in_slskd() {
+async fn a_peer_that_sends_nothing_is_canceled_in_slskd() {
     let slskd = FakeTransferSlskd::new(|_| ("Queued, Remotely", 0));
     let (client, _server) = transfer_client(&slskd).await;
 
@@ -461,7 +461,7 @@ async fn a_peer_that_sends_nothing_is_cancelled_in_slskd() {
 }
 
 #[tokio::test]
-async fn a_transfer_that_finished_as_it_was_given_up_is_kept_not_cancelled() {
+async fn a_transfer_that_finished_as_it_was_given_up_is_kept_not_canceled() {
     let slskd = FakeTransferSlskd::new(|_| ("Completed, Succeeded", 400_000));
     let (client, _server) = transfer_client(&slskd).await;
 

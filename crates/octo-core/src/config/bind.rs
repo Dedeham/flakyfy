@@ -116,7 +116,7 @@ impl de::Error for BindError {
 }
 
 /// Normalizes a key or field name for matching: lowercase, without underscores.
-fn normalise(name: &str) -> String {
+fn normalize(name: &str) -> String {
     name.chars()
         .filter(|c| *c != '_')
         .flat_map(|c| c.to_lowercase())
@@ -379,10 +379,10 @@ impl<'de, 'a> de::Deserializer<'de> for NodeDeserializer<'a> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, BindError> {
-        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalise(f), *f)).collect();
+        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalize(f), *f)).collect();
         let mut entries = Vec::new();
         for (key, node) in &self.node.children {
-            let k = normalise(key);
+            let k = normalize(key);
             if let Some((_, field)) = wanted.iter().find(|(n, _)| *n == k) {
                 // A later spelling of the same field (env and file differing in case) has
                 // already been merged by ConfigTree; the first wins here.
@@ -408,7 +408,7 @@ impl<'de, 'a> de::Deserializer<'de> for NodeDeserializer<'a> {
             |text| {
                 variants
                     .iter()
-                    .find(|v| v.eq_ignore_ascii_case(text) || normalise(v) == normalise(text))
+                    .find(|v| v.eq_ignore_ascii_case(text) || normalize(v) == normalize(text))
                     .copied()
                     .or_else(|| text.parse::<usize>().ok().and_then(|i| variants.get(i).copied()))
             },

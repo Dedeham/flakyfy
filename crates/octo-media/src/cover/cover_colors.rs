@@ -297,7 +297,7 @@ pub struct CoverMusic {
 
 impl CoverMusic {
     /// Colors under this chroma read as grey, and give no hue to work from.
-    const COLOURLESS: f64 = 0.035;
+    const COLORLESS: f64 = 0.035;
 
     /// The color as short text, for cache keys.
     pub fn key(&self) -> String {
@@ -321,12 +321,12 @@ impl CoverMusic {
     /// the strongest by how much of its cover it fills and how vivid it is. None with no covers
     /// or only grey ones.
     pub fn from_covers(covers: &[Vec<Swatch>]) -> Option<CoverMusic> {
-        let with_colour: Vec<&Vec<Swatch>> = covers.iter().filter(|c| !c.is_empty()).collect();
-        if with_colour.is_empty() {
+        let with_color: Vec<&Vec<Swatch>> = covers.iter().filter(|c| !c.is_empty()).collect();
+        if with_color.is_empty() {
             return None;
         }
-        let n = with_colour.len() as f64;
-        let colourful: Vec<(Lch, f64)> = with_colour
+        let n = with_color.len() as f64;
+        let colorful: Vec<(Lch, f64)> = with_color
             .iter()
             .flat_map(|swatches| {
                 swatches
@@ -334,11 +334,11 @@ impl CoverMusic {
                     .take(4)
                     .map(|s| (to_lch(s.argb), s.share as f64 / n))
             })
-            .filter(|(lch, _)| lch.c >= Self::COLOURLESS && (0.15..=0.97).contains(&lch.l))
+            .filter(|(lch, _)| lch.c >= Self::COLORLESS && (0.15..=0.97).contains(&lch.l))
             .collect();
         // LINQ's MaxBy keeps the first of equal scores.
         let mut first: Option<(Lch, f64)> = None;
-        for &(lch, weight) in &colourful {
+        for &(lch, weight) in &colorful {
             let score = weight.sqrt() * (0.3 + lch.c * 5.0);
             if first.is_none_or(|(_, best)| score > best) {
                 first = Some((lch, score));

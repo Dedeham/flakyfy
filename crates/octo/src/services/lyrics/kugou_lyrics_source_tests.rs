@@ -199,7 +199,7 @@ fn lyrics_a_clean_edits_words_fit_the_song() {
 #[derive(Clone, Default)]
 struct FakeKugou {
     search_body: Option<String>,
-    catalogue_body: Option<String>,
+    catalog_body: Option<String>,
     hash_search_body: Option<String>,
     krc: Option<Vec<u8>>,
     lrc: Option<String>,
@@ -213,7 +213,7 @@ impl FakeKugou {
         }
         let empty = r#"{"status":200,"candidates":[]}"#;
         let body = if url.contains("/api/v3/search/song") {
-            self.catalogue_body
+            self.catalog_body
                 .clone()
                 .unwrap_or_else(|| r#"{"status":1,"data":{"info":[]}}"#.into())
         } else if url.contains("/search?") && url.contains("hash=") {
@@ -264,7 +264,7 @@ async fn kugou_only_another_song_of_the_same_length_is_a_miss_and_nothing_is_dow
             candidate("1", "Ultimate $uicide", "$uicideboy$", 170_000),
             candidate("2", "Black $uicide", "$uicideboy$", 170_500)
         )),
-        catalogue_body: Some(
+        catalog_body: Some(
             r#"{"status":1,"data":{"info":[{"hash":"h1","songname":"Ultimate $uicide (Explicit)","singername":"$uicideboy$","duration":170}]}}"#.into(),
         ),
         krc: Some(encode_krc(KRC)),
@@ -442,9 +442,9 @@ async fn kugou_plain_text_and_the_instrumental_mark() {
 
 // LyricsWordTimingTests.Kugou_NoLyricEntry_FindsTheSongInTheCatalogueAndAsksByItsHash
 #[tokio::test]
-async fn kugou_no_lyric_entry_finds_the_song_in_the_catalogue_and_asks_by_its_hash() {
+async fn kugou_no_lyric_entry_finds_the_song_in_the_catalog_and_asks_by_its_hash() {
     let (http, source) = FakeKugou {
-        catalogue_body: Some(
+        catalog_body: Some(
             r#"{"status":1,"data":{"info":[{"hash":"abc","songname":"Headlines (Explicit)","singername":"Drake","album_name":"Take Care","duration":236}]}}"#.into(),
         ),
         hash_search_body: Some(format!(

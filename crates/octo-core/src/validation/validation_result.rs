@@ -104,7 +104,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_factories_set_status_and_colour() {
+    fn the_factories_set_status_and_color() {
         let ok = ValidationResult::success("fine", None);
         assert!(ok.is_valid);
         assert_eq!(ok.status, "VALID");

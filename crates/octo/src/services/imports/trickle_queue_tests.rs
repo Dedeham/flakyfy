@@ -159,7 +159,7 @@ fn a_restart_keeps_the_queue_and_the_pause_and_a_running_song_goes_again() {
 }
 
 #[test]
-fn cancelling_takes_back_only_what_has_not_run() {
+fn canceling_takes_back_only_what_has_not_run() {
     let queue = TrickleQueue::default();
     queue.add("alice", &[song("a"), song("b"), song("c")]);
     queue.take_next();

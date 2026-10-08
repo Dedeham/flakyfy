@@ -757,7 +757,7 @@ async fn disconnect_right_after_finish_is_not_connected() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_waiting_connect_carries_its_approval_link_until_cancelled() {
+async fn a_waiting_connect_carries_its_approval_link_until_canceled() {
     let f = Fixture::new().await;
     let url = f.service.begin_connect("bob").await.expect("a link");
 

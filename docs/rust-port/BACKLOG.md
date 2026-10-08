@@ -1157,7 +1157,7 @@ No Rust server change: both are their own images.
 Done in G4 (`port/g4-n`): `31e3715`, `2e4fdcf`, `d52ae54` and the dashboard half of
 `5a00fb1`, `ca47988` and `af48eb1` are `octo/wwwroot`, which the Rust build serves as is. The
 server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
-`services::admin::{cover_palette, ambient_palette_service}` and `cover_colours::from_lch`) and
+`services::admin::{cover_palette, ambient_palette_service}` and `cover_colors::from_lch`) and
 `GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
 the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
 reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
@@ -1289,7 +1289,7 @@ its reason when it changes an answer.
   music folder warning in `navidrome_identity_service.rs`). Change them in
   both builds together.
 - [ ] **US spelling in identifiers.** Comments and the port notes are done;
-  names like `cover_colours`, `COLOURLESS` and `normalise_*` are not. Rename
+  names like `cover_colors`, `COLORLESS` and `normalise_*` are not. Rename
   inside the code only, never a stored key or a JSON field.
 - [ ] **`.unwrap()` outside tests** (about 92 in non-test files): turn the
   reachable ones into errors that are logged and answered.

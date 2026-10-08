@@ -236,7 +236,7 @@ async fn native_artist_the_page_and_its_albums_at_once_ask_the_catalog_once() {
 }
 
 #[tokio::test]
-async fn native_artist_albums_honour_the_page_asked() {
+async fn native_artist_albums_honor_the_page_asked() {
     let fixture = fixture().await;
     let id = register_outside_artist(&fixture.state);
 

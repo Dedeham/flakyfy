@@ -12,7 +12,7 @@
 //! teal night, a sepia photo) as quiet light in that hue, so every chosen song changes the page;
 //! only a truly black, white or grey cover leaves the dashboard's own colors.
 
-use octo_media::cover::cover_colours::{self, Lch, Swatch};
+use octo_media::cover::cover_colors::{self, Lch, Swatch};
 
 /// Three lights, strongest first, and the accent, all as `#rrggbb`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub fn from_swatches(swatches: Option<&[Swatch]>) -> Option<Palette> {
     let swatches = swatches.filter(|s| !s.is_empty())?;
     let seen: Vec<(Lch, f32)> = swatches
         .iter()
-        .map(|s| (cover_colours::to_lch(s.argb), s.share))
+        .map(|s| (cover_colors::to_lch(s.argb), s.share))
         .collect();
     let mut ranked: Vec<(Lch, f64)> = seen
         .iter()
@@ -60,7 +60,7 @@ pub fn from_swatches(swatches: Option<&[Swatch]>) -> Option<Palette> {
     for &(lch, _) in &ranked {
         if picks
             .iter()
-            .any(|p| cover_colours::hue_distance(p.h, lch.h) < MIN_HUE_GAP)
+            .any(|p| cover_colors::hue_distance(p.h, lch.h) < MIN_HUE_GAP)
         {
             continue;
         }
@@ -145,12 +145,12 @@ fn muted(seen: &[(Lch, f32)]) -> Option<Palette> {
 }
 
 fn hex(lch: Lch) -> String {
-    let argb = cover_colours::from_lch(lch);
+    let argb = cover_colors::from_lch(lch);
     format!(
         "#{:02x}{:02x}{:02x}",
-        cover_colours::r(argb),
-        cover_colours::g(argb),
-        cover_colours::b(argb)
+        cover_colors::r(argb),
+        cover_colors::g(argb),
+        cover_colors::b(argb)
     )
 }
 

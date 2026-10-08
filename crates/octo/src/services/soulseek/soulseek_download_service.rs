@@ -103,7 +103,7 @@ fn client_error(error: SoulseekClientError) -> anyhow::Error {
 
 /// The future, unless the caller gives up first: the C# passed its token to these calls, which
 /// threw `OperationCanceledException` when it was cancelled.
-async fn or_cancelled<T>(
+async fn or_canceled<T>(
     ct: &CancellationToken,
     work: impl Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
@@ -472,7 +472,7 @@ impl SoulseekDownloadService {
 
         // The shim answers only once the file is written, so there is nothing to count here.
         base.track(|t| t.transfer(&provider, &track_key, None, None, None, Some("YouTube")));
-        let path = or_cancelled(ct, async {
+        let path = or_canceled(ct, async {
             Ok(self
                 .youtube
                 .download(
@@ -1186,7 +1186,7 @@ impl SoulseekDownloadService {
                 let attempt_started_utc = album_copy.map_or_else(Utc::now, |p| p.queued_utc);
 
                 if !from_album {
-                    let enqueued = or_cancelled(ct, async {
+                    let enqueued = or_canceled(ct, async {
                         let batch = self
                             .slskd
                             .enqueue_batch(&hit.username, &[(hit.filename.clone(), hit.size)], &job_dir)
@@ -2125,7 +2125,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 .iter()
                 .map(|(_, file)| (file.filename.clone(), file.size))
                 .collect();
-            let batch = or_cancelled(cancellation_token, async {
+            let batch = or_canceled(cancellation_token, async {
                 self.slskd
                     .enqueue_batch(&choice.username, &files, &job_dir)
                     .await

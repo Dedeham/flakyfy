@@ -41,7 +41,7 @@ pub fn from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WebError> {
     from_value(&value)
 }
 
-fn normalise(name: &str) -> String {
+fn normalize(name: &str) -> String {
     name.chars()
         .filter(|c| *c != '_')
         .flat_map(|c| c.to_lowercase())
@@ -225,10 +225,10 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
         let Value::Object(m) = self.0 else {
             return Err(WebError(format!("expected an object, found {}", self.0)));
         };
-        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalise(f), *f)).collect();
+        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalize(f), *f)).collect();
         let mut entries: Vec<(&'static str, &'a Value)> = Vec::new();
         for (k, v) in m {
-            let nk = normalise(k);
+            let nk = normalize(k);
             // Two spellings of one field: the later wins, as STJ sets the property twice.
             let field = fields
                 .iter()

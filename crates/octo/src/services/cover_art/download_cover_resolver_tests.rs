@@ -24,14 +24,14 @@ use crate::services::cover_art::ICoverArtSource;
 use crate::services::cover_art::itunes_cover_art_lookup::set_apple_interval;
 use crate::services::http_client_factory;
 
-fn jpeg_with(width: u32, height: u32, centre: Option<[u8; 3]>, quality: u8) -> Vec<u8> {
+fn jpeg_with(width: u32, height: u32, center: Option<[u8; 3]>, quality: u8) -> Vec<u8> {
     let mut image = RgbImage::from_pixel(width, height, Rgb([0, 0, 0]));
-    if let Some(colour) = centre {
+    if let Some(color) = center {
         let side = width.min(height);
         let (x0, y0) = ((width - side) / 2, (height - side) / 2);
         for y in y0..y0 + side {
             for x in x0..x0 + side {
-                image.put_pixel(x, y, Rgb(colour));
+                image.put_pixel(x, y, Rgb(color));
             }
         }
     }
@@ -88,7 +88,7 @@ fn is_usable_too_small_or_not_an_image_fails() {
 
 /// A YouTube "Topic" frame letterboxes the real cover; its center square is that cover.
 #[test]
-fn crop_to_square_letterbox_returns_the_centre() {
+fn crop_to_square_letterbox_returns_the_center() {
     let cropped = cover_image::crop_to_square(&video_frame()).expect("cropped");
 
     let image = image::load_from_memory(&cropped).expect("decodes").to_rgb8();
@@ -453,7 +453,7 @@ async fn resolve_non_square_catalog_cover_falls_through_to_the_search() {
 }
 
 #[tokio::test]
-async fn resolve_nothing_found_uses_the_centre_of_the_video_frame() {
+async fn resolve_nothing_found_uses_the_center_of_the_video_frame() {
     let hosts = Hosts::start(|_, _| not_found()).await;
 
     let choice = resolve(
@@ -750,7 +750,7 @@ fn fit_within_shrinks_a_master_and_leaves_a_smaller_cover_alone() {
 }
 
 #[test]
-fn mark_as_octo_stays_a_readable_jpeg_and_is_recognised() {
+fn mark_as_octo_stays_a_readable_jpeg_and_is_recognized() {
     let square = square();
     assert!(!cover_image::is_octo_cover(&square));
 

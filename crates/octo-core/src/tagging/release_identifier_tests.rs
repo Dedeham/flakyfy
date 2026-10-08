@@ -507,7 +507,7 @@ async fn a_slow_release_lookup_costs_its_facts_not_the_plan() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelling_during_the_release_lookup_is_an_error() {
+async fn canceling_during_the_release_lookup_is_an_error() {
     let database = Arc::new(FakeDatabase {
         details: Some(json(MEZZANINE_DETAILS)),
         delay: Duration::from_secs(5),

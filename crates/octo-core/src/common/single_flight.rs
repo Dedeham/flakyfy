@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_factory_token_is_cancelled_by_the_deadline() {
+    async fn the_factory_token_is_canceled_by_the_deadline() {
         let flight = SingleFlight::<String, bool>::new();
 
         // A hung dependency must not pin the key. The token the factory receives belongs to

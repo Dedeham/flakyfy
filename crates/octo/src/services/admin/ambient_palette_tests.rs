@@ -4,13 +4,13 @@
 use octo_core::models::download::DownloadHistoryEntry;
 use octo_media::cover::CoverArtService;
 use octo_media::cover::CoverMusic;
-use octo_media::cover::cover_colours::{self, Lch, Swatch};
+use octo_media::cover::cover_colors::{self, Lch, Swatch};
 
 use super::from_swatches;
 use crate::controllers::admin::ambient::newest_per_cover;
 
 fn hex(text: &str) -> i32 {
-    cover_colours::hex(text).expect("a hex color")
+    cover_colors::hex(text).expect("a hex color")
 }
 
 fn s(text: &str, share: f32) -> Swatch {
@@ -24,17 +24,17 @@ fn s(text: &str, share: f32) -> Swatch {
 fn from_lch_undoes_to_lch() {
     for case in ["#d9552b", "#1d3f8c", "#7fb35a", "#ffffff", "#000000"] {
         let argb = hex(case);
-        let back = cover_colours::from_lch(cover_colours::to_lch(argb));
+        let back = cover_colors::from_lch(cover_colors::to_lch(argb));
         assert!(
-            (cover_colours::r(back) - cover_colours::r(argb)).abs() <= 1,
+            (cover_colors::r(back) - cover_colors::r(argb)).abs() <= 1,
             "{case}"
         );
         assert!(
-            (cover_colours::g(back) - cover_colours::g(argb)).abs() <= 1,
+            (cover_colors::g(back) - cover_colors::g(argb)).abs() <= 1,
             "{case}"
         );
         assert!(
-            (cover_colours::b(back) - cover_colours::b(argb)).abs() <= 1,
+            (cover_colors::b(back) - cover_colors::b(argb)).abs() <= 1,
             "{case}"
         );
     }
@@ -48,12 +48,8 @@ fn from_lch_out_of_gamut_keeps_hue() {
         c: 0.4,
         h: 145.0,
     };
-    let got = cover_colours::to_lch(cover_colours::from_lch(wanted));
-    assert!(
-        cover_colours::hue_distance(got.h, wanted.h) < 3.0,
-        "hue {}",
-        got.h
-    );
+    let got = cover_colors::to_lch(cover_colors::from_lch(wanted));
+    assert!(cover_colors::hue_distance(got.h, wanted.h) < 3.0, "hue {}", got.h);
     assert!((0.68..=0.72).contains(&got.l), "lightness {}", got.l);
     assert!(got.c < wanted.c);
 }
@@ -66,16 +62,16 @@ fn palette_leads_with_the_color_cover_music_picks() {
     let palette = from_swatches(Some(&swatches)).expect("a palette");
 
     assert_eq!(palette.colors.len(), 3);
-    let lead = cover_colours::to_lch(hex(&palette.colors[0]));
-    let accent = cover_colours::to_lch(hex(&palette.accent));
+    let lead = cover_colors::to_lch(hex(&palette.colors[0]));
+    let accent = cover_colors::to_lch(hex(&palette.accent));
     let hue = f64::from(music.hue);
     assert!(
-        cover_colours::hue_distance(lead.h, hue) < 4.0,
+        cover_colors::hue_distance(lead.h, hue) < 4.0,
         "lead {} vs music {hue}",
         lead.h
     );
     assert!(
-        cover_colours::hue_distance(accent.h, hue) < 4.0,
+        cover_colors::hue_distance(accent.h, hue) < 4.0,
         "accent {} vs music {hue}",
         accent.h
     );
@@ -93,12 +89,12 @@ fn palette_lights_are_distinct_hues() {
     let hues: Vec<f64> = palette
         .colors
         .iter()
-        .map(|c| cover_colours::to_lch(hex(c)).h)
+        .map(|c| cover_colors::to_lch(hex(c)).h)
         .collect();
     for i in 0..hues.len() {
         for j in i + 1..hues.len() {
             assert!(
-                cover_colours::hue_distance(hues[i], hues[j]) >= 30.0,
+                cover_colors::hue_distance(hues[i], hues[j]) >= 30.0,
                 "{} vs {}",
                 palette.colors[i],
                 palette.colors[j]
@@ -119,7 +115,7 @@ fn palette_one_color_cover_fills_with_neighbors() {
 
 /// A grey, black and white cover has no color, so the dashboard keeps its own.
 #[test]
-fn palette_grey_cover_is_null() {
+fn palette_gray_cover_is_null() {
     assert_eq!(
         from_swatches(Some(&[s("#111111", 0.6), s("#f0f0f0", 0.3), s("#808080", 0.1)])),
         None
@@ -141,19 +137,15 @@ fn palette_faintly_tinted_cover_is_muted_in_its_own_hue() {
     ];
     assert_eq!(CoverMusic::from_covers(std::slice::from_ref(&swatches)), None);
     let palette = from_swatches(Some(&swatches)).expect("a palette");
-    let lead = cover_colours::to_lch(hex(&palette.colors[0]));
-    assert!(
-        cover_colours::hue_distance(lead.h, 191.0) < 12.0,
-        "hue {}",
-        lead.h
-    );
+    let lead = cover_colors::to_lch(hex(&palette.colors[0]));
+    assert!(cover_colors::hue_distance(lead.h, 191.0) < 12.0, "hue {}", lead.h);
     assert!((0.03..=0.065).contains(&lead.c), "chroma {}", lead.c);
     let mut distinct = palette.colors.clone();
     distinct.sort();
     distinct.dedup();
     assert_eq!(distinct.len(), 3);
     let accent = hex(&palette.accent);
-    assert!(cover_colours::contrast_ratio(accent, hex("#14080e")) >= 7.0);
+    assert!(cover_colors::contrast_ratio(accent, hex("#14080e")) >= 7.0);
 }
 
 /// The accent carries dark words on it and reads as words on the dark page.
@@ -162,11 +154,11 @@ fn accent_is_readable_both_ways() {
     for cover in ["#d9552b", "#1d3f8c", "#f2d100", "#5a2a82"] {
         let accent = hex(&from_swatches(Some(&[s(cover, 1.0)])).expect("a palette").accent);
         assert!(
-            cover_colours::contrast_ratio(accent, hex("#14080e")) >= 7.0,
+            cover_colors::contrast_ratio(accent, hex("#14080e")) >= 7.0,
             "dark words on the accent of {cover}"
         );
         assert!(
-            cover_colours::contrast_ratio(accent, hex("#0a0a0f")) >= 7.0,
+            cover_colors::contrast_ratio(accent, hex("#0a0a0f")) >= 7.0,
             "the accent on the page of {cover}"
         );
     }
@@ -218,8 +210,8 @@ fn palette_from_a_picture() {
     image.write_to(&mut png, image::ImageFormat::Png).expect("a PNG");
     let swatches = CoverArtService::swatches_of(png.get_ref());
     let palette = from_swatches(swatches.as_deref()).expect("a palette");
-    let lead = cover_colours::to_lch(hex(&palette.colors[0]));
-    assert!(cover_colours::hue_distance(lead.h, cover_colours::to_lch(hex("#d9552b")).h) < 4.0);
+    let lead = cover_colors::to_lch(hex(&palette.colors[0]));
+    assert!(cover_colors::hue_distance(lead.h, cover_colors::to_lch(hex("#d9552b")).h) < 4.0);
 }
 
 /// The parity stub's cover (`parity/stubs/bodies/cover.jpg`) lights the page as the C# build

@@ -155,7 +155,7 @@ async fn gives_up_after_max_wait() {
 }
 
 #[tokio::test]
-async fn cancelled_caller_gets_one_final_check_instead_of_the_window() {
+async fn canceled_caller_gets_one_final_check_instead_of_the_window() {
     let cts = CancellationToken::new();
     cts.cancel();
 

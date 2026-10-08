@@ -17,6 +17,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use super::*;
+use crate::controllers::admin::activity::{self, HealthActivity};
 use crate::controllers::admin::health::{check_name, parse_check};
 use crate::services::health::health_fixes::{
     self as fixes, FixAnswer, FixOutcome, FixStep, TagChange, fix_actions,
@@ -787,10 +788,66 @@ async fn a_lookup_says_what_it_found_and_what_to_pick() {
         ]
     );
     assert_eq!(lookups[1].detail.as_deref(), Some("Nothing matched."));
-    // ActivityController.Health's half of this test is group N's (`activity::health`).
-    let progress = run.progress();
-    assert_eq!((progress.state.as_str(), progress.done), ("done", 2));
-    assert!(progress.finished_utc.is_some());
+    let finished = run.progress().finished_utc.expect("finished");
+    let items = activity::health(Some(&HealthActivity::from(&*run)), None, finished);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        (items[0].page, items[0].state, items[0].detail.as_deref()),
+        ("health", "done", Some("Found tags for 1 of 2 songs"))
+    );
+}
+
+/// `TheActivityFeed_ShowsACheckAndARunGoing`, over a real run: a check of the library and a run
+/// of fixes on the activity card while they go.
+#[tokio::test]
+async fn the_activity_feed_shows_a_check_and_a_run_going() {
+    let (health, _, _) = service(LibraryActionSettings::default());
+    let gate = Arc::new(Notify::new());
+    {
+        let gate = Arc::clone(&gate);
+        health.configure(move |seams| {
+            seams.send = Some(Arc::new(move |_, _| {
+                let gate = Arc::clone(&gate);
+                async move {
+                    gate.notified().await;
+                    Ok(FixAnswer::new("applied", None))
+                }
+                .boxed()
+            }));
+        });
+    }
+    let steps: Vec<FixStep> = (0..20)
+        .map(|i| FixStep::remove_copy(&i.to_string(), "NOKIA"))
+        .collect();
+    assert!(
+        health
+            .start_fix("Joining albums", Some(HealthCheck::SplitAlbums), steps, "winters")
+            .is_none()
+    );
+    for _ in 0..500 {
+        if health.run().is_some_and(|run| run.progress().current.is_some()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let run = health.run().expect("a run");
+    let now = Utc::now();
+    let items = activity::health(Some(&HealthActivity::from(&*run)), Some(now), now);
+
+    let titles: Vec<&str> = items.iter().map(|item| item.title.as_str()).collect();
+    assert_eq!(titles, ["Checking your library", "Joining albums"]);
+    assert_eq!(
+        (
+            items[1].done,
+            items[1].total,
+            items[1].unit,
+            items[1].detail.as_deref()
+        ),
+        (Some(0), Some(20), Some("changes"), Some("NOKIA"))
+    );
+    assert!(activity::health(None, None, now).is_empty());
+    assert!(health.stop());
+    gate.notify_one();
 }
 
 #[tokio::test]

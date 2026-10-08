@@ -29,6 +29,7 @@ use crate::http::routes::RouteSet;
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, AcquisitionState};
 use crate::services::common::song_finder::FindSnapshot;
 use crate::services::cover_art::{CoverUpgradeMode, CoverUpgradeRun, CoverUpgradeStatus};
+use crate::services::health::HealthRun;
 use crate::services::imports::import_views::ImportOverview;
 use crate::services::library::duplicate_scan_worker::DuplicateScanResult;
 use crate::services::library::upgrade_queue::{UpgradeJob, UpgradeStates};
@@ -161,8 +162,9 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
                 .collect();
             items.extend(find(&looks, now));
         }
-        // STUB(R): with `LibraryHealthService` in:
-        // `items.extend(health(run.as_ref().map(HealthActivity::from), checking_since, now))`.
+        let library_health = &state.library_health;
+        let run = library_health.run().as_deref().map(HealthActivity::from);
+        items.extend(health(run.as_ref(), library_health.checking_since(), now));
     }
     items.extend(downloads(&state.acquisition_tracker.all(), now));
     let worker = &state.duplicate_scan_worker;
@@ -798,6 +800,30 @@ pub struct HealthActivity {
     /// `Outcome?.Summary()`.
     pub outcome_summary: Option<String>,
     pub error: Option<String>,
+}
+
+impl From<&HealthRun> for HealthActivity {
+    fn from(run: &HealthRun) -> Self {
+        let progress = run.progress();
+        HealthActivity {
+            id: run.id.clone(),
+            kind: run.kind.clone(),
+            label: run.label.clone(),
+            total: i32::try_from(run.total).unwrap_or(i32::MAX),
+            done: i32::try_from(progress.done).unwrap_or(i32::MAX),
+            state: progress.state.clone(),
+            started_utc: run.started_utc,
+            finished_utc: progress.finished_utc,
+            current: progress.current.clone(),
+            found: run
+                .lookups_now()
+                .iter()
+                .filter(|lookup| lookup.state == "found")
+                .count(),
+            outcome_summary: progress.outcome.as_ref().map(|outcome| outcome.summary()),
+            error: progress.error,
+        }
+    }
 }
 
 /// Library health: a check of the library while one runs, and a run of fixes or lookups.

@@ -115,7 +115,7 @@
     {"name": "cleanup-files", "exec": ["sh", "-c", "rm -rf '/music/Kestrel Moor' /music/.octo-trash && echo removed"]},
     {"name": "cleanup-scan", "path": "/rest/startScan", "auth": "p", "f": "json", "query": [["fullScan", "true"]], "ignoreKeys": ["count", "folderCount", "scanning", "lastScan", "elapsedTime", "scanType"]},
     {"name": "cleanup-wait", "path": "/api/song/{{kh_tidewater}}", "session": null, "headers": {"X-ND-Authorization": "Bearer {{nd_token}}"}, "until": {"from": "json:missing", "in": [true]}, "pollMs": 500, "timeoutMs": 60000, "ignoreKeys": ["createdAt", "updatedAt", "birthTime", "playDate"]},
-    {"name": "cleanup-search", "path": "/rest/search3", "auth": "p", "f": "json", "query": [["query", "Kestrel"]], "unordered": true},
+    {"name": "cleanup-search", "path": "/rest/search3", "auth": "p", "f": "json", "query": [["query", "Kestrel"]], "until": {"regex": "\"song\":\\[\\]"}, "pollMs": 500, "timeoutMs": 60000, "unordered": true},
     {"name": "settings-restore", "method": "POST", "path": "/api/admin/settings", "headers": {"X-Octo-Admin": "1"}, "body": {"json": {"LibraryActions": {"Enabled": false, "DryRun": true, "AllowedUsers": [], "Actions": []}}}, "ignoreKeys": ["persisted"]},
     {"name": "wait-off", "path": "/rest/getLibraryActions", "auth": "p", "f": "json", "until": {"from": "json:subsonic-response.libraryActions.enabled", "in": [false]}, "pollMs": 300, "timeoutMs": 20000}
   ]

@@ -85,6 +85,38 @@
       ],
       "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); applies once group F's library edits land.",
       "knownDiff": "Clearing a tag field"
+    },
+    {
+      "id": "cover-resume-counts-once",
+      "backlog": "P",
+      "requests": [
+        "17-covers-explicit/covers-resumed-done"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.(kept|files|songsRead|albumsDone): \\d+ != \\d+$"
+      ],
+      "reason": "A cover run resumed after a stop counts each album and song once. C# 2026.10.05 counted the stopped batch again (CoverUpgrade.cs:696,744): the picked preview of 3 albums ended with albumsDone 6, songsRead 20 of 10, kept and files doubled. Fixed in the port only (Brandon, 2026-10-07).",
+      "knownDiff": "Cover upgrade: a resumed run's counts"
+    },
+    {
+      "id": "cover-scan-leaves-the-trash-out",
+      "backlog": "P",
+      "requests": [
+        "96-covers-explicit-writes/covers-scan-done"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.(songsTotal|songsRead|albumsDone|total|soft|processed): \\d+ != \\d+$",
+        "^\\$\\.preview: array length \\d+ != \\d+$",
+        "^\\$\\.preview\\[\\d+\\]\\.(folder|artist|album|fromSide|toSide|files|folderCover|result|source|looksSame): .* != .*$"
+      ],
+      "reason": "The cover scan leaves the trash folder out: C# 2026.10.05 walked into /music/.octo-trash and listed a song deleted from disk in 20-library-edits as an album of its own (one more album, song and soft row, and the sorted preview shifted by one). Fixed in the port only (Brandon, 2026-10-07). Until group F's delete and put back land, this request also differs for F's sake.",
+      "knownDiff": "Library walks and the trash"
     }
   ]
 }

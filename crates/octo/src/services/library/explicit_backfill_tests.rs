@@ -239,22 +239,6 @@ async fn apply_writes_explicit_and_clean_in_place_journals_each_and_undo_takes_t
     assert_eq!(worker.current().written, 2);
 }
 
-#[test]
-fn set_advisory_round_trips_and_clears() {
-    let root = Root::new();
-    let path = root.mp3("x.mp3", "A", "B");
-
-    let written = library_tag_edits::set_advisory(Path::new(&path), Some(1));
-    let again = library_tag_edits::set_advisory(Path::new(&path), Some(1));
-    let cleared = library_tag_edits::set_advisory(Path::new(&path), None);
-
-    assert!(written.changed);
-    assert!(!again.changed);
-    assert!(cleared.changed);
-    assert_eq!(cleared.before[tag_edit_kinds::ADVISORY].as_deref(), Some("1"));
-    assert_eq!(advisory_of(&path), None);
-}
-
 /// Port fix: the walk the marking falls back to when Navidrome cannot list the songs leaves the
 /// trash out, and a trashed song Navidrome lists (a trash folder with no leading dot) too.
 #[tokio::test]

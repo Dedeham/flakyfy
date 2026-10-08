@@ -15,13 +15,16 @@
 
 pub mod browse;
 pub mod cover_upgrade;
+pub mod downloads;
 pub mod explicit_backfill;
 pub mod genre;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
+pub mod imports;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
+pub mod radio_admin;
 pub mod raw_config;
 pub mod secrets;
 pub mod settings;
@@ -106,7 +109,7 @@ pub fn routes_6b1() -> RouteSet {
 
 /// Every AdminController route.
 pub fn routes() -> RouteSet {
-    routes_6b1().merge(routes_6b2())
+    routes_6b1().merge(routes_6b2()).merge(imports::routes())
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
@@ -122,7 +125,9 @@ pub fn routes_6b2() -> RouteSet {
         .merge(explicit_backfill::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
+        .merge(downloads::routes())
         .merge(soulseek_sharing::routes())
+        .merge(radio_admin::routes())
 }
 
 #[cfg(test)]
@@ -152,3 +157,7 @@ mod admin_sign_in_tests;
 #[cfg(test)]
 #[path = "admin_secret_tests.rs"]
 mod admin_secret_tests;
+
+#[cfg(test)]
+#[path = "admin_downloads_tests.rs"]
+mod admin_downloads_tests;

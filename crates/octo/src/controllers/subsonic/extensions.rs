@@ -23,6 +23,7 @@ use super::helpers_6a2::{SubsonicCall, check_caller, is_successful_subsonic_resp
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
+use crate::services::common::song_finder::UpgradeGate;
 use crate::services::library::library_tag_edits::song_tag_fields;
 use crate::services::library::{
     LibraryActionOutcome, LibraryActionRequest, LibraryActionState, LibraryEditOutcome, SongLookup,
@@ -105,12 +106,13 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
     let settings = state.settings.current();
     state
         .subsonic_response_builder
-        .merge_open_subsonic_extensions(
+        .merge_open_subsonic_extensions_with(
             &format,
             relay.as_ref().map(|r| r.body.as_ref()),
             relay.as_ref().and_then(|r| r.content_type.as_deref()),
             settings.metadata.fetch_lyrics,
             settings.library_actions.enabled,
+            state.song_radio.enabled(),
         )
         .into_response()
 }
@@ -422,32 +424,13 @@ fn queue_upgrade(state: &AppState, id: &str, username: Option<&str>) -> Response
     let builder = &state.subsonic_response_builder;
     let settings = state.settings.current().library_actions.clone();
     let username = username.filter(|u| !is_blank(u));
-    let refusal = match username {
-        None => Some(
-            "Sign in with a username to upgrade songs; an API key alone does not say who is asking."
-                .to_string(),
-        ),
-        Some(_) if !settings.enabled => Some("Library actions are off.".to_string()),
-        Some(user) if !settings.is_allowed(Some(user)) => {
-            Some(format!("{user} is not on the library actions allowed list."))
-        }
-        Some(_)
-            if !settings
-                .effective_actions()
-                .iter()
-                .any(|a| a.action == LibraryAction::BetterQuality && a.enabled) =>
-        {
-            Some("Better quality is not switched on.".to_string())
-        }
-        Some(_) if settings.dry_run => {
-            Some("Library actions only rehearse while dry run is on, so nothing would change.".to_string())
-        }
-        Some(_) if !upgrade_ready(state) => Some(format!(
-            "Better quality looks for copies on {}, which is not set up on this server.",
-            upgrade_source_name(state)
-        )),
-        Some(_) => None,
-    };
+    let refusal = UpgradeGate::refusal(
+        Some(&settings),
+        username,
+        true,
+        upgrade_ready(state),
+        &upgrade_source_name(state),
+    );
     if let Some(refusal) = refusal {
         return builder
             .create_library_action_response(id, "skipped", Some(&refusal), UPGRADE_ACTION)

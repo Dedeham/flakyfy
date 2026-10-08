@@ -29,6 +29,7 @@ use tracing::{debug, error, info, warn};
 
 use super::placement::{get_directory_name, get_file_name, is_audio_file};
 use super::{BaseDownloadService, RequestedIdentity, get_extension};
+use crate::services::common::acquisition_tracker::acquisition_event_kinds;
 use crate::services::cover_art::CoversOnHand;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::soulseek::soulseek_download_service::INCOMING_FOLDER_NAME;
@@ -126,6 +127,19 @@ impl BaseDownloadService {
         if let (Some(plan), Some(advisory)) = (song.tag_plan.as_deref_mut(), advisory.as_ref()) {
             plan.fields
                 .insert("advisory".to_string(), explicit_advisory::field(advisory));
+        }
+        if let Some(advisory) = &advisory {
+            let text = match advisory.value {
+                explicit_advisory::EXPLICIT => "Marked explicit",
+                explicit_advisory::CLEAN => "Marked as the clean edit",
+                _ => "Marked not explicit",
+            };
+            let why = if advisory.source == explicit_advisory::FILE_NAME_SOURCE {
+                "The file's name says it is the clean edit"
+            } else {
+                "The catalog's match for this exact version says so"
+            };
+            self.log_song_step(song, acquisition_event_kinds::TAGS, text, Some(why));
         }
 
         let sibling = if self.settings.current().subsonic.folder_structure == FolderStructure::Organized {
@@ -290,6 +304,40 @@ impl BaseDownloadService {
             return None;
         }
         Some(AlbumSiblingFile { path: sibling, facts })
+    }
+
+    /// Renames a landed file whose extension names another format than its bytes (a FLAC named
+    /// .mp3, an M4A named .flac) and logs it. None when the name was right or the file could not
+    /// be renamed; the file is then tagged as it is, as before.
+    pub(super) fn fix_landed_extension(
+        &self,
+        path: &str,
+        provider: &str,
+        external_id: &str,
+    ) -> Option<octo_media::tags::audio_container::ExtensionFix> {
+        match octo_media::tags::audio_container::fix_extension(path) {
+            Ok(Some(fix)) => {
+                info!(
+                    "{path} is {}; renamed from {} to {} before tagging",
+                    fix.format, fix.from, fix.to
+                );
+                self.track(|t| {
+                    t.log(
+                        provider,
+                        external_id,
+                        acquisition_event_kinds::CHECK,
+                        &format!("Renamed to {}: the file is {}", fix.to, fix.format),
+                        Some(&format!("It arrived named {}", fix.from)),
+                    )
+                });
+                Some(fix)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Could not check or fix the extension of {path}: {e}");
+                None
+            }
+        }
     }
 
     /// Start measuring a landed file, beside identification, when ReplayGain is on.
@@ -472,6 +520,20 @@ impl BaseDownloadService {
                         plan.notes.push(format!("took off the file's own {names}: {why}"));
                     }
                     info!("Took off {names} from {file_path}: {why}");
+                    let detail = if filed_elsewhere {
+                        format!(
+                            "The peer had it filed under \"{}\": {names}",
+                            arrived_album.as_deref().unwrap_or("")
+                        )
+                    } else {
+                        format!("A new download starts its own album: {names}")
+                    };
+                    self.log_song_step(
+                        song,
+                        acquisition_event_kinds::TAGS,
+                        "Took off the peer's own album tags",
+                        Some(&detail),
+                    );
                 }
                 (existing, embedded, filed_elsewhere)
             }
@@ -621,6 +683,12 @@ impl BaseDownloadService {
         match written {
             Ok(()) => {
                 info!("Metadata written successfully to: {file_path}");
+                self.log_song_step(
+                    song,
+                    acquisition_event_kinds::TAGS,
+                    "Tags written",
+                    Some(file_path.rsplit('/').next().unwrap_or(file_path)),
+                );
                 chosen_cover
             }
             Err(e) => {
@@ -647,16 +715,10 @@ impl BaseDownloadService {
         }
     }
 
-    /// One line in the download's log about its cover (`LogStep` with the cover kind).
-    /// STUB(D): the downloads log is group D's; until it lands the line goes to the server log,
-    /// and tests read it back.
+    /// One line in the download's log about its cover (`LogStep` with the cover kind). Tests
+    /// also read the lines back from the service.
     fn log_cover_step(&self, song: &Song, text: &str, detail: Option<&str>) {
-        debug!(
-            "{} - {}: {text}{}",
-            song.artist,
-            song.title,
-            detail.map(|detail| format!(": {detail}")).unwrap_or_default()
-        );
+        self.log_song_step(song, acquisition_event_kinds::COVER, text, detail);
         #[cfg(test)]
         self.cover_steps
             .lock()

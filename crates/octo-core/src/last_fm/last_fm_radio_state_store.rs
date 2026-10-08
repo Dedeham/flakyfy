@@ -10,6 +10,7 @@ pub const CURRENT_VERSION: i32 = 1;
 pub const MAX_PLAYS_PER_USER: usize = 2_000;
 pub const MAX_USERS: usize = 100;
 pub const MAX_UNAVAILABLE_TRACKS_PER_USER: usize = 500;
+pub const MAX_RADIO_BANS_PER_USER: usize = 1_000;
 pub const UNAVAILABLE_TRACK_COOLDOWN: TimeDelta = TimeDelta::hours(24);
 pub const DUPLICATE_WINDOW: TimeDelta = TimeDelta::minutes(5);
 

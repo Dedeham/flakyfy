@@ -17,6 +17,7 @@ use regex::Regex;
 use tracing::{debug, error, info, warn};
 
 use super::{BaseDownloadService, FileNotFoundException, RequestedIdentity, file_exists, get_extension};
+use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::library::{ReplacementHandoff, ReplacementRejectedException};
 use crate::services::lyrics::lyrics_sidecar_writer::LyricsJob;
@@ -449,7 +450,15 @@ impl BaseDownloadService {
             && cover_files::should_write(Path::new(&dir), cover, placement.created_folder)
         {
             match cover_files::write(Path::new(&dir), cover) {
-                Ok(()) => info!("Wrote cover.jpg beside {}", placement.path),
+                Ok(()) => {
+                    info!("Wrote cover.jpg beside {}", placement.path);
+                    self.log_song_step(
+                        song,
+                        acquisition_event_kinds::COVER,
+                        "Saved cover.jpg in the album folder",
+                        None,
+                    );
+                }
                 Err(e) => warn!("Could not write cover.jpg beside {}: {e}", placement.path),
             }
         }
@@ -459,13 +468,30 @@ impl BaseDownloadService {
         if current.metadata.fetch_lyrics
             && let Some(lyrics) = &self.services.lyrics
         {
-            lyrics.try_enqueue(LyricsJob::new(
+            // The log's row hears how the look went, after the song is in.
+            let row = match (
+                song.external_provider.as_deref().filter(|p| !p.is_empty()),
+                song.external_id.as_deref().filter(|i| !i.is_empty()),
+            ) {
+                (Some(provider), Some(id)) => Some(key_of(provider, id)),
+                _ => None,
+            };
+            let job = LyricsJob::new(
                 &placement.path,
                 song.primary_artist.clone().unwrap_or_else(|| song.artist.clone()),
                 LyricsText::query_title(&song.title, &song.artist),
                 Some(song.album.clone()),
                 song.duration,
-            ));
+            )
+            .with_acquisition(row);
+            if lyrics.try_enqueue(job) {
+                self.log_song_step(
+                    song,
+                    acquisition_event_kinds::LYRICS,
+                    "Looking for lyrics",
+                    Some("In the background, so the next download need not wait"),
+                );
+            }
         }
     }
 }

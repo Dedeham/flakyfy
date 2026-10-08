@@ -358,6 +358,7 @@ mod tests {
             last_fm,
             state.clone(),
             settings.clone(),
+            None,
         ));
         let queue = Arc::new(LastFmRadioRefreshQueue::new());
         let worker = Arc::new(LastFmRadioRefreshWorker::new(

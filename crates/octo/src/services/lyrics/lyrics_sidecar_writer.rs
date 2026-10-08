@@ -19,6 +19,8 @@ use tracing::{info, warn};
 use super::lyrics_service::LyricsService;
 use super::lyrics_undo_journal::{LyricsUndoEntry, LyricsUndoJournal};
 use super::song_lyrics;
+use crate::services::common::AcquisitionTracker;
+use crate::services::common::acquisition_tracker::acquisition_event_kinds;
 use crate::services::local::ILocalLibraryService;
 
 /// One song to find lyrics for.
@@ -31,6 +33,9 @@ pub struct LyricsJob {
     pub duration_seconds: Option<i32>,
     /// 1 for the first try.
     pub attempt: i32,
+    /// The downloads log row ("provider:id") that hears how the look went, when a download asked
+    /// for it.
+    pub acquisition: Option<String>,
 }
 
 impl LyricsJob {
@@ -48,7 +53,14 @@ impl LyricsJob {
             album,
             duration_seconds,
             attempt: 1,
+            acquisition: None,
         }
+    }
+
+    /// `job with { Acquisition = row }`.
+    pub fn with_acquisition(mut self, row: Option<String>) -> Self {
+        self.acquisition = row;
+        self
     }
 
     /// `job with { Attempt = attempt }`.
@@ -78,7 +90,7 @@ pub struct LyricsWrite {
 }
 
 impl LyricsWrite {
-    fn new(outcome: LyricsWriteOutcome, result: Option<LyricsResult>) -> Self {
+    pub fn new(outcome: LyricsWriteOutcome, result: Option<LyricsResult>) -> Self {
         Self { outcome, result }
     }
 }
@@ -190,6 +202,8 @@ pub struct LyricsSidecarWriter {
     sender: mpsc::Sender<LyricsJob>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<LyricsJob>>,
     scan_pending: Arc<AtomicBool>,
+    /// The downloads log a download's look reports to; set once the tracker exists.
+    tracker: OnceLock<Arc<AcquisitionTracker>>,
 }
 
 impl LyricsSidecarWriter {
@@ -225,7 +239,13 @@ impl LyricsSidecarWriter {
             sender,
             receiver: tokio::sync::Mutex::new(receiver),
             scan_pending: Arc::new(AtomicBool::new(false)),
+            tracker: OnceLock::new(),
         }
+    }
+
+    /// The downloads log a download's look reports to. Only the first call counts.
+    pub fn set_tracker(&self, tracker: Arc<AcquisitionTracker>) {
+        let _ = self.tracker.set(tracker);
     }
 
     /// The library service, asked for a scan after lyrics are written inside songs. Only the
@@ -257,14 +277,96 @@ impl LyricsSidecarWriter {
             // One job's failure is logged and the loop goes on.
             match self.write(&job, false, &stopping).await {
                 _ if stopping.is_cancelled() => break,
-                Ok(write) if write.outcome == LyricsWriteOutcome::Retrying => {
-                    self.retry_later(job.clone().with_attempt(job.attempt + 1), stopping.clone());
+                Ok(write) => {
+                    self.report(&job, &write);
+                    if write.outcome == LyricsWriteOutcome::Retrying {
+                        self.retry_later(job.clone().with_attempt(job.attempt + 1), stopping.clone());
+                    }
                 }
-                Ok(_) => {}
                 Err(error) => warn!("Could not write lyrics for {}: {error}", job.audio_path.display()),
             }
         }
         Ok(())
+    }
+
+    /// Tells the download's log what the look found, in words, and where the lyrics went.
+    pub fn report(&self, job: &LyricsJob, write: &LyricsWrite) {
+        let (Some(tracker), Some(row)) = (self.tracker.get(), job.acquisition.as_deref()) else {
+            return;
+        };
+        let Some((provider, id)) = row.split_once(':').filter(|(provider, _)| !provider.is_empty()) else {
+            return;
+        };
+        let place = if job.audio_path.exists() {
+            self.song_lyrics(&job.audio_path).place
+        } else {
+            SongLyricsPlace::None
+        };
+        let (Some(text), detail) = Self::report_text(job, write, place) else {
+            return;
+        };
+        tracker.log(
+            provider,
+            id,
+            acquisition_event_kinds::LYRICS,
+            &text,
+            detail.as_deref(),
+        );
+    }
+
+    /// The log's words for one look, or None when there is nothing to say yet.
+    pub fn report_text(
+        job: &LyricsJob,
+        write: &LyricsWrite,
+        place: SongLyricsPlace,
+    ) -> (Option<String>, Option<String>) {
+        let said = |text: &str, detail: Option<String>| (Some(text.to_string()), detail);
+        match (write.outcome, &write.result) {
+            (LyricsWriteOutcome::Written | LyricsWriteOutcome::Upgraded, Some(found)) => {
+                let timing = match found.timing() {
+                    LyricsTiming::Word => "Word by word lyrics",
+                    LyricsTiming::Line => "Synced lyrics",
+                    _ => "Plain lyrics",
+                };
+                let detail = match place {
+                    SongLyricsPlace::Inside => "Embedded in the song".to_string(),
+                    SongLyricsPlace::Beside => format!(
+                        "Saved beside the song as a {} file",
+                        if found.has_synced() { ".lrc" } else { ".txt" }
+                    ),
+                    _ => "Saved".to_string(),
+                };
+                (Some(format!("{timing} from {}", found.source)), Some(detail))
+            }
+            (LyricsWriteOutcome::Instrumental, result) => said(
+                "No lyrics: an instrumental",
+                result
+                    .as_ref()
+                    .map(|said| format!("{} says it has no words", said.source)),
+            ),
+            (LyricsWriteOutcome::NotFound, _) => said(
+                "No lyrics found",
+                Some("None of the lyrics sources has this song".to_string()),
+            ),
+            (LyricsWriteOutcome::AlreadyThere, _) => said(
+                "The song already has lyrics",
+                Some("Left as they are".to_string()),
+            ),
+            (LyricsWriteOutcome::Retrying, _) => said(
+                "No lyrics service answered",
+                Some(format!(
+                    "Trying again in {} minutes (try {} of {})",
+                    Self::RETRY_DELAY.as_secs() / 60,
+                    job.attempt,
+                    Self::MAX_ATTEMPTS
+                )),
+            ),
+            (LyricsWriteOutcome::GaveUp, _) => said(
+                "No lyrics service answered",
+                Some(format!("Gave up after {} tries", Self::MAX_ATTEMPTS)),
+            ),
+            _ => (None, None),
+        }
     }
 
     /// Look the song up and save what was found. A song that already has lyrics is left alone,

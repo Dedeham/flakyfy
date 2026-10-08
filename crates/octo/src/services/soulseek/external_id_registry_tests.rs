@@ -439,3 +439,36 @@ fn registry_a_search_row_minted_again_keeps_what_the_catalog_said() {
         Some(1)
     );
 }
+
+/// Fixed in the port only (BACKLOG "Found while building the harness", known-diffs "An outside
+/// song's album in the registry"): a song's id leaves out its album, so radio registering a song
+/// Last.fm named without one must not undo the album a search filed it under. A registration
+/// with an album of its own still replaces it.
+#[test]
+fn a_registration_without_an_album_keeps_the_album_already_known() {
+    let registry = ExternalIdRegistry::in_memory();
+    let searched = registry.register(SoulseekRouting {
+        album: Some("Tidal Lines".into()),
+        ..song("Zephyr Echo", "Glass Harbor")
+    });
+    let radio = registry.register(song("Zephyr Echo", "Glass Harbor"));
+    assert_eq!(searched, radio);
+    let album_of = |id: &str| registry.lookup(id).expect("known").lock().album.clone();
+    assert_eq!(album_of(&radio).as_deref(), Some("Tidal Lines"));
+
+    let blank = registry.register(SoulseekRouting {
+        album: Some("  ".into()),
+        ..song("Zephyr Echo", "Glass Harbor")
+    });
+    assert_eq!(album_of(&blank).as_deref(), Some("Tidal Lines"));
+
+    let other = registry.register(SoulseekRouting {
+        album: Some("Another Album".into()),
+        ..song("Zephyr Echo", "Glass Harbor")
+    });
+    assert_eq!(album_of(&other).as_deref(), Some("Another Album"));
+
+    // An album routing is not a song: its own album is its id.
+    let first = registry.register(album("Zephyr Echo", "Tidal Lines", None));
+    assert_eq!(album_of(&first).as_deref(), Some("Tidal Lines"));
+}

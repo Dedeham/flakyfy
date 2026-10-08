@@ -58,6 +58,9 @@ pub struct LibraryActionRequest {
     /// A Delete of one copy of a song the library keeps another of (Library health's
     /// duplicates). The song is still wanted, so it is not refused when asked for again.
     pub only_a_copy: bool,
+    /// The one source to fetch the replacement from, for a copy someone picked in Find songs; no
+    /// other source is tried after it.
+    pub only_source: Option<DownloadSource>,
 }
 
 impl LibraryActionRequest {
@@ -69,6 +72,7 @@ impl LibraryActionRequest {
             credential: None,
             on_replacement_queued: None,
             only_a_copy: false,
+            only_source: None,
         }
     }
 
@@ -509,7 +513,7 @@ impl LibraryActionExecutor {
         // is back. Nothing is written and no file is touched. With Lidarr also set up, a Soulseek
         // outage just means Lidarr alone is asked.
         if request.action == LibraryAction::BetterQuality {
-            let sources = self.sources_for(request.action).await;
+            let sources = self.sources_for(request.action, request.only_source).await;
             if sources.is_empty() && self.waiting_for_soulseek().await {
                 return Ok(LibraryActionOutcome::coded(
                     LibraryActionState::Failed,
@@ -757,7 +761,7 @@ impl LibraryActionExecutor {
 
             // In order, and on to the next when one finds nothing or its copy fails the checks:
             // Soulseek first, then Lidarr, for Better quality with both set up.
-            let sources = self.sources_for(request.action).await;
+            let sources = self.sources_for(request.action, request.only_source).await;
             let upgrade_search = request.action == LibraryAction::BetterQuality;
             let requested_by = self
                 .settings
@@ -1031,7 +1035,20 @@ impl LibraryActionExecutor {
     /// refuses anyway), and searches the slow way, because nobody is waiting (#70). Wrong song and
     /// wrong version use the download source, except that Lidarr there means Lidarr too: before,
     /// those replacements went to Soulseek whatever was configured. A None entry is the default.
-    pub async fn sources_for(&self, action: LibraryAction) -> Vec<Option<DownloadSource>> {
+    pub async fn sources_for(
+        &self,
+        action: LibraryAction,
+        only: Option<DownloadSource>,
+    ) -> Vec<Option<DownloadSource>> {
+        if action == LibraryAction::BetterQuality
+            && let Some(picked) = only
+        {
+            return if picked == DownloadSource::Soulseek && self.soulseek_out().await {
+                Vec::new()
+            } else {
+                vec![Some(picked)]
+            };
+        }
         if action == LibraryAction::BetterQuality {
             // Without the plan (hosts that build the executor by hand): Soulseek, as it always was.
             let Some(sources) = &self.sources else {

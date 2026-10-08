@@ -16,8 +16,10 @@ mod tests_6a1;
 
 pub(crate) mod album_ownership;
 pub mod browsing;
+pub mod downloads;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
+pub mod imports;
 pub mod lyrics;
 pub mod media;
 pub mod stars;
@@ -39,6 +41,8 @@ mod library_edit_tests;
 mod lyrics_endpoint_tests_6a2;
 #[cfg(test)]
 mod media_tests_6a2;
+#[cfg(test)]
+mod radio_ban_tests;
 #[cfg(test)]
 mod rating_tests_6a2;
 #[cfg(test)]
@@ -133,5 +137,7 @@ pub fn routes() -> RouteSet {
         .merge(media::routes())
         .merge(stars::routes())
         .merge(extensions::routes())
+        .merge(downloads::routes())
         .merge(lyrics::routes())
+        .merge(imports::routes())
 }

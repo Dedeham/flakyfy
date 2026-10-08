@@ -282,11 +282,17 @@ async fn get_acquisitions_returns_only_the_callers_rows_in_the_apps_shape() {
             "artist",
             "bytesDone",
             "bytesTotal",
+            "coverArt",
             "error",
             "id",
+            "key",
+            "kind",
             "libraryId",
+            "logLines",
             "note",
+            "peer",
             "progress",
+            "quality",
             "source",
             "startedAt",
             "state",
@@ -294,6 +300,10 @@ async fn get_acquisitions_returns_only_the_callers_rows_in_the_apps_shape() {
             "updatedAt"
         ]
     );
+    assert_eq!(row["key"], "soulseek:3kX9Qm");
+    assert_eq!(row["kind"], "download");
+    assert_eq!(row["coverArt"], "3kX9Qm");
+    assert_eq!(row["logLines"], 2);
     assert_eq!(row["id"], "3kX9Qm");
     assert_eq!(row["artist"], "Daft Punk");
     assert_eq!(row["title"], "Da Funk");
@@ -480,7 +490,7 @@ async fn get_open_subsonic_extensions_adds_octo_acquisitions_to_navidromes_list(
     assert_eq!(envelope["status"], "ok");
     assert_eq!(envelope["openSubsonic"], true);
     let extensions = extensions_of(&envelope);
-    assert_eq!(extension(&extensions, "octoAcquisitions"), Some(&vec![1]));
+    assert_eq!(extension(&extensions, "octoAcquisitions"), Some(&vec![1, 2]));
     assert!(extension(&extensions, "formPost").is_some());
     assert!(extension(&extensions, "songLyrics").is_some());
 }
@@ -499,6 +509,266 @@ async fn get_open_subsonic_extensions_adds_it_in_xml_too() {
         .collect();
     assert_eq!(ours.len(), 1);
     assert_eq!(first_version(ours[0]).as_deref(), Some("1"));
+    let versions: Vec<String> = ours[0]
+        .elements()
+        .filter(|e| e.name == "versions")
+        .map(XElement::value)
+        .collect();
+    assert_eq!(versions, ["1", "2"]);
+}
+
+// ---- Version 2: the downloads drawer --------------------------------------------------------
+
+#[tokio::test]
+async fn get_acquisition_returns_the_row_with_its_log_in_order() {
+    let t = AcquisitionApp::new(|_| {}).await;
+    t.seed();
+    t.state.acquisition_tracker.found(
+        "soulseek",
+        "3kX9Qm",
+        "2 copies fit, best first",
+        vec![octo_core::models::download::AcquisitionCandidate {
+            source: "Soulseek".into(),
+            peer: Some("peer1".into()),
+            file: Some("01 - Da Funk.flac".into()),
+            folder: Some("Homework".into()),
+            format: Some("flac".into()),
+            bit_depth: Some(16),
+            sample_rate: Some(44100),
+            size: Some(31_000_000),
+            rank: Some(1),
+            ..Default::default()
+        }],
+        None,
+    );
+
+    let envelope = get(
+        &t.app,
+        &format!(
+            "/rest/getAcquisition.view?{}&key=soulseek:3kX9Qm",
+            acq_auth("alice")
+        ),
+    )
+    .await
+    .envelope();
+
+    let row = &envelope["acquisition"];
+    assert_eq!(row["key"], "soulseek:3kX9Qm");
+    let lines = row["event"].as_array().expect("the log").clone();
+    assert_eq!(
+        lines
+            .iter()
+            .map(|l| l["kind"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        ["queued", "transfer", "found"]
+    );
+    assert_eq!(lines[1]["text"], "Downloading from Soulseek");
+    assert_eq!(lines[1]["detail"], "27.7 MB");
+    let copies = lines[2]["candidate"].as_array().expect("copies");
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["quality"], "FLAC 16-bit 44.1 kHz");
+    assert_eq!(copies[0]["peer"], "peer1");
+    assert_eq!(copies[0]["rank"], 1);
+}
+
+#[tokio::test]
+async fn get_acquisition_someone_elses_row_is_not_found() {
+    let t = AcquisitionApp::new(|_| {}).await;
+    t.seed();
+
+    let envelope = get(
+        &t.app,
+        &format!(
+            "/rest/getAcquisition.view?{}&key=soulseek:3kX9Qm",
+            acq_auth("bob")
+        ),
+    )
+    .await
+    .envelope();
+
+    assert_eq!(envelope["status"], "failed");
+    assert_eq!(envelope["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn clear_acquisitions_takes_only_the_callers_finished_rows() {
+    let t = AcquisitionApp::new(|_| {}).await;
+    t.seed();
+    let tracker = &t.state.acquisition_tracker;
+    tracker.begin(
+        "soulseek",
+        "9zz",
+        Some("9zz"),
+        Some("alice"),
+        Some("Air"),
+        Some("La Femme d'Argent"),
+        Some("Moon Safari"),
+    );
+    tracker.fail("soulseek", "9zz", Some("No Soulseek FLAC found"));
+
+    let envelope = get(
+        &t.app,
+        &format!("/rest/clearAcquisitions.view?{}", acq_auth("alice")),
+    )
+    .await
+    .envelope();
+
+    assert_eq!(envelope["cleared"]["count"], 1);
+    // The one still downloading stays, and bob's is not hers to clear.
+    assert_eq!(
+        tracker
+            .for_user("alice")
+            .into_iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        ["3kX9Qm"]
+    );
+    assert_eq!(tracker.for_user("bob").len(), 1);
+}
+
+#[tokio::test]
+async fn find_songs_starts_a_look_that_get_found_songs_follows_and_pick_found_song_fetches() {
+    use futures::FutureExt;
+
+    use crate::services::common::PickedCopy;
+    use crate::services::common::song_finder::FoundCopy;
+
+    let t = AcquisitionApp::new(|_| {}).await;
+    let id = t.register_teardrop();
+    let finder = t.state.song_finder.clone();
+    finder.seams(|seams| {
+        seams.sources_for = std::sync::Arc::new(|_| {
+            vec![
+                ("Soulseek".to_string(), None),
+                (
+                    "Lidarr".to_string(),
+                    Some("Lidarr is not set up on this server".to_string()),
+                ),
+            ]
+        });
+        seams.search_soulseek = std::sync::Arc::new(|_, _| {
+            async {
+                Ok((
+                    vec![FoundCopy::new(
+                        octo_core::models::download::AcquisitionCandidate {
+                            source: "Soulseek".into(),
+                            peer: Some("peer1".into()),
+                            file: Some("03 Teardrop.flac".into()),
+                            folder: Some("Mezzanine".into()),
+                            format: Some("flac".into()),
+                            bit_depth: Some(16),
+                            sample_rate: Some(44100),
+                            size: Some(40_000_000),
+                            length: Some(331),
+                            rank: Some(1),
+                            title: Some("Teardrop".into()),
+                            album: Some("Mezzanine".into()),
+                            ..Default::default()
+                        },
+                        PickedCopy {
+                            source: "Soulseek".into(),
+                            peer: Some("peer1".into()),
+                            file: Some(r"Music\Mezzanine\03 Teardrop.flac".into()),
+                            size: 40_000_000,
+                            format: Some("flac".into()),
+                            ..Default::default()
+                        },
+                    )],
+                    vec!["Massive Attack Teardrop".to_string()],
+                    Some("1 file from 1 peer; 1 fits the song".to_string()),
+                ))
+            }
+            .boxed()
+        });
+    });
+
+    let started = get(
+        &t.app,
+        &format!("/rest/findSongs.view?{}&id={id}", acq_auth("alice")),
+    )
+    .await
+    .envelope();
+    let look = &started["foundSongs"];
+    let search = look["id"].as_str().expect("an id").to_string();
+    assert_eq!(look["song"]["title"], "Teardrop");
+    assert_eq!(look["song"]["coverArt"], id.as_str());
+    finder.wait(&search, std::time::Duration::from_secs(10)).await;
+
+    let done = get(
+        &t.app,
+        &format!("/rest/getFoundSongs.view?{}&search={search}", acq_auth("alice")),
+    )
+    .await
+    .envelope();
+    let found = &done["foundSongs"];
+    assert_eq!(found["state"], "done");
+    let sources: std::collections::HashMap<String, String> = found["source"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap_or("").to_string(),
+                s["state"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(sources["Soulseek"], "done");
+    assert_eq!(sources["Lidarr"], "off");
+    let copies = found["candidate"].as_array().expect("copies");
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["index"], 0);
+    let copy_id = copies[0]["id"].as_str().expect("a copy id").to_string();
+    assert!(!copy_id.is_empty());
+    assert_eq!(copies[0]["album"], "Mezzanine");
+
+    // Bob cannot read or pick alice's look.
+    let bobs = get(
+        &t.app,
+        &format!("/rest/getFoundSongs.view?{}&search={search}", acq_auth("bob")),
+    )
+    .await
+    .envelope();
+    assert_eq!(bobs["status"], "failed");
+
+    let picked = get(
+        &t.app,
+        &format!(
+            "/rest/pickFoundSong.view?{}&search={search}&copy={copy_id}",
+            acq_auth("alice")
+        ),
+    )
+    .await
+    .envelope();
+    let pick = &picked["pick"];
+    assert_eq!(pick["state"], "queued");
+    assert_eq!(pick["key"], format!("soulseek:{id}"));
+
+    // The download waits in the queue (no worker runs here) with the pick pinned to it.
+    assert!(t.state.download_picks.has(&id));
+    let rows = t.state.acquisition_tracker.for_user("alice");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, "pick");
+    assert_eq!(rows[0].note.as_deref(), Some("Getting FLAC from peer1"));
+}
+
+#[tokio::test]
+async fn find_songs_an_unknown_id_is_not_found() {
+    use futures::FutureExt;
+
+    let t = AcquisitionApp::new(|_| {}).await;
+    t.state
+        .song_finder
+        .seams(|seams| seams.resolve = std::sync::Arc::new(|_, _| async { None }.boxed()));
+
+    let envelope = get(
+        &t.app,
+        &format!("/rest/findSongs.view?{}&id=nope", acq_auth("alice")),
+    )
+    .await
+    .envelope();
+
+    assert_eq!(envelope["error"]["code"], 70);
 }
 
 // `AdminAcquisitions_ListsEveryonesRowsWithWhoAsked` drives `/api/admin/acquisitions`
@@ -1172,10 +1442,12 @@ async fn upgrade_is_queued_at_once_and_listed_for_the_caller_first() {
     assert_eq!(
         sorted_keys(&rows[0]),
         [
+            "acquisition",
             "album",
             "artist",
             "detail",
             "id",
+            "picked",
             "progress",
             "state",
             "title",

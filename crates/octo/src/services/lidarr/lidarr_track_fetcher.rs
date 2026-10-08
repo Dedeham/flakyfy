@@ -122,6 +122,17 @@ impl LidarrTrackFetcher {
         *self.inner.poll.lock() = poll;
     }
 
+    /// The album a song is on, found as a fetch finds it: from the original's own release group
+    /// tag, then by its album name, then the studio album MusicBrainz files the song under. Find
+    /// songs lists that album's releases.
+    pub async fn find_album(
+        &self,
+        request: &LidarrTrackRequest,
+        ct: &CancellationToken,
+    ) -> Result<Option<LidarrAlbumCandidate>, LidarrError> {
+        self.inner.find_album(request, ct).await
+    }
+
     /// How many fetches share the album's search now, for tests that start two.
     #[cfg(test)]
     pub(crate) fn users_of(&self, foreign_album_id: &str) -> usize {

@@ -946,7 +946,7 @@ mod cover_keep {
         }
     }
 
-    /// The one cover line the downloads log would show (STUB(D): read from the service).
+    /// The one cover line the downloads log shows, read back from the service.
     fn cover_line(harness: &Harness) -> (String, Option<String>) {
         let steps = harness.service.cover_steps.lock();
         assert_eq!(steps.len(), 1, "{steps:?}");

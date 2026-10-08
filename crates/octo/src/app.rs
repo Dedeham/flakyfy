@@ -37,9 +37,10 @@ use crate::services::admin::{
 };
 use crate::services::common::{
     AcquisitionActivity, AcquisitionTracker, AcquisitionWorker, CacheCleanupService, CatalogBlanks,
-    DownloadConcurrency, DownloadCore, DownloadServices, ExternalSearchService, HeartAcquisitionCoordinator,
-    HeartCoordinatorExtras, MeterPreview, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome,
-    StarOnArrival, TrackAcquisitionQueue, TrackerServices,
+    DownloadConcurrency, DownloadCore, DownloadLogKeeper, DownloadPicks, DownloadServices,
+    ExternalSearchService, HeartAcquisitionCoordinator, HeartCoordinatorExtras, MeterPreview, SongFinder,
+    SongFinderServices, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome, StarOnArrival,
+    TrackAcquisitionQueue, TrackerServices,
 };
 use crate::services::cover_art::{
     AlbumCoverFinder, CoverArtAggregator, CoverArtArchiveLookup, CoverUpgradeJournal, CoverUpgradeServices,
@@ -88,7 +89,7 @@ use crate::services::lidarr::{
     ILidarrHeartAcquisitionService, ILidarrTrackFetcher, LidarrAlbumClaims, LidarrClient,
     LidarrHeartAcquisitionService, LidarrHeartExtras, LidarrImportHandoff, LidarrTrackFetcher,
 };
-use crate::services::listen_brainz::ListenBrainzService;
+use crate::services::listen_brainz::{ListenBrainzRadioClient, ListenBrainzService};
 use crate::services::local::DownloadHistoryService;
 use crate::services::local::{ILocalLibraryService, LocalLibraryService};
 use crate::services::lyrics::{
@@ -100,6 +101,13 @@ use crate::services::metadata::{
 };
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
+use crate::services::radio::{
+    IRadioSource, LastFmRadioSource, ListenBrainzRadioSource, RadioOutcomeStore, RadioSourceSet,
+    SongRadioService, SoundsAlikeRadioSource, YouTubeMusicRadioSource,
+};
+use crate::services::sonic::{
+    ISonicClient, NavidromeSonicLibrary, SonicAnalysisWorker, SonicClient, SonicStore,
+};
 use crate::services::soulseek::soulseek_download_service::{SoulseekDownloadParts, SoulseekDownloadService};
 use crate::services::soulseek::soulseek_metadata_service::LastFmTrackLengths;
 use crate::services::soulseek::{
@@ -117,7 +125,7 @@ use crate::services::updates::UpdateHost;
 use crate::services::validation::{
     IStartupValidator, StartupValidationOrchestrator, SubsonicStartupValidator,
 };
-use crate::services::you_tube::YouTubeResolver;
+use crate::services::you_tube::{YouTubeMusicClient, YouTubeResolver};
 use crate::workers::WorkerSupervisor;
 
 /// Cheap to clone; handlers and workers receive it by value.
@@ -249,6 +257,8 @@ pub struct AppInner {
     pub download_history: Arc<DownloadHistoryService>,
     /// `DownloadConcurrency`: how many downloads transfer at once.
     pub download_concurrency: Arc<DownloadConcurrency>,
+    /// `DownloadPicks`: copies picked in Find songs, waiting for their download.
+    pub download_picks: Arc<DownloadPicks>,
     /// `SoulseekHoldStore`: hearts waiting out a Soulseek outage, `soulseek-holds.json`.
     pub soulseek_holds: Arc<SoulseekHoldStore>,
     /// `YouTubeResolver`: the yt-dlp shim client (its address captured at startup).
@@ -332,6 +342,8 @@ pub struct AppInner {
     pub acquisition_activity: Arc<AcquisitionActivity>,
     /// `AcquisitionTracker(logger, sp)`: where each hearted download has got to, in memory.
     pub acquisition_tracker: Arc<AcquisitionTracker>,
+    /// `SongFinder`: Find songs, a song's search run again by hand and a copy picked from it.
+    pub song_finder: Arc<SongFinder>,
     /// `StarOnArrival`, built eagerly as `Program.cs` resolved it after `Build()`, so it is
     /// listening when the first download finishes.
     pub star_on_arrival: Arc<StarOnArrival>,
@@ -367,6 +379,18 @@ pub struct AppInner {
     /// `LastFmRadioRefreshWorker` (hosted): the "LastFmRadioRefreshWorker" worker, and the only
     /// settings `OnChange` subscriber.
     pub last_fm_radio_refresh_worker: Arc<LastFmRadioRefreshWorker>,
+    /// `RadioSourceSet` (singleton): every radio source (`IRadioSource`), asked together.
+    pub radio_sources: Arc<RadioSourceSet>,
+    /// `SongRadioService` (scoped in C#): getSimilarSongs over the sources; each request hands it
+    /// its own resolver.
+    pub song_radio: Arc<SongRadioService>,
+    /// `RadioOutcomeStore`: what radio learns from listening, `radio-outcomes.json`. Its flush on
+    /// the way out (`ApplicationStopping.Register`) is the "RadioOutcomeStore" worker.
+    pub radio_outcomes: Arc<RadioOutcomeStore>,
+    /// `SonicStore`: what every library song sounds like, `sonic-features.json`.
+    pub sonic_store: Arc<SonicStore>,
+    /// `SonicAnalysisWorker`, singleton AND hosted: the "SonicAnalysisWorker" worker.
+    pub sonic_worker: Arc<SonicAnalysisWorker>,
     /// `GeneratedPlaylistService`: the genre and decade mixes, `generated-playlists.json`.
     pub generated_playlists: Arc<GeneratedPlaylistService>,
     /// `AddSingleton<SyncCatalogService>()`: the discovery catalog appended to a syncing
@@ -425,6 +449,10 @@ pub struct AppInner {
     /// `LibraryEditService` (singleton): the apps' Library health fixes, tags written in place,
     /// albums joined, covers added, and a removed song put back.
     pub library_edits: Arc<LibraryEditService>,
+    /// `ImportService`, singleton AND hosted, over the import stores (`imports.json`,
+    /// `imports-trickle.json`, `spotify-accounts.json`), the Spotify sign-in and the trickle
+    /// (`TrickleWorker`, also hosted): the "ImportService" and "TrickleWorker" workers.
+    pub imports: Arc<crate::services::imports::ImportService>,
 }
 
 /// The apps' Library health fixes (`Program.cs`, 374dac8): the rescan and the edit service, over
@@ -535,6 +563,7 @@ struct Acquisition {
     track_acquisition_queue: Arc<TrackAcquisitionQueue>,
     acquisition_activity: Arc<AcquisitionActivity>,
     acquisition_tracker: Arc<AcquisitionTracker>,
+    song_finder: Arc<SongFinder>,
     star_on_arrival: Arc<StarOnArrival>,
     upgrade_queue: Arc<UpgradeQueue>,
     upgrade_sources: Arc<UpgradeSources>,
@@ -566,6 +595,10 @@ impl Acquisition {
             }),
             Clock::system(),
         ));
+        // A download's lyrics look reports to its row in the downloads log, and each finished
+        // download's log is saved with its fetched-songs entry, for the dashboard.
+        downloads.lyrics.set_tracker(acquisition_tracker.clone());
+        DownloadLogKeeper::attach(&acquisition_tracker, stores.download_history.clone());
         let star_on_arrival = StarOnArrival::new(
             acquisition_tracker.clone(),
             Some(StarNavidrome {
@@ -593,21 +626,22 @@ impl Acquisition {
         let lidarr_client = Arc::new(LidarrClient::new(settings.clone()));
         let lidarr_album_claims = Arc::new(LidarrAlbumClaims::new());
         let lidarr_import_handoff = Arc::new(LidarrImportHandoff::new());
-        let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = Arc::new(LidarrTrackFetcher::new(
+        let lidarr_fetcher = Arc::new(LidarrTrackFetcher::new(
             lidarr_client.clone(),
             settings.clone(),
             navidrome.navidrome_identity.clone(),
             lidarr_album_claims.clone(),
             Some(clients.music_brainz.clone()),
         ));
+        let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = lidarr_fetcher.clone();
 
         // The download service (4-C): the base's service-provider lookups are the services built
         // above, and the Soulseek backend's optional ones the link and Lidarr's two.
         // A handler test may swap in its own (the C# factories replaced the registration).
-        let download_service: Arc<dyn IDownloadService> = match download_service {
-            Some(fake) => fake,
+        let (download_service, soulseek_backend): (Arc<dyn IDownloadService>, _) = match download_service {
+            Some(fake) => (fake, None),
             None => {
-                let (download_base, _) = SoulseekDownloadService::build(
+                let (download_base, backend) = SoulseekDownloadService::build(
                     DownloadCore {
                         settings: settings.clone(),
                         local_library: navidrome.local_library.clone(),
@@ -633,6 +667,7 @@ impl Acquisition {
                         cover_resolver: Some(downloads.tagging.download_cover_resolver.clone()),
                         lyrics: Some(downloads.lyrics.clone()),
                         last_fm: Some(integrations.last_fm.clone()),
+                        picks: Some(stores.download_picks.clone()),
                     },
                     SoulseekDownloadParts {
                         slskd: downloads.soulseek_client.clone(),
@@ -645,7 +680,7 @@ impl Acquisition {
                         lidarr_fetcher: Some(lidarr_track_fetcher.clone()),
                     },
                 );
-                download_base
+                (download_base as Arc<dyn IDownloadService>, Some(backend))
             }
         };
         acquisition_activity.set_downloads(&download_service);
@@ -685,12 +720,28 @@ impl Acquisition {
             HeartCoordinatorExtras {
                 tracker: Some(acquisition_tracker.clone()),
                 id_registry: Some(stores.external_id_registry.clone()),
-                soulseek: Some(soulseek_link),
+                soulseek: Some(soulseek_link.clone()),
                 holds: Some(stores.soulseek_holds.clone()),
                 owned: Some(heart_ownership.clone()),
                 stars: Some(star_on_arrival.clone()),
             },
         );
+        let song_finder = Arc::new(SongFinder::new(SongFinderServices {
+            settings: Some(settings.clone()),
+            upgrade_queue: Some(upgrade_queue.clone()),
+            upgrade_sources: Some(upgrade_sources.clone()),
+            executor: true,
+            tracker: Some(acquisition_tracker.clone()),
+            acquisitions: Some(track_acquisition_queue.clone()),
+            picks: Some(stores.download_picks.clone()),
+            local_library: Some(navidrome.local_library.clone()),
+            id_registry: Some(stores.external_id_registry.clone()),
+            resolver: Some(navidrome.navidrome_song_path_resolver.clone()),
+            soulseek: soulseek_backend,
+            soulseek_link: Some(soulseek_link.clone()),
+            lidarr_fetcher: Some(lidarr_fetcher),
+            lidarr_client: Some(lidarr_client.clone()),
+        }));
         let external_search = Arc::new(ExternalSearchService::new(
             music_metadata,
             Some(integrations.last_fm.clone()),
@@ -706,6 +757,7 @@ impl Acquisition {
             track_acquisition_queue,
             acquisition_activity,
             acquisition_tracker,
+            song_finder,
             star_on_arrival,
             upgrade_queue,
             upgrade_sources,
@@ -882,6 +934,7 @@ impl AdminSignIn {
 struct Stores {
     download_history: Arc<DownloadHistoryService>,
     download_concurrency: Arc<DownloadConcurrency>,
+    download_picks: Arc<DownloadPicks>,
     soulseek_holds: Arc<SoulseekHoldStore>,
     you_tube_resolver: Arc<YouTubeResolver>,
     external_id_registry: Arc<ExternalIdRegistry>,
@@ -921,6 +974,7 @@ impl Stores {
                 config_dir.join("downloads-history.json"),
             )),
             download_concurrency: Arc::new(DownloadConcurrency::new(settings.clone())),
+            download_picks: Arc::new(DownloadPicks::default()),
             soulseek_holds: Arc::new(SoulseekHoldStore::new(Some(
                 config_dir.join("soulseek-holds.json"),
             ))),
@@ -1274,6 +1328,73 @@ impl GenreAndCoverJobs {
 }
 
 /// The Soulseek services of task 4-A, over the stores and clients they read.
+/// The Spotify import (group H): `Program.cs`'s Imports block.
+struct Imports {
+    service: Arc<crate::services::imports::ImportService>,
+    trickle: Arc<crate::services::imports::TrickleWorker>,
+}
+
+impl Imports {
+    /// `config_dir`: where the three files live; None keeps them in memory, as the endpoint
+    /// tests built them.
+    fn build(
+        settings: &Arc<SettingsStore>,
+        config_dir: Option<&Path>,
+        stores: &Stores,
+        navidrome: &NavidromeServices,
+        acquisition: &Acquisition,
+        soulseek_link: Arc<dyn ISoulseekLink>,
+    ) -> Imports {
+        use crate::services::imports::{
+            ImportMatcher, ImportParts, ImportPlaylists, ImportService, ImportStore, NavidromePlaylists,
+            SpotifyAccountStore, SpotifyAuth, SpotifyLinkReader, SpotifyWebApi, TrickleQueue,
+            TrickleServices, TrickleWorker,
+        };
+        let file = |name: &str| config_dir.map(|dir| dir.join(name));
+        let queue = Arc::new(TrickleQueue::new(file("imports-trickle.json")));
+        let trickle = TrickleWorker::wired(
+            queue.clone(),
+            settings.clone(),
+            TrickleServices {
+                owned: acquisition.library_ownership.clone(),
+                ids: stores.external_id_registry.clone(),
+                hearts: acquisition.heart_acquisition_coordinator.clone(),
+                downloads: acquisition.track_acquisition_queue.clone(),
+                tracker: acquisition.acquisition_tracker.clone(),
+                soulseek: soulseek_link,
+            },
+        );
+        let service = ImportService::new(ImportParts {
+            store: Arc::new(ImportStore::new(file("imports.json"))),
+            queue,
+            trickle: trickle.clone(),
+            matcher: Arc::new(ImportMatcher::new(navidrome.navidrome_playlist_api.clone())),
+            playlists: ImportPlaylists::new(Arc::new(NavidromePlaylists {
+                api: navidrome.navidrome_playlist_api.clone(),
+                identity: navidrome.navidrome_identity.clone(),
+            })),
+            auth: Arc::new(SpotifyAuth::default()),
+            accounts: Arc::new(SpotifyAccountStore::new(file("spotify-accounts.json"))),
+            spotify: Arc::new(SpotifyWebApi::new(SpotifyWebApi::client())),
+            links: Arc::new(SpotifyLinkReader::new(SpotifyLinkReader::client())),
+            settings: settings.clone(),
+            tracker: Some(acquisition.acquisition_tracker.clone()),
+        });
+        Imports { service, trickle }
+    }
+
+    fn register_workers(&self, workers: &WorkerSupervisor) {
+        let trickle = self.trickle.clone();
+        workers.register("TrickleWorker", move |stopping| {
+            trickle.clone().run_loop(stopping)
+        });
+        let service = self.service.clone();
+        workers.register("ImportService", move |stopping| {
+            service.clone().run_loop(stopping)
+        });
+    }
+}
+
 struct SoulseekServices {
     client: SoulseekClient,
     link: Arc<SoulseekLink>,
@@ -1331,6 +1452,11 @@ struct Radio {
     warmup: Arc<LastFmRadioWarmupService>,
     refresh_worker: Arc<LastFmRadioRefreshWorker>,
     generated_playlists: Arc<GeneratedPlaylistService>,
+    sources: Arc<RadioSourceSet>,
+    song_radio: Arc<SongRadioService>,
+    outcomes: Arc<RadioOutcomeStore>,
+    sonic_store: Arc<SonicStore>,
+    sonic_worker: Arc<SonicAnalysisWorker>,
 }
 
 impl Radio {
@@ -1344,7 +1470,65 @@ impl Radio {
         downloads: Arc<dyn IDownloadService>,
         overrides: &TestServices,
         deezer: &Arc<DeezerMetadataService>,
+        acquisition: &Acquisition,
     ) -> Radio {
+        // Where radio's state files go: Octo:StateDirectory when set (tests point it at their own
+        // folder), else beside the settings.
+        let state_dir = settings
+            .raw("Octo:StateDirectory")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| config_dir.to_path_buf());
+        // What radio learns from listening: which source's songs each listener plays through or
+        // skips.
+        let outcomes = Arc::new(RadioOutcomeStore::new(
+            state_dir.join("radio-outcomes.json"),
+            settings.clone(),
+        ));
+        // Sounds alike (multi-source radio): what every library song sounds like, from octo-sonic.
+        let sonic_store = Arc::new(SonicStore::new(state_dir.join("sonic-features.json")));
+        let sonic_client: Arc<dyn ISonicClient> = overrides
+            .sonic_client
+            .clone()
+            .unwrap_or_else(|| Arc::new(SonicClient::new(settings.clone())));
+        let sonic_worker = SonicAnalysisWorker::new(
+            sonic_store.clone(),
+            sonic_client,
+            Arc::new(NavidromeSonicLibrary::new(
+                navidrome.navidrome_playlist_api.clone(),
+                navidrome.navidrome_song_path_resolver.clone(),
+            )),
+            acquisition.acquisition_activity.clone(),
+            settings.clone(),
+            Some(&acquisition.acquisition_tracker),
+            Clock::system(),
+        );
+        // Radio's suggestion sources, asked together and blended (multi-source radio).
+        let listen_brainz = Arc::new(match &overrides.listen_brainz_radio_urls {
+            Some((labs, api)) => ListenBrainzRadioClient::with_urls(settings.clone(), labs, api)
+                .with_pacing(std::time::Duration::ZERO, ListenBrainzRadioClient::MAX_QUEUE_WAIT),
+            None => ListenBrainzRadioClient::new(settings.clone()),
+        });
+        let source_list: Vec<Arc<dyn IRadioSource>> = vec![
+            Arc::new(LastFmRadioSource::new(integrations.last_fm.clone())),
+            Arc::new(YouTubeMusicRadioSource::new(
+                Arc::new(YouTubeMusicClient::new(settings)),
+                settings.clone(),
+            )),
+            Arc::new(ListenBrainzRadioSource::new(listen_brainz, settings.clone())),
+            Arc::new(SoundsAlikeRadioSource::new(sonic_store.clone(), settings.clone())),
+        ];
+        let sources = Arc::new(RadioSourceSet::new(
+            source_list,
+            settings.clone(),
+            Some(outcomes.clone()),
+        ));
+        let song_radio = Arc::new(SongRadioService::new(
+            sources.clone(),
+            settings.clone(),
+            Some(sonic_store.clone()),
+            Some(outcomes.clone()),
+        ));
         let state = Arc::new(LastFmRadioStateStore::new(
             config_dir.join("lastfm-radio-state.json"),
             settings.clone(),
@@ -1360,6 +1544,7 @@ impl Radio {
             integrations.last_fm.clone(),
             state.clone(),
             settings.clone(),
+            Some(sources.clone()),
         ));
         let streams = LastFmRadioStreamService::new(LastFmRadioStreamServiceParts {
             state: state.clone(),
@@ -1419,6 +1604,11 @@ impl Radio {
             warmup,
             refresh_worker,
             generated_playlists,
+            sources,
+            song_radio,
+            outcomes,
+            sonic_store,
+            sonic_worker,
         }
     }
 
@@ -1432,6 +1622,12 @@ impl Radio {
         let refresh = self.refresh_worker.clone();
         workers.register("LastFmRadioRefreshWorker", move |stopping| {
             refresh.clone().run(stopping)
+        });
+        let sonic = self.sonic_worker.clone();
+        workers.register("SonicAnalysisWorker", move |stopping| sonic.clone().run(stopping));
+        let outcomes = self.outcomes.clone();
+        workers.register("RadioOutcomeStore", move |stopping| {
+            outcomes.clone().run_flusher(stopping)
         });
     }
 }
@@ -1538,6 +1734,10 @@ pub struct TestServices {
     pub library_snapshot: Option<Arc<LibrarySnapshot>>,
     /// `IAlbumCoverFinder` as the library edits ask it (the C# `FixedFinder`).
     pub album_cover_finder: Option<Arc<dyn IAlbumCoverFinder>>,
+    /// octo-sonic (a fake sidecar).
+    pub sonic_client: Option<Arc<dyn ISonicClient>>,
+    /// Where `ListenBrainzRadioClient` sends its labs and API calls, unpaced.
+    pub listen_brainz_radio_urls: Option<(String, String)>,
     /// `Admin:SignIn`. None runs the test with the sign-in off, as the C# suite's
     /// `TestDefaults` did for every web test written before the sign-in (they test what an
     /// endpoint does, not who may call it); the sign-in tests set it.
@@ -1577,6 +1777,7 @@ impl LibraryJobs {
                 attempts: Some(stores.quality_upgrade_store.clone()),
                 settings: Some(settings.clone()),
                 sources: Some(acquisition.upgrade_sources.clone()),
+                picks: Some(stores.download_picks.clone()),
             },
         ));
         let quality_upgrade_worker = Arc::new(QualityUpgradeWorker::new(
@@ -1771,6 +1972,7 @@ impl AppState {
             acquisition.download_service.clone(),
             &TestServices::default(),
             &clients.deezer_metadata,
+            &acquisition,
         );
         radio.register_workers(&workers);
         let sync_catalog = Arc::new(SyncCatalogService::new(
@@ -1802,6 +2004,15 @@ impl AppState {
             &tagging,
             genre_cover_jobs.album_cover_finder.clone(),
         );
+        let imports = Imports::build(
+            &settings,
+            Some(&config_dir),
+            &stores,
+            &navidrome,
+            &acquisition,
+            soulseek.link.clone(),
+        );
+        imports.register_workers(&workers);
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1826,6 +2037,7 @@ impl AppState {
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,
+            download_picks: stores.download_picks,
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
@@ -1883,6 +2095,7 @@ impl AppState {
             track_acquisition_queue: acquisition.track_acquisition_queue,
             acquisition_activity: acquisition.acquisition_activity,
             acquisition_tracker: acquisition.acquisition_tracker,
+            song_finder: acquisition.song_finder,
             star_on_arrival: acquisition.star_on_arrival,
             upgrade_queue: acquisition.upgrade_queue,
             upgrade_sources: acquisition.upgrade_sources,
@@ -1898,6 +2111,11 @@ impl AppState {
             last_fm_radio_streams: radio.streams,
             last_fm_radio_warmup: radio.warmup,
             last_fm_radio_refresh_worker: radio.refresh_worker,
+            radio_sources: radio.sources,
+            song_radio: radio.song_radio,
+            radio_outcomes: radio.outcomes,
+            sonic_store: radio.sonic_store,
+            sonic_worker: radio.sonic_worker,
             generated_playlists: radio.generated_playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
@@ -1922,6 +2140,7 @@ impl AppState {
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
+            imports: imports.service,
         };
         AppState {
             inner: Arc::new(inner),
@@ -2030,6 +2249,7 @@ impl AppState {
             acquisition.download_service.clone(),
             &overrides,
             &clients.deezer_metadata,
+            &acquisition,
         );
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
@@ -2065,6 +2285,15 @@ impl AppState {
                 .clone()
                 .unwrap_or_else(|| genre_cover_jobs.album_cover_finder.clone()),
         );
+        // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
+        let imports = Imports::build(
+            &settings,
+            None,
+            &stores,
+            &navidrome,
+            &acquisition,
+            soulseek.link.clone(),
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2089,6 +2318,7 @@ impl AppState {
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,
+            download_picks: stores.download_picks,
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
@@ -2146,6 +2376,7 @@ impl AppState {
             track_acquisition_queue: acquisition.track_acquisition_queue,
             acquisition_activity: acquisition.acquisition_activity,
             acquisition_tracker: acquisition.acquisition_tracker,
+            song_finder: acquisition.song_finder,
             star_on_arrival: acquisition.star_on_arrival,
             upgrade_queue: acquisition.upgrade_queue,
             upgrade_sources: acquisition.upgrade_sources,
@@ -2161,6 +2392,11 @@ impl AppState {
             last_fm_radio_streams: radio.streams,
             last_fm_radio_warmup: radio.warmup,
             last_fm_radio_refresh_worker: radio.refresh_worker,
+            radio_sources: radio.sources,
+            song_radio: radio.song_radio,
+            radio_outcomes: radio.outcomes,
+            sonic_store: radio.sonic_store,
+            sonic_worker: radio.sonic_worker,
             generated_playlists: radio.generated_playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
@@ -2185,6 +2421,7 @@ impl AppState {
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
+            imports: imports.service,
         };
         AppState {
             inner: Arc::new(inner),
@@ -2356,7 +2593,12 @@ mod tests {
     async fn the_radio_is_wired_as_program_cs_registered_it() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
-        for name in ["LastFmRadioWarmupService", "LastFmRadioRefreshWorker"] {
+        for name in [
+            "LastFmRadioWarmupService",
+            "LastFmRadioRefreshWorker",
+            "SonicAnalysisWorker",
+            "RadioOutcomeStore",
+        ] {
             assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
         }
 
@@ -2372,6 +2614,11 @@ mod tests {
                 .ends_with("lastfm-radio-state.json")
         );
         assert!(state.generated_playlists.find("alice", "og1").is_none());
+        // Radio's other state files sit beside the radio state, and every source has a weight.
+        assert!(state.radio_outcomes.path().ends_with("radio-outcomes.json"));
+        assert!(state.sonic_store.path().ends_with("sonic-features.json"));
+        assert_eq!(state.sonic_worker.status().state, "Waiting");
+        assert_eq!(state.radio_sources.weights(None, false).len(), 5);
         let token = state
             .last_fm_radio_stream_sessions
             .issue("alice", "or1", [("u", "alice")], None);

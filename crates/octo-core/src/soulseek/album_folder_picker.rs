@@ -7,6 +7,7 @@ use regex::Regex;
 
 use crate::common::dotnet::{is_digit_utf16, utf16_class_view};
 use crate::common::song_identity::SongIdentity;
+use crate::common::version_variant;
 use crate::soulseek::soulseek_client::SoulseekFileHit;
 use crate::soulseek::soulseek_download_service::{
     adds_version, duration_plausible, filename_plausibly_matches_title, quality_penalty,
@@ -50,7 +51,8 @@ pub struct AlbumFolderChoice {
 /// batch instead of a search, a peer and a queue per song.
 ///
 /// Every check a song's own search makes applies to each file here too: the title as a phrase in
-/// the file name, a length within the window, no version the track did not ask for. On top of that
+/// the file name, a length within the window, no version the track did not ask for and none it
+/// asked for missing. On top of that
 /// a file's leading track number counts, and matching is global rather than in track order, so
 /// "Hold On" never takes "Hold On, We're Going Home" when both are on the record.
 pub struct AlbumFolderPicker;
@@ -198,7 +200,7 @@ impl AlbumFolderPicker {
     /// each track and each file once. Score: the title exactly (0) or only as a phrase (3); the
     /// file's leading number equal to the track's (0), missing (1) or different (4); plus the length
     /// difference in seconds.
-    fn match_files<'a>(
+    pub fn match_files<'a>(
         tracks: &[&'a AlbumTrack],
         files: &[&'a SoulseekFileHit],
     ) -> Vec<(&'a AlbumTrack, &'a SoulseekFileHit)> {
@@ -212,7 +214,10 @@ impl AlbumFolderPicker {
                 if !duration_plausible(file.length, track.duration, false) {
                     continue;
                 }
-                if adds_version(&file.filename, &track.title) {
+                if adds_version(&file.filename, &track.title, None) {
+                    continue;
+                }
+                if version_variant::lacks_requested(&file.filename, Some(&track.title), None) {
                     continue;
                 }
                 let normalized = file.filename.replace('\\', "/");

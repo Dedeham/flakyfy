@@ -118,6 +118,7 @@ impl HeartOwnership {
                 album: Some(song.album.clone()),
                 suffix: Some(owned.suffix.clone()),
                 attempt_key: None,
+                pick: None,
             }],
             requested_by.unwrap_or_default(),
             "heart",

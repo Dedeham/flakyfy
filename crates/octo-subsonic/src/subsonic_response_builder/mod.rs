@@ -49,26 +49,39 @@ pub type Fields = Map<String, Value>;
 pub const SUBSONIC_NAMESPACE: &str = "http://subsonic.org/restapi";
 pub const SUBSONIC_VERSION: &str = "1.16.1";
 
-/// The OpenSubsonic extension a client checks for before it asks for getAcquisitions.
+/// The OpenSubsonic extension a client checks for before it asks for getAcquisitions. Version 2
+/// adds each row's log (getAcquisition), clearing finished rows (clearAcquisitions) and Find
+/// songs (findSongs, getFoundSongs, pickFoundSong).
 pub const ACQUISITIONS_EXTENSION: &str = "octoAcquisitions";
-pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 1;
+pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 2;
 
 /// The extensions Octo answers itself, with their versions. songLyrics is here because Octo
 /// answers getLyricsBySongId for every song, and for the ones it answers itself it honors
 /// enhanced=true (version 2) with word cues; a Navidrome that lists fewer versions has them
 /// added, never removed.
 pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
-    (ACQUISITIONS_EXTENSION, &[ACQUISITIONS_EXTENSION_VERSION]),
+    (ACQUISITIONS_EXTENSION, &[1, ACQUISITIONS_EXTENSION_VERSION]),
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
     (
         LIBRARY_ACTIONS_EXTENSION,
         &[1, 2, LIBRARY_ACTIONS_EXTENSION_VERSION],
     ),
     ("songLyrics", &[1, 2]),
-    // The other groups' extensions (octoTopSongs, octoImports, octoRadioSources) come before
-    // this one, as the C# lists them, when those groups land.
+    // octoTopSongs (group G) comes before octoImports, as the C# lists it, when that group lands.
+    (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
+    (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
+
+/// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
+/// getImport, importAction).
+pub const IMPORTS_EXTENSION: &str = "octoImports";
+pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
+
+/// Octo's radio answers name the source of each song (`octoSuggestedBy`): Last.fm, YouTube
+/// Music, ListenBrainz, Sounds alike or Your library.
+pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
+pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
 /// octoLists v1 (f54467a): Made for you (New Releases, Rediscover, Deep Cuts) are read-only
 /// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
@@ -506,15 +519,38 @@ impl SubsonicResponseBuilder {
         lyrics_choices: bool,
         library_actions: bool,
     ) -> SubsonicReply {
+        self.merge_open_subsonic_extensions_with(
+            format,
+            upstream,
+            content_type,
+            lyrics_choices,
+            library_actions,
+            false,
+        )
+    }
+
+    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoRadioSources
+    /// listed while radio can answer (`radio_sources`; the C# default was false).
+    pub fn merge_open_subsonic_extensions_with(
+        &self,
+        format: &str,
+        upstream: Option<&[u8]>,
+        content_type: Option<&str>,
+        lyrics_choices: bool,
+        library_actions: bool,
+        radio_sources: bool,
+    ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
         // "choose lyrics" that can only answer that lookups are off. octoLibraryActions is only
-        // listed while library actions are on, for the same reason.
+        // listed while library actions are on, and octoRadioSources while radio can answer, for the
+        // same reason.
         let own: Vec<(&str, &[i32])> = OWN_EXTENSIONS
             .iter()
             .copied()
             .filter(|(name, _)| lyrics_choices || *name != LYRICS_EXTENSION)
             .filter(|(name, _)| library_actions || *name != LIBRARY_ACTIONS_EXTENSION)
+            .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {
@@ -737,6 +773,10 @@ impl SubsonicResponseBuilder {
 
         if let Some(year) = song.year {
             fields.insert("year".into(), year.into());
+        }
+        // Which radio source suggested the song; only radio answers carry it (octoRadioSources).
+        if let Some(by) = song.suggested_by.as_deref().filter(|by| !by.is_empty()) {
+            fields.insert("octoSuggestedBy".into(), by.into());
         }
 
         if !song.is_local {

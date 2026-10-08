@@ -145,6 +145,8 @@ struct Options {
     soulseek: SoulseekSettings,
     loudness: Option<Loudness>,
     layout: FolderStructure,
+    /// The downloads log the download reports to, when a test reads it.
+    tracker: Option<Arc<AcquisitionTracker>>,
 }
 
 impl Default for Options {
@@ -154,6 +156,7 @@ impl Default for Options {
             soulseek: SoulseekSettings::default(),
             loudness: Some(Loudness::new(-11.5, 6.3, -0.3)),
             layout: FolderStructure::Flat,
+            tracker: None,
         }
     }
 }
@@ -186,6 +189,7 @@ async fn build_with(songs: Vec<(&str, Song)>, server: MockServer, options: Optio
         deezer: Some(deezer),
         music_brainz: Some(music_brainz),
         loudness_meter: Some(Arc::clone(&meter) as Arc<dyn ILoudnessMeter>),
+        tracker: options.tracker,
         ..Default::default()
     };
     let harness = build(root.path(), settings, None, Some(catalog(songs)), services);
@@ -1179,4 +1183,134 @@ async fn a_landed_path_with_no_audio_fails_and_is_never_recorded() {
         assert!(tagging.harness.history.get_recent(50).is_empty(), "{empty_file}");
         assert!(!tagging.meter.called(), "{empty_file}");
     }
+}
+
+// ---- a file named for another format (85bba0f) ----------------------------------------------
+
+/// Every file under a folder, at any depth.
+fn files_below(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(files_below(&path));
+        } else {
+            found.push(path.to_string_lossy().into_owned());
+        }
+    }
+    found
+}
+
+/// DownloadTaggingTests.TheDownloadsLogSaysWhatCameOffThePeersTagsAndWhetherTheSongIsExplicit
+/// (02cc06b).
+#[tokio::test]
+async fn the_downloads_log_says_what_came_off_the_peers_tags_and_whether_the_song_is_explicit() {
+    let song = Song {
+        external_provider: Some("test".into()),
+        external_id: Some("1".into()),
+        ..money_trees()
+    };
+    let tracker = Arc::new(AcquisitionTracker::new(None, octo_core::common::Clock::system()));
+    let tagging = build_with(
+        vec![("1", song)],
+        serve(money_trees_routes()).await,
+        Options {
+            tracker: Some(tracker.clone()),
+            ..Options::default()
+        },
+    )
+    .await;
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |_, _| {
+        landed_flac(&root, "peer share", |file| {
+            file.set_title(Some("Money Trees"));
+            file.set_performers(&["Kendrick Lamar".to_string()]);
+            tag_writer_extras::set_text(file, octo_media::tags::TagFields::ISRC, Some("USUM71210782"));
+            set_vorbis(
+                file,
+                "MUSICBRAINZ_ALBUMID",
+                "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+            );
+        })
+    });
+    tracker.begin("test", "1", None, Some("alice"), None, None, None);
+
+    tagging.download("1").await.expect("downloaded");
+
+    let log = tracker
+        .detail("test:1", Some("alice"))
+        .and_then(|row| row.events)
+        .expect("the log");
+    assert!(
+        log.iter().any(|e| e.kind == "tags"
+            && e.text == "Marked explicit"
+            && e.detail.as_deref() == Some("The catalog's match for this exact version says so")),
+        "{log:?}"
+    );
+    assert!(
+        log.iter().any(|e| e.kind == "tags"
+            && e.text == "Took off the peer's own album tags"
+            && e.detail
+                .as_deref()
+                .is_some_and(|d| d.to_uppercase().contains("MUSICBRAINZ_ALBUMID"))),
+        "{log:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_log_and_report_say_so() {
+    let song = Song {
+        external_provider: Some("test".into()),
+        external_id: Some("1".into()),
+        ..teardrop()
+    };
+    let tracker = Arc::new(AcquisitionTracker::new(None, octo_core::common::Clock::system()));
+    let tagging = build_with(
+        vec![("1", song)],
+        serve(mezzanine_routes("Mezzanine")).await,
+        Options {
+            tracker: Some(tracker.clone()),
+            ..Options::default()
+        },
+    )
+    .await;
+    tracker.begin("test", "1", None, Some("alice"), None, None, None);
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |song, _| {
+        confirm(song, confirmed_teardrop());
+        let flac = landed_flac(&root, "peer share", |_| {});
+        let misnamed = format!("{}.mp3", flac.strip_suffix(".flac").expect("a FLAC"));
+        std::fs::rename(&flac, &misnamed).expect("renamed");
+        misnamed
+    });
+
+    let path = tagging.download("1").await.expect("downloaded");
+
+    assert!(path.ends_with(".flac"), "{path}");
+    // Written as a FLAC: the tagger read it by its new name.
+    assert_eq!(vorbis(&path, "ALBUM").as_deref(), Some("Mezzanine"));
+    assert!(
+        !files_below(tagging.root())
+            .iter()
+            .any(|file| file.ends_with(".mp3")),
+        "no .mp3 left"
+    );
+    let report = tagging.last_entry().tagging.expect("a report");
+    assert!(
+        report
+            .notes
+            .contains(&"renamed from .mp3 to .flac: the file is a FLAC".to_string()),
+        "{:?}",
+        report.notes
+    );
+    let log = tracker
+        .detail("test:1", Some("alice"))
+        .and_then(|row| row.events)
+        .expect("the log");
+    assert!(
+        log.iter().any(|e| e.kind == "check"
+            && e.text == "Renamed to .flac: the file is a FLAC"
+            && e.detail.as_deref() == Some("It arrived named .mp3")),
+        "{log:?}"
+    );
 }

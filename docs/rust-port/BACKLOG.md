@@ -463,7 +463,7 @@ Rust change.
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 21 | open |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
-| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | done on `port/g-charts`, with the charts plan (parity pending) |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
@@ -603,12 +603,16 @@ writer does. What the later groups find waiting for them:
 
 ### G. Top songs, charts, Popular right now
 
-- [ ] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
-  (G2: `TopSongsService.CatalogSong` is `services::library::for_you_lists::catalog_song`, marked
-  `STUB(G)`; New Releases shares it, so `TopSongsService` calls it or replaces it there)
-- [ ] `3d5bea4` feat(top-songs): every app's getTopSongs ranked by Octo, the caller's songs as their own
-- [ ] `43d8325` feat(lists): Popular right now, the chart as a playlist in every app
-- [ ] `2397369` docs(lists): US spelling in a Popular right now comment
+Ported on `port/g-charts` together with the charts plan (`~/.claude/plans/octo-charts/PLAN.md`):
+Popular right now is one of several chart lists (Best New Songs, Trending Songs, the genre charts)
+read from Apple Music's public pages, with Deezer and Last.fm behind Popular right now.
+
+- [x] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
+  (`TopSongsService` registers its songs through `services::library::for_you_lists::catalog_song`,
+  which New Releases shares; the STUB(G) mark is gone)
+- [x] `3d5bea4` feat(top-songs): every app's getTopSongs ranked by Octo, the caller's songs as their own
+- [x] `43d8325` feat(lists): Popular right now, the chart as a playlist in every app
+- [x] `2397369` docs(lists): US spelling in a Popular right now comment
 
 ### H. Spotify import and the trickle
 
@@ -766,6 +770,12 @@ The Rust tests read the shared case files as they are.
 - [ ] `97855f1` test: two timing tests wait for what they check instead of sleeping
 
 ## Improvements we want while porting
+
+- [x] **Charts and new songs from Apple Music** (group G, `port/g-charts`; Brandon 2026-10-07).
+  Popular right now from Apple's chart (Deezer, then Last.fm, behind it), plus Best New Songs,
+  Trending Songs and genre charts as read-only playlists for every listener; `getTopChart?chart=`,
+  `getCharts`, `octoTopSongs` [1,2]; the dashboard's Charts card. Plan and Check Mode:
+  `~/.claude/plans/octo-charts/`.
 
 The port does not have to stay one to one. Each of these is a known diff with
 its reason when it changes an answer.

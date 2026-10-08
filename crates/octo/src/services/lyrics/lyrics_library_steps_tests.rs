@@ -485,6 +485,9 @@ fn entry(
         title: Some(title.to_string()),
         album: album.map(str::to_string),
         lyrics: lyrics.map(str::to_string),
+        id: None,
+        duration: None,
+        explicit_status: None,
     }
 }
 

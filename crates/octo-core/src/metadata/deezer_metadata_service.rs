@@ -118,6 +118,43 @@ pub struct AlbumDetail {
     pub explicit_content: Option<i32>,
 }
 
+/// One catalog track as the explicit lookup weighs it: who, what, how long, its code, and what
+/// the catalog says of its words (see `models::domain::explicit_status`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CatalogTrackFacts {
+    pub track_id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration: Option<i32>,
+    pub isrc: Option<String>,
+    pub explicit_content: Option<i32>,
+}
+
+/// A catalog answer: the tracks, or that the catalog did not answer this time.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CatalogTrackAnswer {
+    pub tracks: Vec<CatalogTrackFacts>,
+    pub did_not_answer: bool,
+}
+
+impl CatalogTrackAnswer {
+    pub fn found(tracks: Vec<CatalogTrackFacts>) -> Self {
+        Self {
+            tracks,
+            did_not_answer: false,
+        }
+    }
+
+    /// The catalog did not answer this time.
+    pub fn busy() -> Self {
+        Self {
+            tracks: Vec::new(),
+            did_not_answer: true,
+        }
+    }
+}
+
 /// What the catalog said when asked for an album's detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AlbumAnswer {

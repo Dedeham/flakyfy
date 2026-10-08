@@ -1686,6 +1686,11 @@ fn year_prefix(release_date: &str) -> Option<i32> {
     text.parse().ok()
 }
 
+#[path = "deezer_metadata_service_explicit.rs"]
+mod explicit;
+
+pub use explicit::DeezerExplicitCatalog;
+
 #[cfg(test)]
 #[path = "deezer_metadata_service_tests.rs"]
 mod tests;

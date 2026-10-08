@@ -177,9 +177,14 @@ pull_images() {
   done
 }
 
-# The release this folder holds, from octo.csproj.
+# The release this folder holds: the VERSION file, or octo.csproj in a folder from before it
+# (2026.10.05 and earlier, which is where an update to the Rust release starts).
 folder_version() {
-  sed -n '/<InformationalVersion>/{s:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p;q}' "$OCTO_DIR/octo/octo.csproj" 2>/dev/null || true
+  if [ -f "$OCTO_DIR/VERSION" ]; then
+    tr -d ' \r\n' < "$OCTO_DIR/VERSION"
+  else
+    sed -n '/<InformationalVersion>/{s:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p;q}' "$OCTO_DIR/octo/octo.csproj" 2>/dev/null || true
+  fi
 }
 
 describe() {

@@ -11,8 +11,8 @@ mkdir -p "$work/bin" "$work/origin-src/octo"
 failures=0
 
 # docker logs what it was asked. Its compose file is shaped like the real one: Octo and its
-# sidecars are pulled, at the tag the checked out release names (its octo.csproj version),
-# or FAKE_IMAGE_TAG (OCTO_IMAGE_TAG in .env). FAKE_REGISTRY is where they come from,
+# sidecars are pulled, at the tag the checked out release names (its VERSION file, or its
+# octo.csproj version in a release from before VERSION), or FAKE_IMAGE_TAG (OCTO_IMAGE_TAG in .env). FAKE_REGISTRY is where they come from,
 # FAKE_OCTO=build is an override that builds Octo from the folder, DOCKER_FAIL makes one
 # compose verb fail, FAKE_NO_IMAGE names services whose pull fails (no network to ghcr.io),
 # FAKE_NO_SONIC leaves octo-sonic out, and FAKE_BAD_VERSION is a release whose container
@@ -20,6 +20,10 @@ failures=0
 cat > "$work/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
+release() {
+  if [ -f "$OCTO_DIR/VERSION" ]; then tr -d ' \r\n' < "$OCTO_DIR/VERSION"
+  else sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' "$OCTO_DIR/octo/octo.csproj" | head -n 1; fi
+}
 if [ "$1" = compose ]; then
   shift
   # The global --profile flag comes before the verb.
@@ -35,7 +39,7 @@ if [ "$1" = compose ]; then
         # quoted and the shim's not, slskd someone else's image, a volume list after. The
         # -source services are in a profile that is off, so they are absent.
         r="${FAKE_REGISTRY:-ghcr.io/winters27}"
-        t="${FAKE_IMAGE_TAG:-$(sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' "$OCTO_DIR/octo/octo.csproj" | head -n 1)}"
+        t="${FAKE_IMAGE_TAG:-$(release)}"
         printf 'name: octo\nservices:\n'
         printf '  octo:\n'
         [ "${FAKE_OCTO:-pull}" = build ] && printf '    build:\n      context: %s\n' "$OCTO_DIR"
@@ -57,7 +61,7 @@ if [ "$1" = compose ]; then
   exit 0
 fi
 if [ "$1" = inspect ]; then
-  if [ -n "${FAKE_BAD_VERSION:-}" ] && grep -q "$FAKE_BAD_VERSION" "$OCTO_DIR/octo/octo.csproj"; then
+  if [ -n "${FAKE_BAD_VERSION:-}" ] && [ "$(release)" = "$FAKE_BAD_VERSION" ]; then
     echo restarting
   else
     echo "${FAKE_STATE:-running}"
@@ -69,9 +73,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$work/bin/sleep"
 chmod +x "$work/bin/"*
 export PATH="$work/bin:$PATH" FAKE_LOG="$work/docker.log"
 
-# An origin whose main is at 2026.10.01, with a newer release 2026.10.04 tagged. The newer
-# release carries a helper of its own, whose installer only says it ran (or fails, with
-# FAKE_REFRESH_FAIL), so a run can be seen reinstalling the helper.
+# An origin whose main is at 2026.10.01, with newer releases 2026.10.04 and 2026.10.06 tagged.
+# The newer releases carry a helper of their own, whose installer only says it ran (or fails,
+# with FAKE_REFRESH_FAIL), so a run can be seen reinstalling the helper. 2026.10.01 names its
+# release in octo.csproj, as 2026.10.05 and earlier did; from 2026.10.04 on it is the VERSION
+# file, and octo.csproj (the C# app kept beside the Rust one) is left behind on purpose, to show
+# it is no longer read.
 (
   cd "$work/origin-src" || exit 1
   git init -q -b main . && git config user.email test@example.com && git config user.name test
@@ -82,16 +89,17 @@ export PATH="$work/bin:$PATH" FAKE_LOG="$work/docker.log"
   printf '#!/usr/bin/env bash\necho "install-updater $*" >> "$FAKE_LOG"\n[ -z "${FAKE_REFRESH_FAIL:-}" ]\n' > scripts/updater/install-updater.sh
   echo "# the next helper" > scripts/updater/octo-updater.sh
   touch scripts/updater/octo-updater.path scripts/updater/octo-updater.service
-  version 2026.10.04 && git add -A && git update-index --chmod=+x scripts/updater/install-updater.sh \
+  echo 2026.10.04 > VERSION && git add -A && git update-index --chmod=+x scripts/updater/install-updater.sh \
     && git commit -qm two && git tag 2026.10.04
+  echo 2026.10.06 > VERSION && git commit -qam three && git tag 2026.10.06
   git reset -q --hard 2026.10.01
 ) || { echo "could not build the test origin"; exit 1; }
 git clone -q --bare "$work/origin-src" "$work/origin.git"
 
-fresh() { # a clone on main at 2026.10.01 that has not fetched 2026.10.04 yet
+fresh() { # a clone on main at 2026.10.01 that has not fetched the newer releases yet
   rm -rf "$work/octo" "$work/config"
   git clone -q "$work/origin.git" "$work/octo"
-  git -C "$work/octo" tag -d 2026.10.04 > /dev/null 2>&1 || true
+  git -C "$work/octo" tag -d 2026.10.04 2026.10.06 > /dev/null 2>&1 || true
   mkdir -p "$work/config/update"
   : > "$FAKE_LOG"
 }
@@ -204,6 +212,14 @@ expect_compose "the rollback restarts the old release" "pull octo|pull yt-dlp-sh
 
 fresh; request 2026.10.04
 FAKE_STATE=restarting check "a failed rollback says so" failed 2026.10.01 "failed too"
+
+fresh; request 2026.10.04
+check "an update from a release that names itself in octo.csproj" "done" 2026.10.04 ""
+expect "the run starts from the octo.csproj release" test "$(status_of from)" = 2026.10.01
+request 2026.10.06
+check "an update from a release with a VERSION file" "done" 2026.10.06 ""
+expect "the run starts from the VERSION release, not octo.csproj" test "$(status_of from)" = 2026.10.04
+expect "it pulls the tag the VERSION file names" grep -q 'image: ghcr.io/winters27/octo:2026.10.06' <(OCTO_DIR="$work/octo" docker compose config)
 
 fresh; request 2026.10.04
 OCTO_UPDATER_DRYRUN=1 check "a dry run changes nothing" "done" 2026.10.01 ""

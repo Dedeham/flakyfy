@@ -211,7 +211,10 @@ services:
       - octo-config:/app/config
       # Songs with planted problems that 19-health and 20-library-edits copy into the library.
       - ./fixtures/planted:/parity-planted:ro
-    mem_limit: 768m
+    # 1 GB, not 768 MB: 12-imports/cap-zip-too-big-unpacked makes the C# build hold the zip's
+    # 256 MB of text as one string, and under 768 MB (a .NET heap of about 576 MB) that ran out
+    # of memory now and then (a 500 instead of the 400).
+    mem_limit: 1g
     networks: [sandbox]
 
   # The same Octo with the dashboard sign-in off and the dashboard on a port of its own

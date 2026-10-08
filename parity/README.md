@@ -38,6 +38,9 @@ parity/lxc131.sh --only '13-*'      # some corpus files (00-setup always runs; C
 parity/lxc131.sh --bytes            # also the bytes-mode diff
 parity/lxc131.sh --rust-twice       # also Rust against Rust (the determinism gate)
 parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: C# against C#, no Rust
+parity/lxc131.sh --attach           # follow this branch's run on the box again, fetch its reports
+parity/lxc131.sh --queue            # what holds the box lock and what waits for it
+parity/lxc131.sh --selftest         # a dry run of the harness's own machinery (no build, no Docker)
 parity/lxc131.sh --clean            # remove this branch's image and folder on the box
 ```
 
@@ -59,7 +62,51 @@ and runs [`box-run.sh`](box-run.sh) there: the image (above; with `--box-build`,
 `/opt/octo-parity/cs-cache/`) and against the Rust image, then the diff. It prints the summary
 and the diffs per backlog group, and copies the full reports to
 `parity/.run/lxc131-<branch>/report.txt`. A box build takes about 8 minutes cold, the
-prebuilt image under a minute; a recording of the whole corpus 25 to 45 minutes. One run at a time: a second one waits for the first.
+prebuilt image under a minute. A recording of the whole corpus takes about 11 minutes against
+C# and 45 to 55 against Rust: about 45 of those are waits for features the port does not have
+yet, timing out (57 to 65 timed-out waits on 2026-10-08, 2,400 to 2,800 s). Starting and
+removing the stack is about 26 s of it, so keeping the stubs and Navidrome up between
+recordings would save little, and it is not done: the stubs count calls (`times`) and write
+files, and the corpus changes Navidrome's library, so every recording starts from a fresh
+stack. To spend less time on the box, rerun only the corpus files you work on (`--only`; the C#
+side is then recorded again too, about 11 minutes for the whole corpus and less for a part).
+One run at a time: a second one waits for the first.
+
+**The run is detached on the box, so it outlives the script.** `lxc131.sh` starts
+`box-run.sh --start`, which runs the box side under `setsid nohup` (its wait for the box lock
+included) and returns at once; `lxc131.sh` then follows the run's log over ssh until the run
+writes its done marker, fetches the reports and exits with `box-run.sh`'s exit status (0: the
+run went through, diffs or not; 143: it was stopped). A copy of the log lands in
+`parity/.run/lxc131-<branch>/run-<id>.log`. When the script is stopped (a background limit, a
+lost terminal), the run goes on:
+
+```sh
+parity/lxc131.sh --attach   # follow it again from the start of its log; fetches the reports at the end
+parity/lxc131.sh --queue    # who holds the box lock, for how long, and who waits behind whom
+```
+
+`--attach` works on a run that is still waiting, running or already done (then it prints the
+log and fetches the reports). A second start of a branch whose run is still going is refused
+(exit 75) with a pointer to `--attach`, and so is `--clean`. On the box each run has its files
+in `/opt/octo-parity/runs/<branch>/`: `run-<id>.log`, `run-<id>.info` (the supervisor's pid,
+when it was queued, its options), `run-<id>.locked` (when it got the lock), `run-<id>.done`
+(its exit status, written last) and `current` (the latest id). A run started by an older
+`lxc131.sh` (from a branch without `--attach`) still runs in the foreground of its ssh session
+and dies with it; `--queue` shows those as "in the foreground of an older lxc131.sh". Both kinds
+take the same lock (`/opt/octo-parity/run.lock`, `flock`) and use the same stack names, so they
+queue behind one another as before.
+
+`--queue` reads the lock straight from the kernel (which process's open file holds the flock)
+and lists the holder (with how long it has held the lock, when the run recorded it), each
+waiting run with how long it has waited and whom it waits behind, and strays: a `flock 9` left
+by a run killed while it waited (it lets go the moment it gets the lock), or a process still
+holding the lock after its run was killed. Waiters are not strictly first come first served.
+
+`--selftest [--sleep S]` checks this machinery without queuing behind real runs: it runs as
+`<branch>-selftest` with its own lock (`/opt/octo-parity/selftest.lock`), prints a line every
+5 s for S seconds (default 60), writes a one-line report and ends, with a host watchdog of its
+own. It still sends the commits and checks them out on the box, but builds nothing and starts
+no Docker.
 
 It touches only its own things on the box: `/opt/octo-parity`, the compose projects
 `octo-parity-cs` and `octo-parity-rs`, the images `octo-rust-parity:<branch>` and the builder.
@@ -69,8 +116,19 @@ Never the starter rig (`/opt/octo`, project `octo`). It refuses to build or pull
 **The Proxmox host is shared, and short of memory.** LXC 111 (Brandon's own Octo) runs on it.
 On 2026-10-07 a run while the host had about 5 GB free pushed it into swap until nothing
 answered for minutes. So `lxc131.sh` starts only with 3.5 GB free on the host
-(`PARITY_MIN_HOST_MB`), and a watchdog takes the parity stacks down if the host falls under
-1.5 GB while it runs. Never run two parity runs side by side, and never raise the limits.
+(`PARITY_MIN_HOST_MB`), and a watchdog stops the run if the host falls under 1.5 GB. The
+watchdog ([`host-watchdog.sh`](host-watchdog.sh)) runs on the Proxmox host itself, detached
+with `setsid nohup` for the life of the run, so it does not die with `lxc131.sh` either: it
+reads `MemAvailable` every 15 s, and under 1.5 GB it has the box stop the run that holds the
+box lock (`box-run.sh --stop-holder`: TERM to that run's `box-run.sh` and everything under it,
+KILL after 10 s, then the `octo-parity-cs` and `-rs` stacks down). That is the run using the
+memory, whether it is the watchdog's own run or one it waits behind. Waiting runs, other
+containers and the starter rig are left alone (the watchdog that lived in `lxc131.sh` before
+`--attach` stopped every `parity.py` on the box, and older branches still carry it). It exits when its run writes the done marker, when the run has gone without one, or
+when the container stops. It reads the run's files through the container's
+`/proc/<init>/root`, so it costs no `pct exec` per poll. Its log is
+`/root/octo-parity-watchdog-<branch>.log` on the Proxmox host. `--attach` starts it again if
+it is not running. Never run two parity runs side by side, and never raise the limits.
 On 2026-10-07 another container's load swung by 4 GB a minute and left the host about 3.6 GB
 to spare, so the box build (its LTO link takes about 3 GB) tripped the watchdog every time,
 once with the host at 1 GB and its swap full. That is why the compile moved to WSL. If you

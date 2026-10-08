@@ -789,6 +789,85 @@ async fn the_cover_status_is_written() {
 /// Model binding runs before the action: a missing required member, a bad bool and an empty
 /// body are `[ApiController]`'s 400s whether or not anyone is signed in; a body that is not
 /// JSON is a 415.
+/// Every `[FromBody]` endpoint refuses a body as System.Text.Json read it into that endpoint's
+/// own C# record: the path it had reached, its words, where the reader stood, and the
+/// parameter's own entry first (a nullable parameter has none).
+#[tokio::test]
+async fn a_body_that_cannot_be_read_is_refused_as_each_endpoint_record_read_it() {
+    let state = AppState::for_tests(AppSettings::default());
+    let app = app(&state);
+    let depth = "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.";
+    let cases: [(&str, &str, Option<&str>, &str, String); 6] = [
+        // The C# recording (17-covers-explicit/covers-start-bad-json).
+        (
+            "/api/admin/covers/upgrade",
+            "{\"scope\": ",
+            Some("request"),
+            "$.scope",
+            format!("{depth} Path: $.scope | LineNumber: 0 | BytePositionInLine: 10."),
+        ),
+        (
+            "/api/admin/health/apply",
+            "{\"steps\": [{\"with\": {\"a\": 1}}]}",
+            Some("request"),
+            "$.steps[0].with.a",
+            "The JSON value could not be converted to System.String. Path: $.steps[0].with.a | LineNumber: 0 | BytePositionInLine: 27.".into(),
+        ),
+        (
+            "/api/admin/upgrades",
+            "{\"songs\": [{\"navidromeId\": \"x\", \"pick\": {\"size\": \"big\"}}]}",
+            Some("request"),
+            "$.songs[0].pick.size",
+            "The JSON value could not be converted to System.Int64. Path: $.songs[0].pick.size | LineNumber: 0 | BytePositionInLine: 54.".into(),
+        ),
+        (
+            "/api/admin/genre/backfill",
+            "{\"dryRun\": \"yes\"}",
+            Some("request"),
+            "$.dryRun",
+            "The JSON value could not be converted to Octo.Controllers.AdminController+GenreBackfillStartRequest. Path: $.dryRun | LineNumber: 0 | BytePositionInLine: 16.".into(),
+        ),
+        (
+            "/api/admin/browse/auth",
+            "{\"username\": [",
+            Some("req"),
+            "$.username",
+            format!("{depth} Path: $.username | LineNumber: 0 | BytePositionInLine: 14."),
+        ),
+        (
+            "/api/admin/find",
+            "[1]",
+            None,
+            "$",
+            "The JSON value could not be converted to Octo.Controllers.AdminDownloadsController+FindRequest. Path: $ | LineNumber: 0 | BytePositionInLine: 1.".into(),
+        ),
+    ];
+    for (uri, body, parameter, path, message) in cases {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("X-Octo-Admin", "1")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let reply = send(&app, request).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{uri}: {}", reply.body);
+        let errors = reply.json()["errors"].clone();
+        let keys: Vec<String> = errors.as_object().expect("errors").keys().cloned().collect();
+        let mut expected_keys: Vec<String> = parameter.map(str::to_string).into_iter().collect();
+        expected_keys.push(path.to_string());
+        assert_eq!(keys, expected_keys, "{uri}");
+        if let Some(parameter) = parameter {
+            assert_eq!(
+                errors[parameter][0],
+                format!("The {parameter} field is required."),
+                "{uri}"
+            );
+        }
+        assert_eq!(errors[path][0], message.as_str(), "{uri}");
+    }
+}
+
 #[tokio::test]
 async fn binding_failures_come_before_the_session() {
     let state = AppState::for_tests(AppSettings::default());

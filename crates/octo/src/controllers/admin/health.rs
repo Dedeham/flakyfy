@@ -21,6 +21,7 @@ use tracing::info;
 
 use super::helpers_6b1::{BROWSE_COOKIE_NAME, accepted, ok, request_cookie};
 use super::helpers_6b2::{SIGN_IN_FIRST, bind_body, error, query, split, status, utc, utc_opt};
+use super::json_body::{FromBody, Kind, Member, Shape};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::admin::{AdminCaller, AdminCallerKind};
@@ -253,6 +254,35 @@ struct PreviewRequest {
     keep: Option<String>,
     fills: Option<Vec<String>>,
     choose: Option<IndexMap<String, String>>,
+}
+
+impl FromBody for PreviewRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.LibraryHealthController+PreviewRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "check",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "keys",
+                kind: Kind::TextList,
+            },
+            Member {
+                name: "keep",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "fills",
+                kind: Kind::TextList,
+            },
+            Member {
+                name: "choose",
+                kind: Kind::TextMap,
+            },
+        ],
+    };
 }
 
 /// What a fix would do, before anything changes: the same plans the app makes. Duplicates keep
@@ -596,6 +626,30 @@ struct StepRequest {
     with: Option<IndexMap<String, String>>,
 }
 
+/// The C# record a step was read into.
+const STEP_REQUEST: &Shape = &Shape {
+    name: "Octo.Controllers.LibraryHealthController+StepRequest",
+    by_constructor: true,
+    members: &[
+        Member {
+            name: "action",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "id",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "title",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "with",
+            kind: Kind::TextMap,
+        },
+    ],
+};
+
 /// `ApplyRequest(string? Label, string? Check, List<StepRequest>? Steps)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -603,6 +657,27 @@ struct ApplyRequest {
     label: Option<String>,
     check: Option<String>,
     steps: Option<Vec<StepRequest>>,
+}
+
+impl FromBody for ApplyRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.LibraryHealthController+ApplyRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "label",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "check",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "steps",
+                kind: Kind::RecordList(STEP_REQUEST),
+            },
+        ],
+    };
 }
 
 /// Runs the steps a preview gave (or a person picked from a lookup), one song at a time, as the
@@ -658,6 +733,23 @@ async fn apply(State(state): State<AppState>, request: Request) -> Response {
 struct LookupRequest {
     ids: Option<Vec<Option<String>>>,
     check: Option<String>,
+}
+
+impl FromBody for LookupRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.LibraryHealthController+LookupRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "ids",
+                kind: Kind::TextList,
+            },
+            Member {
+                name: "check",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 /// Looks songs up the way a download is tagged, at most 25 a run, and writes nothing. What it

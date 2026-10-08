@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use serde::Deserialize;
 
 use super::helpers_6b2::{bind_body, browse_user, error, ok, query, sign_in, split, status, utc, utc_opt};
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::library::library_action_journal::action_name;
@@ -114,6 +115,11 @@ async fn get_library_actions(State(state): State<AppState>, request: Request) ->
 #[serde(default)]
 struct AllowDownloadRequest {
     key: Option<String>,
+}
+
+impl FromBody for AllowDownloadRequest {
+    const SHAPE: &'static Shape =
+        text_record!("Octo.Controllers.AdminController+AllowDownloadRequest", "key");
 }
 
 /// The history's Allow downloading again: a song removed with Delete from disk may be downloaded

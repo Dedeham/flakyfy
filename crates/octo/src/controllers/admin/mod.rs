@@ -25,6 +25,7 @@ pub mod health;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
 pub mod imports;
+pub mod json_body;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;

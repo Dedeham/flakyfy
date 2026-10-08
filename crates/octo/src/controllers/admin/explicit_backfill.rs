@@ -22,6 +22,7 @@ use super::helpers_6b2::{
     BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, bind_body, error, ok, query, request_cookie, sign_in, split,
     status, utc_opt,
 };
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::library::explicit_backfill::{
@@ -79,6 +80,13 @@ fn mode_name(mode: ExplicitBackfillMode) -> &'static str {
 #[serde(default)]
 struct ApplyRequest {
     confirm: Option<String>,
+}
+
+impl FromBody for ApplyRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.ExplicitBackfillController+ApplyRequest",
+        "confirm"
+    );
 }
 
 async fn get_run(State(state): State<AppState>, request: Request) -> Response {

@@ -20,6 +20,7 @@ use tracing::info;
 use super::helpers_6b2::{
     bind_body, browse_user, error, ok, query, required, sign_in, split, status, utc, utc_opt,
 };
+use super::json_body::{FromBody, Kind, Member, Shape};
 use crate::app::AppState;
 use crate::http::error::validation_problem;
 use crate::http::routes::RouteSet;
@@ -264,6 +265,17 @@ struct UpgradeQueueRequest {
     songs: Option<Vec<UpgradeAskBody>>,
 }
 
+impl FromBody for UpgradeQueueRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+UpgradeQueueRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "songs",
+            kind: Kind::RecordList(UPGRADE_ASK),
+        }],
+    };
+}
+
 /// `UpgradeAsk(string NavidromeId, string? Title, ...)`, as the body carries it.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -281,6 +293,108 @@ struct UpgradeAskBody {
 #[serde(default)]
 struct UpgradeIdsRequest {
     ids: Option<Vec<String>>,
+}
+
+/// `Octo.Services.Library.UpgradeAsk`, and the `PickedCopy` class it can carry.
+const UPGRADE_ASK: &Shape = &Shape {
+    name: "Octo.Services.Library.UpgradeAsk",
+    by_constructor: true,
+    members: &[
+        Member {
+            name: "navidromeId",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "title",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "artist",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "album",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "suffix",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "attemptKey",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "pick",
+            kind: Kind::Record(PICKED_COPY),
+        },
+    ],
+};
+
+const PICKED_COPY: &Shape = &Shape {
+    name: "Octo.Services.Common.PickedCopy",
+    by_constructor: false,
+    members: &[
+        Member {
+            name: "source",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "peer",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "file",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "size",
+            kind: Kind::Int64,
+        },
+        Member {
+            name: "format",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "bitRate",
+            kind: Kind::OptionalInt32,
+        },
+        Member {
+            name: "bitDepth",
+            kind: Kind::OptionalInt32,
+        },
+        Member {
+            name: "sampleRate",
+            kind: Kind::OptionalInt32,
+        },
+        Member {
+            name: "length",
+            kind: Kind::OptionalInt32,
+        },
+        Member {
+            name: "releaseGuid",
+            kind: Kind::Text,
+        },
+        Member {
+            name: "indexerId",
+            kind: Kind::OptionalInt32,
+        },
+        Member {
+            name: "releaseTitle",
+            kind: Kind::Text,
+        },
+    ],
+};
+
+impl FromBody for UpgradeIdsRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+UpgradeIdsRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "ids",
+            kind: Kind::TextList,
+        }],
+    };
 }
 
 /// Queue songs for a higher quality copy, acting as the Navidrome admin signed in on this page.

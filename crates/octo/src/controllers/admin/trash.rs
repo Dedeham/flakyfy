@@ -17,8 +17,10 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
 
-use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, bind_optional_body, ok, request_cookie};
+use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, ok, request_cookie};
 use super::helpers_6b2::{SIGN_IN_FIRST, error, split, utc, utc_opt};
+use super::json_body::bind_optional_body;
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 
@@ -92,6 +94,11 @@ async fn trash(State(state): State<AppState>, request: Request) -> Response {
 #[serde(default)]
 struct RestoreRequest {
     id: Option<String>,
+}
+
+impl FromBody for RestoreRequest {
+    const SHAPE: &'static Shape =
+        text_record!("Octo.Controllers.AdminDownloadsController+RestoreRequest", "id");
 }
 
 /// Puts a removed song back where it was, with its own files, as the signed-in admin.

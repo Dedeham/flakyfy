@@ -17,6 +17,7 @@ use tracing::info;
 use super::helpers_6b2::{
     bind_body, browse_user, enum_try_parse, error, ok, sign_in, split, status, utc_opt,
 };
+use super::json_body::{FromBody, Kind, Member, Shape};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::metadata::genre_backfill_state::{GenreBackfillScope, GenreBackfillStatus};
@@ -77,6 +78,27 @@ struct GenreBackfillStartRequest {
     scope: Option<String>,
     dry_run: bool,
     confirm: Option<String>,
+}
+
+impl FromBody for GenreBackfillStartRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+GenreBackfillStartRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "scope",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "dryRun",
+                kind: Kind::Bool,
+            },
+            Member {
+                name: "confirm",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 /// Start a backfill, or a preview of one.

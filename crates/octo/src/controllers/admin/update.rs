@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::helpers_6b2::{BROWSE_COOKIE_NAME, bind_body, error, ok, request_cookie, split, status, utc_opt};
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::error::AppError;
 use crate::http::routes::RouteSet;
@@ -36,6 +37,10 @@ pub fn routes() -> RouteSet {
 #[serde(default)]
 struct UpdateRequest {
     tag: Option<String>,
+}
+
+impl FromBody for UpdateRequest {
+    const SHAPE: &'static Shape = text_record!("Octo.Controllers.UpdateController+UpdateRequest", "tag");
 }
 
 async fn get_update(State(state): State<AppState>) -> Response {

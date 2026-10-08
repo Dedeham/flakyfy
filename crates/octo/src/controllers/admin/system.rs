@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 
-use super::helpers_6b1::{bind_body, camel_case_value, object_result, ok};
+use super::helpers_6b1::{camel_case_value, object_result, ok};
+use super::json_body::bind_body;
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::error::json_ok;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
@@ -444,6 +446,14 @@ pub async fn get_lidarr_options(State(state): State<AppState>) -> Response {
 pub struct LidarrConnectionTestRequest {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+}
+
+impl FromBody for LidarrConnectionTestRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.AdminController+LidarrConnectionTestRequest",
+        "baseUrl",
+        "apiKey"
+    );
 }
 
 /// `POST /api/admin/lidarr/test`: tests entered credentials without saving them.

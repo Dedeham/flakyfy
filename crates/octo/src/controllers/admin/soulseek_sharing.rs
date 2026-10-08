@@ -14,10 +14,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
-use super::helpers_6b1::is_json_content_type;
 use super::helpers_6b2::{bind_body, error as error_answer, ok, split, status};
+use super::json_body::{FromBody, Kind, Member, Shape};
 use crate::app::AppState;
-use crate::http::error::validation_problem;
 use crate::http::routes::RouteSet;
 
 pub fn routes() -> RouteSet {
@@ -33,6 +32,17 @@ pub fn routes() -> RouteSet {
 #[serde(default)]
 struct ShareRequest {
     on: bool,
+}
+
+impl FromBody for ShareRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.SoulseekSharingController+ShareRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "on",
+            kind: Kind::Bool,
+        }],
+    };
 }
 
 async fn get_sharing(State(state): State<AppState>) -> Response {
@@ -59,20 +69,7 @@ async fn share(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
     let request: ShareRequest = match bind_body(&parts, &body) {
         Ok(request) => request,
-        Err(rejection) => {
-            if is_json_content_type(&parts.headers)
-                && let Some((path, line, byte)) = wrong_typed_on(&body)
-            {
-                let message = format!(
-                    "The JSON value could not be converted to Octo.Controllers.SoulseekSharingController+ShareRequest. Path: $.{path} | LineNumber: {line} | BytePositionInLine: {byte}."
-                );
-                return validation_problem(&[
-                    ("request", &["The request field is required."]),
-                    (&format!("$.{path}"), &[message.as_str()]),
-                ]);
-            }
-            return *rejection;
-        }
+        Err(rejection) => return *rejection,
     };
     let mut section = IndexMap::new();
     section.insert("ShareLibrary".to_string(), Node::Bool(request.on));
@@ -89,125 +86,14 @@ async fn share(State(state): State<AppState>, request: Request) -> Response {
     ok(&state.soulseek_sharing.report(false, Some(request.on)).await)
 }
 
-/// The `on` member of a valid JSON object body when it is not a bool, which System.Text.Json
-/// refused naming the record and the member: the member's name as sent, and the line and the
-/// byte in it where the reader stood (after a plain value, after the opening bracket of an
-/// object or a list). None for any other body, which the shared binder answers.
-fn wrong_typed_on(body: &[u8]) -> Option<(String, usize, usize)> {
-    let text = std::str::from_utf8(body).ok()?;
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let offset = body.len() - text.len();
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()?
-        .as_object()?;
-    let s = text.as_bytes();
-    let mut i = skip_ws(s, 0);
-    if s.get(i) != Some(&b'{') {
-        return None;
-    }
-    i += 1;
-    let mut found = None;
-    loop {
-        i = skip_ws(s, i);
-        if s.get(i) == Some(&b'}') {
-            break;
-        }
-        let key_end = string_end(s, i)?;
-        let key: String = serde_json::from_slice(&s[i..key_end]).ok()?;
-        i = skip_ws(s, key_end);
-        i = skip_ws(s, i + 1); // the ':'
-        let start = i;
-        let end = value_end(s, start)?;
-        if key.eq_ignore_ascii_case("on") {
-            let stopped = if matches!(s[start], b'{' | b'[') {
-                start + 1
-            } else {
-                end
-            };
-            found = Some((key, s[start] == b't' || s[start] == b'f', stopped));
-        }
-        i = skip_ws(s, end);
-        if s.get(i) == Some(&b',') {
-            i += 1;
-        }
-    }
-    let (key, is_bool, stopped) = found?;
-    if is_bool {
-        return None;
-    }
-    let before = &body[..offset + stopped];
-    let line = before.iter().filter(|b| **b == b'\n').count();
-    let line_start = before.iter().rposition(|b| *b == b'\n').map_or(0, |p| p + 1);
-    Some((key, line, before.len() - line_start))
-}
-
-fn skip_ws(s: &[u8], mut i: usize) -> usize {
-    while matches!(s.get(i), Some(b' ' | b'\t' | b'\r' | b'\n')) {
-        i += 1;
-    }
-    i
-}
-
-/// The index after the string starting at `i`.
-fn string_end(s: &[u8], i: usize) -> Option<usize> {
-    if s.get(i) != Some(&b'"') {
-        return None;
-    }
-    let mut j = i + 1;
-    while let Some(&b) = s.get(j) {
-        match b {
-            b'\\' => j += 2,
-            b'"' => return Some(j + 1),
-            _ => j += 1,
-        }
-    }
-    None
-}
-
-/// The index after the value starting at `i` (the body is known to be valid JSON).
-fn value_end(s: &[u8], i: usize) -> Option<usize> {
-    match s.get(i)? {
-        b'"' => string_end(s, i),
-        b'{' | b'[' => {
-            let mut depth = 0usize;
-            let mut j = i;
-            while let Some(&b) = s.get(j) {
-                match b {
-                    b'"' => {
-                        j = string_end(s, j)?;
-                        continue;
-                    }
-                    b'{' | b'[' => depth += 1,
-                    b'}' | b']' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(j + 1);
-                        }
-                    }
-                    _ => {}
-                }
-                j += 1;
-            }
-            None
-        }
-        _ => {
-            let mut j = i;
-            while matches!(s.get(j), Some(b) if !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n'))
-            {
-                j += 1;
-            }
-            Some(j)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use axum::http::{Method, StatusCode};
     use octo_core::settings::{AppSettings, SoulseekSettings};
 
-    use super::wrong_typed_on;
+    use super::ShareRequest;
     use crate::app::{AppState, TestServices};
+    use crate::controllers::admin::json_body::FromBody;
     use crate::controllers::admin::test_support_6b1::{app, get, send};
 
     /// slskd at a port nothing listens on, and the port test off, as the C# tests ran
@@ -350,23 +236,35 @@ mod tests {
     }
 
     /// Where System.Text.Json stopped on a member it could not read as a bool, as the C# answer
-    /// for the body {"on": "maybe"} said (LineNumber 0, BytePositionInLine 14).
+    /// for the body {"on": "maybe"} said (LineNumber 0, BytePositionInLine 14): the member's name
+    /// as sent, after a plain value or after the opening bracket of an object or a list.
     #[test]
     fn a_wrong_typed_on_is_placed_where_the_reader_stopped() {
-        let cases: [(&str, Option<(&str, usize, usize)>); 8] = [
-            (r#"{"on": "maybe"}"#, Some(("on", 0, 14))),
-            (r#"{"x":[1,{"on":2}],"On":12}"#, Some(("On", 0, 25))),
-            ("{\n  \"on\": null\n}", Some(("on", 1, 12))),
-            (r#"{"on": {"a": 1}}"#, Some(("on", 0, 8))),
+        let record = "The JSON value could not be converted to Octo.Controllers.SoulseekSharingController+ShareRequest.";
+        let null = "The JSON value could not be converted to System.Boolean.";
+        let cases: [(&str, Option<(&str, &str, usize, usize)>); 8] = [
+            (r#"{"on": "maybe"}"#, Some(("$.on", record, 0, 14))),
+            (r#"{"x":[1,{"on":2}],"On":12}"#, Some(("$.On", record, 0, 25))),
+            ("{\n  \"on\": null\n}", Some(("$.on", null, 1, 12))),
+            (r#"{"on": {"a": 1}}"#, Some(("$.on", record, 0, 8))),
             (r#"{"on": true}"#, None),
             (r#"{"off": 1}"#, None),
-            ("[1]", None),
-            ("{not json", None),
+            ("[1]", Some(("$", record, 0, 1))),
+            (
+                "{not json",
+                Some((
+                    "$",
+                    "'n' is an invalid start of a property name. Expected a '\"'.",
+                    0,
+                    1,
+                )),
+            ),
         ];
         for (body, expected) in cases {
+            let refused = crate::controllers::admin::json_body::read_error(body, ShareRequest::SHAPE);
             assert_eq!(
-                wrong_typed_on(body.as_bytes()),
-                expected.map(|(k, l, b)| (k.to_string(), l, b)),
+                refused.map(|e| (e.path, e.message, e.line, e.byte_in_line)),
+                expected.map(|(p, m, l, b)| (p.to_string(), m.to_string(), l, b)),
                 "{body}"
             );
         }

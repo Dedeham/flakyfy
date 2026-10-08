@@ -22,8 +22,10 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, bind_optional_body, request_cookie};
+use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, request_cookie};
 use super::helpers_6b2::{error, ok, query, sign_in, split};
+use super::json_body::bind_optional_body;
+use super::json_body::{FromBody, Shape, text_record};
 use crate::app::AppState;
 use crate::http::error::problem;
 use crate::http::routes::RouteSet;
@@ -115,11 +117,20 @@ struct FindRequest {
     id: Option<String>,
 }
 
+impl FromBody for FindRequest {
+    const SHAPE: &'static Shape = text_record!("Octo.Controllers.AdminDownloadsController+FindRequest", "id");
+}
+
 /// `PickRequest(string? Copy)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct PickRequest {
     copy: Option<String>,
+}
+
+impl FromBody for PickRequest {
+    const SHAPE: &'static Shape =
+        text_record!("Octo.Controllers.AdminDownloadsController+PickRequest", "copy");
 }
 
 /// Starts a Find songs search for one song (an outside song's id or key, or a library song's

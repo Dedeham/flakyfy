@@ -13,7 +13,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::warn;
 
-use super::helpers_6b1::{SECRET_PLACEHOLDER, accepted, bind_body, error_json, ok, query_value};
+use super::helpers_6b1::{SECRET_PLACEHOLDER, accepted, error_json, ok, query_value};
+use super::json_body::bind_body;
+use super::json_body::{FromBody, Kind, Member, Shape, text_record};
 use crate::app::AppState;
 use crate::http::error::validation_problem;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
@@ -155,6 +157,14 @@ pub struct ListenBrainzValidateRequest {
     pub token: Option<String>,
 }
 
+impl FromBody for ListenBrainzValidateRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.AdminController+ListenBrainzValidateRequest",
+        "user",
+        "token"
+    );
+}
+
 /// `POST /api/admin/listenbrainz/validate`: the same check as the GET, with the token in the
 /// body so a typed token never lands in a URL, a proxy log or the browser history. The GET
 /// stays for compatibility.
@@ -200,6 +210,17 @@ pub struct LastFmScrobbleUserRequest {
     pub user: Option<String>,
 }
 
+impl FromBody for LastFmScrobbleUserRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+LastFmScrobbleUserRequest",
+        by_constructor: false,
+        members: &[Member {
+            name: "user",
+            kind: Kind::Text,
+        }],
+    };
+}
+
 impl LastFmScrobbleUserRequest {
     fn user(&self) -> &str {
         self.user.as_deref().unwrap_or("")
@@ -211,6 +232,23 @@ impl LastFmScrobbleUserRequest {
 pub struct LastFmCredentialsRequest {
     pub api_key: Option<String>,
     pub api_secret: Option<String>,
+}
+
+impl FromBody for LastFmCredentialsRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+LastFmCredentialsRequest",
+        by_constructor: false,
+        members: &[
+            Member {
+                name: "apiKey",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "apiSecret",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 /// `POST /api/admin/lastfm/check`: checks an API key and shared secret with Last.fm before
@@ -340,6 +378,23 @@ pub async fn disconnect_last_fm(State(state): State<AppState>, headers: HeaderMa
 pub struct RadioUserRequest {
     pub user: Option<String>,
     pub station_id: Option<String>,
+}
+
+impl FromBody for RadioUserRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+RadioUserRequest",
+        by_constructor: false,
+        members: &[
+            Member {
+                name: "user",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "stationId",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 /// `POST /api/admin/lastfm/radio/refresh`.

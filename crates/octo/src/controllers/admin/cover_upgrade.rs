@@ -21,6 +21,7 @@ use tracing::info;
 use super::helpers_6b2::{
     bind_body, enum_try_parse, error, ok, query_bool, sign_in, signed, split, status, utc_opt,
 };
+use super::json_body::{FromBody, Kind, Member, Shape};
 use crate::app::AppState;
 use crate::http::error::problem;
 use crate::http::routes::RouteSet;
@@ -84,6 +85,39 @@ struct StartRequest {
     smaller_than: i32,
     albums: Option<Vec<String>>,
     confirm: Option<String>,
+}
+
+impl FromBody for StartRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.CoverUpgradeController+StartRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "scope",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "mode",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "folderCovers",
+                kind: Kind::Bool,
+            },
+            Member {
+                name: "smallerThan",
+                kind: Kind::Int32,
+            },
+            Member {
+                name: "albums",
+                kind: Kind::TextList,
+            },
+            Member {
+                name: "confirm",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 impl Default for StartRequest {

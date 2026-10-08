@@ -604,7 +604,13 @@ async fn sync_walk_page(
     }
 
     let username = call.param_or("u", "").to_string();
-    let stations = visible_stations(state, &username);
+    let mut stations = visible_stations(state, &username);
+    // The chart lists ride along as stations, so a syncing client holds their outside songs
+    // under the ids the playlists list (C#: popular.Warm + AsSyncStation).
+    if !username.is_empty() {
+        state.chart_playlists.warm(&username, &call.parameters).await;
+        stations.extend(state.chart_playlists.as_sync_stations(&username));
+    }
     let rows = sync_catalog_response::count_rows(&relay.body, relay.content_type.as_deref(), envelope);
     let Some((artists_returned, albums_returned, songs_returned)) = rows.filter(|_| !username.is_empty())
     else {

@@ -614,15 +614,29 @@ impl SyncCatalogService {
                 continue;
             }
 
-            // The same call, with the same duration, that the station playlist makes, so the
+            // A chart list's song is known by the id the list gives it; a station's is found by
+            // the same call, with the same duration, that the station playlist makes, so the
             // placeholder id here is the id the playlist lists.
-            let Some(mut hit) = self
-                .metadata
-                .search_songs_by_artist_title(&track.artist, &track.title, 1, track.duration)
-                .await
-                .into_iter()
-                .next()
-            else {
+            let listed = (track.source == crate::services::library::chart_playlist_service::TRACK_SOURCE)
+                .then(|| track.resolved_id.as_deref().filter(|id| !id.is_empty()))
+                .flatten();
+            let hit = match listed {
+                Some(id) => {
+                    self.metadata
+                        .get_song(
+                            crate::services::soulseek::soulseek_metadata_service::SoulseekMetadataService::PROVIDER_NAME,
+                            id,
+                        )
+                        .await
+                }
+                None => self
+                    .metadata
+                    .search_songs_by_artist_title(&track.artist, &track.title, 1, track.duration)
+                    .await
+                    .into_iter()
+                    .next(),
+            };
+            let Some(mut hit) = hit else {
                 continue;
             };
             if hit.id.is_empty() || !seen_ids.insert(hit.id.clone()) {

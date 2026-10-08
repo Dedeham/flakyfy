@@ -10,6 +10,7 @@ pub mod ping;
 pub mod playlists;
 pub mod search;
 pub mod similar_songs;
+pub mod top_songs;
 
 #[cfg(test)]
 mod tests_6a1;
@@ -137,5 +138,6 @@ pub fn routes() -> RouteSet {
         .merge(extensions::routes())
         .merge(downloads::routes())
         .merge(lyrics::routes())
+        .merge(top_songs::routes())
         .merge(imports::routes())
 }

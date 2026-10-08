@@ -62,8 +62,8 @@ pub struct BuildResult {
 /// A catalog song made into an outside song: its artist, album and song registered so it
 /// plays, opens its album and is added like any other.
 ///
-/// STUB(G): `TopSongsService.CatalogSong` (3e35798), which New Releases shares with the artist
-/// "Top songs"; group G's `TopSongsService` should call this, or replace it, when it lands.
+/// `TopSongsService.CatalogSong` (3e35798), shared by New Releases and the charts
+/// (`services::common::top_songs_service::catalog_song` adds the charts' own fields on top).
 pub struct CatalogTrackSong<'a> {
     pub title: &'a str,
     pub artist: &'a str,

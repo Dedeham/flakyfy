@@ -1234,6 +1234,11 @@ tests.
 
 Done in the release phase (plan § 9): the compose file, install.sh and the update helper move to the Rust image there.
 
+The update card's hand commands (`610dba2`'s `UpdateController` half, after `b2e5d9c`'s) are
+ported in the final parity round (`7f55c32`): pull the yt-dlp shim and octo-sonic, build a
+sidecar from its `-source` service only when it will not pull, build Octo; the image command
+pulls and restarts Octo with both sidecars.
+
 - [ ] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
 - [ ] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
 - [ ] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
@@ -1279,25 +1284,37 @@ its reason when it changes an answer.
   `/api/admin/status` is slower than C# only because it probes five services
   on every call (group J). Done in G1, as the C# does it (ten seconds, one
   probe round at a time).
-- [ ] **Plain error words instead of .NET's.** The port copies .NET exception
+- [x] **Plain error words instead of .NET's.** The port copied .NET exception
   texts the apps can show ("The request was canceled due to the configured
   HttpClient.Timeout of 100 seconds elapsing.", "Connection refused
-  (host:port)"). Say what happened in plain words, in both builds while the
-  twin rule holds.
-- [ ] **Em dashes in answers.** Two messages shared with the C# app still
-  carry one (the "absolute URL" hint in `subsonic_proxy_service.rs`, the
-  music folder warning in `navidrome_identity_service.rs`). Change them in
-  both builds together.
-- [ ] **US spelling in identifiers.** Comments and the port notes are done;
-  names like `cover_colors`, `COLORLESS` and `normalise_*` are not. Rename
-  inside the code only, never a stored key or a JSON field.
-- [ ] **`.unwrap()` outside tests** (about 92 in non-test files): turn the
-  reachable ones into errors that are logged and answered.
-- [ ] **Module names from the port's waves** (`route_tests`, `plumbing`,
-  `test_app` and 13 more): name them for what they hold.
-- [ ] **Smaller list cover JPEGs.** The Rust encoder writes 4:4:4 (17.6 KB
-  against C#'s 11.8 KB on the 600 px placeholder); 4:2:0 should match the
-  size with no visible change.
+  (host:port)"). Done in the final parity round (`8597aa7`), in the port only
+  (the C# is frozen): `services::http_client_factory` says "No answer came
+  within 100 seconds, so Octo stopped waiting.", "Could not connect to
+  host:port: the connection was refused.", "Could not connect to host:port: no
+  address was found for host." and "The server answered 404 (Not Found).", and
+  every caller uses it. Proposed entry `plain-error-words`. Left as they were:
+  the cancellation texts ("The operation was canceled."), which reach the log,
+  not an answer, apart from a lookup the app stopped itself.
+- [x] **Em dashes in answers.** The not-configured message in
+  `subsonic_proxy_service.rs` and the music folder warning in
+  `navidrome_identity_service.rs` (`8597aa7`, port only). No corpus request
+  reaches either.
+- [x] **US spelling in identifiers** (`2b132e6`): `cover_colors`, `COLORLESS`,
+  `normalize`, `analyze`, `catalog_url`, `or_canceled` and 50 test names, on
+  identifier tokens only. Kept: tokio's `cancelled()`, the `Cancelled` types
+  and state variants (written to state files), `SonicStatus.analysed` (a JSON
+  field), the cover book's `lowChromaAsGrey`, `greyBelow` and `greyPenalty`
+  (read from the shared design file).
+- [x] **`.unwrap()` outside tests** (`c5ebd77`): four were left, none
+  reachable; each is now infallible. No `.unwrap()` is outside a test.
+- [x] **Module names from the port's waves** (`a1d46d9`): `tests_6a1`,
+  `helpers_6b1`, `test_support_6a2` and 13 more are `route_tests`, `plumbing`,
+  `test_app` and so on, and `routes_6b1`, `routes_6b2` and `routes_n` are
+  `admin_controller_routes`, `library_and_job_routes` and `activity_routes`.
+- [x] **Smaller cover JPEGs** (`4ccc138`). The placeholder, badged and shrunk
+  covers are 4:2:0 as ImageSharp wrote them (`octo_media::cover::jpeg_420`):
+  11.7 KB for the 600 px placeholder against C#'s 11.8 KB (17.6 KB before).
+  The list covers stay 4:4:4, as the C# asked for them (`YCbCrRatio444`).
 - [ ] **Cut the .NET compatibility helpers where tests prove the same
   answers** (`octo_core::common::dotnet`, the `XElement` replica), after the
   cutover, behind the tests.

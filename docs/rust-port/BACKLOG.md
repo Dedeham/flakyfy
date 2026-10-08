@@ -725,23 +725,39 @@ Rust change beyond the settings they name.
   Last.fm without an album and replaces the search's entry, so later answers
   lose the album; keep the album a registration already had (as the length,
   ISRC and explicit mark are kept), with a Rust test and an intentional diff.
+  Done in G3 (`external_id_registry::register`, test
+  `a_registration_without_an_album_keeps_the_album_already_known`, known-diffs
+  "An outside song's album in the registry", proposed intentional diff
+  `registry-keeps-the-album`, `reviewed` unset).
 
-- [ ] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
-- [ ] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
-- [ ] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again
-- [ ] `8f5142d` refactor(radio): song radio asks a set of sources and blends them; Last.fm is the first
-- [ ] `c1d701d` feat(radio): every radio song says which source suggested it (octoSuggestedBy, octoRadioSources)
-- [ ] `8346a30` feat(radio): YouTube Music's radio is a source, and a song it suggests plays the video it named
-- [ ] `7b0e226` feat(radio): ListenBrainz's similar recordings are a source, and LB Radio fills artist and genre stations when Octo has a token
-- [ ] `6a119db` feat(admin): radio sources and their weights on the Radio page
-- [ ] `2d04f3f` feat(radio): Sounds alike, library songs that sound like the seed, from Octo's own analysis
-- [ ] `7ba1123` feat(radio): stations draw on every radio source and remember which one suggested each song
-- [ ] `ece2795` feat(radio): radio learns which sources each listener keeps, and weighs them by it
-- [ ] `7a8cc5f` fix(radio): song radio asks fairly and never keeps a failure as an answer
-- [ ] `b446983` fix(radio): stations share per seed and learning counts each serving once
-- [ ] `3de8dde` fix(sonic): the analysis says it is about to start, not that it is off, until its first look
-- [ ] `e4b0327` fix(sonic): Sounds alike never forgets songs on a bad listing, and octo-sonic runs locked down
-- [ ] `7af692c` fix(sonic): the dashboard and comments spell analyzed the US way
+Done in G3 on `port/g3-l`. The pure parts are `octo_core::radio` (`RadioProvider`,
+`RadioTypes`, `RadioBlend`) and `octo_core::last_fm::radio_filler`; the sources, the set,
+song radio and the outcome store are `octo::services::radio`; octo-sonic's client, store and
+analysis worker `octo::services::sonic`; `YouTubeMusicClient` and `ListenBrainzRadioClient`
+beside their services. `SongRadioService` is shared, with each request's resolver handed to
+`build`. `TopSongsService.LibraryQuery` (7a8cc5f's library search) lives in
+`last_fm_radio_track_resolver::library_query`, marked STUB(G): G's `TopSongsService` takes it
+over. `6a119db`'s settings views and the octo-sonic status card came with G1. The station
+previews' em dash Brandon saw is in the dashboard (`octo/wwwroot/admin/admin.js`, the Radio
+page's station grid joins artist and title with one), which both builds serve as is; no Rust
+radio code builds a string with one.
+
+- [x] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
+- [x] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
+- [x] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again
+- [x] `8f5142d` refactor(radio): song radio asks a set of sources and blends them; Last.fm is the first
+- [x] `c1d701d` feat(radio): every radio song says which source suggested it (octoSuggestedBy, octoRadioSources)
+- [x] `8346a30` feat(radio): YouTube Music's radio is a source, and a song it suggests plays the video it named
+- [x] `7b0e226` feat(radio): ListenBrainz's similar recordings are a source, and LB Radio fills artist and genre stations when Octo has a token
+- [x] `6a119db` feat(admin): radio sources and their weights on the Radio page
+- [x] `2d04f3f` feat(radio): Sounds alike, library songs that sound like the seed, from Octo's own analysis
+- [x] `7ba1123` feat(radio): stations draw on every radio source and remember which one suggested each song
+- [x] `ece2795` feat(radio): radio learns which sources each listener keeps, and weighs them by it
+- [x] `7a8cc5f` fix(radio): song radio asks fairly and never keeps a failure as an answer
+- [x] `b446983` fix(radio): stations share per seed and learning counts each serving once
+- [x] `3de8dde` fix(sonic): the analysis says it is about to start, not that it is off, until its first look
+- [x] `e4b0327` fix(sonic): Sounds alike never forgets songs on a bad listing, and octo-sonic runs locked down
+- [x] `7af692c` fix(sonic): the dashboard and comments spell analyzed the US way
 
 ### M. octo-sonic (Rust) and the shim's /ytm (Python)
 

@@ -10,8 +10,8 @@
 //!
 //! Some jobs are read through small views of their own ([`FindLook`], [`ImportsActivity`],
 //! [`HealthActivity`], [`RescanReport`]). Those of groups not yet on this branch (Find songs, D;
-//! Spotify imports, H; Library health, R) each land as a conversion and one call in
-//! [`get_activity`] where its `STUB` marks the place.
+//! Library health, R) each land as a conversion and one call in [`get_activity`] where its
+//! `STUB` marks the place.
 
 use axum::extract::{Request, State};
 use axum::response::Response;
@@ -29,6 +29,7 @@ use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, AcquisitionState};
 use crate::services::cover_art::{CoverUpgradeMode, CoverUpgradeRun, CoverUpgradeStatus};
+use crate::services::imports::import_views::ImportOverview;
 use crate::services::library::duplicate_scan_worker::DuplicateScanResult;
 use crate::services::library::upgrade_queue::{UpgradeJob, UpgradeStates};
 use crate::services::metadata::genre_backfill_state::{GenreBackfillRun, GenreBackfillStatus};
@@ -147,8 +148,10 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
         let lyrics_worker = &state.lyrics_library_worker;
         items.extend(lyrics(&lyrics_worker.current(), lyrics_worker.is_running(), now));
         items.extend(upgrades(&state.upgrade_queue.snapshot(), now));
-        // STUB(H): with `ImportService` in, for `sessions.user_of(browse)` when there is one:
-        // `items.extend(imports(&ImportsActivity::from(&imports.overview(user)), now))`.
+        if let Some(user) = sessions.user_of(browse) {
+            let overview = state.imports.overview(&user);
+            items.extend(imports(&ImportsActivity::from(&overview), now));
+        }
         // STUB(D): with `SongFinder` in, for `sessions.navidrome_user_of(browse)` when there is
         // one: `items.extend(find(&finder.for_user(admin) as FindLooks, now))`.
         // STUB(R): with `LibraryHealthService` in:
@@ -670,6 +673,20 @@ pub struct ImportsActivity {
     pub trickle_downloading: i32,
     pub trickle_done: i32,
     pub trickle_queued: i32,
+}
+
+impl From<&ImportOverview> for ImportsActivity {
+    fn from(overview: &ImportOverview) -> Self {
+        ImportsActivity {
+            reading_busy: overview.reading.busy,
+            reading_step: overview.reading.step.clone(),
+            reading_error: overview.reading.error.clone(),
+            reading_finished_utc: overview.reading.finished_utc,
+            trickle_downloading: overview.trickle.downloading,
+            trickle_done: overview.trickle.done,
+            trickle_queued: overview.trickle.queued,
+        }
+    }
 }
 
 /// A Spotify read while it runs and a moment after, and the trickle while it fetches.

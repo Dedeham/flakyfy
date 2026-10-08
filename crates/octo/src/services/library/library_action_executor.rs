@@ -55,6 +55,9 @@ pub struct LibraryActionRequest {
     pub username: String,
     pub credential: Option<SubsonicCredential>,
     pub on_replacement_queued: Option<OnReplacementQueued>,
+    /// A Delete of one copy of a song the library keeps another of (Library health's
+    /// duplicates). The song is still wanted, so it is not refused when asked for again.
+    pub only_a_copy: bool,
     /// The one source to fetch the replacement from, for a copy someone picked in Find songs; no
     /// other source is tried after it.
     pub only_source: Option<DownloadSource>,
@@ -68,8 +71,15 @@ impl LibraryActionRequest {
             username: username.into(),
             credential: None,
             on_replacement_queued: None,
+            only_a_copy: false,
             only_source: None,
         }
+    }
+
+    /// `OnlyACopy: true`, the `copy=true` of an app's remove.
+    pub fn only_a_copy(mut self, only_a_copy: bool) -> Self {
+        self.only_a_copy = only_a_copy;
+        self
     }
 
     pub fn with_credential(mut self, credential: Option<SubsonicCredential>) -> Self {
@@ -376,7 +386,7 @@ impl LibraryActionExecutor {
         if !self.reconciled.swap(true, Ordering::SeqCst) {
             let quarantine = self.quarantine.clone();
             self.journal
-                .reconcile(Some(&move |path: &str| quarantine.restore(path).moved));
+                .reconcile(Some(&move |path: &str| quarantine.restore(path, None).moved));
         }
         if !settings.is_allowed(Some(&request.username)) {
             return Ok(LibraryActionOutcome::said(
@@ -588,9 +598,14 @@ impl LibraryActionExecutor {
         let mut replaced: Option<Replaced> = None;
         let quarantine_path: Option<String>;
         if request.action == LibraryAction::Delete {
-            let moved = self
-                .quarantine
-                .move_file(resolved, &music_root, request.action, &request.username);
+            // The song's own lyrics go with it, so nothing of it stays behind in the library.
+            let moved = self.quarantine.move_file_with_sidecars(
+                resolved,
+                &music_root,
+                request.action,
+                &request.username,
+                true,
+            );
             if !moved.moved {
                 self.journal.complete(
                     key,
@@ -612,10 +627,18 @@ impl LibraryActionExecutor {
                 None,
             );
             self.journal.flush();
-            self.library.forget_mapping(&resolved.absolute_path).await?;
+            // Kept in the trash note, so Put back links the outside song to the file again.
+            let forgotten = self.library.forget_mapping(&resolved.absolute_path).await?;
+            if let Some(trashed) = quarantine_path.as_deref() {
+                self.quarantine.record_mappings(trashed, &forgotten);
+            }
             outcome = LibraryActionOutcome::said(
                 LibraryActionState::Applied,
-                "Removed. It will not be downloaded again.",
+                if request.only_a_copy {
+                    "Removed this copy. The song stays in the library."
+                } else {
+                    "Removed. It will not be downloaded again."
+                },
             );
         } else {
             // The original stays in place, playable, until its replacement has passed; the two
@@ -1138,7 +1161,7 @@ impl LibraryActionExecutor {
     }
 
     fn restore_original(&self, quarantine_path: &str, detail: &str) -> LibraryActionOutcome {
-        let restored = self.quarantine.restore(quarantine_path);
+        let restored = self.quarantine.restore(quarantine_path, None);
         if restored.moved {
             LibraryActionOutcome::said(LibraryActionState::Failed, detail)
         } else {
@@ -1226,7 +1249,7 @@ impl LibraryActionExecutor {
             at_utc: Utc::now(),
             history_kept: None,
             revealed_path: None,
-            copy: false,
+            copy: request.only_a_copy,
             download_allowed: false,
         }
     }

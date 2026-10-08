@@ -14,7 +14,7 @@ use crate::services::framework::http::parse_json;
 use crate::services::subsonic::NavidromeIdentityService;
 
 /// One song as Navidrome's native song list has it, by the full path of its file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NavidromeSongEntry {
     pub full_path: String,
     pub album_id: Option<String>,
@@ -22,6 +22,12 @@ pub struct NavidromeSongEntry {
     pub title: Option<String>,
     pub album: Option<String>,
     pub lyrics: Option<String>,
+    /// Navidrome's id for the song.
+    pub id: Option<String>,
+    /// The length in seconds, as Navidrome read it.
+    pub duration: Option<f64>,
+    /// What Navidrome read from the advisory tag: "e" (explicit), "c" (clean) or "".
+    pub explicit_status: Option<String>,
 }
 
 impl NavidromeSongEntry {
@@ -110,6 +116,9 @@ pub async fn list(
                         title: text("title"),
                         album: text("album"),
                         lyrics: text("lyrics"),
+                        id: text("id"),
+                        duration: song.get("duration").and_then(serde_json::Value::as_f64),
+                        explicit_status: text("explicitStatus"),
                     });
                 }
             }

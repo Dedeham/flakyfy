@@ -15,7 +15,7 @@ use octo_core::common::{SongIdentity, dotnet};
 use octo_core::metadata::deezer_metadata_service::{
     AlbumAnswer, AlbumHit, ArtistHit, TrackMeta, release_types,
 };
-use octo_core::models::domain::{Album, Artist, Song};
+use octo_core::models::domain::{Album, Artist, Song, explicit_status};
 use octo_core::models::search::SearchResult;
 use octo_core::models::subsonic::ExternalPlaylist;
 use octo_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting};
@@ -363,6 +363,22 @@ impl SoulseekMetadataService {
     }
 }
 
+/// The catalog ids of the clean copies in an album listing: a release that is not marked
+/// explicit beside one of the same artist and title that is. The listing alone does not tell a
+/// clean edit from an album that never had explicit words, but its explicit twin does.
+pub(crate) fn clean_copies(hits: &[AlbumHit]) -> HashSet<String> {
+    let key = |hit: &AlbumHit| (SongIdentity::key(&hit.artist), SongIdentity::key(&hit.title));
+    let explicit: HashSet<(String, String)> = hits
+        .iter()
+        .filter(|hit| hit.explicit_lyrics == Some(true))
+        .map(key)
+        .collect();
+    hits.iter()
+        .filter(|hit| hit.explicit_lyrics == Some(false) && explicit.contains(&key(hit)))
+        .map(|hit| hit.deezer_id.clone())
+        .collect()
+}
+
 impl Inner {
     fn lookup(&self, id: &str) -> Option<SharedRouting> {
         self.id_registry.lookup(id)
@@ -377,6 +393,9 @@ impl Inner {
         if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
             song.album = album.to_string();
         }
+        if let Some(words) = meta.explicit_content {
+            song.explicit_content_lyrics = Some(words);
+        }
     }
 
     fn reflect_on_routing(&self, id: &str, meta: &TrackMeta) {
@@ -388,6 +407,9 @@ impl Inner {
             }
             if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
                 r.album = Some(album.to_string());
+            }
+            if let Some(said) = meta.explicit_content {
+                r.explicit_content = Some(said);
             }
         }
         self.id_registry
@@ -641,11 +663,13 @@ impl Inner {
             .iter()
             .zip(&walk.counts)
             .map(|(release, count)| {
+                let words = (release.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT);
                 let album_id = self.id_registry.register(SoulseekRouting {
                     kind: RoutingKind::Album,
                     artist: Some(name.to_string()),
                     album: Some(release.title.clone()),
                     external_album_id: Some(release.deezer_id.clone()),
+                    explicit_content: words,
                     ..Default::default()
                 });
                 Album {
@@ -655,6 +679,7 @@ impl Inner {
                     song_count: Some(count.unwrap_or(release.track_count)),
                     cover_art_url: release.cover_url.clone(),
                     release_types: release_type_list(release.record_type.as_deref()),
+                    explicit_content_lyrics: words,
                     is_local: false,
                     external_provider: Some(SoulseekMetadataService::PROVIDER_NAME.to_string()),
                     external_id: Some(album_id),
@@ -844,6 +869,9 @@ impl IMusicMetadataService for SoulseekMetadataService {
         // clients from rendering a scrub bar at all). The Octo app knows this
         // value and shows no length for it rather than a wrong one.
         let effective_duration = remembered.or(duration_seconds).unwrap_or(180);
+        let explicit = registry
+            .lookup(&external_id)
+            .and_then(|routing| routing.lock().explicit_content);
 
         vec![Song {
             id: external_id.clone(),
@@ -851,6 +879,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
             artist: artist.to_string(),
             album: String::new(),
             duration: Some(effective_duration),
+            explicit_content_lyrics: explicit,
             is_local: false,
             external_provider: Some(Self::PROVIDER_NAME.to_string()),
             external_id: Some(external_id),
@@ -1123,16 +1152,26 @@ impl IMusicMetadataService for SoulseekMetadataService {
         let inner = &self.inner;
         let hits = inner.deezer.search_albums(query, limit, false).await;
         let mut albums = Vec::with_capacity(hits.len());
+        let clean_copies = clean_copies(&hits);
 
         for hit in hits {
             // The registry id is the external id everywhere: getAlbum, getCoverArt and
             // star all round-trip through it. The Deezer id rides along on the routing
-            // so album detail can fetch the exact tracklist without a name lookup.
+            // so album detail can fetch the exact tracklist without a name lookup. A clean copy
+            // listed beside its explicit original gets an id of its own, or the two rows would
+            // open the same album.
+            let words = if clean_copies.contains(hit.deezer_id.as_str()) {
+                Some(explicit_status::CLEAN)
+            } else {
+                (hit.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT)
+            };
             let album_id = inner.id_registry.register(SoulseekRouting {
                 kind: RoutingKind::Album,
                 artist: Some(hit.artist.clone()),
                 album: Some(hit.title.clone()),
                 external_album_id: Some(hit.deezer_id.clone()),
+                explicit_content: words,
+                version: explicit_status::version_of(words),
                 ..Default::default()
             });
             let artist_id = inner.id_registry.register(SoulseekRouting {
@@ -1150,6 +1189,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 song_count: Some(hit.track_count),
                 cover_art_url: hit.cover_url.clone(),
                 release_types: release_type_list(hit.record_type.as_deref()),
+                explicit_content_lyrics: words,
                 is_local: false,
                 external_provider: Some(Self::PROVIDER_NAME.to_string()),
                 external_id: Some(album_id),
@@ -1266,6 +1306,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
             total_tracks: routing.total_tracks,
             duration: routing.duration,
             isrc: routing.isrc.clone(),
+            explicit_content_lyrics: routing.explicit_content,
             is_local: false,
             external_provider: Some(Self::PROVIDER_NAME.to_string()),
             external_id: Some(external_id.to_string()),
@@ -1371,6 +1412,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
         album.genre = detail.genre.clone();
         album.cover_art_url = detail.cover_url.clone().or(album.cover_art_url);
         album.release_types = release_type_list(detail.record_type.as_deref());
+        album.explicit_content_lyrics = detail.explicit_content.or(routing.explicit_content);
         // Defence in depth: the Deezer layer no longer returns a tracklist-less album,
         // but if one ever gets through, reporting zero is worse than saying nothing.
         if !detail.tracks.is_empty() {
@@ -1399,6 +1441,9 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 disc_number: track.disc_number,
                 total_tracks: Some(detail.tracks.len() as i32),
                 isrc: track.isrc.clone(),
+                // A clean edit's track has an id of its own, apart from the explicit album's.
+                explicit_content: track.explicit_content,
+                version: explicit_status::version_of(track.explicit_content),
                 ..Default::default()
             });
 
@@ -1413,6 +1458,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 track: track.track_position,
                 disc_number: track.disc_number,
                 isrc: track.isrc.clone(),
+                explicit_content_lyrics: track.explicit_content,
                 year: detail.year,
                 genre: detail.genre.clone(),
                 cover_art_url: detail.cover_url.clone(),

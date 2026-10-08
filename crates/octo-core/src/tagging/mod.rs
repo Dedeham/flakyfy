@@ -6,6 +6,7 @@
 pub mod album_tag_context;
 pub mod candidate_sources;
 pub mod explicit_advisory;
+pub mod explicit_lookup;
 pub mod matching_settings;
 mod net;
 pub mod release_chooser;

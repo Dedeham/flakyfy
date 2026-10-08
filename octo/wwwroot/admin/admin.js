@@ -2904,7 +2904,7 @@ async function loadRadioStatus() {
       : learning.refreshing ? 'Refreshing now. The last good snapshots remain playable.'
       : learning.lastRefreshError ? `Last refresh failed: ${learning.lastRefreshError}` : `${learning.plays} completed plays learned.`;
     output.innerHTML = `<p class="radio-state-copy">${escapeHtml(stateMessage)}</p>` + ((data.stations || []).length
-      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${escapeHtml(station.kind)} · ${station.trackCount} tracks</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.artist)} — ${escapeHtml(track.title)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
+      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${escapeHtml(station.kind)} · ${station.trackCount} tracks</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.title)} by ${escapeHtml(track.artist)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
       : '<div class="radio-empty">No ready snapshots yet. Stations are offered automatically as listening signals arrive.</div>');
   } catch (error) { output.textContent = `Radio status unavailable: ${error.message}`; }
 }
@@ -3831,7 +3831,7 @@ function renderLatestFetched() {
   const covers = document.getElementById('latest-covers');
   covers.innerHTML = ambientSongs.map((s, i) => {
     const on = s === song;
-    const label = `Light the page with ${s.title} by ${s.artist}${s.colors ? '' : ' (no colour in this cover)'}`;
+    const label = `Light the page with ${s.title} by ${s.artist}${s.colors ? '' : ' (no color in this cover)'}`;
     const img = s.coverArtUrl
       ? `<img src="${escapeHtml(s.coverArtUrl)}" alt="" loading="lazy" onerror="this.remove()">`
       : '';

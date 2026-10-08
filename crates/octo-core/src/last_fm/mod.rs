@@ -14,6 +14,7 @@ pub mod last_fm_radio_track_resolver;
 pub mod last_fm_scrobble_service;
 pub mod last_fm_search_cleanup;
 pub mod last_fm_service;
+pub mod radio_filler;
 
 pub use last_fm_radio_audio_transcoder::RadioAudioProfile;
 pub use last_fm_scrobble_service::{

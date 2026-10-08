@@ -507,6 +507,42 @@ its 2 aspects in both modes and is waiting for review) and the two `activity-res
 of N. No group got worse against the C, O and Q record: B 11, C 9, D 110, F 128, G 47, H 201,
 I 3, J 3, L 45, N 14, O 17, P 68, Q 5, R 96 (97), base 29; A, K and S 0.
 
+### G3 record: group L (2026-10-08)
+
+Branch `port/g3-l` (`1b4d021`, merged with `rust/main` `cd89293`). A first targeted run on
+LXC 131 (`--only '1[15]-*'`, `694e9ee`, 218 requests compared) left nothing of L's own: every
+`15-radio` diff was another group's. The final run: `parity/run.sh --rust-twice` on the WSL lane,
+the whole corpus (1,837 requests) against the cached C# recording, 49 minutes.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 741 unexplained (768 after E), 1,069 explained, 27 identical | not run |
+| Rust against Rust | 1,837 identical, 0 unexplained | 1,837 identical, 0 unexplained |
+
+| Group | Own before (phase 1) | Own after J and I | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| L | 75 | 45 | 18 | 6 |
+
+Song radio, station provenance, bans, learning, the outcome stats, Sounds alike's pass and
+controls and the octo-sonic status card all match. What is left on L is other groups' work:
+
+- L 18 own: 15 `getSimilarSongs` answers differ only by P's `explicitStatus` on one outside song;
+  the 3 `extensions-radio-*` answers by D's second `octoAcquisitions` version and G's and H's
+  extensions (octoRadioSources is listed and placed as the C# places it).
+- L 6 diffs: those 3 extension answers, and `09-admin/update`, `11-signin/in-get-update` and
+  `90-mutations/update-check`, whose update commands pull `yt-dlp-shim` and `octo-sonic`
+  (`610dba2`, group T, the release phase); `groups.json` puts them on L for `octo-sonic`.
+
+The registry fix shows in no request of this corpus: the C# answers carry the album too
+(`95-acquisition` searches again before it reads the songs, as the harness notes said), so no
+`intentional-diffs.json` entry is proposed: like G1's two unreachable fixes, it has a Rust test
+and a known-diffs row. No group got worse against the E record: B 11, C 9, D 110, E 4, F 128,
+G 47, H 201, I 3, J 3, N 14, O 17, P 68, Q 5, R 96, base 29; A, K and S 0.
+
+The full run was started on the box first and stopped while queued; WSL full runs on `78234a5`
+stopped silently after the image build (`run.sh`'s ADAPTIVE substitution under `set -e`), fixed
+on `rust/main` in `cd89293`.
+
 ### WSL lane record (2026-10-08)
 
 The parity harness now also runs in WSL's own Docker (29.1.3, compose 2.40), many stacks at
@@ -544,6 +580,39 @@ the shards work in progress; its C# against Rust count (795) is not yet the whol
 The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
 Rust, so that shard sets the time of a sharded run.
 
+### G3 record: group H (2026-10-08)
+
+Branch `port/g3-h` (`b0de7a5`, on `rust/main` `cd89293`), the whole corpus on the WSL lane with
+`parity/run.sh --rust-twice` against the cached C# recording (1,837 requests). A targeted run
+before it (`--only '[01][126]-*'` on LXC 131, 547 requests) found the same 16.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 584 unexplained (768 after E), 1,225 explained, 28 identical |
+| Rust against Rust | 1,836 identical, 1 unexplained (bytes the same) |
+
+| Group | Own before (phase 1) | Own after J and I | Own after |
+| --- | ---: | ---: | ---: |
+| H | 208 | 202 | 16 |
+
+All 16 are the Keep as playlist fix, proposed as `keep-as-playlist-navidrome-takes-it`
+(`reviewed` unset, so still counted; with it reviewed H is 0, checked with a local diff of the
+recordings): `playlist-on` and `app-playlist-on` answer 200 with the playlist's song count where
+the C# answered 500; the lists then carry their `playlistId` (`list-gym-after-playlist`,
+`overview-trickle-off`, `getImports-paused`, `overview-after-skips`, `list-gym-after-skips`,
+`app-getImport-public`, `getImports-listener-paused`, `getImports-listener-after-read-7`) and
+their removal says the playlist stays (`remove-gym`, `app-remove`); and Navidrome's own playlist
+is named after the list, holds its songs and belongs to its owner (`nd-find-playlist-gym`,
+`nd-playlist-gym`, `nd-find-playlist-listener`, `nd-playlist-listener`; the corpus finds it by
+either name, so it needed no change, and deletes it as before, so later files see none).
+Everything else in `12-imports` matches, the state files included.
+
+No group got worse: B 11, C 9, D 110, E 4, F 128, G 47, I 3, J 3, L 45, N 14, O 17, P 68, Q 5,
+R 97, base 29; A, K and S 0. The extension lists (`01-system/extensions-*`,
+`16-lists/extensions-*`) now carry octoImports and differ only by G's octoTopSongs and L's
+octoRadioSources. Rust against Rust's one diff is `19-health/plant-wait` (R), the scan timing
+the G1 and E records saw.
+
 ### G4 record: group N (2026-10-08)
 
 Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
@@ -574,7 +643,7 @@ diff.
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three, the G4 record for E and N), proposed
+and Q record for those three, the G3 H record for H, the G4 record for E and N), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -587,13 +656,13 @@ Rust change.
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
-| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
+| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
-| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 45 | open |
+| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 18 | done (G3) |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; D, H and R's jobs wait on those groups) |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; D and R's jobs wait on those groups) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
@@ -750,17 +819,22 @@ playlists); left out of `port/g2-eg` on purpose.
 
 ### H. Spotify import and the trickle
 
-- **Fix in port:** "Keep as playlist" answers 500 against Navidrome 0.64.2
-  (Octo reads Navidrome's answer to the playlist create as JSON; likely the
-  `application/json; charset=utf-8` content type makes Navidrome take the
-  body as an M3U import), and every 30 s retry leaves another empty playlist
-  named after the time; create the playlist the way Navidrome reads it and
-  never retry into a new empty one, with a Rust test and an intentional diff.
+Done in G3 (`services::imports`, `controllers::admin::imports`, `controllers::subsonic::imports`).
 
-- [ ] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
-- [ ] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
-- [ ] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
-- [ ] `45f730c` fix(imports): a file holds at most 50,000 songs, a zip 200 files and 256 MB unpacked, and a person 500 lists
+- **Fixed in port:** "Keep as playlist" answered 500 against Navidrome 0.64.2. Navidrome
+  creates a playlist from JSON only when the content type is exactly `application/json`; the
+  C# sent `application/json; charset=utf-8`, so Navidrome read the body as an M3U file, made an
+  empty playlist named after the time and answered in M3U, and every 30 s pass made another.
+  The port sends `application/json`, deletes a playlist it made and could not fill, and tries a
+  playlist Navidrome would not take again after 1, 2, 4 minutes and on, at most an hour; Rust
+  tests and the proposed intentional diff `keep-as-playlist-navidrome-takes-it`.
+
+- [x] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
+- [x] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
+  (no Rust change: the dashboard is the shared `octo/wwwroot`)
+- [x] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
+  (no Rust change: the shared `install.sh`)
+- [x] `45f730c` fix(imports): a file holds at most 50,000 songs, a zip 200 files and 256 MB unpacked, and a person 500 lists
 
 ### I. Secret masking in the admin API
 
@@ -797,23 +871,39 @@ Rust change beyond the settings they name.
   Last.fm without an album and replaces the search's entry, so later answers
   lose the album; keep the album a registration already had (as the length,
   ISRC and explicit mark are kept), with a Rust test and an intentional diff.
+  Done in G3 (`external_id_registry::register`, test
+  `a_registration_without_an_album_keeps_the_album_already_known`, known-diffs
+  "An outside song's album in the registry"; no corpus request reaches it, so it has no
+  intentional-diffs entry, see the G3 record).
 
-- [ ] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
-- [ ] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
-- [ ] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again
-- [ ] `8f5142d` refactor(radio): song radio asks a set of sources and blends them; Last.fm is the first
-- [ ] `c1d701d` feat(radio): every radio song says which source suggested it (octoSuggestedBy, octoRadioSources)
-- [ ] `8346a30` feat(radio): YouTube Music's radio is a source, and a song it suggests plays the video it named
-- [ ] `7b0e226` feat(radio): ListenBrainz's similar recordings are a source, and LB Radio fills artist and genre stations when Octo has a token
-- [ ] `6a119db` feat(admin): radio sources and their weights on the Radio page
-- [ ] `2d04f3f` feat(radio): Sounds alike, library songs that sound like the seed, from Octo's own analysis
-- [ ] `7ba1123` feat(radio): stations draw on every radio source and remember which one suggested each song
-- [ ] `ece2795` feat(radio): radio learns which sources each listener keeps, and weighs them by it
-- [ ] `7a8cc5f` fix(radio): song radio asks fairly and never keeps a failure as an answer
-- [ ] `b446983` fix(radio): stations share per seed and learning counts each serving once
-- [ ] `3de8dde` fix(sonic): the analysis says it is about to start, not that it is off, until its first look
-- [ ] `e4b0327` fix(sonic): Sounds alike never forgets songs on a bad listing, and octo-sonic runs locked down
-- [ ] `7af692c` fix(sonic): the dashboard and comments spell analyzed the US way
+Done in G3 on `port/g3-l`. The pure parts are `octo_core::radio` (`RadioProvider`,
+`RadioTypes`, `RadioBlend`) and `octo_core::last_fm::radio_filler`; the sources, the set,
+song radio and the outcome store are `octo::services::radio`; octo-sonic's client, store and
+analysis worker `octo::services::sonic`; `YouTubeMusicClient` and `ListenBrainzRadioClient`
+beside their services. `SongRadioService` is shared, with each request's resolver handed to
+`build`. `TopSongsService.LibraryQuery` (7a8cc5f's library search) lives in
+`last_fm_radio_track_resolver::library_query`, marked STUB(G): G's `TopSongsService` takes it
+over. `6a119db`'s settings views and the octo-sonic status card came with G1. The station
+previews' em dash Brandon saw is in the dashboard (`octo/wwwroot/admin/admin.js`, the Radio
+page's station grid joins artist and title with one), which both builds serve as is; no Rust
+radio code builds a string with one.
+
+- [x] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
+- [x] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
+- [x] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again
+- [x] `8f5142d` refactor(radio): song radio asks a set of sources and blends them; Last.fm is the first
+- [x] `c1d701d` feat(radio): every radio song says which source suggested it (octoSuggestedBy, octoRadioSources)
+- [x] `8346a30` feat(radio): YouTube Music's radio is a source, and a song it suggests plays the video it named
+- [x] `7b0e226` feat(radio): ListenBrainz's similar recordings are a source, and LB Radio fills artist and genre stations when Octo has a token
+- [x] `6a119db` feat(admin): radio sources and their weights on the Radio page
+- [x] `2d04f3f` feat(radio): Sounds alike, library songs that sound like the seed, from Octo's own analysis
+- [x] `7ba1123` feat(radio): stations draw on every radio source and remember which one suggested each song
+- [x] `ece2795` feat(radio): radio learns which sources each listener keeps, and weighs them by it
+- [x] `7a8cc5f` fix(radio): song radio asks fairly and never keeps a failure as an answer
+- [x] `b446983` fix(radio): stations share per seed and learning counts each serving once
+- [x] `3de8dde` fix(sonic): the analysis says it is about to start, not that it is off, until its first look
+- [x] `e4b0327` fix(sonic): Sounds alike never forgets songs on a bad listing, and octo-sonic runs locked down
+- [x] `7af692c` fix(sonic): the dashboard and comments spell analyzed the US way
 
 ### M. octo-sonic (Rust) and the shim's /ytm (Python)
 
@@ -841,11 +931,11 @@ server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
 `GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
 the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
 reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
-on both). The activity view reads three jobs of groups not on `rust/main` yet through views of
-its own, with a `STUB` where each is read: Find songs (D, `FindLook` from `FindSnapshot`),
-Spotify imports (H, `ImportsActivity` from `ImportOverview`), Library health (R,
-`HealthActivity` from `HealthRun`). Each is a conversion and one call in `get_activity`; the
-word mapping and its tests are in already. The slskd rescan (E) is read.
+on both). The activity view reads two jobs of groups not on `rust/main` yet through views of
+its own, with a `STUB` where each is read: Find songs (D, `FindLook` from `FindSnapshot`) and
+Library health (R, `HealthActivity` from `HealthRun`). Each is a conversion and one call in
+`get_activity`; the word mapping and its tests are in already. The slskd rescan (E) and the
+Spotify read and trickle (H, `ImportsActivity` from `ImportOverview`) are read.
 
 ### O. Search album ownership
 
@@ -874,6 +964,15 @@ word mapping and its tests are in already. The slskd rescan (E) is read.
 - [x] `452f47e` fix(lists): Check Mode on Made for you
   (the Made for you settings came from g1-core's `generated_playlist.rs` as it wrote them, with its
   admin settings and raw-config rows, so the two merge cleanly)
+- [x] Lists off in the dashboard (2026-10-08, `fix/q-lists-off`): the parity run's
+  `16-lists/listener-playlists-lists-off-json` kept New Releases. The getPlaylists right after
+  the save came in before the file watcher read settings.json again (250 ms later), so it
+  answered from the settings before the save. With Popular right now's chart calls that one
+  request took 15 s, the whole wait, so no second ask came. A settings save and a Raw config
+  save now read the file again before they answer, and the next request sees the save.
+  Rediscover, Deep Cuts and the list settings (weeks, artists, months) had the same lag and the
+  same fix. C# still waits for its watcher; a request inside those 250 ms is the only place the
+  two can answer differently.
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 

@@ -1,13 +1,17 @@
-//! `Services/Sonic/SonicStore.cs`'s file, `sonic-features.json`: what every analyzed song sounds
-//! like, by Navidrome song id.
+//! Port of `Services/Sonic/SonicStore.cs` and its file, `sonic-features.json`: what every
+//! analyzed song sounds like, by Navidrome song id, on disk beside the settings, and the songs
+//! nearest a seed. Written at most once a minute, like the review sweep's store.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
 use octo_core::json::datetime;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::services::state_file::{self, null_as_default};
@@ -106,6 +110,204 @@ pub fn save(path: &Path, state: &SonicState) -> bool {
     }
 }
 
+// A whole library's numbers are megabytes of JSON; once a minute is plenty, and a crash costs at
+// most a minute of analysis.
+const FLUSH_EVERY: TimeDelta = TimeDelta::minutes(1);
+
+/// bliss 0.13's own distance for feature version 2 (its `VERSION2_WEIGHTS`, a weighted
+/// Euclidean): tempo counts a quarter, since its beat tracker is unreliable on music with few
+/// onsets, and the 13 harmony values share the weight of 3, so harmony cannot outvote timbre and
+/// loudness. Another version's numbers are compared unweighted.
+pub const VERSION2_WEIGHTS: [f32; 23] = [
+    0.25,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+    3.0 / 13.0,
+];
+
+pub const FIT_CLOSE: f64 = 1.2;
+pub const FIT_FAR: f64 = 0.6;
+
+/// The distance between two songs' features. Each term is worked out in single precision, as the
+/// C# `float` arithmetic did, and summed in double.
+pub fn distance(a: &[f32], b: &[f32], version: i32) -> f64 {
+    let weights = (version == 2 && a.len() == VERSION2_WEIGHTS.len()).then_some(&VERSION2_WEIGHTS);
+    let mut sum = 0.0_f64;
+    for i in 0..a.len() {
+        let d = a[i] - b[i];
+        let weight = weights.map_or(1.0, |w| w[i]);
+        sum += f64::from(weight * d * d);
+    }
+    sum.sqrt()
+}
+
+struct Inner {
+    state: SonicState,
+    dirty: bool,
+    last_flush: DateTime<Utc>,
+}
+
+/// What every analyzed song sounds like, on disk beside the settings, and the songs nearest a
+/// seed.
+pub struct SonicStore {
+    path: PathBuf,
+    inner: Mutex<Inner>,
+    /// Held from the snapshot to the file move, so an older snapshot never lands last.
+    file_lock: Mutex<()>,
+}
+
+impl SonicStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let state = load(&path);
+        SonicStore {
+            path,
+            inner: Mutex::new(Inner {
+                state,
+                dirty: false,
+                last_flush: datetime::min_value(),
+            }),
+            file_lock: Mutex::new(()),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn read<T>(&self, read: impl FnOnce(&SonicState) -> T) -> T {
+        read(&self.inner.lock().state)
+    }
+
+    pub fn write(&self, write: impl FnOnce(&mut SonicState)) {
+        let due = {
+            let mut inner = self.inner.lock();
+            write(&mut inner.state);
+            inner.dirty = true;
+            Utc::now() - inner.last_flush >= FLUSH_EVERY
+        };
+        if due {
+            self.flush();
+        }
+    }
+
+    pub fn flush(&self) {
+        let _file = self.file_lock.lock();
+        let snapshot = {
+            let mut inner = self.inner.lock();
+            if !inner.dirty {
+                return;
+            }
+            inner.dirty = false;
+            inner.last_flush = Utc::now();
+            inner.state.clone()
+        };
+        if !save(&self.path, &snapshot) {
+            self.inner.lock().dirty = true;
+        }
+    }
+
+    /// Whatever changed since the last write goes down on the way out (the worker's stop).
+    pub async fn run_flusher(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
+        stopping.cancelled().await;
+        self.flush();
+        Ok(())
+    }
+
+    /// Library songs that sound most like the seed, nearest first. Nothing for a song not
+    /// analyzed yet.
+    pub fn nearest(&self, seed_id: &str, count: usize) -> Vec<(String, SonicSong, f64)> {
+        let inner = self.inner.lock();
+        let Some(seed) = inner.state.songs.get(seed_id).filter(|seed| !seed.f.is_empty()) else {
+            return Vec::new();
+        };
+        let mut near: Vec<(String, SonicSong, f64)> = inner
+            .state
+            .songs
+            .iter()
+            .filter(|(id, song)| {
+                *id != seed_id && song.version == seed.version && song.f.len() == seed.f.len()
+            })
+            .map(|(id, song)| (id.clone(), song.clone(), distance(&seed.f, &song.f, seed.version)))
+            .collect();
+        // A stable sort, as OrderBy: equal distances keep the file's order.
+        near.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        near.truncate(count);
+        near
+    }
+
+    /// How well each candidate's sound fits the seed, as a score multiplier: [`FIT_CLOSE`] at or
+    /// under the 25th percentile of the seed's distances to the whole library, [`FIT_FAR`] at or
+    /// over the 75th, in a straight line between. Measured against the seed's own spread, because
+    /// how far "close" is differs from library to library and song to song. Empty when the seed
+    /// has not been analyzed; a candidate without a sound is left out.
+    pub fn fit_factors<'a>(
+        &self,
+        seed_id: &str,
+        candidate_ids: impl IntoIterator<Item = &'a str>,
+    ) -> IndexMap<String, f64> {
+        let inner = self.inner.lock();
+        let Some(seed) = inner.state.songs.get(seed_id).filter(|seed| !seed.f.is_empty()) else {
+            return IndexMap::new();
+        };
+        let mut all: Vec<f64> = inner
+            .state
+            .songs
+            .iter()
+            .filter(|(id, song)| {
+                *id != seed_id && song.version == seed.version && song.f.len() == seed.f.len()
+            })
+            .map(|(_, song)| distance(&seed.f, &song.f, seed.version))
+            .collect();
+        if all.len() < 8 {
+            return IndexMap::new();
+        }
+        all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let near = all[all.len() / 4];
+        let far = all[all.len() * 3 / 4];
+        let mut fit = IndexMap::new();
+        for id in candidate_ids {
+            let Some(song) = inner
+                .state
+                .songs
+                .get(id)
+                .filter(|song| song.version == seed.version && song.f.len() == seed.f.len())
+            else {
+                continue;
+            };
+            let d = distance(&seed.f, &song.f, seed.version);
+            let factor = if d <= near {
+                FIT_CLOSE
+            } else if d >= far || far <= near {
+                FIT_FAR
+            } else {
+                FIT_CLOSE + (FIT_FAR - FIT_CLOSE) * (d - near) / (far - near)
+            };
+            fit.insert(id.to_string(), factor);
+        }
+        fit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +316,28 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/rust-migration/fixtures/state/sonic-features.json"
     );
+
+    /// 23 numbers, all zero but the second, which says how far along a line the song sits.
+    fn at(x: f32) -> Vec<f32> {
+        let mut f = vec![0.0; 23];
+        f[1] = x;
+        f
+    }
+
+    fn song(f: Vec<f32>, version: i32, title: &str) -> SonicSong {
+        SonicSong {
+            stamp: "1:1".into(),
+            title: title.into(),
+            artist: "Artist".into(),
+            version,
+            f,
+            ..Default::default()
+        }
+    }
+
+    fn store(dir: &tempfile::TempDir) -> SonicStore {
+        SonicStore::new(dir.path().join("sonic-features.json"))
+    }
 
     /// Single-precision features are written as .NET wrote a `float`: shortest round trip,
     /// exponents as `E-05` and `E+38`.
@@ -138,5 +362,112 @@ mod tests {
         assert_eq!(state.songs.keys().collect::<Vec<_>>(), ["c"]);
         assert_eq!(state.failed.keys().collect::<Vec<_>>(), ["y"]);
         assert_eq!(state.pass, 1);
+    }
+
+    // SonicStoreTests.Distance_IsBlissWeighted_TempoAQuarter_HarmonyThreeThirteenths
+    #[test]
+    fn distance_is_bliss_weighted_tempo_a_quarter_harmony_three_thirteenths() {
+        let a = vec![0.0_f32; 23];
+        let mut tempo = a.clone();
+        tempo[0] = 1.0;
+        let mut timbre = a.clone();
+        timbre[1] = 1.0;
+        let mut chroma = a.clone();
+        chroma[12] = 1.0;
+        assert!((distance(&a, &tempo, 2) - 0.25_f64.sqrt()).abs() < 1e-6);
+        assert!((distance(&a, &timbre, 2) - 1.0).abs() < 1e-6);
+        assert!((distance(&a, &chroma, 2) - (3.0_f64 / 13.0).sqrt()).abs() < 1e-6);
+        // Another version's numbers are compared unweighted.
+        assert!((distance(&a, &tempo, 1) - 1.0).abs() < 1e-6);
+    }
+
+    // SonicStoreTests.Nearest_IsClosestFirst_AndOnlySongsOfTheSameVersion
+    #[test]
+    fn nearest_is_closest_first_and_only_songs_of_the_same_version() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = store(&dir);
+        store.write(|s| {
+            s.songs.insert("seed".into(), song(at(0.0), 2, "Song"));
+            s.songs.insert("far".into(), song(at(0.9), 2, "Song"));
+            s.songs.insert("near".into(), song(at(0.1), 2, "Song"));
+            s.songs.insert("mid".into(), song(at(0.5), 2, "Song"));
+            s.songs.insert("old".into(), song(at(0.05), 1, "Song"));
+        });
+        let ids: Vec<String> = store
+            .nearest("seed", 2)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(ids, ["near", "mid"]);
+        assert!(store.nearest("unknown", 5).is_empty());
+    }
+
+    // SonicStoreTests.FitFactors_LeanOnTheSeedsOwnSpread
+    #[test]
+    fn fit_factors_lean_on_the_seeds_own_spread() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = store(&dir);
+        store.write(|s| {
+            s.songs.insert("seed".into(), song(at(0.0), 2, "Song"));
+            for i in 1..=20 {
+                s.songs
+                    .insert(format!("s{i}"), song(at(i as f32 / 20.0), 2, "Song"));
+            }
+        });
+        let fit = store.fit_factors("seed", ["s1", "s20", "s10", "nobody"]);
+        assert_eq!(fit["s1"], FIT_CLOSE);
+        assert_eq!(fit["s20"], FIT_FAR);
+        assert!((FIT_FAR..=FIT_CLOSE).contains(&fit["s10"]));
+        assert!(!fit.contains_key("nobody"));
+    }
+
+    // SonicStoreTests.FitFactors_NeedAnAnalysedSeedAndEnoughSongs
+    #[test]
+    fn fit_factors_need_an_analyzed_seed_and_enough_songs() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = store(&dir);
+        store.write(|s| {
+            s.songs.insert("seed".into(), song(at(0.0), 2, "Song"));
+            for i in 1..=5 {
+                s.songs
+                    .insert(format!("s{i}"), song(at(i as f32 / 5.0), 2, "Song"));
+            }
+        });
+        assert!(store.fit_factors("seed", ["s1"]).is_empty());
+        assert!(store.fit_factors("unanalysed", ["s1"]).is_empty());
+    }
+
+    // SonicStoreTests.WhatWasSaved_IsThereAfterARestart_AndABrokenFileStartsOver
+    #[test]
+    fn what_was_saved_is_there_after_a_restart_and_a_broken_file_starts_over() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let first = store(&dir);
+        first.write(|s| {
+            s.songs.insert("a".into(), song(at(0.3), 2, "Roads"));
+            s.pass = 2;
+        });
+        first.flush();
+        let again = store(&dir);
+        assert_eq!(again.read(|s| s.songs["a"].title.clone()), "Roads");
+        assert_eq!(again.read(|s| s.songs["a"].f[1]), 0.3_f32);
+        assert_eq!(again.read(|s| s.pass), 2);
+
+        std::fs::write(again.path(), "{ not json").expect("writes");
+        assert!(store(&dir).read(|s| s.songs.is_empty()));
+    }
+
+    // SonicStoreTests.AFileWithNulls_IsReadWithoutThem
+    #[test]
+    fn a_file_with_nulls_is_read_without_them() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("sonic-features.json"),
+            r#"{"Pass":3,"Songs":{"a":{"Stamp":"1:1","Version":2,"F":[0.1]},"b":null,"c":{"Stamp":"1:1","F":null}},"Failed":{"x":null},"Paused":false}"#,
+        )
+        .expect("writes");
+        let store = store(&dir);
+        assert_eq!(store.read(|s| s.songs.keys().cloned().collect::<Vec<_>>()), ["a"]);
+        assert!(store.read(|s| s.failed.is_empty()));
+        assert!(store.nearest("a", 5).is_empty());
     }
 }

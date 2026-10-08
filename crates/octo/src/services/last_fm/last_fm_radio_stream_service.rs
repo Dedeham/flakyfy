@@ -362,6 +362,7 @@ impl LastFmRadioStreamService {
                                 &prepared.track.title,
                                 prepared.track.duration,
                                 &session.authentication,
+                                None,
                             )
                             .await;
                         if let Some(song) = song {
@@ -849,7 +850,7 @@ impl LastFmRadioStreamService {
     ) -> anyhow::Result<Option<DirectStreamInfo>> {
         let Some(song) = self
             .resolver
-            .resolve(&track.artist, &track.title, track.duration, authentication)
+            .resolve(&track.artist, &track.title, track.duration, authentication, None)
             .await
         else {
             return Ok(None);

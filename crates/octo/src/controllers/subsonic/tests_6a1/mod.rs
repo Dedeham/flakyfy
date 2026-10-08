@@ -5,6 +5,7 @@
 mod native;
 mod radio;
 mod search_paging;
+mod similar_songs;
 mod sync_walks;
 mod various;
 

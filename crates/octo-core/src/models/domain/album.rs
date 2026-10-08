@@ -22,6 +22,11 @@ pub struct Album {
     /// the way the catalog does, without guessing from a track count.
     pub release_types: Vec<String>,
     pub is_local: bool,
+
+    /// For an outside album: how many of its songs the library already holds, whatever album it
+    /// filed them under, sent as `ownedCount` beside `songCount`. None when its songs were not
+    /// looked at, which a client reads as it always has.
+    pub owned_count: Option<i32>,
     pub external_provider: Option<String>,
     pub external_id: Option<String>,
     pub songs: Vec<Song>,

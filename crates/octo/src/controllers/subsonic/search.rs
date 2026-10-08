@@ -17,12 +17,14 @@ use octo_subsonic::{Parameters, SubsonicReply};
 use serde_json::{Map, Value};
 use tracing::{debug, info};
 
+use super::album_ownership::{judge_albums, settle_search_albums};
 use super::helpers_6a1::{
     SubsonicCall, extract_local_song_ids, int_param, int_try_parse, is_failed_subsonic_body,
     queue_refresh_if_stale, visible_stations,
 };
 use crate::app::AppState;
 use crate::http::error::AppError;
+use crate::services::library::Standing;
 use crate::services::subsonic::{
     SearchBudget, SearchSongOrder, SearchSongOrderCache, SearchSongPagePlanner, SyncCatalog, SyncCatalogKind,
     SyncCatalogService,
@@ -137,7 +139,14 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         .then(|| {
             let external_search = Arc::clone(&state.external_search);
             let query = clean_query.clone();
-            tokio::spawn(async move { external_search.get_albums(&query, requested_albums.min(20)).await })
+            // What the library already holds of those albums, from their songs, judged as soon
+            // as they are found so it runs alongside the song build rather than after it.
+            let judging = state.clone();
+            tokio::spawn(async move {
+                let albums = external_search.get_albums(&query, requested_albums.min(20)).await;
+                let standings = judge_albums(&judging, &albums).await;
+                (albums, standings)
+            })
         });
 
     // Artists the same way, and for the same reason: the merge has always known how to
@@ -186,7 +195,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     // Parsed here rather than inside the merge so the count that sizes the discovery
     // slice below is taken from the very list the response will render.
     let mapper = model_mapper(&state);
-    let local_parsed: SearchRows = match &local_result {
+    let mut local_parsed: SearchRows = match &local_result {
         Some(local) => mapper.parse_search_response(&local.body, local.content_type.as_deref()),
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
@@ -242,15 +251,15 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
 
     // Degrade to no albums rather than failing the whole search if Deezer is slow,
     // throttled or unreachable.
-    let external_albums: Vec<Album> = match album_task {
+    let (external_albums, standings): (Vec<Album>, Vec<Standing>) = match album_task {
         Some(task) => match task.await {
-            Ok(albums) => albums.as_ref().clone(),
+            Ok((albums, standings)) => (albums.as_ref().clone(), standings),
             Err(error) => {
                 debug!("external album search failed for '{clean_query}': {error}");
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         },
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
     let external_artists: Vec<Artist> = match artist_task {
         Some(task) => match task.await {
@@ -273,9 +282,25 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
             .chain(external_songs.iter().map(|song| song.id.clone())),
     );
 
+    // An album the library holds whole, or by its very name, is listed as the library's album;
+    // one it holds in part says how much. search2 lists folders, not albums, so nothing is added
+    // there and its outside albums stay, counted.
+    let (settled_albums, added_albums) = settle_search_albums(
+        builder,
+        &call.proxy,
+        &call.parameters,
+        external_albums,
+        &standings,
+        &local_parsed.1,
+        local_type,
+        !is_search2,
+    )
+    .await;
+    local_parsed.1.extend(added_albums);
+
     let external_result = SearchResult {
         songs: external_songs,
-        albums: external_albums,
+        albums: settled_albums,
         artists: external_artists,
     };
     Ok(merge_search_results(

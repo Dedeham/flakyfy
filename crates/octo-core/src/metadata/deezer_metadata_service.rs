@@ -123,6 +123,16 @@ pub struct AlbumLookup {
     pub answer: AlbumAnswer,
 }
 
+/// No answer: what a shared lookup that failed outright stands for.
+impl Default for AlbumLookup {
+    fn default() -> Self {
+        Self {
+            detail: None,
+            answer: AlbumAnswer::Unavailable,
+        }
+    }
+}
+
 /// One artist from a catalog search. Fans is how many follow them, which is what
 /// tells two artists of one name apart when nothing better is known.
 #[derive(Debug, Clone, PartialEq, Default)]

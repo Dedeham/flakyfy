@@ -291,6 +291,38 @@ impl SubsonicResponseBuilder {
 
     /// Creates a Subsonic response containing an album with songs.
     pub fn create_album_response(&self, format: &str, album: &Album) -> SubsonicReply {
+        let fields = self.album_detail_fields(album);
+
+        if format == "json" {
+            let mut body = fields;
+            body.insert(
+                "song".into(),
+                Value::Array(
+                    album
+                        .songs
+                        .iter()
+                        .map(|s| Value::Object(self.convert_song_to_json(s)))
+                        .collect(),
+                ),
+            );
+            return self.create_json_response(json!({
+                "status": "ok",
+                "version": SUBSONIC_VERSION,
+                "album": body,
+            }));
+        }
+
+        let mut element = subsonic_element("album");
+        attributes(&mut element, &fields);
+        text_lists(&mut element, &fields, Some(SUBSONIC_NAMESPACE));
+        for song in &album.songs {
+            element.push(self.convert_song_to_xml(song, Some(SUBSONIC_NAMESPACE)));
+        }
+        SubsonicReply::xml(&envelope("ok").child(element))
+    }
+
+    /// An outside album's own fields as its detail sends them, without its songs.
+    pub fn album_detail_fields(&self, album: &Album) -> Fields {
         let song_count: i64 = if album.songs.is_empty() {
             i64::from(album.song_count.unwrap_or(0))
         } else {
@@ -324,33 +356,10 @@ impl SubsonicResponseBuilder {
         if let Some(year) = album.year {
             fields.insert("year".into(), year.into());
         }
-
-        if format == "json" {
-            let mut body = fields;
-            body.insert(
-                "song".into(),
-                Value::Array(
-                    album
-                        .songs
-                        .iter()
-                        .map(|s| Value::Object(self.convert_song_to_json(s)))
-                        .collect(),
-                ),
-            );
-            return self.create_json_response(json!({
-                "status": "ok",
-                "version": SUBSONIC_VERSION,
-                "album": body,
-            }));
+        if let Some(owned) = album.owned_count {
+            fields.insert("ownedCount".into(), owned.into());
         }
-
-        let mut element = subsonic_element("album");
-        attributes(&mut element, &fields);
-        text_lists(&mut element, &fields, Some(SUBSONIC_NAMESPACE));
-        for song in &album.songs {
-            element.push(self.convert_song_to_xml(song, Some(SUBSONIC_NAMESPACE)));
-        }
-        SubsonicReply::xml(&envelope("ok").child(element))
+        fields
     }
 
     /// Creates a Subsonic response for a playlist represented as an album.
@@ -773,6 +782,9 @@ impl SubsonicResponseBuilder {
         // unknown here and is left out rather than reported as zero.
         if let Some(year) = album.year {
             fields.insert("year".into(), year.into());
+        }
+        if let Some(owned) = album.owned_count {
+            fields.insert("ownedCount".into(), owned.into());
         }
 
         fields

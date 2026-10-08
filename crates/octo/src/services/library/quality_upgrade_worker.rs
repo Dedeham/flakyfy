@@ -30,7 +30,7 @@ use crate::services::soulseek::ISoulseekLink;
 use crate::services::state_file;
 use crate::services::subsonic::NavidromeIdentityService;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LibrarySongRow {
     pub id: String,
     pub path: String,
@@ -42,6 +42,11 @@ pub struct LibrarySongRow {
     pub artist: String,
     pub duration: Option<i32>,
     pub album: Option<String>,
+    /// The album the song is filed under, its album artist and its ISRCs (f49fb80), for album
+    /// ownership.
+    pub album_id: Option<String>,
+    pub album_artist: Option<String>,
+    pub isrcs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -528,6 +533,30 @@ impl QualityUpgradeWorker {
     }
 }
 
+/// A song's ISRCs: Navidrome files them among its tags, as a list; one written as a single
+/// string is read as a list of one.
+fn isrcs_of(song: &Value) -> Vec<String> {
+    fn read(value: &Value, found: &mut Vec<String>) {
+        match value {
+            Value::String(one) if !one.is_empty() => found.push(one.clone()),
+            Value::Array(items) => items.iter().for_each(|item| read(item, found)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    if let Some(tagged) = song
+        .get("tags")
+        .filter(|tags| tags.is_object())
+        .and_then(|tags| tags.get("isrc"))
+    {
+        read(tagged, &mut found);
+    }
+    if let Some(direct) = song.get("isrc") {
+        read(direct, &mut found);
+    }
+    found
+}
+
 /// `StringComparer.Ordinal`: UTF-16 code unit order.
 pub(crate) fn compare_ordinal(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
@@ -570,6 +599,9 @@ pub fn parse_songs(root: &Value) -> Result<Option<(Vec<LibrarySongRow>, usize)>,
                 _ => None,
             },
             album: text(song, "album"),
+            album_id: text(song, "albumId"),
+            album_artist: text(song, "albumArtist"),
+            isrcs: isrcs_of(song),
         });
     }
     Ok(Some((rows, count)))

@@ -126,6 +126,7 @@ struct Inner {
     /// once a request is back, so two callers asking the same thing at once each asked.
     in_flight_artists: InFlight<Vec<ArtistHit>>,
     in_flight_counts: InFlight<Option<i32>>,
+    in_flight_albums: InFlight<AlbumLookup>,
 }
 
 /// Flow out of a C# `try` block that could `return` early.
@@ -156,6 +157,7 @@ impl DeezerMetadataService {
                 album_year_tasks: InFlight::new(),
                 in_flight_artists: InFlight::new(),
                 in_flight_counts: InFlight::new(),
+                in_flight_albums: InFlight::new(),
             }),
         }
     }
@@ -948,6 +950,47 @@ impl DeezerMetadataService {
     /// Deezer has no such album, it has the album but no tracks for it, or it did not answer
     /// this time. Only the last may come right on its own a moment later.
     pub async fn look_up_album_detail(&self, deezer_id: &str) -> AlbumLookup {
+        self.look_up_album_detail_on(deezer_id, false).await
+    }
+
+    /// The album's detail when it is already cached, without asking Deezer.
+    pub fn cached_album_detail(&self, deezer_id: &str) -> Option<AlbumLookup> {
+        if is_blank(deezer_id) {
+            return None;
+        }
+        match self.get_cached(&format!("ad|{deezer_id}")) {
+            Some(Cached::Album(cached)) => Some(cached),
+            _ => None,
+        }
+    }
+
+    /// [`Self::look_up_album_detail`] from the cache, or from one request shared by every caller
+    /// asking at once. The request runs without any one caller, so a search that stops waiting
+    /// still leaves the answer cached for the next one. `background` puts it behind anything a
+    /// listener is waiting on.
+    pub async fn shared_album_detail(&self, deezer_id: &str, background: bool) -> AlbumLookup {
+        if is_blank(deezer_id) {
+            return AlbumLookup {
+                detail: None,
+                answer: AlbumAnswer::NoSuchAlbum,
+            };
+        }
+        let cache_key = format!("ad|{deezer_id}");
+        if let Some(Cached::Album(cached)) = self.get_cached(&cache_key) {
+            return cached;
+        }
+        let this = self.clone();
+        let id = deezer_id.to_string();
+        self.inner
+            .in_flight_albums
+            .run(&cache_key, async move {
+                this.look_up_album_detail_on(&id, background).await
+            })
+            .await
+    }
+
+    /// [`Self::look_up_album_detail`] on the catalog's background lane when `background`.
+    pub async fn look_up_album_detail_on(&self, deezer_id: &str, background: bool) -> AlbumLookup {
         if is_blank(deezer_id) {
             return AlbumLookup {
                 detail: None,
@@ -981,10 +1024,17 @@ impl DeezerMetadataService {
             // album that genuinely has no tracks.
             let mut nb_tracks = None;
 
+            // Both calls at once: the tracklist does not depend on the album's answer, and an
+            // album opened or counted from a search waits on the slower of the two rather than on
+            // both in turn. When the album call says there is nothing, the tracklist's answer is
+            // dropped unread.
+            let album_url = format!("{}/album/{deezer_id}", self.base());
+            let tracks_url = format!("{}/album/{deezer_id}/tracks?limit=300", self.base());
+            let (r, tr) = tokio::join!(
+                self.get_json(&album_url, background),
+                self.get_json(&tracks_url, background)
+            );
             {
-                let r = self
-                    .get_json(&format!("{}/album/{deezer_id}", self.base()), false)
-                    .await;
                 if r.transient {
                     return anyhow::Ok(Flow::Return(unavailable.clone()));
                 }
@@ -1021,12 +1071,6 @@ impl DeezerMetadataService {
 
             let mut tracks = Vec::new();
             {
-                let tr = self
-                    .get_json(
-                        &format!("{}/album/{deezer_id}/tracks?limit=300", self.base()),
-                        false,
-                    )
-                    .await;
                 // The album call can succeed while the tracklist call is throttled. That
                 // built a perfectly valid AlbumDetail carrying title, year and genre with
                 // an empty tracklist, cached it permanently, and is why getAlbum reported

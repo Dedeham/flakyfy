@@ -14,6 +14,7 @@ pub mod similar_songs;
 #[cfg(test)]
 mod tests_6a1;
 
+pub(crate) mod album_ownership;
 pub mod browsing;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
@@ -38,6 +39,8 @@ mod media_tests_6a2;
 mod rating_tests_6a2;
 #[cfg(test)]
 mod scrobble_tests_6a2;
+#[cfg(test)]
+mod search_album_ownership_tests;
 #[cfg(test)]
 mod stream_length_tests;
 

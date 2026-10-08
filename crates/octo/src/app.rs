@@ -60,8 +60,8 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
-use crate::services::library::GeneratedPlaylistService;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
+use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
     NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker, ReviewSweepStore, UpgradeWorker,
@@ -192,6 +192,11 @@ pub struct AppInner {
     pub navidrome_song_path_resolver: Arc<NavidromeSongPathResolver>,
     /// `AddSingleton<NavidromePlaylistApi>()`.
     pub navidrome_playlist_api: Arc<NavidromePlaylistApi>,
+    /// `AddSingleton<LibrarySnapshot>()` (f49fb80): the whole library through Navidrome's song
+    /// list, kept 5 minutes.
+    pub library_snapshot: Arc<LibrarySnapshot>,
+    /// `AddSingleton<AlbumOwnership>()` (f49fb80): how much of an outside album the library holds.
+    pub album_ownership: Arc<AlbumOwnership>,
     /// `AddHostedService<StartupValidationOrchestrator>()` over the `IStartupValidator`s
     /// (`SubsonicStartupValidator`, then `SoulseekStartupValidator`). Run by
     /// [`crate::host::run`] before the listener binds, as the host started it.
@@ -1369,6 +1374,8 @@ pub struct TestServices {
     pub raw_settings: Vec<(String, String)>,
     /// `IDownloadService` (the real one is task 4-C's).
     pub download_service: Option<Arc<dyn IDownloadService>>,
+    /// `LibrarySnapshot` (the C# tests swapped its `ReadPage`).
+    pub library_snapshot: Option<Arc<LibrarySnapshot>>,
 }
 
 /// The queues and sweeps of 5-B: the upgrade queue's worker, the weekly quality upgrade, the
@@ -1599,6 +1606,14 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let library_snapshot = Arc::new(LibrarySnapshot::new(Arc::clone(
+            &navidrome.navidrome_playlist_api,
+        )));
+        let album_ownership = Arc::new(AlbumOwnership::over(
+            Arc::clone(&library_snapshot),
+            Arc::clone(&clients.deezer_metadata),
+            Arc::clone(&stores.external_id_registry),
+        ));
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1640,6 +1655,8 @@ impl AppState {
             local_library: navidrome.local_library,
             navidrome_song_path_resolver: navidrome.navidrome_song_path_resolver,
             navidrome_playlist_api: navidrome.navidrome_playlist_api,
+            library_snapshot,
+            album_ownership,
             startup_validation: navidrome.startup_validation,
             deezer_rate_limiter: clients.deezer_rate_limiter,
             deezer_client: clients.deezer_client,
@@ -1823,6 +1840,16 @@ impl AppState {
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
+        let library_snapshot = overrides.library_snapshot.clone().unwrap_or_else(|| {
+            Arc::new(LibrarySnapshot::new(Arc::clone(
+                &navidrome.navidrome_playlist_api,
+            )))
+        });
+        let album_ownership = Arc::new(AlbumOwnership::over(
+            Arc::clone(&library_snapshot),
+            Arc::clone(&clients.deezer_metadata),
+            Arc::clone(&stores.external_id_registry),
+        ));
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -1864,6 +1891,8 @@ impl AppState {
             local_library: navidrome.local_library,
             navidrome_song_path_resolver: navidrome.navidrome_song_path_resolver,
             navidrome_playlist_api: navidrome.navidrome_playlist_api,
+            library_snapshot,
+            album_ownership,
             startup_validation: navidrome.startup_validation,
             deezer_rate_limiter: clients.deezer_rate_limiter,
             deezer_client: clients.deezer_client,

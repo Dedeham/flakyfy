@@ -309,6 +309,7 @@ async fn get_album_detail_async_definitive_no_data_is_cached() {
 
     // One call only: a definitive answer is allowed to stick.
     assert_eq!(h.calls("/album/999"), 1);
+    assert_eq!(h.calls("/album/999/tracks"), 1);
 }
 
 /// getAlbum lists the songs filed under an album when Deezer answered that it has
@@ -323,6 +324,8 @@ async fn look_up_album_detail_async_says_why_there_is_no_detail() {
             vec![QUOTA_ENVELOPE, r#"{"data":[]}"#, tracks.as_str()],
         ),
         ("/album/711108", vec![ALBUM_DETAIL_JSON]),
+        // The tracklist is asked beside the album, and dropped when there is no album.
+        ("/album/999/tracks", vec![r#"{"data":[]}"#]),
         ("/album/999", vec![NO_DATA_ENVELOPE]),
     ])
     .await;

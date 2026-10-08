@@ -15,6 +15,7 @@ use octo_core::models::domain::Album;
 use serde_json::Value;
 use tracing::{debug, error};
 
+use super::album_ownership::{outside_album_with_owned_songs, settle_artist_albums};
 use super::helpers_6a2::{SubsonicCall, as_json, file};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
@@ -111,6 +112,10 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
                 album.artist_id = Some(artist.id.clone());
             }
         }
+
+        // Each says how much of it the library holds. None is left out: the page lists no
+        // library album to stand in for one.
+        let albums = settle_artist_albums(&state, albums, &[]).await;
 
         return Ok(builder
             .create_artist_response(&format, &artist, &albums)
@@ -210,6 +215,10 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
     let local_album_names: HashSet<String> =
         local_album_titles.iter().map(|t| SongIdentity::key(t)).collect();
 
+    // Each outside album says how much of it the library holds; one the page's own albums hold
+    // whole, or by name, is left out.
+    let deezer_albums = settle_artist_albums(&state, deezer_albums, &local_albums).await;
+
     let mut merged_albums = local_albums;
     for deezer_album in &deezer_albums {
         if !local_album_names.contains(&SongIdentity::key(&deezer_album.title)) {
@@ -284,11 +293,18 @@ pub async fn get_album(State(state): State<AppState>, req: Request) -> AppResult
             )
             .await;
 
-        let Some(album) = album else {
+        let Some(mut album) = album else {
             return Ok(builder
                 .create_error(&format, 70, "Album not found")
                 .into_response());
         };
+
+        // The songs the library already holds go out as the library's own copies.
+        if let Some(owned) =
+            outside_album_with_owned_songs(&state, &call.proxy, &call.parameters, &mut album, &format).await
+        {
+            return Ok(owned);
+        }
 
         return Ok(builder.create_album_response(&format, &album).into_response());
     }

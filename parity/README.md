@@ -391,21 +391,23 @@ Two files wait on timers, which set where they go:
 | `acquisition` | 95, 96 | `13-downloads/setup-ext-song3`, 20 |
 
 Each shard's recording time on 2026-10-08 in WSL, two recordings of each (C# 2026.10.05, and
-the Rust build of `rust/main` `19db112` with adaptive waits), not counting the stack's start and
-removal (about 30 s) or waiting for the budget:
+the Rust build of `rust/main` `4ff2c86`, every group merged, with adaptive waits), not counting the
+stack's start and removal (about 30 s) or waiting for the budget:
 
 | Shard | C# | Rust |
 | --- | ---: | ---: |
-| `radio` | 279 s | 274 to 279 s |
-| `lists` | 311 s | 306 to 307 s |
-| `imports` | 42 to 45 s | 42 to 49 s |
-| `dashboard` | 139 to 140 s | 194 to 196 s |
-| `library` | 272 to 275 s | 527 to 528 s |
-| `acquisition` | 262 to 263 s | 526 to 533 s |
+| `radio` | 278 s | 273 to 275 s |
+| `lists` | 312 to 313 s | 307 to 310 s |
+| `imports` | 42 to 47 s | 42 to 46 s |
+| `dashboard` | 138 to 147 s | 133 to 135 s |
+| `library` | 260 to 272 s | 251 to 261 s |
+| `acquisition` | 262 to 273 s | 259 to 263 s |
 
-The same commit unsharded, on one stack each: 692 s against C# and 1,199 s against Rust (with
-adaptive waits). `library` and `acquisition` set the length against Rust: `20` reads `19`, `90`
-reads `20`, and `96` needs what `95` files and what `20` leaves, so they cannot be split further.
+The same commit unsharded, on one stack each: 683 s against C# and 663 s against Rust. `lists`
+sets the length: `16-lists` waits about 5 minutes for Made for you's second attempt wherever it
+runs. Against a Rust build that still lacked features (`19db112`), `library` and `acquisition`
+were the long ones (about 530 s each): `20` reads `19`, `90` reads `20`, and `96` needs what `95`
+files and what `20` leaves, so they cannot be split further.
 
 ## Adaptive waits
 
@@ -668,6 +670,7 @@ Applied to both sides before comparing:
 | `roles` arrays / `<roles>` runs (Navidrome builds them from Go maps) | sorted |
 | .NET ticks of a run-time instant (18 digits, 2025 on: activity ids, journal keys, state files) | `600000000000000000` ([`normalize.json`](normalize.json)) |
 | The trash's day folder `.octo-trash/<yyyy-MM-dd>/` | `.octo-trash/DAY/` |
+| Navidrome's image hash on a playlist's cover id (`pl-<id>_<16 hex>`, added once it made the image) | `pl-<id>` |
 | Radio outcome multipliers (they fade with each play's age) | 4 decimals (`15-radio/outcomes-after-*`) |
 | Requests marked `unordered` | arrays (JSON) and child elements (XML) sorted, recursively |
 | `ignoreKeys` (per request, or global in `normalize.json`) | members/attributes removed |

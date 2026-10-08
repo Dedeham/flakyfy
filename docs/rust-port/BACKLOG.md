@@ -24,12 +24,19 @@ Baseline: Rust at 2026.10.04 parity. Target: `main` at `ce63143` (release
   `target/`; never point several at one `CARGO_TARGET_DIR`. Incremental
   builds are on, so a `target/` grows to about 7.3 GB (3.8 GB of it
   incremental caches). Keep 30 GB free in WSL.
-- **At most 3 agents compile at once** in WSL's 16 GB: a test rebuild peaks
-  at 2.3 to 3.4 GB with incremental caches, 4 to 4.7 GB cold.
-- **Shared slots.** Run cargo through `~/bin/cargo-slot` (one of WSL's
-  three build slots). Parity runs go through `parity/lxc131.sh`, whose run
-  on the box outlives the script: `--attach` follows it again and fetches
-  its reports, `--queue` shows who holds the box and who waits.
+- **One memory budget in WSL.** Run cargo through `~/bin/cargo-slot`. It is
+  now a weighted budget of WSL's 16 GB for builds and parity stacks together
+  (`parity/budget.sh`, README "WSL's budget"): 12.5 GB, a cargo build 3.5 GB
+  (a test rebuild peaks at 2.3 to 3.4 GB with incremental caches, 4 to
+  5.3 GB cold), a parity stack 1.25 GB. A build that does not fit waits in
+  line; a stack never takes the last build's share. `cargo-slot --status`
+  shows who holds what.
+- **Parity runs: `parity/run.sh`.** One command, the options of
+  `parity/lxc131.sh`. It runs in WSL's own Docker by default, as many stacks
+  at once as the budget allows (the runs of several branches side by side),
+  or on the test box with `--lane box`. The run outlives the script:
+  `--attach` follows it again and fetches its reports, `--queue` shows both
+  lanes. `parity/lxc131.sh` still works for the box.
 - **The loop.** `cargo test -p <crate> <filter>` while working; the full
   `cargo test --workspace`, `cargo clippy --workspace --tests -- -D warnings`
   and `cargo fmt --all --check` before merging into `rust/main`.
@@ -169,6 +176,9 @@ Done 2026-10-07 (`parity/README.md` has the details):
   corpus, structural and bytes (record below).
 - [x] One script for the test box: `parity/lxc131.sh` (README, "For port
   agents").
+- [x] Parallel parity lanes in WSL: `parity/run.sh` picks WSL or the box, and
+  WSL's `cargo-slot` is one memory budget for builds and stacks
+  (`parity/budget.sh`; README "The WSL lane", record below).
 - [ ] `parity/recordings/csharp` stays the 2026.10.03.2 baseline: the Rust
   golden tests (`subsonic_wire_golden_tests.rs`) pin the wire format the port
   has today. A group that changes those answers moves its golden tests onto a
@@ -318,6 +328,9 @@ every later request in its corpus file onto the normalized address.
   album and replaces the search's entry, so later answers lose the album until
   a search registers them again (`95-acquisition` starts with that search).
 - **The Soulseek web address is saved with the spaces it was typed with.**
+  **Fixed in G2 with E** (`port/g2-eg`): saved (settings and Raw config,
+  `normalize_saved_addresses`) and read (`AppSettings::bind`) trimmed; the proposed
+  intentional diff is `slskd-web-url-trimmed` (`18-dashboard/settings-weburl-ok`, `-ok-read`).
 
 ### G1 record: groups A, K and S (2026-10-07)
 
@@ -446,6 +459,91 @@ F request); with it reviewed that request no longer differs for the ISRC.
 Made for you list order was left out of the gate, as planned; Rust against Rust is 0 on the
 whole corpus all the same.
 
+### G2 record: group E (2026-10-08)
+
+Branch `port/g2-eg`, rebased on `rust/main` `bbc1b1e`. Group G is not in it: it is owned by
+`port/g-charts` (the Apple Music charts plan), and no G code was written here.
+
+Run on LXC 131 from `port/g2-eg` (`662b0ba`, on `13c48b5`) with `parity/lxc131.sh --only
+'1[18]-*' --bytes`: the binary compiled in WSL, the C# side recorded again for the subset (204
+requests, 195 compared).
+
+| Group | Own before (phase 1) | Own after J and I | Own after |
+| --- | ---: | ---: | ---: |
+| E | 45 | 21 | 5 |
+
+What was left in E, structural and bytes alike:
+
+- `18-dashboard/sharing-share-bad-body`: the C# answered `{"on": "maybe"}` with STJ's own
+  words naming the record (`... converted to
+  Octo.Controllers.SoulseekSharingController+ShareRequest. Path: $.on | LineNumber: 0 |
+  BytePositionInLine: 14.`, under `$.on`, after `request`). Fixed after the run (`2537f75`,
+  the switch's body refuses a member that is not a bool in those words; read from the box's C#
+  recording, with a Rust test); the final run below confirms it.
+- `18-dashboard/settings-weburl-ok` and `-ok-read`: the port fix, proposed as
+  `slskd-web-url-trimmed` (`reviewed` unset, so still counted).
+- `18-dashboard/activity-rescan-starting` and `-done` (tagged N and E): `/api/admin/activity`
+  is N's route (404 in Rust); E's half, `SoulseekSharing::last_rescan_utc`, is in place for it.
+
+So E's own count is 4 after the fix, 2 with the intentional diff reviewed, and 0 once N's
+activity view lands. The other groups' own counts in the subset (D 3, F 3, H 2, I 0, J 3 for the
+proposed `config-sources` bullets, L 1, N 14, P 1, R 3, base 3) are their own unported routes
+and proposals; the subset cannot show the whole corpus, which the final run below was for.
+
+The final run: `parity/lxc131.sh --rust-twice --bytes` on the whole corpus from `7d56cfe`
+(rebased on `3c4c593`, the detached box run), against the cached C# recording (1,837 requests).
+A first attempt on `fb3f28f` stopped before it built: the box had 7.0 GB free and needs 8 (this
+branch's own image and folder were removed with `--clean`; the space came back once other runs
+ended).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 768 unexplained (786 after C, O and Q), 1,044 explained, 25 identical | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+E is 4 own, as expected: `sharing-share-bad-body` now matches the C# byte for byte, and what is
+left is `settings-weburl-ok` and `-ok-read` (the proposed `slskd-web-url-trimmed`, which matched
+its 2 aspects in both modes and is waiting for review) and the two `activity-rescan-*` requests
+of N. No group got worse against the C, O and Q record: B 11, C 9, D 110, F 128, G 47, H 201,
+I 3, J 3, L 45, N 14, O 17, P 68, Q 5, R 96 (97), base 29; A, K and S 0.
+
+### WSL lane record (2026-10-08)
+
+The parity harness now also runs in WSL's own Docker (29.1.3, compose 2.40), many stacks at
+once, through `parity/run.sh` (README "The WSL lane"), under one memory budget with the cargo
+builds (`parity/budget.sh`, installed as `~/bin/cargo-slot`: 12.5 GB, a build 3.5 GB, a C#
+stack 1.25 GB, a stack of the Rust build 0.75 GB).
+
+`rust/main` (`3c4c593`, the same code and corpus as the G2 record's `be07a5f`) with
+`parity/run.sh --lane wsl --rust-twice`: the C# recording made afresh in WSL beside the Rust one
+and the Rust one again, three stacks at once.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 786 unexplained, 1,026 explained, 25 identical (the G2 box record's numbers) | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+The one Rust against Rust diff is `19-health/plant-wait`: its `search3` was answered while
+Navidrome was still giving the planted albums their covers after `plant-scan-done` saw the
+scan end (one recording has `coverArt` on the albums, the other not, and the two albums
+in another order). It showed with five stacks and port agents' builds going at once; the
+sharded run below with `--rust-twice` had it 0. A corpus fix (wait for the planted albums'
+`coverArt`) is for whoever owns the corpus.
+
+| Run (WSL) | Stacks at once | Wall time |
+| --- | --- | --- |
+| `rust/main` `--rust-twice`, C# not cached | 3 (C# 741 s, Rust 3,087 s, Rust again 3,088 s) | 51 min run, 55 min with the musl compile |
+| `port/g2-bd` (`eb59c77`) beside it and `port/g2-coq` | 1 each (they waited for, then shared, the C# recording `rust/main` was making) | 47 and 52 min run; 684 and 786 unexplained |
+| A trial four-shard plan, C# not cached, Rust waits from C# | 4 C# shards, then each Rust shard after its C# one | 28 min |
+| The same, C# cached, `--rust-twice` | 8 Rust shards | 17 min; Rust against Rust 0 in both modes |
+
+On the box the same `rust/main --rust-twice` is about 11 min of C# (when not cached) and two
+45 to 55 min Rust recordings one after the other, about 2 hours, after the wait for the box
+lock (seven runs were queued for it while these ran). The trial plan was a timing test with
+the shards work in progress; its C# against Rust count (795) is not yet the whole corpus's.
+The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
+Rust, so that shard sets the time of a sharded run.
+
 ### G2 record: groups B and D (2026-10-07)
 
 Run on LXC 131 from `port/g2-bd` with `parity/lxc131.sh --rust-twice --bytes` (the binary
@@ -508,9 +606,9 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 21 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
-| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
@@ -617,16 +715,28 @@ writer does. What the later groups find waiting for them:
 
 - **Fix in port:** the Soulseek web address (`Soulseek.WebUrl`) is saved with
   the spaces it was typed with (BACKLOG "Found while building the harness");
-  save it trimmed, with a Rust test and an intentional diff.
+  save it trimmed, with a Rust test and an intentional diff. Done in G2
+  (`fc00777`): saved and read trimmed, tests `slskds_web_address_is_saved_without_spaces`
+  and `slskds_web_address_is_read_without_spaces`, proposed intentional diff
+  `slskd-web-url-trimmed`.
+
+Done in G2 (`port/g2-eg`): `octo_core::soulseek::{soulseek_sharing, soulseek_share_switch}`
+(the card's records and slskd's answers, the slskd.yml block), `services::soulseek::{SoulseekSharing,
+SoulseekPortCheck, SoulseekShareSwitch}` (the switch runs as the `SoulseekShareSwitch` worker),
+the slskd client's reads, rescan, settings file, scan cancel and upload cancel, and
+`controllers::admin::soulseek_sharing` (`GET /api/admin/soulseek/sharing`, `test-port`,
+`rescan`, `share`). The four compose, installer and README commits change no Rust.
 
 - [x] `9f9502d` fix(admin): the slskd password never goes back to the browser (ported in G1 with group I)
-- [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
-- [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
-- [ ] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd
-- [ ] `e3a5063` feat(soulseek): sharing is a choice, on for new installs and never switched on by an update
-- [ ] `416644b` feat(soulseek): a Share my library switch on the Sharing card, applied to slskd within seconds
-- [ ] `e30b242` docs(readme): the Share my library switch, and how it reaches slskd
-- [ ] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
+- [x] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
+  (compose, `.env.example`, install.sh: no Rust change; the settings came in G1)
+- [x] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
+- [x] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd (no Rust change)
+- [x] `e3a5063` feat(soulseek): sharing is a choice, on for new installs and never switched on by an update
+  (compose, `.env.example`, install.sh: no Rust change; `ShareLibrary` defaults off since G1)
+- [x] `416644b` feat(soulseek): a Share my library switch on the Sharing card, applied to slskd within seconds
+- [x] `e30b242` docs(readme): the Share my library switch, and how it reaches slskd (no Rust change)
+- [x] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
 
 ### F. Library edits from the apps, delete, trash, put back
 
@@ -655,6 +765,9 @@ writer does. What the later groups find waiting for them:
   (ported with D in G2: Find songs reads a library song's length through it)
 
 ### G. Top songs, charts, Popular right now
+
+Owned by `port/g-charts` (the Apple Music charts plan, which ports G generalized into chart
+playlists); left out of `port/g2-eg` on purpose.
 
 - [ ] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
   (G2: `TopSongsService.CatalogSong` is `services::library::for_you_lists::catalog_song`, marked

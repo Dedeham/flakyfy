@@ -10,6 +10,8 @@ pub mod soulseek_client;
 pub mod soulseek_download_service;
 pub mod soulseek_link;
 pub mod soulseek_metadata_service;
+pub mod soulseek_share_switch;
+pub mod soulseek_sharing;
 pub mod soulseek_startup_validator;
 
 pub use external_id_registry::{ExternalIdRegistry, SharedRouting};
@@ -19,4 +21,6 @@ pub use rejected_peer_registry::RejectedPeerRegistry;
 pub use soulseek_client::{SoulseekClient, SoulseekClientError};
 pub use soulseek_link::{ISoulseekLink, SoulseekLink};
 pub use soulseek_metadata_service::{LastFmTrackLengths, SoulseekMetadataService};
+pub use soulseek_share_switch::{ISlskdShares, SoulseekShareSwitch};
+pub use soulseek_sharing::{SoulseekPortCheck, SoulseekSharing};
 pub use soulseek_startup_validator::SoulseekStartupValidator;

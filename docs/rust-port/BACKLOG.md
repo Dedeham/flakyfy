@@ -318,6 +318,9 @@ every later request in its corpus file onto the normalized address.
   album and replaces the search's entry, so later answers lose the album until
   a search registers them again (`95-acquisition` starts with that search).
 - **The Soulseek web address is saved with the spaces it was typed with.**
+  **Fixed in G2 with E** (`port/g2-eg`): saved (settings and Raw config,
+  `normalize_saved_addresses`) and read (`AppSettings::bind`) trimmed; the proposed
+  intentional diff is `slskd-web-url-trimmed` (`18-dashboard/settings-weburl-ok`, `-ok-read`).
 
 ### G1 record: groups A, K and S (2026-10-07)
 
@@ -446,6 +449,54 @@ F request); with it reviewed that request no longer differs for the ISRC.
 Made for you list order was left out of the gate, as planned; Rust against Rust is 0 on the
 whole corpus all the same.
 
+### G2 record: group E (2026-10-08)
+
+Branch `port/g2-eg`, rebased on `rust/main` `bbc1b1e`. Group G is not in it: it is owned by
+`port/g-charts` (the Apple Music charts plan), and no G code was written here.
+
+Run on LXC 131 from `port/g2-eg` (`662b0ba`, on `13c48b5`) with `parity/lxc131.sh --only
+'1[18]-*' --bytes`: the binary compiled in WSL, the C# side recorded again for the subset (204
+requests, 195 compared).
+
+| Group | Own before (phase 1) | Own after J and I | Own after |
+| --- | ---: | ---: | ---: |
+| E | 45 | 21 | 5 |
+
+What was left in E, structural and bytes alike:
+
+- `18-dashboard/sharing-share-bad-body`: the C# answered `{"on": "maybe"}` with STJ's own
+  words naming the record (`... converted to
+  Octo.Controllers.SoulseekSharingController+ShareRequest. Path: $.on | LineNumber: 0 |
+  BytePositionInLine: 14.`, under `$.on`, after `request`). Fixed after the run (`2537f75`,
+  the switch's body refuses a member that is not a bool in those words; read from the box's C#
+  recording, with a Rust test); the final run below confirms it.
+- `18-dashboard/settings-weburl-ok` and `-ok-read`: the port fix, proposed as
+  `slskd-web-url-trimmed` (`reviewed` unset, so still counted).
+- `18-dashboard/activity-rescan-starting` and `-done` (tagged N and E): `/api/admin/activity`
+  is N's route (404 in Rust); E's half, `SoulseekSharing::last_rescan_utc`, is in place for it.
+
+So E's own count is 4 after the fix, 2 with the intentional diff reviewed, and 0 once N's
+activity view lands. The other groups' own counts in the subset (D 3, F 3, H 2, I 0, J 3 for the
+proposed `config-sources` bullets, L 1, N 14, P 1, R 3, base 3) are their own unported routes
+and proposals; the subset cannot show the whole corpus, which the final run below was for.
+
+The final run: `parity/lxc131.sh --rust-twice --bytes` on the whole corpus from `7d56cfe`
+(rebased on `3c4c593`, the detached box run), against the cached C# recording (1,837 requests).
+A first attempt on `fb3f28f` stopped before it built: the box had 7.0 GB free and needs 8 (this
+branch's own image and folder were removed with `--clean`; the space came back once other runs
+ended).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 768 unexplained (786 after C, O and Q), 1,044 explained, 25 identical | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+E is 4 own, as expected: `sharing-share-bad-body` now matches the C# byte for byte, and what is
+left is `settings-weburl-ok` and `-ok-read` (the proposed `slskd-web-url-trimmed`, which matched
+its 2 aspects in both modes and is waiting for review) and the two `activity-rescan-*` requests
+of N. No group got worse against the C, O and Q record: B 11, C 9, D 110, F 128, G 47, H 201,
+I 3, J 3, L 45, N 14, O 17, P 68, Q 5, R 96 (97), base 29; A, K and S 0.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
@@ -461,9 +512,9 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 21 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
-| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
@@ -565,16 +616,28 @@ writer does. What the later groups find waiting for them:
 
 - **Fix in port:** the Soulseek web address (`Soulseek.WebUrl`) is saved with
   the spaces it was typed with (BACKLOG "Found while building the harness");
-  save it trimmed, with a Rust test and an intentional diff.
+  save it trimmed, with a Rust test and an intentional diff. Done in G2
+  (`fc00777`): saved and read trimmed, tests `slskds_web_address_is_saved_without_spaces`
+  and `slskds_web_address_is_read_without_spaces`, proposed intentional diff
+  `slskd-web-url-trimmed`.
+
+Done in G2 (`port/g2-eg`): `octo_core::soulseek::{soulseek_sharing, soulseek_share_switch}`
+(the card's records and slskd's answers, the slskd.yml block), `services::soulseek::{SoulseekSharing,
+SoulseekPortCheck, SoulseekShareSwitch}` (the switch runs as the `SoulseekShareSwitch` worker),
+the slskd client's reads, rescan, settings file, scan cancel and upload cancel, and
+`controllers::admin::soulseek_sharing` (`GET /api/admin/soulseek/sharing`, `test-port`,
+`rescan`, `share`). The four compose, installer and README commits change no Rust.
 
 - [x] `9f9502d` fix(admin): the slskd password never goes back to the browser (ported in G1 with group I)
-- [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
-- [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
-- [ ] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd
-- [ ] `e3a5063` feat(soulseek): sharing is a choice, on for new installs and never switched on by an update
-- [ ] `416644b` feat(soulseek): a Share my library switch on the Sharing card, applied to slskd within seconds
-- [ ] `e30b242` docs(readme): the Share my library switch, and how it reaches slskd
-- [ ] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
+- [x] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
+  (compose, `.env.example`, install.sh: no Rust change; the settings came in G1)
+- [x] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
+- [x] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd (no Rust change)
+- [x] `e3a5063` feat(soulseek): sharing is a choice, on for new installs and never switched on by an update
+  (compose, `.env.example`, install.sh: no Rust change; `ShareLibrary` defaults off since G1)
+- [x] `416644b` feat(soulseek): a Share my library switch on the Sharing card, applied to slskd within seconds
+- [x] `e30b242` docs(readme): the Share my library switch, and how it reaches slskd (no Rust change)
+- [x] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
 
 ### F. Library edits from the apps, delete, trash, put back
 
@@ -602,6 +665,9 @@ writer does. What the later groups find waiting for them:
 - [ ] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
 
 ### G. Top songs, charts, Popular right now
+
+Owned by `port/g-charts` (the Apple Music charts plan, which ports G generalized into chart
+playlists); left out of `port/g2-eg` on purpose.
 
 - [ ] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
   (G2: `TopSongsService.CatalogSong` is `services::library::for_you_lists::catalog_song`, marked

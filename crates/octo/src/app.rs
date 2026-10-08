@@ -94,8 +94,9 @@ use crate::services::notifications::{DiscordSink, INotificationSink, Notificatio
 use crate::services::soulseek::soulseek_download_service::{SoulseekDownloadParts, SoulseekDownloadService};
 use crate::services::soulseek::soulseek_metadata_service::LastFmTrackLengths;
 use crate::services::soulseek::{
-    ExternalIdRegistry, ISoulseekLink, RadioQueueStore, RejectedPeerRegistry, SoulseekClient, SoulseekLink,
-    SoulseekMetadataService, SoulseekStartupValidator,
+    ExternalIdRegistry, ISlskdShares, ISoulseekLink, RadioQueueStore, RejectedPeerRegistry, SoulseekClient,
+    SoulseekLink, SoulseekMetadataService, SoulseekPortCheck, SoulseekShareSwitch, SoulseekSharing,
+    SoulseekStartupValidator,
 };
 use crate::services::subsonic::new_subsonic_response_builder;
 use crate::services::subsonic::{
@@ -287,6 +288,15 @@ pub struct AppInner {
     /// `AddSingleton<SoulseekLink>()`, also registered as `ISoulseekLink`: slskd's Soulseek
     /// login, read live, for the dashboard and for downloads that wait out an outage.
     pub soulseek_link: Arc<SoulseekLink>,
+    /// `AddSingleton<SoulseekPortCheck>()`: Soulseek's port test for the Sharing card, one answer
+    /// kept six hours.
+    pub soulseek_port_check: Arc<SoulseekPortCheck>,
+    /// `AddSingleton<SoulseekShareSwitch>()`, also hosted: the Share my library switch, which
+    /// keeps slskd.yml's share list to it and checks every 10 minutes.
+    pub soulseek_share_switch: Arc<SoulseekShareSwitch>,
+    /// `AddSingleton<SoulseekSharing>()`: what this server shares back with Soulseek, and whether
+    /// people can connect to it, for the dashboard.
+    pub soulseek_sharing: Arc<SoulseekSharing>,
     /// `AddSingleton<IMusicMetadataService, SoulseekMetadataService>()`.
     pub music_metadata: Arc<SoulseekMetadataService>,
     /// `IMusicMetadataService` as the controllers resolve it: `music_metadata` in production,
@@ -1187,6 +1197,9 @@ impl GenreAndCoverJobs {
 struct SoulseekServices {
     client: SoulseekClient,
     link: Arc<SoulseekLink>,
+    port_check: Arc<SoulseekPortCheck>,
+    share_switch: Arc<SoulseekShareSwitch>,
+    sharing: Arc<SoulseekSharing>,
     metadata: Arc<SoulseekMetadataService>,
     validator: Arc<dyn IStartupValidator>,
 }
@@ -1201,7 +1214,18 @@ impl SoulseekServices {
         // IOptions<SoulseekSettings>: the client deliberately keeps the address and login Octo
         // started with.
         let client = SoulseekClient::new(&settings.current().soulseek);
+        let slskd: Arc<dyn ISlskdShares> = Arc::new(client.clone());
+        let port_check = Arc::new(SoulseekPortCheck::new(Arc::clone(settings)));
+        let share_switch = Arc::new(SoulseekShareSwitch::new(slskd.clone(), Arc::clone(settings)));
         SoulseekServices {
+            sharing: Arc::new(SoulseekSharing::new(
+                slskd,
+                port_check.clone(),
+                share_switch.clone(),
+                Arc::clone(settings),
+            )),
+            port_check,
+            share_switch,
             link: Arc::new(SoulseekLink::new(client.clone(), Arc::clone(settings))),
             metadata: Arc::new(SoulseekMetadataService::new(
                 Arc::clone(&stores.you_tube_resolver),
@@ -1602,6 +1626,12 @@ impl AppState {
         let integrations = Integrations::build(&settings, &settings_writer, &clients.deezer_metadata, None);
         let soulseek = SoulseekServices::build(&settings, &stores, &clients, &integrations.last_fm);
         let metadata_service: Arc<dyn IMusicMetadataService> = soulseek.metadata.clone();
+        // The Share my library switch: keeps slskd.yml's share list to it, and checks every 10
+        // minutes.
+        let share_switch = soulseek.share_switch.clone();
+        workers.register("SoulseekShareSwitch", move |stopping| {
+            share_switch.clone().run(stopping)
+        });
         let navidrome = NavidromeServices::build(&settings, &stores, true, vec![soulseek.validator]);
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, Some(&config_dir), &navidrome);
@@ -1743,6 +1773,9 @@ impl AppState {
             subsonic_response_builder: stores.subsonic_response_builder,
             soulseek_client: soulseek.client,
             soulseek_link: soulseek.link,
+            soulseek_port_check: soulseek.port_check,
+            soulseek_share_switch: soulseek.share_switch,
+            soulseek_sharing: soulseek.sharing,
             music_metadata: soulseek.metadata,
             metadata_service,
             download_service: acquisition.download_service,
@@ -1988,6 +2021,9 @@ impl AppState {
             subsonic_response_builder: stores.subsonic_response_builder,
             soulseek_client: soulseek.client,
             soulseek_link: soulseek.link,
+            soulseek_port_check: soulseek.port_check,
+            soulseek_share_switch: soulseek.share_switch,
+            soulseek_sharing: soulseek.sharing,
             music_metadata: soulseek.metadata,
             metadata_service,
             download_service: acquisition.download_service,

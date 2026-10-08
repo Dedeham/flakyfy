@@ -376,6 +376,161 @@ impl SoulseekClient {
         }
     }
 
+    /// One of slskd's read-only answers as text, for the Sharing card: application, options,
+    /// shares or uploads. None when slskd did not answer it. Nothing read here changes slskd.
+    pub async fn read(&self, path: &str) -> Option<String> {
+        let url = format!("{}/api/v0/{}", self.inner.base, path.trim_start_matches('/'));
+        match self.get_text(&url).await {
+            Ok(text) => text,
+            Err(e) => {
+                debug!(
+                    "slskd {path} not readable at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                None
+            }
+        }
+    }
+
+    /// Asks slskd to look through its shared folders again, so songs added since its last look
+    /// are shared. None when it started; otherwise why not, in words for the dashboard.
+    pub async fn rescan_shares(&self) -> Option<String> {
+        let url = format!("{}/api/v0/shares", self.inner.base);
+        match self.send(Method::PUT, &url, None).await {
+            Ok(resp) if resp.status().is_success() => None,
+            Ok(resp) if resp.status() == StatusCode::CONFLICT => {
+                Some("slskd is already looking through your shared folders.".to_string())
+            }
+            Ok(resp) => Some(format!(
+                "slskd refused the rescan (HTTP {}).",
+                resp.status().as_u16()
+            )),
+            Err(e) => {
+                warn!(
+                    "slskd share rescan failed at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                Some("Octo cannot reach slskd.".to_string())
+            }
+        }
+    }
+
+    /// slskd's own settings file (slskd.yml) as text. The status is slskd's answer: 403 means
+    /// slskd does not allow remote configuration, so nothing in it can be changed from here.
+    pub async fn read_settings_file(&self) -> (u16, Option<String>) {
+        let url = format!("{}/api/v0/options/yaml", self.inner.base);
+        let read = async {
+            let resp = self.send(Method::GET, &url, None).await?;
+            let status = resp.status().as_u16();
+            if !resp.status().is_success() {
+                return anyhow::Ok((status, None));
+            }
+            let json = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split(';').next())
+                .is_some_and(|media| contains_ignore_case(media, "json"));
+            let mut text = resp.text().await?;
+            // slskd answers with the text itself, or with it as a JSON string when asked for JSON.
+            if json {
+                text = serde_json::from_str::<Option<String>>(&text)?.unwrap_or_default();
+            }
+            Ok((status, Some(text)))
+        };
+        match read.await {
+            Ok(answer) => answer,
+            Err(e) => {
+                debug!(
+                    "slskd settings file not readable at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                (0, None)
+            }
+        }
+    }
+
+    /// Replaces slskd.yml. slskd checks it first and keeps the old file as slskd.yml.bak; with
+    /// its file watch on, it applies the new one without a restart. None when written,
+    /// otherwise why not.
+    pub async fn write_settings_file(&self, yaml: &str) -> Option<String> {
+        let url = format!("{}/api/v0/options/yaml", self.inner.base);
+        let body = octo_core::json::to_string(yaml);
+        let write = async {
+            let resp = self.send(Method::PUT, &url, Some(&body)).await?;
+            let status = resp.status();
+            if status.is_success() {
+                return anyhow::Ok(None);
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ok(Some(
+                    "slskd does not let Octo change its settings (remote configuration is off).".to_string(),
+                ));
+            }
+            let text = resp.text().await?;
+            let detail = if dotnet::is_blank(&text) {
+                String::new()
+            } else {
+                format!(": {}", text.trim())
+            };
+            Ok(Some(format!(
+                "slskd refused the change (HTTP {}){detail}.",
+                status.as_u16()
+            )))
+        };
+        match write.await {
+            Ok(answer) => answer,
+            Err(e) => {
+                warn!(
+                    "Could not write slskd settings at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                Some("Octo cannot reach slskd.".to_string())
+            }
+        }
+    }
+
+    /// Stops a share scan in progress. False when none was running or slskd did not answer.
+    pub async fn cancel_share_scan(&self) -> bool {
+        let url = format!("{}/api/v0/shares", self.inner.base);
+        match self.send(Method::DELETE, &url, None).await {
+            Ok(resp) => resp.status().is_success(),
+            Err(e) => {
+                debug!(
+                    "slskd share scan cancel failed at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                false
+            }
+        }
+    }
+
+    /// Cancels one upload to someone. False when slskd would not.
+    pub async fn cancel_upload(&self, username: &str, id: &str) -> bool {
+        let url = format!(
+            "{}/api/v0/transfers/uploads/{}/{}",
+            self.inner.base,
+            dotnet::escape_data_string(username),
+            dotnet::escape_data_string(id)
+        );
+        match self.send(Method::DELETE, &url, None).await {
+            Ok(resp) => resp.status().is_success(),
+            Err(e) => {
+                debug!(
+                    "slskd upload cancel failed at {}: {}",
+                    self.inner.base,
+                    message(&e)
+                );
+                false
+            }
+        }
+    }
+
     /// Reads slskd's resolved downloads directory from /api/v0/options. Purely a
     /// diagnostic: a None (endpoint missing, redacted, or unexpected shape) must
     /// never gate anything.

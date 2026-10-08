@@ -26,6 +26,7 @@ pub mod lyrics_admin;
 pub mod raw_config;
 pub mod secrets;
 pub mod settings;
+pub mod soulseek_sharing;
 pub mod system;
 pub mod update;
 pub mod upgrades;
@@ -119,6 +120,7 @@ pub fn routes_6b2() -> RouteSet {
         .merge(cover_upgrade::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
+        .merge(soulseek_sharing::routes())
 }
 
 /// The routes of group N: the activity view behind the progress toasts, and the Afterglow

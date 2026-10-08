@@ -291,6 +291,32 @@ impl BaseDownloadService {
         }
     }
 
+    /// Renames a landed file whose extension names another format than its bytes (a FLAC named
+    /// .mp3, an M4A named .flac) and logs it. None when the name was right or the file could not
+    /// be renamed; the file is then tagged as it is, as before.
+    pub(super) fn fix_landed_extension(
+        &self,
+        path: &str,
+        provider: &str,
+        external_id: &str,
+    ) -> Option<octo_media::tags::audio_container::ExtensionFix> {
+        match octo_media::tags::audio_container::fix_extension(path) {
+            Ok(Some(fix)) => {
+                info!(
+                    "{path} is {}; renamed from {} to {} before tagging",
+                    fix.format, fix.from, fix.to
+                );
+                let _ = (provider, external_id);
+                Some(fix)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!("Could not check or fix the extension of {path}: {e}");
+                None
+            }
+        }
+    }
+
     /// Start measuring a landed file, beside identification, when ReplayGain is on.
     pub(super) fn start_loudness(&self, path: &str) -> Option<JoinHandle<Option<Loudness>>> {
         let settings = self.settings.current().metadata.clone();

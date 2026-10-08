@@ -255,56 +255,6 @@ fn known_name_none_for_a_name_that_is_not_an_alias() {
 
 // ---- SongIdentityCasesTests ----------------------------------------------------------------
 
-/// Cases the C# app gained after the fork's base (2026.10.05: editions, drumless, 8D, piano,
-/// orchestral, lo-fi, bass boost, mash-ups, medleys, megamixes) that the Rust port does not
-/// read yet: port group B in docs/rust-port/BACKLOG.md. They are skipped, and a listed case
-/// that passes fails the test until it is taken off this list, so the list only shrinks.
-const NOT_PORTED_YET: &[&str] = &[
-    "8D audio.",
-    "A blend of two songs.",
-    "A bonus track version is neutral, and its 'Version' is not a named version.",
-    "A drumless edition changes what is played, unlike a deluxe one.",
-    "A drumless edition is the drumless marker; the word edition goes with it.",
-    "A lo-fi mix is lofi, not also a mix.",
-    "A lo-fi version.",
-    "A mash-up medley carries both markers.",
-    "A mashup is two songs or more in one, never the song alone.",
-    "A medley in a dash tail.",
-    "A trailing '8D Audio' and a bracketed '8D' are one marker.",
-    "A trailing 'Drumless' without brackets is the drumless edition.",
-    "A trailing 8D Audio without brackets.",
-    "Bass boost written as one word.",
-    "Bass boosted.",
-    "Collector's and limited editions are both neutral.",
-    "Drumless in a dash tail.",
-    "Lo-fi with or without the hyphen, as a mix or a version.",
-    "Mashup with a hyphen, a space or a plural is one marker.",
-    "Megamix is read ahead of mix, so 'Mega Mix' is not also a mix.",
-    "Megamix written as two words.",
-    "Only one of two editions changes what is played.",
-    "Symphonic and orchestral are one marker.",
-    "Symphonic reads as orchestral, and its 'Version' is not a second marker.",
-    "The piano marker written two ways.",
-    "Tour and platinum editions are neutral.",
-];
-
-/// The failures of the cases not ported yet are dropped; a case on the list that no longer
-/// fails is a failure of its own, so the list is kept honest.
-fn without_pending(notes: &[String], failures: Vec<(String, String)>) -> Vec<String> {
-    let failing: std::collections::HashSet<&str> = failures.iter().map(|(note, _)| note.as_str()).collect();
-    let mut left: Vec<String> = failures
-        .iter()
-        .filter(|(note, _)| !NOT_PORTED_YET.contains(&note.as_str()))
-        .map(|(_, line)| line.clone())
-        .collect();
-    for note in notes {
-        if NOT_PORTED_YET.contains(&note.as_str()) && !failing.contains(note.as_str()) {
-            left.push(format!("{note}: passes now; take it off NOT_PORTED_YET"));
-        }
-    }
-    left
-}
-
 fn cases() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/song-identity-cases.json");
     let text = std::fs::read_to_string(path).expect("docs/song-identity-cases.json is in the repo");
@@ -365,10 +315,8 @@ fn the_file_has_enough_cases() {
 fn compare_case() {
     let cases = cases();
     let mut failures = Vec::new();
-    let mut notes = Vec::new();
     for item in cases["compare"].as_array().expect("compare") {
         let note = text_of(&item["note"]);
-        notes.push(note.to_string());
         let a = song_ref(&item["a"]);
         let b = song_ref(&item["b"]);
         let options = options_of(item);
@@ -407,7 +355,7 @@ fn compare_case() {
         );
         assert!(!is_blank(&forward.reason), "{note}: no reason");
     }
-    let failures = without_pending(&notes, failures);
+    let failures: Vec<String> = failures.into_iter().map(|(_, line)| line).collect();
     assert!(
         failures.is_empty(),
         "{} failing:\n{}",
@@ -420,10 +368,8 @@ fn compare_case() {
 fn parse_case() {
     let cases = cases();
     let mut failures = Vec::new();
-    let mut notes = Vec::new();
     for item in cases["parse"].as_array().expect("parse") {
         let note = text_of(&item["note"]);
-        notes.push(note.to_string());
         let input = &item["input"];
         let title = text_of(&input["title"]);
         // null and "" differ for parse_title's artist.
@@ -466,7 +412,7 @@ fn parse_case() {
             ));
         }
     }
-    let failures = without_pending(&notes, failures);
+    let failures: Vec<String> = failures.into_iter().map(|(_, line)| line).collect();
     assert!(
         failures.is_empty(),
         "{} failing:\n{}",

@@ -755,7 +755,7 @@ impl BaseDownloadService {
             ..
         } = download;
         song = downloaded;
-        let landed_path = transferred?;
+        let mut landed_path = transferred?;
         Self::ensure_on_disk(Some(&landed_path))?;
         // Placing, tagging and registering touch the library and the mapping file, and those stay
         // one at a time.
@@ -766,6 +766,12 @@ impl BaseDownloadService {
                     .await
                     .expect("the download lock is never closed"),
             );
+        }
+        // A file named for another format than it holds is renamed before anything reads it by
+        // its name: the tagger chooses how to write by the extension.
+        let extension_fix = self.fix_landed_extension(&landed_path, external_provider, external_id);
+        if let Some(fix) = &extension_fix {
+            landed_path = fix.path.clone();
         }
         song.local_path = Some(landed_path.clone());
         self.track(|t| {
@@ -794,6 +800,12 @@ impl BaseDownloadService {
             options.album_context.as_deref(),
         )
         .await;
+        if let (Some(fix), Some(plan)) = (&extension_fix, song.tag_plan.as_mut()) {
+            plan.notes.push(format!(
+                "renamed from {} to {}: the file is {}",
+                fix.from, fix.to, fix.format
+            ));
+        }
         self.apply_loudness(&mut song, loudness, &landed_path).await;
 
         // Placed from the Song, so the path and the tags come from one decision (#48). The file

@@ -16,6 +16,7 @@ mod net;
 mod net_dictionary;
 mod xiph;
 
+pub mod audio_container;
 pub mod kept_identity;
 pub mod song_tags;
 pub mod tag_file;

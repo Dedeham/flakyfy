@@ -26,9 +26,9 @@ use octo_core::notifications::{NotificationEvent, NotificationEventType};
 use octo_core::settings::{DownloadSource, SoulseekSettings};
 use octo_core::soulseek::soulseek_client::normalize_extension;
 use octo_core::soulseek::soulseek_download_service::{
-    BROWSE_TIMEOUT, PEER_FOLDERS_TO_BROWSE, adds_version, album_search_text, duration_plausible,
-    filename_plausibly_matches_title, folder_of_file, from_live_folder, planned_queries, quality_penalty,
-    size_sort_key, variant_penalty,
+    BROWSE_TIMEOUT, CandidateWant, PEER_FOLDERS_TO_BROWSE, adds_version, album_search_text,
+    duration_plausible, filename_plausibly_matches_title, folder_of_file, from_version_folder,
+    planned_queries, rank,
 };
 use octo_core::soulseek::{
     AlbumFolderPicker, AlbumTrack, RoutingKind, SearchProfile, SoulseekFileHit, SoulseekLinkState,
@@ -69,8 +69,9 @@ pub const DEFAULT_INCOMPLETE_FOLDER_NAME: &str = "incomplete";
 /// just the top hit fails too often.
 ///
 /// Each attempt is bounded by Soulseek:DownloadTimeoutSeconds, so that setting is per peer and a
-/// full walk can spend it MaxPeerAttempts times over.
-pub const MAX_PEER_ATTEMPTS: usize = 5;
+/// full walk can spend it MaxPeerAttempts times over. (The ranking lives in octo-core with the
+/// rest of the matching.)
+pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 
 /// `InvalidOperationException`: a download that cannot be made as asked (no artist or title, no
 /// download path, no Lidarr, audio YouTube could not decode). The library-action executor tries
@@ -724,36 +725,19 @@ impl SoulseekDownloadService {
         expected_duration: Option<i32>,
         strict: bool,
         album: Option<&str>,
+        artist: Option<&str>,
     ) -> Vec<SoulseekFileHit> {
-        let wanted = normalize_extension(Some(&self.settings.preferred_extension), "");
         let remembers = self.verification.remembers_rejections();
-        let mut found: Vec<&SoulseekFileHit> = hits
-            .iter()
-            // First because it is the cheapest filter and the only one backed by evidence
-            // from a completed transfer: these exact files were downloaded, inspected and
-            // found to be the wrong recording. Offering them again spends a whole transfer
-            // to reach the same verdict.
-            .filter(|h| candidate_allowed(h, Some(&self.rejected_peers), remembers))
-            .filter(|h| dotnet::eq_ignore_case(&h.extension, &wanted))
-            .filter(|h| h.size >= self.settings.min_file_size_bytes)
-            .filter(|h| filename_plausibly_matches_title(&h.filename, title, strict))
-            .filter(|h| duration_plausible(h.length, expected_duration, strict))
-            .filter(|h| !adds_version(&h.filename, title))
-            .filter(|h| !from_live_folder(&h.filename, title, album))
-            .collect();
-        // An unnamed bracketed addition sorts last rather than being dropped: it may be a
-        // different take ("Angel (Angel Dust)"), or only a peer's own label. Stable, as LINQ's
-        // OrderBy is.
-        found.sort_by_cached_key(|h| {
-            (
-                variant_penalty(&h.filename, title),
-                quality_penalty(h),
-                h.queue_length.unwrap_or(i32::MAX),
-                std::cmp::Reverse(h.upload_speed.unwrap_or(0)),
-                size_sort_key(h.size, Some(&wanted)),
-            )
-        });
-        found.into_iter().take(MAX_PEER_ATTEMPTS).cloned().collect()
+        rank(
+            hits,
+            &CandidateWant::new(title, expected_duration)
+                .strict(strict)
+                .album(album)
+                .artist(artist),
+            &self.settings.preferred_extension,
+            self.settings.min_file_size_bytes,
+            |h| candidate_allowed(h, Some(&self.rejected_peers), remembers),
+        )
     }
 
     /// A search that found the song only lossy (an MP3 where FLAC is preferred) looks in the
@@ -775,8 +759,15 @@ impl SoulseekDownloadService {
             .filter(|h| !folder_of_file(&h.filename).is_empty())
             .filter(|h| filename_plausibly_matches_title(&h.filename, &title, false))
             .filter(|h| duration_plausible(h.length, routing.duration, false))
-            .filter(|h| !adds_version(&h.filename, &title))
-            .filter(|h| !from_live_folder(&h.filename, &title, routing.album.as_deref()))
+            .filter(|h| !adds_version(&h.filename, &title, routing.artist.as_deref()))
+            .filter(|h| {
+                !from_version_folder(
+                    &h.filename,
+                    &title,
+                    routing.album.as_deref(),
+                    routing.artist.as_deref(),
+                )
+            })
             // One per peer folder, the first of each.
             .filter(|h| seen.insert((h.username.clone(), folder_of_file(&h.filename).to_string())))
             .collect();
@@ -801,7 +792,14 @@ impl SoulseekDownloadService {
                     .await?,
             );
         }
-        let found = self.rank_candidates(&listed, &title, routing.duration, false, routing.album.as_deref());
+        let found = self.rank_candidates(
+            &listed,
+            &title,
+            routing.duration,
+            false,
+            routing.album.as_deref(),
+            routing.artist.as_deref(),
+        );
         info!(
             "Soulseek: no {} of '{} - {title}' in the search; looked in {} peers' folders beside their lossy copy and found {}",
             dotnet::to_upper_invariant(&wanted),
@@ -830,6 +828,21 @@ impl SoulseekDownloadService {
         let mut found: Vec<SoulseekFileHit> = Vec::new();
         // Every query's answers, for the folder look below.
         let mut every_hit: Vec<SoulseekFileHit> = Vec::new();
+        // One wider search per song at most: each one waits seconds.
+        let mut widened = false;
+        let ranked_of = |hits: &[SoulseekFileHit], strict: bool| -> Vec<SoulseekFileHit> {
+            self.rank_candidates(
+                hits,
+                &title,
+                routing.duration,
+                strict,
+                routing.album.as_deref(),
+                routing.artist.as_deref(),
+            )
+            .into_iter()
+            .filter(not_passed_over)
+            .collect()
+        };
         for (index, (query, strict)) in queries.iter().enumerate() {
             let text = query.text();
             if index == 0 {
@@ -839,17 +852,32 @@ impl SoulseekDownloadService {
             }
             // Ranked once, on the whole search: slskd hands over a search's answers only when it
             // ends, so there is nothing to stop early on.
-            hits = self
+            let outcome = self
                 .slskd
-                .search(&text, profile, ct)
+                .search_with_end(&text, profile, ct)
                 .await
                 .map_err(client_error)?;
+            hits = outcome.hits;
             every_hit.extend(hits.iter().cloned());
-            found = self
-                .rank_candidates(&hits, &title, routing.duration, *strict, routing.album.as_deref())
-                .into_iter()
-                .filter(not_passed_over)
-                .collect();
+            found = ranked_of(&hits, *strict);
+            if found.is_empty() && outcome.hit_limit && !widened {
+                // The limit filled before the answers ran out, so the peers still on their way
+                // were never heard. The same words once more, wider, before other words.
+                widened = true;
+                let wider = profile.wider();
+                info!(
+                    "Soulseek search '{text}' filled its limit with nothing usable; asking again for up to {} files",
+                    wider.file_limit
+                );
+                hits = self
+                    .slskd
+                    .search_with_end(&text, &wider, ct)
+                    .await
+                    .map_err(client_error)?
+                    .hits;
+                every_hit.extend(hits.iter().cloned());
+                found = ranked_of(&hits, *strict);
+            }
             if !found.is_empty() {
                 break;
             }
@@ -1741,8 +1769,9 @@ impl DownloadBackend for SoulseekDownloadService {
                 candidate_allowed(hit, Some(&self.rejected_peers), remembers)
                     && dotnet::eq_ignore_case(&hit.extension, &wanted_ext)
                     && hit.size >= self.settings.min_file_size_bytes
-                    // A studio album is never taken from a live album's folder.
-                    && !from_live_folder(&hit.filename, "", Some(&album.title))
+                    // A studio album is never taken from a live album's folder, nor from a remix or
+                    // radio edit compilation's.
+                    && !from_version_folder(&hit.filename, "", Some(&album.title), Some(&album.artist))
             });
             let Some(choice) = choice else {
                 info!(
@@ -2361,3 +2390,7 @@ fn find_directory(root: &str, name: &str, accept: impl Fn(&str) -> bool) -> std:
 #[cfg(test)]
 #[path = "soulseek_download_service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "download_matching_tests.rs"]
+pub(crate) mod download_matching_tests;

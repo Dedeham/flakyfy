@@ -11,8 +11,8 @@ use futures::future::{BoxFuture, Shared};
 use octo_core::common::{Clock, dotnet};
 use octo_core::settings::SoulseekSettings;
 use octo_core::soulseek::soulseek_client::{
-    self as wire, BatchEnqueue, DirectoryError, SearchStatus, SoulseekFileHit, SoulseekTransferProgress,
-    SoulseekTransferState, TransferWatch, contains_ignore_case,
+    self as wire, BatchEnqueue, DirectoryError, SearchStatus, SoulseekFileHit, SoulseekSearchOutcome,
+    SoulseekTransferProgress, SoulseekTransferState, TransferWatch, contains_ignore_case,
 };
 use octo_core::soulseek::{SearchProfile, SoulseekServerReading};
 use parking_lot::Mutex;
@@ -428,6 +428,17 @@ impl SoulseekClient {
         profile: &SearchProfile,
         ct: &CancellationToken,
     ) -> Result<Vec<SoulseekFileHit>, SoulseekClientError> {
+        Ok(self.search_with_end(query, profile, ct).await?.hits)
+    }
+
+    /// [`Self::search`], and whether slskd stopped it at the profile's response or file limit
+    /// rather than when the answers ran out: such a search saw only the fastest peers.
+    pub async fn search_with_end(
+        &self,
+        query: &str,
+        profile: &SearchProfile,
+        ct: &CancellationToken,
+    ) -> Result<SoulseekSearchOutcome, SoulseekClientError> {
         let search_id = uuid::Uuid::new_v4().to_string();
         let began = self.now();
         // Set before the start goes out: a caller who gives up while it is on its way leaves a
@@ -459,10 +470,10 @@ impl SoulseekClient {
         began: DateTime<Utc>,
         ct: &CancellationToken,
         cleanup: &mut SearchCleanup,
-    ) -> Result<Vec<SoulseekFileHit>, SoulseekClientError> {
+    ) -> Result<SoulseekSearchOutcome, SoulseekClientError> {
         if !self.start_search(search_id, query, profile, ct).await? {
             cleanup.started = false;
-            return Ok(Vec::new());
+            return Ok(SoulseekSearchOutcome::default());
         }
         let ceiling = began + TimeDelta::seconds(i64::from(profile.ceiling_seconds));
         let mut status = self.wait_for_end(search_id, ceiling, ct).await?;
@@ -491,7 +502,10 @@ impl SoulseekClient {
             status.as_ref().map_or("unknown", |s| s.state.as_str()),
             status.as_ref().map_or(0, |s| s.response_count),
         );
-        Ok(hits)
+        Ok(SoulseekSearchOutcome {
+            hits,
+            hit_limit: wire::hit_limit(status.as_ref().map(|s| s.state.as_str())),
+        })
     }
 
     async fn start_search(

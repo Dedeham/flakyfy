@@ -844,3 +844,62 @@ async fn a_landed_path_with_no_audio_fails_and_is_never_recorded() {
         assert!(!tagging.meter.called(), "{empty_file}");
     }
 }
+
+// ---- a file named for another format (85bba0f) ----------------------------------------------
+
+/// Every file under a folder, at any depth.
+fn files_below(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(files_below(&path));
+        } else {
+            found.push(path.to_string_lossy().into_owned());
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_report_says_so() {
+    let song = Song {
+        external_provider: Some("test".into()),
+        external_id: Some("1".into()),
+        ..teardrop()
+    };
+    let tagging = build_with(
+        vec![("1", song)],
+        serve(mezzanine_routes("Mezzanine")).await,
+        Options::default(),
+    )
+    .await;
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |song, _| {
+        confirm(song, confirmed_teardrop());
+        let flac = landed_flac(&root, "peer share", |_| {});
+        let misnamed = format!("{}.mp3", flac.strip_suffix(".flac").expect("a FLAC"));
+        std::fs::rename(&flac, &misnamed).expect("renamed");
+        misnamed
+    });
+
+    let path = tagging.download("1").await.expect("downloaded");
+
+    assert!(path.ends_with(".flac"), "{path}");
+    // Written as a FLAC: the tagger read it by its new name.
+    assert_eq!(vorbis(&path, "ALBUM").as_deref(), Some("Mezzanine"));
+    assert!(
+        !files_below(tagging.root())
+            .iter()
+            .any(|file| file.ends_with(".mp3")),
+        "no .mp3 left"
+    );
+    let report = tagging.last_entry().tagging.expect("a report");
+    assert!(
+        report
+            .notes
+            .contains(&"renamed from .mp3 to .flac: the file is a FLAC".to_string()),
+        "{:?}",
+        report.notes
+    );
+}

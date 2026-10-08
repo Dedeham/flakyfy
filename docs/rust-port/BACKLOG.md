@@ -861,6 +861,77 @@ the C# activity tests over a real run in `library_health_server_tests.rs`.
 No settings and no new intentional diffs (the ISRC entry gained a request). No "Fix in port"
 line was under R.
 
+## Final parity record (2026-10-08)
+
+Branch `port/integrate`, on `rust/main` `4ff2c86` (every gap group in: A to S but M and T, G
+from the charts session), then `harness/shards` (`20a37c0`) and `release/rust` (`f8c07ac`)
+merged in. Final run on the WSL lane, `parity/run.sh --rust-twice --bytes`, sharded, of
+`e2038cf`'s build, against C# 2026.10.05 recorded again for corpus `55ac89246e2d466e` (1,842
+requests); the diff was then taken again on the same recordings with this branch's last
+`intentional-diffs.json` (it adds `90-mutations/update-check` to `update-card-pulls-octo` and
+drops an entry the new C# recording no longer needs).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| Before: C# against Rust, `4ff2c86`, corpus `eb2c30598fe12590`, unsharded | 106 unexplained | 113 unexplained |
+| Before: the same build, sharded, corpus `55ac89246e2d466e` (the shards agent's gate) | 104 unexplained | 111 unexplained |
+| After: C# against Rust | 82 unexplained, every one covered by a proposed entry; 0 covered by none | the same |
+| After: Rust against Rust | 1,842 identical | 1,842 identical |
+
+The 82 are all proposals waiting for Brandon (`reviewed` unset): with every entry treated as
+reviewed, the diff is 0 in both modes. The three reviewed entries explain 39 more.
+
+**The causes, and what became of each:**
+
+| Cause | Requests | Handled |
+| --- | ---: | --- |
+| G's two settings (`GeneratedPlaylists.Charts`, `ChartCountry`) in every settings, Raw config and settings file answer, and two more keys in config-sources | 55 | Proposed `charts-settings-listed` (46). The 7 config-sources answers carry `config-sources-fixed-mask`'s change too, and one entry has to cover every line of an aspect, so that entry pins the moved keys; `slskd-web-url-trimmed` likewise pins the two settings on its 2 answers. |
+| `octoTopSongs` version 2 on the extension lists outside `16-lists` (`01-system`, `13-downloads`, `15-radio`, `20-library-edits`) | 12 | Reviewed `charts-octo-top-songs-version-2` names them, with the bytes mode's lines for the same change. |
+| The dashboard files read by `10-static-cors` and the second Octo (`11-signin/alt-admin-index`) | 10 | Reviewed `dashboard-files-2026-10-08` names them, with a range's `Content-Range`. |
+| `getTopChart`'s added fields in bytes mode | 3 | Reviewed `charts-top-chart-says-which-chart` gains the bytes mode's lines. |
+| The update card's hand commands | 3 | First ported as 2026.10.05 wrote them (`7f55c32`); then `release/rust`'s helper version 2 changed them on purpose: proposed `update-card-pulls-octo` (the release agent's), which now names `90-mutations/update-check` too. |
+| `covers-start-bad-json`: the shared body binder said `$` and "Expected a value" where System.Text.Json said `$.scope` and "Expected depth to be zero", and put the parameter's entry second | 1 | Fixed for every body endpoint (`e797b0a`): `controllers::admin::json_body` reads a body against each endpoint's C# record, so the path, the words, the position and the order match; tested across endpoints. |
+| `12-imports/cap-zip-too-big-unpacked`: the C# answered 500 under the stack's memory (it reads a zip's file whole into one string) | 1 | Gone with the shards agent's 1 GB memory limit for the C# stack: both answer the 400. |
+| `album-without-cafe`, `19-health` scan timing, `plant-wait` (the one Rust against Rust diff) | 1 to 5 | Gone with the shards agent's corpus fixes (genres ignored, scan waits, coverArt ignored). |
+| `09-admin/lidarr-test-unreachable`: .NET's "Connection refused (stubs:9)" | 1 (new) | Plain error words, an improvement (`8597aa7`): proposed `plain-error-words`. |
+| The proposals already on file (J, I, F, P, E, H) | 32 | Waiting for Brandon; unchanged but for their bytes mode's lines. |
+
+**Improvements done** (list above): the shared JSON binder matched to System.Text.Json, plain
+error words and no em dashes (`8597aa7`), US spelling in identifiers (`2b132e6`), no `.unwrap()`
+outside tests (`c5ebd77`), the wave modules named for what they hold (`a1d46d9`), and 4:2:0
+cover JPEGs where ImageSharp wrote them (`4ccc138`; the bytes already differed under
+`cover-jpeg-bytes`). Left for the release agent: the cutover items.
+
+**Gate** on `e2038cf`: `cargo test --workspace` 3,333 passed (octo 2,275 and 3, octo-core 769,
+octo-media 166, octo-subsonic 120); `#[test]` counts per crate at least `rust/main`'s (octo
+2,278 against 2,274, octo-media 166 against 162, octo-core and octo-subsonic equal); clippy
+`-D warnings` and fmt clean. One test flaked once under load and passed on three reruns:
+`scrobble_tests::a_repeated_finished_play_is_learned_once`. A play sent without a time is
+told apart from a repeat by the minute it arrived (`recent_scrobbles`, as the C#), so two
+sends that straddle a minute count twice.
+
+**Proposed entries for Brandon's review** (`reviewed` unset; what a person or an app would
+notice):
+
+| Entry | Group | Requests | What changes for a person or an app |
+| --- | --- | ---: | --- |
+| `charts-settings-listed` | G | 46 | The settings page, Raw config and the settings file show the two chart settings (which chart lists to make, and the chart country) like every other setting. |
+| `keep-as-playlist-navidrome-takes-it` | H | 16 | "Keep as playlist" on an import works: the playlist appears in Navidrome under the list's name with its songs, instead of an error and an empty playlist named after the time every 30 seconds. |
+| `config-sources-fixed-mask` | I | 7 | The configuration sources page shows every saved secret as eight dots, so it no longer gives away how long a password or key is (it also lists the two chart settings). |
+| `update-card-pulls-octo` | T | 3 | The update card's hand command pulls Octo with its sidecars instead of building it, and an update helper too old for that is asked to be reinstalled. |
+| `recovery-refused-on-library-files` | J | 2 | Signed in with the recovery code, the explicit marking is refused like every other page that touches music files; only a Navidrome admin can run it. |
+| `isrc-clear-takes-the-tag-off` | F | 2 | Undoing an ISRC edit takes the code off the file, as the undo already said it did. |
+| `slskd-web-url-trimmed` | E | 2 | The Open slskd link's address is saved without the spaces it was typed with. |
+| `lidarr-test-saved-key-stays-home` | I | 1 | Testing Lidarr at a new address asks for the key to be typed again instead of sending the saved key to that address. |
+| `plain-error-words` | base | 1 | A failed connection, timeout or error status reads in plain words ("Could not connect to stubs:9: the connection was refused.") instead of .NET's exception text. |
+| `cover-resume-counts-once` | P | 1 | A cover run resumed after a stop counts each album and song once ("3 of 3 albums", not "6 of 3"). |
+| `cover-scan-leaves-the-trash-out` | P | 1 | The cover scan no longer lists songs in Octo's trash folder as albums of their own. |
+| `cover-run-reason-cleared` | P | 0 | A finished cover run no longer keeps its last "barcodes 1 of 1" line by a race (the corpus now ignores that line, so no request uses the entry). |
+
+The reviewed entries this round extended (to other requests with the same change, and to the
+bytes mode's lines): `charts-octo-top-songs-version-2`, `charts-top-chart-says-which-chart`,
+`dashboard-files-2026-10-08`. Brandon may want to see those additions too.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test

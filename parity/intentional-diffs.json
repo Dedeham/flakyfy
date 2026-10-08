@@ -374,7 +374,8 @@
       "backlog": "T",
       "requests": [
         "09-admin/update",
-        "11-signin/in-get-update"
+        "11-signin/in-get-update",
+        "90-mutations/update-check"
       ],
       "aspects": [
         "body"
@@ -463,43 +464,6 @@
       ],
       "reason": "The charts plan's two settings (Brandon 2026-10-07: chart lists beyond Popular right now, read for one country) are settings like the others: GET settings, a save's persisted answer, Raw config and the settings file list GeneratedPlaylists.Charts (the chart lists to make, empty for the default set) and GeneratedPlaylists.ChartCountry (auto by default), and config-sources lists their keys. C# 2026.10.05 has neither. A Raw config save that writes them back is 46 bytes longer. Values only added; no other setting changes.",
       "knownDiff": "Chart settings in the settings answers"
-    },
-    {
-      "id": "import-zip-cap-answers-in-words",
-      "backlog": "H",
-      "requests": [
-        "12-imports/cap-zip-too-big-unpacked"
-      ],
-      "aspects": [
-        "status",
-        "body",
-        "header:cache-control",
-        "header:expires",
-        "header:pragma",
-        "header:set-cookie"
-      ],
-      "lines": [
-        "^500 != 400$",
-        "^A: \\['no-cache,no-store'\\]$",
-        "^B: \\['no-store'\\]$",
-        "^A: \\['-1'\\]$",
-        "^A: \\['no-cache'\\]$",
-        "^A: \\(absent\\)$",
-        "^B: \\(absent\\)$",
-        "^B: \\['octo_browse=\\{\\{admin_session\\}\\}; max-age=7776000; path=/api/admin; samesite=strict; httponly'\\]$",
-        "^\\$\\.subsonic-response: only in A \\(\\{\"status\": \"failed\", \"version\": \"1\\.16\\.1\", \"error\": \\{\"code\": 0, \"message\": \"An internal server error occurred\"\\}\\}\\)$",
-        "^\\$\\.(listId|url): only in B \\(null\\)$",
-        "^\\$\\.count: only in B \\(0\\)$",
-        "^\\$\\.ok: only in B \\(false\\)$",
-        "^\\$\\.message: only in B \\(Octo could not read that file: The zip unpacks to more than 256 MB, more than any export Octo reads\\.\\)$",
-        "^--- A$",
-        "^\\+\\+\\+ B$",
-        "^@@ -1 \\+1 @@$",
-        "^\\-\\{\"subsonic\\-response\":\\{\"status\":\"failed\",\"version\":\"1\\.16\\.1\",\"error\":\\{\"code\":0,\"message\":\"An\\ internal\\ server\\ error\\ occurred\"\\}\\}\\}$",
-        "^\\+\\{\"ok\":false,\"message\":\"Octo\\ could\\ not\\ read\\ that\\ file:\\ The\\ zip\\ unpacks\\ to\\ more\\ than\\ 256\\ MB,\\ more\\ than\\ any\\ export\\ Octo\\ reads\\.\",\"url\":null,\"listId\":null,\"count\":0\\}$"
-      ],
-      "reason": "A zip that unpacks to more than 256 MB is refused with the 400 and its words every time. The C# read each wanted file whole into one string (StreamReader.ReadToEnd, up to the 256 MB cap as UTF-16) before the cap stopped it, so under the parity stack's memory it could fail first and answer 500 (this recording); another C# recording of the same corpus answered the 400. The Rust reader stops at the cap with no string built.",
-      "knownDiff": "Spotify import: a zip that unpacks too far"
     },
     {
       "id": "plain-error-words",

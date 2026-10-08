@@ -423,6 +423,8 @@ async fn a_removed_song_stays_removed() {
         at_utc: Utc::now(),
         history_kept: None,
         revealed_path: None,
+        copy: false,
+        download_allowed: false,
     });
 
     // Removed means not wanted: the album is not short of anything the next source should fetch.

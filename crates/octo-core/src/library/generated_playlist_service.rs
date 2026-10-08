@@ -55,6 +55,13 @@ pub struct UserMixes {
     pub counts_utc: DateTime<Utc>,
     #[serde(deserialize_with = "null_as_default")]
     pub kinds: String,
+    /// Each Made for you list's songs as Subsonic song JSON, by kind.
+    #[serde(deserialize_with = "null_as_default")]
+    pub for_you: IndexMap<String, Vec<String>>,
+    /// Album covers New Releases' cover is colored from: outside albums Navidrome does not
+    /// know, so they are fetched from the catalog's own image host.
+    #[serde(deserialize_with = "null_as_default")]
+    pub for_you_covers: Vec<String>,
 }
 
 impl Default for UserMixes {
@@ -65,6 +72,8 @@ impl Default for UserMixes {
             // default(DateTime): written without a Z, as STJ writes DateTime.MinValue.
             counts_utc: datetime::min_value(),
             kinds: String::new(),
+            for_you: IndexMap::new(),
+            for_you_covers: Vec::new(),
         }
     }
 }

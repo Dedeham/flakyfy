@@ -46,6 +46,9 @@ pub struct LastFmRadioUserState {
     pub stations: Vec<LastFmRadioStation>,
     #[serde(deserialize_with = "null_as_default")]
     pub unavailable_tracks: Vec<LastFmRadioUnavailableTrack>,
+    /// Songs the listener rated one star: they never play on their radio.
+    #[serde(deserialize_with = "null_as_default")]
+    pub radio_bans: Vec<LastFmRadioBan>,
     #[serde(with = "datetime::utc_option")]
     pub last_refresh_attempt_utc: Option<DateTime<Utc>>,
     #[serde(with = "datetime::utc_option")]
@@ -63,6 +66,7 @@ impl Default for LastFmRadioUserState {
             plays: Vec::new(),
             stations: Vec::new(),
             unavailable_tracks: Vec::new(),
+            radio_bans: Vec::new(),
             last_refresh_attempt_utc: None,
             last_refresh_success_utc: None,
             last_refresh_error: None,
@@ -96,6 +100,34 @@ impl Default for LastFmRadioUnavailableTrack {
             title: String::new(),
             failed_at_utc: now,
             retry_after_utc: now + TimeDelta::hours(24),
+        }
+    }
+}
+
+/// A song the listener rated one star: it never plays on their radio.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct LastFmRadioBan {
+    #[serde(deserialize_with = "null_as_default")]
+    pub key: String,
+    #[serde(deserialize_with = "null_as_default")]
+    pub song_id: String,
+    #[serde(deserialize_with = "null_as_default")]
+    pub artist: String,
+    #[serde(deserialize_with = "null_as_default")]
+    pub title: String,
+    #[serde(with = "datetime::utc")]
+    pub banned_at_utc: DateTime<Utc>,
+}
+
+impl Default for LastFmRadioBan {
+    fn default() -> Self {
+        LastFmRadioBan {
+            key: String::new(),
+            song_id: String::new(),
+            artist: String::new(),
+            title: String::new(),
+            banned_at_utc: Utc::now(),
         }
     }
 }

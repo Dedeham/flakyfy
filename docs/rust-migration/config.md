@@ -6,6 +6,9 @@ Sources read: `.env.example`, `docker-compose.yml`, `octo/appsettings.json`, `oc
 
 **Totals:** 164 settings across 14 sections (12 bound classes plus two raw `IConfiguration` keys). This counts each list or dictionary as one setting, and its element fields are listed under it. There are also 5 host-level variables.
 
+> [!NOTE] 2026.10.05 (wave G1)
+> 2026.10.05 adds three sections and 21 settings: `RadioSources` (§3.15, 11), `Admin` (§3.16, 2) and `Imports` (§3.17, 4), plus four in `Soulseek` (§3.6) and seven in `GeneratedPlaylists` (§3.12). That is 199 settings across 17 sections. The secret rules changed: every credential now reads as the placeholder (§6). The env vars the release added that Octo itself never reads (the slskd share and upload limits, `SONIC_CPUS`, `OCTO_IMAGE_TAG`, the starter stack's `COMPOSE_PROFILES` and `NAVIDROME_*`) configure other containers; they are listed in §3.18 so the compose and the installer keep them.
+
 ---
 
 ## 1. Sources and precedence
@@ -121,7 +124,8 @@ Every bounds check happens **at read time** in `Effective*` properties or at the
 | Variable | Where | Default | Effect / Rust mapping |
 |---|---|---|---|
 | `ASPNETCORE_ENVIRONMENT` (also `DOTNET_ENVIRONMENT`) | compose: `Production` | `Production` | `Development` turns on Swagger UI (`/swagger`) and loads `appsettings.Development.json`. Rust: optional, and the OpenAPI UI may be dropped (PLAN). |
-| `ASPNETCORE_URLS` | Dockerfile: `http://+:8080` | `http://+:8080` | Kestrel's bind address. Rust: bind `0.0.0.0:8080`, and honor `ASPNETCORE_URLS` if set (first `http://` entry; `+` and `*` mean all interfaces). |
+| `ASPNETCORE_URLS` | Dockerfile: `http://+:8080` | `http://+:8080` | Kestrel's bind address. Rust: bind `0.0.0.0:8080`, and honor `ASPNETCORE_URLS` if set (first `http://` entry; `+` and `*` mean all interfaces). With `Admin:Port` set (§3.16) the dashboard's port is added to these (`AdminPortSplit.ListenUrls`: `urls`, else `ASPNETCORE_HTTP_PORTS` as `http://+:<port>` entries, else `http://localhost:5000`), unless an entry already ends in `:<port>`; Rust binds `0.0.0.0:<port>` beside the main address. |
+| `ASPNETCORE_HTTP_PORTS` | not set | - | Read only by the admin port's address list (above). |
 | `Logging__LogLevel__Default`, `Logging__LogLevel__<Category>` | not set (`appsettings.json` has no `Logging` section) | Information | Standard .NET filter. Development adds `Microsoft.AspNetCore: Warning`. Rust: translate into a `tracing` `EnvFilter`, and honor `RUST_LOG` if set. |
 | `TMPDIR` | not set | `/tmp` | Implicit through `Path.GetTempPath()`: the cache dir `octo-cache` (StorageMode=Cache), the radio spool, and the working dir for ffmpeg and fpcalc. Rust: `std::env::temp_dir()`. |
 | `DOTNET_USE_POLLING_FILE_WATCHER` | not set | inotify | Switches the settings.json watcher to polling (4 s). Rust: optional; `notify` has a `PollWatcher`. |
@@ -206,7 +210,11 @@ Enums:
 |---|---|---|---|---|---|---|
 | `BaseUrl` | literal `http://slskd:5030` | string? | null / `http://slskd:5030` / literal | `SoulseekClient`: null → `http://localhost:5030`, `TrimEnd('/')`. | Restart, RT (`SoulseekClient` uses `IOptions`) | yes |
 | `Username` | `SLSKD_USERNAME` | string? | null / `""` / `slskd` | slskd API login; the session is not made when user or password is blank. | Restart, RT | yes |
-| `Password` | `SLSKD_PASSWORD` | string? | null / `""` / `slskd` | **Secret, returned in clear** by GET (§6). | Restart, RT | yes |
+| `Password` | `SLSKD_PASSWORD` | string? | null / `""` / `slskd` | **Secret**: the placeholder in GET since 2026.10.05 (§6). A save that sends the placeholder back with a changed `Username` is refused: "Retype the slskd password for the new username." | Restart, RT | yes |
+| `WebUrl` | `SLSKD_WEB_URL` | string | `""` / `""` / `""` | The address Open slskd opens. `EffectiveWebUrl` = `SafeWebUrl(WebUrl)`: an absolute http or https address with a host, trimmed, as `Uri.ToString()` writes it (a bare host gains its `/`), else null. A save of a non-blank value that is not one is refused (400 "slskd's page must be a whole http:// or https:// address, such as http://192.168.1.5:5030."). | Live | yes |
+| `CheckListenPort` | `SLSKD_CHECK_PORT` | bool | true / `true` / `true` | Ask Soulseek's port test at most every 6 hours. | Live | yes |
+| `ShareLibrary` | `SLSKD_SHARE_LIBRARY` | bool | **false** / `false` / `false` | Off in the class and appsettings so an update never starts sharing; the installer and `.env.example` turn it on for new installs. | Live (applied to slskd within seconds) | yes |
+| `SharedFolders` | `SLSKD_SHARED_DIR` | string | `[Music]/share` / `[Music]/share` / `[Music]/share` | `SharedFolderList`: split on `;`, trimmed, blanks dropped. A `!` in front keeps a folder out. | Live | yes |
 | `SearchWaitSeconds` | `SLSKD_SEARCH_WAIT_SECONDS` | int | 30 / `30` / `30` | No clamp. The interactive search ceiling; an album search uses `max(v, 45)`. | Restart, RT (`SoulseekDownloadService` uses `IOptions`) | yes |
 | `UpgradeSearchWaitSeconds` | `SLSKD_UPGRADE_SEARCH_WAIT_SECONDS` | int | 90 / `90` / `90` | `Math.Clamp(v, 30, 300)` | **Restart, but not RT** (read only through `SoulseekDownloadService`'s captured `IOptions`; a gap in RestartTracker) | no |
 | `MinFileSizeBytes` | `SLSKD_MIN_FILE_SIZE_BYTES` | **long** | 5242880 / `5242880` / `5242880` | No clamp. | Restart, RT | yes |
@@ -366,6 +374,13 @@ Enums:
 | `RefreshHours` | `MIX_REFRESH_HOURS` | int | 24 / `24` / `24` | `Clamp(1, 336)` | Live | yes |
 | `NewShare` | `MIX_NEW_SHARE` | int (percent) | 0 / `0` / `0` | `Clamp(0, 100)` | Live | yes |
 | `NewDays` | `MIX_NEW_DAYS` | int | 30 / `30` / `30` | `Clamp(1, 3650)` | Live | yes |
+| `NewReleases` | `FOR_YOU_NEW_RELEASES` | bool | true / - / `true` | Made for you's New Releases. `AnyForYou` = any of the three. | Live | yes |
+| `Rediscover` | `FOR_YOU_REDISCOVER` | bool | true / - / `true` | Made for you's Rediscover. | Live | yes |
+| `DeepCuts` | `FOR_YOU_DEEP_CUTS` | bool | true / - / `true` | Made for you's Deep Cuts. | Live | yes |
+| `NewReleaseWeeks` | `NEW_RELEASE_WEEKS` | int | 8 / - / `8` | `Clamp(1, 26)` | Live | yes |
+| `NewReleaseArtists` | `NEW_RELEASE_ARTISTS` | int | 50 / - / `50` | `Clamp(10, 200)` | Live | yes |
+| `RediscoverMonths` | `REDISCOVER_MONTHS` | int | 6 / - / `6` | `Clamp(3, 24)` | Live | yes |
+| `PopularNow` | `POPULAR_NOW` | bool | true / - / `true` | "Popular right now", the chart as a playlist for every listener. GET lists it first in the section. | Live | yes |
 | `NameFormat` | `MIX_NAME_FORMAT` | string (.NET composite format) | `{0} Mix` / `{0} Mix` / **`""`** | `Name(label)`: if the format contains `{0}`, use `string.Format(InvariantCulture, format, label).Trim()`; on a `FormatException` (a stray brace) **or** when `{0}` is absent (including `""`), use `"{label} Mix"`. Compose turns an unset var into `""`, so GET shows `""` under Docker, but names still come out as `"{label} Mix"`. Rust needs a small .NET-format emulation: `{0}`, `{{`/`}}` escapes, alignment and format specifiers such as `{0,-10}`, and an error on any other index. | Live | yes |
 
 ### 3.13 `Notifications` → `NotificationSettings` (8)
@@ -390,6 +405,47 @@ The section is absent from `appsettings.json` and compose. Raw env only.
 | `Token` | - (raw `ListenBrainz__Token`) | string | `""` | **Secret, in clear** in GET; masked in config-sources (ends in `Token`). Trimmed when used. | Live | yes |
 | `UserTokens` | - (raw `ListenBrainz__UserTokens__alice`) | `Dictionary<string,string>` (OrdinalIgnoreCase) | `{}` | `TokenFor(user)`: returns null if `SubmitExternalPlays` is false. Otherwise the user's own token if the trimmed username matches and the token is non-blank (trimmed), else `Token` (trimmed) if non-blank, else null. **Secret, in clear** in GET and raw-config, and not listed in config-sources. **POST replaces this object whole** (`replaceObjects: ["ListenBrainz.UserTokens"]`). | Live | yes |
 | `SubmitExternalPlays` | - | bool | true | - | Live | yes |
+
+### 3.15 `RadioSources` → `RadioSourceSettings` (11, 2026.10.05)
+
+Song radio (getSimilarSongs) and the stations ask every source that is on and blend their answers. GET settings and raw-config list the section after `YouTube`.
+
+| JSON key | .env var (→ `RadioSources__Key`) | Type | Class / appsettings / Compose | Validation, parsing | Reload | Form |
+|---|---|---|---|---|---|---|
+| `YouTubeMusic` | `RADIO_YOUTUBE_MUSIC` | bool | true / `true` / `true` | YouTube Music's radio, through the shim. | Live | yes |
+| `ListenBrainz` | `RADIO_LISTENBRAINZ` | bool | true / `true` / `true` | ListenBrainz's similar recordings, and LB Radio with a token. | Live | yes |
+| `SoundsAlike` | `RADIO_SOUNDS_ALIKE` | bool | true / `true` / `true` | Library songs that sound like the seed (octo-sonic). Off also stops the analysis, and the status page shows octo-sonic as off. | Live | yes |
+| `SonicUrl` | `RADIO_SONIC_URL` | string | `http://octo-sonic:8080` (all three) | The octo-sonic sidecar; the status page probes `{SonicUrl}/health`. | Live | yes |
+| `SonicPauseSeconds` | `RADIO_SONIC_PAUSE_SECONDS` | int | 2 / `2` / `2` | `Clamp(0, 600)`. | Live | yes |
+| `ListenBrainzAlgorithm` | `RADIO_LISTENBRAINZ_ALGORITHM` (compose only) | string | `session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30` (all three) | The labs similarity dataset. | Live | no |
+| `LastFmWeight`, `YouTubeMusicWeight`, `ListenBrainzWeight`, `SoundsAlikeWeight` | - (dashboard only) | double | 0.9, 1.0, 0.7, 0.4 / same / - | `EffectiveWeight`: `Clamp(0, 3)`, and 1 for a value that is not a finite number. 0 leaves a source out of the blend. | Live | yes |
+| `LearnFromListening` | `RADIO_LEARN_FROM_LISTENING` | bool | true / `true` / `true` | Each listener's plays and skips move the weights (0.3 to 1.5). | Live | yes |
+
+The C# names start `YouTube` (capital T); the Rust fields are `you_tube_music` with a serde rename, and the binder matches them ignoring case.
+
+### 3.16 `Admin` → `AdminSettings` (2, 2026.10.05)
+
+Absent from `appsettings.json`. Neither GET settings nor raw-config lists the section (it is set in `.env`, and the port needs a restart), so a Raw config save never writes it.
+
+| JSON key | .env var (→ `Admin__Key`) | Type | Class / appsettings / Compose | Validation, parsing | Reload | Form |
+|---|---|---|---|---|---|---|
+| `SignIn` | `ADMIN_SIGN_IN` | string | `required` / - / `required` | `SignInOff` is true only for `off` (trimmed, any case), so a typo never opens the dashboard. Start-up warns about any value other than `required` or `off`. Read live by the gate (`IOptionsMonitor`). | Live | no |
+| `Port` | `ADMIN_PORT` | int | 0 / - / `0` | A port of its own for the dashboard and the admin API (§2). Read once at start (`builder.Configuration.GetValue<int>("Admin:Port")`): restart to apply. Ignored when it is already one of Octo's own ports. | Restart | no |
+
+### 3.17 `Imports` → `ImportSettings` (4, 2026.10.05)
+
+Absent from `appsettings.json`; read through `_config.GetSection("Imports").Get<ImportSettings>()` where the admin API shows it.
+
+| JSON key | .env var (→ `Imports__Key`) | Type | Class / appsettings / Compose | Validation, parsing | Reload | Form |
+|---|---|---|---|---|---|---|
+| `SpotifyClientId` | `IMPORTS_SPOTIFY_CLIENT_ID` | string | `""` / - / `""` | Empty: no Spotify sign-in (links and files still work). Not a secret (PKCE). | Live | yes |
+| `SpotifyRedirectUri` | `IMPORTS_SPOTIFY_REDIRECT_URI` | string | `http://127.0.0.1/callback` / - / same | `EffectiveRedirectUri`: the default when blank, else trimmed. GET shows the effective value. | Live | yes |
+| `SongsPerHour` | `IMPORTS_SONGS_PER_HOUR` | int | 20 / - / `20` | `EffectiveSongsPerHour` = `Clamp(0, 600)`; 0 stops the trickle. | Live | yes |
+| `RefreshHours` | `IMPORTS_REFRESH_HOURS` | int | 6 / - / `6` | 0 reads lists again only when asked. | Live | yes |
+
+### 3.18 Variables for other containers (2026.10.05)
+
+Compose and the installer pass these to slskd, octo-sonic or the starter Navidrome, or use them themselves. Octo does not read them: `SLSKD_SHARE_RESCAN_MINUTES`, `SLSKD_UPLOAD_SLOTS`, `SLSKD_UPLOAD_SPEED_LIMIT` (slskd), `SONIC_CPUS` (octo-sonic), `COMPOSE_PROFILES`, `NAVIDROME_ADMIN_PASSWORD`, `NAVIDROME_PORT`, `NAVIDROME_DATA_DIR` (the starter stack), `OCTO_IMAGE_TAG` (the image compose pulls). One raw key was added for tests: `Octo:StateDirectory`, where the radio state files go instead of beside settings.json (the C# tests' only way to move them; Rust tests pass their own paths).
 
 ---
 
@@ -471,9 +527,9 @@ File.Move(path + ".tmp", path, overwrite: true)      // rename(2): atomic on one
 | Endpoint / code path | Effect on settings.json | Validation and secret handling |
 |---|---|---|
 | `GET /api/admin/settings` | - | Returns the **effective** values (§3), plus `_meta`: `ConfigFilePath`, `RejectedPeerCount`, `ConfigFileExists`, `ConfigFileValid`, `RestartPending` (array of `"Section:Key"`), `SecretPlaceholder` = `"(saved, not shown)"`, `Version` (InformationalVersion with the `+sha` cut off). Keys are PascalCase (a `Dictionary`, so no camelCase), and enums are returned as names. Leaving masking aside, three fields differ from the raw stored value: `HeartDownloadSources` and `LibraryActions.Actions` are the effective lists, and `Metadata.SaveLyricsTo` is normalized. `LastFm.DiscoveryStations` and `Genre.Mappings` come from the raw file when present. |
-| `POST /api/admin/settings` | `Merge(patch, ["ListenBrainz.UserTokens"])` | Body must be a JSON object, otherwise 400 `empty body` / `invalid JSON: …`. `_meta` is removed. Validates `LibraryActions`, `Genre.Mappings` and `LastFm.DiscoveryStations` (§3), with a 400 on failure. Secret placeholders: `Subsonic.AdminPassword` and `LastFm.ApiSecret` as in §3; `LastFm.UserSessions` is always removed from the patch. Corrupt file → 409; any other exception → 500 `{error}`. Logs `Admin settings updated: {Section,Section}` (section names only). Answers `{"ok":true,"persisted":<merged, with AdminPassword, ApiSecret and every SessionKey masked>}`. |
+| `POST /api/admin/settings` | `Merge(patch, ["ListenBrainz.UserTokens"])` | Body must be a JSON object, otherwise 400 `empty body` / `invalid JSON: …`. `_meta` is removed. Validates `LibraryActions`, `Genre.Mappings` and `LastFm.DiscoveryStations` (§3), with a 400 on failure. Since 2026.10.05, in this order: a saved credential never follows a new address (§6, `SecretSentElsewhere`); the admin password and the slskd password as in §3; `Soulseek.WebUrl` (§3.6); `LastFm.UserSessions` is always removed; then every other placeholder is taken out (`KeepSavedSecrets`, §6). Corrupt file → 409; any other exception → 500 `{error}`. Logs `{Who} saved settings: {Section,Section}` (who: the Navidrome user, "someone with the recovery code", "someone (the dashboard sign-in is off)", "{user} (from the Octo app)"). Answers `{"ok":true,"persisted":<merged, every credential masked>}`. |
 | `GET /api/admin/raw-config` | - | The effective document as indented JSON (the same masking as GET settings). It always includes every section, so a plain Save does not delete any. Differences from GET settings: `DiscoveryStations` is always the class serialized (never the raw file); `AllowedUsers`, `Blocklist` and `BackfillExtensions` are serialized arrays. |
-| `PUT /api/admin/raw-config` | `Replace(parsed)`, wholesale | Body must be a JSON object. Placeholders are swapped back from the existing file; if the file is unreadable, the running values of `AdminPassword`, `ApiSecret` and `UserSessions` are used instead. A placeholder with no stored value → the key is dropped, so env keeps applying. A session whose key exists only in env is dropped whole. Placeholder plus extra text → 400 (admin password, shared secret, or session key: `Connect {user} to Last.fm again…`). Answers `{"ok":true,"bytes":N}`. **No LibraryActions, Genre or DiscoveryStations validation on this path.** |
+| `PUT /api/admin/raw-config` | `Replace(parsed)`, wholesale | Body must be a JSON object. Since 2026.10.05 `SecretSentElsewhere` runs first (§6). Placeholders are swapped back from the existing file (every credential of §6, each listener's ListenBrainz token by name); if the file is unreadable, the running values of every credential are used instead (`RunningSecrets`). Logs `{Who} saved the raw config ({Bytes} bytes)`. A placeholder with no stored value → the key is dropped, so env keeps applying. A session whose key exists only in env is dropped whole. Placeholder plus extra text → 400 (admin password, shared secret, or session key: `Connect {user} to Last.fm again…`). Answers `{"ok":true,"bytes":N}`. **No LibraryActions, Genre or DiscoveryStations validation on this path.** |
 | `GET /api/admin/config-sources` | - | `{keys:[{Key,Value,IsSecret}], configFile}` for a fixed list of `Section:Key` strings, read through `IConfiguration[key]`. Despite the name, it does **not** report which source a value came from. Lists come out as `""`, because the section has no scalar value. A value counts as secret when its key ends in `Password`, `ApiKey`, `Secret`, `Token` or `WebhookUrl` (case-insensitive); a non-empty secret shows as `'•'` repeated `min(len, 16)` times. |
 | `POST /api/admin/restart` | - | 202 `{ok:true,message:"restarting"}`. After 1 s it calls `StopApplication()`; 2 s later it calls `Environment.Exit(1)`. |
 | `POST /api/admin/lastfm/scrobble/finish` (`LastFmScrobbleService.FinishConnect`) | `Update`: finds the `LastFm` section case-insensitively, creating `"LastFm"` if missing, and `UserSessions` the same way. Removes every key equal to the user (trimmed, case-insensitive) and sets `UserSessions[user] = {"SessionKey":…, "LastFmUser":…}`. | - |
@@ -486,19 +542,24 @@ No other code path writes `settings.json`. `LyricsAdminController`, `UpdateContr
 
 ## 6. Secrets: redaction contract
 
+> [!CORRECTION] 2026.10.05
+> Every credential now reads as the placeholder (031e563, and 9f9502d for the slskd password); nothing in the table below goes out in clear any more. The lists the C# keeps (`SecretFields`, `SecretAddresses`, `SecretMaps`) are `controllers::admin::secrets` in Rust, and a test walks the settings structs so a new credential cannot go out in clear unnoticed.
+
 | Setting | GET settings / raw-config | POST echo (`persisted`) | config-sources | Logs |
 |---|---|---|---|---|
 | `Subsonic.AdminPassword` | placeholder `(saved, not shown)`, or `""` if unset | masked | masked | never logged |
 | `LastFm.ApiSecret` | placeholder | masked | masked | `api_sig` query param redacted |
 | `LastFm.UserSessions.*.SessionKey` | placeholder; entries with a blank key are omitted | masked | (not listed) | `sk` query param redacted |
-| `Soulseek.Password` | **clear** | clear | masked | - |
-| `Soulseek.AcoustIdApiKey`, `Soulseek.AcoustIdUserApiKey` | **clear** | clear | masked | `client`, `user` query params redacted |
-| `Lidarr.ApiKey` | **clear** | clear | masked | - (sent as a header) |
-| `LastFm.ApiKey` | **clear** | clear | masked | `api_key` redacted |
-| `Notifications.NtfyToken`, `Notifications.DiscordWebhookUrl` | **clear** | clear | masked | - |
-| `ListenBrainz.Token`, `ListenBrainz.UserTokens` | **clear** | clear | Token masked; UserTokens not listed | - |
+| `Soulseek.Password` | placeholder | masked | masked | - |
+| `Soulseek.AcoustIdApiKey`, `Soulseek.AcoustIdUserApiKey` | placeholder | masked | masked | `client`, `user` query params redacted |
+| `Lidarr.ApiKey` | placeholder | masked | masked | - (sent as a header) |
+| `LastFm.ApiKey` | placeholder | masked | masked | `api_key` redacted |
+| `Notifications.NtfyToken`, `Notifications.DiscordWebhookUrl` | placeholder (the webhook address carries its own token) | masked | masked | - |
+| `ListenBrainz.Token`, `ListenBrainz.UserTokens` | placeholder; a blank user token is left out, names kept | masked | Token masked; UserTokens not listed | - |
 
-- **"Clear" is intentional parity.** The source comments say "every other secret still does [go out in clear], as it always has". The Rust port must keep these exact shapes, or the dashboard round-trip breaks.
+- **Saving it back keeps what is saved** (`KeepSavedSecrets`): a field that reads exactly as the placeholder is taken out of the patch; the placeholder with text after it is refused ("Retype the whole {words}; it was added to the hidden placeholder."); a listener's ListenBrainz token sent as the placeholder is replaced by the stored one (the map is saved whole), or dropped when none is stored.
+- **A saved credential never follows a new address** (`SecretSentElsewhere`, 9210c63): for `Subsonic.Url`/`AdminPassword`, `Soulseek.BaseUrl`/`Password`, `Lidarr.BaseUrl`/`ApiKey` and `Notifications.NtfyUrl`/`NtfyToken`, a patch that changes the address (compared trimmed, without trailing slashes, ignoring case, against the running `IConfiguration` value) while a credential is stored and the patch does not type a new one is refused: "Retype the {words} for the new address."
+- **The checks that send a credential somewhere take the placeholder as the saved one:** `lastfm/check` (shared secret), `listenbrainz/validate` (token), `lidarr/test` (API key). `lidarr/test` sends the saved key to whatever address the request names (BACKLOG, "Found while building the harness"; kept as C# does it, Brandon to decide).
 - **Log redaction** (`LogRedaction.cs`, wrapping the whole `ILoggerFactory`, so it applies to request lines, HttpClient lines and app logs, at every level):
   - Regex `(?<=[?&;](?:t|s|p|apikey|token|api_key|client|user|sk|api_sig)=)[^&#\s"'<>]+`, case-insensitive, replaced with `***`.
   - It applies to the message text and to every structured argument: strings, and anything whose `ToString()` is a URL or query. Enums, dates, numbers, `Guid` and `TimeSpan` pass through.

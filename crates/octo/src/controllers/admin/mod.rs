@@ -7,9 +7,11 @@
 //! marks those, and `POST /api/admin/restart` exits so docker compose's restart policy brings
 //! the container back with the new values.
 //!
-//! Every route here sits behind the admin request guard (`crate::middleware::admin_guard`):
-//! a write needs the `X-Octo-Admin` header. The endpoints that read files also need a browse
-//! sign-in ([`helpers_6b1::BrowseUser`]).
+//! Every route here sits behind the admin request guard (`crate::middleware::admin_guard`), a
+//! write needs the `X-Octo-Admin` header, and behind the sign-in gate
+//! (`crate::middleware::admin_sign_in_gate`), which answers 401 to anyone not signed in apart
+//! from its few open endpoints. The endpoints that read files also need a Navidrome admin's own
+//! sign-in, never the recovery code ([`helpers_6b1::BrowseUser`]).
 
 pub mod browse;
 pub mod cover_upgrade;
@@ -20,6 +22,7 @@ pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
 pub mod raw_config;
+pub mod secrets;
 pub mod settings;
 pub mod system;
 pub mod update;
@@ -65,6 +68,7 @@ pub fn routes_6b1() -> RouteSet {
         .route("/api/admin/discover-servers", get(system::discover_servers))
         .route("/api/admin/library-status", get(system::library_status))
         .route("/api/admin/browse/auth", post(browse::browse_auth))
+        .route("/api/admin/auth/recovery", post(browse::recovery_sign_in))
         .route("/api/admin/browse", get(browse::browse))
         .route("/api/admin/test-notification", post(system::test_notification))
         .route("/api/admin/browse/session", get(browse::browse_session))
@@ -130,3 +134,11 @@ mod admin_contract_tests;
 #[cfg(test)]
 #[path = "lastfm_admin_tests.rs"]
 mod lastfm_admin_tests;
+
+#[cfg(test)]
+#[path = "admin_sign_in_tests.rs"]
+mod admin_sign_in_tests;
+
+#[cfg(test)]
+#[path = "admin_secret_tests.rs"]
+mod admin_secret_tests;

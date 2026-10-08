@@ -2,6 +2,7 @@
 //! Navidrome song and playlist plumbing.
 
 pub mod duplicate_scan_worker;
+pub mod explicit_backfill_store;
 pub mod generated_playlist_service;
 pub mod heart_ownership;
 pub mod library_action_executor;
@@ -12,6 +13,7 @@ pub mod library_action_quarantine;
 pub mod library_action_rating_worker;
 pub mod library_ownership;
 pub mod library_review_sweep_worker;
+pub mod library_tag_edits;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;

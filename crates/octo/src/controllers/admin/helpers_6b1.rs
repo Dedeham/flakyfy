@@ -15,10 +15,9 @@ use crate::http::error::{problem, validation_problem};
 use crate::middleware::forwarded::RequestScheme;
 use crate::services::admin::browse_session_store::BrowseSessionStore;
 
-/// What a saved Navidrome admin password reads as through the admin API. The Last.fm shared
-/// secret and each listener's Last.fm session key read the same way: they were added after
-/// this was, and neither has ever gone out in clear. Every other secret still does, as it
-/// always has.
+/// What a saved credential reads as through the admin API: every password, key, token and
+/// webhook address in [`super::secrets::SECRET_FIELDS`] and [`super::secrets::SECRET_MAPS`].
+/// None goes out in clear, and a save that sends this back keeps what is saved.
 pub const SECRET_PLACEHOLDER: &str = "(saved, not shown)";
 
 /// Cookie carrying the browse session. Scoped to /api/admin so it is never sent with the
@@ -89,7 +88,15 @@ pub fn is_https(scheme: Option<&RequestScheme>) -> bool {
 /// is set again on every signed-in request, so the browser keeps it exactly as long as the
 /// server keeps the session. Written in `SetCookieHeaderValue`'s order.
 pub fn browse_cookie(token: &str, https: bool) -> HeaderValue {
-    let max_age = BrowseSessionStore::TTL.num_seconds();
+    browse_cookie_for(token, https, BrowseSessionStore::TTL)
+}
+
+/// `AdminCookie.Options(request, maxAge)`: [`browse_cookie`] with its own age (an hour for a
+/// recovery-code session). HttpOnly so the page's script cannot read it, SameSite=Strict so no
+/// other site's page sends it, and scoped to /api/admin so it never goes out with the Subsonic
+/// traffic Octo relays.
+pub fn browse_cookie_for(token: &str, https: bool, max_age: chrono::TimeDelta) -> HeaderValue {
+    let max_age = max_age.num_seconds();
     let secure = if https { "; secure" } else { "" };
     let text = format!(
         "{BROWSE_COOKIE_NAME}={}; max-age={max_age}; path=/api/admin{secure}; samesite=strict; httponly",
@@ -110,7 +117,8 @@ fn escape_cookie_value(value: &str) -> String {
 
 /// The Navidrome admin this request is signed in as (`BrowseUser`), with the cookie to send
 /// back. Cookie first (how the admin UI signs in), header second so the endpoints stay usable
-/// from curl. A live cookie is renewed: [`BrowseUser::finish`] adds it to the answer.
+/// from curl. A live cookie is renewed: [`BrowseUser::finish`] adds it to the answer. A
+/// recovery-code session is not one: it cannot reach the endpoints that touch library files.
 pub struct BrowseUser {
     pub user: Option<String>,
     renew: Option<HeaderValue>,
@@ -125,7 +133,9 @@ impl BrowseUser {
     ) -> BrowseUser {
         let cookie = request_cookie(headers, BROWSE_COOKIE_NAME);
         // A stale cookie hides a valid header: the cookie wins whenever there is one.
-        let user = state.browse_sessions.user_of(cookie.as_deref().or(header_token));
+        let user = state
+            .browse_sessions
+            .navidrome_user_of(cookie.as_deref().or(header_token));
         let renew = match (&user, &cookie) {
             (Some(_), Some(cookie)) => Some(browse_cookie(cookie, is_https(scheme))),
             _ => None,
@@ -331,6 +341,42 @@ pub fn bind_body<T: DeserializeOwned>(headers: &HeaderMap, body: &[u8], name: &s
     octo_core::json::web::from_value(&value).map_err(|e| {
         let message = format!("The JSON value could not be converted. {e}");
         validation_problem(&[("$", &[message.as_str()]), (name, &[required.as_str()])])
+    })
+}
+
+/// A `[FromBody] T? name` parameter (nullable, so `EmptyBodyBehavior.Allow`): an empty body or
+/// `null` binds as None instead of the 400, and a body that does not parse is the 400 with its
+/// `$` entry alone (no "field is required", since the parameter is not).
+#[allow(clippy::result_large_err)]
+pub fn bind_optional_body<T: DeserializeOwned>(
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<Option<T>, Response> {
+    if body.is_empty() {
+        return Ok(None);
+    }
+    if !is_json_content_type(headers) {
+        return Err(problem(StatusCode::UNSUPPORTED_MEDIA_TYPE));
+    }
+    let text = String::from_utf8_lossy(body);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    if let Some(error) = stj_parse_error(text) {
+        let message = format!("{} Path: $ | {}", error.message, error.position());
+        return Err(validation_problem(&[("$", &[message.as_str()])]));
+    }
+    let value: Value = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(e) => {
+            let message = e.to_string();
+            return Err(validation_problem(&[("$", &[message.as_str()])]));
+        }
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    octo_core::json::web::from_value(&value).map(Some).map_err(|e| {
+        let message = format!("The JSON value could not be converted. {e}");
+        validation_problem(&[("$", &[message.as_str()])])
     })
 }
 

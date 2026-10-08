@@ -1469,6 +1469,10 @@ impl BaseDownloadService {
             tagging: song.tag_plan.as_ref().map(|plan| plan.to_report()),
             downloaded_at: round_trip(&Utc::now()),
             requested_by: requested_by.clone(),
+            // STUB(D): the live row's key, which its saved log is found by on the dashboard,
+            // and the log itself (DownloadLogKeeper), come with the download log.
+            key: None,
+            log: None,
         });
 
         // Same chokepoint as the fetched-songs log, reusing what it just assembled (the

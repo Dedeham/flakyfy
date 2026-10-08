@@ -30,6 +30,8 @@ fn entry(
         at_utc: Utc::now(),
         history_kept: None,
         revealed_path: None,
+        copy: false,
+        download_allowed: false,
     }
 }
 
@@ -357,15 +359,22 @@ fn the_fixture_round_trips_byte_for_byte() {
 
     let journal = LibraryActionJournal::with_path(Some(path.clone()));
     let recent = journal.recent(10);
-    assert_eq!(recent.len(), 2);
-    let applied = &recent[1];
+    assert_eq!(recent.len(), 5);
+    let applied = &recent[4];
     assert_eq!(applied.action, LibraryAction::Delete);
     assert_eq!(applied.artist, "Sigur Rós");
     assert_eq!(applied.resolution, Some(PathSource::NativeApi));
     assert_eq!(applied.state, LibraryActionState::Applied);
-    assert_eq!(recent[0].resolution, Some(PathSource::LocalMappings));
-    assert_eq!(recent[0].history_kept, Some(true));
+    assert!(applied.blocks_downloads());
+    assert_eq!(recent[3].resolution, Some(PathSource::LocalMappings));
+    assert_eq!(recent[3].history_kept, Some(true));
     assert!(journal.is_never_requested(Some("Sigur Rós"), Some("Svefn-g-englar")));
+    // 2026.10.05: a removed copy, a song allowed again and a put back block nothing.
+    assert!(recent[2].copy && !recent[2].blocks_downloads());
+    assert!(recent[1].download_allowed && !recent[1].blocks_downloads());
+    assert_eq!(recent[0].state, LibraryActionState::Restored);
+    assert!(!journal.is_never_requested(Some("宇多田ヒカル"), Some("First Love")));
+    assert!(!journal.is_never_requested(Some("Portishead"), Some("Roads")));
 
     // Nothing changed, so nothing is written; a change writes the whole file again.
     assert!(journal.flush());

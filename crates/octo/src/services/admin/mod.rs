@@ -1,7 +1,15 @@
 //! `Services/Admin`: the dashboard's sign-ins and folder picker.
 
+pub mod admin_caller;
+pub mod admin_recovery_code;
+pub mod admin_role_check;
 pub mod browse_session_store;
 pub mod directory_browser;
+pub mod sign_in_throttle;
 
+pub use admin_caller::{AdminCaller, AdminCallerKind};
+pub use admin_recovery_code::AdminRecoveryCode;
+pub use admin_role_check::AdminRoleCheck;
 pub use browse_session_store::BrowseSessionStore;
 pub use directory_browser::{BrowseEntry, BrowseResult, DirectoryBrowser};
+pub use sign_in_throttle::SignInThrottle;

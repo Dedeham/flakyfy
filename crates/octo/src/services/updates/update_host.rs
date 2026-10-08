@@ -15,13 +15,27 @@ use tracing::{debug, warn};
 
 use crate::services::state_file;
 
-/// The host helper, as it describes itself in config/update/helper.
+/// The host helper, as it describes itself in config/update/helper. `mode` is "git" (a clone:
+/// version 2 fetches, checks out and pulls), "image" (copied by hand: it only pulls), or "build"
+/// (version 1 in a clone that built Octo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateHelperInfo {
     pub version: String,
     pub mode: String,
     pub dir: Option<String>,
     pub installed_utc: Option<DateTime<Utc>>,
+}
+
+impl UpdateHelperInfo {
+    /// The helper version this Octo needs. Version 1 chose what to do by whether
+    /// docker-compose.yml built Octo; now that Octo is pulled it would pull the release its old
+    /// compose file names, restart the same Octo and report the update done.
+    pub const NEEDED: u32 = 2;
+
+    /// True when the helper is older than [`Self::NEEDED`], or names no version.
+    pub fn outdated(&self) -> bool {
+        self.version.parse::<u32>().map_or(true, |v| v < Self::NEEDED)
+    }
 }
 
 /// One update run, as the host helper reports it in config/update/status.
@@ -122,10 +136,10 @@ impl UpdateHost {
 
     pub fn helper(&self) -> Option<UpdateHelperInfo> {
         let values = read(&self.helper_path())?;
-        let mode = if values.get("mode").map(String::as_str) == Some("image") {
-            "image"
-        } else {
-            "build"
+        let mode = match values.get("mode").map(String::as_str) {
+            Some("image") => "image",
+            Some("git") => "git",
+            _ => "build",
         };
         Some(UpdateHelperInfo {
             version: values.get("version").cloned().unwrap_or_else(|| "1".to_string()),
@@ -483,6 +497,28 @@ mod tests {
         fixture.write_file("helper", &["version=1", "mode=something"]);
 
         assert_eq!(fixture.host().helper().expect("installed").mode, "build");
+    }
+
+    #[test]
+    fn a_version_two_helper_in_a_git_clone_is_current() {
+        let fixture = Fixture::new();
+        fixture.write_file("helper", &["version=2", "mode=git", "dir=/opt/octo"]);
+        let helper = fixture.host().helper().expect("installed");
+
+        assert_eq!(helper.mode, "git");
+        assert!(!helper.outdated());
+    }
+
+    #[test]
+    fn a_helper_from_before_version_two_is_outdated() {
+        // Version 1 picked image mode once Octo was pulled, pulled the release its old compose
+        // file named, and reported the update done. A file without a version is version 1's.
+        for line in ["version=1", "version=", "version=two", "mode=build"] {
+            let fixture = Fixture::new();
+            fixture.write_file("helper", &[line, "dir=/opt/octo"]);
+
+            assert!(fixture.host().helper().expect("installed").outdated(), "{line}");
+        }
     }
 
     #[test]

@@ -1269,3 +1269,147 @@ async fn the_prewarm_pins_a_video_once_and_skips_warm_songs() {
     // Cover art for outside songs goes through the aggregator, here with no sources.
     fixture.service.prewarm_cover_art(&songs, 12).await;
 }
+
+// ---- OutsideExplicitTests -----------------------------------------------------------------
+//
+// Port of `OutsideExplicitTests`: outside songs and albums carry the catalog's explicit word
+// (OpenSubsonic's explicitStatus), so the apps can mark the explicit version before it is
+// added, and a clean copy gets an id of its own so it can be listed beside the explicit
+// original. The word and id tests are in `explicit_status` and `external_id_registry_tests`,
+// the artist page's pick in `deezer_metadata_service_tests`, the client answers in the
+// response builder's tests.
+
+mod outside_explicit {
+    use octo_core::models::domain::explicit_status;
+
+    use super::*;
+
+    /// The catalog lists the clean edit first; the row is the song, and the song is explicit.
+    const DRACULA_SEARCH: &str = r#"{"data":[
+        {"id":11,"title":"Dracula","duration":210,"explicit_lyrics":false,"explicit_content_lyrics":3,
+         "artist":{"name":"Tame Impala"},"album":{"id":5,"title":"Dracula"}},
+        {"id":12,"title":"Dracula","duration":210,"explicit_lyrics":true,"explicit_content_lyrics":1,
+         "artist":{"name":"Tame Impala"},"album":{"id":6,"title":"Dracula"}}]}"#;
+
+    #[tokio::test]
+    async fn search_rows_carry_the_songs_explicit_word_and_get_song_keeps_it() {
+        let h = build_service(vec![("/search?q=", DRACULA_SEARCH)]).await;
+        let mut rows = h
+            .service
+            .search_songs_by_artist_title("Tame Impala", "Dracula", 1, None)
+            .await;
+        let id_before = rows[0].id.clone();
+
+        h.service.enrich_external_songs(&mut rows).await;
+        let again = h
+            .service
+            .search_songs_by_artist_title("Tame Impala", "Dracula", 1, None)
+            .await;
+        let song = h.service.get_song(PROVIDER, &id_before).await.expect("a song");
+
+        assert_eq!(rows[0].explicit_content_lyrics, Some(explicit_status::EXPLICIT));
+        assert_eq!(again[0].id, id_before);
+        assert_eq!(again[0].explicit_content_lyrics, Some(explicit_status::EXPLICIT));
+        assert_eq!(song.explicit_content_lyrics, Some(explicit_status::EXPLICIT));
+    }
+
+    #[tokio::test]
+    async fn search_rows_a_song_only_the_clean_edit_of_says_clean() {
+        let h = build_service(vec![(
+            "/search?q=",
+            r#"{"data":[
+            {"id":11,"title":"Song","duration":200,"explicit_lyrics":false,"explicit_content_lyrics":3,
+             "artist":{"name":"A"},"album":{"id":5,"title":"Song"}}]}"#,
+        )])
+        .await;
+        let mut rows = h.service.search_songs_by_artist_title("A", "Song", 1, None).await;
+
+        h.service.enrich_external_songs(&mut rows).await;
+
+        assert_eq!(rows[0].explicit_content_lyrics, Some(explicit_status::CLEAN));
+    }
+
+    const GNX_SEARCH: &str = r#"{"data":[
+        {"id":100,"title":"GNX","record_type":"album","nb_tracks":12,"explicit_lyrics":true,"artist":{"name":"Kendrick Lamar"}},
+        {"id":200,"title":"GNX","record_type":"album","nb_tracks":12,"explicit_lyrics":false,"artist":{"name":"Kendrick Lamar"}},
+        {"id":300,"title":"Mr. Morale","record_type":"album","nb_tracks":18,"explicit_lyrics":false,"artist":{"name":"Kendrick Lamar"}}]}"#;
+
+    #[tokio::test]
+    async fn album_search_a_clean_copy_beside_its_explicit_original_is_its_own_row() {
+        let h = build_service(vec![("/search/album", GNX_SEARCH)]).await;
+
+        let albums = h.service.search_albums("gnx", 10).await;
+
+        let (explicit_copy, clean_copy, other) = (&albums[0], &albums[1], &albums[2]);
+        assert_ne!(explicit_copy.id, clean_copy.id);
+        assert_eq!(
+            explicit_copy.explicit_content_lyrics,
+            Some(explicit_status::EXPLICIT)
+        );
+        assert_eq!(clean_copy.explicit_content_lyrics, Some(explicit_status::CLEAN));
+        // Not explicit and with no explicit twin: the listing cannot say it is a clean edit.
+        assert_eq!(other.explicit_content_lyrics, None);
+        assert_eq!(
+            h.lookup(&explicit_copy.id).external_album_id.as_deref(),
+            Some("100")
+        );
+        assert_eq!(h.lookup(&clean_copy.id).external_album_id.as_deref(), Some("200"));
+        assert_eq!(explicit_copy.id, "7tcNOznFZSzl3pGOYcZfl7");
+    }
+
+    #[tokio::test]
+    async fn get_album_the_clean_copys_songs_are_their_own_and_say_clean() {
+        let h = build_service(vec![
+            ("/search/album", GNX_SEARCH),
+            (
+                "/album/100/tracks",
+                r#"{"total":1,"data":[{"title":"squabble up","duration":157,"track_position":2,"disk_number":1,
+                "explicit_lyrics":true,"explicit_content_lyrics":1,"artist":{"name":"Kendrick Lamar"}}]}"#,
+            ),
+            (
+                "/album/200/tracks",
+                r#"{"total":1,"data":[{"title":"squabble up","duration":157,"track_position":2,"disk_number":1,
+                "explicit_lyrics":false,"explicit_content_lyrics":3,"artist":{"name":"Kendrick Lamar"}}]}"#,
+            ),
+            (
+                "/album/100",
+                r#"{"id":100,"title":"GNX","explicit_lyrics":true,"explicit_content_lyrics":1,"nb_tracks":1,"artist":{"name":"Kendrick Lamar"}}"#,
+            ),
+            (
+                "/album/200",
+                r#"{"id":200,"title":"GNX","explicit_lyrics":false,"explicit_content_lyrics":3,"nb_tracks":1,"artist":{"name":"Kendrick Lamar"}}"#,
+            ),
+        ])
+        .await;
+        let albums = h.service.search_albums("gnx", 10).await;
+
+        let original = h
+            .service
+            .get_album(PROVIDER, &albums[0].id)
+            .await
+            .expect("an album");
+        let clean = h
+            .service
+            .get_album(PROVIDER, &albums[1].id)
+            .await
+            .expect("an album");
+
+        assert_eq!(original.explicit_content_lyrics, Some(explicit_status::EXPLICIT));
+        assert_eq!(clean.explicit_content_lyrics, Some(explicit_status::CLEAN));
+        assert_eq!(
+            original.songs[0].explicit_content_lyrics,
+            Some(explicit_status::EXPLICIT)
+        );
+        assert_eq!(
+            clean.songs[0].explicit_content_lyrics,
+            Some(explicit_status::CLEAN)
+        );
+        assert_ne!(original.songs[0].id, clean.songs[0].id);
+        let song = h
+            .service
+            .get_song(PROVIDER, &clean.songs[0].id)
+            .await
+            .expect("a song");
+        assert_eq!(song.explicit_content_lyrics, Some(explicit_status::CLEAN));
+    }
+}

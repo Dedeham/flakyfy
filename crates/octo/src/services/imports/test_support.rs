@@ -146,5 +146,6 @@ pub fn row(
         album_id: None,
         album_artist: None,
         isrcs: Vec::new(),
+        ..Default::default()
     }
 }

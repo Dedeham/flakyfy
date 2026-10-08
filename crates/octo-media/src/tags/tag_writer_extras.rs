@@ -393,6 +393,23 @@ pub fn set_advisory(file: &mut TagFile, value: Option<i32>) {
     }
 }
 
+/// Takes the advisory out of every frame [`set_advisory`] writes, to undo it.
+pub fn clear_advisory(file: &mut TagFile) {
+    let tags = native_tags(file);
+    if let (Some(id3), Some(description)) = (tags.id3, TagFields::ADVISORY.id3_description) {
+        id3.remove_user_text(description, true);
+    }
+    if let Some(xiph) = tags.xiph {
+        xiph.remove_field(TagFields::ADVISORY.vorbis);
+    }
+    if let Some(apple) = tags.apple {
+        apple.clear_data(apple_names::RTNG);
+        if apple.dash_box(APPLE_MEAN, TagFields::ADVISORY.mp4).is_some() {
+            apple.set_dash_box(APPLE_MEAN, TagFields::ADVISORY.mp4, None);
+        }
+    }
+}
+
 /// The advisory a file carries, from whichever frame holds it; None when none does.
 pub fn read_advisory(file: &TagFile) -> Option<i32> {
     if let Some(apple) = &file.apple

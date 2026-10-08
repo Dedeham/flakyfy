@@ -75,16 +75,66 @@
       "id": "isrc-clear-takes-the-tag-off",
       "backlog": "F",
       "requests": [
-        "20-library-edits/tags-copy-undone"
+        "20-library-edits/tags-copy-undone",
+        "20-library-edits/remove-copy-seen"
       ],
       "aspects": [
         "body"
       ],
       "lines": [
-        "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$"
+        "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$",
+        "^\\$\\.tags\\.isrc: only in A \\(\\[\"QZPAR2000001\"\\]\\)$"
       ],
-      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); applies once group F's library edits land.",
+      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3). Navidrome then lists the removed copy without the code (remove-copy-seen, G4 R).",
       "knownDiff": "Clearing a tag field"
+    },
+    {
+      "id": "cover-resume-counts-once",
+      "backlog": "P",
+      "requests": [
+        "17-covers-explicit/covers-resumed-done"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.(kept|files|songsRead|albumsDone): \\d+ != \\d+$",
+        "^\\$\\.reason: barcodes \\d+ of \\d+ · Apple matched \\d+ != null$"
+      ],
+      "reason": "A cover run resumed after a stop counts each album and song once, and goes on with only what the stop left undone. C# 2026.10.05 ran the stopped batch again and counted it again (CoverUpgrade.cs:696,744): the picked preview of 3 albums ended with albumsDone 6, songsRead 20 of 10, kept and files doubled; a replace also counted an album it had written as kept. Fixed in the port only (Brandon, 2026-10-07). The run's reason line may also differ: see cover-run-reason-cleared (the C# left its last bulk-match line there by a race).",
+      "knownDiff": "Cover upgrade: a resumed run's counts"
+    },
+    {
+      "id": "cover-scan-leaves-the-trash-out",
+      "backlog": "P",
+      "requests": [
+        "96-covers-explicit-writes/covers-scan-done"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.(songsTotal|songsRead|albumsDone|total|soft|processed): \\d+ != \\d+$",
+        "^\\$\\.preview: array length \\d+ != \\d+$",
+        "^\\$\\.preview\\[\\d+\\]\\.(folder|artist|album|fromSide|toSide|files|folderCover|result|source|looksSame): .* != .*$"
+      ],
+      "reason": "The cover scan leaves the trash folder out: C# 2026.10.05 walked into /music/.octo-trash and listed a song deleted from disk in 20-library-edits as an album of its own (one more album, song and soft row, and the sorted preview shifted by one). Fixed in the port only (Brandon, 2026-10-07). Until group F's delete and put back land, this request also differs for F's sake. The albumsDone line also carries the second port fix on this answer: albums done are counted the way albums in all are (the C# ended 6 of 5; known-diffs \"Cover upgrade: albums done and albums in all\").",
+      "knownDiff": "Library walks and the trash"
+    },
+    {
+      "id": "cover-run-reason-cleared",
+      "backlog": "P",
+      "requests": [
+        "96-covers-explicit-writes/covers-apply-aurora-done"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.reason: barcodes \\d+ of \\d+ · Apple matched \\d+ != null$"
+      ],
+      "reason": "A picked cover run that matched its albums in bulk ends with no reason line, as the C# meant (its finally sets Reason = null). C# 2026.10.05 reported the bulk match's progress through Progress<string>, which runs the update later on the thread pool, so the last line (\"barcodes 1 of 1 · Apple matched 1\") could land after the finally and stay on the finished run; whether it did changed from run to run (17-covers-explicit/covers-resumed-done had it in one C# recording and not in another).",
+      "knownDiff": "Cover upgrade: the bulk match's last line"
     },
     {
       "id": "slskd-web-url-trimmed",
@@ -183,7 +233,8 @@
         "^\\$\\.subsonic-response\\.topSongs\\.country: only in B \\((null|[a-z]{2})\\)$"
       ],
       "reason": "getTopChart takes chart (the overall chart, Best New Songs, Trending Songs or an Apple genre; the charts plan, Brandon 2026-10-07), so a chart's answer says which chart it is, its name and the country it was read for (null while Apple's country is not known). Added fields only: old apps send no chart and read the old ones. The explicitStatus lines on the same answers are group P's.",
-      "knownDiff": "`getTopChart`"
+      "knownDiff": "`getTopChart`",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "charts-octo-top-songs-version-2",
@@ -202,7 +253,8 @@
         "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$"
       ],
       "reason": "octoTopSongs version 2 tells an app that getTopChart takes chart and getCharts lists the country's charts (the charts plan, Brandon 2026-10-07); version 1 is still listed, so an app that knows only that one keeps working. The other lines on these answers are other groups': octoAcquisitions [1, 2] and the octoImports entry the port has not reached yet.",
-      "knownDiff": "`octoTopSongs`"
+      "knownDiff": "`octoTopSongs`",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "dashboard-files-2026-10-08",
@@ -238,7 +290,8 @@
         "^B:\\ a4a313d775a29712d170c8458d5c2ff7bec1cf96f2364ef77e698b67d886e7c4\\ \\(115954\\ bytes,\\ text\\)$"
       ],
       "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated.",
-      "knownDiff": "Dashboard Charts card"
+      "knownDiff": "Dashboard Charts card",
+      "reviewed": "Brandon 2026-10-08"
     }
   ]
 }

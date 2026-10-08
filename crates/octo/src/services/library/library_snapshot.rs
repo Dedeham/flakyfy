@@ -115,6 +115,29 @@ impl LibrarySnapshot {
         reading.await
     }
 
+    /// When the copy answered with now was read, or None before the first read.
+    pub fn read_at_utc(&self) -> Option<DateTime<Utc>> {
+        self.inner.state.lock().current.as_ref().map(|(_, at)| *at)
+    }
+
+    /// A copy read from now on, for a caller that knows the library changed (Library health's
+    /// "Check again", after its own fixes). A read already running is joined rather than doubled.
+    pub async fn refresh(&self) -> Option<Arc<LibraryAlbumIndex>> {
+        let reading = {
+            let mut state = self.inner.state.lock();
+            state.failed_at = None;
+            match &state.reading {
+                Some(reading) => reading.clone(),
+                None => {
+                    let reading = self.start_read();
+                    state.reading = Some(reading.clone());
+                    reading
+                }
+            }
+        };
+        reading.await
+    }
+
     /// A read on a task of its own and without any caller: one caller giving up does not stop
     /// a read every later caller will use. Called with the state locked, so the read cannot
     /// finish (and clear `reading`) before it is stored.

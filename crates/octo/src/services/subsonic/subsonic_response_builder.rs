@@ -19,7 +19,8 @@ use octo_core::library::for_you_lists;
 use octo_core::settings::{GeneratedPlaylistSettings, SubsonicSettings};
 use octo_core::soulseek::SoulseekRouting;
 use octo_subsonic::subsonic_response_builder::{
-    Fields, IdRegistry, REMOVE_ACTION, SUBSONIC_VERSION, SubsonicReply, SubsonicResponseBuilder,
+    Fields, IdRegistry, LOOKUP_ACTION, REMOVE_ACTION, SUBSONIC_VERSION, SubsonicReply,
+    SubsonicResponseBuilder,
 };
 use serde_json::{Value, json};
 
@@ -27,7 +28,9 @@ use octo_core::models::download::{AcquisitionCandidate, AcquisitionEvent};
 
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, key_of};
 use crate::services::common::song_finder::{FindSnapshot, PickOutcome};
-use crate::services::library::{GeneratedPlaylist, LibraryActionOutcome, UpgradeJob};
+use crate::services::library::{
+    GeneratedPlaylist, LibraryActionOutcome, LibraryEditOutcome, SongLookup, TrashedSong, UpgradeJob,
+};
 use crate::services::soulseek::ExternalIdRegistry;
 
 impl IdRegistry for ExternalIdRegistry {
@@ -84,6 +87,22 @@ pub trait SubsonicResponseBuilderExt {
     /// Navidrome id that was asked for, and it stays the same after the swap. progress is 0 to
     /// 1, or null.
     fn create_upgrades_response(&self, jobs: &[(UpgradeJob, Option<f64>)]) -> SubsonicReply;
+
+    /// libraryAction for a version 3 edit: the state, the server's words, and the song's tags
+    /// before and after (null for restore), which an app shows and can send back to undo.
+    fn create_library_edit_response(
+        &self,
+        song_id: &str,
+        action: &str,
+        outcome: &LibraryEditOutcome,
+    ) -> SubsonicReply;
+
+    /// libraryAction?action=lookup: the file's tags now ("current") and what a download would
+    /// write ("suggested", only the fields it found), with how sure the match is and where from.
+    fn create_lookup_response(&self, song_id: &str, lookup: &SongLookup) -> SubsonicReply;
+
+    /// getLibraryTrash: removed songs still in the trash, a plain array under "trash".
+    fn create_library_trash_response(&self, songs: &[TrashedSong], keep_days: i32) -> SubsonicReply;
 
     /// getAcquisition: one row with its whole log.
     fn create_acquisition_response(&self, row: &AcquisitionSnapshot) -> SubsonicReply;
@@ -174,6 +193,69 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
             outcome.detail.as_deref(),
             action,
         )
+    }
+
+    fn create_library_edit_response(
+        &self,
+        song_id: &str,
+        action: &str,
+        outcome: &LibraryEditOutcome,
+    ) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "openSubsonic": true,
+            "libraryAction": {
+                "id": song_id,
+                "action": action,
+                "state": outcome.state,
+                "detail": outcome.detail,
+                "before": outcome.before,
+                "after": outcome.after,
+            },
+        }))
+    }
+
+    fn create_lookup_response(&self, song_id: &str, lookup: &SongLookup) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "openSubsonic": true,
+            "libraryAction": {
+                "id": song_id,
+                "action": LOOKUP_ACTION,
+                "state": lookup.state,
+                "detail": lookup.detail,
+                "current": lookup.current,
+                "suggested": lookup.suggested,
+                "confidence": lookup.confidence,
+                "source": lookup.source,
+                "release": lookup.release,
+            },
+        }))
+    }
+
+    fn create_library_trash_response(&self, songs: &[TrashedSong], keep_days: i32) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "openSubsonic": true,
+            "libraryTrash": {
+                "keepDays": keep_days,
+                "songs": songs.iter().map(|song| json!({
+                    "id": song.id,
+                    "title": song.title,
+                    "artist": song.artist,
+                    "album": song.album,
+                    "removedBy": song.username,
+                    "removedAt": round_trip(&song.removed_utc),
+                    "goneAt": song.gone_utc.as_ref().map(round_trip),
+                })).collect::<Vec<_>>(),
+            },
+        }))
     }
 
     fn create_upgrades_response(&self, jobs: &[(UpgradeJob, Option<f64>)]) -> SubsonicReply {

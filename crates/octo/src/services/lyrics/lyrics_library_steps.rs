@@ -31,6 +31,7 @@ use super::lyrics_library_job::{LyricsLibraryWorker, count, extension_of, files_
 use super::lyrics_sidecar_writer::LyricsJob;
 use super::song_lyrics;
 use crate::services::library::NavidromeSongEntry;
+use crate::services::library::library_walk;
 use crate::services::library::navidrome_song_list::{self, full_path};
 
 impl LyricsLibraryWorker {
@@ -187,7 +188,9 @@ impl LyricsLibraryWorker {
         .await;
         let sidecars = {
             let root = root.clone();
-            tokio::task::spawn_blocking(move || lyrics_file_stems(&root))
+            let trash =
+                library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
+            tokio::task::spawn_blocking(move || lyrics_file_stems(&root, Some(&trash)))
                 .await
                 .ok()
                 .flatten()
@@ -480,11 +483,11 @@ const LYRICS_FILE_EXTENSIONS: [&str; 7] = [".lrc", ".txt", ".ttml", ".elrc", ".s
 
 /// Every song stem (full path without extension) with a lyrics file beside it, from one listing
 /// of the music folder; None when it cannot be listed, so each song is checked.
-pub(crate) fn lyrics_file_stems(root: &str) -> Option<HashSet<String>> {
+pub(crate) fn lyrics_file_stems(root: &str, trash: Option<&Path>) -> Option<HashSet<String>> {
     if !Path::new(root).is_dir() {
         return None;
     }
-    let files = files_with(Path::new(root), &LYRICS_FILE_EXTENSIONS).ok()?;
+    let files = files_with(Path::new(root), &LYRICS_FILE_EXTENSIONS, trash).ok()?;
     Some(files.iter().map(|file| stem_of(&full_path(file))).collect())
 }
 

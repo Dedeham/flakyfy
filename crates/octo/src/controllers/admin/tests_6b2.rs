@@ -684,7 +684,8 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     assert_eq!(send(&app, stale).await.status, StatusCode::UNAUTHORIZED);
 }
 
-/// The idle runs as the parity baseline has them (`09-admin/genre-backfill`, `covers-upgrade`),
+/// The idle runs as the parity baseline has them (`09-admin/genre-backfill`, `covers-upgrade`; the
+/// genre run says whether one is `pending` since ca47988),
 /// with the music path the configuration gives.
 #[tokio::test]
 async fn the_idle_runs_answer_the_baselines_shape() {
@@ -705,7 +706,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"runId":"","status":"Idle","scope":"OctoDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
+            r#"{{"runId":"","status":"Idle","pending":false,"scope":"OctoDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
             octo_core::json::to_string(&music_path)
         )
     );

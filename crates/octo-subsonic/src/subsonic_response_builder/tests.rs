@@ -1067,9 +1067,9 @@ fn library_actions_offer_what_is_enabled() {
     let off = LibraryActionSettings::default();
     assert_eq!(
         builder()
-            .create_library_actions_response(&off, Some("admin"), 1, true, "Soulseek")
+            .create_library_actions_response(&off, Some("admin"), 1, true, "Soulseek", false, false, false)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryActions":{"enabled":false,"allowed":false,"dryRun":true,"actions":[],"admin":false,"keepDays":30,"parallel":1,"upgradeSource":"Soulseek"}}}"#
     );
     let mut on = LibraryActionSettings {
         enabled: true,
@@ -1084,16 +1084,43 @@ fn library_actions_offer_what_is_enabled() {
             definition
         })
         .collect();
-    let json = json_of(&builder().create_library_actions_response(&on, Some(" admin "), 3, true, "Lidarr"));
+    let json = json_of(&builder().create_library_actions_response(
+        &on,
+        Some(" admin "),
+        3,
+        true,
+        "Lidarr",
+        true,
+        false,
+        false,
+    ));
     assert_eq!(json["subsonic-response"]["libraryActions"]["allowed"], true);
+    assert_eq!(json["subsonic-response"]["libraryActions"]["admin"], true);
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove", "upgrade"])
     );
-    let json = json_of(&builder().create_library_actions_response(&on, None, 3, false, "Lidarr"));
+    let json = json_of(
+        &builder().create_library_actions_response(&on, None, 3, false, "Lidarr", true, false, false),
+    );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove"])
+    );
+    // Version 3 (374dac8, f2c6a65): remove only for a Navidrome admin; the edits whenever the
+    // server can make them, cover last and only with a cover finder.
+    let json =
+        json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
+    assert_eq!(
+        json["subsonic-response"]["libraryActions"]["actions"],
+        json!(["upgrade", "retag", "joinAlbum", "lookup", "undo", "restore"])
+    );
+    let json = json_of(
+        &builder().create_library_actions_response(&off, None, 1, false, "Soulseek", true, true, true),
+    );
+    assert_eq!(
+        json["subsonic-response"]["libraryActions"]["actions"],
+        json!(["retag", "joinAlbum", "lookup", "undo", "restore", "cover"])
     );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["upgradeSource"],
@@ -1124,7 +1151,7 @@ fn extensions_json_adds_octos_own_and_missing_versions() {
     assert_eq!(reply.content_type, "application/json");
     assert_eq!(
         reply.text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1,2]},{"name":"octoLibraryActions","versions":[1,2]},{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1,2]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}]}}"#
     );
     // Lyrics choices off and library actions off leave those two out.
     let reply = builder().merge_open_subsonic_extensions(
@@ -1220,7 +1247,7 @@ fn extensions_without_an_answer_list_octos_own() {
         builder()
             .merge_open_subsonic_extensions("json", None, None, true, true)
             .text(),
-        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoLibraryActions","versions":[1,2]},{"name":"songLyrics","versions":[1,2]},{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}]}}"#
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonicExtensions":[{"name":"octoAcquisitions","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"songLyrics","versions":[1,2]},{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}]}}"#
     );
     assert_eq!(
         builder()
@@ -1257,5 +1284,40 @@ fn merged_responses_write_json_as_it_is_and_xml_by_opensubsonic_rules() {
     assert_eq!(
         builder().create_merged_response("xml", "album", &data).text(),
         "<subsonic-response status=\"ok\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <album id=\"a\">\n    <song id=\"s\" />\n  </album>\n</subsonic-response>"
+    );
+}
+
+// ---- OutsideExplicitTests: what a client reads ----------------------------------------------
+
+#[test]
+fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml() {
+    let builder = builder();
+    let song = Song {
+        id: "s1".into(),
+        artist: "Tame Impala".into(),
+        title: "Dracula".into(),
+        explicit_content_lyrics: Some(1),
+        ..Default::default()
+    };
+    let plain = Song {
+        id: "s2".into(),
+        artist: "A".into(),
+        title: "T".into(),
+        ..Default::default()
+    };
+    let album = Album {
+        id: "a1".into(),
+        artist: "Kendrick Lamar".into(),
+        title: "GNX".into(),
+        explicit_content_lyrics: Some(3),
+        ..Default::default()
+    };
+
+    assert_eq!(builder.convert_song_to_json(&song)["explicitStatus"], "explicit");
+    assert_eq!(builder.convert_song_to_json(&plain)["explicitStatus"], "");
+    assert_eq!(builder.convert_album_to_json(&album)["explicitStatus"], "clean");
+    assert_eq!(
+        builder.convert_song_to_xml(&song, NS).attribute("explicitStatus"),
+        Some("explicit")
     );
 }

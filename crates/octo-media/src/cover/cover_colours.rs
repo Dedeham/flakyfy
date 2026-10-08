@@ -84,6 +84,56 @@ pub fn to_lch(argb: i32) -> Lch {
     }
 }
 
+/// The sRGB color of an OKLCH one, opaque. A color outside what a screen can show keeps its
+/// lightness and hue and loses chroma until it fits, so it stays the color it was meant to be,
+/// only quieter.
+pub fn from_lch(lch: Lch) -> i32 {
+    let (mut lo, mut hi) = (0.0, lch.c);
+    let (mut r, mut g, mut b) = linear_rgb(lch.l, hi, lch.h);
+    if !in_gamut(r, g, b) {
+        for _ in 0..24 {
+            let mid = (lo + hi) / 2.0;
+            let (mr, mg, mb) = linear_rgb(lch.l, mid, lch.h);
+            if in_gamut(mr, mg, mb) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        (r, g, b) = linear_rgb(lch.l, lo, lch.h);
+    }
+    BLACK | (encode(r) << 16) | (encode(g) << 8) | encode(b)
+}
+
+fn linear_rgb(lightness: f64, chroma: f64, hue: f64) -> (f64, f64, f64) {
+    let a = chroma * (hue * std::f64::consts::PI / 180.0).cos();
+    let bb = chroma * (hue * std::f64::consts::PI / 180.0).sin();
+    // Math.Pow, as the C# wrote it.
+    let l = (lightness + 0.3963377774 * a + 0.2158037573 * bb).powf(3.0);
+    let m = (lightness - 0.1055613458 * a - 0.0638541728 * bb).powf(3.0);
+    let s = (lightness - 0.0894841775 * a - 1.2914855480 * bb).powf(3.0);
+    (
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    )
+}
+
+fn in_gamut(r: f64, g: f64, b: f64) -> bool {
+    let fits = |c: f64| (-1e-6..=1.0 + 1e-6).contains(&c);
+    fits(r) && fits(g) && fits(b)
+}
+
+fn encode(linear: f64) -> i32 {
+    let c = linear.clamp(0.0, 1.0);
+    let srgb = if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    round(srgb * 255.0).clamp(0, 255)
+}
+
 /// How far apart two hues are around the circle, 0 to 180 degrees.
 pub fn hue_distance(a: f64, b: f64) -> f64 {
     let d = ((a - b) % 360.0 + 360.0) % 360.0;

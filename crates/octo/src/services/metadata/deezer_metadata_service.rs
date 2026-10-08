@@ -15,6 +15,7 @@ pub use octo_core::metadata::deezer_metadata_service::{
     AlbumAnswer, AlbumDetail, AlbumHit, AlbumLookup, AlbumTrack, ArtistHit, ArtistMeta, CatalogCandidates,
     FullTrackMeta, TrackMeta, release_rank, release_types,
 };
+use octo_core::models::domain::explicit_status;
 use octo_core::settings::SettingsStore;
 use octo_core::tagging::CatalogLookup;
 use serde_json::Value;
@@ -232,7 +233,7 @@ impl DeezerMetadataService {
             if transient {
                 return anyhow::Ok(Flow::Return(None));
             }
-            if let Some(t) = found {
+            if let Some((t, doc)) = found {
                 let (mut alb_title, mut cover, mut art_name, mut art_img) = (None, None, None, None);
                 let mut alb_id = 0;
                 if let Some(alb) = try_get_property(&t, "album")? {
@@ -266,6 +267,7 @@ impl DeezerMetadataService {
                     duration,
                     artist_name: art_name.map(str::to_string),
                     artist_image_url: art_img.map(str::to_string),
+                    explicit_content: song_explicitness(doc.as_ref(), artist, title, &t)?,
                 });
             }
             Ok(Flow::Done)
@@ -312,7 +314,7 @@ impl DeezerMetadataService {
             if transient {
                 return anyhow::Ok(Flow::Return(None));
             }
-            if let Some(t) = found {
+            if let Some((t, _)) = found {
                 let (full, unresolved) = self.build_full_meta(&t).await?;
                 meta = Some(full);
                 detail_unresolved = unresolved;
@@ -719,6 +721,7 @@ impl DeezerMetadataService {
                         track_count,
                         record_type: record_type.map(str::to_string),
                         release_date: None,
+                        explicit_lyrics: bool_prop(a, "explicit_lyrics")?,
                     });
                 }
             }
@@ -846,6 +849,7 @@ impl DeezerMetadataService {
                             .map(|date| {
                                 String::from_utf16_lossy(&date.encode_utf16().take(10).collect::<Vec<_>>())
                             }),
+                        explicit_lyrics: bool_prop(a, "explicit_lyrics")?,
                     };
 
                     let title_key = SongIdentity::key(title);
@@ -855,8 +859,17 @@ impl DeezerMetadataService {
                             releases.push(hit);
                         }
                         Some(&at) => {
-                            if release_rank(hit.record_type.as_deref())
-                                < release_rank(releases[at].record_type.as_deref())
+                            let (rank, known) = (
+                                release_rank(hit.record_type.as_deref()),
+                                release_rank(releases[at].record_type.as_deref()),
+                            );
+                            if rank < known
+                                // Of a clean and an explicit copy of one release, the explicit
+                                // one: the original, and the one a search row of its songs
+                                // stands for.
+                                || (rank == known
+                                    && hit.explicit_lyrics == Some(true)
+                                    && releases[at].explicit_lyrics != Some(true))
                             {
                                 releases[at] = hit;
                             }
@@ -1087,6 +1100,7 @@ impl DeezerMetadataService {
                 String::new(),
             );
             let mut record_type = None;
+            let mut album_explicit = None;
             let mut year = None;
             // Kept from the album call: this is what tells an empty tracklist apart from an
             // album that genuinely has no tracks.
@@ -1115,6 +1129,7 @@ impl DeezerMetadataService {
                         .to_string();
                     label = str_prop(root, "label")?.unwrap_or("").to_string();
                     record_type = str_prop(root, "record_type")?.map(str::to_string);
+                    album_explicit = catalog_explicit(root)?;
                     if let Some(yr) = str_prop(root, "release_date")?.and_then(year_prefix) {
                         year = Some(yr);
                     }
@@ -1165,7 +1180,7 @@ impl DeezerMetadataService {
                             disc_number: int(t, "disk_number")?,
                             isrc: str_prop(t, "isrc")?.map(str::to_string),
                             rank: int(t, "rank")?,
-                            explicit_content: explicit_of(t)?,
+                            explicit_content: catalog_explicit(t)?,
                         });
                     }
 
@@ -1226,6 +1241,7 @@ impl DeezerMetadataService {
                 label: (!label.is_empty()).then_some(label),
                 tracks,
                 record_type,
+                explicit_content: album_explicit,
             });
             Ok(Flow::Done)
         };
@@ -1409,7 +1425,7 @@ impl DeezerMetadataService {
         artist: &str,
         title: &str,
         background: bool,
-    ) -> ElementResult<(bool, Option<Value>)> {
+    ) -> ElementResult<(bool, Option<(Value, Option<Value>)>)> {
         for variant in SongIdentity::query_variants(title, artist)
             .into_iter()
             .take(TRACK_SEARCHES)
@@ -1424,7 +1440,7 @@ impl DeezerMetadataService {
                 return Ok((true, None));
             }
             if let Some(hit) = best_match(r.doc.as_ref(), artist, title)? {
-                return Ok((false, Some(hit)));
+                return Ok((false, Some((hit, r.doc))));
             }
         }
         Ok((false, None))
@@ -1594,20 +1610,51 @@ fn first_genre(root: &Value) -> ElementResult<Option<String>> {
     Ok(None)
 }
 
-/// The C# `Int` helper: `GetInt32()` of a number, which throws for one that is not an
-/// integer in range.
-/// A track's explicit state as the catalog's number, from its yes or no when the number is
-/// missing.
-fn explicit_of(track: &Value) -> ElementResult<Option<i32>> {
-    if let Some(number) = int(track, "explicit_content_lyrics")? {
-        return Ok(Some(number));
-    }
-    Ok(match try_get_property(track, "explicit_lyrics")? {
-        Some(Value::Bool(said)) => Some(i32::from(*said)),
+/// The C# `Bool` helper: a true or false, None for anything else.
+fn bool_prop(element: &Value, name: &str) -> ElementResult<Option<bool>> {
+    Ok(match try_get_property(element, name)? {
+        Some(Value::Bool(said)) => Some(*said),
         _ => None,
     })
 }
 
+/// `ExplicitStatus.FromCatalog` of a catalog record's two explicit fields.
+fn catalog_explicit(element: &Value) -> ElementResult<Option<i32>> {
+    Ok(explicit_status::from_catalog(
+        int(element, "explicit_content_lyrics")?,
+        bool_prop(element, "explicit_lyrics")?,
+    ))
+}
+
+/// Whether a search row's song is explicit. The row stands for the song, not one copy of it,
+/// and the catalog lists the explicit original and its clean edit side by side under the same
+/// title: when any hit of this very song (the same version as the one matched) is explicit, the
+/// song is; otherwise the matched hit says.
+pub(crate) fn song_explicitness(
+    doc: Option<&Value>,
+    artist: &str,
+    title: &str,
+    matched: &Value,
+) -> ElementResult<Option<i32>> {
+    let mine = catalog_explicit(matched)?;
+    let versions_of = |hit: &Value| -> ElementResult<_> {
+        let parsed = SongIdentity::parse_title(str_prop(hit, "title")?.unwrap_or(""), None);
+        Ok(SongIdentity::distinct_versions(&parsed, None))
+    };
+    let version = versions_of(matched)?;
+    for hit in all_matches(doc, artist, title)? {
+        if versions_of(&hit)? != version {
+            continue;
+        }
+        if catalog_explicit(&hit)? == Some(explicit_status::EXPLICIT) {
+            return Ok(Some(explicit_status::EXPLICIT));
+        }
+    }
+    Ok(mine)
+}
+
+/// The C# `Int` helper: `GetInt32()` of a number, which throws for one that is not an
+/// integer in range.
 fn int(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     match try_get_property(element, name)? {
         Some(value @ Value::Number(_)) => Ok(Some(get_int32(value)?)),
@@ -1643,6 +1690,10 @@ fn year_prefix(release_date: &str) -> Option<i32> {
     text.parse().ok()
 }
 
+#[path = "deezer_metadata_service_explicit.rs"]
+mod explicit;
+
+pub use explicit::DeezerExplicitCatalog;
 // `DeezerMetadataService.Charts.cs`, a partial class in the C#: the chart and artist top lists.
 #[path = "deezer_charts.rs"]
 mod charts;

@@ -667,12 +667,206 @@ lyrics look runs in the background); the saved logs are compared unordered.
 No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
 `5d3f096`'s Recently removed and activity card for F and N.
 
+### G3 record: groups F and P (2026-10-08)
+
+Branch `port/g3-fp` (`c4ce8f1`: `port/g3-f` and `port/g3-p` merged, with `rust/main` up to
+`19db112`, so B, D, E, G, H and L are in). The whole corpus on the WSL lane with
+`parity/run.sh --rust-twice` against the cached C# recording (1,837 requests), then
+`--only '20-*' --rust-twice` to settle the Rust against Rust diffs.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 260 unexplained, 1,524 explained, 53 identical |
+| Rust against Rust (whole corpus) | 1,835 identical, 2 unexplained (`20-library-edits/album-without-cafe`, `plant-copy-album`) |
+| Rust against Rust (`20-*` alone) | 152 identical, 1 unexplained (`plant-copy-album`) |
+
+| Group | Own before (G2 record) | Own after | Diffs before | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| F | 128 | 24 | 133 | 24 |
+| P | 68 | 15 | 99 | 15 |
+
+What is left in F is R's and G's:
+
+- **R** (14 requests): `plant-copy-seen` waits on Library health (`/api/admin/health`, 404 in
+  Rust) for the planted second copy of Café del Mar and captures its id there
+  (`song_cafe_copy`, `key_copy`). Without it every request about the copy fails or differs:
+  `plant-copy-album`, `retag-copy-isrc` and `-seen`, `tags-copy-isrc`, `undo-copy-isrc`,
+  `tags-copy-undone`, `remove-copy` and `-seen`, `folder-after-copy-removed`,
+  `trash-files-copy`, `admin-trash-copy`, `trash-admin-copy`, `allow-download-copy`.
+- **R, through the journals** (6): `admin-actions-off`, `-dryrun`, `-cafe`, `-final`,
+  `tag-edits-journal` and `library-actions-journal` list the fixes `19-health` made in the C#
+  run (the Kestrel Moor songs) and the copy's removal. Run alone (`20-*`), the first three match.
+- **G** (3): `extensions-on-json`, `-xml` and `extensions-off-again` differ only by
+  octoTopSongs at versions 1 and 2, G's proposed `charts-octo-top-songs-version-2`.
+- `album-without-cafe` (1): Navidrome's album genres while its scan of the removed song is still
+  going; it differed Rust against Rust in the whole run only, and matched C# and itself when
+  `20-*` ran alone (the timed-out health waits of `19-health` and `20-library-edits` move the
+  scans' timing).
+
+The two Rust against Rust diffs are the same thing: `plant-copy-album` lists the planted copy
+under Navidrome's own id, which changes every run and is normalized only through the capture
+`plant-copy-seen` makes from the health route. Both go once R is in.
+
+What is left in P is J's, R's knock-on and the proposed intentional diffs:
+
+- **Intentional, not reviewed** (3): `17-covers-explicit/covers-resumed-done`
+  (`cover-resume-counts-once`), `96-covers-explicit-writes/covers-scan-done`
+  (`cover-scan-leaves-the-trash-out`; the trash entry the C# listed, plus the copy below) and
+  `covers-apply-aurora-done` (`cover-run-reason-cleared`, plus the copy).
+- **J's `recovery-refused-on-library-files`** (2): `explicit-get-recovery`,
+  `explicit-cancel-recovery-idle`.
+- **R's knock-on** (9): the planted mp3 copy that `20-library-edits` could not remove without
+  the health capture is still in the library, so the explicit marking reads 12 songs against
+  11 (`explicit-preview-1-done`, `-2-done`, `explicit-apply-1-done`, `-2-done`,
+  `explicit-undo-1-done`, `-2-done`, `explicit-state-after-apply-1`) and the cover run
+  embeds into it too (`covers-journal-after-apply`, `covers-undo-done`).
+- **base** (1): `covers-start-bad-json`, the admin JSON binder's `$` against the C#'s `$.scope`
+  for a cut-off body (`helpers_6b1.rs`).
+
+No other group moved because of F or P. The counts that differ from the earlier records come
+with `19db112` (G's charts plan): every settings answer carries `GeneratedPlaylists.Charts` and
+`ChartCountry`, which puts the settings reads of E (20), I (23) and base on those groups, and
+the dashboard files (`dashboard-files-2026-10-08`, not reviewed) put `21-static` on J and N.
+G's `charts-top-chart-says-which-chart` now matches its three `16-lists/top-chart-*` requests,
+as expected with P's `explicitStatus` in.
+
+Settled on the way:
+
+- D carried F's `ed0bd7c` too (`571de77`); the merge keeps D's copy and one test row.
+- P's cover line in the downloads log (`log_cover_step`) now writes through D's
+  `log_song_step`, which clears the cover line B and D were waiting on (B 0, D 2 in this run;
+  D's 2 are the extension lists, G's octoTopSongs version).
+- F changed shared `octo-media` code: an MP3 rewritten in place keeps its ID3v2 tag size while
+  the frames fit, as TagLib# did (`tag_file::taglib_padding`, known-diffs "Audio tags: ID3v2
+  padding"). No other group's count moved with it.
+
+No settings were added, and no route was added to `LIBRARY_FILE_ROUTES`: the new admin routes
+(`/api/admin/library-actions/allow-download`, `/api/admin/explicit/backfill/*`) sit under
+prefixes G1 already listed.
+
+### G4 record: group N (2026-10-08)
+
+Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
+WSL lane with `parity/run.sh`: first `--only '1[18]-*'` from `f6b9ee1` (C# recorded again for
+the subset, 195 compared), then the whole corpus with `--rust-twice` from `7d1f3f2` against
+the cached C# recording (1,837 requests, 1h04m).
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 752 unexplained (768 after E), 1,060 explained, 25 identical |
+| Rust against Rust | 1,837 identical, 0 unexplained (bytes: the same) |
+
+| Group | Own before (phase 1) | Own after E | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| N | 48 | 14 | 0 | 0 |
+
+All 14 are gone: `ambient-seeded` (and `-again-cached`, `-recovery`, `-alt-admin-unseeded`)
+light the page with the C# recording's colors exactly (the parity cover's palette is also a
+Rust test), and the ten `activity-*` requests, `11-signin/in-get-activity` and `in-get-ambient`
+match, `activity-rescan-starting` and `-done` included (E's two, now that the Sharing card is
+in). Base went from 29 to 27: the genre run's `pending` (`09-admin`), which phase 1 put on N.
+E is 2, the proposed `slskd-web-url-trimmed`. No group got worse: B 11, C 9, D 110, F 128, G
+47, H 201, I 3, J 3, L 45, O 17, P 68, Q 5, R 96; A, K and S 0. N has no proposed intentional
+diff.
+
+After `rust/main` `d83eb7c` (H and L) was merged in and the activity view read the Spotify read
+and the trickle (`16b07f0`), `parity/run.sh --only '1[128]-*'` (401 requests) had N at 0
+again. Its one new J diff, `11-signin/alt-admin-index`, is `aa504ee`'s edit of
+`octo/wwwroot/admin/index.html` (the dashboard served differs from the C# image's by one byte),
+not N's; `21-static` will show it too.
+
+Then `rust/main` `b4b33cd` (B and D) and `19db112` (G) were merged in, the activity view
+read Find songs (D), and the final run was `parity/run.sh --rust-twice` on the whole corpus from
+`d839fb7` (corpus `eb2c30598fe12590`, so C# was recorded again; 0h49m on the WSL lane):
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 469 unexplained, 1,337 explained, 31 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+No activity or ambient request differs. N's 10 are all `21-static` (`static-index`, `-css`,
+`-js` and their HEAD and `If-None-Match` forms): the dashboard files `rust/main` changed after
+2026.10.05 (`aa504ee`'s spelling and station previews, G's Charts card), covered by G's proposed
+`dashboard-files-2026-10-08` (`reviewed` unset, so still counted); with it reviewed N is 0.
+The rest is other groups' (E 18, I 23 and part of J are G's two new `GeneratedPlaylists`
+settings, `Charts` and `ChartCountry`, in every settings answer). Rust against Rust's one diff
+is `19-health/plant-wait` (R), the Navidrome scan timing the earlier records saw.
+
+After `rust/main` `61b1cfb` (F and P) was merged in, every crate file's test count matched
+`rust/main`'s apart from N's own additions (`git grep -c`), the gate passed (3,289 tests) and
+`parity/run.sh --only '1[128]-*'` (401 requests) had N at 0.
+
+### G4 record: group R (2026-10-08)
+
+Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` up to `aeb3ed8` (B,
+D, F, G, H, L, N and P in). Final run on the WSL lane, `parity/run.sh --no-build --rust-twice`,
+of `65c9275`'s build, against the cached C# recording of corpus `eb2c30598fe12590` (1,837
+requests). Every crate file's `#[test]` count is at least `rust/main`'s (`git grep -c`), and
+the gate passed (3,320 tests; octo-subsonic 120).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 106 unexplained, 1,647 explained, 17 intentional, 67 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+| Group | Own before (G2 E record) | Own after R | Diffs after R |
+| --- | ---: | ---: | ---: |
+| R | 96 | 0 | 0 |
+| F | 24 (G3 F and P record) | 5 | 5 |
+| P | 15 (G3 F and P record) | 6 | 6 |
+
+R is at 0. Rust against Rust's one diff is `19-health/plant-wait`, the Navidrome scan timing
+every record since phase 1 has seen: `search3` answered while Navidrome was still giving the
+planted albums their covers. A corpus fix (wait for the albums' `coverArt`) is for whoever
+owns the corpus. The build run just before (`parity/run.sh --rust-twice`, same commit) had 5
+Rust against Rust diffs, all in `19-health`: Navidrome's scans after planting and after the
+duplicate fix did not end within the corpus's 60 s while the lane was busy, and the requests
+that wait on them followed; the rerun had none of them.
+
+F's 17 requests that waited on R pass: `20-library-edits/plant-copy-seen` captures
+`{{song_cafe_copy}}` and `{{copy_dup_key}}` from `/api/admin/health`, and the `*-copy*` chain,
+`admin-actions-final`, `tag-edits-journal` and `library-actions-journal` match, and so do the
+journals' `admin-actions-off`, `-dryrun` and `-cafe` in the whole run. F's 5 are proposals:
+`isrc-clear-takes-the-tag-off` (`tags-copy-undone`, and now `remove-copy-seen`, whose only
+difference is Navidrome listing the copy without the code), and the three `extensions-*`
+requests, octoTopSongs at versions 1 and 2, which G's reviewed
+`charts-octo-top-songs-version-2` does not name in `20-library-edits` (nor D's two in
+`13-downloads`). P's 9 knock-on requests (the planted copy left in the library) pass; its 6 are
+its 3 proposals, J's 2 and the base binder's `covers-start-bad-json`, as in the F and P record.
+`album-without-cafe` and `plant-copy-album`, Rust against Rust in that record, match.
+
+The rest of the 106 is other groups', as the F and P and N records found them: G's `Charts` and
+`ChartCountry` in every settings answer (E 18, I 23, part of J and base), the shared dashboard
+files on `10-static-cors` (base), the update command (L), the extension lists (D, L), H's 17.
+
+Found and fixed on the way (to match the C#; known-diffs.md rows updated; Rust tests):
+
+- **FLAC padding.** TagLib#'s `Flac.File.Save` keeps the metadata's size on disk while its
+  blocks fit (the padding takes up the rest; 4096 bytes when they outgrow it); lofty kept the
+  old padding block, so every Library health fix changed a FLAC's size and Navidrome's
+  `getSong`/`getAlbum` sizes differed (`19-health/settle1-*`, `settle4-tidewater-bare`,
+  `cleanup-wait`). `tag_file::taglib_flac_padding`. B and D's `tagged-file-length` allowlist
+  entry now applies to one request instead of two (the FLAC relay matches; the M4A does not).
+- **The blank ID3v1 tag.** TagLib# gives every MP3 an ID3v1 tag, blank when it has nothing to
+  say. lofty's remove appends a blank one to a file that has none and takes it off one that has
+  it, so the first save added 128 bytes and the next took them away (`remove-copy-seen`'s size).
+  The tag is now written blank over the one there or after the audio.
+
+`5d3f096` is in pieces: its download log and Find songs routes came with D (`port/g2-bd`), the
+trash and Put back routes with F, their three Recently removed tests with R
+(`trash_tests.rs`), and its activity card with N. N's `STUB(R)` in `get_activity` is wired: a
+`HealthActivity` from the service's run (`From<&HealthRun>`) and its `checking_since()`, with
+the C# activity tests over a real run in `library_health_server_tests.rs`.
+
+No settings and no new intentional diffs (the ISRC entry gained a request). No "Fix in port"
+line was under R.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three, the G3 H record for H), proposed
+and Q record for those three, the G3 H record for H, the G4 record for E and N), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -682,8 +876,8 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 2 | done (G2, `port/g2-bd`) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
-| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 24 | done (G3, `port/g3-fp`); what is left waits for R |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | done on `port/g-charts`, with the charts plan (parity pending) |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
@@ -691,11 +885,11 @@ Rust change.
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 18 | done (G3) |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; R's job waits on R) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
-| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 15 | done (G3, `port/g3-fp`); what is left is R's knock-on and proposed intentional diffs |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 0 | done (G4, `port/g4-r`) |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
@@ -825,18 +1019,18 @@ the slskd client's reads, rescan, settings file, scan cancel and upload cancel, 
   `clearing_an_isrc_takes_it_off_the_file`), and the proposed intentional diff
   is `isrc-clear-takes-the-tag-off`; F's tag edits only need to call it.
 
-- [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
+- [x] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
   (G2: `LibraryTagEdits.Set` must write through `tag_writer_extras::set_or_clear_text`, so a
   cleared field, an ISRC above all, leaves the file; the port-only fix and its intentional diff
   `isrc-clear-takes-the-tag-off` are in place)
-- [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
-- [ ] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
-- [ ] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
-- [ ] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
-- [ ] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
-- [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
-- [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
-- [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
+- [x] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
+- [x] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
+- [x] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
+- [x] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
+- [x] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
+- [x] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
+- [x] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
+- [x] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
 - [x] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
   (ported with D in G2: Find songs reads a library song's length through it)
 
@@ -951,14 +1145,27 @@ No Rust server change: both are their own images.
 
 ### N. Afterglow dashboard, activity view, toasts
 
-- [ ] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
-- [ ] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
-- [ ] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
-- [ ] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
-- [ ] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
-- [ ] `d52ae54` feat(admin): Fetched songs in the Afterglow look
-- [ ] `ca47988` feat(admin): one activity view of everything Octo is working on
-- [ ] `af48eb1` feat(admin): live progress toasts for Octo's background work
+- [x] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
+- [x] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
+- [x] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
+- [x] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
+- [x] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
+- [x] `d52ae54` feat(admin): Fetched songs in the Afterglow look
+- [x] `ca47988` feat(admin): one activity view of everything Octo is working on
+- [x] `af48eb1` feat(admin): live progress toasts for Octo's background work
+
+Done in G4 (`port/g4-n`): `31e3715`, `2e4fdcf`, `d52ae54` and the dashboard half of
+`5a00fb1`, `ca47988` and `af48eb1` are `octo/wwwroot`, which the Rust build serves as is. The
+server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
+`services::admin::{cover_palette, ambient_palette_service}` and `cover_colours::from_lch`) and
+`GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
+the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
+reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
+on both). The activity view reads Library health (group R, not on `rust/main` yet) through a
+view of its own, `HealthActivity` (from `HealthRun`), with a `STUB` where it is read: a
+conversion and one call in `get_activity`; the word mapping and its tests are in already. The
+slskd rescan (E), the Spotify read and trickle (H, `ImportsActivity` from `ImportOverview`) and
+Find songs (D, `FindLook` from `FindSnapshot`) are read.
 
 ### O. Search album ownership
 
@@ -975,10 +1182,10 @@ No Rust server change: both are their own images.
   intentional diff.
 - The recovery-code explicit marks are already refused by the gate (G1).
 
-- [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
-- [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
-- [ ] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
-- [ ] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
+- [x] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
+- [x] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
+- [x] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
+- [x] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
 
 ### Q. Made for you lists
 
@@ -999,15 +1206,25 @@ No Rust server change: both are their own images.
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 
-- [ ] `69f577f` feat(health): Library health findings and fixes on the server
-  (G2: `LibrarySnapshot` and `LibraryAlbumIndex` are O's, at `f49fb80`; R adds `ReadAtUtc`,
-  `RefreshAsync`, `Rows` and the song row's health fields)
-- [ ] `e36d823` fix(health): check songs in the order the apps read them
-- [ ] `c156710` feat(admin): Library health page on the dashboard
-- [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
-  (its download log and Find songs routes are in, with D: `controllers/admin/downloads.rs`;
-  Recently removed, Put back and the activity card wait for F and N)
-- [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
+Done in G4 (`port/g4-r`): `services::health` (`library_health`, `health_words`, `health_fixes`,
+`server_song_fields`, `library_health_service`) and `controllers::admin::health`
+(`/api/admin/health` and its `run`, `preview`, `apply`, `lookup`, `stop`, `undo`), already in
+`LIBRARY_FILE_ROUTES` since G1. The shared cases (`docs/library-health-cases.json`) run as Rust
+tests.
+
+- [x] `69f577f` feat(health): Library health findings and fixes on the server
+  (the song row's health fields, `LibrarySnapshot::read_at_utc` and `refresh`,
+  `LibraryAlbumIndex::rows`; the duplicate scan groups by Library health's rule;
+  `LibraryRescan::hold` came with F; `ActivityController.Health` is N's)
+- [x] `e36d823` fix(health): check songs in the order the apps read them
+- [x] `c156710` feat(admin): Library health page on the dashboard (the shared dashboard files; the
+  controller's `?fresh=1` and slimmer song view)
+- [x] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+  (download log and Find songs routes with D: `controllers/admin/downloads.rs`; trash and Put
+  back with F: `controllers/admin/trash.rs`; the Recently removed tests with R; the activity
+  card with N, wired to R's run in G4)
+- [x] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard (no
+  Rust change: the shared dashboard files)
 
 ### S. Estimated stream length fix
 

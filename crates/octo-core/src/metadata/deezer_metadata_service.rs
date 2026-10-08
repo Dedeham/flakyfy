@@ -13,6 +13,9 @@ pub struct TrackMeta {
     pub duration: Option<i32>,
     pub artist_name: Option<String>,
     pub artist_image_url: Option<String>,
+    /// Whether the song's words are explicit (1), the clean edit (3) or neither (0), None when
+    /// the catalog does not say. See `models::domain::explicit_status`.
+    pub explicit_content: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -78,6 +81,9 @@ pub struct AlbumHit {
     /// The release date (yyyy-MM-dd), filled by an artist's album list, which New Releases sorts
     /// and filters by.
     pub release_date: Option<String>,
+    /// The listing's explicit flag. False is not "clean": a listing does not tell a clean edit
+    /// from an album that never had explicit words.
+    pub explicit_lyrics: Option<bool>,
 }
 
 /// One track of an album, with the real length and position. Rank is the catalog's popularity
@@ -108,6 +114,45 @@ pub struct AlbumDetail {
     pub label: Option<String>,
     pub tracks: Vec<AlbumTrack>,
     pub record_type: Option<String>,
+    /// The album's own word: 1 explicit (or partly), 3 the clean edit, 0 neither.
+    pub explicit_content: Option<i32>,
+}
+
+/// One catalog track as the explicit lookup weighs it: who, what, how long, its code, and what
+/// the catalog says of its words (see `models::domain::explicit_status`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CatalogTrackFacts {
+    pub track_id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration: Option<i32>,
+    pub isrc: Option<String>,
+    pub explicit_content: Option<i32>,
+}
+
+/// A catalog answer: the tracks, or that the catalog did not answer this time.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CatalogTrackAnswer {
+    pub tracks: Vec<CatalogTrackFacts>,
+    pub did_not_answer: bool,
+}
+
+impl CatalogTrackAnswer {
+    pub fn found(tracks: Vec<CatalogTrackFacts>) -> Self {
+        Self {
+            tracks,
+            did_not_answer: false,
+        }
+    }
+
+    /// The catalog did not answer this time.
+    pub fn busy() -> Self {
+        Self {
+            tracks: Vec::new(),
+            did_not_answer: true,
+        }
+    }
 }
 
 /// What the catalog said when asked for an album's detail.

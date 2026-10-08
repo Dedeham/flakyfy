@@ -19,6 +19,7 @@ where
 pub mod domain {
     pub mod album;
     pub mod artist;
+    pub mod explicit_status;
     pub mod song;
 
     pub use album::Album;

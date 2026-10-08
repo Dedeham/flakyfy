@@ -246,6 +246,14 @@ fn corrupt_path(path: &Path, now: DateTime<Utc>) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// `Path.GetFullPath(path)`, or the path itself where that throws (an empty one).
+fn full_path_or_self(path: &str) -> String {
+    if path.is_empty() {
+        return path.to_string();
+    }
+    crate::services::library::navidrome_song_path_resolver::get_full_path(path)
+}
+
 fn file_exists(path: &str) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file())
 }
@@ -401,25 +409,59 @@ impl ILocalLibraryService for LocalLibraryService {
     ///
     /// Without this, DownloadSongInternalAsync's existing-file short-circuit keeps pointing a
     /// re-acquire at the file that was just quarantined, and the replacement never happens.
-    async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<bool> {
+    /// Answers the mappings it dropped, so a song put back can have them again.
+    async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>> {
         if dotnet::is_blank(local_path) {
-            return Ok(false);
+            return Ok(Vec::new());
         }
         let mut cached = self.mappings.lock();
         let mappings = self.loaded(&mut cached)?;
-        let stale: Vec<String> = mappings
+        // By the whole path, so "Artist/Album/Song.flac" and "Artist/./Album/Song.flac" are one
+        // file.
+        let wanted = full_path_or_self(local_path);
+        let stale: Vec<(String, LocalSongMapping)> = mappings
             .iter()
-            .filter(|(_, mapping)| eq_ignore_case(&mapping.local_path, local_path))
-            .map(|(key, _)| key.clone())
+            .filter(|(_, mapping)| eq_ignore_case(&full_path_or_self(&mapping.local_path), &wanted))
+            .map(|(key, mapping)| (key.clone(), mapping.clone()))
             .collect();
         if stale.is_empty() {
-            return Ok(false);
+            return Ok(Vec::new());
         }
-        for key in &stale {
+        for (key, _) in &stale {
             mappings.remove(key);
         }
         self.save(mappings)?;
-        Ok(true)
+        Ok(stale.into_iter().map(|(_, mapping)| mapping).collect())
+    }
+
+    async fn restore_mappings(&self, mappings: &[LocalSongMapping], local_path: &str) -> anyhow::Result<()> {
+        if mappings.is_empty() || dotnet::is_blank(local_path) {
+            return Ok(());
+        }
+        let mut cached = self.mappings.lock();
+        let current = self.loaded(&mut cached)?;
+        let mut added = 0;
+        for mapping in mappings {
+            if mapping.external_provider.is_empty() || mapping.external_id.is_empty() {
+                continue;
+            }
+            let key = format!("{}:{}", mapping.external_provider, mapping.external_id);
+            // Downloaded again while this one was in the trash: that copy is the song's now.
+            if current
+                .get(&key)
+                .is_some_and(|newer| file_exists(&newer.local_path))
+            {
+                continue;
+            }
+            let mut mapping = mapping.clone();
+            mapping.local_path = local_path.to_string();
+            current.set(key, mapping);
+            added += 1;
+        }
+        if added > 0 {
+            self.save(current)?;
+        }
+        Ok(())
     }
 
     async fn trigger_library_scan(&self, force: bool) -> bool {
@@ -487,10 +529,16 @@ impl ILocalLibraryService for LocalLibraryService {
 
     async fn get_scan_status(&self) -> Option<ScanStatus> {
         let result: anyhow::Result<Option<ScanStatus>> = async {
-            // Note: This endpoint works without authentication on most Subsonic/Navidrome servers
-            // when called from localhost.
+            // Navidrome answers getScanStatus only with a sign-in, so it gets the same admin
+            // identity startScan uses.
             let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
-            let url = format!("{base}/rest/getScanStatus?f=json");
+            let url = match self.nav_identity.get_scan_auth() {
+                Some((user, token, salt)) => format!(
+                    "{base}/rest/getScanStatus?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
+                    escape_data_string(&user)
+                ),
+                None => format!("{base}/rest/getScanStatus?f=json"),
+            };
             let response = self.http.get(&url).send().await?;
             if !response.status().is_success() {
                 return Ok(None);
@@ -501,14 +549,15 @@ impl ILocalLibraryService for LocalLibraryService {
         }
         .await;
         result.unwrap_or_else(|e| {
-            error!(error = %e, "Error getting Subsonic scan status");
+            debug!(error = %e, "Error getting Subsonic scan status");
             None
         })
     }
 }
 
 /// `subsonic-response.scanStatus`, read as `JsonElement` did: a property of the wrong kind
-/// (`scanning` not a bool, `count` not an Int32, a node that is not an object) throws.
+/// (`scanning` not a bool, `count` not a number, a node that is not an object) throws; a
+/// `count` that is a number but not an Int32 is none.
 fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
     fn property<'a>(element: &'a Value, name: &str) -> anyhow::Result<Option<&'a Value>> {
         match element {
@@ -527,13 +576,11 @@ fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
         Some(_) => anyhow::bail!("scanning is not a boolean"),
         None => false,
     };
+    // TryGetInt32: a number that is not an Int32 reads as none; a count that is not a number
+    // at all still throws.
     let count = match property(scan_status, "count")? {
-        Some(value) => Some(
-            value
-                .as_i64()
-                .and_then(|n| i32::try_from(n).ok())
-                .ok_or_else(|| anyhow::anyhow!("count is not an Int32"))?,
-        ),
+        Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+        Some(_) => anyhow::bail!("count is not a number"),
         None => None,
     };
     Ok(Some(ScanStatus { scanning, count }))

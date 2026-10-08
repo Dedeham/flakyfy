@@ -92,9 +92,12 @@ impl ILocalLibraryService for RecordingLibrary {
         None
     }
 
-    async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<bool> {
+    async fn forget_mapping(
+        &self,
+        local_path: &str,
+    ) -> anyhow::Result<Vec<crate::services::local::LocalSongMapping>> {
         self.forgotten.lock().push(local_path.to_string());
-        Ok(false)
+        Ok(Vec::new())
     }
 
     async fn trigger_library_scan(&self, _force: bool) -> bool {

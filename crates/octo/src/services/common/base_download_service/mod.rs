@@ -314,6 +314,10 @@ pub struct BaseDownloadService {
     download_lock: Semaphore,
 
     identifier: OnceLock<Arc<ReleaseIdentifier>>,
+
+    /// The cover lines written to the downloads log, for tests.
+    #[cfg(test)]
+    pub(crate) cover_steps: Mutex<Vec<(String, Option<String>)>>,
 }
 
 impl BaseDownloadService {
@@ -358,6 +362,8 @@ impl BaseDownloadService {
             active_downloads: Mutex::new(HashMap::new()),
             download_lock: Semaphore::new(1),
             identifier: OnceLock::new(),
+            #[cfg(test)]
+            cover_steps: Mutex::new(Vec::new()),
         });
 
         for dir in [service.download_path(), service.cache_path.clone()] {
@@ -736,12 +742,14 @@ impl BaseDownloadService {
             && journal.is_never_requested(Some(&song.artist), Some(&song.title))
         {
             info!(
-                "Skipping '{} - {}': it was removed with a library action, so it is not requested again. \
-                 Clear that entry from the dashboard to allow it.",
+                "Skipping '{} - {}': it was removed with Delete from disk, so it is not downloaded again. \
+                 Put it back from the trash, or choose Allow downloading again beside it in the Library \
+                 actions history on the dashboard.",
                 song.artist, song.title
             );
             anyhow::bail!(
-                "'{} - {}' was deleted with a library action",
+                "'{} - {}' was removed with Delete from disk, so it is not downloaded again; put it back \
+                 from the trash, or allow downloading it again in the dashboard's Library actions history",
                 song.artist,
                 song.title
             );
@@ -892,7 +900,10 @@ impl BaseDownloadService {
         // arrive bare (YouTube: artist/title and a video thumbnail; Soulseek: whatever the peer
         // tagged), so this is what makes every fetched song a properly-tagged library citizen.
         let writing = std::time::Instant::now();
-        let cover = self.write_metadata(&local_path, &mut song).await;
+        let replacing = options.replacement.as_ref().map(|r| r.original_path.clone());
+        let cover = self
+            .write_metadata_replacing(&local_path, &mut song, replacing.as_deref())
+            .await;
         if let Some(replacement) = &options.replacement {
             placement = self
                 .reveal_replacement(&song, &requested, &local_path, replacement)

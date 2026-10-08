@@ -29,6 +29,7 @@ use tracing::{error, info, warn};
 use super::lyrics_choices::LyricsChoiceService;
 use super::lyrics_sidecar_writer::{LyricsJob, LyricsSidecarWriter, LyricsWrite, LyricsWriteOutcome};
 use super::lyrics_undo_journal::LyricsUndoJournal;
+use crate::services::library::library_walk;
 use crate::services::local::ILocalLibraryService;
 use crate::services::state_file;
 use crate::services::subsonic::NavidromeIdentityService;
@@ -588,7 +589,10 @@ impl LyricsLibraryWorker {
         }
         let listed = {
             let root = root.clone();
-            tokio::task::spawn_blocking(move || audio_files(Path::new(&root))).await
+            // The trash is not part of the library (port fix).
+            let trash =
+                library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
+            tokio::task::spawn_blocking(move || audio_files(Path::new(&root), Some(&trash))).await
         };
         match listed {
             Ok(Ok(mut paths)) => {
@@ -625,14 +629,15 @@ fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
 
 /// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`, kept to the audio
 /// extensions.
-fn audio_files(root: &Path) -> io::Result<Vec<String>> {
-    files_with(root, &LyricsLibraryWorker::AUDIO_EXTENSIONS)
+fn audio_files(root: &Path, trash: Option<&Path>) -> io::Result<Vec<String>> {
+    files_with(root, &LyricsLibraryWorker::AUDIO_EXTENSIONS, trash)
 }
 
 /// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`, kept to `extensions`.
 /// Symbolic links to folders are followed, and any folder that cannot be read fails the whole
 /// listing (`IgnoreInaccessible` is off for that overload).
-pub(super) fn files_with(root: &Path, extensions: &[&str]) -> io::Result<Vec<String>> {
+/// The trash folder is left out (port fix).
+pub(super) fn files_with(root: &Path, extensions: &[&str], trash: Option<&Path>) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];
     while let Some(folder) = folders.pop() {
@@ -644,7 +649,9 @@ pub(super) fn files_with(root: &Path, extensions: &[&str]) -> io::Result<Vec<Str
                 kind => kind.is_dir(),
             };
             if is_dir {
-                folders.push(path);
+                if !library_walk::is_trash(&path, trash) {
+                    folders.push(path);
+                }
                 continue;
             }
             let name = entry.file_name();

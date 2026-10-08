@@ -59,9 +59,21 @@ pub trait ILocalLibraryService: Send + Sync {
     ) -> Option<LocalSongMapping>;
 
     /// Drop the mapping for a path Octo no longer owns, so a re-acquire is not
-    /// short-circuited by a file that has just been moved out of the library. `Err` where the
-    /// C# threw: the mappings file could not be written.
-    async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<bool>;
+    /// short-circuited by a file that has just been moved out of the library. Answers the
+    /// mappings it dropped, so a song put back can have them again. `Err` where the C# threw:
+    /// the mappings file could not be written.
+    async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>>;
+
+    /// Puts back mappings a removal dropped, pointing at the song's path again. A song mapped
+    /// anew since keeps its newer mapping. (A no-op by default, for the test fakes; the real
+    /// service writes them.)
+    async fn restore_mappings(
+        &self,
+        _mappings: &[LocalSongMapping],
+        _local_path: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     /// Triggers a Subsonic library scan. `force` bypasses the debounce. Needed when a caller
     /// must guarantee the scan actually runs, e.g. after each track of an album download so the

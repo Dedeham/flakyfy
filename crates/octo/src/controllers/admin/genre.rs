@@ -155,6 +155,7 @@ async fn get_genre_backfill(State(state): State<AppState>, request: Request) -> 
     browse.finish(ok(&json!({
         "runId": run.run_id,
         "status": status_name(run.status),
+        "pending": state.genre_backfill_worker.is_pending(),
         "scope": scope_name(run.scope),
         "dryRun": run.dry_run,
         "startedUtc": utc_opt(&run.started_utc),

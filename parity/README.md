@@ -26,13 +26,14 @@ Everything is Python 3.10+ standard library plus Docker Compose. No `pip install
 ## For port agents: one command on the test box
 
 There is no Docker on the PC or in WSL. The harness runs on the test box, LXC 131, through the
-Proxmox host (`ssh pmx`). Commit first (only commits travel), then from the checkout of your
-branch, in WSL or Git Bash:
+Proxmox host (`ssh pmx`). Commit first (only commits travel, and the binary is built from the
+working tree, so the script refuses a dirty one), then from the checkout of your branch, in
+WSL:
 
 ```sh
-parity/lxc131.sh                    # build the Rust image from HEAD, run the corpus, diff with C#
+parity/lxc131.sh                    # compile here, image on the box, run the corpus, diff with C#
 parity/lxc131.sh --no-build         # same image as last time (corpus or stub changes only)
-parity/lxc131.sh --low-memory       # build with one job and no LTO, when the host is short
+parity/lxc131.sh --box-build        # compile on the box instead (avoid: see below)
 parity/lxc131.sh --only '13-*'      # some corpus files (00-setup always runs; C# is recorded again)
 parity/lxc131.sh --bytes            # also the bytes-mode diff
 parity/lxc131.sh --rust-twice       # also Rust against Rust (the determinism gate)
@@ -40,14 +41,25 @@ parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: C# against C#, no
 parity/lxc131.sh --clean            # remove this branch's image and folder on the box
 ```
 
+**Compile in WSL, never on the Proxmox host.** By default `lxc131.sh` compiles `octo` in your
+checkout as a static musl binary (`cargo build --release --locked --target
+x86_64-unknown-linux-musl`, into `target/x86_64-unknown-linux-musl/release/octo`), sends it to
+the box beside the commits, and [`box-run.sh`](box-run.sh) `--prebuilt` builds the image from
+`Dockerfile.rust`'s own runtime stage with the build stage swapped for that binary
+(`.parity-bin/Dockerfile` in the box checkout): Debian packages, cached after the first time,
+and a copy. The image is the release image in every way but how the binary was compiled.
+Static musl because a WSL glibc build needs a newer glibc than bookworm-slim has and does not
+start there. Once per WSL install: `rustup target add x86_64-unknown-linux-musl` and
+`apt install musl-tools`. Keep to the WSL compile limit (at most three cargo builds at once).
+
 It bundles the commits the box lacks, checks them out in `/opt/octo-parity/runs/<branch>/src`
-and runs [`box-run.sh`](box-run.sh) there: `docker buildx build -f Dockerfile.rust` (own
-builder `octo-parity`, capped at 3.5 GB, its cache kept for the next build and the builder
-stopped after), the corpus against the C# image (recorded once per corpus version and kept in
+and runs [`box-run.sh`](box-run.sh) there: the image (above; with `--box-build`, the whole
+`docker buildx build -f Dockerfile.rust` on the box, own builder `octo-parity`, capped at
+3.5 GB), the corpus against the C# image (recorded once per corpus version and kept in
 `/opt/octo-parity/cs-cache/`) and against the Rust image, then the diff. It prints the summary
 and the diffs per backlog group, and copies the full reports to
-`parity/.run/lxc131-<branch>/report.txt`. A cold build takes about 8 minutes; a C# recording
-of the whole corpus about 25 minutes. One run at a time: a second one waits for the first.
+`parity/.run/lxc131-<branch>/report.txt`. A box build takes about 8 minutes cold, the
+prebuilt image under a minute; a recording of the whole corpus 25 to 45 minutes. One run at a time: a second one waits for the first.
 
 It touches only its own things on the box: `/opt/octo-parity`, the compose projects
 `octo-parity-cs` and `octo-parity-rs`, the images `octo-rust-parity:<branch>` and the builder.
@@ -60,9 +72,10 @@ answered for minutes. So `lxc131.sh` starts only with 3.5 GB free on the host
 (`PARITY_MIN_HOST_MB`), and a watchdog takes the parity stacks down if the host falls under
 1.5 GB while it runs. Never run two parity runs side by side, and never raise the limits.
 On 2026-10-07 another container's load swung by 4 GB a minute and left the host about 3.6 GB
-to spare, so the usual build (its LTO link takes about 3 GB) tripped the watchdog every time;
-`--low-memory` builds the same program with one job and no LTO instead, slower and with its
-own cache, and a later `--no-build` run reuses that image.
+to spare, so the box build (its LTO link takes about 3 GB) tripped the watchdog every time,
+once with the host at 1 GB and its swap full. That is why the compile moved to WSL. If you
+must compile on the box, `--box-build --low-memory` builds the same program with one job and
+no LTO, slower and with its own cache, and a later `--no-build` run reuses that image.
 
 ## Running it by hand
 
@@ -301,14 +314,14 @@ it). `--only GLOB` always keeps `00-setup`, whose captures the rest needs.
 | `16-lists` | 68 | Groups G and Q: `getTopSongs`, `getArtistTopSongs`, `getTopChart`, Popular right now, Made for you (New Releases, Rediscover, Deep Cuts), the explicit filter |
 | `17-covers-explicit` | 74 | Groups P and C: the covers upgrade run, explicit or clean outside songs and albums with their own ids, the explicit backfill preview and refusals, Try it with the advisory |
 | `18-dashboard` | 63 | Groups N and E: the activity view, the Afterglow palette, the Sharing card and Share switch against a stubbed slskd, the slskd password and web address rules |
-| `19-health` | 114 | Group R: Library health over 8 planted songs: report, previews, fixes, lookups, stop, undo |
+| `19-health` | 115 | Group R: Library health over 8 planted songs: report, previews, fixes, lookups, stop, undo |
 | `20-library-edits` | 153 | Group F: `libraryAction` edits (retag, joinAlbum, cover, lookup, undo), remove to the trash with its `.lrc`, put back, a second copy, `getLibraryActions`, `getLibraryTrash`, the dashboard's trash and history |
 | `21-static` | 31 | The 2026.10.05 dashboard files with the admin security headers |
 | `90-mutations` | 57 | Run last: star/unstar/rating/scrobble/now playing/reportPlayback, a playlist create-update-delete round trip, a settings patch and re-read, the side-effect admin POSTs (caches, notifications, update check, Last.fm connect flow, job cancel/resume/undo, lyrics choices), sign-out (its heart moved to `95-acquisition`) |
 | `95-acquisition` | 43 | Groups D, B, C, P: two hearts and a pick end to end: slskd search, transfer of a fixture file, length, AcoustID and spectrum checks, tagging, filing, Navidrome scan, logs and state files |
 | `96-covers-explicit-writes` | 42 | Group P: cover replace and explicit marks written into the library files, checked with `ffprobe` and Navidrome, and undone |
 | `99-signed-out-writes` | 77 | Group J: every admin write signed out (written by `tools/admin_routes.py`); runs last, the restart last of all |
-| **Total** | **1836** | |
+| **Total** | **1837** | |
 
 ## Recordings
 

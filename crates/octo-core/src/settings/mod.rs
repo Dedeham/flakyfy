@@ -107,7 +107,7 @@ impl AppSettings {
     /// starts with the section name.
     pub fn bind(tree: &ConfigTree) -> (AppSettings, Vec<BindWarning>) {
         let mut warnings = Vec::new();
-        let settings = AppSettings {
+        let mut settings = AppSettings {
             genre: bind_section(tree, "Genre", &mut warnings),
             library_actions: bind_section(tree, "LibraryActions", &mut warnings),
             generated_playlists: bind_section(tree, "GeneratedPlaylists", &mut warnings),
@@ -124,8 +124,21 @@ impl AppSettings {
             admin: bind_section(tree, "Admin", &mut warnings),
             imports: bind_section(tree, "Imports", &mut warnings),
         };
+        // A port fix: Navidrome's address is read without the spaces and trailing slashes it
+        // may have been typed with, so every upstream URL Octo builds from it has one slash
+        // (the C# stream relay asked for `//rest/stream`; BACKLOG, "Found while building the
+        // harness"; known-diffs.md).
+        if let Some(url) = settings.subsonic.url.as_mut() {
+            *url = normalize_server_url(url);
+        }
         (settings, warnings)
     }
+}
+
+/// A server address as Octo keeps it: trimmed, with no trailing slash (`http://nd:4533/ ` is
+/// `http://nd:4533`).
+pub fn normalize_server_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
 }
 
 /// `Configuration.GetSection(name).Get<T>()`, collecting conversion warnings under the
@@ -145,4 +158,23 @@ pub fn bind_section<T: DeserializeOwned + Default>(
         message: w.message,
     }));
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navidromes_address_is_read_without_trailing_slashes_or_spaces() {
+        let mut tree = ConfigTree::new();
+        tree.set("Subsonic:Url", Some(" http://navidrome:4533// ".into()));
+        let (settings, warnings) = AppSettings::bind(&tree);
+        assert!(warnings.is_empty());
+        assert_eq!(settings.subsonic.url.as_deref(), Some("http://navidrome:4533"));
+        assert_eq!(
+            normalize_server_url("http://nd:4533/base/"),
+            "http://nd:4533/base"
+        );
+        assert_eq!(normalize_server_url(""), "");
+    }
 }

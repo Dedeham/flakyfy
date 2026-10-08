@@ -457,7 +457,17 @@ pub async fn test_lidarr_connection(
         Err(res) => return res,
     };
     let current = state.settings.current();
-    let key = lidarr_test_key(request.api_key.as_deref(), current.lidarr.api_key.as_deref());
+    let key = match lidarr_test_key(
+        request.api_key.as_deref(),
+        request.base_url.as_deref(),
+        current.lidarr.api_key.as_deref(),
+        current.lidarr.base_url.as_deref(),
+    ) {
+        Ok(key) => key,
+        Err(words) => {
+            return object_result(StatusCode::BAD_REQUEST, &json!({ "ok": false, "error": words }));
+        }
+    };
     match state
         .lidarr_client
         .test_connection(request.base_url.as_deref().unwrap_or(""), key.unwrap_or(""))
@@ -476,18 +486,26 @@ pub async fn test_lidarr_connection(
 }
 
 /// The key `lidarr/test` sends: the page only ever holds the placeholder for a saved key, and
-/// testing it means the saved one; anything else is the key as typed.
-///
-/// As the C# does it, the saved key then goes to whatever address the request names, unlike a
-/// save, where a saved credential never follows a new address (`secrets::secret_sent_elsewhere`).
-/// BACKLOG "Found while building the harness" lists this for Brandon to decide; the fix, if he
-/// wants it, belongs here: take the address too, and keep the saved key only when the address is
-/// the saved `Lidarr:BaseUrl` (the same comparison `secret_sent_elsewhere` makes).
-fn lidarr_test_key<'a>(typed: Option<&'a str>, saved: Option<&'a str>) -> Option<&'a str> {
-    if typed == Some(super::helpers_6b1::SECRET_PLACEHOLDER) {
-        saved
+/// testing it means the saved one, but only at the saved address. A port fix: the C# sent the
+/// saved key to whatever address the request named, so anyone who could reach the admin API
+/// could have it sent to a server of their own; now the saved key follows the saved address
+/// alone, as a save's does (`secrets::secret_sent_elsewhere`, the same comparison), and a new
+/// address needs the key typed (BACKLOG "Found while building the harness"; known-diffs.md).
+/// Anything other than the placeholder is the key as typed.
+fn lidarr_test_key<'a>(
+    typed_key: Option<&'a str>,
+    typed_url: Option<&str>,
+    saved_key: Option<&'a str>,
+    saved_url: Option<&str>,
+) -> Result<Option<&'a str>, &'static str> {
+    if typed_key != Some(super::helpers_6b1::SECRET_PLACEHOLDER) {
+        return Ok(typed_key);
+    }
+    let address = |url: Option<&str>| url.unwrap_or("").trim().trim_end_matches('/').to_string();
+    if octo_core::common::dotnet::eq_ignore_case(&address(typed_url), &address(saved_url)) {
+        Ok(saved_key)
     } else {
-        typed
+        Err("Retype the Lidarr API key for the new address.")
     }
 }
 
@@ -545,5 +563,39 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 10, 4, 8, 7, 57).unwrap()
             + chrono::TimeDelta::nanoseconds(635_173_300);
         assert_eq!(round_trip_offset(now), "2026-10-04T08:07:57.6351733+00:00");
+    }
+}
+
+#[cfg(test)]
+mod lidarr_test_key_tests {
+    use super::lidarr_test_key;
+    use crate::controllers::admin::helpers_6b1::SECRET_PLACEHOLDER;
+
+    /// The saved key follows the saved address only; a typed key goes anywhere it is sent.
+    #[test]
+    fn the_saved_key_follows_the_saved_address_only() {
+        let saved = (Some("saved-key"), Some("http://lidarr:8686"));
+        let test = |key, url| lidarr_test_key(key, url, saved.0, saved.1);
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some("http://lidarr:8686")),
+            Ok(Some("saved-key"))
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some(" HTTP://LIDARR:8686/ ")),
+            Ok(Some("saved-key"))
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some("http://evil.example:8686")),
+            Err("Retype the Lidarr API key for the new address.")
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), None),
+            Err("Retype the Lidarr API key for the new address.")
+        );
+        assert_eq!(
+            test(Some("typed"), Some("http://evil.example:8686")),
+            Ok(Some("typed"))
+        );
+        assert_eq!(test(None, Some("http://lidarr:8686")), Ok(None));
     }
 }

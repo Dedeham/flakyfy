@@ -439,3 +439,35 @@ async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
     assert_eq!(appended.status, StatusCode::BAD_REQUEST);
     assert_eq!(password(&factory).as_deref(), Some("slskd-secret"));
 }
+
+/// A port fix: Navidrome's address is saved without its trailing slash (and the spaces it was
+/// typed with), so the stream relay never asks for `//rest/stream`; the Raw config save the same.
+#[tokio::test]
+async fn navidromes_address_is_saved_without_a_trailing_slash() {
+    let factory = ScrobbleAdminFactory::new("{}").await;
+    let url = |factory: &ScrobbleAdminFactory| {
+        Node::parse(&factory.saved())
+            .expect("the file parses")
+            .get("Subsonic")
+            .and_then(|s| s.get("Url"))
+            .and_then(Node::as_str)
+            .map(str::to_string)
+    };
+    let body = r#"{ "Subsonic": { "Url": " http://navidrome:4533/ " } }"#;
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    assert_eq!(url(&factory).as_deref(), Some("http://navidrome:4533"));
+
+    let body = r#"{ "Subsonic": { "Url": "http://navidrome:4533//" } }"#;
+    let put = admin_write(&factory.app, Method::PUT, "/api/admin/raw-config", Some(body)).await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.text());
+    assert_eq!(url(&factory).as_deref(), Some("http://navidrome:4533"));
+
+    // A section sent in another case is saved under its own name.
+    let body = r#"{ "lidarr": { "BaseUrl": "http://lidarr:8686" } }"#;
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    let saved = Node::parse(&factory.saved()).expect("the file parses");
+    let sections: Vec<&String> = saved.as_object().expect("an object").keys().collect();
+    assert_eq!(sections, ["Subsonic", "Lidarr"]);
+}

@@ -44,6 +44,19 @@ pub const SECRET_MAPS: &[(&str, &str, Option<&str>)] = &[
     ("ListenBrainz", "UserTokens", None),
 ];
 
+/// A port fix: Navidrome's address is saved trimmed and without trailing slashes, so the file
+/// never holds the `http://nd:4533/` the C# relay turned into `//rest/stream` (the settings read
+/// it the same way: `octo_core::settings::normalize_server_url`).
+pub fn normalize_saved_addresses(patch: &mut JsonObject) {
+    if let Some(subsonic) = child_mut(patch, "Subsonic")
+        && let Some(key) = key_of(subsonic, "Url")
+        && let Some(url) = string_value(subsonic.get(&key))
+    {
+        let normalized = octo_core::settings::normalize_server_url(url);
+        subsonic.insert(key, Node::String(normalized));
+    }
+}
+
 /// The text of a JSON string that starts with the placeholder.
 fn placeholder_text(node: Option<&Node>) -> Option<&str> {
     string_value(node).filter(|text| text.starts_with(SECRET_PLACEHOLDER))

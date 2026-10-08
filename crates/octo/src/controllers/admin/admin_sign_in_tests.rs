@@ -810,6 +810,44 @@ async fn sign_out_everywhere_ends_every_browser_of_that_person() {
     );
 }
 
+/// A sign-out answers with the cookie's deletion alone: the gate's renewal of a signed-in
+/// call is left out when the endpoint deletes the cookie (ASP.NET's `Cookies.Delete` took back
+/// the gate's `Append`), for this browser, everywhere, and the recovery code alike.
+#[tokio::test]
+async fn a_sign_out_answers_with_the_deletion_alone() {
+    let factory = SignInFactory::new().await;
+    let code = factory.recovery().current().expect("a code");
+    for (path, sign_in) in [
+        ("/api/admin/browse/signout", factory.sign_in("admin", "pw").await),
+        (
+            "/api/admin/browse/signout?everywhere=true",
+            factory.sign_in("admin", "pw").await,
+        ),
+        (
+            "/api/admin/browse/signout?everywhere=true",
+            post_json(
+                &factory.app,
+                "/api/admin/auth/recovery",
+                &json!({ "code": code }),
+                &[],
+            )
+            .await,
+        ),
+    ] {
+        let cookie = cookie_of(&sign_in);
+        let reply = post_json(&factory.app, path, &json!({}), &[("Cookie", &cookie)]).await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        let set: Vec<&str> = reply
+            .headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+        assert_eq!(set.len(), 1, "{path}: {set:?}");
+        assert!(set[0].starts_with("octo_browse=;"), "{path}: {set:?}");
+    }
+}
+
 // ---- headers ----------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -894,4 +932,95 @@ async fn the_signed_out_status_is_kept_ten_seconds() {
     let first = get(&factory.app, "/api/admin/status").await.text();
     let second = get(&factory.app, "/api/admin/status").await.text();
     assert_eq!(first, second, "the same answer, time included");
+}
+
+/// A port fix: the gate refuses a recovery-code session on every route that reads or changes
+/// library files, the explicit marking included (the C# endpoint asked `UserOf` and let the
+/// recovery code write explicit marks), with the cookie renewed as on any signed-in call.
+#[tokio::test]
+async fn a_recovery_session_never_reaches_a_library_file_route() {
+    let factory = SignInFactory::new().await;
+    let code = factory.recovery().current().expect("a code");
+    let signed = post_json(
+        &factory.app,
+        "/api/admin/auth/recovery",
+        &json!({ "code": code }),
+        &[],
+    )
+    .await;
+    let cookie = cookie_of(&signed);
+
+    for (method, path) in [
+        (Method::GET, "/api/admin/explicit/backfill"),
+        (Method::POST, "/api/admin/explicit/backfill/cancel"),
+        (Method::POST, "/api/admin/explicit/backfill"),
+        (Method::GET, "/api/admin/health"),
+        (Method::GET, "/api/admin/trash"),
+        (Method::GET, "/api/admin/lyrics/choices"),
+        (Method::GET, "/api/admin/covers/upgrade"),
+    ] {
+        let reply = send(
+            &factory.app,
+            method.clone(),
+            path,
+            &[("Cookie", &cookie), ("X-Octo-Admin", "1")],
+            (method == Method::POST).then_some("{}"),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {path}");
+        assert_eq!(
+            reply.json()["error"],
+            "Sign in with your Navidrome admin account first.",
+            "{method} {path}"
+        );
+        assert!(
+            reply.header("set-cookie").unwrap_or("").contains("max-age=3600"),
+            "{method} {path}"
+        );
+    }
+    let browse = get_cookie(&factory.app, "/api/admin/browse", &cookie).await;
+    assert_eq!(browse.json()["error"], "Browse session required.");
+    let imports = get_cookie(&factory.app, "/api/admin/imports", &cookie).await;
+    assert_eq!(
+        imports.json()["error"],
+        "Sign in with your Navidrome account first."
+    );
+
+    // Settings and the rest of the dashboard still answer it.
+    assert_eq!(
+        get_cookie(&factory.app, "/api/admin/settings", &cookie)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_cookie(&factory.app, "/api/admin/downloads", &cookie)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // A Navidrome admin's session is not refused by the gate (the route itself answers).
+    let admin = factory.state.browse_sessions.create("admin");
+    let reply = factory
+        .get_with_token("/api/admin/explicit/backfill", &admin)
+        .await;
+    assert_ne!(reply.status, StatusCode::UNAUTHORIZED);
+}
+
+/// A port fix: `lidarr/test` sends the saved key only to the saved address.
+#[tokio::test]
+async fn lidarr_test_never_sends_the_saved_key_to_a_new_address() {
+    let factory = SignInFactory::with("off", false).await;
+    let reply = admin_write(
+        &factory.app,
+        Method::POST,
+        "/api/admin/lidarr/test",
+        Some(r#"{"baseUrl":"http://evil.example:8686","apiKey":"(saved, not shown)"}"#),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        reply.text(),
+        r#"{"ok":false,"error":"Retype the Lidarr API key for the new address."}"#
+    );
 }

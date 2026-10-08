@@ -420,7 +420,7 @@ pub fn duplicate_fix<T: Clone>(
     let mine = tag_values(&keep, fields);
     // The fullest tagged donors first.
     let mut donors: Vec<&T> = others.iter().collect();
-    donors.sort_by(|a, b| tags_of(*b, fields).cmp(&tags_of(*a, fields)));
+    donors.sort_by_key(|donor| std::cmp::Reverse(tags_of(*donor, fields)));
     let my_album = SongIdentity::key(mine.get(fields_of::ALBUM).unwrap_or(""));
     // With no album, the album comes from one donor whole: its title, album artist, track and
     // disc together.

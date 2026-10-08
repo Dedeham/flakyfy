@@ -628,10 +628,8 @@ impl LibraryHealthService {
             };
             steps.clone()
         };
-        match self.start_fix_as("Undoing the last change", None, undo, user, true) {
-            None => None,
-            Some(_) => Some("A fix is still running.".to_string()),
-        }
+        self.start_fix_as("Undoing the last change", None, undo, user, true)
+            .map(|_| "A fix is still running.".to_string())
     }
 
     /// Ends the run going now after the song it is on.

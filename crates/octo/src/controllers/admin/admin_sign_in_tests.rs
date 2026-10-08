@@ -810,6 +810,44 @@ async fn sign_out_everywhere_ends_every_browser_of_that_person() {
     );
 }
 
+/// A sign-out answers with the cookie's deletion alone: the gate's renewal of a signed-in
+/// call is left out when the endpoint deletes the cookie (ASP.NET's `Cookies.Delete` took back
+/// the gate's `Append`), for this browser, everywhere, and the recovery code alike.
+#[tokio::test]
+async fn a_sign_out_answers_with_the_deletion_alone() {
+    let factory = SignInFactory::new().await;
+    let code = factory.recovery().current().expect("a code");
+    for (path, sign_in) in [
+        ("/api/admin/browse/signout", factory.sign_in("admin", "pw").await),
+        (
+            "/api/admin/browse/signout?everywhere=true",
+            factory.sign_in("admin", "pw").await,
+        ),
+        (
+            "/api/admin/browse/signout?everywhere=true",
+            post_json(
+                &factory.app,
+                "/api/admin/auth/recovery",
+                &json!({ "code": code }),
+                &[],
+            )
+            .await,
+        ),
+    ] {
+        let cookie = cookie_of(&sign_in);
+        let reply = post_json(&factory.app, path, &json!({}), &[("Cookie", &cookie)]).await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        let set: Vec<&str> = reply
+            .headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+        assert_eq!(set.len(), 1, "{path}: {set:?}");
+        assert!(set[0].starts_with("octo_browse=;"), "{path}: {set:?}");
+    }
+}
+
 // ---- headers ----------------------------------------------------------------------------------
 
 #[tokio::test]

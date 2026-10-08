@@ -306,6 +306,10 @@ pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request,
 
 /// Puts a `Set-Cookie` ahead of the ones the endpoint wrote, as the gate's
 /// `Response.Cookies.Append` ran before the endpoint did.
+///
+/// When the endpoint deleted that same cookie (a sign-out), the renewal is left out: ASP.NET's
+/// `Response.Cookies.Delete` took back an earlier `Append` of the cookie, so the C# answered
+/// with the deletion alone, and a browser handed both might keep the renewed one.
 fn prepend_set_cookie(res: &mut Response, cookie: HeaderValue) {
     let existing: Vec<HeaderValue> = res
         .headers()
@@ -313,6 +317,19 @@ fn prepend_set_cookie(res: &mut Response, cookie: HeaderValue) {
         .iter()
         .cloned()
         .collect();
+    let name = cookie
+        .to_str()
+        .ok()
+        .and_then(|c| c.split_once('='))
+        .map(|(name, _)| format!("{name}="))
+        .unwrap_or_default();
+    let deleted = existing
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|v| v.starts_with(&name) && v.to_ascii_lowercase().contains("expires=thu, 01 jan 1970"));
+    if name.is_empty() || deleted {
+        return;
+    }
     res.headers_mut().remove(header::SET_COOKIE);
     res.headers_mut().append(header::SET_COOKIE, cookie);
     for value in existing {

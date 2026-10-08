@@ -152,13 +152,9 @@ fn to_client_error(error: anyhow::Error) -> SoulseekClientError {
     }
 }
 
-/// `EnsureSuccessStatusCode()`'s message.
+/// `EnsureSuccessStatusCode()`'s failure, in plain words.
 fn not_success(status: StatusCode) -> String {
-    format!(
-        "Response status code does not indicate success: {} ({}).",
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("")
-    )
+    crate::services::http_client_factory::status_failure_message(status)
 }
 
 /// The future, unless the token is cancelled first (an already-cancelled token wins at once, as

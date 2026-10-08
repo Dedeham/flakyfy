@@ -200,11 +200,9 @@ impl SoulseekPortCheck {
         let response = self.http.get(url).send().await?;
         let status = response.status();
         if !status.is_success() {
-            anyhow::bail!(
-                "Response status code does not indicate success: {} ({}).",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("")
-            );
+            anyhow::bail!(crate::services::http_client_factory::status_failure_message(
+                status
+            ));
         }
         Ok(response.text().await?)
     }

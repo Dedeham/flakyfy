@@ -792,13 +792,13 @@ async fn status_reports_each_service() {
     assert_eq!(body["services"]["navidrome"]["ok"], false);
     assert_eq!(
         body["services"]["navidrome"]["detail"],
-        format!("Connection refused ({address})")
+        format!("Could not connect to {address}: the connection was refused.")
     );
     assert_eq!(body["services"]["lidarr"]["detail"], "Not set up. Optional.");
     assert_eq!(body["services"]["lidarr"]["configured"], false);
     assert_eq!(
         body["services"]["ytDlpShim"]["detail"],
-        format!("Connection refused ({address})")
+        format!("Could not connect to {address}: the connection was refused.")
     );
     assert_eq!(body["services"]["lastfm"]["configured"], false);
     let time = body["time"].as_str().expect("a time");

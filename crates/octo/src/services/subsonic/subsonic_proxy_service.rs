@@ -30,8 +30,8 @@ use crate::services::i_download_service::DirectStreamInfo;
 
 /// `OctoNotConfiguredException`'s message: the Navidrome URL is missing or not absolute.
 pub const NOT_CONFIGURED_MESSAGE: &str = "Octo has no valid Navidrome URL. Set SUBSONIC_URL (Subsonic__Url) to your \
-     Navidrome server, e.g. http://192.168.1.10:4533 — an absolute URL reachable \
-     from the Octo container, not localhost.";
+     Navidrome server, e.g. http://192.168.1.10:4533. It must be an absolute URL the Octo \
+     container can reach, not localhost.";
 
 /// What `HttpClient` threw for a request URI that was not absolute.
 const INVALID_REQUEST_URI: &str = "An invalid request URI was provided. Either the request URI must be an \
@@ -842,18 +842,9 @@ fn request_url(url: &str) -> Result<reqwest::Url, RelayError> {
     }
 }
 
-/// `EnsureSuccessStatusCode`'s message.
+/// `EnsureSuccessStatusCode`'s failure, in plain words.
 fn not_success_message(status: StatusCode) -> String {
-    match status.canonical_reason() {
-        Some(reason) => format!(
-            "Response status code does not indicate success: {} ({reason}).",
-            status.as_u16()
-        ),
-        None => format!(
-            "Response status code does not indicate success: {}.",
-            status.as_u16()
-        ),
-    }
+    crate::services::http_client_factory::status_failure_message(status)
 }
 
 /// A request header's values as one line: Kestrel kept each line as a value, and HttpClient

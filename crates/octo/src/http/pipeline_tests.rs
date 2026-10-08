@@ -59,7 +59,7 @@ fn dummy_routes() -> RouteSet {
         .route(
             "/test/not-configured",
             get(|| async {
-                AppError::NotConfigured("Set SUBSONIC_URL — an absolute URL, isn't it".into()).into_response()
+                AppError::NotConfigured("Set SUBSONIC_URL: an absolute URL, isn't it".into()).into_response()
             }),
         )
         .route(
@@ -676,14 +676,14 @@ async fn everything_else_is_relayed_and_without_a_url_says_so() {
         r.text(),
         "<subsonic-response status=\"failed\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  \
          <error code=\"0\" message=\"Error connecting to Subsonic server: Octo has no valid Navidrome URL. \
-         Set SUBSONIC_URL (Subsonic__Url) to your Navidrome server, e.g. http://192.168.1.10:4533 — an absolute \
-         URL reachable from the Octo container, not localhost.\" />\n</subsonic-response>"
+         Set SUBSONIC_URL (Subsonic__Url) to your Navidrome server, e.g. http://192.168.1.10:4533. It must be an absolute \
+         URL the Octo container can reach, not localhost.\" />\n</subsonic-response>"
     );
     let r = get_("/rest/getArtists.view?u=a&f=json", &[]).await;
     assert_eq!(r.header("content-type"), Some("application/json; charset=utf-8"));
     assert_eq!(
         r.text(),
-        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Error connecting to Subsonic server: Octo has no valid Navidrome URL. Set SUBSONIC_URL (Subsonic__Url) to your Navidrome server, e.g. http://192.168.1.10:4533 \u2014 an absolute URL reachable from the Octo container, not localhost."}}}"#
+        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Error connecting to Subsonic server: Octo has no valid Navidrome URL. Set SUBSONIC_URL (Subsonic__Url) to your Navidrome server, e.g. http://192.168.1.10:4533. It must be an absolute URL the Octo container can reach, not localhost."}}}"#
     );
 }
 
@@ -734,6 +734,6 @@ async fn exception_envelopes_use_the_relaxed_encoder() {
     assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
         r.text(),
-        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Set SUBSONIC_URL — an absolute URL, isn't it"}}}"#
+        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Set SUBSONIC_URL: an absolute URL, isn't it"}}}"#
     );
 }

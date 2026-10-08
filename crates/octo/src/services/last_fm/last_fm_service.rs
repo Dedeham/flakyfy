@@ -822,16 +822,14 @@ impl LastFmService {
     }
 }
 
-/// `EnsureSuccessStatusCode`, with .NET's message.
+/// `EnsureSuccessStatusCode`, in plain words.
 fn ensure_success(answer: &HttpAnswer) -> anyhow::Result<()> {
     if answer.is_success() {
         return Ok(());
     }
-    anyhow::bail!(
-        "Response status code does not indicate success: {} ({}).",
-        answer.status.as_u16(),
-        answer.status.canonical_reason().unwrap_or("")
-    )
+    anyhow::bail!(crate::services::http_client_factory::status_failure_message(
+        answer.status
+    ))
 }
 
 /// `list.Take(limit)`.

@@ -522,7 +522,7 @@ fn scan_a_song_with_lyrics_beside_it_is_opened_to_learn_their_timing() {
     std::fs::write(lrc(&path), "[00:01.00]<00:01.00>word<00:02.00>\n").expect("written");
     let known = entry(&path, "Artist", "Song", None, None);
 
-    let stems = lyrics_file_stems(&library.music.to_string_lossy());
+    let stems = lyrics_file_stems(&library.music.to_string_lossy(), None);
     let (row, word) = worker
         .scan_song_known(&path.to_string_lossy(), Some(&known), stems.as_ref())
         .expect("read");

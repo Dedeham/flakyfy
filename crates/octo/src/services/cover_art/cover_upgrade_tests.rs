@@ -609,6 +609,72 @@ async fn a_stopped_run_does_the_unfinished_part_again_on_resume_and_lists_each_a
     assert_eq!(current.preview.len(), 2);
 }
 
+/// Port fix (C# 2026.10.05 counted the stopped batch again: "6 of 3 albums", songs read 20 of
+/// 10): a resume takes off what the stopped batch counted before it runs the batch again, so
+/// each album and each song counts once.
+#[tokio::test]
+async fn a_resumed_run_counts_each_album_and_song_once() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    library.song("Discovery", "One More Time", Some(&jpeg(300, 10)), None, false);
+    library.song("Homework", "Da Funk", Some(&jpeg(300, 10)), None, false);
+    let finder = Arc::new(StopOnFirstFinder {
+        worker: OnceLock::new(),
+        calls: Mutex::new(0),
+    });
+    let (worker, store) = library.worker(finder.clone(), false);
+    finder.worker.set(Arc::downgrade(&worker)).expect("set once");
+    run(&worker, &store, whole(CoverUpgradeMode::Scan)).await;
+    let ids: Vec<String> = store.read(|run| run.preview.iter().map(|row| row.id.clone()).collect());
+    let preview = whole(CoverUpgradeMode::Preview).with_albums(ids);
+
+    run(&worker, &store, preview.clone()).await;
+    let stopped = store.current();
+    assert_eq!(stopped.status, CoverUpgradeStatus::Cancelled);
+    assert!(stopped.batch.is_some(), "the stopped batch keeps what it counted");
+    let saved = octo_core::json::to_string(&stopped);
+    assert!(saved.contains(r#""Batch":{"SongsRead":"#), "{saved}");
+
+    run(&worker, &store, preview).await;
+
+    let done = store.current();
+    assert_eq!(done.status, CoverUpgradeStatus::Completed);
+    assert_eq!((done.albums_done, done.albums_total), (2, 2));
+    assert_eq!((done.songs_read, done.songs_total), (2, 2));
+    assert_eq!((done.upgraded, done.kept, done.files), (2, 0, 2));
+    assert_eq!(done.batch, None);
+    assert!(!octo_core::json::to_string(&done).contains("Batch"));
+}
+
+/// Port fix: the cover scan used to walk into the trash folder and list a trashed song as an
+/// album of its own, with an id that depended on the dated folder it sat in.
+#[tokio::test]
+async fn a_scan_of_the_whole_library_leaves_the_trash_out() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    let kept = library.song("Discovery", "One More Time", Some(&jpeg(300, 10)), None, false);
+    let trashed = library
+        .music()
+        .join(".octo-trash")
+        .join("2026-10-08")
+        .join("Daft Punk")
+        .join("Discovery");
+    std::fs::create_dir_all(&trashed).expect("created");
+    std::fs::copy(&kept, trashed.join("Aerodynamic.mp3")).expect("copied");
+    let (worker, store) = library.worker(FixedFinder::new(None), false);
+
+    run(&worker, &store, whole(CoverUpgradeMode::Scan)).await;
+
+    let current = store.current();
+    assert_eq!((current.songs_total, current.soft), (1, 1));
+    assert!(
+        current
+            .preview
+            .iter()
+            .all(|row| !row.folder.contains(".octo-trash")),
+        "{:?}",
+        current.preview
+    );
+}
+
 #[tokio::test]
 async fn a_songs_own_barcode_tag_is_read() {
     let library = Library::new(audio_or_skip!("mp3"));

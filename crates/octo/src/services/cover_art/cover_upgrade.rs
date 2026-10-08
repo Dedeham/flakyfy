@@ -27,6 +27,7 @@ use tracing::{debug, error, info, warn};
 
 use super::album_cover_finder::{AlbumCoverQuery, IAlbumCoverFinder};
 use crate::services::framework::HttpAnswer;
+use crate::services::library::library_walk;
 use crate::services::library::navidrome_song_list::{self, full_path};
 use crate::services::local::ILocalLibraryService;
 use crate::services::state_file::{self, null_as_default};
@@ -209,6 +210,22 @@ pub struct CoverUpgradeRun {
     pub preview: Vec<CoverUpgradeChange>,
     #[serde(deserialize_with = "null_as_default")]
     pub queue: Vec<CoverUpgradeItem>,
+    /// What the batch under way has counted so far. A batch stopped part way runs again on a
+    /// resume, so its counts come off first and every album counts once (C# 2026.10.05 counted
+    /// them again: "6 of 3 albums"). Not in the C# file: written only while a batch is stopped
+    /// part way, and a C# reader ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch: Option<CoverUpgradeTally>,
+}
+
+/// The counts one batch added, to take off again when the batch runs again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct CoverUpgradeTally {
+    pub songs_read: i32,
+    pub albums_done: i32,
+    pub kept: i32,
+    pub files: i32,
 }
 
 impl Default for CoverUpgradeRun {
@@ -242,6 +259,7 @@ impl Default for CoverUpgradeRun {
             errors: Vec::new(),
             preview: Vec::new(),
             queue: Vec::new(),
+            batch: None,
         }
     }
 }
@@ -249,6 +267,52 @@ impl Default for CoverUpgradeRun {
 impl CoverUpgradeRun {
     pub fn dry_run(&self) -> bool {
         self.mode != CoverUpgradeMode::Apply
+    }
+
+    /// Songs read, counted on the run and on the batch under way.
+    fn count_songs_read(&mut self, songs: i32) {
+        self.songs_read += songs;
+        if let Some(batch) = &mut self.batch {
+            batch.songs_read += songs;
+        }
+    }
+
+    /// One more album gone through, when the albums are known up front.
+    fn count_album_done(&mut self) {
+        if self.albums_total > 0 {
+            self.albums_done += 1;
+            if let Some(batch) = &mut self.batch {
+                batch.albums_done += 1;
+            }
+        }
+    }
+
+    fn count_kept(&mut self) {
+        self.kept += 1;
+        if let Some(batch) = &mut self.batch {
+            batch.kept += 1;
+        }
+    }
+
+    /// Songs rewritten, or that would be. Only a dry run's come off on a resume: a replace's
+    /// writes are done, and the batch run again finds those songs as sharp as the cover found.
+    fn count_files(&mut self, files: i32) {
+        self.files += files;
+        if self.dry_run()
+            && let Some(batch) = &mut self.batch
+        {
+            batch.files += files;
+        }
+    }
+
+    /// Takes off what a batch stopped part way counted, before it runs again.
+    fn forget_unfinished_batch(&mut self) {
+        if let Some(batch) = self.batch.take() {
+            self.songs_read -= batch.songs_read;
+            self.albums_done -= batch.albums_done;
+            self.kept -= batch.kept;
+            self.files -= batch.files;
+        }
     }
 
     pub fn can_resume(&self) -> bool {
@@ -811,6 +875,7 @@ impl CoverUpgradeWorker {
             self.store.update(|run| {
                 run.status = CoverUpgradeStatus::Running;
                 run.reason = None;
+                run.forget_unfinished_batch();
             });
         } else {
             // Running from the first moment, with nothing listed yet: listing the songs and
@@ -936,6 +1001,8 @@ impl CoverUpgradeWorker {
             }
 
             let batch = &current.queue[index..(index + parallel).min(current.queue.len())];
+            self.store
+                .update(|run| run.batch = Some(CoverUpgradeTally::default()));
             let looked = futures::future::join_all(batch.iter().map(|item| async move {
                 match self.process_folder(item, current, stopping).await {
                     Ok(looked) => Ok(looked),
@@ -963,6 +1030,7 @@ impl CoverUpgradeWorker {
             let reached = index + batch.len();
             self.store.update(|run| {
                 run.cursor = count(reached);
+                run.batch = None;
                 run.processed += count(batch.len());
                 run.last_folder = batch.last().map(|item| item.folder.clone());
             });
@@ -1132,12 +1200,12 @@ impl CoverUpgradeWorker {
             if let Some(song) = song {
                 songs.push(song);
             }
-            self.store.update(|r| r.songs_read += 1);
+            self.store.update(|r| r.count_songs_read(1));
             if one_will_do && read_one {
                 let at = paths.iter().position(|p| p == path).unwrap_or_default();
                 let left = paths.len() - at - 1;
                 if left > 0 {
-                    self.store.update(|r| r.songs_read += count(left));
+                    self.store.update(|r| r.count_songs_read(count(left)));
                 }
                 break;
             }
@@ -1170,11 +1238,7 @@ impl CoverUpgradeWorker {
                 break;
             }
             let id = Self::album_id(&item.folder, key);
-            self.store.update(|r| {
-                if r.albums_total > 0 {
-                    r.albums_done += 1;
-                }
-            });
+            self.store.update(CoverUpgradeRun::count_album_done);
             // Every path of the album, read or not, so a later run and a replace see them all.
             let album_paths: Vec<String> = if item.navidrome_album_id.is_some() {
                 paths.clone()
@@ -1207,7 +1271,7 @@ impl CoverUpgradeWorker {
 
             // A picked album is looked up whatever its size: it was picked.
             if picked.is_none() && shown >= run.smaller_than {
-                self.store.update(|r| r.kept += 1);
+                self.store.update(CoverUpgradeRun::count_kept);
                 continue;
             }
 
@@ -1301,7 +1365,7 @@ impl CoverUpgradeWorker {
                         looks_same: None,
                     };
                     self.store.update(|r| {
-                        r.kept += 1;
+                        r.count_kept();
                         if picked.is_some() {
                             add_row(r, none);
                         }
@@ -1329,7 +1393,7 @@ impl CoverUpgradeWorker {
             };
             if looks_same == Some(false) && picked.is_none() && !run.dry_run() {
                 // Nobody picked this album, so a different picture is not written on a guess.
-                self.store.update(|r| r.kept += 1);
+                self.store.update(CoverUpgradeRun::count_kept);
                 continue;
             }
 
@@ -1384,7 +1448,7 @@ impl CoverUpgradeWorker {
                 if add_row(r, change) {
                     r.upgraded += 1;
                 }
-                r.files += count(written);
+                r.count_files(count(written));
             });
         }
         Ok(looked)
@@ -1705,7 +1769,9 @@ impl CoverUpgradeWorker {
             return Ok(Vec::new());
         } else {
             let walk_root = PathBuf::from(&root);
-            tokio::task::spawn_blocking(move || all_files(&walk_root))
+            // The trash is not part of the library (port fix).
+            let trash = library_walk::trash_folder(&walk_root, &self.settings.current().library_actions);
+            tokio::task::spawn_blocking(move || library_walk::all_files(&walk_root, Some(&trash)))
                 .await
                 .map_err(|panic| anyhow::anyhow!(panic.to_string()))??
                 .into_iter()
@@ -1895,31 +1961,6 @@ fn is_audio(path: &str) -> bool {
         .any(|audio| eq_ignore_case(audio, extension))
 }
 
-/// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`. Symbolic links to folders
-/// are followed, and any folder that cannot be read fails the whole listing.
-fn all_files(root: &Path) -> io::Result<Vec<String>> {
-    let mut found = Vec::new();
-    let mut folders = vec![root.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder)? {
-            let entry = entry?;
-            let path = entry.path();
-            let is_dir = match entry.file_type()? {
-                kind if kind.is_symlink() => std::fs::metadata(&path).is_ok_and(|target| target.is_dir()),
-                kind => kind.is_dir(),
-            };
-            if is_dir {
-                folders.push(path);
-            } else {
-                found.push(path.to_string_lossy().into_owned());
-            }
-        }
-    }
-    Ok(found)
-}
-
-/// `Path.GetExtension`: from the last dot of the file name, or nothing when there is no dot or
-/// the name ends in one.
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

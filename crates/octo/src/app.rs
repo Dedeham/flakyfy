@@ -49,6 +49,9 @@ use crate::services::cover_art::{
 };
 use octo_media::cover::CoverArtService;
 
+use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
+use crate::services::common::TopSongsService;
+use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
     MusicBrainzClient,
@@ -63,6 +66,7 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
+use crate::services::library::ChartPlaylistService;
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
@@ -383,6 +387,12 @@ pub struct AppInner {
     pub sonic_worker: Arc<SonicAnalysisWorker>,
     /// `GeneratedPlaylistService`: the genre and decade mixes, `generated-playlists.json`.
     pub generated_playlists: Arc<GeneratedPlaylistService>,
+    /// `TopSongsService`: an artist's top songs and every chart (Apple Music's pages, Deezer and
+    /// Last.fm behind Popular right now).
+    pub top_songs: TopSongsService,
+    /// The chart lists as read-only playlists for every listener (`PopularPlaylistService`,
+    /// generalized).
+    pub chart_playlists: Arc<ChartPlaylistService>,
     /// `AddSingleton<SyncCatalogService>()`: the discovery catalog appended to a syncing
     /// client's library walk, built over the background proxy (the C# made a scope per build).
     pub sync_catalog: Arc<SyncCatalogService>,
@@ -999,6 +1009,8 @@ struct MetadataClients {
     itunes_cover_art: Arc<ITunesCoverArtLookup>,
     cover_art_aggregator: Arc<CoverArtAggregator>,
     cover_art_archive: Arc<CoverArtArchiveLookup>,
+    /// The covers the charts named for their songs, served first by the aggregator.
+    artwork_hints: Arc<ArtworkHints>,
 }
 
 impl MetadataClients {
@@ -1031,7 +1043,10 @@ impl MetadataClients {
         let itunes_cover_art = Arc::new(ITunesCoverArtLookup::new(itunes_cache));
         // Cover-art sources, registered in fallback order. The aggregator queries them
         // sequentially; adding or removing a source is a one-line change here.
+        let artwork_hints = Arc::new(ArtworkHints::new());
         let sources: Vec<Arc<dyn ICoverArtSource>> = vec![
+            // A chart's own artwork first: it names the cover exactly; the rest search by name.
+            Arc::new(HintedArtwork::new(Arc::clone(&artwork_hints))) as Arc<dyn ICoverArtSource>,
             Arc::new(DeezerCoverArtLookup::new(
                 Arc::clone(&deezer_client),
                 &current.metadata,
@@ -1050,6 +1065,7 @@ impl MetadataClients {
             itunes_cover_art,
             cover_art_aggregator: Arc::new(CoverArtAggregator::new(sources)),
             cover_art_archive: Arc::new(CoverArtArchiveLookup::new()),
+            artwork_hints,
         }
     }
 }
@@ -1626,6 +1642,66 @@ impl LibraryActions {
     }
 }
 
+/// The charts: Apple Music's pages, the chart service over them, the chart playlists, and the
+/// worker that fetches the charts at start and at each new period.
+struct Charts {
+    top_songs: TopSongsService,
+    playlists: Arc<ChartPlaylistService>,
+    warm: Arc<ChartsWarmWorker>,
+}
+
+impl Charts {
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        settings: &Arc<SettingsStore>,
+        stores: &Stores,
+        clients: &MetadataClients,
+        integrations: &Integrations,
+        navidrome: &NavidromeServices,
+        music_metadata: Arc<dyn IMusicMetadataService>,
+        apple_base_url: Option<&str>,
+    ) -> Charts {
+        let apple = Arc::new(match apple_base_url {
+            Some(base) => {
+                AppleMusicPages::with_base_url(base, crate::services::charts::apple_music_pages::INTERVAL)
+            }
+            None => AppleMusicPages::new(),
+        });
+        let top_songs = TopSongsService::new(
+            (*clients.deezer_metadata).clone(),
+            Some(integrations.last_fm.clone()),
+            music_metadata,
+            stores.external_id_registry.clone(),
+            apple,
+            Arc::clone(&clients.artwork_hints),
+            settings.clone(),
+        );
+        let playlists = ChartPlaylistService::new(
+            top_songs.clone(),
+            Arc::clone(&stores.subsonic_response_builder),
+            stores.external_id_registry.clone(),
+            navidrome.subsonic_proxy.clone(),
+            settings.clone(),
+            Clock::system(),
+        );
+        let warm = Arc::new(ChartsWarmWorker::new(
+            top_songs.clone(),
+            playlists.clone(),
+            Clock::system(),
+        ));
+        Charts {
+            top_songs,
+            playlists: Arc::new(playlists),
+            warm,
+        }
+    }
+
+    fn register_workers(&self, workers: &WorkerSupervisor) {
+        let warm = self.warm.clone();
+        workers.register("ChartsWarmWorker", move |stopping| warm.clone().run(stopping));
+    }
+}
+
 /// What a handler test swaps for fakes, as the C# `WebApplicationFactory`s did in
 /// `ConfigureServices`. Anything left `None` is the production service.
 #[derive(Default)]
@@ -1660,6 +1736,9 @@ pub struct TestServices {
     /// `TestDefaults` did for every web test written before the sign-in (they test what an
     /// endpoint does, not who may call it); the sign-in tests set it.
     pub sign_in: Option<String>,
+    /// Where Apple Music's pages are read from (a test's mock server). None in a handler test
+    /// is an address that refuses at once, so no test reaches music.apple.com.
+    pub apple_music_base_url: Option<String>,
 }
 
 /// The queues and sweeps of 5-B: the upgrade queue's worker, the weekly quality upgrade, the
@@ -1887,6 +1966,16 @@ impl AppState {
             &acquisition,
         );
         radio.register_workers(&workers);
+        let charts = Charts::build(
+            &settings,
+            &stores,
+            &clients,
+            &integrations,
+            &navidrome,
+            metadata_service.clone(),
+            None,
+        );
+        charts.register_workers(&workers);
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
             metadata_service.clone(),
@@ -2021,6 +2110,8 @@ impl AppState {
             sonic_store: radio.sonic_store,
             sonic_worker: radio.sonic_worker,
             generated_playlists: radio.generated_playlists,
+            top_songs: charts.top_songs,
+            chart_playlists: charts.playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             library_action_quarantine: library_actions.quarantine,
@@ -2150,6 +2241,23 @@ impl AppState {
             &overrides,
             &clients.deezer_metadata,
             &acquisition,
+        );
+        // Apple's pages from the test's mock server, else an address that refuses at once (a
+        // port the system handed out and let go: never port 1, which WSL's mirrored networking
+        // lets time out). The warm worker is not run.
+        let apple_base = overrides.apple_music_base_url.clone().unwrap_or_else(|| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free loopback port");
+            let address = listener.local_addr().expect("its address");
+            format!("http://{address}")
+        });
+        let charts = Charts::build(
+            &settings,
+            &stores,
+            &clients,
+            &integrations,
+            &navidrome,
+            metadata_service.clone(),
+            Some(&apple_base),
         );
         let sync_catalog = Arc::new(SyncCatalogService::new(
             navidrome.subsonic_proxy.clone(),
@@ -2287,6 +2395,8 @@ impl AppState {
             sonic_store: radio.sonic_store,
             sonic_worker: radio.sonic_worker,
             generated_playlists: radio.generated_playlists,
+            top_songs: charts.top_songs,
+            chart_playlists: charts.playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             library_action_quarantine: library_actions.quarantine,

@@ -3,6 +3,7 @@
 //! the same module paths, and `framework` holds the .NET library pieces they were built on.
 
 pub mod admin;
+pub mod charts;
 pub mod common;
 pub mod cover_art;
 pub mod fingerprint;

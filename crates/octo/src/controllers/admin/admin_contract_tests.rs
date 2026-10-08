@@ -649,7 +649,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    assert_eq!(rows.len(), 177);
+    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan).
+    assert_eq!(rows.len(), 179);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 

@@ -6,9 +6,12 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
+use octo_core::charts::chart_settings;
 use octo_core::json::dom::Node;
 use octo_core::radio::radio_provider;
+use octo_core::settings::GeneratedPlaylistSettings;
 use octo_subsonic::SubsonicReply;
+use octo_subsonic::subsonic_response_builder::chart_playlist_comment;
 use octo_subsonic::xml::XElement;
 use serde_json::Value;
 use tracing::warn;
@@ -19,7 +22,7 @@ use super::helpers_6a1::{
     queue_refresh_if_stale, xml_value,
 };
 use crate::app::AppState;
-use crate::services::library::LibraryActionPlaylistProvisioner;
+use crate::services::library::{GeneratedPlaylist, LibraryActionPlaylistProvisioner};
 use crate::services::subsonic::SubsonicResponseBuilderExt;
 
 pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Response {
@@ -69,13 +72,16 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     } else {
         Vec::new()
     };
-    if stations.is_empty() && generated.is_empty() {
+    // The chart lists, on whether or not the mixes are: after the stations, before the mixes.
+    let charts = state.chart_playlists.list(&username, &call.parameters).await;
+    if stations.is_empty() && charts.is_empty() && generated.is_empty() {
         return call.file(&relay.body, relay.content_type.as_deref());
     }
 
     let rows: Vec<serde_json::Map<String, Value>> = stations
         .iter()
         .map(|station| builder.radio_playlist_fields(station))
+        .chain(charts.iter().map(|list| chart_playlist_fields(builder, list)))
         .chain(
             generated
                 .iter()
@@ -106,6 +112,25 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
             call.file(&relay.body, relay.content_type.as_deref())
         }
     }
+}
+
+/// A chart list as a playlist row (C#'s `PopularPlaylistFields`): the keys a mix has, read-only,
+/// with its own comment and its real song count.
+pub(crate) fn chart_playlist_fields(
+    builder: &octo_subsonic::SubsonicResponseBuilder,
+    list: &GeneratedPlaylist,
+) -> serde_json::Map<String, Value> {
+    let wide = GeneratedPlaylistSettings {
+        track_count: 500,
+        ..Default::default()
+    };
+    let mut fields = builder.generated_playlist_fields(list, &wide);
+    fields.insert("songCount".into(), list.pool_size.into());
+    let chart = chart_settings::chart_from_key(&list.key).unwrap_or_default();
+    let kind = chart_settings::kind_word(&chart).unwrap_or("overall");
+    let genre = list.name.strip_prefix("Top ").unwrap_or(&list.name);
+    fields.insert("comment".into(), chart_playlist_comment(kind, genre).into());
+    fields
 }
 
 /// A row's fields as XML attributes (`XmlValue`).
@@ -222,6 +247,55 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
         let settings = state.settings.current().generated_playlists.clone();
         return builder
             .create_generated_playlist_response(format, &mix, &settings, &entries)
+            .into_response();
+    }
+
+    // A chart list (C#'s `PopularPlaylistAsync`), with the same ping first.
+    if let Some(chart) = state.chart_playlists.which(&username, &id) {
+        let mut auth_only = call.parameters.clone();
+        auth_only.shift_remove("id");
+        let check = call.proxy.relay_safe("rest/ping", &auth_only).await;
+        if !check.is_some_and(|check| is_successful_subsonic_response(&check.body, format)) {
+            return builder
+                .create_error(format, 40, "Wrong username or password")
+                .into_response();
+        }
+        let entries = state
+            .chart_playlists
+            .songs(&username, &chart, &call.parameters)
+            .await;
+        let outside = state.chart_playlists.outside_songs(&username, &chart);
+        // A song this listener's sync catalog holds goes out as the catalog describes it, as on
+        // a station: a syncing client keeps whichever description it read last.
+        let entries: Vec<Value> = entries
+            .into_iter()
+            .map(|entry| {
+                let id = entry.get("id").and_then(Value::as_str).unwrap_or("");
+                if !outside.iter().any(|song| song.id == id) {
+                    return entry;
+                }
+                match state.sync_catalog.try_get_song(&username, id) {
+                    Some(synced) => Value::Object(builder.convert_song_to_json(&synced)),
+                    None => entry,
+                }
+            })
+            .collect();
+        state
+            .radio_queues
+            .register(outside.iter().map(|song| song.id.clone()));
+        let metadata = Arc::clone(&state.metadata_service);
+        tokio::spawn(async move { metadata.prewarm_you_tube_ids(&outside, 8).await });
+        let list = state
+            .chart_playlists
+            .made_playlist(&username, &chart)
+            .unwrap_or_else(|| {
+                state
+                    .chart_playlists
+                    .playlist(&username, &chart, String::new(), 0)
+            });
+        let fields = chart_playlist_fields(builder, &list);
+        return builder
+            .create_chart_playlist_response(format, fields, &entries)
             .into_response();
     }
 

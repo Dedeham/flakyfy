@@ -194,3 +194,261 @@ impl IRadioSource for YouTubeMusicRadioSource {
         Ok(RadioAnswer::new(YOU_TUBE_MUSIC, r#match, suggested, Vec::new()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! `YouTubeMusicRadioSourceTests`: YouTube Music as a radio source: finding the seed's video,
+    //! its radio, which rows count as music, artist radio only for the very artist, and the seed
+    //! search cached.
+
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use octo_core::settings::AppSettings;
+    use parking_lot::Mutex;
+    use serde_json::{Value, json};
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
+
+    use super::*;
+
+    const ATV: &str = "MUSIC_VIDEO_TYPE_ATV";
+    const UGC: &str = "MUSIC_VIDEO_TYPE_UGC";
+
+    #[derive(Default)]
+    struct ShimState {
+        calls: Mutex<Vec<String>>,
+        search: Mutex<HashMap<String, Vec<Value>>>,
+        radio: Mutex<HashMap<String, Vec<Value>>>,
+        artist: Mutex<(Option<String>, Vec<Value>)>,
+        /// Searches answer 503, as the shim does with its gate full.
+        busy: AtomicBool,
+    }
+
+    #[derive(Clone, Default)]
+    struct Shim(Arc<ShimState>);
+
+    impl Respond for Shim {
+        fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+            let path = request.url.path().to_string();
+            self.0
+                .calls
+                .lock()
+                .push(format!("{path}?{}", request.url.query().unwrap_or("")));
+            if self.0.busy.load(Ordering::SeqCst) && path == "/ytm/search" {
+                return ResponseTemplate::new(503);
+            }
+            let query: HashMap<String, String> = request.url.query_pairs().into_owned().collect();
+            let q = |name: &str| query.get(name).cloned().unwrap_or_default();
+            let body = match path.as_str() {
+                "/ytm/search" => {
+                    json!({"tracks": self.0.search.lock().get(&format!("{}|{}", q("filter"), q("q"))).cloned().unwrap_or_default()})
+                }
+                "/ytm/radio" => {
+                    json!({"tracks": self.0.radio.lock().get(&q("videoId")).cloned().unwrap_or_default()})
+                }
+                "/ytm/artist-radio" => {
+                    let (artist, rows) = self.0.artist.lock().clone();
+                    json!({"artist": artist, "tracks": rows})
+                }
+                _ => json!({}),
+            };
+            ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json")
+        }
+    }
+
+    fn row(id: &str, title: &str, artist: &str, seconds: i32, kind: &str) -> Value {
+        json!({"videoId": id, "title": title, "artists": [artist], "durationSeconds": seconds, "videoType": kind})
+    }
+
+    async fn source() -> (YouTubeMusicRadioSource, Shim, MockServer) {
+        let server = MockServer::start().await;
+        let shim = Shim::default();
+        Mock::given(any()).respond_with(shim.clone()).mount(&server).await;
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
+        let client = Arc::new(YouTubeMusicClient::with_shim_url(Some(&server.uri())));
+        (YouTubeMusicRadioSource::new(client, settings), shim, server)
+    }
+
+    fn seed(artist: &str, title: &str, seconds: Option<i32>) -> RadioSeed {
+        RadioSeed::new(artist, title, seconds, None)
+    }
+
+    async fn ask(source: &YouTubeMusicRadioSource, seed: &RadioSeed) -> RadioAnswer {
+        source
+            .songs_like(seed, 20, &IndexMap::new())
+            .await
+            .expect("an answer")
+    }
+
+    fn searches(shim: &Shim) -> usize {
+        shim.0
+            .calls
+            .lock()
+            .iter()
+            .filter(|call| call.starts_with("/ytm/search"))
+            .count()
+    }
+
+    // YouTubeMusicRadioSourceTests.ARelease_GetsItsRadio_WithoutUploadsPodcastsOrItself
+    #[tokio::test]
+    async fn a_release_gets_its_radio_without_uploads_podcasts_or_itself() {
+        let (source, shim, _server) = source().await;
+        shim.0.search.lock().insert(
+            "songs|Massive Attack Teardrop".into(),
+            vec![row("t", "Teardrop", "Massive Attack", 330, ATV)],
+        );
+        shim.0.radio.lock().insert(
+            "t".into(),
+            vec![
+                row("t", "Teardrop", "Massive Attack", 330, ATV),
+                row("g", "Glory Box", "Portishead", 305, ATV),
+                row("u", "Teardrop (cover)", "Some Channel", 300, UGC),
+                row("p", "Episode 4", "A Podcast", 2400, PODCAST),
+            ],
+        );
+        let answer = ask(&source, &seed("Massive Attack", "Teardrop", Some(331))).await;
+        assert_eq!(answer.r#match, RadioMatch::Song);
+        assert_eq!(answer.tracks.len(), 1);
+        let track = &answer.tracks[0];
+        assert_eq!(
+            (
+                track.artist.as_str(),
+                track.title.as_str(),
+                track.you_tube_id.as_deref(),
+                track.provider.as_deref()
+            ),
+            ("Portishead", "Glory Box", Some("g"), Some(YOU_TUBE_MUSIC))
+        );
+    }
+
+    // YouTubeMusicRadioSourceTests.AnUpload_IsFoundAmongVideos_AndItsRadioKeepsUploads
+    #[tokio::test]
+    async fn an_upload_is_found_among_videos_and_its_radio_keeps_uploads() {
+        let (source, shim, _server) = source().await;
+        shim.0.search.lock().insert(
+            "videos|Missigno SPOOKY".into(),
+            vec![row("s", "SPOOKY", "Missigno", 180, UGC)],
+        );
+        shim.0.radio.lock().insert(
+            "s".into(),
+            vec![
+                row("d", "DRIFT KING", "Phonk Lord", 150, UGC),
+                row("m", "Murder In My Mind", "Kordhell", 145, ATV),
+            ],
+        );
+        let answer = ask(&source, &seed("Missigno", "SPOOKY", Some(180))).await;
+        assert_eq!(answer.r#match, RadioMatch::Song);
+        let titles: Vec<&str> = answer.tracks.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, ["DRIFT KING", "Murder In My Mind"]);
+    }
+
+    // YouTubeMusicRadioSourceTests.OnlyAnotherVersionOnYouTubeMusic_IsTheOriginalsRadio
+    #[tokio::test]
+    async fn only_another_version_on_you_tube_music_is_the_originals_radio() {
+        let (source, shim, _server) = source().await;
+        shim.0.search.lock().insert(
+            "songs|Nightcore Galaxy Faded (Nightcore)".into(),
+            vec![row("f", "Faded", "Nightcore Galaxy", 212, ATV)],
+        );
+        shim.0
+            .radio
+            .lock()
+            .insert("f".into(), vec![row("w", "Wake Me Up", "Avicii", 247, ATV)]);
+        let answer = ask(&source, &seed("Nightcore Galaxy", "Faded (Nightcore)", Some(160))).await;
+        assert_eq!(answer.r#match, RadioMatch::Original);
+        assert_eq!(answer.tracks.len(), 1);
+    }
+
+    // YouTubeMusicRadioSourceTests.AKnownVideo_NeedsNoSearch
+    #[tokio::test]
+    async fn a_known_video_needs_no_search() {
+        let (source, shim, _server) = source().await;
+        shim.0
+            .radio
+            .lock()
+            .insert("known".into(), vec![row("n", "Next", "Someone", 200, ATV)]);
+        let mut known = seed("A", "B", Some(200));
+        known.you_tube_id = Some("known".into());
+        let answer = ask(&source, &known).await;
+        assert_eq!(answer.tracks.len(), 1);
+        assert_eq!(searches(&shim), 0);
+    }
+
+    // YouTubeMusicRadioSourceTests.TheSeedSearch_IsAskedOnce
+    #[tokio::test]
+    async fn the_seed_search_is_asked_once() {
+        let (source, shim, _server) = source().await;
+        shim.0.search.lock().insert(
+            "songs|Portishead Roads".into(),
+            vec![row("r", "Roads", "Portishead", 305, ATV)],
+        );
+        let roads = seed("Portishead", "Roads", Some(305));
+        ask(&source, &roads).await;
+        ask(&source, &roads).await;
+        assert_eq!(searches(&shim), 1);
+    }
+
+    // YouTubeMusicRadioSourceTests.ABusyShim_IsAskedAgainNextTime_NotRememberedAsNothingFound
+    #[tokio::test]
+    async fn a_busy_shim_is_asked_again_next_time_not_remembered_as_nothing_found() {
+        let (source, shim, _server) = source().await;
+        shim.0.search.lock().insert(
+            "songs|Portishead Roads".into(),
+            vec![row("r", "Roads", "Portishead", 305, ATV)],
+        );
+        shim.0
+            .radio
+            .lock()
+            .insert("r".into(), vec![row("g", "Glory Box", "Portishead", 305, ATV)]);
+        let roads = seed("Portishead", "Roads", Some(305));
+
+        shim.0.busy.store(true, Ordering::SeqCst);
+        assert!(ask(&source, &roads).await.tracks.is_empty());
+        assert_eq!(searches(&shim), 1);
+
+        shim.0.busy.store(false, Ordering::SeqCst);
+        assert_eq!(ask(&source, &roads).await.tracks.len(), 1);
+    }
+
+    // YouTubeMusicRadioSourceTests.NothingFound_IsNothing
+    #[tokio::test]
+    async fn nothing_found_is_nothing() {
+        let (source, _shim, _server) = source().await;
+        let answer = ask(&source, &seed("Nobody", "Nothing", Some(100))).await;
+        assert_eq!(answer.r#match, RadioMatch::None);
+        assert!(answer.tracks.is_empty());
+    }
+
+    // YouTubeMusicRadioSourceTests.ArtistRadio_IsOnlyForTheVeryArtist
+    #[tokio::test]
+    async fn artist_radio_is_only_for_the_very_artist() {
+        for (found, used) in [("Massive Attack", true), ("Massive Attack Tribute Band", false)] {
+            let (source, shim, _server) = source().await;
+            *shim.0.artist.lock() = (Some(found.into()), vec![row("a", "Angel", found, 379, ATV)]);
+            let answer = ask(&source, &seed("Massive Attack", "", None)).await;
+            let expected = if used {
+                RadioMatch::ArtistsTrusted
+            } else {
+                RadioMatch::None
+            };
+            assert_eq!(answer.r#match, expected, "{found}");
+            assert_eq!(answer.tracks.len(), usize::from(used), "{found}");
+        }
+    }
+
+    // YouTubeMusicRadioSourceTests.Rows_TolerateMissingFields
+    #[test]
+    fn rows_tolerate_missing_fields() {
+        let rows = crate::services::you_tube::you_tube_music_client::rows(&json!({"tracks": [
+            {"videoId": "a", "title": "A"},
+            {"title": "no id"},
+            {"videoId": "b", "title": "B", "artists": ["X", null], "durationSeconds": "soon"}
+        ]}))
+        .expect("reads");
+        let ids: Vec<&str> = rows.iter().map(|r| r.video_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(rows[1].artists, ["X"]);
+        assert_eq!(rows[1].duration_seconds, None);
+    }
+}

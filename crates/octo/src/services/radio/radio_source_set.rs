@@ -212,3 +212,254 @@ impl RadioSourceSet {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! `RadioSourceSetTests`: the radio sources asked together: base weights, the seed-aware
+    //! Sounds alike weight, and a source that keeps failing is rested instead of costing every
+    //! radio its timeout.
+
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    use async_trait::async_trait;
+    use octo_core::radio::RadioMatch;
+    use octo_core::radio::radio_blend::SOUNDS_ALIKE_WHEN_UNKNOWN;
+    use octo_core::settings::AppSettings;
+    use tokio::sync::Notify;
+
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    enum Behavior {
+        Nothing,
+        Hang,
+        Fail,
+        Roads,
+    }
+
+    struct FakeSource {
+        provider: &'static str,
+        behavior: Mutex<Behavior>,
+        calls: AtomicUsize,
+        /// The first call waits for this, when set.
+        first_waits: Option<Arc<Notify>>,
+        first_done: AtomicBool,
+    }
+
+    impl FakeSource {
+        fn new(provider: &'static str, behavior: Behavior) -> Arc<FakeSource> {
+            Arc::new(FakeSource {
+                provider,
+                behavior: Mutex::new(behavior),
+                calls: AtomicUsize::new(0),
+                first_waits: None,
+                first_done: AtomicBool::new(false),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl IRadioSource for FakeSource {
+        fn provider(&self) -> &'static str {
+            self.provider
+        }
+
+        fn available(&self) -> bool {
+            true
+        }
+
+        async fn songs_like(
+            &self,
+            _seed: &RadioSeed,
+            _count: i32,
+            _auth: &IndexMap<String, String>,
+        ) -> anyhow::Result<RadioAnswer> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(gate) = &self.first_waits
+                && !self.first_done.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                gate.notified().await;
+                return Ok(RadioAnswer::nothing(self.provider));
+            }
+            let behavior = *self.behavior.lock();
+            match behavior {
+                Behavior::Nothing => Ok(RadioAnswer::nothing(self.provider)),
+                Behavior::Hang => {
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                }
+                Behavior::Fail => anyhow::bail!("down"),
+                Behavior::Roads => Ok(RadioAnswer::new(
+                    self.provider,
+                    RadioMatch::Song,
+                    vec![octo_core::last_fm::SimilarTrack::new("Portishead", "Roads", 1.0)],
+                    Vec::new(),
+                )),
+            }
+        }
+    }
+
+    fn set(settings: RadioSourceSettings, sources: Vec<Arc<dyn IRadioSource>>) -> RadioSourceSet {
+        RadioSourceSet::new(
+            sources,
+            Arc::new(SettingsStore::for_tests(AppSettings {
+                radio_sources: settings,
+                ..Default::default()
+            })),
+            None,
+        )
+    }
+
+    fn seed() -> RadioSeed {
+        RadioSeed::new("Massive Attack", "Teardrop", Some(330), None)
+    }
+
+    async fn ask(set: &RadioSourceSet) -> Vec<RadioAnswer> {
+        set.ask_all(&seed(), 10, &IndexMap::new(), None).await
+    }
+
+    // RadioSourceSetTests.BaseWeights_AreTheReasonedStartingPoints
+    #[test]
+    fn base_weights_are_the_reasoned_starting_points() {
+        let weights = set(RadioSourceSettings::default(), Vec::new()).weights(None, false);
+        assert_eq!(weights[YOU_TUBE_MUSIC], 1.0);
+        assert_eq!(weights[LAST_FM], 0.9);
+        assert_eq!(weights[LISTEN_BRAINZ], 0.7);
+        assert_eq!(weights[SOUNDS_ALIKE], 0.4);
+        assert_eq!(weights[LIBRARY], 1.0);
+    }
+
+    // RadioSourceSetTests.WhenNoCatalogKnowsTheSong_SoundsAlikeCountsMore_UnlessItWasLeftOut
+    #[test]
+    fn when_no_catalog_knows_the_song_sounds_alike_counts_more_unless_it_was_left_out() {
+        let with = |weight: f64| {
+            set(
+                RadioSourceSettings {
+                    sounds_alike_weight: weight,
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .weights(None, true)[SOUNDS_ALIKE]
+        };
+        assert_eq!(with(0.4), SOUNDS_ALIKE_WHEN_UNKNOWN);
+        assert_eq!(with(1.2), 1.2);
+        assert_eq!(with(0.0), 0.0);
+    }
+
+    // RadioSourceSetTests.AnAdminWeightOutsideTheBounds_IsKept
+    #[test]
+    fn an_admin_weight_outside_the_bounds_is_kept() {
+        let weights = set(
+            RadioSourceSettings {
+                last_fm_weight: 0.1,
+                you_tube_music_weight: 2.5,
+                listen_brainz_weight: 9.0,
+                ..Default::default()
+            },
+            Vec::new(),
+        )
+        .weights(None, false);
+        assert!((weights[LAST_FM] - 0.1).abs() < 1e-6);
+        assert!((weights[YOU_TUBE_MUSIC] - 2.5).abs() < 1e-6);
+        assert!((weights[LISTEN_BRAINZ] - 3.0).abs() < 1e-6);
+    }
+
+    // RadioSourceSetTests.ASlowSource_IsLeftOutOfOneRadio_TheOthersStillAnswer
+    #[tokio::test]
+    async fn a_slow_source_is_left_out_of_one_radio_the_others_still_answer() {
+        let slow = FakeSource::new(YOU_TUBE_MUSIC, Behavior::Hang);
+        let quick = FakeSource::new(LAST_FM, Behavior::Roads);
+        let set = set(RadioSourceSettings::default(), vec![slow, quick]);
+        set.set_source_timeout(Duration::from_millis(100));
+        let answers = ask(&set).await;
+        let of = |provider: &str| answers.iter().find(|a| a.provider == provider).expect("answered");
+        assert_eq!(of(YOU_TUBE_MUSIC).r#match, RadioMatch::None);
+        assert_eq!(of(LAST_FM).tracks.len(), 1);
+    }
+
+    // RadioSourceSetTests.ASourceThatKeepsFailing_IsRested_ThenComesBack
+    #[tokio::test]
+    async fn a_source_that_keeps_failing_is_rested_then_comes_back() {
+        let failing = FakeSource::new(LISTEN_BRAINZ, Behavior::Fail);
+        let set = set(RadioSourceSettings::default(), vec![failing.clone()]);
+        set.set_rest(TimeDelta::milliseconds(300));
+        for _ in 0..FAILURES_BEFORE_REST {
+            ask(&set).await;
+        }
+        assert!(set.available().is_empty());
+        ask(&set).await;
+        assert_eq!(
+            failing.calls.load(std::sync::atomic::Ordering::SeqCst),
+            FAILURES_BEFORE_REST as usize
+        );
+
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(set.available().len(), 1);
+    }
+
+    // RadioSourceSetTests.ASuccess_ClearsTheFailures
+    #[tokio::test]
+    async fn a_success_clears_the_failures() {
+        let flaky = FakeSource::new(LISTEN_BRAINZ, Behavior::Fail);
+        let set = set(RadioSourceSettings::default(), vec![flaky.clone()]);
+        for _ in 0..FAILURES_BEFORE_REST - 1 {
+            ask(&set).await;
+        }
+        *flaky.behavior.lock() = Behavior::Nothing;
+        ask(&set).await;
+        *flaky.behavior.lock() = Behavior::Fail;
+        ask(&set).await;
+        assert_eq!(set.available().len(), 1);
+    }
+
+    // RadioSourceSetTests.AnAnswerToACallFromBeforeTheRest_DoesNotEndTheRest
+    #[tokio::test]
+    async fn an_answer_to_a_call_from_before_the_rest_does_not_end_the_rest() {
+        let gate = Arc::new(Notify::new());
+        let source = Arc::new(FakeSource {
+            provider: LISTEN_BRAINZ,
+            behavior: Mutex::new(Behavior::Fail),
+            calls: AtomicUsize::new(0),
+            first_waits: Some(gate.clone()),
+            first_done: AtomicBool::new(false),
+        });
+        let set = Arc::new(set(RadioSourceSettings::default(), vec![source]));
+        set.set_source_timeout(Duration::from_secs(30));
+        let early = {
+            let set = set.clone();
+            tokio::spawn(async move { ask(&set).await })
+        };
+        // Let the early call start and wait at its gate.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        for _ in 0..FAILURES_BEFORE_REST {
+            ask(&set).await;
+        }
+        assert!(set.available().is_empty());
+
+        gate.notify_one();
+        early.await.expect("the early call ends");
+        assert!(set.available().is_empty());
+    }
+
+    // RadioSourceSetTests.OnlyTheSourcesAskedFor_AreAsked
+    #[tokio::test]
+    async fn only_the_sources_asked_for_are_asked() {
+        let last_fm = FakeSource::new(LAST_FM, Behavior::Nothing);
+        let ytm = FakeSource::new(YOU_TUBE_MUSIC, Behavior::Nothing);
+        let set = set(
+            RadioSourceSettings {
+                you_tube_music: true,
+                ..Default::default()
+            },
+            vec![last_fm.clone(), ytm],
+        );
+        let not_last_fm = |source: &dyn IRadioSource| source.provider() != LAST_FM;
+        let answers = set
+            .ask_all(&seed(), 10, &IndexMap::new(), Some(&not_last_fm))
+            .await;
+        let providers: Vec<&str> = answers.iter().map(|a| a.provider.as_str()).collect();
+        assert_eq!(providers, [YOU_TUBE_MUSIC]);
+        assert_eq!(last_fm.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}

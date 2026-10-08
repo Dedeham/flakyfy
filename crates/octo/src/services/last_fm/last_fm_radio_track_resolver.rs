@@ -556,6 +556,127 @@ mod tests {
         assert_eq!(song.map(|song| song.id), Some(expected.id));
     }
 
+    // LastFmRadioCoreTests.Resolver_KeepsTheVideoASourceNamed_WithoutReplacingOneAlreadyFound
+    #[tokio::test]
+    async fn resolver_keeps_the_video_a_source_named_without_replacing_one_already_found() {
+        let metadata = Arc::new(FakeMetadata::default());
+        let (resolver, _server) = resolver(
+            r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[]}}}"#,
+            metadata.clone(),
+        )
+        .await;
+        let id =
+            resolver
+                .registry
+                .register(octo_core::soulseek::soulseek_metadata_service::SoulseekRouting {
+                    artist: Some("A".into()),
+                    title: Some("T".into()),
+                    duration: Some(180),
+                    ..Default::default()
+                });
+        metadata.hits.lock().insert(
+            ("A".into(), "T".into()),
+            Song {
+                id: id.clone(),
+                artist: "A".into(),
+                title: "T".into(),
+                is_local: false,
+                ..Default::default()
+            },
+        );
+        let video = |resolver: &LastFmRadioTrackResolver| {
+            resolver
+                .registry
+                .lookup(&id)
+                .expect("known")
+                .lock()
+                .you_tube_id
+                .clone()
+        };
+
+        resolver
+            .resolve("A", "T", Some(180), &IndexMap::new(), Some("video-1"))
+            .await;
+        assert_eq!(video(&resolver).as_deref(), Some("video-1"));
+
+        resolver
+            .resolve("A", "T", Some(180), &IndexMap::new(), Some("video-2"))
+            .await;
+        assert_eq!(video(&resolver).as_deref(), Some("video-1"));
+    }
+
+    /// Rust-only (446d393, 7a8cc5f): the library is searched with the main artist and the core
+    /// title, a seed is a song, an album's first song or an artist's name, and the neighbors are
+    /// the album's other songs and the genre's, never the seed.
+    #[tokio::test]
+    async fn the_library_is_searched_plainly_and_seeds_are_songs_albums_or_artists() {
+        assert_eq!(
+            library_query("Kordhell, Scarlxrd", "Murder In My Mind (Official Video)"),
+            "Kordhell Murder In My Mind"
+        );
+        assert_eq!(library_query("A feat. B", ""), "A");
+
+        let server = MockServer::start().await;
+        let answer = |path: &str, id: &str| -> String {
+            let body = match (path, id) {
+                ("/rest/getAlbum", "al-1") => {
+                    r#""album":{"id":"al-1","artist":"Album Artist","song":[{"id":"s1","title":"One","artist":"X","albumId":"al-1","genre":"Phonk"},{"id":"s2","title":"Two","artist":"X","albumId":"al-1","duration":200.5}]}"#
+                }
+                ("/rest/getAlbum", "al-2") => {
+                    r#""album":{"id":"al-2","song":[{"id":"s1","title":"One","artist":"X","albumId":"al-2","genre":"Phonk"},{"id":"s3","title":"Three","artist":"X"}]}"#
+                }
+                ("/rest/getArtist", "ar-1") => r#""artist":{"id":"ar-1","name":"Massive Attack"}"#,
+                ("/rest/getRandomSongs", _) => {
+                    r#""randomSongs":{"song":[{"id":"g1","title":"G","artist":"Y"},{"id":"s1","title":"One","artist":"X"}]}"#
+                }
+                _ => r#""error":{"code":70}"#,
+            };
+            format!(r#"{{"subsonic-response":{{"status":"ok",{body}}}}}"#)
+        };
+        Mock::given(any())
+            .respond_with(move |request: &wiremock::Request| {
+                let id = request
+                    .url
+                    .query_pairs()
+                    .find(|(key, _)| key == "id")
+                    .map(|(_, value)| value.into_owned())
+                    .unwrap_or_default();
+                ResponseTemplate::new(200).set_body_string(answer(request.url.path(), &id))
+            })
+            .mount(&server)
+            .await;
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(server.uri()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let resolver = LastFmRadioTrackResolver::new(
+            SubsonicProxyService::new(settings),
+            Arc::new(FakeMetadata::default()),
+            Arc::new(ExternalIdRegistry::in_memory()),
+        );
+        let no_auth = IndexMap::new();
+        // A fractional length is a song the C# reader threw on: the album reads as no seed.
+        assert!(resolver.read_seed("al-1", &no_auth).await.is_none());
+        let album = resolver.read_seed("al-2", &no_auth).await.expect("an album seed");
+        assert_eq!(album.artist, "X");
+        let first = album.song.expect("its first song");
+        assert_eq!(first.id, "s1");
+        let artist = resolver
+            .read_seed("ar-1", &no_auth)
+            .await
+            .expect("an artist seed");
+        assert!(artist.song.is_none());
+        assert_eq!(artist.artist, "Massive Attack");
+        assert!(resolver.read_seed("nothing", &no_auth).await.is_none());
+
+        let neighbours = resolver.library_neighbours(&first, 10, &no_auth).await;
+        let ids: Vec<&str> = neighbours.iter().map(|song| song.id.as_str()).collect();
+        assert_eq!(ids, ["s3", "g1"]);
+    }
+
     /// Rust-only: a hit that is another recording is passed over, an answer that is not the
     /// shape read gives no match, and a scrobbled external id is its route.
     #[tokio::test]

@@ -2347,7 +2347,12 @@ mod tests {
     async fn the_radio_is_wired_as_program_cs_registered_it() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
-        for name in ["LastFmRadioWarmupService", "LastFmRadioRefreshWorker"] {
+        for name in [
+            "LastFmRadioWarmupService",
+            "LastFmRadioRefreshWorker",
+            "SonicAnalysisWorker",
+            "RadioOutcomeStore",
+        ] {
             assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
         }
 
@@ -2363,6 +2368,11 @@ mod tests {
                 .ends_with("lastfm-radio-state.json")
         );
         assert!(state.generated_playlists.find("alice", "og1").is_none());
+        // Radio's other state files sit beside the radio state, and every source has a weight.
+        assert!(state.radio_outcomes.path().ends_with("radio-outcomes.json"));
+        assert!(state.sonic_store.path().ends_with("sonic-features.json"));
+        assert_eq!(state.sonic_worker.status().state, "Waiting");
+        assert_eq!(state.radio_sources.weights(None, false).len(), 5);
         let token = state
             .last_fm_radio_stream_sessions
             .issue("alice", "or1", [("u", "alice")], None);

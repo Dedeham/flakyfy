@@ -666,3 +666,332 @@ async fn radio_off_builds_nothing_and_a_cancelled_caller_is_told() {
         .expect_err("the caller cancelled");
     assert!(error.is::<OperationCanceled>());
 }
+
+// ---- Group L: one-star bans, spacing, the bookkeeping tags and stations from every source ----
+
+// LastFmRadioCoreTests.OneStar_KeepsASongOffEveryStationAndAnyOtherRatingLiftsIt
+#[tokio::test]
+async fn one_star_keeps_a_song_off_every_station_and_any_other_rating_lifts_it() {
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            minimum_plays: 3,
+            radio_track_count: 10,
+            ..Default::default()
+        },
+        RecommendationHandler,
+    )
+    .await;
+    for index in 0..3 {
+        record(
+            &fixture.state,
+            LastFmRadioPlay {
+                artist: "Fresh".into(),
+                title: format!("Fresh Seed {index}"),
+                genre: Some("Electronica".into()),
+                played_at_utc: Utc::now() - TimeDelta::days(20) - TimeDelta::hours(index),
+                ..Default::default()
+            },
+        );
+    }
+    assert!(
+        fixture
+            .state
+            .set_radio_ban("alice", "id-0", "Similar Artist 0", "similar-0", true)
+    );
+    assert!(
+        fixture
+            .state
+            .radio_ban_keys("alice")
+            .contains(&seed_normalizer::track_key("Similar Artist 0", "similar-0"))
+    );
+    let stations = build(&fixture.service).await;
+    let tracks: Vec<&LastFmRadioTrack> = stations.iter().flat_map(|station| &station.tracks).collect();
+    assert!(!tracks.is_empty());
+    assert!(
+        !tracks
+            .iter()
+            .any(|track| track.title == "similar-0" && track.artist == "Similar Artist 0")
+    );
+
+    assert!(
+        fixture
+            .state
+            .set_radio_ban("alice", "id-0", "Similar Artist 0", "similar-0", false)
+    );
+    assert!(fixture.state.get_user("alice").radio_bans.is_empty());
+    assert!(
+        !fixture
+            .state
+            .set_radio_ban("alice", "id-0", "Similar Artist 0", "similar-0", false)
+    );
+}
+
+// LastFmRadioCoreTests.OneStar_PullsTheSongFromTheStationsItIsOnNow
+#[tokio::test]
+async fn one_star_pulls_the_song_from_the_stations_it_is_on_now() {
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            ..Default::default()
+        },
+        Nothing,
+    )
+    .await;
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    };
+    fixture.state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: "s1".into(),
+            key: "your-mix".into(),
+            name: "Your Mix".into(),
+            owner: "alice".into(),
+            tracks: vec![track("A", "Keep"), track("B", "Gone")],
+            ..Default::default()
+        }],
+    );
+    assert!(fixture.state.set_radio_ban("alice", "id-b", "B", "Gone", true));
+    let user = fixture.state.get_user("alice");
+    assert_eq!(user.stations.len(), 1);
+    let titles: Vec<&str> = user.stations[0].tracks.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["Keep"]);
+}
+
+// LastFmRadioCoreTests.ArtistStation_SpreadsItsArtistsAcrossTheFirstFiveSongs
+#[tokio::test]
+async fn artist_station_spreads_its_artists_across_the_first_five_songs() {
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            minimum_plays: 3,
+            radio_track_count: 10,
+            ..Default::default()
+        },
+        RecommendationHandler,
+    )
+    .await;
+    for index in 0..3 {
+        record(
+            &fixture.state,
+            LastFmRadioPlay {
+                artist: "Fresh".into(),
+                title: format!("Fresh Seed {index}"),
+                genre: Some("Electronica".into()),
+                played_at_utc: Utc::now() - TimeDelta::days(20) - TimeDelta::hours(index),
+                ..Default::default()
+            },
+        );
+    }
+    let stations = build(&fixture.service).await;
+    let fresh: Vec<&LastFmRadioStation> = stations
+        .iter()
+        .filter(|station| station.kind == LastFmRadioStationKind::Artist && station.name == "Fresh Radio")
+        .collect();
+    assert_eq!(fresh.len(), 1);
+    let artists: std::collections::HashSet<String> = fresh[0]
+        .tracks
+        .iter()
+        .take(5)
+        .map(|track| octo_core::common::dotnet::to_lower_invariant(&track.artist))
+        .collect();
+    assert_eq!(artists.len(), 5);
+}
+
+// LastFmRadioCoreTests.BookkeepingTags_AreNotGenres_InEitherSpelling
+#[test]
+fn bookkeeping_tags_are_not_genres_in_either_spelling() {
+    use octo_core::last_fm::last_fm_radio_recommendation_service::canonical_tag;
+    for tag in ["favourites", "Favourite Songs", "favorites", "favorite song"] {
+        assert_eq!(canonical_tag(tag), "", "{tag}");
+    }
+}
+
+// LastFmRadioCoreTests.ASeedsListsFromEverySource_AreOneSeed
+#[test]
+fn a_seeds_lists_from_every_source_are_one_seed() {
+    use octo_core::last_fm::last_fm_radio_recommendation_service::seed_group;
+    for (source, group) in [
+        ("youtube-music:tag:trip hop", "tag:trip hop"),
+        ("tag:trip hop", "tag:trip hop"),
+        ("lastfm:massive attack - teardrop", "massive attack - teardrop"),
+        ("listenbrainz:artist:Portishead", "artist:Portishead"),
+        ("history", "history"),
+        ("artist:Sunn O))): live", "artist:Sunn O))): live"),
+    ] {
+        assert_eq!(seed_group(source), group, "{source}");
+    }
+}
+
+/// A radio source for station tests: always the same answer, or one that never comes.
+struct StationSource {
+    provider: &'static str,
+    r#match: octo_core::radio::RadioMatch,
+    count: usize,
+    score: f64,
+    hangs: bool,
+    asked: parking_lot::Mutex<Vec<octo_core::radio::RadioSeed>>,
+}
+
+impl StationSource {
+    fn new(provider: &'static str, count: usize) -> Arc<StationSource> {
+        Arc::new(StationSource {
+            provider,
+            r#match: octo_core::radio::RadioMatch::Song,
+            count,
+            score: 1.0,
+            hangs: false,
+            asked: parking_lot::Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::services::radio::IRadioSource for StationSource {
+    fn provider(&self) -> &'static str {
+        self.provider
+    }
+
+    fn available(&self) -> bool {
+        true
+    }
+
+    async fn songs_like(
+        &self,
+        seed: &octo_core::radio::RadioSeed,
+        _count: i32,
+        _auth: &indexmap::IndexMap<String, String>,
+    ) -> anyhow::Result<octo_core::radio::RadioAnswer> {
+        self.asked.lock().push(seed.clone());
+        if self.hangs {
+            std::future::pending::<()>().await;
+        }
+        let provider = self.provider;
+        Ok(octo_core::radio::RadioAnswer::new(
+            provider,
+            self.r#match,
+            (0..self.count)
+                .map(|i| {
+                    octo_core::last_fm::SimilarTrack::new(
+                        format!("{provider} artist {i}"),
+                        format!("{provider} song {i} for {}", seed.title),
+                        self.score,
+                    )
+                    .with_duration(Some(180))
+                    .with_provider(Some(provider.to_string()))
+                })
+                .collect(),
+            Vec::new(),
+        ))
+    }
+}
+
+/// The C# `WithSources`: a learned listener, and Last.fm (the fake) beside the given sources.
+async fn with_sources(extra: Vec<Arc<dyn crate::services::radio::IRadioSource>>) -> Fixture {
+    let mut fixture = fixture(learned(), RecommendationHandler).await;
+    record_twelve(&fixture.state);
+    let last_fm = Arc::new(LastFmService::with_base_url(
+        fixture.settings.clone(),
+        &format!("{}/", fixture._server.uri()),
+    ));
+    let mut sources: Vec<Arc<dyn crate::services::radio::IRadioSource>> = vec![Arc::new(
+        crate::services::radio::LastFmRadioSource::new(last_fm.clone()),
+    )];
+    sources.extend(extra);
+    let set = Arc::new(crate::services::radio::RadioSourceSet::new(
+        sources,
+        fixture.settings.clone(),
+        None,
+    ));
+    set.set_source_timeout(std::time::Duration::from_millis(200));
+    fixture.service = LastFmRadioRecommendationService::new(
+        last_fm,
+        fixture.state.clone(),
+        fixture.settings.clone(),
+        Some(set),
+    );
+    fixture
+}
+
+// LastFmRadioCoreTests.YourMix_DrawsOnEverySource_AndRemembersWhichSuggestedEachSong
+#[tokio::test]
+async fn your_mix_draws_on_every_source_and_remembers_which_suggested_each_song() {
+    use octo_core::radio::radio_provider::{HISTORY, LAST_FM, LISTEN_BRAINZ, YOU_TUBE_MUSIC};
+    let listen_brainz = Arc::new(StationSource {
+        // A count of shared sessions, as ListenBrainz scores: ranked by position, it cannot swamp
+        // the rest.
+        score: 216.0,
+        ..Arc::into_inner(StationSource::new(LISTEN_BRAINZ, 15)).expect("one owner")
+    });
+    let fixture = with_sources(vec![StationSource::new(YOU_TUBE_MUSIC, 15), listen_brainz]).await;
+    let stations = build(&fixture.service).await;
+    let mix = stations
+        .iter()
+        .find(|station| station.kind == LastFmRadioStationKind::YourMix)
+        .expect("Your Mix");
+    // This fake's Last.fm answers every seed with the same 15 songs, so whether one of them is
+    // drawn is chance; the sources that answer each seed differently always are.
+    let sources: std::collections::HashSet<&str> =
+        mix.tracks.iter().map(|track| track.source.as_str()).collect();
+    assert!(sources.contains(YOU_TUBE_MUSIC), "{sources:?}");
+    assert!(sources.contains(LISTEN_BRAINZ), "{sources:?}");
+    assert!(
+        sources
+            .iter()
+            .all(|source| [LAST_FM, YOU_TUBE_MUSIC, LISTEN_BRAINZ, HISTORY].contains(source))
+    );
+    for track in mix
+        .tracks
+        .iter()
+        .filter(|track| track.title.starts_with('T') && track.artist.starts_with("Artist "))
+    {
+        assert_eq!(track.source, HISTORY);
+    }
+    assert!(
+        mix.tracks
+            .iter()
+            .filter(|track| track.source == LISTEN_BRAINZ)
+            .count()
+            < mix.tracks.len() / 2,
+        "ListenBrainz's large scores do not take over the mix"
+    );
+}
+
+// LastFmRadioCoreTests.ASourceThatNeverAnswers_DoesNotStopTheStations
+#[tokio::test]
+async fn a_source_that_never_answers_does_not_stop_the_stations() {
+    use octo_core::radio::radio_provider::YOU_TUBE_MUSIC;
+    let hanging = Arc::new(StationSource {
+        hangs: true,
+        ..Arc::into_inner(StationSource::new(YOU_TUBE_MUSIC, 10)).expect("one owner")
+    });
+    let fixture = with_sources(vec![hanging]).await;
+    let started = std::time::Instant::now();
+    let stations = build(&fixture.service).await;
+    assert!(
+        stations
+            .iter()
+            .any(|station| station.kind == LastFmRadioStationKind::YourMix && !station.tracks.is_empty())
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+// LastFmRadioCoreTests.AnArtistStation_AsksTheOtherSources_NotLastFmAgain
+#[tokio::test]
+async fn an_artist_station_asks_the_other_sources_not_last_fm_again() {
+    use octo_core::radio::radio_provider::{LAST_FM, YOU_TUBE_MUSIC};
+    let last_fm = StationSource::new(LAST_FM, 5);
+    let ytm = StationSource::new(YOU_TUBE_MUSIC, 10);
+    let fixture = with_sources(vec![last_fm.clone(), ytm.clone()]).await;
+    build(&fixture.service).await;
+    // An artist station's seed has no title; Last.fm answered it with its own top tracks.
+    assert!(ytm.asked.lock().iter().any(|seed| seed.title.is_empty()));
+    assert!(!last_fm.asked.lock().iter().any(|seed| seed.title.is_empty()));
+}

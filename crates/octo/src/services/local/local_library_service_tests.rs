@@ -280,7 +280,13 @@ async fn the_mappings_fixture_round_trips_byte_for_byte() {
     assert_eq!(mappings[1].source_peer, None);
 
     // A forget of a path nobody has writes nothing; registering again writes the same file.
-    assert!(!f.service.forget_mapping("/nowhere.flac").await.expect("no write"));
+    assert!(
+        f.service
+            .forget_mapping("/nowhere.flac")
+            .await
+            .expect("no write")
+            .is_empty()
+    );
     {
         let mut cached = f.service.mappings.lock();
         let map = f.service.loaded(&mut cached).expect("loaded");
@@ -304,13 +310,19 @@ async fn forget_mapping_drops_the_path_ignoring_case() {
             .expect("registered");
     }
 
-    assert!(
-        f.service
-            .forget_mapping(&f.path("TWO.FLAC"))
-            .await
-            .expect("written")
+    let forgotten = f
+        .service
+        .forget_mapping(&f.path("TWO.FLAC"))
+        .await
+        .expect("written");
+    assert_eq!(
+        forgotten
+            .iter()
+            .map(|m| m.external_id.as_str())
+            .collect::<Vec<_>>(),
+        ["2"]
     );
-    assert!(!f.service.forget_mapping("  ").await.expect("nothing"));
+    assert!(f.service.forget_mapping("  ").await.expect("nothing").is_empty());
     f.service
         .register_downloaded_song(
             &song("4", "four", Some("soulseek"), Some("4")),

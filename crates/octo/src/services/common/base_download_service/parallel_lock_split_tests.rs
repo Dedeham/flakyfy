@@ -130,8 +130,19 @@ impl ILocalLibraryService for CountingLibrary {
         self.inner.find_mapping_by_tags(artist, title, album).await
     }
 
-    async fn forget_mapping(&self, path: &str) -> anyhow::Result<bool> {
+    async fn forget_mapping(
+        &self,
+        path: &str,
+    ) -> anyhow::Result<Vec<crate::services::local::LocalSongMapping>> {
         self.inner.forget_mapping(path).await
+    }
+
+    async fn restore_mappings(
+        &self,
+        mappings: &[crate::services::local::LocalSongMapping],
+        path: &str,
+    ) -> anyhow::Result<()> {
+        self.inner.restore_mappings(mappings, path).await
     }
 
     async fn trigger_library_scan(&self, force: bool) -> bool {

@@ -98,7 +98,7 @@ fn restore_puts_the_file_back_where_it_came_from() {
 
     let moved = quarantine.move_file(&track, &f.root, LibraryAction::Delete, "alice");
     let moved_to = moved.quarantine_path.expect("a path");
-    let restored = quarantine.restore(&moved_to);
+    let restored = quarantine.restore(&moved_to, None);
 
     assert!(restored.moved);
     assert!(exists(&track.absolute_path));
@@ -117,7 +117,7 @@ fn restore_works_from_the_sidecar_manifest_alone() {
     assert!(exists(&format!("{moved_to}.octo-action.json")));
 
     // A completely separate instance, with no shared state at all.
-    assert!(default_quarantine().restore(&moved_to).moved);
+    assert!(default_quarantine().restore(&moved_to, None).moved);
     assert!(exists(&track.absolute_path));
 }
 
@@ -132,7 +132,7 @@ fn restore_something_already_at_the_original_path_refuses_rather_than_overwritin
     // A replacement arrived in the meantime.
     f.write_track("Artist/Album/Song.flac", 2048);
 
-    let restored = quarantine.restore(&moved_to);
+    let restored = quarantine.restore(&moved_to, None);
     assert!(!restored.moved);
     assert!(exists(&moved_to));
 }
@@ -278,12 +278,12 @@ fn a_move_writes_the_manifest_the_csharp_wrote() {
 fn a_restore_without_a_readable_manifest_is_refused() {
     let f = Fixture::new();
     let lost = f.write_track(".octo-trash/2026-01-01/Song.flac", 8);
-    let restored = default_quarantine().restore(&lost.absolute_path);
+    let restored = default_quarantine().restore(&lost.absolute_path, None);
     assert_eq!(
         restored.error.as_deref(),
         Some("no manifest, so the original path is unknown")
     );
-    assert!(!default_quarantine().restore("/nonexistent/x.flac").moved);
+    assert!(!default_quarantine().restore("/nonexistent/x.flac", None).moved);
 }
 
 #[test]
@@ -296,4 +296,138 @@ fn dates_and_relative_paths_follow_dotnet() {
     assert_eq!(get_relative_path("/music", "/other/B.flac"), "../other/B.flac");
     // StartsWith("..") also refuses a top folder whose name starts with two dots.
     assert!(get_relative_path("/music", "/music/..odd/B.flac").starts_with(".."));
+}
+
+// ---- QuarantineContainmentTests (374dac8): the last check before a file leaves the library:
+// inside the music folder, not in the trash already, and a real file. -----------------------
+
+#[test]
+fn a_folder_that_only_starts_with_the_music_folders_name_is_outside() {
+    let f = Fixture::new();
+    let full = format!("{}-old/Song.flac", f.root);
+    std::fs::create_dir_all(Path::new(&full).parent().expect("a folder")).expect("folders");
+    std::fs::write(&full, [1u8, 2, 3]).expect("written");
+
+    let moved = default_quarantine().move_file(&track(&full, 3), &f.root, LibraryAction::Delete, "alice");
+
+    assert!(!moved.moved);
+    assert_eq!(
+        moved.error.as_deref(),
+        Some("the file is not under the music root")
+    );
+    assert!(exists(&full));
+}
+
+#[test]
+fn a_path_that_climbs_out_is_outside() {
+    let f = Fixture::new();
+    let real = f._dir.path().join("elsewhere").join("Song.flac");
+    std::fs::create_dir_all(real.parent().expect("a folder")).expect("folders");
+    std::fs::write(&real, [1u8, 2, 3]).expect("written");
+    let climbing = format!("{}/../elsewhere/Song.flac", f.root);
+
+    assert!(
+        !default_quarantine()
+            .move_file(&track(&climbing, 3), &f.root, LibraryAction::Delete, "alice")
+            .moved
+    );
+    assert!(real.exists());
+}
+
+#[test]
+fn a_file_in_the_trash_already_is_not_moved_again() {
+    let f = Fixture::new();
+    let file = f.write_track(".octo-trash/2026-10-01/Song.flac", 3);
+
+    let moved = default_quarantine().move_file(&file, &f.root, LibraryAction::Delete, "alice");
+
+    assert!(!moved.moved);
+    assert_eq!(moved.error.as_deref(), Some("the file is in the trash already"));
+    assert!(exists(&file.absolute_path));
+}
+
+#[test]
+fn a_song_inside_the_music_folder_goes_to_the_trash() {
+    let f = Fixture::new();
+    let file = f.write_track("A/B/Song.flac", 3);
+
+    let moved = default_quarantine().move_file(&file, &f.root, LibraryAction::Delete, "alice");
+
+    assert!(moved.moved);
+    assert!(!exists(&file.absolute_path));
+    assert!(
+        moved
+            .quarantine_path
+            .as_deref()
+            .expect("a place in the trash")
+            .starts_with(&format!("{}/.octo-trash", f.root))
+    );
+}
+
+/// Rust-only: a link inside the music folder is not a song file, whatever it points at.
+#[cfg(unix)]
+#[test]
+fn a_link_is_not_moved() {
+    let f = Fixture::new();
+    let target = f.write_track("A/B/Real.flac", 3);
+    let link = format!("{}/A/B/Link.flac", f.root);
+    std::os::unix::fs::symlink(&target.absolute_path, &link).expect("a link");
+
+    let moved = default_quarantine().move_file(&track(&link, 3), &f.root, LibraryAction::Delete, "alice");
+
+    assert!(!moved.moved);
+    assert_eq!(
+        moved.error.as_deref(),
+        Some("the file is a link, not a song file")
+    );
+    assert!(Path::new(&link).exists());
+}
+
+/// Rust-only: the sidecars go with the song into the trash and come back with it, and a song
+/// with another copy beside it keeps the lyrics they share.
+#[test]
+fn sidecars_go_to_the_trash_with_the_song_and_come_back() {
+    let f = Fixture::new();
+    let file = f.write_track("Daft Punk/Discovery/03 - Digital Love.flac", 3);
+    let folder = format!("{}/Daft Punk/Discovery", f.root);
+    for name in [
+        "03 - Digital Love.lrc",
+        "03 - Digital Love.TXT",
+        "cover.jpg",
+        "04 - Other.lrc",
+    ] {
+        std::fs::write(format!("{folder}/{name}"), name).expect("written");
+    }
+    let mut sidecars = LibraryActionQuarantine::sidecars_of(&file.absolute_path);
+    sidecars.sort();
+    assert_eq!(
+        sidecars,
+        [
+            format!("{folder}/03 - Digital Love.TXT"),
+            format!("{folder}/03 - Digital Love.lrc")
+        ]
+    );
+
+    let quarantine = default_quarantine();
+    let moved = quarantine.move_file_with_sidecars(&file, &f.root, LibraryAction::Delete, "alice", true);
+    assert!(moved.moved);
+    let trashed = moved.quarantine_path.expect("a place in the trash");
+    let mut names = quarantine.sidecar_names(&trashed);
+    names.sort();
+    assert_eq!(names, ["03 - Digital Love.TXT", "03 - Digital Love.lrc"]);
+    assert!(!exists(&format!("{folder}/03 - Digital Love.lrc")));
+    assert!(exists(&format!("{folder}/cover.jpg")));
+
+    // Back only into the music folder.
+    assert!(!quarantine.restore(&trashed, Some("/elsewhere")).moved);
+    let restored = quarantine.restore(&trashed, Some(&f.root));
+    assert!(restored.moved);
+    assert_eq!(
+        std::fs::read_to_string(format!("{folder}/03 - Digital Love.lrc")).expect("back"),
+        "03 - Digital Love.lrc"
+    );
+    assert!(quarantine.sidecar_names(&trashed).is_empty());
+
+    std::fs::write(format!("{folder}/03 - Digital Love.mp3"), "the other copy").expect("written");
+    assert!(LibraryActionQuarantine::sidecars_of(&file.absolute_path).is_empty());
 }

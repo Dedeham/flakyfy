@@ -133,6 +133,28 @@ pub fn look_alike(a: u64, b: u64) -> bool {
     (a ^ b).count_ones() <= LIKENESS_TOLERANCE
 }
 
+/// How much fine detail the picture holds at `side` px: the average change, in grey levels, when
+/// it is shrunk to half that and grown back. A picture that was blown up from a small one has
+/// nothing at that scale to lose, so it scores near nothing, while the real artwork at the same
+/// size loses its edges and lettering. Only comparable between two pictures of the same art
+/// measured at the same side. None when it cannot be read.
+pub fn detail(bytes: &[u8], side: u32) -> Option<f64> {
+    if side < 16 {
+        return None;
+    }
+    let grey = decode(bytes)?.to_luma8();
+    // ImageSharp's bicubic resampler is Catmull-Rom.
+    let image = image::imageops::resize(&grey, side, side, FilterType::CatmullRom);
+    let half = image::imageops::resize(&image, side / 2, side / 2, FilterType::CatmullRom);
+    let round = image::imageops::resize(&half, side, side, FilterType::CatmullRom);
+    let total: u64 = image
+        .pixels()
+        .zip(round.pixels())
+        .map(|(a, b)| u64::from(a.0[0].abs_diff(b.0[0])))
+        .sum();
+    Some(total as f64 / f64::from(side * side))
+}
+
 const OCTO_MARK: &[u8] = b"Written by Octo";
 
 /// The JPEG with a comment saying Octo wrote it, so a later, sharper cover may replace a

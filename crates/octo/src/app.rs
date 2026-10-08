@@ -67,9 +67,16 @@ use crate::services::last_fm::{
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
 use crate::services::library::ChartPlaylistService;
+use crate::services::library::explicit_backfill::{
+    ExplicitBackfill, ExplicitBackfillServices, ExplicitBackfillStore,
+};
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
+use crate::services::library::library_edit_service::{
+    LibraryEditService, LibraryEditServices, LibraryRescan,
+};
 use crate::services::library::library_review_sweep_worker::SweepVerification;
+use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
@@ -93,7 +100,9 @@ use crate::services::lyrics::{
     LyricsChoiceService, LyricsChoiceStore, LyricsLibraryStore, LyricsLibraryWorker, LyricsService,
     LyricsSidecarWriter, LyricsUndoJournal, lyrics_http,
 };
-use crate::services::metadata::{DeezerMetadataService, DeezerRateLimitHandler, DeezerRateLimiter};
+use crate::services::metadata::{
+    DeezerExplicitCatalog, DeezerMetadataService, DeezerRateLimitHandler, DeezerRateLimiter,
+};
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
 use crate::services::radio::{
@@ -182,6 +191,10 @@ pub struct AppInner {
     pub cover_upgrade_journal: Arc<CoverUpgradeJournal>,
     /// `CoverUpgradeWorker`, singleton and hosted: its queue is the "CoverUpgradeWorker" worker.
     pub cover_upgrade_worker: Arc<CoverUpgradeWorker>,
+    /// `ExplicitBackfill`, singleton and hosted ("Mark explicit songs"): its queue is the
+    /// "ExplicitBackfill" worker, and its store's coalescing flush (a timer in C#) the
+    /// "ExplicitBackfillStore" worker, `<config>/explicit-backfill.json`.
+    pub explicit_backfill: Arc<ExplicitBackfill>,
     /// `UpdateHost`: the handshake files with the host updater, `<config>/update/`.
     pub update_host: Arc<UpdateHost>,
     /// `IHostApplicationLifetime`: cancel it (see [`AppInner::stop_application`]) to shut the
@@ -399,6 +412,9 @@ pub struct AppInner {
     /// `LibraryActionJournal`: the write-ahead journal, `<config>/library-actions.json`. Its
     /// 10-second flush (a timer in C#) is the "LibraryActionJournal" worker.
     pub library_action_journal: Arc<LibraryActionJournal>,
+    /// : the tag edits made from the apps and by the explicit marking,
+    /// .
+    pub tag_edit_journal: Arc<TagEditJournal>,
     /// `LibraryActionQuarantine` (singleton).
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
     /// `LibraryActionExecutor` (singleton): the only code in library actions that touches a file.
@@ -440,10 +456,44 @@ pub struct AppInner {
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `FingerprintSweepVerifier`: the sweep's check, over the download verification service.
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
+    /// `LibraryRescan` (singleton): one normal Navidrome scan a few seconds after a run of
+    /// library changes.
+    pub library_rescan: Arc<LibraryRescan>,
+    /// `LibraryEditService` (singleton): the apps' Library health fixes, tags written in place,
+    /// albums joined, covers added, and a removed song put back.
+    pub library_edits: Arc<LibraryEditService>,
     /// `ImportService`, singleton AND hosted, over the import stores (`imports.json`,
     /// `imports-trickle.json`, `spotify-accounts.json`), the Spotify sign-in and the trickle
     /// (`TrickleWorker`, also hosted): the "ImportService" and "TrickleWorker" workers.
     pub imports: Arc<crate::services::imports::ImportService>,
+}
+
+/// The apps' Library health fixes (`Program.cs`, 374dac8): the rescan and the edit service, over
+/// the resolver, the quarantine, both journals and the services a lookup and a cover ask.
+fn library_edits(
+    settings: &Arc<SettingsStore>,
+    stores: &Stores,
+    navidrome: &NavidromeServices,
+    quarantine: &Arc<LibraryActionQuarantine>,
+    tagging: &Tagging,
+    cover_finder: Arc<dyn IAlbumCoverFinder>,
+) -> (Arc<LibraryRescan>, Arc<LibraryEditService>) {
+    let rescan = Arc::new(LibraryRescan::new(Some(navidrome.local_library.clone())));
+    let edits = Arc::new(LibraryEditService::new(
+        navidrome.navidrome_song_path_resolver.clone(),
+        quarantine.clone(),
+        stores.library_action_journal.clone(),
+        stores.tag_edit_journal.clone(),
+        rescan.clone(),
+        settings.clone(),
+        LibraryEditServices {
+            library: Some(navidrome.local_library.clone()),
+            identifier: Some(tagging.release_identifier.clone()),
+            verification: Some(tagging.download_verification.clone()),
+            cover_finder: Some(cover_finder),
+        },
+    ));
+    (rescan, edits)
 }
 
 /// The tagging and verification services of task 4-B, which the download base
@@ -908,6 +958,7 @@ struct Stores {
     release_check: Arc<ReleaseCheck>,
     subsonic_response_builder: Arc<SubsonicResponseBuilder>,
     library_action_journal: Arc<LibraryActionJournal>,
+    tag_edit_journal: Arc<TagEditJournal>,
     upgrade_queue: Arc<UpgradeQueue>,
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
@@ -965,6 +1016,7 @@ impl Stores {
             library_action_journal: Arc::new(LibraryActionJournal::with_path(Some(
                 config_dir.join("library-actions.json"),
             ))),
+            tag_edit_journal: Arc::new(TagEditJournal::new(Some(config_dir.join("tag-edits.json")))),
             upgrade_queue: Arc::new(UpgradeQueue::with_path(Some(config_dir.join("upgrades.json")))),
             quality_upgrade_store: Arc::new(QualityUpgradeStore::with_path(Some(
                 config_dir.join("quality-upgrade.json"),
@@ -1174,6 +1226,8 @@ struct GenreAndCoverJobs {
     cover_upgrade_store: Arc<CoverUpgradeStore>,
     cover_upgrade_journal: Arc<CoverUpgradeJournal>,
     cover_upgrade_worker: Arc<CoverUpgradeWorker>,
+    explicit_backfill_store: Arc<ExplicitBackfillStore>,
+    explicit_backfill: Arc<ExplicitBackfill>,
 }
 
 impl GenreAndCoverJobs {
@@ -1182,6 +1236,7 @@ impl GenreAndCoverJobs {
         config_dir: Option<&Path>,
         navidrome: &NavidromeServices,
         clients: &MetadataClients,
+        tag_edit_journal: &Arc<TagEditJournal>,
     ) -> GenreAndCoverJobs {
         // Genre backfill state lives beside the other config-dir files so a run survives a
         // restart and can be resumed deliberately rather than silently restarting.
@@ -1223,6 +1278,22 @@ impl GenreAndCoverJobs {
                 http: Some(navidrome.http.clone()),
             },
         ));
+        // Marking the library explicit or clean: a preview, then the writes it found, journaled
+        // in tag-edits.json like the apps' edits so a run (or one song) can be undone.
+        let explicit_backfill_store = Arc::new(ExplicitBackfillStore::new(
+            config_dir.map(|dir| dir.join("explicit-backfill.json")),
+        ));
+        let explicit_backfill = Arc::new(ExplicitBackfill::new(
+            explicit_backfill_store.clone(),
+            tag_edit_journal.clone(),
+            Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
+            settings.clone(),
+            ExplicitBackfillServices {
+                identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
+                http: Some(navidrome.http.clone()),
+                library: Some(navidrome.local_library.clone()),
+            },
+        ));
         GenreAndCoverJobs {
             genre_backfill_store,
             genre_backfill_journal,
@@ -1231,6 +1302,8 @@ impl GenreAndCoverJobs {
             cover_upgrade_store,
             cover_upgrade_journal,
             cover_upgrade_worker,
+            explicit_backfill_store,
+            explicit_backfill,
         }
     }
 
@@ -1260,6 +1333,16 @@ impl GenreAndCoverJobs {
         });
         let worker = self.cover_upgrade_worker.clone();
         workers.register("CoverUpgradeWorker", move |stopping| worker.clone().run(stopping));
+        let store = self.explicit_backfill_store.clone();
+        workers.register("ExplicitBackfillStore", move |stopping| {
+            let store = store.clone();
+            async move {
+                store.run_flusher(stopping).await;
+                Ok(())
+            }
+        });
+        let worker = self.explicit_backfill.clone();
+        workers.register("ExplicitBackfill", move |stopping| worker.clone().run(stopping));
     }
 }
 
@@ -1728,6 +1811,8 @@ pub struct TestServices {
     pub download_service: Option<Arc<dyn IDownloadService>>,
     /// `LibrarySnapshot` (the C# tests swapped its `ReadPage`).
     pub library_snapshot: Option<Arc<LibrarySnapshot>>,
+    /// `IAlbumCoverFinder` as the library edits ask it (the C# `FixedFinder`).
+    pub album_cover_finder: Option<Arc<dyn IAlbumCoverFinder>>,
     /// octo-sonic (a fake sidecar).
     pub sonic_client: Option<Arc<dyn ISonicClient>>,
     /// Where `ListenBrainzRadioClient` sends its labs and API calls, unpaced.
@@ -1916,7 +2001,13 @@ impl AppState {
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, Some(&config_dir), &navidrome);
         lyrics_library.register_workers(&workers);
-        let genre_cover_jobs = GenreAndCoverJobs::build(&settings, Some(&config_dir), &navidrome, &clients);
+        let genre_cover_jobs = GenreAndCoverJobs::build(
+            &settings,
+            Some(&config_dir),
+            &navidrome,
+            &clients,
+            &stores.tag_edit_journal,
+        );
         genre_cover_jobs.register_workers(&workers);
         let acquisition = Acquisition::build(
             &settings,
@@ -1997,6 +2088,14 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        let (library_rescan, library_edits) = library_edits(
+            &settings,
+            &stores,
+            &navidrome,
+            &library_actions.quarantine,
+            &tagging,
+            genre_cover_jobs.album_cover_finder.clone(),
+        );
         let imports = Imports::build(
             &settings,
             Some(&config_dir),
@@ -2025,6 +2124,7 @@ impl AppState {
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
+            explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
@@ -2114,6 +2214,7 @@ impl AppState {
             chart_playlists: charts.playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
+            tag_edit_journal: stores.tag_edit_journal,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,
@@ -2132,6 +2233,8 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            library_rescan,
+            library_edits,
             imports: imports.service,
         };
         AppState {
@@ -2193,7 +2296,8 @@ impl AppState {
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, None, &navidrome);
         // The genre backfill and the cover upgrade keep their runs in memory.
-        let genre_cover_jobs = GenreAndCoverJobs::build(&settings, None, &navidrome, &clients);
+        let genre_cover_jobs =
+            GenreAndCoverJobs::build(&settings, None, &navidrome, &clients, &stores.tag_edit_journal);
         // No workers: the acquisition worker, the resumer and the cache cleanup are not run.
         let acquisition = Acquisition::build(
             &settings,
@@ -2282,6 +2386,17 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        let (library_rescan, library_edits) = library_edits(
+            &settings,
+            &stores,
+            &navidrome,
+            &library_actions.quarantine,
+            &tagging,
+            overrides
+                .album_cover_finder
+                .clone()
+                .unwrap_or_else(|| genre_cover_jobs.album_cover_finder.clone()),
+        );
         // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
         let imports = Imports::build(
             &settings,
@@ -2310,6 +2425,7 @@ impl AppState {
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
+            explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
@@ -2399,6 +2515,7 @@ impl AppState {
             chart_playlists: charts.playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
+            tag_edit_journal: stores.tag_edit_journal,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,
@@ -2417,6 +2534,8 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            library_rescan,
+            library_edits,
             imports: imports.service,
         };
         AppState {

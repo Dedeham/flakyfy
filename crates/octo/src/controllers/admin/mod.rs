@@ -19,6 +19,7 @@ pub mod browse;
 pub mod charts;
 pub mod cover_upgrade;
 pub mod downloads;
+pub mod explicit_backfill;
 pub mod genre;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
@@ -32,6 +33,7 @@ pub mod secrets;
 pub mod settings;
 pub mod soulseek_sharing;
 pub mod system;
+pub mod trash;
 pub mod update;
 pub mod upgrades;
 
@@ -118,14 +120,16 @@ pub fn routes() -> RouteSet {
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
-/// genre normalization, and the `CoverUpgradeController`, `LyricsAdminController` and
-/// `UpdateController` routes.
+/// genre normalization, and the `CoverUpgradeController`, `ExplicitBackfillController`,
+/// `LyricsAdminController` and `UpdateController` routes.
 pub fn routes_6b2() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
+        .merge(trash::routes())
         .merge(upgrades::routes())
         .merge(genre::routes())
         .merge(cover_upgrade::routes())
+        .merge(explicit_backfill::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
         .merge(downloads::routes())
@@ -145,11 +149,15 @@ mod tests_6b2;
 
 #[cfg(test)]
 #[path = "test_support_6b1.rs"]
-mod test_support_6b1;
+pub(crate) mod test_support_6b1;
 
 #[cfg(test)]
 #[path = "admin_contract_tests.rs"]
 mod admin_contract_tests;
+
+#[cfg(test)]
+#[path = "library_action_allow_download_tests.rs"]
+mod library_action_allow_download_tests;
 
 #[cfg(test)]
 #[path = "lastfm_admin_tests.rs"]

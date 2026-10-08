@@ -1069,3 +1069,21 @@ async fn the_service_is_the_identifiers_catalog_lookup() {
     assert_eq!(answer.hits.len(), 1);
     assert_eq!(answer.hits[0].album_title.as_deref(), Some("Mezzanine"));
 }
+
+/// `OutsideExplicitTests.ArtistPage_OfAReleaseInTwoCopies_ListsTheExplicitOne`.
+#[tokio::test]
+async fn artist_page_of_a_release_in_two_copies_lists_the_explicit_one() {
+    let h = Harness::new(vec![(
+        "/artist/",
+        r#"{"total":2,"data":[
+            {"id":200,"title":"GNX","record_type":"album","explicit_lyrics":false,"release_date":"2024-11-22"},
+            {"id":100,"title":"GNX","record_type":"album","explicit_lyrics":true,"release_date":"2024-11-22"}]}"#,
+    )])
+    .await;
+
+    let hits = h.service.get_artist_albums("525046", "Kendrick Lamar").await;
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].deezer_id, "100");
+    assert_eq!(hits[0].explicit_lyrics, Some(true));
+}

@@ -667,6 +667,83 @@ lyrics look runs in the background); the saved logs are compared unordered.
 No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
 `5d3f096`'s Recently removed and activity card for F and N.
 
+### G3 record: groups F and P (2026-10-08)
+
+Branch `port/g3-fp` (`c4ce8f1`: `port/g3-f` and `port/g3-p` merged, with `rust/main` up to
+`19db112`, so B, D, E, G, H and L are in). The whole corpus on the WSL lane with
+`parity/run.sh --rust-twice` against the cached C# recording (1,837 requests), then
+`--only '20-*' --rust-twice` to settle the Rust against Rust diffs.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 260 unexplained, 1,524 explained, 53 identical |
+| Rust against Rust (whole corpus) | 1,835 identical, 2 unexplained (`20-library-edits/album-without-cafe`, `plant-copy-album`) |
+| Rust against Rust (`20-*` alone) | 152 identical, 1 unexplained (`plant-copy-album`) |
+
+| Group | Own before (G2 record) | Own after | Diffs before | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| F | 128 | 24 | 133 | 24 |
+| P | 68 | 15 | 99 | 15 |
+
+What is left in F is R's and G's:
+
+- **R** (14 requests): `plant-copy-seen` waits on Library health (`/api/admin/health`, 404 in
+  Rust) for the planted second copy of Café del Mar and captures its id there
+  (`song_cafe_copy`, `key_copy`). Without it every request about the copy fails or differs:
+  `plant-copy-album`, `retag-copy-isrc` and `-seen`, `tags-copy-isrc`, `undo-copy-isrc`,
+  `tags-copy-undone`, `remove-copy` and `-seen`, `folder-after-copy-removed`,
+  `trash-files-copy`, `admin-trash-copy`, `trash-admin-copy`, `allow-download-copy`.
+- **R, through the journals** (6): `admin-actions-off`, `-dryrun`, `-cafe`, `-final`,
+  `tag-edits-journal` and `library-actions-journal` list the fixes `19-health` made in the C#
+  run (the Kestrel Moor songs) and the copy's removal. Run alone (`20-*`), the first three match.
+- **G** (3): `extensions-on-json`, `-xml` and `extensions-off-again` differ only by
+  octoTopSongs at versions 1 and 2, G's proposed `charts-octo-top-songs-version-2`.
+- `album-without-cafe` (1): Navidrome's album genres while its scan of the removed song is still
+  going; it differed Rust against Rust in the whole run only, and matched C# and itself when
+  `20-*` ran alone (the timed-out health waits of `19-health` and `20-library-edits` move the
+  scans' timing).
+
+The two Rust against Rust diffs are the same thing: `plant-copy-album` lists the planted copy
+under Navidrome's own id, which changes every run and is normalized only through the capture
+`plant-copy-seen` makes from the health route. Both go once R is in.
+
+What is left in P is J's, R's knock-on and the proposed intentional diffs:
+
+- **Intentional, not reviewed** (3): `17-covers-explicit/covers-resumed-done`
+  (`cover-resume-counts-once`), `96-covers-explicit-writes/covers-scan-done`
+  (`cover-scan-leaves-the-trash-out`; the trash entry the C# listed, plus the copy below) and
+  `covers-apply-aurora-done` (`cover-run-reason-cleared`, plus the copy).
+- **J's `recovery-refused-on-library-files`** (2): `explicit-get-recovery`,
+  `explicit-cancel-recovery-idle`.
+- **R's knock-on** (9): the planted mp3 copy that `20-library-edits` could not remove without
+  the health capture is still in the library, so the explicit marking reads 12 songs against
+  11 (`explicit-preview-1-done`, `-2-done`, `explicit-apply-1-done`, `-2-done`,
+  `explicit-undo-1-done`, `-2-done`, `explicit-state-after-apply-1`) and the cover run
+  embeds into it too (`covers-journal-after-apply`, `covers-undo-done`).
+- **base** (1): `covers-start-bad-json`, the admin JSON binder's `$` against the C#'s `$.scope`
+  for a cut-off body (`helpers_6b1.rs`).
+
+No other group moved because of F or P. The counts that differ from the earlier records come
+with `19db112` (G's charts plan): every settings answer carries `GeneratedPlaylists.Charts` and
+`ChartCountry`, which puts the settings reads of E (20), I (23) and base on those groups, and
+the dashboard files (`dashboard-files-2026-10-08`, not reviewed) put `21-static` on J and N.
+G's `charts-top-chart-says-which-chart` now matches its three `16-lists/top-chart-*` requests,
+as expected with P's `explicitStatus` in.
+
+Settled on the way:
+
+- D carried F's `ed0bd7c` too (`571de77`); the merge keeps D's copy and one test row.
+- P's cover line in the downloads log (`log_cover_step`) now writes through D's
+  `log_song_step`, which clears the cover line B and D were waiting on (B 0, D 2 in this run;
+  D's 2 are the extension lists, G's octoTopSongs version).
+- F changed shared `octo-media` code: an MP3 rewritten in place keeps its ID3v2 tag size while
+  the frames fit, as TagLib# did (`tag_file::taglib_padding`, known-diffs "Audio tags: ID3v2
+  padding"). No other group's count moved with it.
+
+No settings were added, and no route was added to `LIBRARY_FILE_ROUTES`: the new admin routes
+(`/api/admin/library-actions/allow-download`, `/api/admin/explicit/backfill/*`) sit under
+prefixes G1 already listed.
+
 ### G4 record: group N (2026-10-08)
 
 Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
@@ -731,7 +808,7 @@ Rust change.
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
-| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 24 | done (G3, `port/g3-fp`); what is left waits for R |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | done on `port/g-charts`, with the charts plan (parity pending) |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
@@ -741,7 +818,7 @@ Rust change.
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
 | N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; R's job waits on R) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
-| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 15 | done (G3, `port/g3-fp`); what is left is R's knock-on and proposed intentional diffs |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
 | R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
@@ -873,18 +950,18 @@ the slskd client's reads, rescan, settings file, scan cancel and upload cancel, 
   `clearing_an_isrc_takes_it_off_the_file`), and the proposed intentional diff
   is `isrc-clear-takes-the-tag-off`; F's tag edits only need to call it.
 
-- [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
+- [x] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
   (G2: `LibraryTagEdits.Set` must write through `tag_writer_extras::set_or_clear_text`, so a
   cleared field, an ISRC above all, leaves the file; the port-only fix and its intentional diff
   `isrc-clear-takes-the-tag-off` are in place)
-- [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
-- [ ] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
-- [ ] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
-- [ ] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
-- [ ] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
-- [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
-- [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
-- [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
+- [x] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
+- [x] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
+- [x] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
+- [x] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
+- [x] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
+- [x] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
+- [x] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
+- [x] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
 - [x] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
   (ported with D in G2: Find songs reads a library song's length through it)
 
@@ -1036,10 +1113,10 @@ Find songs (D, `FindLook` from `FindSnapshot`) are read.
   intentional diff.
 - The recovery-code explicit marks are already refused by the gate (G1).
 
-- [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
-- [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
-- [ ] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
-- [ ] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
+- [x] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
+- [x] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
+- [x] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
+- [x] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
 
 ### Q. Made for you lists
 

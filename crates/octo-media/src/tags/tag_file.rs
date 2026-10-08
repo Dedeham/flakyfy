@@ -245,6 +245,33 @@ fn flac_metadata_reaches_end(file: &mut std::fs::File) -> std::io::Result<bool> 
     }
 }
 
+/// The padding TagLib# gives a rewritten ID3v2 tag at the start of an MPEG file
+/// (`Id3v2.Tag.Render`): the tag keeps the size it had on disk when its frames fit in it, and
+/// otherwise (or with no tag before) gets 1024 bytes after the frames. So an edit in place leaves
+/// the file the same size, as the library server last saw it. lofty's own rule is always 1024.
+fn taglib_padding(file: &mut std::fs::File, tag: &Id3v2Tag, options: WriteOptions) -> Result<u32, TagError> {
+    const DEFAULT_PADDING: u32 = 1024;
+    let mut header = [0u8; 10];
+    file.rewind()?;
+    let on_disk = match std::io::Read::read_exact(file, &mut header) {
+        Ok(()) if &header[..3] == b"ID3" && header[6..10].iter().all(|byte| byte & 0x80 == 0) => header
+            [6..10]
+            .iter()
+            .fold(0u32, |size, byte| (size << 7) | u32::from(*byte)),
+        _ => return Ok(DEFAULT_PADDING),
+    };
+    let mut rendered = Vec::new();
+    tag.dump_to(&mut rendered, options.preferred_padding(0))
+        .map_err(|e| TagError::Io(std::io::Error::other(e.to_string())))?;
+    // The rendered tag's own header is not part of the size TagLib compares.
+    let frames = u32::try_from(rendered.len().saturating_sub(10)).unwrap_or(u32::MAX);
+    Ok(if frames < on_disk {
+        on_disk - frames
+    } else {
+        DEFAULT_PADDING
+    })
+}
+
 /// lofty reads what is on disk, unconverted: TagLib# reads a version 3 date its own way (see
 /// `Id3Tag::from_lofty`), and keeps a Vorbis TRACKNUMBER and an MP4 gnre as they are.
 fn parse_options(implicit_conversions: bool) -> ParseOptions {
@@ -430,7 +457,13 @@ impl TagFile {
                 match self.id3v2.as_ref().filter(|tag| !tag.is_empty()) {
                     Some(tag) => {
                         let (tag, version3) = tag.to_lofty();
-                        tag.save_to(&mut file, options.clone().use_id3v23(version3))?;
+                        let mut tag_options = options.clone().use_id3v23(version3);
+                        if matches!(self.inner, Inner::Mpeg) {
+                            tag_options =
+                                tag_options.preferred_padding(taglib_padding(&mut file, &tag, tag_options)?);
+                            file.rewind()?;
+                        }
+                        tag.save_to(&mut file, tag_options)?;
                     }
                     None => tag_type.remove_from(&mut file, options)?,
                 }
@@ -1094,5 +1127,49 @@ impl TagFile {
         if let Some(apple) = &mut self.apple {
             apple.set_pictures(&lofty);
         }
+    }
+}
+
+#[cfg(test)]
+mod padding_tests {
+    use super::*;
+    use crate::tags::test_support::{mp3, write};
+
+    fn retitled(path: &Path, title: &str) -> u64 {
+        let mut file = TagFile::open(path).expect("opens");
+        file.set_title(Some(title));
+        file.save().expect("saved");
+        std::fs::metadata(path).expect("there").len()
+    }
+
+    fn tag_size(path: &Path) -> u64 {
+        let header = std::fs::read(path).expect("there");
+        assert_eq!(&header[..3], b"ID3");
+        header[6..10]
+            .iter()
+            .fold(0u64, |size, byte| (size << 7) | u64::from(*byte))
+    }
+
+    /// TagLib#'s rule (`Id3v2.Tag.Render`): a rewritten tag keeps its size on disk while its
+    /// frames fit, so an edit in place leaves an MP3 the size the library server saw; frames that
+    /// outgrow it get 1024 bytes of padding, as does a tag written where there was none.
+    #[test]
+    fn a_rewritten_id3v2_tag_keeps_its_size_while_the_frames_fit() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = write(dir.path(), "song.mp3", &mp3());
+
+        let first = retitled(&path, "A");
+        assert!(tag_size(&path) >= 1024, "{}", tag_size(&path));
+
+        assert_eq!(retitled(&path, "A much longer title than before"), first);
+        assert_eq!(retitled(&path, "B"), first);
+
+        let long = "x".repeat(4000);
+        let grown = retitled(&path, &long);
+        assert!(grown > first, "{grown} {first}");
+        let bytes = std::fs::read(&path).expect("there");
+        let tag_end = (10 + tag_size(&path)) as usize;
+        // Whatever the frames take, 1024 bytes of padding follow them.
+        assert!(bytes[tag_end - 1024..tag_end].iter().all(|byte| *byte == 0));
     }
 }

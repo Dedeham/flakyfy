@@ -13,14 +13,18 @@ use tracing::{info, warn};
 
 use super::ResolvedSongFile;
 use super::library_action_journal::action_name;
-use super::navidrome_song_path_resolver::get_full_path;
+use super::navidrome_song_path_resolver::{get_full_path, is_inside};
+use crate::services::local::LocalSongMapping;
 use crate::services::state_file;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A move into or out of the trash. A restore answers the outside-song mappings the removal
+/// dropped, for the library to have again.
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuarantineResult {
     pub moved: bool,
     pub quarantine_path: Option<String>,
     pub error: Option<String>,
+    pub mappings: Option<Vec<LocalSongMapping>>,
 }
 
 impl QuarantineResult {
@@ -29,6 +33,7 @@ impl QuarantineResult {
             moved: true,
             quarantine_path: Some(path),
             error: None,
+            mappings: None,
         }
     }
 
@@ -37,12 +42,15 @@ impl QuarantineResult {
             moved: false,
             quarantine_path: None,
             error: Some(error.into()),
+            mappings: None,
         }
     }
 }
 
 /// What is written next to a quarantined file so a restore works without the journal. Its
-/// `Action` is the enum's name.
+/// `Action` is the enum's name. Sidecars are the song's own files that went with it (its
+/// lyrics), put back with it; Mappings the outside songs Octo knew the file as, which a removal
+/// forgets and a restore puts back.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct QuarantineManifest {
@@ -61,7 +69,7 @@ pub struct QuarantineManifest {
     pub sidecars: Option<Vec<QuarantinedSidecar>>,
     /// The outside songs Octo knew the file as, which a removal forgets and a restore puts back.
     #[serde(default)]
-    pub mappings: Option<Vec<crate::services::local::local_library_service::LocalSongMapping>>,
+    pub mappings: Option<Vec<LocalSongMapping>>,
 }
 
 /// A file of the song's own that went to the trash with it: where it was, and where it waits.
@@ -112,8 +120,55 @@ impl LibraryActionQuarantine {
         )
     }
 
+    /// Files beside a song that belong to it alone, by its name: the lyrics Octo writes (.lrc,
+    /// .txt) and the other lyrics files players read. Never a folder's cover, which the album
+    /// shares.
+    pub const SIDECAR_EXTENSIONS: [&'static str; 7] =
+        [".lrc", ".txt", ".ttml", ".elrc", ".srt", ".yaml", ".yml"];
+
+    const AUDIO_EXTENSIONS: [&'static str; 18] = [
+        ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".aiff", ".aif", ".ape", ".wv",
+        ".alac", ".wma", ".mp4", ".dsf", ".dff", ".mka",
+    ];
+
+    /// The song's own sidecars: files with its name and a lyrics extension. None while another
+    /// audio file of the same name stays beside it (a second copy in another format), since the
+    /// lyrics are that copy's too.
+    pub fn sidecars_of(audio_path: &str) -> Vec<String> {
+        let folder = directory_name(audio_path);
+        if folder.is_empty() || !Path::new(&folder).is_dir() {
+            return Vec::new();
+        }
+        let stem = file_name_without_extension(audio_path);
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            return Vec::new();
+        };
+        let named: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_dir()))
+            .map(|entry| combine(&folder, &entry.file_name().to_string_lossy()))
+            .filter(|path| file_name_without_extension(path) == stem)
+            .collect();
+        if named.iter().any(|path| {
+            path != audio_path
+                && Self::AUDIO_EXTENSIONS
+                    .iter()
+                    .any(|audio| octo_core::common::dotnet::eq_ignore_case(audio, &extension_of(path)))
+        }) {
+            return Vec::new();
+        }
+        named
+            .into_iter()
+            .filter(|path| {
+                Self::SIDECAR_EXTENSIONS
+                    .iter()
+                    .any(|lyrics| octo_core::common::dotnet::eq_ignore_case(lyrics, &extension_of(path)))
+            })
+            .collect()
+    }
+
     /// Move a verified file into quarantine, preserving its layout underneath so a restore is a
-    /// straight copy back. (C# `Move`, a keyword here.)
+    /// straight copy back. (C# `Move`, a keyword here; its `withSidecars` is false.)
     pub fn move_file(
         &self,
         file: &ResolvedSongFile,
@@ -121,7 +176,20 @@ impl LibraryActionQuarantine {
         action: LibraryAction,
         username: &str,
     ) -> QuarantineResult {
-        match self.try_move(file, music_root, action, username) {
+        self.move_file_with_sidecars(file, music_root, action, username, false)
+    }
+
+    /// [`Self::move_file`]; with `with_sidecars`, the song's own lyrics files go with it, named
+    /// after its place in the trash; one that cannot move stays, and is logged.
+    pub fn move_file_with_sidecars(
+        &self,
+        file: &ResolvedSongFile,
+        music_root: &str,
+        action: LibraryAction,
+        username: &str,
+        with_sidecars: bool,
+    ) -> QuarantineResult {
+        match self.try_move(file, music_root, action, username, with_sidecars) {
             Ok(result) => result,
             Err(e) => {
                 warn!("Library action could not quarantine {}: {e}", file.absolute_path);
@@ -136,11 +204,19 @@ impl LibraryActionQuarantine {
         music_root: &str,
         action: LibraryAction,
         username: &str,
+        with_sidecars: bool,
     ) -> io::Result<QuarantineResult> {
-        let relative = get_relative_path(&get_full_path(music_root), &get_full_path(&file.absolute_path));
-        if relative.starts_with("..") {
-            return Ok(QuarantineResult::refused("the file is not under the music root"));
+        if let Some(refused) = self.outside(&file.absolute_path, music_root) {
+            return Ok(QuarantineResult::refused(refused));
         }
+        let relative = get_relative_path(&get_full_path(music_root), &get_full_path(&file.absolute_path));
+        // Read before the song moves: with it gone, nothing would tell its lyrics from another
+        // copy's.
+        let sidecars = if with_sidecars {
+            Self::sidecars_of(&file.absolute_path)
+        } else {
+            Vec::new()
+        };
 
         let destination = combine(
             &combine(
@@ -172,6 +248,24 @@ impl LibraryActionQuarantine {
             std::fs::remove_file(&file.absolute_path)?;
         }
 
+        let mut moved = Vec::new();
+        for sidecar in sidecars {
+            let target = combine(
+                &directory_name(&destination),
+                &format!(
+                    "{}{}",
+                    file_name_without_extension(&destination),
+                    extension_of(&sidecar)
+                ),
+            );
+            if self.move_sidecar(&sidecar, &target, music_root) {
+                moved.push(QuarantinedSidecar {
+                    original_path: sidecar,
+                    quarantine_path: target,
+                });
+            }
+        }
+
         self.write_manifest(
             &destination,
             &QuarantineManifest {
@@ -180,8 +274,8 @@ impl LibraryActionQuarantine {
                 action: action_name(action).to_string(),
                 username: username.to_string(),
                 at_utc: Utc::now(),
-                // STUB(F): the song's lyrics and its outside-song links go with it from group F.
-                sidecars: None,
+                sidecars: (!moved.is_empty()).then_some(moved),
+                // Filled in by `record_mappings` once the library has forgotten them.
                 mappings: None,
             },
         );
@@ -194,8 +288,31 @@ impl LibraryActionQuarantine {
         Ok(QuarantineResult::moved(destination))
     }
 
-    /// Put a quarantined file back where it came from.
-    pub fn restore(&self, quarantine_path: &str) -> QuarantineResult {
+    /// Why a file may not be moved out of the library, or None when it may. The resolver proved
+    /// it already; this is the last word before a move, so it does not trust that: the full path
+    /// must sit inside the music root (a "..", another drive or a lookalike folder name such as
+    /// "/music-old" all fail), must not already be in the trash, and must be a real file rather
+    /// than a link that could point anywhere.
+    pub fn outside(&self, path: &str, music_root: &str) -> Option<&'static str> {
+        if path.is_empty() {
+            return Some("the file's path cannot be read");
+        }
+        let full = get_full_path(path);
+        if !is_inside(&full, music_root) {
+            return Some("the file is not under the music root");
+        }
+        if is_inside(&full, &self.root_for(music_root)) {
+            return Some("the file is in the trash already");
+        }
+        if std::fs::symlink_metadata(&full).is_ok_and(|info| info.file_type().is_symlink()) {
+            return Some("the file is a link, not a song file");
+        }
+        None
+    }
+
+    /// Put a quarantined file back where it came from. With `music_root`, only into it, whatever
+    /// the manifest beside the file says.
+    pub fn restore(&self, quarantine_path: &str, music_root: Option<&str>) -> QuarantineResult {
         let attempt = || -> io::Result<QuarantineResult> {
             if !file_exists(quarantine_path) {
                 return Ok(QuarantineResult::refused("the quarantined file is gone"));
@@ -206,6 +323,13 @@ impl LibraryActionQuarantine {
                     "no manifest, so the original path is unknown",
                 ));
             };
+            if let Some(root) = music_root
+                && !is_inside(&get_full_path(&manifest.original_path), root)
+            {
+                return Ok(QuarantineResult::refused(
+                    "its old place is not under the music root",
+                ));
+            }
 
             if let Some(parent) = Path::new(&manifest.original_path)
                 .parent()
@@ -220,10 +344,27 @@ impl LibraryActionQuarantine {
             }
 
             rename_new(quarantine_path, &manifest.original_path)?;
+            for sidecar in manifest.sidecars.iter().flatten() {
+                // Each one meets the same rule as the song: back only into the music folder.
+                if let Some(root) = music_root
+                    && !is_inside(&get_full_path(&sidecar.original_path), root)
+                {
+                    continue;
+                }
+                if !file_exists(&sidecar.quarantine_path) || file_exists(&sidecar.original_path) {
+                    continue;
+                }
+                if let Err(e) = rename_new(&sidecar.quarantine_path, &sidecar.original_path) {
+                    warn!("Library action could not put back {}: {e}", sidecar.original_path);
+                }
+            }
             try_delete(&format!("{quarantine_path}{}", Self::MANIFEST_SUFFIX));
 
             info!("Library action restored {}", manifest.original_path);
-            Ok(QuarantineResult::moved(manifest.original_path))
+            Ok(QuarantineResult {
+                mappings: manifest.mappings,
+                ..QuarantineResult::moved(manifest.original_path)
+            })
         };
         attempt().unwrap_or_else(|e| {
             warn!("Library action could not restore {quarantine_path}: {e}");
@@ -277,6 +418,67 @@ impl LibraryActionQuarantine {
         removed
     }
 
+    /// One sidecar into the trash beside its song. False, and left where it is, when it is
+    /// outside the music folder, a link, or anything is in the way.
+    fn move_sidecar(&self, from: &str, to: &str, music_root: &str) -> bool {
+        if let Some(refused) = self.outside(from, music_root) {
+            info!("Library action left {from} where it is: {refused}");
+            return false;
+        }
+        if file_exists(to) {
+            return false;
+        }
+        let attempt = || -> io::Result<bool> {
+            if let Err(moving) = rename_new(from, to) {
+                if moving.kind() == io::ErrorKind::PermissionDenied {
+                    return Err(moving);
+                }
+                let length = std::fs::metadata(from)?.len();
+                copy_new(from, to)?;
+                if std::fs::metadata(to)?.len() != length {
+                    try_delete(to);
+                    return Ok(false);
+                }
+                std::fs::remove_file(from)?;
+            }
+            Ok(true)
+        };
+        attempt().unwrap_or_else(|e| {
+            warn!("Library action could not move {from} with its song: {e}");
+            false
+        })
+    }
+
+    /// Writes into a trashed song's note which outside songs Octo knew it as, so Put back can
+    /// tell the library again.
+    pub fn record_mappings(&self, quarantine_path: &str, mappings: &[LocalSongMapping]) {
+        if mappings.is_empty() {
+            return;
+        }
+        let Some(manifest) = self.read_manifest(quarantine_path) else {
+            return;
+        };
+        self.write_manifest(
+            quarantine_path,
+            &QuarantineManifest {
+                mappings: Some(mappings.to_vec()),
+                ..manifest
+            },
+        );
+    }
+
+    /// The names of the song's own files (its lyrics) waiting in the trash with it, which a
+    /// restore puts back too. Empty when there are none, or the manifest cannot be read.
+    pub fn sidecar_names(&self, quarantine_path: &str) -> Vec<String> {
+        self.read_manifest(quarantine_path)
+            .and_then(|manifest| manifest.sidecars)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|sidecar| file_exists(&sidecar.quarantine_path))
+            .map(|sidecar| file_name(&sidecar.original_path))
+            .collect()
+    }
+
     /// Written straight over the path, not through a temporary file, as the C# did.
     fn write_manifest(&self, quarantine_path: &str, manifest: &QuarantineManifest) {
         let path = format!("{quarantine_path}{}", Self::MANIFEST_SUFFIX);
@@ -291,6 +493,39 @@ impl LibraryActionQuarantine {
         let path = format!("{quarantine_path}{}", Self::MANIFEST_SUFFIX);
         let text = state_file::read_text(Path::new(&path)).ok()??;
         serde_json::from_str(&text).ok()
+    }
+}
+
+/// `Path.GetDirectoryName(path)`: everything before the last separator, or empty.
+fn directory_name(path: &str) -> String {
+    match path.rfind('/') {
+        Some(0) => "/".to_string(),
+        Some(at) => path[..at].to_string(),
+        None => String::new(),
+    }
+}
+
+/// `Path.GetFileName(path)`.
+fn file_name(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+/// `Path.GetFileNameWithoutExtension(path)`: the name up to its last dot.
+fn file_name_without_extension(path: &str) -> String {
+    let name = file_name(path);
+    match name.rfind('.') {
+        Some(dot) => name[..dot].to_string(),
+        None => name,
+    }
+}
+
+/// `Path.GetExtension(path)`: the name's last dot and what follows, or empty when there is no
+/// dot or nothing follows it.
+fn extension_of(path: &str) -> String {
+    let name = file_name(path);
+    match name.rfind('.') {
+        Some(dot) if dot + 1 < name.len() => name[dot..].to_string(),
+        _ => String::new(),
     }
 }
 

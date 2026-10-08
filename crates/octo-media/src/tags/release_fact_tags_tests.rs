@@ -407,6 +407,51 @@ fn advisory_on_mp4_is_the_one_byte_rating_atom() {
     assert_eq!(extras::read_advisory(&after), Some(1));
 }
 
+/// `TagWriterExtras.ClearAdvisory` (`d80141f`): the undo of the explicit marking takes the
+/// advisory out of every frame `SetAdvisory` writes, and leaves the rest of the file alone.
+#[test]
+fn clear_advisory_takes_it_out_of_every_frame() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut paths = vec![
+        write(dir.path(), "song.mp3", &mp3()),
+        write(dir.path(), "song.flac", &flac()),
+    ];
+    if crate::audio::test_support::ffmpeg_available() {
+        paths.push(mp4(dir.path(), "song.m4a"));
+    } else {
+        eprintln!("the MP4 case is skipped: ffmpeg is not on the PATH");
+    }
+    for path in paths {
+        {
+            let mut file = open(&path);
+            file.set_title(Some("Kept"));
+            extras::set_advisory(&mut file, Some(1));
+            if let Some(apple) = file.apple.as_mut() {
+                apple.set_dash_box(APPLE_MEAN, "ITUNESADVISORY", Some("1"));
+            }
+            file.save().expect("saved");
+        }
+        {
+            let mut file = open(&path);
+            extras::clear_advisory(&mut file);
+            file.save().expect("saved");
+        }
+
+        let after = open(&path);
+        assert_eq!(extras::read_advisory(&after), None, "{}", path.display());
+        assert!(
+            !KeptIdentityTags::navidrome_view(&after).contains_key("itunesadvisory"),
+            "{}",
+            path.display()
+        );
+        if let Some(apple) = after.apple.as_ref() {
+            assert!(apple.first_data(super::super::apple::names::RTNG).is_none());
+            assert_eq!(apple.dash_box(APPLE_MEAN, "ITUNESADVISORY"), None);
+        }
+        assert_eq!(after.title().as_deref(), Some("Kept"), "{}", path.display());
+    }
+}
+
 // ---- Rust-only ---------------------------------------------------------------------------
 
 /// What a tidy reports: each name once, as the file spelled it, the frames by their ids.

@@ -90,7 +90,7 @@ impl LibraryActionPlaylistWorker {
         // Decide what half-finished actions meant before doing anything new.
         let quarantine = self.quarantine.clone();
         self.journal
-            .reconcile(Some(&move |path: &str| quarantine.restore(path).moved));
+            .reconcile(Some(&move |path: &str| quarantine.restore(path, None).moved));
 
         // PeriodicTimer: the first tick one interval in, and missed ticks coalesced into one.
         let period = settings.effective_poll_interval();

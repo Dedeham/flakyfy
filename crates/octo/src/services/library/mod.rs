@@ -2,6 +2,7 @@
 //! Navidrome song and playlist plumbing.
 
 pub mod album_ownership;
+pub mod chart_playlist_service;
 pub mod duplicate_scan_worker;
 pub mod explicit_backfill_store;
 pub mod for_you_lists;
@@ -34,6 +35,7 @@ mod library_action_keep_file_tests;
 pub(crate) mod library_action_test_support;
 
 pub use album_ownership::{AlbumOwnership, CatalogTrack, LibraryAlbum, LibraryAlbumIndex, Standing};
+pub use chart_playlist_service::{ChartCover, ChartPlaylistService};
 pub use duplicate_scan_worker::{DuplicateGroup, DuplicateScanResult, DuplicateScanWorker, LibraryTrack};
 pub use generated_playlist_service::{GeneratedPlaylist, GeneratedPlaylistService};
 pub use heart_ownership::HeartOwnership;

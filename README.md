@@ -704,20 +704,30 @@ DejaVu or Symbola from the image. No cover carries an Octo mark. A picture in
 `/app/config/covers` named after a mix or station (`Rock Mix.jpg`), or after its genre or
 decade (`Rock.png`), replaces its cover, and replacing the picture shows without a restart.
 
-### Popular right now
+### Charts
 
-Every listener also gets **Popular right now**, a read-only playlist of the chart of the moment
-in every app: Deezer's 50 most played songs for the country Octo's server is in (Last.fm's
-chart when Deezer does not answer), the same chart the Octo apps show in search before anything
-is typed. Songs the listener has are their own library copies; the rest play right away and are
-added with a heart, like any outside song. It is made with the listener's own sign-in the next
-time their app lists playlists and holds still for 6 hours, so every app shows the same songs.
-A chart or library that does not answer keeps the last list rather than emptying it. Outside
-songs are left out while `ENABLE_SEARCH_DISCOVERY` is off and follow `EXPLICIT_FILTER`, as the
-stations do. Its cover is drawn like a mix's, from its first songs' covers. It is on by
-default, whether or not the mixes are; `POPULAR_NOW=false` or the dashboard's Mixes page turns
-it off. Apps that copy the library to the device (Symfonium) get its outside songs in their
-sync catalog, so the playlist finds them there.
+Every listener also gets read-only playlists of what is popular and new, in every app, read
+from Apple Music's public web pages for the country Octo's server is in:
+
+- **Popular right now**: the 50 most played songs (Deezer's chart, then Last.fm's, when Apple's
+  cannot be read). The Octo apps show the same chart in search before anything is typed.
+- **Best New Songs**: Apple Music's 100 picks of the week.
+- **Trending Songs**: what is catching on this week.
+- **Top Hip-Hop/Rap**, **Top Pop** and **Top Country**: the 50 most played songs of a genre.
+  Any of Apple's genres can be added.
+
+Songs the listener has are their own library copies; the rest play right away and are added
+with a heart, like any outside song. A list is made with the listener's own sign-in and holds
+still for 6 hours, so every app shows the same songs. A source or library that does not answer
+keeps the last list rather than emptying it. Outside songs are left out while
+`ENABLE_SEARCH_DISCOVERY` is off and follow `EXPLICIT_FILTER`, as the stations do. Covers are
+drawn like a mix's, from each list's first songs. Apps that copy the library to the device
+(Symfonium) get the lists' outside songs in their sync catalog, so the playlists find them there.
+
+They are on by default, whether or not the mixes are. The dashboard's Mixes page picks them, or:
+`POPULAR_NOW=false` turns Popular right now off; `CHARTS` lists the others in order (`new`,
+`trending` and Apple genre numbers, default `new,trending,18,14,6`; empty for none);
+`CHART_COUNTRY` is `auto` or a two-letter country such as `gb`.
 
 ### Spotify import
 

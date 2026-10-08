@@ -803,6 +803,10 @@ fn duration_seconds(element: &Value) -> ElementResult<Option<i32>> {
     }
 }
 
+// `LastFmService.Charts.cs`, a partial class in the C#: the play-count charts.
+#[path = "last_fm_charts.rs"]
+mod charts;
+
 #[cfg(test)]
 #[path = "last_fm_service_tests.rs"]
 mod tests;

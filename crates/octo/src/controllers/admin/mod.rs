@@ -14,6 +14,7 @@
 //! sign-in, never the recovery code ([`helpers_6b1::BrowseUser`]).
 
 pub mod browse;
+pub mod charts;
 pub mod cover_upgrade;
 pub mod genre;
 pub mod helpers_6b1;
@@ -88,6 +89,7 @@ pub fn routes_6b1() -> RouteSet {
         .route("/api/admin/config-sources", get(raw_config::get_config_sources))
         // Status and process control.
         .route("/api/admin/status", get(system::get_status))
+        .route("/api/admin/charts", get(charts::get_charts))
         .route("/api/admin/lidarr/options", get(system::get_lidarr_options))
         .route("/api/admin/lidarr/test", post(system::test_lidarr_connection))
         .route("/api/admin/restart", post(system::restart))

@@ -71,6 +71,7 @@ enum Cached {
     Id(Option<String>),
     Text(String),
     Album(AlbumLookup),
+    Chart(Arc<Vec<octo_core::charts::top_songs::CatalogTrack>>),
 }
 
 /// Result of one Deezer call. Deezer answers HTTP 200 even when it is refusing the
@@ -127,6 +128,8 @@ struct Inner {
     in_flight_artists: InFlight<Vec<ArtistHit>>,
     in_flight_counts: InFlight<Option<i32>>,
     in_flight_albums: InFlight<AlbumLookup>,
+    /// The chart and artist top lists on their way (`deezer_charts.rs`).
+    in_flight_charts: InFlight<Option<Arc<Vec<octo_core::charts::top_songs::CatalogTrack>>>>,
 }
 
 /// Flow out of a C# `try` block that could `return` early.
@@ -158,6 +161,7 @@ impl DeezerMetadataService {
                 in_flight_artists: InFlight::new(),
                 in_flight_counts: InFlight::new(),
                 in_flight_albums: InFlight::new(),
+                in_flight_charts: InFlight::new(),
             }),
         }
     }
@@ -1638,6 +1642,11 @@ fn year_prefix(release_date: &str) -> Option<i32> {
     }
     text.parse().ok()
 }
+
+// `DeezerMetadataService.Charts.cs`, a partial class in the C#: the chart and artist top lists.
+#[path = "deezer_charts.rs"]
+mod charts;
+pub use charts::CHART_LIMIT;
 
 #[cfg(test)]
 #[path = "deezer_metadata_service_tests.rs"]

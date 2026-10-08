@@ -479,6 +479,8 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
         "GeneratedPlaylists".into(),
         n_obj([
             ("PopularNow", Node::Bool(mixes.popular_now)),
+            ("Charts", n_str(&mixes.charts)),
+            ("ChartCountry", n_str(&mixes.chart_country)),
             ("Enabled", Node::Bool(mixes.enabled)),
             ("Genres", Node::Bool(mixes.genres)),
             ("Decades", Node::Bool(mixes.decades)),
@@ -780,6 +782,26 @@ pub fn validate_genre_mappings(mappings: &[Node]) -> Result<Option<String>, AppE
     Ok(None)
 }
 
+/// The chart list and the chart country, when the patch sets them. Keys are matched without
+/// regard to case, as the configuration system matches them.
+pub fn validate_charts(lists: &JsonObject) -> Option<String> {
+    use octo_core::charts::chart_settings::{is_valid_charts, is_valid_country};
+    let value = |name: &str| key_of(lists, name).and_then(|key| lists.get(&key));
+    match value("Charts") {
+        None | Some(Node::Null) => {}
+        Some(Node::String(charts)) if is_valid_charts(charts) => {}
+        Some(_) => {
+            return Some("Charts are new, trending and Apple genre numbers, separated by commas.".into());
+        }
+    }
+    match value("ChartCountry") {
+        None | Some(Node::Null) => {}
+        Some(Node::String(country)) if is_valid_country(country) => {}
+        Some(_) => return Some("Chart country is auto or a two-letter country such as us.".into()),
+    }
+    None
+}
+
 pub fn validate_discovery_stations(stations: &[Node]) -> Result<Option<String>, AppError> {
     if stations.len() > 12 {
         return Ok(Some(
@@ -877,6 +899,11 @@ pub async fn save_settings(
     if let Some(Node::Object(lastfm_patch)) = patch.get("LastFm")
         && let Some(Node::Array(stations)) = lastfm_patch.get("DiscoveryStations")
         && let Some(message) = validate_discovery_stations(stations)?
+    {
+        return Ok(error_json(StatusCode::BAD_REQUEST, &message));
+    }
+    if let Some(lists_patch) = child(&patch, "GeneratedPlaylists")
+        && let Some(message) = validate_charts(lists_patch)
     {
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
@@ -1015,6 +1042,48 @@ mod tests {
         match Node::parse(json).expect("test JSON parses") {
             Node::Object(map) => map,
             _ => panic!("an object"),
+        }
+    }
+
+    #[test]
+    fn validate_charts_takes_good_lists_and_countries() {
+        for ok in [
+            r#"{ "Charts": "new,trending,18,14,6", "ChartCountry": "auto" }"#,
+            r#"{ "charts": "", "chartcountry": "GB" }"#,
+            r#"{ "PopularNow": false }"#,
+            r#"{ "Charts": null }"#,
+        ] {
+            assert_eq!(validate_charts(&obj(ok)), None, "{ok}");
+        }
+    }
+
+    #[test]
+    fn save_settings_refuses_a_bad_chart_list() {
+        for bad in [
+            r#"{ "Charts": "pop,18" }"#,
+            r#"{ "Charts": 18 }"#,
+            r#"{ "charts": "new;18" }"#,
+        ] {
+            assert_eq!(
+                validate_charts(&obj(bad)).as_deref(),
+                Some("Charts are new, trending and Apple genre numbers, separated by commas."),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn save_settings_refuses_a_bad_chart_country() {
+        for bad in [
+            r#"{ "ChartCountry": "usa" }"#,
+            r#"{ "ChartCountry": "../" }"#,
+            r#"{ "ChartCountry": true }"#,
+        ] {
+            assert_eq!(
+                validate_charts(&obj(bad)).as_deref(),
+                Some("Chart country is auto or a two-letter country such as us."),
+                "{bad}"
+            );
         }
     }
 

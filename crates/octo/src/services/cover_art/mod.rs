@@ -3,6 +3,7 @@
 //! upgrade with the album cover finder it asks. List-cover rendering is `octo_media::cover`.
 
 pub mod album_cover_finder;
+pub mod artwork_hints;
 pub mod cover_art_aggregator;
 pub mod cover_art_archive_lookup;
 pub mod cover_upgrade;
@@ -13,6 +14,7 @@ pub mod itunes_cover_art_lookup;
 pub mod last_fm_cover_art_lookup;
 
 pub use album_cover_finder::{AlbumCoverFinder, AlbumCoverQuery, FoundCover, IAlbumCoverFinder};
+pub use artwork_hints::{ArtworkHints, HintedArtwork};
 pub use cover_art_aggregator::CoverArtAggregator;
 pub use cover_art_archive_lookup::CoverArtArchiveLookup;
 pub use cover_upgrade::{

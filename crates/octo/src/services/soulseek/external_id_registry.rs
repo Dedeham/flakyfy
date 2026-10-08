@@ -180,7 +180,7 @@ impl ExternalIdRegistry {
         if let Some(previous) = previous.filter(|p| !p.ptr_eq(&routing)) {
             // Read the earlier routing under its own lock, then let it go before taking the
             // new one's, so two registrations never hold both.
-            let (prev_album_id, (seconds, source), prev_isrc, prev_artist_id, prev_explicit) = {
+            let (prev_album_id, (seconds, source), prev_isrc, prev_artist_id, prev_explicit, prev_album) = {
                 let p = previous.lock();
                 (
                     p.external_album_id.clone(),
@@ -188,6 +188,7 @@ impl ExternalIdRegistry {
                     p.isrc.clone(),
                     p.external_artist_id.clone(),
                     p.explicit_content,
+                    p.album.clone(),
                 )
             };
             let mut r = routing.lock();
@@ -219,6 +220,18 @@ impl ExternalIdRegistry {
             // the catalog is asked.
             if r.explicit_content.is_none() {
                 r.explicit_content = prev_explicit;
+            }
+            // And the album, which a song's id leaves out: radio registers a song Last.fm named
+            // without one, and it must not undo the album a search or a listing filed it under.
+            // Fixed in the port only (the C# replaced it, so later answers lost the album until a
+            // search registered the song again).
+            if r.kind == RoutingKind::Song
+                && r.album.as_deref().is_none_or(|album| album.trim().is_empty())
+                && prev_album
+                    .as_deref()
+                    .is_some_and(|album| !album.trim().is_empty())
+            {
+                r.album = prev_album;
             }
         }
 

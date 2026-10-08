@@ -1,21 +1,21 @@
-//! `getSimilarSongs` and `getSimilarSongs2` (L2770): song radio from Last.fm's similar
-//! tracks, the library's own copies preferred.
+//! `getSimilarSongs` and `getSimilarSongs2`: song radio from every radio source
+//! (`services::radio::SongRadioService`), the library's own copies preferred. A song, an album
+//! or an artist id starts it, as the Subsonic API says.
 
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use octo_core::common::dotnet;
-use octo_core::last_fm::{last_fm_radio_seed_normalizer, last_fm_radio_spacing};
 use octo_core::models::domain::Song;
+use octo_core::radio::RadioSeed;
 use octo_subsonic::SubsonicReply;
 use octo_subsonic::subsonic_response_builder::{SUBSONIC_NAMESPACE, SUBSONIC_VERSION};
 use octo_subsonic::xml::XElement;
 use serde_json::{Map, Value};
-use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use super::helpers_6a1::{SubsonicCall, int_param};
+use super::helpers_6a1::{SubsonicCall, int_param, is_successful_subsonic_response};
 use crate::app::AppState;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 
@@ -48,8 +48,8 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
             .into_response();
     }
 
-    // Check if Last.fm radio is configured and enabled
-    if !state.last_fm.is_radio_enabled() {
+    // Check if radio is configured and enabled
+    if !state.song_radio.enabled() {
         debug!("Last.fm radio not configured, relaying to upstream server");
         // The path keeps its leading slash, so the upstream URL has a double slash after the
         // server's address, as the C# relayed it.
@@ -62,7 +62,14 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
     // Get the seed song metadata
     let mut artist_name = String::new();
     let mut track_title = String::new();
+    let mut library_seed: Option<Song> = None;
+    let mut seed_video: Option<String> = None;
 
+    let resolver = LastFmRadioTrackResolver::new(
+        call.proxy.clone(),
+        state.metadata_service.clone(),
+        state.external_id_registry.clone(),
+    );
     let (is_external, provider, external_id) = state.local_library.parse_song_id(&id);
     if is_external {
         // External song - get metadata from our service
@@ -77,107 +84,90 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
             artist_name = song.artist;
             track_title = song.title;
         }
+        // An outside song already playing from YouTube names its video: its radio needs no
+        // search.
+        seed_video = state
+            .external_id_registry
+            .lookup(&id)
+            .and_then(|routing| routing.lock().you_tube_id.clone());
     } else {
-        // Local song - get metadata from Navidrome, with auth from the original request
-        let mut get_song_params = call.parameters.clone();
-        get_song_params.insert("id".into(), id.clone());
-        get_song_params.insert("f".into(), "json".into());
-        let read = async {
-            let result = call
-                .proxy
-                .relay("rest/getSong", &get_song_params)
-                .await
-                .map_err(|e| e.to_string())?;
-            let document: Value = serde_json::from_slice(&result.body).map_err(|e| e.to_string())?;
-            let Some(song) = document
-                .as_object()
-                .and_then(|root| root.get("subsonic-response"))
-                .and_then(|response| response.as_object().and_then(|r| r.get("song")))
-            else {
-                return Ok((String::new(), String::new()));
-            };
-            // GetString on a value that is not a string threw.
-            let text = |name: &str| -> Result<String, String> {
-                match song.as_object().and_then(|s| s.get(name)) {
-                    None | Some(Value::Null) => Ok(String::new()),
-                    Some(Value::String(s)) => Ok(s.clone()),
-                    Some(_) if song.is_object() => Err(format!("{name} is not a string")),
-                    Some(_) => Ok(String::new()),
-                }
-            };
-            if !song.is_object() {
-                return Err("the song is not an object".to_string());
-            }
-            Ok::<_, String>((text("artist")?, text("title")?))
+        // A library song, or an album or artist, which Subsonic's getSimilarSongs also takes.
+        // Read with the caller's own credentials, so it is their library being asked.
+        let Some(seed) = resolver.read_seed(&id, &call.parameters).await else {
+            warn!("Could not read radio seed {id} from Navidrome");
+            return builder.create_response(format, response_key).into_response();
         };
-        match read.await {
-            Ok((artist, title)) => {
-                artist_name = artist;
-                track_title = title;
-            }
-            Err(message) => {
-                error!("Failed to get song metadata for {id}: {message}");
-                return builder.create_response(format, response_key).into_response();
-            }
-        }
+        track_title = seed
+            .song
+            .as_ref()
+            .map(|song| song.title.clone())
+            .unwrap_or_default();
+        library_seed = seed.song;
+        artist_name = seed.artist;
     }
 
-    if artist_name.is_empty() || track_title.is_empty() {
+    if artist_name.is_empty() || (track_title.is_empty() && is_external) {
         warn!("Could not get artist/title for song {id}");
         return builder.create_response(format, response_key).into_response();
     }
 
-    // Strip collab/feature decoration so Last.fm finds the canonical artist.
-    let lookup_artist = last_fm_radio_seed_normalizer::artist(&artist_name);
-    let lookup_title = last_fm_radio_seed_normalizer::title(&track_title);
-    info!(
-        "Getting similar songs for {artist_name} - {track_title} (lookup: {lookup_artist} - {lookup_title})"
-    );
-
-    let similar_tracks = state
-        .last_fm
-        .get_similar_tracks(&lookup_artist, &lookup_title, count)
+    // Who the radio is for, once Navidrome has accepted their sign-in: a library seed was just
+    // read with it, an outside one is checked with a ping, as setRating does. Unchecked, the
+    // radio applies no one-star bans, uses the base weights and teaches nothing, so nobody can
+    // read or steer another listener's radio by naming them. Named as scrobbles name them.
+    let mut verified = !is_external;
+    if is_external {
+        let mut auth = call.parameters.clone();
+        auth.shift_remove("id");
+        verified = call
+            .proxy
+            .relay_safe("rest/ping", &auth)
+            .await
+            .is_some_and(|check| is_successful_subsonic_response(&check.body, format));
+    }
+    let listener = if verified {
+        state
+            .request_identity
+            .username(&call.parameters, &call.proxy)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let bans = listener
+        .as_deref()
+        .map(|listener| state.last_fm_radio_state.radio_ban_keys(listener))
+        .unwrap_or_default();
+    let seed = RadioSeed {
+        artist: artist_name.clone(),
+        title: track_title.clone(),
+        duration: library_seed.as_ref().and_then(|song| song.duration),
+        library_song: library_seed,
+        you_tube_id: seed_video,
+    };
+    let resolved_songs = state
+        .song_radio
+        .build(
+            &seed,
+            count,
+            listener.as_deref(),
+            &call.parameters,
+            &bans,
+            &resolver,
+        )
         .await;
-    if similar_tracks.is_empty() {
-        info!("No similar tracks found from Last.fm");
+    if resolved_songs.is_empty() {
+        // Nothing from Octo's sources (no Last.fm key, say, and an artist none of the others
+        // knows): Navidrome's own agents may still answer, as they did before Octo's radio.
+        if !is_external
+            && let Some(upstream) = call.proxy.relay_safe(&path, &call.parameters).await
+            && !upstream.body.is_empty()
+        {
+            return call.file(&upstream.body, upstream.content_type.as_deref());
+        }
         return builder.create_response(format, response_key).into_response();
     }
-    info!(
-        "Found {} similar tracks from Last.fm; building radio queue",
-        similar_tracks.len()
-    );
-
-    // For each Last.fm recommendation, prefer the local copy if we own it. Tracks the user
-    // already has play at full FLAC quality from Navidrome and avoid the yt-dlp roundtrip
-    // entirely. Lookups go in parallel against Navidrome under a cap of 10, which fits
-    // comfortably inside Arpeggi's HTTP budget.
-    let resolver = LastFmRadioTrackResolver::new(
-        call.proxy.clone(),
-        state.metadata_service.clone(),
-        state.external_id_registry.clone(),
-    );
-    let gate = Semaphore::new(10);
-    let resolving = similar_tracks.iter().take(count.max(0) as usize).map(|track| {
-        let resolver = &resolver;
-        let gate = &gate;
-        let parameters = &call.parameters;
-        async move {
-            let _permit = gate.acquire().await.expect("the gate is never closed");
-            resolver
-                .resolve(&track.artist, &track.title, track.duration, parameters)
-                .await
-        }
-    });
-    let resolved: Vec<Song> = futures::future::join_all(resolving)
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
-    let resolved_songs = last_fm_radio_spacing::spread(
-        &resolved,
-        |song: &Song| Some(song.artist.clone()),
-        Some(&artist_name),
-    );
 
     let local_count = resolved_songs.iter().filter(|song| song.is_local).count();
     info!(

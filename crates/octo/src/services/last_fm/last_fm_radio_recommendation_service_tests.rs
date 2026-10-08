@@ -112,7 +112,7 @@ async fn fixture(last_fm: LastFmSettings, handler: impl Respond + 'static) -> Fi
         settings.clone(),
         &format!("{}/", server.uri()),
     ));
-    let service = LastFmRadioRecommendationService::new(client, state.clone(), settings.clone());
+    let service = LastFmRadioRecommendationService::new(client, state.clone(), settings.clone(), None);
     Fixture {
         _dir: dir,
         _server: server,

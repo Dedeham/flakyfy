@@ -35,7 +35,7 @@
 # run's exit status (0: the run went through, diffs or not; 143: it was stopped). If this
 # script is stopped, --attach follows the run again.
 #
-# The run: the image octo-rust-lane:<name> from Dockerfile.rust's runtime stage around the
+# The run: the image octo-rust-lane:<name> from Dockerfile's runtime stage around the
 # binary; the corpus against the C# image (kept per corpus version and shard plan in
 # ~/.octo-parity/cs-cache/, recorded again only when they change) and against the Rust image;
 # then the diffs. Every recording is cut into the shards of parity/shards.json (parity.py run
@@ -519,7 +519,7 @@ for s in plan["shards"] if isinstance(plan, dict) else plan:
     {
       echo "FROM scratch AS build"
       echo "COPY .parity-bin/octo /out/octo"
-      sed -n '/^# ---- Runtime ----/,$p' Dockerfile.rust
+      sed -n '/^# ---- Runtime ----/,$p' Dockerfile
     } > .parity-bin/Dockerfile
     start=$(date +%s)
     docker build -q -f .parity-bin/Dockerfile -t "$RS_IMAGE" . > "$RUN/build.log" 2>&1 || {

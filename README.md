@@ -8,7 +8,7 @@
 Search any song and play it right away. Keep the ones you love as files on your own server.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4)](https://dotnet.microsoft.com/)
+[![Rust](https://img.shields.io/badge/Rust-1.99-B7410E)](https://www.rust-lang.org/)
 [![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED)](https://docs.docker.com/compose/)
 [![CI](https://github.com/winters27/octo/actions/workflows/ci.yml/badge.svg)](https://github.com/winters27/octo/actions/workflows/ci.yml)
 
@@ -391,7 +391,7 @@ Four Docker containers in one `docker compose` stack (the diagram leaves out oct
                               └────────────┘    └─────────┘
 ```
 
-- **`octo`** (port 5274): the proxy + admin UI. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Octo hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
+- **`octo`** (port 5274): the proxy + admin UI, written in Rust. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Octo hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
 - **`yt-dlp-shim`** (internal): wraps `yt-dlp` behind two HTTP endpoints. Process-isolation keeps yt-dlp's frequent extractor breakage from affecting the rest of the stack.
 - **`octo-sonic`** (internal): reads each song once and says how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` leaves it idle.
 - **`slskd`** (port 5030 for its web page, 50300 for other Soulseek users): Soulseek client with REST API. Octo authenticates and queues downloads, and slskd shares your library back, read-only (see [Sharing back on Soulseek](#sharing-back-on-soulseek)).
@@ -930,11 +930,18 @@ Yes. Existing snapshots are served first; Starter and pinned stations can fall b
 
 ### Development
 
+Octo is written in Rust (the workspace in `Cargo.toml`, under `crates/`). `rust-toolchain.toml` picks the toolchain, so `rustup` installs it on first use. Build and test on Linux or WSL; `cargo check` also works on Windows:
+
 ```bash
-dotnet restore
-dotnet build
-dotnet test
+cargo build
+cargo test --workspace
+cargo clippy --workspace --tests -- -D warnings
+cargo fmt --all
 ```
+
+A debug build serves the dashboard and images from the C# folder they still live in: set `OCTO_WWWROOT=octo/wwwroot` and `OCTO_ASSETS=octo/Assets` when you run it from the repository.
+
+The C# Octo (2026.10.05 and earlier) is still in `octo/` and `octo.Tests/`, with `Dockerfile.csharp`, until it is removed after the Rust release; nothing ships it. The Rust server reads the files the two share from there: the dashboard (`octo/wwwroot`), images (`octo/Assets`), the list cover design and `appsettings.json`.
 
 To run your changes in the stack, build Octo from the folder; `docker-compose.yml` otherwise pulls the published image:
 
@@ -954,16 +961,20 @@ Project layout:
 
 | Path | What's there |
 |---|---|
-| `octo/Controllers/` | Subsonic API surface, admin API |
-| `octo/Services/Soulseek/` | slskd client, multi-peer download logic |
-| `octo/Services/Lidarr/` | Lidarr API, album submission, import reconciliation |
-| `octo/Services/YouTube/` | shim HTTP client |
-| `octo/Services/CoverArt/` | Deezer / iTunes / Last.fm aggregator |
-| `octo/Services/LastFm/` | Last.fm client, Radio state/recommendations, in-process refresh queue and worker |
-| `octo/Services/Subsonic/` | request parsing, response building |
-| `octo/Services/Admin/` | settings file writer (atomic, deep-merge) |
+| `crates/octo/src/controllers/` | Subsonic API surface, admin API |
+| `crates/octo/src/services/soulseek/` | slskd client, multi-peer download logic |
+| `crates/octo/src/services/lidarr/` | Lidarr API, album submission, import reconciliation |
+| `crates/octo/src/services/you_tube/` | shim HTTP client |
+| `crates/octo/src/services/cover_art/` | Deezer / iTunes / Last.fm aggregator |
+| `crates/octo/src/services/last_fm/`, `services/radio/` | Last.fm client, Radio state/recommendations, in-process refresh queue and worker |
+| `crates/octo/src/workers/` | the background workers |
+| `crates/octo-core/` | settings, models, tagging rules and the logic the server and its tests share |
+| `crates/octo-media/` | tags (lofty), audio checks, list covers |
+| `crates/octo-subsonic/` | request parsing, response building |
 | `octo/wwwroot/admin/` | the admin UI (vanilla JS, hand-rolled CSS, no build step) |
+| `parity/` | the harness that compares the Rust server's answers with the C# one's |
 | `yt-dlp-shim/` | Python/Flask sidecar (~200 lines) |
+| `sonic/` | octo-sonic, the Sounds alike reader (Rust) |
 
 </details>
 

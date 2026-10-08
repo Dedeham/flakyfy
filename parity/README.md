@@ -66,7 +66,7 @@ through `cargo-slot`), checks HEAD out into the run's own folder
 working or switch branches while it runs), copies itself beside it (`runs/<branch>/run.sh`: the
 lane's machinery is the script you started; the corpus, the stubs and `parity.py` are the
 commit's) and starts the run there under `setsid nohup`. The run builds
-`octo-rust-lane:<branch>` from `Dockerfile.rust`'s runtime stage around the binary, records the
+`octo-rust-lane:<branch>` from `Dockerfile`'s runtime stage around the binary, records the
 corpus against the C# image and the Rust image, and diffs, like the box.
 
 - **Side by side.** Every stack has its own compose project,
@@ -151,7 +151,7 @@ parity/lxc131.sh --box-build --low-memory   # that, with one job and no LTO
 checkout as a static musl binary (`cargo build --release --locked --target
 x86_64-unknown-linux-musl`, into `target/x86_64-unknown-linux-musl/release/octo`), sends it to
 the box beside the commits, and [`box-run.sh`](box-run.sh) `--prebuilt` builds the image from
-`Dockerfile.rust`'s own runtime stage with the build stage swapped for that binary
+`Dockerfile`'s own runtime stage with the build stage swapped for that binary
 (`.parity-bin/Dockerfile` in the box checkout): Debian packages, cached after the first time,
 and a copy. The image is the release image in every way but how the binary was compiled.
 Static musl because a WSL glibc build needs a newer glibc than bookworm-slim has and does not
@@ -160,7 +160,7 @@ start there. Once per WSL install: `rustup target add x86_64-unknown-linux-musl`
 
 It bundles the commits the box lacks, checks them out in `/opt/octo-parity/runs/<branch>/src`
 and runs [`box-run.sh`](box-run.sh) there: the image (above; with `--box-build`, the whole
-`docker buildx build -f Dockerfile.rust` on the box, own builder `octo-parity`, capped at
+`docker buildx build -f Dockerfile` on the box, own builder `octo-parity`, capped at
 3.5 GB), the corpus against the C# image (recorded once per corpus version and kept in
 `/opt/octo-parity/cs-cache/`) and against the Rust image, then the diff. It prints the summary
 and the diffs per backlog group, and copies the full reports to
@@ -249,7 +249,7 @@ python3 parity/parity.py run --image ghcr.io/winters27/octo:2026.10.05 --out /tm
 python3 parity/parity.py diff /tmp/parity/csharp /tmp/parity/csharp-again
 python3 parity/parity.py diff --mode bytes /tmp/parity/csharp /tmp/parity/csharp-again
 
-# The Rust build (docker build -f Dockerfile.rust -t octo-rust:dev .). A different project and
+# The Rust build (docker build -f Dockerfile -t octo-rust:dev .). A different project and
 # ports let it run beside a C# stack.
 python3 parity/parity.py run --image octo-rust:dev --project parity-rust --port 18580 --nd-port 18553 \
     --out /tmp/parity/rust
@@ -283,7 +283,7 @@ one. The released C# image is on ghcr.io (`ghcr.io/winters27/octo:<release>`). T
 C# change that is not released yet, build it from this tree with its own Dockerfile:
 
 ```sh
-docker build -t octo-csharp:dev .
+docker build -f Dockerfile.csharp -t octo-csharp:dev .
 python3 parity/parity.py run --image octo-csharp:dev --out /tmp/parity/csharp-dev
 ```
 

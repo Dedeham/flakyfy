@@ -5,7 +5,7 @@
 #   parity/lxc131.sh                      # build here, record, compare with C# 2026.10.05
 #   parity/lxc131.sh --only '13-*'        # just some corpus files (the C# side is recorded again)
 #   parity/lxc131.sh --no-build           # same image as last time (corpus or stub changes only)
-#   parity/lxc131.sh --box-build          # compile on the box instead (Dockerfile.rust whole)
+#   parity/lxc131.sh --box-build          # compile on the box instead (Dockerfile whole)
 #   parity/lxc131.sh --box-build --low-memory   # that, with one job and no LTO
 #   parity/lxc131.sh --bytes              # also the bytes-mode diff
 #   parity/lxc131.sh --rust-twice         # also Rust against Rust (the determinism gate)
@@ -21,7 +21,7 @@
 # x86_64-unknown-linux-musl; `rustup target add x86_64-unknown-linux-musl` and musl-tools once),
 # bundles HEAD (only the commits the box lacks), copies the bundle and the binary to the box
 # through the Proxmox host, checks it out in /opt/octo-parity/runs/<name>/src, and starts
-# parity/box-run.sh there (the image from Dockerfile.rust's runtime stage around that binary,
+# parity/box-run.sh there (the image from Dockerfile's runtime stage around that binary,
 # the corpus against both builds, the diff).
 #
 # Compiling here is the default because the box's compile is what hurts the shared Proxmox

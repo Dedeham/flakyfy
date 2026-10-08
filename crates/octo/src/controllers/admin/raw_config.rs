@@ -93,6 +93,8 @@ pub async fn put_raw_config(
     let pretty = to_indented_json(&parsed);
     match state.settings_writer.replace(&parsed) {
         Ok(()) => {
+            // As a settings save does: the next request sees the new file, not the one before it.
+            let _ = state.settings.reload_now();
             let bytes = utf16_len(&pretty);
             info!(
                 "{} saved the raw config ({bytes} bytes)",

@@ -853,9 +853,9 @@ pub fn validate_discovery_stations(stations: &[Node]) -> Result<Option<String>, 
 }
 
 /// `POST /api/admin/settings`: writes a partial settings patch to the JSON file. The body
-/// shape matches the GET; any subset of keys may be supplied. The file watcher picks the write
-/// up within moments, so live settings reflect it on the next read, but services that captured
-/// a value at startup keep theirs until a restart.
+/// shape matches the GET; any subset of keys may be supplied. The live settings are read again
+/// before the answer, so the very next request sees the save, but services that captured a
+/// value at startup keep theirs until a restart.
 pub async fn save_settings(
     State(state): State<AppState>,
     caller: Option<Extension<AdminCaller>>,
@@ -1001,6 +1001,12 @@ pub async fn save_settings(
     // UserTokens is a dictionary: merged, a user removed in the dashboard would stay.
     match state.settings_writer.merge(&patch, &["ListenBrainz.UserTokens"]) {
         Ok(merged) => {
+            // The file watcher reads the file again only 250 ms after it settles, and a request
+            // that came in meanwhile answered from the settings before the save: a list switched
+            // off stayed in getPlaylists, and stayed for as long as that request took. Reading it
+            // here means whatever comes after the answer sees the save. A file that does not read
+            // back keeps the last good settings, and the reader logs why.
+            let _ = state.settings.reload_now();
             let keys: Vec<&str> = patch.keys().map(String::as_str).collect();
             info!(
                 "{} saved settings: {}",

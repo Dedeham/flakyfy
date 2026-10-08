@@ -3,14 +3,17 @@
 //! changes every hour, settings.json is watched and shown on the dashboard, and these must never
 //! be). Written whole each time, through a temporary file readable by its owner alone.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use octo_core::common::dotnet::ordinal_ignore_case_key;
 use octo_core::json::datetime;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use crate::services::framework::DotnetDictionary;
 use crate::services::state_file::{self, null_as_default};
 
 /// One person's Spotify sign-in. The tokens never leave Octo.
@@ -78,6 +81,94 @@ pub fn save(path: &Path, accounts: &SpotifyAccounts) -> bool {
     }
 }
 
+/// `SpotifyAccountStore`: the sign-ins in memory, by name ignoring case, written whole on every
+/// change. A name already there keeps the spelling it was first saved under, as the C#
+/// dictionary's indexer did.
+pub struct SpotifyAccountStore {
+    path: Option<PathBuf>,
+    accounts: Mutex<DotnetDictionary<(String, SpotifyAccount)>>,
+}
+
+impl Default for SpotifyAccountStore {
+    fn default() -> Self {
+        SpotifyAccountStore::new(None)
+    }
+}
+
+impl SpotifyAccountStore {
+    /// No path keeps the sign-ins in memory only, as the tests build it.
+    pub fn new(path: Option<PathBuf>) -> Self {
+        let mut accounts = DotnetDictionary::new();
+        if let Some(path) = path.as_deref() {
+            for (user, account) in load(path) {
+                put(&mut accounts, &user, account);
+            }
+        }
+        SpotifyAccountStore {
+            path,
+            accounts: Mutex::new(accounts),
+        }
+    }
+
+    pub fn get(&self, user: &str) -> Option<SpotifyAccount> {
+        self.accounts
+            .lock()
+            .get(&ordinal_ignore_case_key(user))
+            .map(|(_, account)| account.clone())
+    }
+
+    pub fn set(&self, user: &str, account: SpotifyAccount) {
+        let mut accounts = self.accounts.lock();
+        put(&mut accounts, user, account);
+        self.write(&accounts);
+    }
+
+    pub fn update(&self, user: &str, change: impl FnOnce(&mut SpotifyAccount)) {
+        let mut accounts = self.accounts.lock();
+        let Some((_, account)) = accounts.get_mut(&ordinal_ignore_case_key(user)) else {
+            return;
+        };
+        change(account);
+        self.write(&accounts);
+    }
+
+    pub fn remove(&self, user: &str) -> bool {
+        let mut accounts = self.accounts.lock();
+        if accounts.remove(&ordinal_ignore_case_key(user)).is_none() {
+            return false;
+        }
+        self.write(&accounts);
+        true
+    }
+
+    pub fn users(&self) -> Vec<String> {
+        self.accounts
+            .lock()
+            .values()
+            .map(|(user, _)| user.clone())
+            .collect()
+    }
+
+    // Called with the lock held.
+    fn write(&self, accounts: &DotnetDictionary<(String, SpotifyAccount)>) {
+        if let Some(path) = &self.path {
+            let file: SpotifyAccounts = accounts
+                .values()
+                .map(|(user, account)| (user.clone(), account.clone()))
+                .collect();
+            save(path, &file);
+        }
+    }
+}
+
+fn put(accounts: &mut DotnetDictionary<(String, SpotifyAccount)>, user: &str, account: SpotifyAccount) {
+    let key = ordinal_ignore_case_key(user);
+    let name = accounts
+        .get(&key)
+        .map_or_else(|| user.to_string(), |(name, _)| name.clone());
+    accounts.set(key, (name, account));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +198,28 @@ mod tests {
         let mode = std::fs::metadata(&path).expect("exists").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(load(&path), accounts);
+    }
+
+    #[test]
+    fn a_name_is_matched_ignoring_case_and_keeps_its_first_spelling() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("spotify-accounts.json");
+        let store = SpotifyAccountStore::new(Some(path.clone()));
+        store.set("Alice", SpotifyAccount::default());
+        store.set(
+            "alice",
+            SpotifyAccount {
+                display_name: Some("A".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(store.users(), ["Alice"]);
+        store.update("ALICE", |a| a.problem = Some("ended".into()));
+        let again = SpotifyAccountStore::new(Some(path));
+        let account = again.get("alice").expect("kept");
+        assert_eq!(account.display_name.as_deref(), Some("A"));
+        assert_eq!(account.problem.as_deref(), Some("ended"));
+        assert!(again.remove("aLiCe"));
+        assert!(!again.remove("alice"));
     }
 }

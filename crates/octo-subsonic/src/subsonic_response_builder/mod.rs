@@ -72,10 +72,20 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     ("songLyrics", &[1, 2]),
     // After songLyrics, where the C# lists it.
     (TOP_SONGS_EXTENSION, &[1, TOP_SONGS_EXTENSION_VERSION]),
-    // The other groups' extensions (octoImports, octoRadioSources) come before this one, as the
-    // C# lists them, when those groups land.
+    (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
+    (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
+
+/// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
+/// getImport, importAction).
+pub const IMPORTS_EXTENSION: &str = "octoImports";
+pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
+
+/// Octo's radio answers name the source of each song (`octoSuggestedBy`): Last.fm, YouTube
+/// Music, ListenBrainz, Sounds alike or Your library.
+pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
+pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
 /// octoLists v1 (f54467a): Made for you (New Releases, Rediscover, Deep Cuts) are read-only
 /// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
@@ -500,8 +510,8 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs is left out;
-    /// [`Self::merge_open_subsonic_extensions_listing`] says whether it is listed.
+    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs and
+    /// octoRadioSources are left out; [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
         format: &str,
@@ -510,19 +520,22 @@ impl SubsonicResponseBuilder {
         lyrics_choices: bool,
         library_actions: bool,
     ) -> SubsonicReply {
-        self.merge_open_subsonic_extensions_listing(
+        self.merge_open_subsonic_extensions_with(
             format,
             upstream,
             content_type,
             lyrics_choices,
             library_actions,
             false,
+            false,
         )
     }
 
-    /// [`Self::merge_open_subsonic_extensions`], with octoTopSongs listed while `top_songs`
-    /// (search discovery) is on: its lists are outside songs, which discovery being off hides.
-    pub fn merge_open_subsonic_extensions_listing(
+    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
+    /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
+    /// discovery being off hides, and octoRadioSources while radio can answer
+    /// (`radio_sources`). The C# defaults were true and false.
+    pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
         upstream: Option<&[u8]>,
@@ -530,17 +543,20 @@ impl SubsonicResponseBuilder {
         lyrics_choices: bool,
         library_actions: bool,
         top_songs: bool,
+        radio_sources: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
         // "choose lyrics" that can only answer that lookups are off. octoLibraryActions is only
-        // listed while library actions are on, for the same reason.
+        // listed while library actions are on, and octoRadioSources while radio can answer, for the
+        // same reason.
         let own: Vec<(&str, &[i32])> = OWN_EXTENSIONS
             .iter()
             .copied()
             .filter(|(name, _)| lyrics_choices || *name != LYRICS_EXTENSION)
             .filter(|(name, _)| library_actions || *name != LIBRARY_ACTIONS_EXTENSION)
             .filter(|(name, _)| top_songs || *name != TOP_SONGS_EXTENSION)
+            .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {
@@ -757,6 +773,10 @@ impl SubsonicResponseBuilder {
 
         if let Some(year) = song.year {
             fields.insert("year".into(), year.into());
+        }
+        // Which radio source suggested the song; only radio answers carry it (octoRadioSources).
+        if let Some(by) = song.suggested_by.as_deref().filter(|by| !by.is_empty()) {
+            fields.insert("octoSuggestedBy".into(), by.into());
         }
 
         if !song.is_local {

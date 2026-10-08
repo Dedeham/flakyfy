@@ -94,13 +94,14 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
     let settings = state.settings.current();
     state
         .subsonic_response_builder
-        .merge_open_subsonic_extensions_listing(
+        .merge_open_subsonic_extensions_with(
             &format,
             relay.as_ref().map(|r| r.body.as_ref()),
             relay.as_ref().and_then(|r| r.content_type.as_deref()),
             settings.metadata.fetch_lyrics,
             settings.library_actions.enabled,
             settings.subsonic.enable_search_discovery,
+            state.song_radio.enabled(),
         )
         .into_response()
 }

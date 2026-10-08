@@ -12,6 +12,7 @@ pub mod lyrics;
 pub mod metadata;
 pub mod models;
 pub mod notifications;
+pub mod radio;
 pub mod settings;
 pub mod soulseek;
 pub mod tagging;

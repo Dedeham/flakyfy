@@ -19,6 +19,7 @@ pub(crate) mod album_ownership;
 pub mod browsing;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
+pub mod imports;
 pub mod lyrics;
 pub mod media;
 pub mod stars;
@@ -38,6 +39,8 @@ mod for_you_tests;
 mod lyrics_endpoint_tests_6a2;
 #[cfg(test)]
 mod media_tests_6a2;
+#[cfg(test)]
+mod radio_ban_tests;
 #[cfg(test)]
 mod rating_tests_6a2;
 #[cfg(test)]
@@ -134,4 +137,5 @@ pub fn routes() -> RouteSet {
         .merge(extensions::routes())
         .merge(lyrics::routes())
         .merge(top_songs::routes())
+        .merge(imports::routes())
 }

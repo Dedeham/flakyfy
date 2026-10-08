@@ -1,12 +1,14 @@
 //! `getPlaylists` (L357), `getPlaylist` (L426), and the playlist and internet radio
 //! mutations (L688, L710), which refuse Octo's own read-only ids.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use octo_core::charts::chart_settings;
 use octo_core::json::dom::Node;
+use octo_core::radio::radio_provider;
 use octo_core::settings::GeneratedPlaylistSettings;
 use octo_subsonic::SubsonicReply;
 use octo_subsonic::subsonic_response_builder::chart_playlist_comment;
@@ -318,6 +320,12 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
     }
 
     let mut songs = materialize_station(state, &call.proxy, &station, &call.parameters).await;
+    let mut suggested: HashMap<String, String> = HashMap::new();
+    for song in &songs {
+        if let Some(by) = &song.suggested_by {
+            suggested.entry(song.id.clone()).or_insert_with(|| by.clone());
+        }
+    }
     songs = state
         .generated_playlists
         .blend_into_discovery(&username, &station, songs, &call.parameters)
@@ -342,6 +350,32 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .unwrap_or(song)
         })
         .collect();
+    // The discovery blend and the catalog swap hand back other objects; the source rides on by
+    // id, on a copy, since a catalog row is shared with other responses.
+    let songs: Vec<_> = songs
+        .into_iter()
+        .map(|mut song| {
+            if let Some(by) = suggested.get(&song.id)
+                && song.suggested_by.as_ref() != Some(by)
+            {
+                song.suggested_by = Some(by.clone());
+            }
+            song
+        })
+        .collect();
+    // A station refetched by a syncing client is not the listener choosing it, so it never
+    // renews the window in which a start counts for radio.
+    state.radio_outcomes.served(
+        Some(&username),
+        songs.iter().map(|song| {
+            (
+                song.id.as_str(),
+                radio_provider::from_display_name(song.suggested_by.as_deref()),
+            )
+        }),
+        None,
+        false,
+    );
     state
         .radio_queues
         .register(songs.iter().map(|song| song.id.clone()));

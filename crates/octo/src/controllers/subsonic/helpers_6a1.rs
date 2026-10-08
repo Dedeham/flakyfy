@@ -16,6 +16,7 @@ use octo_core::common::dotnet;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::models::domain::Song;
 use octo_core::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind};
+use octo_core::radio::radio_provider;
 use octo_core::settings::ExplicitFilter;
 use octo_subsonic::xml::XElement;
 use octo_subsonic::{Parameters, SubsonicReply};
@@ -689,8 +690,14 @@ pub async fn materialize_station(
         let gate = &gate;
         async move {
             let _permit = gate.acquire().await.expect("the gate is never closed");
-            match resolver
-                .resolve(&track.artist, &track.title, track.duration, parameters)
+            let mut song = match resolver
+                .resolve(
+                    &track.artist,
+                    &track.title,
+                    track.duration,
+                    parameters,
+                    track.you_tube_id.as_deref(),
+                )
                 .await
             {
                 Some(song) => song,
@@ -707,7 +714,14 @@ pub async fn materialize_station(
                     external_id: track.resolved_id.clone(),
                     ..Default::default()
                 },
+            };
+            // A song that sounded like the seed was a library song; if it is gone, it is not
+            // worth streaming a stranger's copy of it.
+            if track.source == radio_provider::SOUNDS_ALIKE && !song.is_local {
+                return Song::default();
             }
+            song.suggested_by = radio_provider::display_name(Some(&track.source)).map(str::to_string);
+            song
         }
     });
     let explicit_filter = state.settings.current().subsonic.explicit_filter;

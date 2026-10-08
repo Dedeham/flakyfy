@@ -260,6 +260,22 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
 
     // An external id is not a Navidrome song, and relaying one errors "data not found".
     if !item_id.is_empty() && state.local_library.parse_song_id(&item_id).0 {
+        // Nothing to relay, so a ping is the auth check before the listener's radio changes.
+        if let Some(external_stars) = try_parse_int(&rating_text)
+            && let Some(external_rater) = call.param_opt("u").filter(|u| !u.is_empty())
+        {
+            let mut auth = call.parameters.clone();
+            auth.shift_remove("id");
+            auth.shift_remove("rating");
+            if call
+                .proxy
+                .relay_safe("rest/ping", &auth)
+                .await
+                .is_some_and(|check| is_successful_subsonic_response(&check.body, &format))
+            {
+                record_radio_ban(&state, &call, external_rater, &item_id, external_stars).await;
+            }
+        }
         return Ok(builder.create_response(&format, "setRating").into_response());
     }
 
@@ -276,6 +292,14 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         }
         Err(other) => return Err(other.into()),
     };
+
+    if is_successful_subsonic_response(&result.body, &format)
+        && let Some(stars) = try_parse_int(&rating_text)
+        && let Some(rater) = call.param_opt("u").filter(|u| !u.is_empty())
+        && !item_id.is_empty()
+    {
+        record_radio_ban(&state, &call, rater, &item_id, stars).await;
+    }
 
     let settings = state.settings.current().library_actions.clone();
     if is_successful_subsonic_response(&result.body, &format)
@@ -306,6 +330,20 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         .content_type
         .unwrap_or_else(|| format!("application/{format}"));
     Ok(file(result.body, &content_type))
+}
+
+/// One star keeps a song off this listener's radio; any other rating lifts that. Never fails the
+/// rating itself: the radio is a side effect of it.
+async fn record_radio_ban(state: &AppState, call: &SubsonicCall, username: &str, item_id: &str, stars: i32) {
+    let resolver = resolver(state, call);
+    if let Some(rated) = resolver.resolve_scrobble(item_id, &call.parameters).await {
+        state
+            .last_fm_radio_state
+            .set_radio_ban(username, item_id, &rated.artist, &rated.title, stars == 1);
+    }
+    if stars == 1 {
+        state.radio_outcomes.disliked(username, item_id, Utc::now());
+    }
 }
 
 /// Whether a star is a command here. NoticeOnly: only on a track in one of Octo's notice
@@ -452,6 +490,11 @@ async fn learn_from_scrobbles(
     else {
         return Ok(());
     };
+    // What radio learns: a song it suggested, started and then played through, or started and
+    // never finished. Before the early return below, so it works with stations off.
+    state
+        .radio_outcomes
+        .observe(&username, ids, submissions, Utc::now());
     let last_fm_settings = state.settings.current().last_fm.clone();
     let learning = last_fm_settings.enable_radio && last_fm_settings.enable_personalized_stations;
     let submitting = state.listen_brainz.is_enabled_for(&username);

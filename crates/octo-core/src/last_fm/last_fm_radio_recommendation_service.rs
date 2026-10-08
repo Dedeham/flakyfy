@@ -20,8 +20,10 @@ use crate::common::dotnet_random::DotnetRandom;
 use crate::last_fm::SimilarTrack;
 use crate::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use crate::last_fm::last_fm_radio_state_store::station_id;
+use crate::last_fm::radio_filler;
 use crate::metadata::genre_normalizer::to_title_case;
 use crate::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
+use crate::radio::radio_provider;
 use crate::settings::{DiscoveryStationSettings, LastFmSettings};
 
 /// Share of its weight a track keeps when it was already in this station's previous snapshot.
@@ -50,6 +52,22 @@ pub const FAMILIAR_SOURCE: &str = "history";
 /// says less still.
 pub const RADIO_PLAY_WEIGHT: f64 = 0.4;
 pub const RANDOM_BOOTSTRAP_WEIGHT: f64 = 0.5;
+
+/// A song heard this recently waits until nothing else fits.
+pub const HEARD_LATELY: TimeDelta = TimeDelta::days(8);
+
+/// How many songs apart one artist must be, and one title (a cover counts). Never more than the
+/// station's candidates can give. The artist gap must stay at least the stream's flow window
+/// (`LastFmRadioStreamService.FlowWindow`): the stream may reorder within that window, and the
+/// gap is what keeps an artist from landing back to back after it.
+pub const ARTIST_GAP: i32 = 4;
+pub const TITLE_GAP: usize = 8;
+
+/// Weight kept by an artist with a song the listener rated one star.
+pub const DISLIKED_ARTIST_WEIGHT: f64 = 0.5;
+
+/// Seeds asked at once when several sources answer: the sources' own gates still pace them.
+pub const SEEDS_AT_ONCE: usize = 3;
 
 /// The source of a build's draw: `System.Random`'s `NextDouble`.
 pub trait RadioRandom: Send {
@@ -95,9 +113,10 @@ pub fn source_weight(play: &LastFmRadioPlay) -> f64 {
 }
 
 const DENIED_TAGS: [&str; 29] = [
+    // Last.fm's tags as listeners write them, in both spellings: these are data, not Octo's words.
     "seen live",
     "favorites",
-    "favorites",
+    "favourites",
     "owned",
     "spotify",
     "albums i own",
@@ -107,9 +126,9 @@ const DENIED_TAGS: [&str; 29] = [
     "best",
     // Sentiment and superlatives say how a listener felt, not what the music is.
     "favorite song",
-    "favorite song",
+    "favourite song",
     "favorite songs",
-    "favorite songs",
+    "favourite songs",
     "my love",
     "love at first listen",
     "beautiful",
@@ -258,13 +277,15 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
     }
 }
 
-/// Selects the station's tracks from its weighted candidates. One weighted draw orders the pool
-/// (see [`weighted_order`]), then the walk applies the spacing rules: nothing unavailable,
-/// nothing just played when asked, never the same artist twice in a row, no artist past its cap
-/// for this station kind, no source list (one seed's neighbors, one tag, one artist) past its
-/// share, and when a familiar quota is set, that many tracks from the listener's own history and
-/// the rest from discovery. The caps are the marginal-relevance idea applied greedily, with
-/// artist and source repetition as the redundancy.
+/// Selects the station's tracks from its weighted candidates. Filler and songs rated one star
+/// never make it, and an artist with a one-star song keeps half its weight. One weighted draw
+/// orders the pool (see [`weighted_order`]), then the walk applies the rules: nothing
+/// unavailable, nothing just played when asked, no artist past its cap for this station kind, no
+/// source list past its share, the familiar quota when set, an artist not within [`ARTIST_GAP`]
+/// songs of itself and a title not within [`TITLE_GAP`]. A new song heard in the last
+/// [`HEARD_LATELY`], or one the gaps refused, waits; if the walk falls short they fill the rest,
+/// never the same artist twice in a row. The caps are the marginal-relevance idea applied
+/// greedily, with artist and source repetition as the redundancy.
 pub fn shape(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
@@ -275,6 +296,8 @@ pub fn shape(
     artist_cap: i32,
     exclude_recent: bool,
     familiar_quota: Option<i32>,
+    banned: Option<&IgnoreCaseKeys>,
+    disliked: Option<&IgnoreCaseKeys>,
 ) -> Vec<LastFmRadioTrack> {
     let target = settings.effective_radio_track_count();
     let recent: IgnoreCaseKeys = plays
@@ -282,18 +305,26 @@ pub fn shape(
         .take(30)
         .map(|play| seed_normalizer::track_key(&play.artist, &play.title))
         .collect();
-    let mut last_artist = String::new();
-    let mut per_artist: HashMap<String, i32> = HashMap::new();
-    let mut per_source: HashMap<String, i32> = HashMap::new();
-    let mut familiar_taken = 0;
-    let mut output: Vec<LastFmRadioTrack> = Vec::new();
+    let heard_after = Utc::now() - HEARD_LATELY;
+    let heard: IgnoreCaseKeys = plays
+        .iter()
+        .filter(|play| play.played_at_utc > heard_after)
+        .map(|play| seed_normalizer::track_key(&play.artist, &play.title))
+        .collect();
 
     // GroupBy the track key (ordinal), keeping each group's heaviest, the first of equals.
     let mut groups: IndexMap<String, Candidate> = IndexMap::new();
-    for item in candidates
-        .into_iter()
-        .filter(|item| !item.track.artist.is_empty() && !item.track.title.is_empty())
-    {
+    for mut item in candidates.into_iter().filter(|item| {
+        !item.track.artist.is_empty()
+            && !item.track.title.is_empty()
+            && !radio_filler::is_filler(Some(&item.track.title), item.track.duration)
+            && !banned.is_some_and(|banned| {
+                banned.contains(&seed_normalizer::track_key(&item.track.artist, &item.track.title))
+            })
+    }) {
+        if disliked.is_some_and(|disliked| disliked.contains(&artist_key(&item.track.artist))) {
+            item.weight *= DISLIKED_ARTIST_WEIGHT;
+        }
         let key = seed_normalizer::track_key(&item.track.artist, &item.track.title);
         match groups.get_mut(&key) {
             Some(best) => {
@@ -307,62 +338,180 @@ pub fn shape(
         }
     }
     let distinct: Vec<Candidate> = groups.into_values().collect();
+    // The cap is per seed, not per source list: three sources answering one seed are one seed's
+    // songs, so a mix of six seeds keeps six shares however many sources answer. The familiar
+    // plays have their own quota and sit outside it.
     let source_cap = source_cap(
         target,
         distinct
             .iter()
-            .map(|item| item.source.as_str())
+            .filter(|item| item.source != FAMILIAR_SOURCE)
+            .map(|item| seed_group(&item.source))
             .collect::<IgnoreCaseKeys>()
             .len(),
     );
+    let artist_gap = (distinct
+        .iter()
+        .map(|item| artist_key(&item.track.artist))
+        .collect::<IgnoreCaseKeys>()
+        .len() as i32
+        - 1)
+    .clamp(1, ARTIST_GAP) as usize;
+
+    let mut walk = Walk {
+        target,
+        unavailable,
+        recent: &recent,
+        heard: &heard,
+        exclude_recent,
+        artist_cap,
+        source_cap,
+        familiar_quota,
+        artist_gap,
+        per_artist: HashMap::new(),
+        per_source: HashMap::new(),
+        familiar_taken: 0,
+        output: Vec::new(),
+        output_artists: Vec::new(),
+        output_titles: Vec::new(),
+    };
+    let mut held = Vec::new();
     for candidate in weighted_order(distinct, random, previous) {
+        if walk.output.len() as i32 >= target {
+            break;
+        }
+        if walk.admit(&candidate, true) == Verdict::Wait {
+            held.push(candidate);
+        }
+    }
+    for candidate in &held {
+        if walk.output.len() as i32 >= target {
+            break;
+        }
+        walk.admit(candidate, false);
+    }
+    walk.output
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Taken,
+    Skip,
+    Wait,
+}
+
+/// The walk's running counts, shared by its two passes.
+struct Walk<'a> {
+    target: i32,
+    unavailable: &'a IgnoreCaseKeys,
+    recent: &'a IgnoreCaseKeys,
+    heard: &'a IgnoreCaseKeys,
+    exclude_recent: bool,
+    artist_cap: i32,
+    source_cap: i32,
+    familiar_quota: Option<i32>,
+    artist_gap: usize,
+    per_artist: HashMap<String, i32>,
+    per_source: HashMap<String, i32>,
+    familiar_taken: i32,
+    output: Vec<LastFmRadioTrack>,
+    output_artists: Vec<String>,
+    output_titles: Vec<String>,
+}
+
+impl Walk<'_> {
+    fn admit(&mut self, candidate: &Candidate, spaced: bool) -> Verdict {
         let track = &candidate.track;
         let key = seed_normalizer::track_key(&track.artist, &track.title);
-        if unavailable.contains(&key) {
-            continue;
+        let artist = artist_key(&track.artist);
+        let artist_folded = dotnet::ordinal_ignore_case_key(&artist);
+        if self.unavailable.contains(&key) {
+            return Verdict::Skip;
         }
-        if exclude_recent && recent.contains(&key) {
-            continue;
+        if self.exclude_recent && self.recent.contains(&key) {
+            return Verdict::Skip;
         }
-        if dotnet::eq_ignore_case(&last_artist, &track.artist) {
-            continue;
-        }
-        let artist_key = dotnet::ordinal_ignore_case_key(&track.artist);
-        let source_key = dotnet::ordinal_ignore_case_key(&candidate.source);
-        if per_artist.get(&artist_key).copied().unwrap_or(0) >= artist_cap {
-            continue;
-        }
-        if per_source.get(&source_key).copied().unwrap_or(0) >= source_cap {
-            continue;
+        if self.per_artist.get(&artist_folded).copied().unwrap_or(0) >= self.artist_cap {
+            return Verdict::Skip;
         }
         let is_familiar = candidate.source == FAMILIAR_SOURCE;
-        if let Some(quota) = familiar_quota {
-            if is_familiar && familiar_taken >= quota {
-                continue;
+        let group = dotnet::ordinal_ignore_case_key(seed_group(&candidate.source));
+        if !is_familiar && self.per_source.get(&group).copied().unwrap_or(0) >= self.source_cap {
+            return Verdict::Skip;
+        }
+        if let Some(quota) = self.familiar_quota {
+            if is_familiar && self.familiar_taken >= quota {
+                return Verdict::Skip;
             }
-            if !is_familiar && output.len() as i32 - familiar_taken >= target - quota {
-                continue;
+            if !is_familiar && self.output.len() as i32 - self.familiar_taken >= self.target - quota {
+                return Verdict::Skip;
             }
         }
-        output.push(LastFmRadioTrack {
+        let title = dotnet::to_lower_invariant(&seed_normalizer::title(&track.title));
+        if spaced {
+            // A familiar song is there because it was heard; only new ones wait.
+            if !is_familiar && self.heard.contains(&key) {
+                return Verdict::Wait;
+            }
+            let from = self.output_artists.len().saturating_sub(self.artist_gap);
+            if self.output_artists[from..]
+                .iter()
+                .any(|earlier| dotnet::eq_ignore_case(earlier, &artist))
+            {
+                return Verdict::Wait;
+            }
+            let from = self.output_titles.len().saturating_sub(TITLE_GAP);
+            if self.output_titles[from..].contains(&title) {
+                return Verdict::Wait;
+            }
+        } else if self
+            .output_artists
+            .last()
+            .is_some_and(|last| dotnet::eq_ignore_case(last, &artist))
+        {
+            return Verdict::Skip;
+        }
+        self.output.push(LastFmRadioTrack {
             artist: seed_normalizer::artist(&track.artist),
             title: seed_normalizer::title(&track.title),
             duration: track.duration,
             score: track.r#match,
-            source: "lastfm".to_string(),
+            you_tube_id: track.you_tube_id.clone(),
+            // Which source suggested it, shown in the apps; a familiar song was the listener's
+            // own pick.
+            source: track.provider.clone().unwrap_or_else(|| {
+                if is_familiar {
+                    radio_provider::HISTORY.to_string()
+                } else {
+                    radio_provider::LAST_FM.to_string()
+                }
+            }),
             ..Default::default()
         });
-        last_artist = track.artist.clone();
-        *per_artist.entry(artist_key).or_insert(0) += 1;
-        *per_source.entry(source_key).or_insert(0) += 1;
+        self.output_artists.push(artist);
+        self.output_titles.push(title);
+        *self.per_artist.entry(artist_folded).or_insert(0) += 1;
+        *self.per_source.entry(group).or_insert(0) += 1;
         if is_familiar {
-            familiar_taken += 1;
+            self.familiar_taken += 1;
         }
-        if output.len() as i32 >= target {
-            break;
-        }
+        Verdict::Taken
     }
-    output
+}
+
+/// One spelling per artist for caps and spacing: the credit without its featured guests, as
+/// seeding spells it.
+pub fn artist_key(artist: &str) -> String {
+    dotnet::to_lower_invariant(seed_normalizer::artist(artist).trim())
+}
+
+/// The seed a source list answers: "youtube-music:tag:trip hop" and "tag:trip hop" are one
+/// seed's lists. Only a provider's own prefix is taken off.
+pub fn seed_group(source: &str) -> &str {
+    match source.find(':') {
+        Some(colon) if colon > 0 && radio_provider::is_known(&source[..colon]) => &source[colon + 1..],
+        _ => source,
+    }
 }
 
 /// One weighted draw over the candidates (Efraimidis-Spirakis: each candidate draws

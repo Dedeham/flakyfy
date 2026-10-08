@@ -102,7 +102,11 @@ musl_target=x86_64-unknown-linux-musl
 binary="$repo/target/$musl_target/release/octo"
 if [ "$prebuilt" = 1 ]; then
   echo "building octo for $musl_target here"
-  cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
+  # One of WSL's three build slots (~/bin/cargo-slot), when it is there, so a parity build
+  # never makes a fourth compile beside the port agents' own.
+  slot=()
+  if [ -x "$HOME/bin/cargo-slot" ]; then slot=("$HOME/bin/cargo-slot"); fi
+  "${slot[@]}" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
   echo "built $(du -h "$binary" | cut -f1) binary from $(git rev-parse --short HEAD)"
 fi
 

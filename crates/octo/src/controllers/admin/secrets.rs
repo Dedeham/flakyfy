@@ -55,6 +55,16 @@ pub fn normalize_saved_addresses(patch: &mut JsonObject) {
         let normalized = octo_core::settings::normalize_server_url(url);
         subsonic.insert(key, Node::String(normalized));
     }
+    // A port fix: slskd's web address (the Open slskd link) is saved without the spaces it was
+    // typed with (the C# saved them, and GET settings showed them; BACKLOG, "Found while
+    // building the harness"; known-diffs.md). Only trimmed: a web address keeps its path.
+    if let Some(soulseek) = child_mut(patch, "Soulseek")
+        && let Some(key) = key_of(soulseek, "WebUrl")
+        && let Some(url) = string_value(soulseek.get(&key))
+    {
+        let trimmed = url.trim().to_string();
+        soulseek.insert(key, Node::String(trimmed));
+    }
 }
 
 /// The text of a JSON string that starts with the placeholder.

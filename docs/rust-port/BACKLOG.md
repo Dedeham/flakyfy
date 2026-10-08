@@ -403,15 +403,16 @@ writer does. What the later groups find waiting for them:
 
 ### B. Download matching (versions, mash-ups, wider star search, format rename, relay file name)
 
-- [ ] `15087f6` fix(soulseek): a star searches as wide as Better quality, and wider again when the limit fills
-- [ ] `ff46dde` fix(downloads): a song's version tag is not words its file must carry, and the song itself never takes an edit
-- [ ] `39770ed` fix(downloads): a guest credit inside a version tag, "(Radio Edit - feat. X)", no longer makes the version words a file must carry
-- [ ] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
-- [ ] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
-- [ ] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
+- [x] `15087f6` fix(soulseek): a star searches as wide as Better quality, and wider again when the limit fills
+- [x] `ff46dde` fix(downloads): a song's version tag is not words its file must carry, and the song itself never takes an edit
+- [x] `39770ed` fix(downloads): a guest credit inside a version tag, "(Radio Edit - feat. X)", no longer makes the version words a file must carry
+- [x] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
+- [x] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
+- [x] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
 - [x] `0a700c0` fix(relay): a download keeps the file name Navidrome gave it
   (ported with S: `StreamLengthTests` checks it)
-- [ ] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
+- [x] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
+  (README only; the Rust build serves the same README)
 
 ### C. Tagging polish (one album's facts, explicit advisory, Try it)
 
@@ -422,23 +423,28 @@ writer does. What the later groups find waiting for them:
 
 ### D. Download log, drawer, Find songs picks
 
-- [ ] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
+- [x] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
   (its Lidarr half is on `rust/main` with K: `LidarrRelease`, `LidarrReleasePick`,
   `list_releases`, `grab_release`, the grab in `start_album_search`, the request's `release`,
-  and its two `LidarrClientTests`; D still wires `SongFinder`, `DownloadPicks` and the
+  and its two `LidarrClientTests`; G2 wired `SongFinder`, `DownloadPicks` and the
   download log's `step` to them)
-- [ ] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
-- [ ] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
+- [x] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
+- [x] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
+  (README only)
 - [ ] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
-- [ ] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
-- [ ] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
-- [ ] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way
-- [ ] `e24eca1` fix(downloads): a pick is let go when its download ends, so a later download never takes it
-- [ ] `45f4463` fix(downloads): Find songs runs two looks a person at once, never drops a running one, and a library song's look is for the allowed list
-- [ ] `57ab90d` fix(downloads): Find songs keeps a few passed-over files of each reason on a popular song's list, and its fit count matches the rows
-- [ ] `13ec9f9` fix(downloads): Find songs says how many fitting copies its list shows when it has no room for all of them
+  (blocked on C: the advisory and the tags a download drops are group C's `2463c23`; the two
+  log lines come with it)
+- [x] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
+- [x] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
+- [x] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way
+- [x] `e24eca1` fix(downloads): a pick is let go when its download ends, so a later download never takes it
+- [x] `45f4463` fix(downloads): Find songs runs two looks a person at once, never drops a running one, and a library song's look is for the allowed list
+- [x] `57ab90d` fix(downloads): Find songs keeps a few passed-over files of each reason on a popular song's list, and its fit count matches the rows
+- [x] `13ec9f9` fix(downloads): Find songs says how many fitting copies its list shows when it has no room for all of them
 - [ ] `696cbff` fix(downloads): a shared download's log names nobody, and import errors show no server paths
-- [ ] `7602787` feat(downloads): keep each finished download's log with its fetched-songs entry
+  (its download log half is in, with D: a shared download's row names nobody on its queued
+  line; the import errors without server paths are group H's `ImportService` and trickle worker)
+- [x] `7602787` feat(downloads): keep each finished download's log with its fetched-songs entry
 
 ### E. slskd sharing and the Share switch
 
@@ -567,6 +573,8 @@ No Rust server change: both are their own images.
 - [ ] `e36d823` fix(health): check songs in the order the apps read them
 - [ ] `c156710` feat(admin): Library health page on the dashboard
 - [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+  (its download log and Find songs routes are in, with D: `controllers/admin/downloads.rs`;
+  Recently removed, Put back and the activity card wait for F and N)
 - [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
 
 ### S. Estimated stream length fix

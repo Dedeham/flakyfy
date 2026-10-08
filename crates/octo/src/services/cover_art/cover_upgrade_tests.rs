@@ -598,13 +598,11 @@ async fn a_stopped_run_does_the_unfinished_part_again_on_resume_and_lists_each_a
 
     let current = store.current();
     assert_eq!(current.status, CoverUpgradeStatus::Completed);
-    // Albums are looked up four at a time, so the stopped batch may hold both; either way it
-    // is done again on resume, and each album is still listed and counted once.
-    assert!(
-        (3..=4).contains(&*finder.calls.lock()),
-        "{} lookups",
-        finder.calls.lock()
-    );
+    // Albums are looked up four at a time, so the stopped batch may hold both. The C# ran the
+    // whole batch again on resume (3 or 4 lookups); the port goes on with only what the stop
+    // left undone (port fix, known-diffs "Cover upgrade: a resumed run's counts"), so each
+    // album is looked up, listed and counted once.
+    assert_eq!(*finder.calls.lock(), 2);
     assert_eq!(current.upgraded, 2);
     assert_eq!(current.preview.len(), 2);
 }
@@ -632,7 +630,7 @@ async fn a_resumed_run_counts_each_album_and_song_once() {
     assert_eq!(stopped.status, CoverUpgradeStatus::Cancelled);
     assert!(stopped.batch.is_some(), "the stopped batch keeps what it counted");
     let saved = octo_core::json::to_string(&stopped);
-    assert!(saved.contains(r#""Batch":{"SongsRead":"#), "{saved}");
+    assert!(saved.contains(r#""Batch":{"Cursor":0,"SongsRead":"#), "{saved}");
 
     run(&worker, &store, preview).await;
 
@@ -643,6 +641,69 @@ async fn a_resumed_run_counts_each_album_and_song_once() {
     assert_eq!((done.upgraded, done.kept, done.files), (2, 0, 2));
     assert_eq!(done.batch, None);
     assert!(!octo_core::json::to_string(&done).contains("Batch"));
+}
+
+/// Port fix (C# 2026.10.05 went through the whole batch again on resume, so an album a replace
+/// had already written was looked up again, found as sharp as the new cover and counted kept
+/// beside its upgraded row): a resumed replace leaves alone the albums it finished before the
+/// stop, and counts each once.
+#[tokio::test]
+async fn a_resumed_replace_does_not_count_a_written_album_again() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    library.song("Discovery", "One More Time", Some(&jpeg(300, 10)), None, false);
+    library.song("Homework", "Da Funk", Some(&jpeg(300, 10)), None, false);
+    let finder = Arc::new(StopOnFirstFinder {
+        worker: OnceLock::new(),
+        calls: Mutex::new(0),
+    });
+    let (worker, store) = library.worker(finder.clone(), false);
+    finder.worker.set(Arc::downgrade(&worker)).expect("set once");
+    run(&worker, &store, whole(CoverUpgradeMode::Scan)).await;
+    let ids: Vec<String> = store.read(|run| run.preview.iter().map(|row| row.id.clone()).collect());
+    let apply = whole(CoverUpgradeMode::Apply).with_albums(ids);
+
+    run(&worker, &store, apply.clone()).await;
+    let stopped = store.current();
+    assert_eq!(stopped.status, CoverUpgradeStatus::Cancelled);
+    let written_before = stopped.files;
+    assert!(written_before >= 1, "the first album was written before the stop");
+
+    run(&worker, &store, apply).await;
+
+    let done = store.current();
+    assert_eq!(done.status, CoverUpgradeStatus::Completed);
+    assert_eq!((done.upgraded, done.kept, done.files), (2, 0, 2));
+    assert_eq!((done.albums_done, done.albums_total), (2, 2));
+    assert_eq!(*finder.calls.lock(), 2);
+    assert!(
+        done.preview.iter().all(|row| row.result == "upgraded"),
+        "{:?}",
+        done.preview
+    );
+}
+
+/// Port fix: a scan with folders Navidrome did not group never ends with more albums done than
+/// it has in all.
+#[tokio::test]
+async fn albums_done_never_passes_albums_total() {
+    let mut run = CoverUpgradeRun {
+        albums_total: 2,
+        batch: Some(CoverUpgradeBatch::default()),
+        ..CoverUpgradeRun::default()
+    };
+
+    for (id, in_total) in [
+        ("a", true),
+        ("loose", false),
+        ("a", true),
+        ("b", true),
+        ("c", true),
+    ] {
+        run.count_album_done(id, in_total);
+    }
+
+    assert_eq!(run.albums_done, 2);
+    assert_eq!(run.batch.expect("a batch").counted, ["a", "b"]);
 }
 
 /// Port fix: the cover scan used to walk into the trash folder and list a trashed song as an
@@ -1117,8 +1178,9 @@ async fn navidrome_names_the_albums_and_draws_their_tiles() {
         })
         .collect();
     assert_eq!(items, [(Some("al-disc"), 2), (None, 1)]);
-    // Every album counts as done once some are known, the folder's too (as the C# counted).
-    assert_eq!((current.albums_total, current.albums_done), (1, 2));
+    // Only the albums the total counts are counted as done: Navidrome named one, so the loose
+    // folder's album is not (port fix; the C# counted it too and ended "2 of 1").
+    assert_eq!((current.albums_total, current.albums_done), (1, 1));
     assert_eq!((current.songs_total, current.songs_read), (3, 3));
     let discovery = current
         .preview

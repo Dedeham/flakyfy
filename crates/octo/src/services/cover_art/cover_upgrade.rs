@@ -210,22 +210,30 @@ pub struct CoverUpgradeRun {
     pub preview: Vec<CoverUpgradeChange>,
     #[serde(deserialize_with = "null_as_default")]
     pub queue: Vec<CoverUpgradeItem>,
-    /// What the batch under way has counted so far. A batch stopped part way runs again on a
-    /// resume, so its counts come off first and every album counts once (C# 2026.10.05 counted
-    /// them again: "6 of 3 albums"). Not in the C# file: written only while a batch is stopped
-    /// part way, and a C# reader ignores it.
+    /// The batch under way: what it has read and which of its albums are counted and done. A
+    /// batch stopped part way runs again on a resume; its songs are read again, so their count
+    /// comes off first, and the albums it had finished are not gone through again, so each
+    /// album counts once (C# 2026.10.05 counted them again: "6 of 3 albums", and a replace
+    /// counted an album it had written as kept). Not in the C# file: written only while a batch
+    /// is stopped part way, and a C# reader ignores it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch: Option<CoverUpgradeTally>,
+    pub batch: Option<CoverUpgradeBatch>,
 }
 
-/// The counts one batch added, to take off again when the batch runs again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// One batch's progress, so it can run again after a stop without counting anything twice.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
-pub struct CoverUpgradeTally {
+pub struct CoverUpgradeBatch {
+    /// Where the batch starts in the queue.
+    pub cursor: i32,
+    /// Songs read in this batch, which a run of it again reads again.
     pub songs_read: i32,
-    pub albums_done: i32,
-    pub kept: i32,
-    pub files: i32,
+    /// Albums counted in `AlbumsDone`.
+    #[serde(deserialize_with = "null_as_default")]
+    pub counted: Vec<String>,
+    /// Albums gone through to the end: kept, listed, found or written.
+    #[serde(deserialize_with = "null_as_default")]
+    pub finished: Vec<String>,
 }
 
 impl Default for CoverUpgradeRun {
@@ -277,41 +285,44 @@ impl CoverUpgradeRun {
         }
     }
 
-    /// One more album gone through, when the albums are known up front.
-    fn count_album_done(&mut self) {
-        if self.albums_total > 0 {
-            self.albums_done += 1;
-            if let Some(batch) = &mut self.batch {
-                batch.albums_done += 1;
-            }
+    /// One more album gone through, counted the way `AlbumsTotal` is (port fix): a picked run
+    /// counts its picked albums, a run over everything the albums Navidrome named. C# 2026.10.05
+    /// counted every album it met once any total was known, so a scan with loose folders ended
+    /// with more done than there were ("6 of 5"). Each album counts once, a batch run again
+    /// included, and never past the total.
+    fn count_album_done(&mut self, id: &str, in_total: bool) {
+        if !in_total || self.albums_done >= self.albums_total {
+            return;
         }
-    }
-
-    fn count_kept(&mut self) {
-        self.kept += 1;
         if let Some(batch) = &mut self.batch {
-            batch.kept += 1;
+            if batch.counted.iter().any(|known| known == id) {
+                return;
+            }
+            batch.counted.push(id.to_string());
+        }
+        self.albums_done += 1;
+    }
+
+    /// Whether the batch under way already went through this album to the end, before a stop.
+    fn finished(&self, id: &str) -> bool {
+        self.batch
+            .as_ref()
+            .is_some_and(|batch| batch.finished.iter().any(|known| known == id))
+    }
+
+    /// This album is gone through; a run of the batch again leaves it as it is.
+    fn finish(&mut self, id: &str) {
+        if let Some(batch) = &mut self.batch {
+            batch.finished.push(id.to_string());
         }
     }
 
-    /// Songs rewritten, or that would be. Only a dry run's come off on a resume: a replace's
-    /// writes are done, and the batch run again finds those songs as sharp as the cover found.
-    fn count_files(&mut self, files: i32) {
-        self.files += files;
-        if self.dry_run()
-            && let Some(batch) = &mut self.batch
-        {
-            batch.files += files;
-        }
-    }
-
-    /// Takes off what a batch stopped part way counted, before it runs again.
+    /// Before a stopped batch runs again: its songs are read again, so their count comes off.
+    /// The albums it counted and finished stay, so they are not counted or gone through again.
     fn forget_unfinished_batch(&mut self) {
-        if let Some(batch) = self.batch.take() {
+        if let Some(batch) = &mut self.batch {
             self.songs_read -= batch.songs_read;
-            self.albums_done -= batch.albums_done;
-            self.kept -= batch.kept;
-            self.files -= batch.files;
+            batch.songs_read = 0;
         }
     }
 
@@ -1001,8 +1012,16 @@ impl CoverUpgradeWorker {
             }
 
             let batch = &current.queue[index..(index + parallel).min(current.queue.len())];
-            self.store
-                .update(|run| run.batch = Some(CoverUpgradeTally::default()));
+            // The batch a stop left part way keeps what it finished; any other starts afresh.
+            let at = count(index);
+            self.store.update(|run| {
+                if run.batch.as_ref().is_none_or(|batch| batch.cursor != at) {
+                    run.batch = Some(CoverUpgradeBatch {
+                        cursor: at,
+                        ..CoverUpgradeBatch::default()
+                    });
+                }
+            });
             let looked = futures::future::join_all(batch.iter().map(|item| async move {
                 match self.process_folder(item, current, stopping).await {
                     Ok(looked) => Ok(looked),
@@ -1238,7 +1257,15 @@ impl CoverUpgradeWorker {
                 break;
             }
             let id = Self::album_id(&item.folder, key);
-            self.store.update(CoverUpgradeRun::count_album_done);
+            // Gone through before a stop in this batch: counted, listed and written already.
+            if self.store.read(|r| r.finished(&id)) {
+                continue;
+            }
+            let in_total = match &picked {
+                Some(picked) => picked.contains(id.as_str()),
+                None => item.navidrome_album_id.is_some(),
+            };
+            self.store.update(|r| r.count_album_done(&id, in_total));
             // Every path of the album, read or not, so a later run and a replace see them all.
             let album_paths: Vec<String> = if item.navidrome_album_id.is_some() {
                 paths.clone()
@@ -1271,7 +1298,10 @@ impl CoverUpgradeWorker {
 
             // A picked album is looked up whatever its size: it was picked.
             if picked.is_none() && shown >= run.smaller_than {
-                self.store.update(CoverUpgradeRun::count_kept);
+                self.store.update(|r| {
+                    r.kept += 1;
+                    r.finish(&id);
+                });
                 continue;
             }
 
@@ -1297,6 +1327,7 @@ impl CoverUpgradeWorker {
                     if add_row(r, soft) {
                         r.soft += 1;
                     }
+                    r.finish(&id);
                 });
                 continue;
             }
@@ -1365,10 +1396,11 @@ impl CoverUpgradeWorker {
                         looks_same: None,
                     };
                     self.store.update(|r| {
-                        r.count_kept();
+                        r.kept += 1;
                         if picked.is_some() {
                             add_row(r, none);
                         }
+                        r.finish(&id);
                     });
                     continue;
                 }
@@ -1393,7 +1425,10 @@ impl CoverUpgradeWorker {
             };
             if looks_same == Some(false) && picked.is_none() && !run.dry_run() {
                 // Nobody picked this album, so a different picture is not written on a guess.
-                self.store.update(CoverUpgradeRun::count_kept);
+                self.store.update(|r| {
+                    r.kept += 1;
+                    r.finish(&id);
+                });
                 continue;
             }
 
@@ -1448,7 +1483,8 @@ impl CoverUpgradeWorker {
                 if add_row(r, change) {
                     r.upgraded += 1;
                 }
-                r.count_files(count(written));
+                r.files += count(written);
+                r.finish(&id);
             });
         }
         Ok(looked)

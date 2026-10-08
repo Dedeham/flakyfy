@@ -99,7 +99,7 @@
         "^\\$\\.(kept|files|songsRead|albumsDone): \\d+ != \\d+$",
         "^\\$\\.reason: barcodes \\d+ of \\d+ · Apple matched \\d+ != null$"
       ],
-      "reason": "A cover run resumed after a stop counts each album and song once. C# 2026.10.05 counted the stopped batch again (CoverUpgrade.cs:696,744): the picked preview of 3 albums ended with albumsDone 6, songsRead 20 of 10, kept and files doubled. Fixed in the port only (Brandon, 2026-10-07). The run's reason line may also differ: see cover-run-reason-cleared (the C# left its last bulk-match line there by a race).",
+      "reason": "A cover run resumed after a stop counts each album and song once, and goes on with only what the stop left undone. C# 2026.10.05 ran the stopped batch again and counted it again (CoverUpgrade.cs:696,744): the picked preview of 3 albums ended with albumsDone 6, songsRead 20 of 10, kept and files doubled; a replace also counted an album it had written as kept. Fixed in the port only (Brandon, 2026-10-07). The run's reason line may also differ: see cover-run-reason-cleared (the C# left its last bulk-match line there by a race).",
       "knownDiff": "Cover upgrade: a resumed run's counts"
     },
     {
@@ -116,7 +116,7 @@
         "^\\$\\.preview: array length \\d+ != \\d+$",
         "^\\$\\.preview\\[\\d+\\]\\.(folder|artist|album|fromSide|toSide|files|folderCover|result|source|looksSame): .* != .*$"
       ],
-      "reason": "The cover scan leaves the trash folder out: C# 2026.10.05 walked into /music/.octo-trash and listed a song deleted from disk in 20-library-edits as an album of its own (one more album, song and soft row, and the sorted preview shifted by one). Fixed in the port only (Brandon, 2026-10-07). Until group F's delete and put back land, this request also differs for F's sake.",
+      "reason": "The cover scan leaves the trash folder out: C# 2026.10.05 walked into /music/.octo-trash and listed a song deleted from disk in 20-library-edits as an album of its own (one more album, song and soft row, and the sorted preview shifted by one). Fixed in the port only (Brandon, 2026-10-07). Until group F's delete and put back land, this request also differs for F's sake. The albumsDone line also carries the second port fix on this answer: albums done are counted the way albums in all are (the C# ended 6 of 5; known-diffs \"Cover upgrade: albums done and albums in all\").",
       "knownDiff": "Library walks and the trash"
     },
     {

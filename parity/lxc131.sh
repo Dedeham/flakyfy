@@ -185,9 +185,12 @@ follow_run() { # id
 
 # The full reports, for reading the diffs themselves.
 pull_reports() {
-  local f
+  local f there
+  # pct pull of a file that is not there makes an empty one; only what the run wrote.
+  there="$("$SSH" "$host" "pct exec $ct -- ls -1 $boxrun" 2> /dev/null | tr -d '\r' || true)"
   for f in report.txt report-bytes.txt cs-cs.txt cs-cs-bytes.txt rs-rs.txt rs-rs-bytes.txt report.groups.json; do
     rm -f "$work/$f"
+    grep -qx -- "$f" <<< "$there" || continue
     if "$SSH" "$host" "pct pull $ct $boxrun/$f /root/parity-$name-$f" 2> /dev/null; then
       (cd "$work" && "$SCP" -q "$host:/root/parity-$name-$f" "$f")
       "$SSH" "$host" "rm -f /root/parity-$name-$f"

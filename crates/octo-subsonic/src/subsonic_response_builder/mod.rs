@@ -60,7 +60,15 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
     (LIBRARY_ACTIONS_EXTENSION, &[1, LIBRARY_ACTIONS_EXTENSION_VERSION]),
     ("songLyrics", &[1, 2]),
+    // The other groups' extensions (octoTopSongs, octoImports, octoRadioSources) come before
+    // this one, as the C# lists them, when those groups land.
+    (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
+
+/// octoLists v1 (f54467a): Made for you (New Releases, Rediscover, Deep Cuts) are read-only
+/// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
+pub const LISTS_EXTENSION: &str = "octoLists";
+pub const LISTS_EXTENSION_VERSION: i32 = 1;
 
 /// Fields only a file in the library can truthfully have.
 pub const FILE_ONLY_FIELDS: &[&str] = &[

@@ -443,6 +443,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "GeneratedPlaylists".into(),
         n_obj([
+            ("PopularNow", Node::Bool(mixes.popular_now)),
             ("Enabled", Node::Bool(mixes.enabled)),
             ("Genres", Node::Bool(mixes.genres)),
             ("Decades", Node::Bool(mixes.decades)),
@@ -455,6 +456,12 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("NewShare", n_num(mixes.new_share)),
             ("NewDays", n_num(mixes.new_days)),
             ("NameFormat", n_str(&mixes.name_format)),
+            ("NewReleases", Node::Bool(mixes.new_releases)),
+            ("Rediscover", Node::Bool(mixes.rediscover)),
+            ("DeepCuts", Node::Bool(mixes.deep_cuts)),
+            ("NewReleaseWeeks", n_num(mixes.new_release_weeks)),
+            ("NewReleaseArtists", n_num(mixes.new_release_artists)),
+            ("RediscoverMonths", n_num(mixes.rediscover_months)),
         ]),
     );
     // Read from the raw file, for the same reason as DiscoveryStations: EffectiveMappings()

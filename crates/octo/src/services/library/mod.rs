@@ -3,6 +3,7 @@
 
 pub mod album_ownership;
 pub mod duplicate_scan_worker;
+pub mod for_you_lists;
 pub mod generated_playlist_service;
 pub mod heart_ownership;
 pub mod library_action_executor;

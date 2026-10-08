@@ -693,6 +693,50 @@ pub(crate) fn station_cover_seeds(state: &AppState, station: &LastFmRadioStation
     seeds
 }
 
+const CATALOG_IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// A cover the catalog's own image host serves over https (cdn-images.dzcdn.net and its kin).
+pub(crate) fn is_catalog_image(url: &str) -> bool {
+    let Ok(uri) = url::Url::parse(url) else {
+        return false;
+    };
+    uri.scheme() == "https"
+        && uri.host_str().is_some_and(|host| {
+            let host = host.to_ascii_lowercase();
+            host == "dzcdn.net" || host.ends_with(".dzcdn.net")
+        })
+}
+
+/// A catalog picture through the catalog's client, 8 MB at most; None on any failure.
+async fn catalog_image(
+    deezer: &crate::services::metadata::DeezerRateLimitHandler,
+    url: &str,
+) -> Option<Vec<u8>> {
+    let request = reqwest::Request::new(reqwest::Method::GET, url::Url::parse(url).ok()?);
+    let read = async {
+        let mut response = deezer.send(request, false).await.ok()?;
+        if !response.status().is_success()
+            || response
+                .content_length()
+                .is_some_and(|length| length > CATALOG_IMAGE_MAX_BYTES as u64)
+        {
+            return None;
+        }
+        let mut copy: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if copy.len() + chunk.len() > CATALOG_IMAGE_MAX_BYTES {
+                return None;
+            }
+            copy.extend_from_slice(&chunk);
+        }
+        Some(copy)
+    };
+    tokio::time::timeout(crate::services::metadata::DeezerRateLimitHandler::TIMEOUT, read)
+        .await
+        .ok()
+        .flatten()
+}
+
 /// The songs whose covers color a mix's cover: the first of this period's draw, one per
 /// album cover, four at most, read from Navidrome as the listener. A period's first draw is
 /// made only for a caller Navidrome accepts, as opening the mix would.
@@ -703,6 +747,28 @@ async fn mix_cover_seeds(
     mix: &GeneratedPlaylist,
     parameters: &octo_subsonic::Parameters,
 ) -> Vec<CoverSeed> {
+    // New Releases is mostly albums Navidrome has never heard of: its covers come from the
+    // catalog's own image host, as the album pages of outside albums do. Only that host, over
+    // https, through the catalog's client (8 second limit), and no picture bigger than 8 MB.
+    if mix.kind == octo_core::library::for_you_lists::NEW_RELEASES_KIND {
+        return state
+            .generated_playlists
+            .for_you_covers(username)
+            .into_iter()
+            .filter(|url| is_catalog_image(url))
+            .map(|url| {
+                let deezer = Arc::clone(&state.deezer_client);
+                CoverSeed {
+                    identity: format!("catalog|{url}"),
+                    fetch: Arc::new(move || {
+                        let deezer = Arc::clone(&deezer);
+                        let url = url.clone();
+                        async move { Ok(catalog_image(&deezer, &url).await) }.boxed()
+                    }),
+                }
+            })
+            .collect();
+    }
     let auth: octo_subsonic::Parameters = parameters
         .iter()
         .filter(|(key, _)| key.as_str() != "id" && key.as_str() != "size")

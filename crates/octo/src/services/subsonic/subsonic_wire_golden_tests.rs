@@ -68,7 +68,34 @@ fn recorded(file: &str, name: &str) -> Recorded {
 
 /// The reply is the recorded answer: same body bytes, same content type, and the same length.
 fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
-    let want = recorded(file, name);
+    assert_recorded(reply, recorded(file, name), file, name);
+}
+
+/// A recorded extensions list with octoLists (Q, f54467a) after the extensions the 2026.10.03.2
+/// recording lists, as Octo 2026.10.05 lists it last. Until the groups that add the other
+/// 2026.10.05 extensions land, a fresh recording would differ for their sake, so these golden
+/// tests keep the old recording and add Q's one entry to it.
+fn recorded_with_lists(file: &str, name: &str) -> Recorded {
+    let mut want = recorded(file, name);
+    if want.content_type.contains("json") {
+        let at = want.body.rfind("]}}").expect("the end of the list");
+        want.body
+            .insert_str(at, r#",{"name":"octoLists","versions":[1]}"#);
+    } else {
+        let at = want
+            .body
+            .rfind("</subsonic-response>")
+            .expect("the end of the answer");
+        want.body.insert_str(
+            at,
+            "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+        );
+    }
+    want.content_length = None;
+    want
+}
+
+fn assert_recorded(reply: SubsonicReply, want: Recorded, file: &str, name: &str) {
     assert_eq!(reply.text(), want.body, "{file}/{name}: body");
     assert_eq!(
         reply.content_type, want.content_type,
@@ -888,7 +915,7 @@ fn extensions_match_the_recordings() {
     // Navidrome's own XML, which the f=JSON request passed through untouched.
     let navidrome_xml = recorded("01-system", "extensions-f-JSON").body;
     for name in ["extensions-xml", "extensions-xml-badpass"] {
-        assert_golden(
+        assert_recorded(
             builder().merge_open_subsonic_extensions(
                 "xml",
                 Some(navidrome_xml.as_bytes()),
@@ -896,6 +923,7 @@ fn extensions_match_the_recordings() {
                 true,
                 false,
             ),
+            recorded_with_lists("01-system", name),
             "01-system",
             name,
         );
@@ -920,7 +948,7 @@ fn extensions_match_the_recordings() {
         .retain(|extension| !extension["name"].as_str().unwrap_or("").starts_with("octo"));
     let navidrome = navidrome.to_string();
     for name in ["extensions-json", "extensions-json-noauth"] {
-        assert_golden(
+        assert_recorded(
             builder().merge_open_subsonic_extensions(
                 "json",
                 Some(navidrome.as_bytes()),
@@ -928,6 +956,7 @@ fn extensions_match_the_recordings() {
                 true,
                 false,
             ),
+            recorded_with_lists("01-system", name),
             "01-system",
             name,
         );

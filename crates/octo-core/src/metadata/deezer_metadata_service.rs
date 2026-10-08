@@ -75,9 +75,13 @@ pub struct AlbumHit {
     pub year: Option<i32>,
     pub track_count: i32,
     pub record_type: Option<String>,
+    /// The release date (yyyy-MM-dd), filled by an artist's album list, which New Releases sorts
+    /// and filters by.
+    pub release_date: Option<String>,
 }
 
-/// One track of an album, with the real length and position.
+/// One track of an album, with the real length and position. Rank is the catalog's popularity
+/// score, which picks an album's best songs for New Releases.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AlbumTrack {
     pub title: String,
@@ -86,6 +90,9 @@ pub struct AlbumTrack {
     pub track_position: Option<i32>,
     pub disc_number: Option<i32>,
     pub isrc: Option<String>,
+    pub rank: Option<i32>,
+    /// 1 explicit, 3 the clean edit, 0 neither, None not said.
+    pub explicit_content: Option<i32>,
 }
 
 /// An album plus its full tracklist. RecordType is the catalog's own word for it:

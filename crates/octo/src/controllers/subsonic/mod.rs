@@ -32,6 +32,8 @@ mod browsing_tests_6a2;
 #[cfg(test)]
 mod extensions_tests_6a2;
 #[cfg(test)]
+mod for_you_tests;
+#[cfg(test)]
 mod lyrics_endpoint_tests_6a2;
 #[cfg(test)]
 mod media_tests_6a2;

@@ -71,16 +71,18 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
     assert_recorded(reply, recorded(file, name), file, name);
 }
 
-/// A recorded extensions list with octoLists (Q, f54467a) after the extensions the 2026.10.03.2
-/// recording lists, as Octo 2026.10.05 lists it last. Until the groups that add the other
-/// 2026.10.05 extensions land, a fresh recording would differ for their sake, so these golden
-/// tests keep the old recording and add Q's one entry to it.
+/// A recorded extensions list with octoImports (H, 4008358) and octoLists (Q, f54467a) after the
+/// extensions the 2026.10.03.2 recording lists, as Octo 2026.10.05 lists them last. Until the
+/// groups that add the other 2026.10.05 extensions land, a fresh recording would differ for
+/// their sake, so these golden tests keep the old recording and add H's and Q's entries to it.
 fn recorded_with_lists(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);
     if want.content_type.contains("json") {
         let at = want.body.rfind("]}}").expect("the end of the list");
-        want.body
-            .insert_str(at, r#",{"name":"octoLists","versions":[1]}"#);
+        want.body.insert_str(
+            at,
+            r#",{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}"#,
+        );
     } else {
         let at = want
             .body
@@ -88,7 +90,10 @@ fn recorded_with_lists(file: &str, name: &str) -> Recorded {
             .expect("the end of the answer");
         want.body.insert_str(
             at,
-            "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+            concat!(
+                "  <openSubsonicExtensions name=\"octoImports\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+                "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+            ),
         );
     }
     want.content_length = None;

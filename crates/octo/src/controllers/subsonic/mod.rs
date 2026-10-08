@@ -18,6 +18,7 @@ pub(crate) mod album_ownership;
 pub mod browsing;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
+pub mod imports;
 pub mod lyrics;
 pub mod media;
 pub mod stars;
@@ -134,4 +135,5 @@ pub fn routes() -> RouteSet {
         .merge(stars::routes())
         .merge(extensions::routes())
         .merge(lyrics::routes())
+        .merge(imports::routes())
 }

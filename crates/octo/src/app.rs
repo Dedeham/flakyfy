@@ -422,6 +422,10 @@ pub struct AppInner {
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `FingerprintSweepVerifier`: the sweep's check, over the download verification service.
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
+    /// `ImportService`, singleton AND hosted, over the import stores (`imports.json`,
+    /// `imports-trickle.json`, `spotify-accounts.json`), the Spotify sign-in and the trickle
+    /// (`TrickleWorker`, also hosted): the "ImportService" and "TrickleWorker" workers.
+    pub imports: Arc<crate::services::imports::ImportService>,
 }
 
 /// The tagging and verification services of task 4-B, which the download base
@@ -1210,6 +1214,73 @@ impl GenreAndCoverJobs {
 }
 
 /// The Soulseek services of task 4-A, over the stores and clients they read.
+/// The Spotify import (group H): `Program.cs`'s Imports block.
+struct Imports {
+    service: Arc<crate::services::imports::ImportService>,
+    trickle: Arc<crate::services::imports::TrickleWorker>,
+}
+
+impl Imports {
+    /// `config_dir`: where the three files live; None keeps them in memory, as the endpoint
+    /// tests built them.
+    fn build(
+        settings: &Arc<SettingsStore>,
+        config_dir: Option<&Path>,
+        stores: &Stores,
+        navidrome: &NavidromeServices,
+        acquisition: &Acquisition,
+        soulseek_link: Arc<dyn ISoulseekLink>,
+    ) -> Imports {
+        use crate::services::imports::{
+            ImportMatcher, ImportParts, ImportPlaylists, ImportService, ImportStore, NavidromePlaylists,
+            SpotifyAccountStore, SpotifyAuth, SpotifyLinkReader, SpotifyWebApi, TrickleQueue,
+            TrickleServices, TrickleWorker,
+        };
+        let file = |name: &str| config_dir.map(|dir| dir.join(name));
+        let queue = Arc::new(TrickleQueue::new(file("imports-trickle.json")));
+        let trickle = TrickleWorker::wired(
+            queue.clone(),
+            settings.clone(),
+            TrickleServices {
+                owned: acquisition.library_ownership.clone(),
+                ids: stores.external_id_registry.clone(),
+                hearts: acquisition.heart_acquisition_coordinator.clone(),
+                downloads: acquisition.track_acquisition_queue.clone(),
+                tracker: acquisition.acquisition_tracker.clone(),
+                soulseek: soulseek_link,
+            },
+        );
+        let service = ImportService::new(ImportParts {
+            store: Arc::new(ImportStore::new(file("imports.json"))),
+            queue,
+            trickle: trickle.clone(),
+            matcher: Arc::new(ImportMatcher::new(navidrome.navidrome_playlist_api.clone())),
+            playlists: ImportPlaylists::new(Arc::new(NavidromePlaylists {
+                api: navidrome.navidrome_playlist_api.clone(),
+                identity: navidrome.navidrome_identity.clone(),
+            })),
+            auth: Arc::new(SpotifyAuth::default()),
+            accounts: Arc::new(SpotifyAccountStore::new(file("spotify-accounts.json"))),
+            spotify: Arc::new(SpotifyWebApi::new(SpotifyWebApi::client())),
+            links: Arc::new(SpotifyLinkReader::new(SpotifyLinkReader::client())),
+            settings: settings.clone(),
+            tracker: Some(acquisition.acquisition_tracker.clone()),
+        });
+        Imports { service, trickle }
+    }
+
+    fn register_workers(&self, workers: &WorkerSupervisor) {
+        let trickle = self.trickle.clone();
+        workers.register("TrickleWorker", move |stopping| {
+            trickle.clone().run_loop(stopping)
+        });
+        let service = self.service.clone();
+        workers.register("ImportService", move |stopping| {
+            service.clone().run_loop(stopping)
+        });
+    }
+}
+
 struct SoulseekServices {
     client: SoulseekClient,
     link: Arc<SoulseekLink>,
@@ -1802,6 +1873,15 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        let imports = Imports::build(
+            &settings,
+            Some(&config_dir),
+            &stores,
+            &navidrome,
+            &acquisition,
+            soulseek.link.clone(),
+        );
+        imports.register_workers(&workers);
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1923,6 +2003,7 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            imports: imports.service,
         };
         AppState {
             inner: Arc::new(inner),
@@ -2055,6 +2136,15 @@ impl AppState {
             Arc::clone(&stores.external_id_registry),
         ));
         let admin_sign_in = AdminSignIn::build(&settings, &stores, &navidrome, &config_dir);
+        // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
+        let imports = Imports::build(
+            &settings,
+            None,
+            &stores,
+            &navidrome,
+            &acquisition,
+            soulseek.link.clone(),
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2176,6 +2266,7 @@ impl AppState {
             review_sweep_store: stores.review_sweep_store,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
+            imports: imports.service,
         };
         AppState {
             inner: Arc::new(inner),

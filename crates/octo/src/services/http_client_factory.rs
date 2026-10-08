@@ -27,7 +27,8 @@ pub fn streaming_client() -> reqwest::Client {
     builder().build().expect("the streaming HTTP client builds")
 }
 
-fn builder() -> reqwest::ClientBuilder {
+/// The builder every named client starts from: no decompression, as .NET's default handler.
+pub fn builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().no_gzip().no_deflate()
 }
 

@@ -60,11 +60,16 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
     (LIBRARY_ACTIONS_EXTENSION, &[1, LIBRARY_ACTIONS_EXTENSION_VERSION]),
     ("songLyrics", &[1, 2]),
-    // The other groups' extensions (octoTopSongs, octoImports) come before octoRadioSources, as
-    // the C# lists them, when those groups land.
+    // octoTopSongs (group G) comes before octoImports, as the C# lists it, when that group lands.
+    (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
+
+/// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
+/// getImport, importAction).
+pub const IMPORTS_EXTENSION: &str = "octoImports";
+pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
 
 /// Octo's radio answers name the source of each song (`octoSuggestedBy`): Last.fm, YouTube
 /// Music, ListenBrainz, Sounds alike or Your library.

@@ -106,6 +106,65 @@
       ],
       "reason": "The C# saved slskd's web address (the Open slskd link) with the spaces it was typed with, and the settings answer and the form showed them; the Rust build saves and reads it trimmed.",
       "knownDiff": "slskd's web address saved with spaces"
+    },
+    {
+      "id": "keep-as-playlist-navidrome-takes-it",
+      "backlog": "H",
+      "requests": [
+        "12-imports/playlist-on",
+        "12-imports/app-playlist-on",
+        "12-imports/list-gym-after-playlist",
+        "12-imports/overview-trickle-off",
+        "12-imports/getImports-paused",
+        "12-imports/overview-after-skips",
+        "12-imports/list-gym-after-skips",
+        "12-imports/remove-gym",
+        "12-imports/app-getImport-public",
+        "12-imports/getImports-listener-paused",
+        "12-imports/getImports-listener-after-read-7",
+        "12-imports/app-remove",
+        "12-imports/nd-find-playlist-gym",
+        "12-imports/nd-playlist-gym",
+        "12-imports/nd-find-playlist-listener",
+        "12-imports/nd-playlist-listener"
+      ],
+      "aspects": [
+        "status",
+        "body",
+        "header:cache-control",
+        "header:expires",
+        "header:pragma",
+        "header:set-cookie"
+      ],
+      "lines": [
+        "^500 != 200$",
+        "^A: \\['no-cache,no-store'\\]$",
+        "^B: \\['no-store'\\]$",
+        "^A: \\['-1'\\]$",
+        "^A: \\['no-cache'\\]$",
+        "^A: \\(absent\\)$",
+        "^B: \\(absent\\)$",
+        "^B: \\['octo_browse=\\{\\{admin_session\\}\\}; max-age=7776000; path=/api/admin; samesite=strict; httponly'\\]$",
+        "^\\$\\.subsonic-response: only in A \\(\\{\"status\": \"failed\", \"version\": \"1\\.16\\.1\", \"error\": \\{\"code\": 0, \"message\": \"An internal server error occurred\"\\}\\}\\)$",
+        "^\\$\\.subsonic-response\\.error: only in A \\(\\{\"code\": 0, \"message\": \"An internal server error occurred\"\\}\\)$",
+        "^\\$\\.subsonic-response\\.status: failed != ok$",
+        "^\\$\\.subsonic-response\\.(openSubsonic|type): only in B ",
+        "^\\$(\\.subsonic-response\\.importAction)?\\.(ok|url|listId|count): only in B ",
+        "^\\$\\.message: only in B \\(The playlist holds the \\d+ songs? in your library\\. Octo adds the rest as they arrive\\.\\)$",
+        "^\\$\\.subsonic-response\\.importAction: only in B \\(\\{\"ok\": true, \"message\": \"The playlist holds the \\d+ songs? in your library\\.",
+        "^\\$(\\.subsonic-response\\.imports)?\\.(list|lists\\[\\d+\\])\\.playlistId: null != \\{\\{imp_pl_(gym|listener)\\}\\}$",
+        "^\\$\\.subsonic-response\\.import\\.list\\.playlistId: null != \\{\\{imp_pl_(gym|listener)\\}\\}$",
+        "^\\$\\.overview\\.lists\\[\\d+\\]\\.playlistId: null != \\{\\{imp_pl_(gym|listener)\\}\\}$",
+        "^\\$(\\.subsonic-response\\.importAction)?\\.message: Removed (Gym Mix|Parity Public Picks)\\. != Removed (Gym Mix|Parity Public Picks)\\. Its playlist stays in Navidrome; delete it there if you no longer want it\\.$",
+        "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.comment: only in B \\((Imported by Octo from a file\\.|Imported from Spotify by Octo, from the songs in your library\\. Octo keeps it up to date\\.)\\)$",
+        "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.name: TS\\(TZ\\) != (Gym Mix|Parity Public Picks)$",
+        "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.(songCount|duration): 0 != \\d+$",
+        "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.owner: admin != listener$",
+        "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.readonly: false != true$",
+        "^\\$\\.subsonic-response\\.playlist\\.entry: only in B \\(\\[\\{\"id\": "
+      ],
+      "reason": "Keep as playlist works. The C# sent the playlist create as application/json; charset=utf-8, which Navidrome 0.64.2 reads as an M3U import: an empty playlist named after the time, an M3U answer the C# could not read, a 500 for the person, and another empty playlist every 30 s pass while the switch stayed on. The port sends application/json exactly, so the playlist is named after the list, holds its songs, belongs to the list's owner, and the list remembers it; a failed sync deletes what it made and backs off.",
+      "knownDiff": "Spotify import: Keep as playlist"
     }
   ]
 }

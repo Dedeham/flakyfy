@@ -580,12 +580,45 @@ the shards work in progress; its C# against Rust count (795) is not yet the whol
 The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
 Rust, so that shard sets the time of a sharded run.
 
+### G3 record: group H (2026-10-08)
+
+Branch `port/g3-h` (`b0de7a5`, on `rust/main` `cd89293`), the whole corpus on the WSL lane with
+`parity/run.sh --rust-twice` against the cached C# recording (1,837 requests). A targeted run
+before it (`--only '[01][126]-*'` on LXC 131, 547 requests) found the same 16.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 584 unexplained (768 after E), 1,225 explained, 28 identical |
+| Rust against Rust | 1,836 identical, 1 unexplained (bytes the same) |
+
+| Group | Own before (phase 1) | Own after J and I | Own after |
+| --- | ---: | ---: | ---: |
+| H | 208 | 202 | 16 |
+
+All 16 are the Keep as playlist fix, proposed as `keep-as-playlist-navidrome-takes-it`
+(`reviewed` unset, so still counted; with it reviewed H is 0, checked with a local diff of the
+recordings): `playlist-on` and `app-playlist-on` answer 200 with the playlist's song count where
+the C# answered 500; the lists then carry their `playlistId` (`list-gym-after-playlist`,
+`overview-trickle-off`, `getImports-paused`, `overview-after-skips`, `list-gym-after-skips`,
+`app-getImport-public`, `getImports-listener-paused`, `getImports-listener-after-read-7`) and
+their removal says the playlist stays (`remove-gym`, `app-remove`); and Navidrome's own playlist
+is named after the list, holds its songs and belongs to its owner (`nd-find-playlist-gym`,
+`nd-playlist-gym`, `nd-find-playlist-listener`, `nd-playlist-listener`; the corpus finds it by
+either name, so it needed no change, and deletes it as before, so later files see none).
+Everything else in `12-imports` matches, the state files included.
+
+No group got worse: B 11, C 9, D 110, E 4, F 128, G 47, I 3, J 3, L 45, N 14, O 17, P 68, Q 5,
+R 97, base 29; A, K and S 0. The extension lists (`01-system/extensions-*`,
+`16-lists/extensions-*`) now carry octoImports and differ only by G's octoTopSongs and L's
+octoRadioSources. Rust against Rust's one diff is `19-health/plant-wait` (R), the scan timing
+the G1 and E records saw.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three), proposed
+and Q record for those three, the G3 H record for H), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -598,7 +631,7 @@ Rust change.
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
-| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
+| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
@@ -761,17 +794,22 @@ playlists); left out of `port/g2-eg` on purpose.
 
 ### H. Spotify import and the trickle
 
-- **Fix in port:** "Keep as playlist" answers 500 against Navidrome 0.64.2
-  (Octo reads Navidrome's answer to the playlist create as JSON; likely the
-  `application/json; charset=utf-8` content type makes Navidrome take the
-  body as an M3U import), and every 30 s retry leaves another empty playlist
-  named after the time; create the playlist the way Navidrome reads it and
-  never retry into a new empty one, with a Rust test and an intentional diff.
+Done in G3 (`services::imports`, `controllers::admin::imports`, `controllers::subsonic::imports`).
 
-- [ ] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
-- [ ] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
-- [ ] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
-- [ ] `45f730c` fix(imports): a file holds at most 50,000 songs, a zip 200 files and 256 MB unpacked, and a person 500 lists
+- **Fixed in port:** "Keep as playlist" answered 500 against Navidrome 0.64.2. Navidrome
+  creates a playlist from JSON only when the content type is exactly `application/json`; the
+  C# sent `application/json; charset=utf-8`, so Navidrome read the body as an M3U file, made an
+  empty playlist named after the time and answered in M3U, and every 30 s pass made another.
+  The port sends `application/json`, deletes a playlist it made and could not fill, and tries a
+  playlist Navidrome would not take again after 1, 2, 4 minutes and on, at most an hour; Rust
+  tests and the proposed intentional diff `keep-as-playlist-navidrome-takes-it`.
+
+- [x] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
+- [x] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
+  (no Rust change: the dashboard is the shared `octo/wwwroot`)
+- [x] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
+  (no Rust change: the shared `install.sh`)
+- [x] `45f730c` fix(imports): a file holds at most 50,000 songs, a zip 200 files and 256 MB unpacked, and a person 500 lists
 
 ### I. Secret masking in the admin API
 

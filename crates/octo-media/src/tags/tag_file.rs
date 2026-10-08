@@ -283,6 +283,25 @@ const BLANK_ID3V1: [u8; 128] = {
     tag
 };
 
+/// Puts a blank ID3v1 tag at the end of an MPEG file: over the ID3v1 tag it ends with, or after
+/// its last byte when it has none.
+fn write_blank_id3v1(file: &mut std::fs::File) -> Result<(), TagError> {
+    let length = file.metadata()?.len();
+    let mut at = length;
+    if length >= 128 {
+        let mut marker = [0u8; 3];
+        file.seek(SeekFrom::Start(length - 128))?;
+        std::io::Read::read_exact(file, &mut marker)?;
+        if &marker == b"TAG" {
+            at = length - 128;
+        }
+    }
+    file.seek(SeekFrom::Start(at))?;
+    std::io::Write::write_all(file, &BLANK_ID3V1)?;
+    file.rewind()?;
+    Ok(())
+}
+
 /// The whole file, read from its start.
 fn read_all(file: &mut std::fs::File) -> Result<Vec<u8>, TagError> {
     let mut bytes = Vec::new();
@@ -577,9 +596,9 @@ impl TagFile {
                         None => {
                             // TagLib# gives every MPEG file an ID3v1 tag, a blank one when it has
                             // nothing to say, so a file keeps its size across edits that empty it.
-                            TagType::Id3v1.remove_from(&mut file, options)?;
-                            file.seek(SeekFrom::End(0))?;
-                            std::io::Write::write_all(&mut file, &BLANK_ID3V1)?;
+                            // Written by hand over the one there, or after the audio: lofty's
+                            // remove appends a blank tag to a file that has none.
+                            write_blank_id3v1(&mut file)?;
                         }
                     }
                 }
@@ -1341,6 +1360,8 @@ mod padding_tests {
         file.save().expect("saved");
         let second = std::fs::read(&path).expect("there");
         assert_eq!(second.len(), first.len());
+        // One tag, not a second one after the first.
+        assert_ne!(&second[second.len() - 256..second.len() - 253], b"TAG");
         assert_eq!(&second[second.len() - 128..], tail);
     }
 }

@@ -11,9 +11,15 @@ use crate::common::dotnet;
 
 const PLACEHOLDERS: [&str; 4] = ["unknown", "unknownartist", "notavailable", "na"];
 
-// A hyphen, en dash or em dash (U+2013, U+2014), with or without space around it: "A - T", "A-T".
+// A hyphen or any of the Unicode dashes (U+2010 to U+2015) or the minus sign (U+2212), with or
+// without space around it: "A - T", "A-T".
 static DASH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s*[-\u{2013}\u{2014}]\s*").expect("a valid pattern"));
+    LazyLock::new(|| Regex::new(r"\s*[-\u{2010}-\u{2015}\u{2212}]\s*").expect("a valid pattern"));
+
+static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("a valid pattern"));
+
+/// A row carrying fewer than one in this many of its artist's listeners is noise.
+const NOISE_RATIO: i64 = 100;
 
 /// Puts right the rows Last.fm's track.search gets from mislabelled scrobbles, before they become
 /// outside songs. A search for "Kavinsky Nightcall" answers, among the real song, artist
@@ -25,9 +31,12 @@ static DASH: LazyLock<Regex> =
 /// row's own artist at the front of its title is always taken out. Moving a song to another
 /// artist needs two things: that artist has rows of their own, and the song as repaired is
 /// among them, so Radiohead's "Creep - Acoustic" stays Radiohead's even when a band called
-/// Creep answers the same search. What cannot be put right is left as it was, except a row
-/// with no artist at all. Rows that turn out to be one song then keep the place of the first
-/// and the spelling of the most listened.
+/// Creep answers the same search. A title split at spaces alone ("Kanye West   Stronger") needs
+/// the same evidence, even under the song's own artist. A row whose artist field is another
+/// artist and a dash ("Kanye West - Stronger" with title "!") is dropped when it has under one
+/// in a hundred of that artist's listeners. What cannot be put right is left as it was, except
+/// a row with no artist at all. Rows that turn out to be one song then keep the place of the
+/// first and the spelling of the most listened.
 pub struct LastFmSearchCleanup;
 
 impl LastFmSearchCleanup {
@@ -93,11 +102,15 @@ fn repair(
     // "Artist - Title" in the title: under the artist itself ("Kanye West - Stronger" by Kanye
     // West), under no artist, or under someone else the answer names on their own, as a label
     // uploading the song ("Kavinsky - Nightcall" by Record Makers).
-    if let Some((named, rest)) = split_at_artist(title, |candidate, rest| {
-        SongIdentity::key(candidate) == artist_key
-            || (known.contains_key(&SongIdentity::key(candidate))
-                && songs.contains(&SongIdentity::match_key(candidate, rest)))
-    }) {
+    let evidenced = |candidate: &str, rest: &str| {
+        (SongIdentity::key(candidate) == artist_key || known.contains_key(&SongIdentity::key(candidate)))
+            && songs.contains(&SongIdentity::match_key(candidate, rest))
+    };
+    if let Some((named, rest)) = split_at(&DASH, title, |candidate, rest| {
+        SongIdentity::key(candidate) == artist_key || evidenced(candidate, rest)
+    })
+    .or_else(|| split_at(&SPACES, title, evidenced))
+    {
         let named_key = SongIdentity::key(&named);
         let mut repaired = track.clone();
         repaired.artist = match known.get(&named_key) {
@@ -109,6 +122,16 @@ fn repair(
     }
 
     if is_placeholder(artist) {
+        if let Some((spaced_artist, spaced_title)) = split_at(&SPACES, title, |candidate, rest| {
+            known.contains_key(&SongIdentity::key(candidate))
+                && songs.contains(&SongIdentity::match_key(candidate, rest))
+        }) && let Some((spelled, _)) = known.get(&SongIdentity::key(&spaced_artist))
+        {
+            let mut repaired = track.clone();
+            repaired.artist = spelled.clone();
+            repaired.title = spaced_title;
+            return Some(repaired);
+        }
         // With no artist to go on, "A - T" still names one, at the first spaced dash.
         return match title.find(" - ") {
             Some(spaced) if spaced > 0 && spaced + 3 < title.len() => {
@@ -139,15 +162,30 @@ fn repair(
         }
     }
 
+    // Another artist and a dash in the artist field, far less listened than that artist:
+    // "Kavinsky - Nightcall" with title "Drive", a file named after the film it was in.
+    if let Some(listeners) = track.listeners
+        && split_at(&DASH, artist, |candidate, _| {
+            let key = SongIdentity::key(candidate);
+            key != artist_key
+                && known
+                    .get(&key)
+                    .is_some_and(|(_, named)| *named > listeners.saturating_mul(NOISE_RATIO))
+        })
+        .is_some()
+    {
+        return None;
+    }
+
     Some(track.clone())
 }
 
-/// The title split at the dash after an artist `accept` takes, with the rest as the title,
-/// trying each dash in turn so a name with a hyphen in it ("Jay-Z - 99 Problems") is read whole.
-fn split_at_artist(title: &str, accept: impl Fn(&str, &str) -> bool) -> Option<(String, String)> {
-    for dash in DASH.find_iter(title) {
-        let before = title[..dash.start()].trim();
-        let after = title[dash.end()..].trim();
+/// The text split at the first `separator` whose two sides `accept` takes, trying each in turn so
+/// a name with a hyphen or a space in it ("Jay-Z - 99 Problems") is read whole.
+fn split_at(separator: &Regex, text: &str, accept: impl Fn(&str, &str) -> bool) -> Option<(String, String)> {
+    for found in separator.find_iter(text) {
+        let before = text[..found.start()].trim();
+        let after = text[found.end()..].trim();
         if before.is_empty() || after.is_empty() {
             continue;
         }
@@ -243,6 +281,67 @@ mod tests {
         ]);
 
         assert_eq!(rows, vec![pair("Kanye West", "Stronger")]);
+    }
+
+    #[test]
+    fn kanye_west_stronger_the_rows_that_got_through_at_first_are_gone_too() {
+        // More of Last.fm's answer for "Kanye West Stronger" on 2026-09-30.
+        let rows = clean(&[
+            t("Kanye West", "Stronger", 2977765),
+            t("Jeanne29570", "Kanye West Stronger", 25),
+            t("Kanye West \u{2013} Stronger", "!", 79),
+            t("Kanye West \u{2013} Stronger", "Stronger", 56),
+            t("eleonoraalili", "Kanye West   Stronger", 47),
+            t("Kanye West", "Kanye West   Stronger", 48),
+            t("[unknown]", "Kanye West   Stronger", 30),
+            t("<Unknown>", "Kanye West \u{2013} Stronger", 29),
+        ]);
+
+        assert_eq!(rows, vec![pair("Kanye West", "Stronger")]);
+    }
+
+    #[test]
+    fn an_artist_field_naming_another_artist_and_a_dash_is_dropped_when_far_less_listened() {
+        let rows = clean(&[
+            t("Kavinsky", "Nightcall", 1257699),
+            t("Kavinsky - Nightcall", "Drive", 202),
+            t("Kavinsky-Nightcall", "Instrumental-Drive", 32),
+        ]);
+
+        assert_eq!(rows, vec![pair("Kavinsky", "Nightcall")]);
+    }
+
+    #[test]
+    fn a_name_with_a_hyphen_is_not_dropped_when_it_is_the_bigger_artist() {
+        let rows = clean(&[t("Jay", "Some Song", 900), t("Jay-Z", "99 Problems", 1500000)]);
+
+        assert!(rows.contains(&pair("Jay-Z", "99 Problems")), "{rows:?}");
+    }
+
+    #[test]
+    fn a_title_starting_with_an_artists_name_is_only_split_at_spaces_on_evidence() {
+        // "Queen Bitch" is David Bowie's even though Queen answers the same search.
+        let rows = clean(&[
+            t("Queen", "Bohemian Rhapsody", 3000000),
+            t("David Bowie", "Queen Bitch", 400000),
+        ]);
+
+        assert!(rows.contains(&pair("David Bowie", "Queen Bitch")), "{rows:?}");
+    }
+
+    /// Rust-only: every Unicode dash from U+2010 to U+2015 and the minus sign split a title.
+    #[test]
+    fn every_unicode_dash_and_the_minus_sign_count_as_a_dash() {
+        for dash in [
+            '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+        ] {
+            assert_eq!(
+                clean(&[t("Daft Punk", &format!("Daft Punk {dash} One More Time"), 10)]),
+                vec![pair("Daft Punk", "One More Time")],
+                "U+{:04X}",
+                dash as u32
+            );
+        }
     }
 
     #[test]

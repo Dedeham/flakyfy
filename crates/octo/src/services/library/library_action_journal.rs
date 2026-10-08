@@ -403,6 +403,35 @@ impl LibraryActionJournal {
         })
     }
 
+    /// The dashboard's Allow downloading again: the song this entry removed may be downloaded
+    /// once more. Every removal of the same song is lifted, since any one of them would still
+    /// refuse it. Answers how many were; 0 when the entry blocks nothing.
+    pub fn allow_downloads(&self, key: &str) -> usize {
+        let lifted: Vec<LibraryActionEntry> = {
+            let entries = self.entries.lock();
+            let Some(chosen) = entries.by_key.get(key).filter(|entry| entry.blocks_downloads()) else {
+                return 0;
+            };
+            let song = SongIdentity::match_key(&chosen.artist, &chosen.title);
+            entries
+                .by_key
+                .values()
+                .filter(|entry| {
+                    entry.blocks_downloads() && SongIdentity::match_key(&entry.artist, &entry.title) == song
+                })
+                .cloned()
+                .collect()
+        };
+        let count = lifted.len();
+        for entry in lifted {
+            self.record(LibraryActionEntry {
+                download_allowed: true,
+                ..entry
+            });
+        }
+        count
+    }
+
     pub fn pending(&self) -> Vec<LibraryActionEntry> {
         self.entries
             .lock()

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::collections::HashSet;
 
 use indexmap::IndexMap;
-use octo_core::common::{SongIdentity, dotnet};
+use octo_core::common::dotnet;
 use octo_core::json::element::{ElementResult, enumerate_array, get_int32, get_string, try_get_property};
 use octo_core::models::domain::Song;
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
@@ -384,18 +384,9 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
-/// What the library is searched with for a song: its main artist and the title without brackets
-/// or guests. Navidrome wants every word it is given, so "(feat. X)" or "(Radio Edit)" would hide
-/// a library copy tagged without them. `TopSongsService.LibraryQuery`; STUB(G): group G's port of
-/// `TopSongsService` takes this over.
-pub fn library_query(artist: &str, title: &str) -> String {
-    let main = SongIdentity::primary_artist(artist);
-    let mut core = SongIdentity::parse_title(title, Some(artist)).core;
-    if core.is_empty() {
-        core = title.to_string();
-    }
-    format!("{main} {core}").trim().to_string()
-}
+/// What the library is searched with for a song (`TopSongsService.LibraryQuery`): the one the
+/// charts search with too.
+pub use octo_core::charts::top_songs::library_query;
 
 /// The songs of an album or a random-songs answer that have an id.
 fn songs(parent: &Value) -> ElementResult<Vec<Song>> {

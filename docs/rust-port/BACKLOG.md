@@ -858,8 +858,8 @@ song radio and the outcome store are `octo::services::radio`; octo-sonic's clien
 analysis worker `octo::services::sonic`; `YouTubeMusicClient` and `ListenBrainzRadioClient`
 beside their services. `SongRadioService` is shared, with each request's resolver handed to
 `build`. `TopSongsService.LibraryQuery` (7a8cc5f's library search) lives in
-`last_fm_radio_track_resolver::library_query`, marked STUB(G): G's `TopSongsService` takes it
-over. `6a119db`'s settings views and the octo-sonic status card came with G1. The station
+`octo_core::charts::top_songs::library_query` (group G), which
+`last_fm_radio_track_resolver::library_query` re-exports (the STUB(G) mark is gone). `6a119db`'s settings views and the octo-sonic status card came with G1. The station
 previews' em dash Brandon saw is in the dashboard (`octo/wwwroot/admin/admin.js`, the Radio
 page's station grid joins artist and title with one), which both builds serve as is; no Rust
 radio code builds a string with one.

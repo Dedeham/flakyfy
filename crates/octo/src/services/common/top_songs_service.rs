@@ -32,8 +32,7 @@ use octo_core::common::SongIdentity;
 use octo_core::common::dotnet::is_blank;
 use octo_core::models::domain::Song;
 use octo_core::settings::SettingsStore;
-use octo_core::soulseek::LengthSource;
-use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
 use parking_lot::Mutex;
 use serde_json::Value;
 use tokio::time::Instant;
@@ -44,9 +43,9 @@ use crate::services::cover_art::ArtworkHints;
 use crate::services::framework::{InFlight, MemoryCache};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::last_fm_service::LastFmService;
+use crate::services::library::for_you_lists;
 use crate::services::metadata::deezer_metadata_service::{CHART_LIMIT, DeezerMetadataService};
 use crate::services::soulseek::external_id_registry::ExternalIdRegistry;
-use crate::services::soulseek::soulseek_metadata_service::SoulseekMetadataService;
 
 /// A whole list keeps for this long once every source answered; one built while a source did
 /// not answer, or that came out empty, is asked again soon.
@@ -631,63 +630,36 @@ fn chart_key(country: Option<&str>, id: &str) -> String {
     format!("chart|{}|{id}", country.unwrap_or("auto"))
 }
 
-/// A catalog track as an outside song: its artist, album and song registered so it plays, opens
-/// its album and is added like any other, and its artwork remembered for its cover.
+/// A catalog track as an outside song: registered through New Releases' shared
+/// [`for_you_lists::catalog_song`] (artist, album and song, so it plays, opens its album and is
+/// added like any other), then given what a chart row carries besides: every credited artist,
+/// the explicit mark, and its artwork remembered for its cover.
 pub fn catalog_song(registry: &ExternalIdRegistry, hints: &ArtworkHints, track: &CatalogTrack) -> Song {
-    let artist_id = registry.register(SoulseekRouting {
-        kind: RoutingKind::Artist,
-        artist: Some(track.artist.clone()),
-        external_artist_id: track.artist_id.clone(),
-        ..Default::default()
-    });
-    let album = track.album.clone().filter(|a| !is_blank(a));
-    let album_id = album.as_ref().map(|album| {
-        registry.register(SoulseekRouting {
-            kind: RoutingKind::Album,
-            artist: Some(track.artist.clone()),
-            album: Some(album.clone()),
-            external_album_id: track.album_id.clone(),
-            ..Default::default()
-        })
-    });
-    // The album rides on the song's routing too, so a download tags it with this album rather
-    // than one found again from the artist and title.
-    let id = registry.register(SoulseekRouting {
-        kind: RoutingKind::Song,
-        artist: Some(track.artist.clone()),
-        title: Some(track.title.clone()),
-        album: album.clone(),
-        duration: track.duration,
-        ..Default::default()
-    });
-    // Catalog-grade, whichever catalog: Apple's lengths are as good as Deezer's.
-    registry.remember_length(&id, track.duration, LengthSource::Deezer);
+    let album = track.album.as_deref().filter(|a| !is_blank(a));
+    let mut song = for_you_lists::catalog_song(
+        registry,
+        &for_you_lists::CatalogTrackSong {
+            title: &track.title,
+            artist: &track.artist,
+            artist_id: track.artist_id.as_deref(),
+            album,
+            album_id: track.album_id.as_deref(),
+            cover_url: track.cover_url.as_deref(),
+            duration: track.duration,
+        },
+    );
     if let Some(url) = track.cover_url.as_deref() {
         hints.remember(RoutingKind::Song, &track.artist, &track.title, url);
-        if let Some(album) = album.as_deref() {
+        if let Some(album) = album {
             hints.remember(RoutingKind::Album, &track.artist, album, url);
         }
     }
-    Song {
-        id: id.clone(),
-        title: track.title.clone(),
-        artist: track.artist.clone(),
-        artist_id: Some(artist_id),
-        album: album.unwrap_or_default(),
-        album_id,
-        duration: track.duration,
-        cover_art_url: track.cover_url.clone(),
-        cover_art_url_large: track.cover_url.clone(),
-        explicit_content_lyrics: track
-            .explicit_content
-            .or(track.explicit.map(|e| if e { 1 } else { 0 })),
-        artists: track.artists.clone(),
-        primary_artist: (!track.artists.is_empty()).then(|| track.artist.clone()),
-        is_local: false,
-        external_provider: Some(SoulseekMetadataService::PROVIDER_NAME.to_string()),
-        external_id: Some(id),
-        ..Default::default()
-    }
+    song.explicit_content_lyrics = track
+        .explicit_content
+        .or(track.explicit.map(|e| if e { 1 } else { 0 }));
+    song.artists = track.artists.clone();
+    song.primary_artist = (!track.artists.is_empty()).then(|| track.artist.clone());
+    song
 }
 
 #[cfg(test)]

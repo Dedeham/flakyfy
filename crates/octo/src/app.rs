@@ -65,9 +65,9 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
+use crate::services::library::ChartPlaylistService;
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
-use crate::services::library::ChartPlaylistService;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{

@@ -6,6 +6,8 @@ use serde_json::json;
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use octo_core::soulseek::soulseek_metadata_service::SoulseekRouting;
+
 use super::*;
 use crate::services::common::test_fakes::FakeMetadata;
 use crate::services::metadata::deezer_rate_limit_handler::DeezerRateLimitHandler;

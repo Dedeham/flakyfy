@@ -11,12 +11,16 @@
 #   parity/lxc131.sh --rust-twice         # also Rust against Rust (the determinism gate)
 #   parity/lxc131.sh --csharp-twice       # also C# against C# (after a corpus change)
 #   parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: no Rust build or run
+#   parity/lxc131.sh --attach             # follow this name's run on the box again and fetch
+#                                         # its reports (after this script was stopped)
+#   parity/lxc131.sh --queue              # what holds the box lock and what waits for it
+#   parity/lxc131.sh --selftest [--sleep S]     # a dry run of the harness's own machinery
 #   parity/lxc131.sh --clean              # remove this name's image and folder on the box
 #
 # What it does: compiles octo here as a static musl binary (cargo build --release --target
 # x86_64-unknown-linux-musl; `rustup target add x86_64-unknown-linux-musl` and musl-tools once),
 # bundles HEAD (only the commits the box lacks), copies the bundle and the binary to the box
-# through the Proxmox host, checks it out in /opt/octo-parity/runs/<name>/src, and runs
+# through the Proxmox host, checks it out in /opt/octo-parity/runs/<name>/src, and starts
 # parity/box-run.sh there (the image from Dockerfile.rust's runtime stage around that binary,
 # the corpus against both builds, the diff).
 #
@@ -24,10 +28,18 @@
 # host: the LTO link takes about 3 GB, and on 2026-10-07 a box build tripped the watchdog with
 # the host at 1 GB and its swap full. The runtime stage is only Debian packages and a copy.
 # A static musl binary runs on bookworm-slim whatever glibc the machine that built it has
-# (a WSL glibc build needs GLIBC_2.38 and does not start there). --box-build is the old way. The full report comes back to parity/.run/lxc131-<name>/. Commit first: only commits
-# travel. Nothing is pushed anywhere and nothing on the box outside /opt/octo-parity, the
+# (a WSL glibc build needs GLIBC_2.38 and does not start there). --box-build is the old way.
+# The full report comes back to parity/.run/lxc131-<name>/. Commit first: only commits travel.
+# Nothing is pushed anywhere and nothing on the box outside /opt/octo-parity, the
 # octo-parity-* compose projects, the octo-rust-parity:<name> image and the octo-parity buildx
 # builder is touched.
+#
+# The run on the box is detached (box-run.sh --start): it waits for the box lock, runs and
+# writes its log and done marker there whether this script is still running or not. This
+# script follows that log (a copy goes to parity/.run/lxc131-<name>/run-<id>.log), and when the
+# done marker appears fetches the reports and exits with box-run.sh's exit status (0: the run
+# went through, diffs or not). If it is stopped, the run goes on: --attach follows it again.
+# One run per name at a time; a second start of a name whose run is still going is refused.
 #
 # Settings (environment): PARITY_NAME (default: the branch name), PARITY_PROXMOX (ssh host of
 # the Proxmox node, default pmx), PARITY_CT (container id, default 131), PARITY_MIN_HOST_MB (the
@@ -36,8 +48,10 @@
 #
 # The Proxmox host is shared (LXC 111 runs Brandon's own Octo there) and has little memory to
 # spare: on 2026-10-07 a run with the host already short pushed it into swap until nothing
-# answered. So the run starts only with PARITY_MIN_HOST_MB free on the host, and a watchdog
-# stops it (and takes the parity stacks down) when the host's free memory drops under 1.5 GB.
+# answered. So the run starts only with PARITY_MIN_HOST_MB free on the host, and a watchdog on
+# the host itself (parity/host-watchdog.sh, started detached for the life of the run) stops the
+# run that holds the box lock, and takes its stacks down, when the host's free memory drops
+# under 1.5 GB.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -48,11 +62,16 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 name="${PARITY_NAME:-$branch}"
 name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '-' | tr 'A-Z' 'a-z')"
 args=()
+mode=run
 clean=0
 prebuilt=1
+selftest=0
 for a in "$@"; do
   case "$a" in
     --clean) clean=1 ;;
+    --attach) mode=attach ;;
+    --queue) mode=queue ;;
+    --selftest) selftest=1; prebuilt=0; args+=("$a") ;;
     --box-build) prebuilt=0 ;;
     --no-build | --csharp-only) prebuilt=0; args+=("$a") ;;
     *) args+=("$a") ;;
@@ -66,6 +85,8 @@ if [ "$prebuilt" = 1 ]; then
     fi
   done
 fi
+# A selftest has its own name, so it never meets this branch's real run.
+if [ "$selftest" = 1 ]; then name="$name-selftest"; fi
 
 # ssh/scp that know the host: the plain ones, or Windows' from WSL.
 SSH=ssh SCP=scp
@@ -78,9 +99,141 @@ if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2> /dev/null; then
   fi
 fi
 on_box() { "$SSH" "$host" "pct exec $ct -- bash -c $(printf '%q' "$1")"; }
+# This commit's box-run.sh, run on the box from a temporary copy: the modes that need no
+# checkout there (--status NAME, --queue).
+box_tool() {
+  git -C "$repo" show HEAD:parity/box-run.sh |
+    "$SSH" "$host" "pct exec $ct -- bash -c 'f=\$(mktemp) && cat > \"\$f\" && bash \"\$f\" $*; s=\$?; rm -f \"\$f\"; exit \$s'"
+}
 
 work="$repo/parity/.run/lxc131-$name"
 mkdir -p "$work"
+boxrun="/opt/octo-parity/runs/$name"
+
+if [ "$mode" = queue ]; then
+  box_tool --queue
+  exit 0
+fi
+
+# The host's memory watchdog for run ID: parity/host-watchdog.sh, copied to the Proxmox host
+# and started there detached, so it outlives this script. One per run; --attach starts it
+# again when it is not running.
+start_watchdog() { # id
+  local id="$1" base="/root/octo-parity-watchdog-$name-$1" env="" flag=""
+  if "$SSH" "$host" "test -s $base.pid && grep -qa octo-parity-watchdog /proc/\$(cat $base.pid)/cmdline 2> /dev/null"; then
+    echo "host watchdog: already running for this run"
+    return 0
+  fi
+  if [ "$selftest" = 1 ]; then
+    # A selftest may set its own limit, to see the watchdog trip; a real run never can.
+    flag=" --selftest"
+    case "${PARITY_WATCHDOG_MB:-}" in
+      "") ;;
+      *[!0-9]*) echo "PARITY_WATCHDOG_MB must be a number of MB" >&2; exit 64 ;;
+      *) env="PARITY_WATCHDOG_MB=$PARITY_WATCHDOG_MB " ;;
+    esac
+  fi
+  git -C "$repo" show HEAD:parity/host-watchdog.sh |
+    "$SSH" "$host" "cat > $base.sh && ${env}setsid -f nohup bash $base.sh $ct $name $id$flag >> /root/octo-parity-watchdog-$name.log 2>&1 < /dev/null && sleep 1 && echo \"host watchdog: pid \$(cat $base.pid 2> /dev/null), log /root/octo-parity-watchdog-$name.log on the Proxmox host\""
+}
+
+# Follow run ID's log on the box until its done marker is there, a copy into
+# parity/.run/lxc131-<name>/run-<id>.log. Sets code to box-run.sh's exit status (75 when the box
+# could not be reached for a while, and the run goes on there; then no reports are fetched).
+follow_run() { # id
+  local id="$1" log="$work/run-$1.log" st rid spid c size last=-1 stalls=0
+  : > "$log"
+  code=1
+  while :; do
+    read -r st rid spid c <<< "$(box_tool --status "$name" 2> /dev/null || echo "unknown - - -")"
+    if [ "$st" != unknown ] && [ "$rid" != "$id" ]; then
+      echo "the box's latest run of $name is $rid ($st), not $id; its reports are not fetched" >&2
+      code=75
+      return 0
+    fi
+    size="$(wc -c < "$log" | tr -d ' ')"
+    case "$st" in
+      done | gone)
+        # What is left of the log, then the end.
+        "$SSH" -n "$host" "pct exec $ct -- tail -c +$((size + 1)) $boxrun/run-$id.log" | tee -a "$log" || true
+        if [ "$st" = done ] && [[ "$c" =~ ^[0-9]+$ ]]; then
+          code="$c"
+        else
+          echo "the run on the box stopped without its done marker (its supervisor was killed)" >&2
+          code=1
+        fi
+        return 0
+        ;;
+      queued | running)
+        # Until the supervisor ends; tail checks it every second.
+        "$SSH" -n -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$host" \
+          "pct exec $ct -- tail -c +$((size + 1)) -f --pid=$spid $boxrun/run-$id.log" | tee -a "$log" || true
+        ;;
+    esac
+    # Back here with the run not done: the connection dropped. Again, unless nothing comes.
+    size="$(wc -c < "$log" | tr -d ' ')"
+    if [ "$size" = "$last" ]; then stalls=$((stalls + 1)); else stalls=0; fi
+    last="$size"
+    if [ "$stalls" -ge 12 ]; then
+      echo "lost the box for a minute; the run goes on there: parity/lxc131.sh --attach" >&2
+      code=75
+      return 0
+    fi
+    sleep 5
+  done
+}
+
+# The full reports, for reading the diffs themselves.
+pull_reports() {
+  local f
+  for f in report.txt report-bytes.txt cs-cs.txt cs-cs-bytes.txt rs-rs.txt rs-rs-bytes.txt report.groups.json; do
+    rm -f "$work/$f"
+    if "$SSH" "$host" "pct pull $ct $boxrun/$f /root/parity-$name-$f" 2> /dev/null; then
+      (cd "$work" && "$SCP" -q "$host:/root/parity-$name-$f" "$f")
+      "$SSH" "$host" "rm -f /root/parity-$name-$f"
+    fi
+  done
+  echo
+  if [ -f "$work/report.txt" ]; then
+    echo "full report: parity/.run/lxc131-$name/report.txt"
+  else
+    echo "no report.txt from this run; the log is parity/.run/lxc131-$name/run-$1.log"
+  fi
+}
+
+# Follow run ID to its end, fetch the reports and exit with its status.
+follow_and_finish() { # id
+  trap 'echo; echo "stopped following; the run goes on on the box: parity/lxc131.sh --attach picks it up" >&2; exit 130' INT TERM
+  follow_run "$1"
+  trap - INT TERM
+  if [ "$code" != 75 ]; then pull_reports "$1"; fi
+  if [ "$code" != 0 ]; then echo "box-run.sh exit status: $code" >&2; fi
+  exit "$code"
+}
+
+status_line="$(box_tool --status "$name")"
+read -r st id spid _ <<< "$status_line"
+
+if [ "$mode" = attach ]; then
+  case "$st" in
+    none) echo "no run of $name on the box to attach to" >&2; exit 1 ;;
+    foreground)
+      echo "the run of $name on the box (pid $spid) was started by an lxc131.sh from before --attach;" \
+        "it cannot be followed. parity/lxc131.sh --queue shows it." >&2
+      exit 1
+      ;;
+  esac
+  echo "attaching to the run of $name $id ($st)"
+  if [ "$st" = queued ] || [ "$st" = running ]; then start_watchdog "$id"; fi
+  follow_and_finish "$id"
+fi
+
+case "$st" in
+  queued | running | foreground)
+    echo "a run of $name is still going on the box ($st); parity/lxc131.sh --attach follows it" >&2
+    exit 75
+    ;;
+esac
 
 if [ "$clean" = 1 ]; then
   on_box "docker rmi octo-rust-parity:$name 2> /dev/null; rm -rf /opt/octo-parity/runs/$name; git -C /opt/octo-parity/repo.git update-ref -d refs/heads/$name 2> /dev/null; df -h / | tail -n 1"
@@ -149,48 +302,25 @@ if [ "$prebuilt" = 1 ]; then
 fi
 
 host_free_mb() { "$SSH" -o ConnectTimeout=20 "$host" "awk '/MemAvailable/ {print int(\$2 / 1024)}' /proc/meminfo" 2> /dev/null || echo 0; }
-stop_box_run() {
-  on_box "pkill -f '[b]ox-run.sh $name' ; pkill -f '[p]arity/parity.py run' ; cd /opt/octo-parity/runs/$name/src && for p in octo-parity-cs octo-parity-rs; do docker compose -p \$p -f parity/docker-compose.yml down -v --remove-orphans > /dev/null 2>&1; done; docker buildx stop octo-parity > /dev/null 2>&1; echo 'parity stacks stopped'" || true
-}
-
 need="${PARITY_MIN_HOST_MB:-3500}"
 free="$(host_free_mb)"
-if [ "$free" -lt "$need" ]; then
+if [ "$selftest" = 0 ] && [ "$free" -lt "$need" ]; then
   echo "the Proxmox host has $free MB free (need $need); not starting. Try again later." >&2
   exit 1
 fi
 
-# The watchdog: every 15 s, the host's free memory; under 1.5 GB the run is stopped.
-(
-  while sleep 15; do
-    f="$(host_free_mb)"
-    if [ "$f" -gt 0 ] && [ "$f" -lt 1536 ]; then
-      echo "WATCHDOG: the Proxmox host is down to $f MB free; stopping the parity run" >&2
-      stop_box_run
-      exit 0
-    fi
-  done
-) &
-watchdog=$!
-trap 'kill $watchdog 2> /dev/null || true' EXIT
-
-# The run itself. Its output streams here; the summary and the per-group table end it.
-# One run at a time on the box: every branch's run uses the same stack names, and two at
-# once would push the host into swap. box-run.sh takes /opt/octo-parity/run.lock itself, and
-# a second run waits there for the first to finish. The lock is not taken here as well: a
-# flock around box-run.sh holds the file through another open file, so box-run.sh's own
-# flock waited on it forever.
+# The run itself, detached on the box. One run at a time on the box: every branch's run uses
+# the same stack names, and two at once would push the host into swap. box-run.sh takes
+# /opt/octo-parity/run.lock itself, and a second run waits there for the first to finish
+# (--queue shows who holds it and who waits).
 quoted=""
 for a in "${args[@]+"${args[@]}"}"; do quoted+=" $(printf '%q' "$a")"; done
-on_box "bash /opt/octo-parity/runs/$name/src/parity/box-run.sh $name$quoted" || true
-kill $watchdog 2> /dev/null || true
-
-# The full reports, for reading the diffs themselves.
-for f in report.txt report-bytes.txt cs-cs.txt cs-cs-bytes.txt rs-rs.txt rs-rs-bytes.txt report.groups.json; do
-  if "$SSH" "$host" "pct pull $ct /opt/octo-parity/runs/$name/$f /root/parity-$name-$f" 2> /dev/null; then
-    (cd "$work" && "$SCP" -q "$host:/root/parity-$name-$f" "$f")
-    "$SSH" "$host" "rm -f /root/parity-$name-$f"
-  fi
-done
-echo
-echo "full report: parity/.run/lxc131-$name/report.txt"
+id="$(on_box "bash $boxrun/src/parity/box-run.sh --start $name$quoted" | tail -n 1)"
+if ! [[ "$id" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+  echo "box-run.sh --start did not give a run id (got '$id')" >&2
+  exit 1
+fi
+echo "box: run $name $id started, detached. If this script stops, the run goes on:"
+echo "  parity/lxc131.sh --attach follows it again; parity/lxc131.sh --queue shows the box's queue"
+start_watchdog "$id"
+follow_and_finish "$id"

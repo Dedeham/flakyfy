@@ -81,6 +81,16 @@ pub struct GeneratedPlaylistSettings {
     /// own; the rest play right away and are added with a heart. Made again every few hours.
     /// Environment variable: POPULAR_NOW
     pub popular_now: bool,
+
+    /// The lists made into playlists for every listener besides Popular right now, in order:
+    /// "new" (Best New Songs), "trending" (Trending Songs) and Apple genre ids such as 18
+    /// (Hip-Hop/Rap). Empty: none. Environment variable: CHARTS
+    pub charts: String,
+
+    /// The country whose charts and new songs are read: "auto" (the server's own, as Apple sees
+    /// it) or a two-letter Apple country such as "us" or "gb". Environment variable:
+    /// CHART_COUNTRY
+    pub chart_country: String,
 }
 
 impl Default for GeneratedPlaylistSettings {
@@ -105,6 +115,8 @@ impl Default for GeneratedPlaylistSettings {
             new_release_artists: 50,
             rediscover_months: 6,
             popular_now: true,
+            charts: "new,trending,18,14,6".to_string(),
+            chart_country: "auto".to_string(),
         }
     }
 }
@@ -125,6 +137,16 @@ impl GeneratedPlaylistSettings {
     /// Whether any of the three Made for you lists is on.
     pub fn any_for_you(&self) -> bool {
         self.new_releases || self.rediscover || self.deep_cuts
+    }
+
+    /// The chart lists that are on besides Popular right now, read from [`Self::charts`].
+    pub fn chart_ids(&self) -> Vec<String> {
+        crate::charts::chart_settings::parse_charts(&self.charts)
+    }
+
+    /// The chart country, read from [`Self::chart_country`].
+    pub fn chart_country(&self) -> crate::charts::chart_settings::ChartCountry {
+        crate::charts::chart_settings::parse_country(&self.chart_country)
     }
 
     pub fn effective_track_count(&self) -> i32 {
@@ -330,6 +352,26 @@ mod tests {
         };
         assert_eq!(s.effective_remove_below(), 5);
         assert_eq!(s.effective_refresh_hours(), 336);
+    }
+
+    #[test]
+    fn charts_default_to_new_trending_and_three_genres_and_auto() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert_eq!(defaults.chart_ids(), vec!["new", "trending", "18", "14", "6"]);
+        assert_eq!(
+            defaults.chart_country(),
+            crate::charts::chart_settings::ChartCountry::Auto
+        );
+        let off = GeneratedPlaylistSettings {
+            charts: String::new(),
+            chart_country: "GB".into(),
+            ..Default::default()
+        };
+        assert!(off.chart_ids().is_empty());
+        assert_eq!(
+            off.chart_country(),
+            crate::charts::chart_settings::ChartCountry::Fixed("gb".into())
+        );
     }
 
     #[test]

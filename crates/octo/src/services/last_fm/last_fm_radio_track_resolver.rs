@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
+use std::collections::HashSet;
+
 use indexmap::IndexMap;
+use octo_core::common::dotnet;
 use octo_core::json::element::{ElementResult, enumerate_array, get_int32, get_string, try_get_property};
 use octo_core::models::domain::Song;
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
@@ -96,12 +99,15 @@ impl LastFmRadioTrackResolver {
     }
 
     /// The library's copy when it has the recording, else the first external placeholder.
+    ///
+    /// `you_tube_id`: a video a source already named for this song (YouTube Music).
     pub async fn resolve(
         &self,
         artist: &str,
         title: &str,
         duration: Option<i32>,
         authenticated_parameters: &IndexMap<String, String>,
+        you_tube_id: Option<&str>,
     ) -> Option<Song> {
         if let Some(local) = self
             .try_find_local_match(artist, title, authenticated_parameters)
@@ -109,11 +115,23 @@ impl LastFmRadioTrackResolver {
         {
             return Some(local);
         }
-        self.metadata
+        let hit = self
+            .metadata
             .search_songs_by_artist_title(artist, title, 1, duration)
             .await
             .into_iter()
-            .next()
+            .next()?;
+        // A source that already named the video saves the search later, and plays exactly what
+        // it suggested.
+        if let Some(video) = you_tube_id.filter(|video| !video.is_empty())
+            && let Some(routing) = self.registry.lookup(&hit.id)
+        {
+            let mut routing = routing.lock();
+            if routing.you_tube_id.as_deref().is_none_or(str::is_empty) {
+                routing.you_tube_id = Some(video.to_string());
+            }
+        }
+        Some(hit)
     }
 
     /// Navidrome's search for the artist and title, as the listener; the first hit that is the
@@ -125,8 +143,11 @@ impl LastFmRadioTrackResolver {
         authenticated_parameters: &IndexMap<String, String>,
     ) -> Option<Song> {
         let mut parameters = authenticated_parameters.clone();
-        parameters.insert("query".into(), format!("{artist} {title}"));
-        parameters.insert("songCount".into(), "3".into());
+        // Navidrome wants every word it is given, so a joined credit ("Kordhell, Scarlxrd") or a
+        // video title ("... (Official Video)") would find nothing: the main artist and the core
+        // title find the candidates, and is_same_recording still decides the version.
+        parameters.insert("query".into(), library_query(artist, title));
+        parameters.insert("songCount".into(), "5".into());
         parameters.insert("albumCount".into(), "0".into());
         parameters.insert("artistCount".into(), "0".into());
         parameters.insert("f".into(), "json".into());
@@ -154,23 +175,7 @@ impl LastFmRadioTrackResolver {
                     continue;
                 }
 
-                return Ok(Some(Song {
-                    id,
-                    title: hit_title,
-                    artist: hit_artist,
-                    artist_id: nullable_string(song, "artistId")?,
-                    album: string(song, "album")?,
-                    album_id: nullable_string(song, "albumId")?,
-                    duration: integer(song, "duration")?,
-                    year: integer(song, "year")?,
-                    track: integer(song, "track")?,
-                    genre: nullable_string(song, "genre")?,
-                    suffix: nullable_string(song, "suffix")?,
-                    bit_rate: integer(song, "bitRate")?,
-                    isrcs: texts(song, "isrc")?,
-                    is_local: true,
-                    ..Default::default()
-                }));
+                return Ok(Some(library_song(song)?));
             }
             Ok(None)
         };
@@ -182,6 +187,241 @@ impl LastFmRadioTrackResolver {
             }
         }
     }
+}
+
+impl LastFmRadioTrackResolver {
+    /// What a radio was started from in the library. Subsonic's getSimilarSongs takes a song, an
+    /// album or an artist id; an album is read as its first song, an artist as the name alone.
+    /// None when Navidrome knows none of them for this listener.
+    pub async fn read_seed(
+        &self,
+        id: &str,
+        authenticated_parameters: &IndexMap<String, String>,
+    ) -> Option<LibrarySeed> {
+        let read = |element: &Value| -> ElementResult<Option<LibrarySeed>> {
+            Ok(Some(LibrarySeed {
+                artist: string(element, "artist")?,
+                song: Some(library_song(element)?),
+            }))
+        };
+        if let Some(song) = self
+            .read("rest/getSong", id, authenticated_parameters, "song")
+            .await
+        {
+            return read(&song).unwrap_or_else(|error| {
+                debug!("radio seed {id} could not be read: {error}");
+                None
+            });
+        }
+        if let Some(album) = self
+            .read("rest/getAlbum", id, authenticated_parameters, "album")
+            .await
+        {
+            let seed = || -> ElementResult<Option<LibrarySeed>> {
+                let Some(first) = songs(&album)?.into_iter().next() else {
+                    return Ok(None);
+                };
+                let name = string(&album, "artist")?;
+                Ok(Some(LibrarySeed {
+                    artist: if name.is_empty() {
+                        first.artist.clone()
+                    } else {
+                        name
+                    },
+                    song: Some(first),
+                }))
+            };
+            return seed().unwrap_or_else(|error| {
+                debug!("radio seed album {id} could not be read: {error}");
+                None
+            });
+        }
+        if let Some(artist) = self
+            .read("rest/getArtist", id, authenticated_parameters, "artist")
+            .await
+            && let Ok(name) = string(&artist, "name")
+            && !name.is_empty()
+        {
+            return Some(LibrarySeed {
+                song: None,
+                artist: name,
+            });
+        }
+        None
+    }
+
+    /// One library song as this listener's Navidrome describes it; None when they cannot see it.
+    pub async fn read_library_song(
+        &self,
+        id: &str,
+        authenticated_parameters: &IndexMap<String, String>,
+    ) -> Option<Song> {
+        let song = self
+            .read("rest/getSong", id, authenticated_parameters, "song")
+            .await?;
+        library_song(&song).ok()
+    }
+
+    /// Library songs near a seed by its own tags: the rest of its album, which for a library
+    /// downloaded from playlists is the playlist, and songs sharing its genre. They lead a radio
+    /// Last.fm cannot place, so the radio keeps the seed's style (#78). Never the seed itself.
+    pub async fn library_neighbours(
+        &self,
+        seed: &Song,
+        count: i32,
+        authenticated_parameters: &IndexMap<String, String>,
+    ) -> Vec<Song> {
+        let mut same_album = Vec::new();
+        if let Some(album_id) = seed.album_id.as_deref().filter(|id| !id.is_empty())
+            && let Some(album) = self
+                .read("rest/getAlbum", album_id, authenticated_parameters, "album")
+                .await
+        {
+            same_album = songs(&album)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|song| song.id != seed.id)
+                .collect();
+            shuffle(&mut same_album);
+        }
+
+        let mut same_genre = Vec::new();
+        if let Some(genre) = seed.genre.as_deref().filter(|genre| !dotnet::is_blank(genre)) {
+            let mut parameters = authenticated_parameters.clone();
+            parameters.shift_remove("id");
+            parameters.insert("genre".into(), genre.to_string());
+            parameters.insert("size".into(), count.clamp(1, 500).to_string());
+            parameters.insert("f".into(), "json".into());
+            if let Some(result) = self.proxy.relay_safe("rest/getRandomSongs", &parameters).await
+                && !result.body.is_empty()
+            {
+                let read = || -> anyhow::Result<Vec<Song>> {
+                    let document: Value = serde_json::from_slice(&result.body)?;
+                    let Some(response) = try_get_property(&document, "subsonic-response")? else {
+                        return Ok(Vec::new());
+                    };
+                    let Some(random) = try_get_property(response, "randomSongs")? else {
+                        return Ok(Vec::new());
+                    };
+                    Ok(songs(random)?)
+                };
+                match read() {
+                    Ok(found) => same_genre = found.into_iter().filter(|song| song.id != seed.id).collect(),
+                    Err(error) => debug!("radio genre neighbours failed for {genre}: {error}"),
+                }
+            }
+        }
+
+        let mut seen = HashSet::new();
+        interleave(&[same_album, same_genre])
+            .into_iter()
+            .filter(|song| seen.insert(song.id.clone()))
+            .take(count.max(0) as usize)
+            .collect()
+    }
+
+    /// The object `element` of Navidrome's answer to `endpoint` for `id`, read with the caller's
+    /// credentials; None when it failed or holds none.
+    async fn read(
+        &self,
+        endpoint: &str,
+        id: &str,
+        authenticated_parameters: &IndexMap<String, String>,
+        element: &str,
+    ) -> Option<Value> {
+        let mut parameters = authenticated_parameters.clone();
+        parameters.insert("id".into(), id.to_string());
+        parameters.insert("f".into(), "json".into());
+        let result = self.proxy.relay_safe(endpoint, &parameters).await?;
+        if result.body.is_empty() {
+            return None;
+        }
+        let read = || -> anyhow::Result<Option<Value>> {
+            let document: Value = serde_json::from_slice(&result.body)?;
+            let Some(response) = try_get_property(&document, "subsonic-response")? else {
+                return Ok(None);
+            };
+            Ok(try_get_property(response, element)?
+                .filter(|found| found.is_object())
+                .cloned())
+        };
+        read().unwrap_or_else(|error| {
+            debug!("{endpoint} failed for radio seed {id}: {error}");
+            None
+        })
+    }
+}
+
+/// A radio's starting point in the library.
+///
+/// `song`: the song, or an album's first song; None for an artist. `artist`: whose radio it is,
+/// as the library credits them.
+#[derive(Debug, Clone)]
+pub struct LibrarySeed {
+    pub song: Option<Song>,
+    pub artist: String,
+}
+
+/// One from each list in turn, keeping each list's order, until all are spent.
+pub fn interleave<T: Clone>(lists: &[Vec<T>]) -> Vec<T> {
+    let longest = lists.iter().map(Vec::len).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for index in 0..longest {
+        for list in lists {
+            if let Some(item) = list.get(index) {
+                out.push(item.clone());
+            }
+        }
+    }
+    out
+}
+
+/// `Random.Shared.Shuffle`: an unseeded Fisher-Yates shuffle.
+fn shuffle<T>(items: &mut [T]) {
+    for i in (1..items.len()).rev() {
+        let j = rand::random_range(0..=i);
+        items.swap(i, j);
+    }
+}
+
+/// What the library is searched with for a song (`TopSongsService.LibraryQuery`): the one the
+/// charts search with too.
+pub use octo_core::charts::top_songs::library_query;
+
+/// The songs of an album or a random-songs answer that have an id.
+fn songs(parent: &Value) -> ElementResult<Vec<Song>> {
+    let Some(Value::Array(items)) = try_get_property(parent, "song")? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for song in items {
+        if !string(song, "id")?.is_empty() {
+            out.push(library_song(song)?);
+        }
+    }
+    Ok(out)
+}
+
+/// A song as Navidrome describes it.
+fn library_song(song: &Value) -> ElementResult<Song> {
+    Ok(Song {
+        id: string(song, "id")?,
+        title: string(song, "title")?,
+        artist: string(song, "artist")?,
+        artist_id: nullable_string(song, "artistId")?,
+        album: string(song, "album")?,
+        album_id: nullable_string(song, "albumId")?,
+        duration: integer(song, "duration")?,
+        year: integer(song, "year")?,
+        track: integer(song, "track")?,
+        genre: nullable_string(song, "genre")?,
+        suffix: nullable_string(song, "suffix")?,
+        bit_rate: integer(song, "bitRate")?,
+        isrcs: texts(song, "isrc")?,
+        music_brainz_recording_id: nullable_string(song, "musicBrainzId")?,
+        is_local: true,
+        ..Default::default()
+    })
 }
 
 /// `TryGetProperty(name) ? GetString() ?? "" : ""`.
@@ -268,6 +508,7 @@ mod tests {
                 "The Song",
                 Some(200),
                 &auth(&[("u", "alice"), ("t", "token"), ("s", "salt")]),
+                None,
             )
             .await
             .expect("a song");
@@ -301,9 +542,130 @@ mod tests {
         )
         .await;
         let song = resolver
-            .resolve("A", "T", Some(180), &auth(&[("u", "alice")]))
+            .resolve("A", "T", Some(180), &auth(&[("u", "alice")]), None)
             .await;
         assert_eq!(song.map(|song| song.id), Some(expected.id));
+    }
+
+    // LastFmRadioCoreTests.Resolver_KeepsTheVideoASourceNamed_WithoutReplacingOneAlreadyFound
+    #[tokio::test]
+    async fn resolver_keeps_the_video_a_source_named_without_replacing_one_already_found() {
+        let metadata = Arc::new(FakeMetadata::default());
+        let (resolver, _server) = resolver(
+            r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[]}}}"#,
+            metadata.clone(),
+        )
+        .await;
+        let id =
+            resolver
+                .registry
+                .register(octo_core::soulseek::soulseek_metadata_service::SoulseekRouting {
+                    artist: Some("A".into()),
+                    title: Some("T".into()),
+                    duration: Some(180),
+                    ..Default::default()
+                });
+        metadata.hits.lock().insert(
+            ("A".into(), "T".into()),
+            Song {
+                id: id.clone(),
+                artist: "A".into(),
+                title: "T".into(),
+                is_local: false,
+                ..Default::default()
+            },
+        );
+        let video = |resolver: &LastFmRadioTrackResolver| {
+            resolver
+                .registry
+                .lookup(&id)
+                .expect("known")
+                .lock()
+                .you_tube_id
+                .clone()
+        };
+
+        resolver
+            .resolve("A", "T", Some(180), &IndexMap::new(), Some("video-1"))
+            .await;
+        assert_eq!(video(&resolver).as_deref(), Some("video-1"));
+
+        resolver
+            .resolve("A", "T", Some(180), &IndexMap::new(), Some("video-2"))
+            .await;
+        assert_eq!(video(&resolver).as_deref(), Some("video-1"));
+    }
+
+    /// Rust-only (446d393, 7a8cc5f): the library is searched with the main artist and the core
+    /// title, a seed is a song, an album's first song or an artist's name, and the neighbors are
+    /// the album's other songs and the genre's, never the seed.
+    #[tokio::test]
+    async fn the_library_is_searched_plainly_and_seeds_are_songs_albums_or_artists() {
+        assert_eq!(
+            library_query("Kordhell, Scarlxrd", "Murder In My Mind (Official Video)"),
+            "Kordhell Murder In My Mind"
+        );
+        assert_eq!(library_query("A feat. B", ""), "A");
+
+        let server = MockServer::start().await;
+        let answer = |path: &str, id: &str| -> String {
+            let body = match (path, id) {
+                ("/rest/getAlbum", "al-1") => {
+                    r#""album":{"id":"al-1","artist":"Album Artist","song":[{"id":"s1","title":"One","artist":"X","albumId":"al-1","genre":"Phonk"},{"id":"s2","title":"Two","artist":"X","albumId":"al-1","duration":200.5}]}"#
+                }
+                ("/rest/getAlbum", "al-2") => {
+                    r#""album":{"id":"al-2","song":[{"id":"s1","title":"One","artist":"X","albumId":"al-2","genre":"Phonk"},{"id":"s3","title":"Three","artist":"X"}]}"#
+                }
+                ("/rest/getArtist", "ar-1") => r#""artist":{"id":"ar-1","name":"Massive Attack"}"#,
+                ("/rest/getRandomSongs", _) => {
+                    r#""randomSongs":{"song":[{"id":"g1","title":"G","artist":"Y"},{"id":"s1","title":"One","artist":"X"}]}"#
+                }
+                _ => r#""error":{"code":70}"#,
+            };
+            format!(r#"{{"subsonic-response":{{"status":"ok",{body}}}}}"#)
+        };
+        Mock::given(any())
+            .respond_with(move |request: &wiremock::Request| {
+                let id = request
+                    .url
+                    .query_pairs()
+                    .find(|(key, _)| key == "id")
+                    .map(|(_, value)| value.into_owned())
+                    .unwrap_or_default();
+                ResponseTemplate::new(200).set_body_string(answer(request.url.path(), &id))
+            })
+            .mount(&server)
+            .await;
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(server.uri()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let resolver = LastFmRadioTrackResolver::new(
+            SubsonicProxyService::new(settings),
+            Arc::new(FakeMetadata::default()),
+            Arc::new(ExternalIdRegistry::in_memory()),
+        );
+        let no_auth = IndexMap::new();
+        // A fractional length is a song the C# reader threw on: the album reads as no seed.
+        assert!(resolver.read_seed("al-1", &no_auth).await.is_none());
+        let album = resolver.read_seed("al-2", &no_auth).await.expect("an album seed");
+        assert_eq!(album.artist, "X");
+        let first = album.song.expect("its first song");
+        assert_eq!(first.id, "s1");
+        let artist = resolver
+            .read_seed("ar-1", &no_auth)
+            .await
+            .expect("an artist seed");
+        assert!(artist.song.is_none());
+        assert_eq!(artist.artist, "Massive Attack");
+        assert!(resolver.read_seed("nothing", &no_auth).await.is_none());
+
+        let neighbours = resolver.library_neighbours(&first, 10, &no_auth).await;
+        let ids: Vec<&str> = neighbours.iter().map(|song| song.id.as_str()).collect();
+        assert_eq!(ids, ["s3", "g1"]);
     }
 
     /// Rust-only: a hit that is another recording is passed over, an answer that is not the

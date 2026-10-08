@@ -381,6 +381,8 @@ Enums:
 | `NewReleaseArtists` | `NEW_RELEASE_ARTISTS` | int | 50 / - / `50` | `Clamp(10, 200)` | Live | yes |
 | `RediscoverMonths` | `REDISCOVER_MONTHS` | int | 6 / - / `6` | `Clamp(3, 24)` | Live | yes |
 | `PopularNow` | `POPULAR_NOW` | bool | true / - / `true` | "Popular right now", the chart as a playlist for every listener. GET lists it first in the section. | Live | yes |
+| `Charts` | `CHARTS` | string (comma list) | `new,trending,18,14,6` / - / `new,trending,18,14,6` | The lists made into playlists besides Popular right now, in order: `new`, `trending`, Apple genre ids (`chart_settings::parse_charts`: lowercase, unknown ids and `34` dropped, no repeats, at most 14). Save refuses anything else. Rust only (charts plan); GET lists it after `PopularNow`. | Live | yes |
+| `ChartCountry` | `CHART_COUNTRY` | string | `auto` / - / `auto` | `auto` or a two-letter Apple country; save refuses anything else. Rust only (charts plan). | Live | yes |
 | `NameFormat` | `MIX_NAME_FORMAT` | string (.NET composite format) | `{0} Mix` / `{0} Mix` / **`""`** | `Name(label)`: if the format contains `{0}`, use `string.Format(InvariantCulture, format, label).Trim()`; on a `FormatException` (a stray brace) **or** when `{0}` is absent (including `""`), use `"{label} Mix"`. Compose turns an unset var into `""`, so GET shows `""` under Docker, but names still come out as `"{label} Mix"`. Rust needs a small .NET-format emulation: `{0}`, `{{`/`}}` escapes, alignment and format specifiers such as `{0,-10}`, and an error on any other index. | Live | yes |
 
 ### 3.13 `Notifications` → `NotificationSettings` (8)

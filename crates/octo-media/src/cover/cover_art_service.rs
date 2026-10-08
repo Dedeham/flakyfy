@@ -29,6 +29,12 @@ use super::text::{eq_ignore_case, strip_suffix_ignore_case, utf16_len};
 pub mod list_kinds {
     pub const RADIO: &str = "radio";
     pub const MIX: &str = "mix";
+    /// Popular right now and the genre charts.
+    pub const CHART: &str = "chart";
+    /// Best New Songs.
+    pub const NEW_SONGS: &str = "new-songs";
+    /// Trending Songs.
+    pub const TRENDING: &str = "trending";
 }
 
 /// A boxed future, as the seed callbacks return them.
@@ -386,10 +392,12 @@ impl CoverArtService {
         song_count: Option<i32>,
         music: Option<CoverMusic>,
     ) -> CoverSpec {
-        let (line, suffix) = if kind == Some(list_kinds::RADIO) {
-            ("Station", " Radio")
-        } else {
-            ("Mix", " Mix")
+        let (line, suffix) = match kind {
+            Some(list_kinds::RADIO) => ("Station", " Radio"),
+            Some(list_kinds::CHART) => ("Chart", " Chart"),
+            Some(list_kinds::NEW_SONGS) => ("New", " New"),
+            Some(list_kinds::TRENDING) => ("Trending", " Trending"),
+            _ => ("Mix", " Mix"),
         };
         let mut title = shown;
         if let Some(head) = strip_suffix_ignore_case(shown, suffix) {

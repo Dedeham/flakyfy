@@ -14,14 +14,18 @@
 //! sign-in, never the recovery code ([`helpers_6b1::BrowseUser`]).
 
 pub mod browse;
+pub mod charts;
 pub mod cover_upgrade;
+pub mod downloads;
 pub mod genre;
 pub mod health;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
+pub mod imports;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
+pub mod radio_admin;
 pub mod raw_config;
 pub mod secrets;
 pub mod settings;
@@ -91,6 +95,7 @@ pub fn routes_6b1() -> RouteSet {
         .route("/api/admin/config-sources", get(raw_config::get_config_sources))
         // Status and process control.
         .route("/api/admin/status", get(system::get_status))
+        .route("/api/admin/charts", get(charts::get_charts))
         .route("/api/admin/lidarr/options", get(system::get_lidarr_options))
         .route("/api/admin/lidarr/test", post(system::test_lidarr_connection))
         .route("/api/admin/restart", post(system::restart))
@@ -106,7 +111,7 @@ pub fn routes_6b1() -> RouteSet {
 
 /// Every AdminController route.
 pub fn routes() -> RouteSet {
-    routes_6b1().merge(routes_6b2())
+    routes_6b1().merge(routes_6b2()).merge(imports::routes())
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
@@ -122,7 +127,9 @@ pub fn routes_6b2() -> RouteSet {
         .merge(cover_upgrade::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
+        .merge(downloads::routes())
         .merge(soulseek_sharing::routes())
+        .merge(radio_admin::routes())
 }
 
 #[cfg(test)]
@@ -152,3 +159,7 @@ mod admin_sign_in_tests;
 #[cfg(test)]
 #[path = "admin_secret_tests.rs"]
 mod admin_secret_tests;
+
+#[cfg(test)]
+#[path = "admin_downloads_tests.rs"]
+mod admin_downloads_tests;

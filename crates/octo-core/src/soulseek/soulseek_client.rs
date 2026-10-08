@@ -153,6 +153,19 @@ pub struct SearchStatus {
     pub response_count: i32,
 }
 
+/// Whether slskd's state says a search ended at its limit: "Completed, FileLimitReached" or
+/// "Completed, ResponseLimitReached".
+pub fn hit_limit(state: Option<&str>) -> bool {
+    state.is_some_and(|state| contains_ignore_case(state, "LimitReached"))
+}
+
+/// A search's files, and whether slskd stopped it at its response or file limit.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SoulseekSearchOutcome {
+    pub hits: Vec<SoulseekFileHit>,
+    pub hit_limit: bool,
+}
+
 /// `s.Contains(value, StringComparison.OrdinalIgnoreCase)`.
 pub fn contains_ignore_case(s: &str, value: &str) -> bool {
     dotnet::ordinal_ignore_case_key(s).contains(&dotnet::ordinal_ignore_case_key(value))

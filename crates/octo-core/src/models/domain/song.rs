@@ -175,6 +175,11 @@ pub struct Song {
     /// Never serialized.
     #[serde(skip)]
     pub verification: Option<Box<VerificationResult>>,
+
+    /// Which radio source suggested this song, as the apps show it ("YouTube Music"). Only radio
+    /// answers set it; never stored.
+    #[serde(skip)]
+    pub suggested_by: Option<String>,
 }
 
 impl Song {

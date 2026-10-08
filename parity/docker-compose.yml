@@ -202,6 +202,8 @@ services:
       RadioSources__SonicUrl: http://octo-sonic
       RadioSources__SonicPauseSeconds: "0"
       GeneratedPlaylists__PopularNow: "false"
+      # Rust only (the charts plan): no list beyond Popular right now, as in the C#.
+      GeneratedPlaylists__Charts: ""
       GeneratedPlaylists__NewReleases: "false"
     volumes:
       - ./certs/ca.crt:/parity-ca/ca.crt:ro

@@ -1,5 +1,6 @@
 //! Octo's settings, models and pure logic: song identity, matching, tagging plans, lyrics text.
 
+pub mod charts;
 pub mod common;
 pub mod config;
 pub mod fingerprint;
@@ -11,6 +12,7 @@ pub mod lyrics;
 pub mod metadata;
 pub mod models;
 pub mod notifications;
+pub mod radio;
 pub mod settings;
 pub mod soulseek;
 pub mod tagging;

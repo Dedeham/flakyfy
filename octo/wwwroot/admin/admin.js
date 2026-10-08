@@ -592,6 +592,7 @@ async function loadSettings() {
   loadLyricsLibrary();
   loadLyricsChoices();
   loadRadioStatus();
+  loadCharts();
   loadQualityUpgrade();
   // Again here, so saving a songs-an-hour value enables its Pause button straight away.
   loadReviewSweep();
@@ -697,6 +698,7 @@ function revertForm(form) {
   const redraw = {
     'f-heart-download-sources': value => renderHeartSourceOrder(JSON.parse(value || '[]')),
     'f-lyrics-sources': value => renderLyricsSources(value),
+    'f-charts': value => renderChartChoices(value),
     'radio-discovery-json': value => renderRadioDiscovery(JSON.parse(value || '[]')),
     'genre-mappings-json': value => renderGenreMappings(JSON.parse(value || '[]')),
     'library-actions-json': value => renderLibraryActions(JSON.parse(value || '[]')),
@@ -2904,7 +2906,7 @@ async function loadRadioStatus() {
       : learning.refreshing ? 'Refreshing now. The last good snapshots remain playable.'
       : learning.lastRefreshError ? `Last refresh failed: ${learning.lastRefreshError}` : `${learning.plays} completed plays learned.`;
     output.innerHTML = `<p class="radio-state-copy">${escapeHtml(stateMessage)}</p>` + ((data.stations || []).length
-      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${escapeHtml(station.kind)} · ${station.trackCount} tracks</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.artist)} — ${escapeHtml(track.title)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
+      ? `<div class="radio-station-grid">${data.stations.map(station => `<article class="radio-station-item"><div><strong>${escapeHtml(station.name)}</strong><span>${escapeHtml(station.kind)} · ${station.trackCount} tracks</span></div><p>${(station.preview || []).map(track => `${escapeHtml(track.title)} by ${escapeHtml(track.artist)}`).join(' · ') || 'Snapshot has no preview yet.'}</p></article>`).join('')}</div>`
       : '<div class="radio-empty">No ready snapshots yet. Stations are offered automatically as listening signals arrive.</div>');
   } catch (error) { output.textContent = `Radio status unavailable: ${error.message}`; }
 }
@@ -3831,7 +3833,7 @@ function renderLatestFetched() {
   const covers = document.getElementById('latest-covers');
   covers.innerHTML = ambientSongs.map((s, i) => {
     const on = s === song;
-    const label = `Light the page with ${s.title} by ${s.artist}${s.colors ? '' : ' (no colour in this cover)'}`;
+    const label = `Light the page with ${s.title} by ${s.artist}${s.colors ? '' : ' (no color in this cover)'}`;
     const img = s.coverArtUrl
       ? `<img src="${escapeHtml(s.coverArtUrl)}" alt="" loading="lazy" onerror="this.remove()">`
       : '';
@@ -4463,6 +4465,124 @@ findEl('trash-list')?.addEventListener('click', async event => {
 })();
 
 // ────────────────────────────────────────────────────────────────
+// Charts card: Popular right now's switch is a plain setting; the chart country and the other
+// lists come from /api/admin/charts (Apple Music's countries and the country's genres), so they
+// are drawn here. Every word from Apple (a genre's or a list's name, an error) goes on the page
+// as text, never as HTML.
+let chartsInfo = null;
+
+async function loadCharts() {
+  const details = document.querySelectorAll('#charts-section .charts-detail');
+  let r;
+  try {
+    r = await api('/api/admin/charts', { cache: 'no-store' });
+  } catch {
+    return;
+  }
+  // A server without charts (the C# build) keeps only the switch.
+  if (!r.ok) {
+    details.forEach(el => { el.hidden = true; });
+    return;
+  }
+  chartsInfo = await r.json();
+  details.forEach(el => { el.hidden = false; });
+  renderChartCountry();
+  renderChartChoices(currentSettings?.GeneratedPlaylists?.Charts ?? '');
+  renderChartStatus();
+  const form = document.querySelector('form[data-section="generated-playlists-charts"]');
+  if (form) markClean(form);
+}
+
+function regionName(code) {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(String(code).toUpperCase()) || code;
+  } catch {
+    return code;
+  }
+}
+
+function renderChartCountry() {
+  const select = document.getElementById('f-chart-country');
+  if (!select || !chartsInfo) return;
+  const detected = chartsInfo.country?.detected;
+  const options = [['auto', detected ? `Automatic (${regionName(detected)})` : 'Automatic']]
+    .concat((chartsInfo.countries || [])
+      .map(code => [code, regionName(code)])
+      .sort((a, b) => a[1].localeCompare(b[1])));
+  select.replaceChildren(...options.map(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  const saved = String(currentSettings?.GeneratedPlaylists?.ChartCountry || 'auto').toLowerCase();
+  select.value = options.some(([value]) => value === saved) ? saved : 'auto';
+}
+
+function renderChartChoices(saved) {
+  const box = document.getElementById('charts-choices');
+  const input = document.getElementById('f-charts');
+  if (!box || !input || !chartsInfo) return;
+  const on = String(saved ?? input.value ?? '').split(',').map(id => id.trim().toLowerCase()).filter(Boolean);
+  input.value = on.join(',');
+  box.replaceChildren(...(chartsInfo.choices || []).map(choice => {
+    const label = document.createElement('label');
+    label.className = 'chart-choice';
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.value = choice.id;
+    tick.checked = on.includes(String(choice.id));
+    label.append(tick, document.createTextNode(choice.name));
+    return label;
+  }));
+}
+
+document.getElementById('charts-choices')?.addEventListener('change', event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  const input = document.getElementById('f-charts');
+  const checked = Array.from(document.querySelectorAll('#charts-choices input[type="checkbox"]'))
+    .filter(box => box.checked)
+    .map(box => box.value);
+  // Keep the saved order for lists still on, then the newly checked ones in page order.
+  const before = input.value.split(',').map(id => id.trim()).filter(Boolean);
+  const order = before.filter(id => checked.includes(id)).concat(checked.filter(id => !before.includes(id)));
+  input.value = order.join(',');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+function renderChartStatus() {
+  const box = document.getElementById('charts-status');
+  if (!box || !chartsInfo) return;
+  const sourceWords = { apple: 'Apple Music', deezer: "Deezer (the server's country)", lastfm: 'Last.fm' };
+  const lines = (chartsInfo.lists || []).map(list => {
+    const line = document.createElement('div');
+    if (list.inCountry === false) {
+      line.textContent = `${list.name}: not in this country's charts`;
+    } else if (list.error && !list.songs) {
+      line.textContent = `${list.name}: ${list.error}`;
+    } else if (list.source) {
+      const when = list.fetchedUtc ? ` ${relativeTime(list.fetchedUtc)}` : '';
+      line.textContent = `${list.name}: ${list.songs} songs from ${sourceWords[list.source] || list.source},${when}`;
+    } else {
+      line.textContent = `${list.name}: not fetched yet`;
+    }
+    return line;
+  });
+  const note = document.createElement('div');
+  note.className = 'chart-status-note';
+  note.textContent = "Read from Apple Music's public web pages.";
+  box.replaceChildren(...lines, note);
+}
+
+function relativeTime(iso) {
+  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return '';
+  if (seconds < 90) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes ago`;
+  return `${Math.round(minutes / 60)} hours ago`;
+}
+
 // Segmented controls: buttons built from a hidden <select> they proxy to,
 // so the load/save logic keeps reading the select's name + value.
 // ────────────────────────────────────────────────────────────────

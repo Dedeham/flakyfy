@@ -427,6 +427,8 @@ const KIND_WORDS: &[&str] = &[
     "Stations",
     "Playlist",
     "Playlists",
+    "Chart",
+    "Charts",
 ];
 
 /// .NET's `\w`: letters, non-spacing marks, decimal digits and connector punctuation.

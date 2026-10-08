@@ -348,6 +348,19 @@ pub fn format_optional_decimals(value: f64, decimals: u32) -> String {
     out
 }
 
+/// A double written with the custom format `"0.0"` (`decimals` = 1; `"0.00"` is 2): as
+/// [`format_optional_decimals`], with the places always written.
+pub fn format_fixed(value: f64, decimals: u32) -> String {
+    let text = format_optional_decimals(value, decimals);
+    if decimals == 0 || !value.is_finite() {
+        return text;
+    }
+    let shown = text.split_once('.').map_or(0, |(_, fraction)| fraction.len());
+    let mut text = if shown == 0 { format!("{text}.") } else { text };
+    text.extend(std::iter::repeat_n('0', decimals as usize - shown));
+    text
+}
+
 /// `Uri.EscapeDataString`: every byte of the UTF-8 encoding percent-encoded (upper-case hex)
 /// except the RFC 3986 unreserved characters `A-Z a-z 0-9 - . _ ~`.
 pub fn escape_data_string(value: &str) -> String {

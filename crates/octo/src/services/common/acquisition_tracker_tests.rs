@@ -1,6 +1,6 @@
 //! Port of `AcquisitionTrackerTests`: the live progress list behind the app's download ring. It
 //! watches the pipeline and must tell the truth about it: one row per hearted song however many
-//! sources it falls through, failed only when the last one gives up, and gone half an hour
+//! sources it falls through, failed only when the last one gives up, and gone three hours
 //! after it ends.
 //!
 //! `ProgressComesFromTheBytesThenThePercentage`, `NoFiguresMeansNoProgress`,
@@ -471,13 +471,13 @@ fn announce_requeues_a_failed_track_but_leaves_a_done_one_alone() {
 // --- Expiry and the cap --------------------------------------------------------------
 
 #[test]
-fn a_finished_row_stays_thirty_minutes_then_goes() {
+fn a_finished_row_stays_three_hours_then_goes() {
     let clock = ManualClock::new();
     let tracker = tracker_at(&clock);
     begin(&tracker, "abc", "alice");
     tracker.complete("soulseek", "abc", None);
 
-    clock.advance(TimeDelta::minutes(29));
+    clock.advance(TimeDelta::hours(3) - TimeDelta::minutes(1));
     assert_eq!(tracker.for_user("alice").len(), 1);
 
     clock.advance(TimeDelta::minutes(1));

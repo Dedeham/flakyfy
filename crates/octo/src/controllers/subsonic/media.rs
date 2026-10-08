@@ -458,6 +458,33 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(file(bytes, "image/jpeg"));
     }
 
+    // A chart list's cover, drawn like a mix's from its first songs' covers. It is only ever
+    // drawn from a list already made: drawing it never makes one.
+    if let Some(chart) = state.chart_playlists.cover(call.param("u"), &id) {
+        let song_count = Some(i32::try_from(chart.entries.len()).unwrap_or(i32::MAX));
+        let kind = match octo_core::charts::chart_settings::kind(&chart.chart) {
+            Some(octo_core::charts::chart_settings::ChartKind::NewSongs) => list_kinds::NEW_SONGS,
+            Some(octo_core::charts::chart_settings::ChartKind::Trending) => list_kinds::TRENDING,
+            _ => list_kinds::CHART,
+        };
+        let seeds = chart_cover_seeds(&state, &call.proxy, &chart, &call.parameters);
+        let list = ListCover {
+            name: chart.name.clone(),
+            label: None,
+            kind: kind.to_string(),
+            seeds: Some(Arc::new(move || {
+                let seeds = seeds.clone();
+                async move { Ok(seeds) }.boxed()
+            })),
+            song_count,
+        };
+        let bytes = state
+            .cover_art_service
+            .get_list_cover(&list, requested_cover_size(&call))
+            .await;
+        return Ok(file(bytes, "image/jpeg"));
+    }
+
     // Playlist covers haven't changed: keep the existing path.
     if playlist_id_helper::is_external_playlist(Some(&id)) {
         return Ok(match external_playlist_cover(&state, &id).await {
@@ -740,6 +767,98 @@ async fn catalog_image(
 /// The songs whose covers color a mix's cover: the first of this period's draw, one per
 /// album cover, four at most, read from Navidrome as the listener. A period's first draw is
 /// made only for a caller Navidrome accepts, as opening the mix would.
+/// A chart list's cover pictures (C#'s `PopularCoverSeeds`): its first songs, one per album, four
+/// at most. An outside song's picture comes from the cover sources (a chart's own artwork first),
+/// a library song's from Navidrome, asked as the listener.
+fn chart_cover_seeds(
+    state: &AppState,
+    proxy: &crate::services::subsonic::SubsonicProxyService,
+    chart: &crate::services::library::ChartCover,
+    parameters: &octo_subsonic::Parameters,
+) -> Vec<CoverSeed> {
+    let auth: octo_subsonic::Parameters = parameters
+        .iter()
+        .filter(|(key, _)| key.as_str() != "id" && key.as_str() != "size")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let text = |entry: &serde_json::Value, name: &str| {
+        entry
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut albums = std::collections::HashSet::new();
+    let mut seeds = Vec::new();
+    for entry in &chart.entries {
+        let (id, artist, title, album) = (
+            text(entry, "id"),
+            text(entry, "artist"),
+            text(entry, "title"),
+            text(entry, "album"),
+        );
+        let distinct = format!(
+            "{}|{}",
+            SongIdentity::key(&artist),
+            SongIdentity::key(if album.is_empty() { &title } else { &album })
+        );
+        if !albums.insert(distinct) {
+            continue;
+        }
+        if let Some(song) = chart.outside.iter().find(|song| song.id == id) {
+            let routing = SoulseekRouting {
+                kind: RoutingKind::Song,
+                artist: Some(song.artist.clone()),
+                title: Some(song.title.clone()),
+                album: Some(song.album.clone()).filter(|a| !a.is_empty()),
+                ..Default::default()
+            };
+            let covers = Arc::clone(&state.cover_art_aggregator);
+            seeds.push(CoverSeed {
+                identity: format!(
+                    "song|{}|{}",
+                    SongIdentity::key(&song.artist),
+                    SongIdentity::key(&song.title)
+                ),
+                fetch: Arc::new(move || {
+                    let covers = Arc::clone(&covers);
+                    let routing = routing.clone();
+                    async move { Ok(covers.get_cover(&routing, true).await.map(|b| b.to_vec())) }.boxed()
+                }),
+            });
+        } else {
+            let cover = text(entry, "coverArt");
+            if cover.is_empty() {
+                continue;
+            }
+            let proxy = proxy.clone();
+            let mut asking = auth.clone();
+            asking.insert("id".into(), cover.clone());
+            asking.insert("size".into(), "128".into());
+            seeds.push(CoverSeed {
+                identity: format!("navidrome|{cover}"),
+                fetch: Arc::new(move || {
+                    let proxy = proxy.clone();
+                    let asking = asking.clone();
+                    async move {
+                        let picture = proxy.relay("rest/getCoverArt", &asking).await?;
+                        let image = picture
+                            .content_type
+                            .as_deref()
+                            .is_some_and(|ct| dotnet::starts_with_ignore_case(ct, "image/"));
+                        Ok(image.then(|| picture.body.to_vec()))
+                    }
+                    .boxed()
+                }),
+            });
+        }
+        if seeds.len() == 4 {
+            break;
+        }
+    }
+    seeds
+}
+
 async fn mix_cover_seeds(
     state: &AppState,
     proxy: &crate::services::subsonic::SubsonicProxyService,

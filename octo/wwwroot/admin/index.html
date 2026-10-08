@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
 </head>
 <body>
-  <!-- Afterglow: the lights behind the glass, coloured by the chosen fetched song's cover. -->
+  <!-- Afterglow: the lights behind the glass, colored by the chosen fetched song's cover. -->
   <div class="ambient" aria-hidden="true"><span class="ambient-light a1"></span><span class="ambient-light a2"></span><span class="ambient-light a3"></span></div>
   <div class="app">
     <!-- ══════════════════════════════════════════════════════════ -->
@@ -1466,16 +1466,26 @@
           </form>
         </div>
 
-        <div class="set-section">
+        <div class="set-section" id="charts-section">
           <div class="set-head">
-            <h3 class="set-title">Popular right now</h3>
-            <p class="set-desc">The chart of the moment as a playlist for every listener, in every app, whether the mixes are on or not.</p>
+            <h3 class="set-title">Charts</h3>
+            <p class="set-desc">The most played and newest songs as playlists for every listener, in every app, whether the mixes are on or not.</p>
           </div>
-          <form data-section="generated-playlists-popular" class="set-card">
+          <form data-section="generated-playlists-charts" class="set-card">
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Popular right now</div><div class="set-info-d">Deezer's 50 most played songs right now, in the country Octo's server is in, made again every 6 hours. Songs a listener has play from their library; the rest play right away and can be added with a heart.</div><div class="set-info-more">On to begin with. Songs from outside the library are left out while search discovery is off, and the explicit filter applies to them, as on the radio stations.</div></div>
+              <div class="set-info"><div class="set-info-t">Popular right now</div><div class="set-info-d">The 50 most played songs on Apple Music in the chart country, made again every 6 hours. Songs a listener has play from their library; the rest play right away and can be added with a heart.</div><div class="set-info-more">On to begin with. If Apple's chart cannot be read, Deezer's chart takes its place. Songs from outside the library are left out while search discovery is off, and the explicit filter applies to them, as on the radio stations.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.PopularNow" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
+            <div class="set-row charts-detail" hidden>
+              <div class="set-info"><div class="set-info-t">Chart country</div><div class="set-info-d" id="charts-country-note">Automatic follows the country Octo's server is in.</div></div>
+              <select class="set-input" id="f-chart-country" name="GeneratedPlaylists.ChartCountry"></select>
+            </div>
+            <div class="set-row set-row-stack charts-detail" hidden>
+              <div class="set-info"><div class="set-info-t">More lists</div><div class="set-info-d">Each one picked is a playlist. Best New Songs is Apple Music's 100 picks of the week; Trending Songs is what is catching on; a genre is a playlist named Top and the genre, such as Top Hip-Hop/Rap.</div></div>
+              <div class="chart-choices" id="charts-choices" role="group" aria-label="More lists"></div>
+              <input type="hidden" id="f-charts" name="GeneratedPlaylists.Charts" />
+            </div>
+            <div class="chart-status charts-detail" id="charts-status" hidden></div>
           </form>
         </div>
       </section>

@@ -424,11 +424,16 @@ static DASH_TAIL: LazyLock<Regex> = LazyLock::new(|| rx(r"\s+-\s+"));
 
 static TRAILING_FEATURE: LazyLock<Regex> = LazyLock::new(|| rxi(r"\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$"));
 
+/// A guest credit run on after a version inside one bracket, "Radio Edit - feat. X". Matched in
+/// the view where `\b` falls where .NET's did.
+static INNER_FEATURE: LazyLock<Regex> =
+    LazyLock::new(|| rxi(r"\s*(?:[-\u{2013},;/]\s*)?\b(?:feat\.?|ft\.?|featuring)\s+.+$"));
+
 /// Version words that mean a version even without brackets at the end of a title,
 /// "Mask Off Remix", "Heat Waves Sped Up". Not "live" or "edit": too many titles end in them.
 static TRAILING_VERSION: LazyLock<Regex> = LazyLock::new(|| {
     rxi(
-        r"\s+(re-?mix|rmx|sped\s*up|speed\s*up|slowed(?:\s*(?:\+|&|and|n)\s*reverb(?:ed)?)?|slowed\s+down|nightcore|instrumental|acapella|a\s*cappella|karaoke(?:\s+version)?)$",
+        r"\s+(re-?mix|rmx|sped\s*up|speed\s*up|slowed(?:\s*(?:\+|&|and|n)\s*reverb(?:ed)?)?|slowed\s+down|nightcore|instrumental|acapella|a\s*cappella|karaoke(?:\s+version)?|drumless|8d\s+audio)$",
     )
 });
 
@@ -504,7 +509,9 @@ static NEUTRAL_PHRASE: LazyLock<Regex> = LazyLock::new(|| {
     rxi(concat!(
         r"^(?:from|taken from|as heard (?:in|on)|as featured in|as seen (?:in|on)|theme from|music from)\b",
         r"|\b(?:soundtrack|ost|motion picture|original score)\b",
-        r"|^bonus(?:\s+track)?$|^(?:prod|produced)\b|^(?:deluxe|expanded|anniversary|special)(?:\s+(?:edition|version))?$",
+        r"|^bonus(?:\s+tracks?)?(?:\s+(?:edition|version))?$|^(?:prod|produced)\b",
+        // A release edition is the same recordings packaged again; "Drumless Edition" is a marker below.
+        r"|^(?:(?:super\s+)?deluxe|expanded|(?:\d+(?:st|nd|rd|th)\s+)?anniversary|special|collector'?s|limited|tour|platinum)(?:\s+(?:edition|version))?$",
         r"|^(?:copyright free|free download|out now|audio only|single|ep)$",
     ))
 });
@@ -558,6 +565,21 @@ static MARKERS: LazyLock<Vec<Marker>> = LazyLock::new(|| {
         marker(r"\bslowed(?:\s+down)?\b", "slowed"),
         marker(r"\breverb(?:ed)?\b", "reverb"),
         marker(r"\bnightcore\b", "nightcore"),
+        // Editions that change what is played, unlike a deluxe or anniversary one (NEUTRAL_PHRASE).
+        marker(r"\bdrumless\b", "drumless"),
+        marker(r"\b8d(?:\s+audio)?\b", "8d"),
+        marker(r"\bpiano(?:\s+(?:version|edition|arrangement))?\b", "piano"),
+        marker(
+            r"\b(?:orchestral|symphonic)(?:\s+(?:version|edition|mix))?\b",
+            "orchestral",
+        ),
+        marker(r"\blo-?fi(?:\s+(?:version|edit|mix))?\b", "lofi"),
+        marker(r"\bbass\s*boost(?:ed)?\b", "bass boosted"),
+        // Two songs or more in one: never the song asked for. Ahead of "mix", so a megamix is not a mix.
+        marker(r"\bmash[\s-]?ups?\b", "mashup"),
+        marker(r"\bmedley\b", "medley"),
+        marker(r"\bmega[\s-]?mix\b", "megamix"),
+        marker(r"\bblend\b", "blend"),
         credited(r"^(.*?)\s*\b(?:re-?mix(?:ed)?|rmx)\b", "remix", false),
         marker(r"\bvip(?:\s+mix)?\b", "vip"),
         marker(r"\bbootleg\b", "bootleg"),
@@ -1535,19 +1557,38 @@ impl SongIdentity {
     pub fn strip_features(title: &str) -> String {
         let text = title.trim();
         let text = BRACKET.replace_all(text, |caps: &Captures| {
-            if read(&Self::fold(&caps[1])).kind == Kind::Feature {
+            let inner = &caps[1];
+            if read(&Self::fold(inner)).kind == Kind::Feature {
+                return String::new();
+            }
+            // "(Radio Edit - feat. Pharrell Williams)": the credit goes, the version stays.
+            let start = match INNER_FEATURE.find(&word_boundary_view(inner)) {
+                Some(credit) if credit.start() > 0 => credit.start(),
+                _ => return caps[0].to_string(),
+            };
+            let kept = inner[..start]
+                .trim()
+                .trim_end_matches(['-', '\u{2013}', ',', ';', '/', ' ']);
+            if kept.is_empty() {
                 String::new()
             } else {
-                caps[0].to_string()
+                caps[0].replace(inner, kept)
             }
         });
         let mut text = text.into_owned();
         if let Some(trailing) = TRAILING_FEATURE.find(&text)
             && trailing.start() > 0
         {
-            text.truncate(trailing.start());
+            // "Song feat. X (Radio Edit)": the credit goes, a bracket after it stays.
+            let rest = &text[trailing.start()..];
+            text = match rest.find(['(', '[']) {
+                Some(bracket) if bracket > 0 => format!("{} {}", &text[..trailing.start()], &rest[bracket..]),
+                _ => text[..trailing.start()].to_string(),
+            };
         }
-        WHITESPACE.replace_all(&text, " ").trim().to_string()
+        // "Song - Radio Edit - feat. X" leaves the dash that led to the credit.
+        let text = text.trim_end().trim_end_matches(['-', '\u{2013}', ',', ' ']);
+        WHITESPACE.replace_all(text, " ").trim().to_string()
     }
 
     // ---- artists ------------------------------------------------------------------------

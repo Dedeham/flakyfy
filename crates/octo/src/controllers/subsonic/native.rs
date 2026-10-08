@@ -105,7 +105,7 @@ pub async fn answer(state: &AppState, request: &NativeRequest<'_>) -> Result<Opt
 }
 
 /// True if any id-shaped parameter is one of Octo's external ids.
-fn has_external_id(state: &AppState, parameters: &Parameters) -> bool {
+pub(crate) fn has_external_id(state: &AppState, parameters: &Parameters) -> bool {
     ["id", "mediaId", "albumId", "artistId"].iter().any(|key| {
         parameters
             .get(*key)

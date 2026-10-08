@@ -1198,3 +1198,100 @@ async fn native_reserved_mutation_is_read_only_and_ordinary_detail_relays() {
     assert_eq!(ordinary.status, StatusCode::OK);
     assert!(ordinary.body.contains("Native Playlist"));
 }
+
+/// Every station track not in the library comes back as an outside copy named after it.
+fn outside_copies() -> TestMetadata {
+    TestMetadata::answering(|artist, title, _| {
+        vec![Song {
+            id: format!("ext-{artist}-{title}"),
+            artist: artist.into(),
+            title: title.into(),
+            is_local: false,
+            ..Default::default()
+        }]
+    })
+}
+
+// RadioProvenanceTests.AStationSongThatSoundedAlike_ButIsNoLongerInTheLibrary_IsLeftOut
+#[tokio::test]
+async fn a_station_song_that_sounded_alike_but_is_no_longer_in_the_library_is_left_out() {
+    use octo_core::radio::radio_provider::{SOUNDS_ALIKE, YOU_TUBE_MUSIC};
+    let fixture = RadioFixture::with_metadata(Options::default(), outside_copies()).await;
+    fixture.install_station("");
+    let mut station = fixture
+        .state
+        .last_fm_radio_state
+        .find_station("alice", &fixture.station_id())
+        .expect("installed");
+    station.tracks.push(LastFmRadioTrack {
+        artist: "Gone Artist".into(),
+        title: "Gone Song".into(),
+        duration: Some(200),
+        source: SOUNDS_ALIKE.into(),
+        resolved_id: Some("ext-gone".into()),
+        ..Default::default()
+    });
+    station.tracks.push(LastFmRadioTrack {
+        artist: "Online Artist".into(),
+        title: "Online Song".into(),
+        duration: Some(200),
+        source: YOU_TUBE_MUSIC.into(),
+        resolved_id: Some("ext-online".into()),
+        ..Default::default()
+    });
+    fixture
+        .state
+        .last_fm_radio_state
+        .replace_stations("alice", &[station]);
+
+    let body = get_string(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            fixture.station_id()
+        ),
+    )
+    .await;
+
+    // Neither is in the fake library, so both resolve as outside songs: the one found online
+    // plays from outside, the one that only sounded alike does not.
+    assert!(!body.contains("Gone Song"), "{body}");
+    assert!(body.contains("Online Song"), "{body}");
+}
+
+// RadioProvenanceTests.AStationSong_SaysTheSourceItsStationWasBuiltWith
+#[tokio::test]
+async fn a_station_song_says_the_source_its_station_was_built_with() {
+    use octo_core::radio::radio_provider::YOU_TUBE_MUSIC;
+    let fixture = RadioFixture::with_metadata(Options::default(), outside_copies()).await;
+    fixture.install_station("");
+    let mut station = fixture
+        .state
+        .last_fm_radio_state
+        .find_station("alice", &fixture.station_id())
+        .expect("installed");
+    for track in &mut station.tracks {
+        track.source = YOU_TUBE_MUSIC.into();
+    }
+    fixture
+        .state
+        .last_fm_radio_state
+        .replace_stations("alice", &[station]);
+
+    let body = get_string(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            fixture.station_id()
+        ),
+    )
+    .await;
+    let doc: serde_json::Value = serde_json::from_str(&body).expect("JSON");
+    let entries = doc["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .expect("entries");
+    assert!(!entries.is_empty());
+    for entry in entries {
+        assert_eq!(entry["octoSuggestedBy"], "YouTube Music", "{entry}");
+    }
+}

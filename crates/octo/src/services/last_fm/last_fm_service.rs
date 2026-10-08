@@ -16,8 +16,10 @@ use octo_core::last_fm::{SimilarArtist, SimilarTrack, TrackInfo};
 use octo_core::metadata::accept_language_header;
 use octo_core::settings::{LastFmSettings, SettingsStore};
 use parking_lot::Mutex;
+use regex::Regex;
 use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
 use serde_json::Value;
+use std::sync::LazyLock;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
@@ -33,6 +35,7 @@ enum RadioValue {
     Tags(Vec<String>),
     Tracks(Vec<SimilarTrack>),
     Info(Option<TrackInfo>),
+    Count(i64),
 }
 
 /// A value [`LastFmService::cached`] can keep: `cached.Value is T typed`.
@@ -77,6 +80,18 @@ impl Cacheable for Vec<SimilarTrack> {
     }
 }
 
+impl Cacheable for i64 {
+    fn wrap(self) -> RadioValue {
+        RadioValue::Count(self)
+    }
+    fn unwrap(value: &RadioValue) -> Option<Self> {
+        match value {
+            RadioValue::Count(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
+
 impl Cacheable for Option<TrackInfo> {
     fn wrap(self) -> RadioValue {
         RadioValue::Info(self)
@@ -90,6 +105,79 @@ impl Cacheable for Option<TrackInfo> {
     }
 }
 
+/// How a list of songs like a seed was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimilarSource {
+    /// Nothing came back.
+    None,
+    /// Last.fm's songs like this very song.
+    Song,
+    /// Songs like the song a nightcore, sped up or remixed seed came from, found only once that
+    /// version was taken off the title.
+    Original,
+    /// Top songs of artists like the seed's artist, with nothing for the song itself.
+    SimilarArtists,
+}
+
+impl std::fmt::Display for SimilarSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+/// `artist_trusted`: the seed's artist is who Last.fm thinks: it has the song under them, or they
+/// have a real audience there. False for a similar-artists list means the artist may only be
+/// whoever uploaded the song.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimilarAnswer {
+    pub tracks: Vec<SimilarTrack>,
+    pub source: SimilarSource,
+    pub artist_trusted: bool,
+}
+
+/// Listeners Last.fm counts for an artist before artists like them are worth a radio without the
+/// song itself: a new song by a known artist, not yet on Last.fm.
+pub const KNOWN_ARTIST_LISTENERS: i64 = 10_000;
+
+/// "Artist - Title" at the front of an upload's title, split at the first spaced dash.
+static UPLOAD_TITLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(?<artist>[^\-–—]+?)\s+[\-–—]\s+(?<title>.*\S)\s*$").expect("the pattern is valid")
+});
+
+/// Versions that change how a song sounds enough to be a style of their own: a nightcore or sped
+/// up upload is not the song it came from, and songs like the original are not like it.
+const STYLE_MARKERS: [&str; 11] = [
+    "nightcore",
+    "sped up",
+    "slowed",
+    "reverb",
+    "8d",
+    "lofi",
+    "bass boosted",
+    "remix",
+    "vip",
+    "bootleg",
+    "rework",
+];
+
+pub fn style_versions(title: Option<&str>) -> Vec<String> {
+    SongIdentity::parse_title(title.unwrap_or(""), None)
+        .versions
+        .into_iter()
+        .filter(|version| STYLE_MARKERS.contains(&version.as_str()))
+        .collect()
+}
+
+/// One cached track.getsimilar answer. Each entry keeps how many tracks were asked for, so a
+/// short answer cached for a station refresh is not handed to a later request that wants more.
+#[derive(Clone)]
+struct CachedSimilar {
+    expiry: DateTime<Utc>,
+    asked: i32,
+    tracks: Vec<SimilarTrack>,
+    source: SimilarSource,
+}
+
 pub struct LastFmService {
     http: reqwest::Client,
     base_url: String,
@@ -98,7 +186,7 @@ pub struct LastFmService {
 
     // Behind locks because radio requests arrive on request tasks and this is written on
     // every miss.
-    cache: Mutex<HashMap<String, (DateTime<Utc>, Vec<SimilarTrack>)>>,
+    cache: Mutex<HashMap<String, CachedSimilar>>,
     radio_cache: Mutex<HashMap<String, (DateTime<Utc>, RadioValue)>>,
     provider_gate: Semaphore,
 }
@@ -164,44 +252,103 @@ impl LastFmService {
     }
 
     pub async fn get_similar_tracks(&self, artist: &str, title: &str, limit: i32) -> Vec<SimilarTrack> {
-        let cache_key = dotnet::to_lower_invariant(&format!("{artist}|{title}"));
+        self.find_similar_tracks(artist, title, limit).await.tracks
+    }
 
-        // Check cache
-        let cached = self
-            .cache
-            .lock()
-            .get(&cache_key)
-            .filter(|(expiry, _)| *expiry > Utc::now())
-            .map(|(_, tracks)| tracks.clone());
-        if let Some(tracks) = cached {
-            debug!(
-                "Returning {} cached similar tracks for {artist} - {title}",
-                tracks.len()
-            );
-            return take(tracks, limit);
-        }
-
-        match self
-            .similar_tracks_uncached(artist, title, limit, &cache_key)
-            .await
-        {
-            Ok(tracks) => take(tracks, limit),
+    /// Songs like one song, and how Last.fm came by them, so a radio can tell a list for the song
+    /// itself from a guess. A seed Last.fm has never heard of, a YouTube upload filed under its
+    /// uploader for one, gets similar artists to that uploader's name, which can be anyone (#78).
+    pub async fn find_similar_tracks(&self, artist: &str, title: &str, limit: i32) -> SimilarAnswer {
+        match self.find_similar_tracks_inner(artist, title, limit).await {
+            Ok(answer) => answer,
             Err(e) => {
                 error!(error = %e, "Error fetching similar tracks from Last.fm for {artist} - {title}");
-                Vec::new()
+                SimilarAnswer {
+                    tracks: Vec::new(),
+                    source: SimilarSource::None,
+                    artist_trusted: false,
+                }
             }
         }
     }
 
-    async fn similar_tracks_uncached(
+    async fn find_similar_tracks_inner(
         &self,
         artist: &str,
         title: &str,
         limit: i32,
-        cache_key: &str,
-    ) -> anyhow::Result<Vec<SimilarTrack>> {
-        info!("Fetching similar tracks from Last.fm for {artist} - {title}");
+    ) -> anyhow::Result<SimilarAnswer> {
+        let cache_key = dotnet::to_lower_invariant(&format!("{artist}|{title}"));
 
+        // Check cache. A list shorter than what was asked for is everything Last.fm has, so it
+        // answers any size.
+        let cached = self.cache.lock().get(&cache_key).cloned().filter(|cached| {
+            cached.expiry > Utc::now()
+                && (cached.asked >= limit || (cached.tracks.len() as i64) < i64::from(cached.asked))
+        });
+        let (tracks, source) = match cached {
+            Some(cached) => {
+                debug!(
+                    "Returning {} cached similar tracks for {artist} - {title}",
+                    cached.tracks.len()
+                );
+                (cached.tracks, cached.source)
+            }
+            None => {
+                info!("Fetching similar tracks from Last.fm for {artist} - {title}");
+                let (tracks, source) = self.fetch_similar_for_spellings(artist, title, limit).await?;
+                info!("Found {} similar tracks from Last.fm", tracks.len());
+                self.cache.lock().insert(
+                    cache_key,
+                    CachedSimilar {
+                        expiry: self.cache_expiry(),
+                        asked: limit,
+                        tracks: tracks.clone(),
+                        source,
+                    },
+                );
+                (tracks, source)
+            }
+        };
+
+        if !tracks.is_empty() {
+            return Ok(SimilarAnswer {
+                tracks: take(tracks, limit),
+                source,
+                artist_trusted: true,
+            });
+        }
+
+        // If no similar tracks found, try getting top tracks from similar artists. For a
+        // renamed artist that guess runs under the name Last.fm files them by: asked for
+        // artists like "Ye", it answered for someone else, and a mix for "Ye - Crack Music"
+        // came back as thirty Jon Anderson songs.
+        let guess_from = SongIdentity::known_name(artist).unwrap_or_else(|| artist.to_string());
+        info!("No similar tracks found, trying similar artists for {guess_from}");
+        let guessed = self.top_tracks_from_similar_artists(&guess_from, limit).await;
+        let known = !guessed.is_empty()
+            && (self.knows_song(&guess_from, title).await
+                || self.artist_listeners(&guess_from).await? >= KNOWN_ARTIST_LISTENERS);
+        let source = if guessed.is_empty() {
+            SimilarSource::None
+        } else {
+            SimilarSource::SimilarArtists
+        };
+        Ok(SimilarAnswer {
+            tracks: take(guessed, limit),
+            source,
+            artist_trusted: known,
+        })
+    }
+
+    /// track.getsimilar under each way the song might be filed, stopping at the first that
+    /// answers.
+    async fn fetch_similar_for_spellings(
+        &self,
+        artist: &str,
+        title: &str,
+        limit: i32,
+    ) -> anyhow::Result<(Vec<SimilarTrack>, SimilarSource)> {
         // Last.fm knows a song under one spelling. "$uicideboy$ - $UICIDE" or a title
         // carrying "(feat. X)" or "- Remastered 2011" can come back empty where the same song
         // written plainly does not, so those are asked before falling back to similar artists.
@@ -221,35 +368,87 @@ impl LastFmService {
                     .take(2),
             );
         }
-
-        let mut tracks = Vec::new();
-        for variant in &queries {
-            tracks = self
-                .fetch_similar_tracks(&variant.artist, &variant.title, limit)
-                .await?;
-            if !tracks.is_empty() {
-                break;
+        // An upload's artist is often the channel, with the singer in the title:
+        // "Nightcore Galaxy" and "Alan Walker - Faded (Nightcore)". The title's artist goes last.
+        if let Some(named) = UPLOAD_TITLE.captures(title)
+            && SongIdentity::key(&named["artist"]) != SongIdentity::key(artist)
+        {
+            let mut added = 0;
+            for variant in SongIdentity::query_variants(&named["title"], &named["artist"]) {
+                if added == 2 {
+                    break;
+                }
+                if !variant.artist.is_empty() && !queries.contains(&variant) {
+                    queries.push(variant);
+                    added += 1;
+                }
             }
         }
 
-        info!("Found {} similar tracks from Last.fm", tracks.len());
-
-        // Cache results
-        self.cache
-            .lock()
-            .insert(cache_key.to_string(), (self.cache_expiry(), tracks.clone()));
-
-        // If no similar tracks found, try getting top tracks from similar artists. For a
-        // renamed artist that guess runs under the name Last.fm files them by: asked for
-        // artists like "Ye", it answered for someone else, and a mix for "Ye - Crack Music"
-        // came back as thirty Jon Anderson songs.
-        if tracks.is_empty() {
-            let guess_from = known_name.as_deref().unwrap_or(artist);
-            info!("No similar tracks found, trying similar artists for {guess_from}");
-            tracks = self.top_tracks_from_similar_artists(guess_from, limit).await;
+        let styles = style_versions(Some(title));
+        for variant in &queries {
+            let tracks = self
+                .fetch_similar_tracks(&variant.artist, &variant.title, limit)
+                .await?;
+            if tracks.is_empty() {
+                continue;
+            }
+            let kept = style_versions(Some(&variant.title));
+            let source = if styles.iter().all(|style| kept.contains(style)) {
+                SimilarSource::Song
+            } else {
+                SimilarSource::Original
+            };
+            return Ok((tracks, source));
         }
+        Ok((Vec::new(), SimilarSource::None))
+    }
 
-        Ok(tracks)
+    /// Whether Last.fm has the song under this artist, so the artist is likely the one who made it
+    /// and not the channel that uploaded it. A failed check counts as no.
+    async fn knows_song(&self, artist: &str, title: &str) -> bool {
+        for variant in SongIdentity::query_variants(title, artist)
+            .into_iter()
+            .filter(|variant| !variant.artist.is_empty())
+            .take(2)
+        {
+            match self.get_track_info(&variant.artist, &variant.title).await {
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
+                Err(e) => debug!(
+                    "Last.fm track.getInfo failed for {} - {}: {e}",
+                    variant.artist, variant.title
+                ),
+            }
+        }
+        false
+    }
+
+    /// How many listeners Last.fm counts for an artist; 0 when it does not know them. An `Err`
+    /// where the C# reader threw: an answer whose `artist` is not an object.
+    async fn artist_listeners(&self, artist: &str) -> ElementResult<i64> {
+        self.cached(&format!("artist-listeners|{artist}"), || async {
+            let Some(doc) = self.get_document("artist.getInfo", &[("artist", artist)]).await else {
+                return Ok(0);
+            };
+            let Some(found) = try_get_property(&doc, "artist")? else {
+                return Ok(0);
+            };
+            let Some(stats) = try_get_property(found, "stats")? else {
+                return Ok(0);
+            };
+            let listeners = try_get_property(stats, "listeners")?
+                .map(element_text)
+                .unwrap_or_default();
+            Ok(parse_long(&listeners).unwrap_or(0))
+        })
+        .await
+    }
+
+    /// Top songs of the artists Last.fm counts as like one artist: a radio for an artist.
+    pub async fn get_similar_artist_tracks(&self, artist: &str, limit: i32) -> Vec<SimilarTrack> {
+        let name = SongIdentity::known_name(artist).unwrap_or_else(|| artist.to_string());
+        self.top_tracks_from_similar_artists(&name, limit).await
     }
 
     /// One track.getsimilar request, read into tracks.
@@ -802,6 +1001,10 @@ fn duration_seconds(element: &Value) -> ElementResult<Option<i32>> {
         _ => Ok(None),
     }
 }
+
+// `LastFmService.Charts.cs`, a partial class in the C#: the play-count charts.
+#[path = "last_fm_charts.rs"]
+mod charts;
 
 #[cfg(test)]
 #[path = "last_fm_service_tests.rs"]

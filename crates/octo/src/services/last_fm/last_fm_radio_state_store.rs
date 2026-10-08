@@ -9,13 +9,14 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::common::{Clock, dotnet};
+use octo_core::last_fm::last_fm_radio_recommendation_service::IgnoreCaseKeys;
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use octo_core::last_fm::last_fm_radio_state_store::{
-    CURRENT_VERSION, DUPLICATE_WINDOW, MAX_PLAYS_PER_USER, MAX_UNAVAILABLE_TRACKS_PER_USER, MAX_USERS,
-    UNAVAILABLE_TRACK_COOLDOWN, user_key,
+    CURRENT_VERSION, DUPLICATE_WINDOW, MAX_PLAYS_PER_USER, MAX_RADIO_BANS_PER_USER,
+    MAX_UNAVAILABLE_TRACKS_PER_USER, MAX_USERS, UNAVAILABLE_TRACK_COOLDOWN, user_key,
 };
 use octo_core::models::radio::{
-    LastFmRadioPlay, LastFmRadioStateDocument, LastFmRadioStation, LastFmRadioTrack,
+    LastFmRadioBan, LastFmRadioPlay, LastFmRadioStateDocument, LastFmRadioStation, LastFmRadioTrack,
     LastFmRadioUnavailableTrack, LastFmRadioUserState, LastFmRadioUserSummary,
 };
 use octo_core::settings::SettingsStore;
@@ -269,6 +270,68 @@ impl LastFmRadioStateStore {
         removed
     }
 
+    /// A song rated one star never plays on this user's radio again and leaves the stations it is
+    /// on now; any other rating lifts that. Returns whether anything changed.
+    pub fn set_radio_ban(
+        &self,
+        username: &str,
+        song_id: &str,
+        artist: &str,
+        title: &str,
+        banned: bool,
+    ) -> bool {
+        if dotnet::is_blank(username) || dotnet::is_blank(artist) || dotnet::is_blank(title) {
+            return false;
+        }
+        let mut guard = self.state.lock();
+        let state = self.load_locked(&mut guard);
+        if !banned && state.get(&user_key(username)).is_none() {
+            return false;
+        }
+        let now = self.clock.now();
+        let user = get_or_create(state, username, now);
+        let key = seed_normalizer::track_key(artist, title);
+        let before = user.radio_bans.len();
+        user.radio_bans
+            .retain(|ban| !(ban.key == key || (!song_id.is_empty() && ban.song_id == song_id)));
+        let had = user.radio_bans.len() != before;
+        if banned {
+            user.radio_bans.insert(
+                0,
+                LastFmRadioBan {
+                    key: key.clone(),
+                    song_id: song_id.to_string(),
+                    artist: artist.to_string(),
+                    title: title.to_string(),
+                    banned_at_utc: now,
+                },
+            );
+            for station in &mut user.stations {
+                let before = station.tracks.len();
+                station
+                    .tracks
+                    .retain(|track| seed_normalizer::track_key(&track.artist, &track.title) != key);
+                if before != station.tracks.len() {
+                    station.changed_utc = now;
+                }
+            }
+        } else if !had {
+            return false;
+        }
+        self.save_locked(state);
+        true
+    }
+
+    /// The keys of the songs this user rated one star, without copying the rest of their state.
+    pub fn radio_ban_keys(&self, username: &str) -> IgnoreCaseKeys {
+        let mut guard = self.state.lock();
+        let state = self.load_locked(&mut guard);
+        state
+            .get(&user_key(username))
+            .map(|user| user.radio_bans.iter().map(|ban| ban.key.as_str()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn replace_stations(&self, username: &str, stations: &[LastFmRadioStation]) {
         let mut guard = self.state.lock();
         let state = self.load_locked(&mut guard);
@@ -405,6 +468,9 @@ impl LastFmRadioStateStore {
             unavailable.sort_by_key(|a| std::cmp::Reverse(a.failed_at_utc));
             unavailable.truncate(MAX_UNAVAILABLE_TRACKS_PER_USER);
             user.unavailable_tracks = unavailable;
+            user.radio_bans
+                .sort_by_key(|a| std::cmp::Reverse(a.banned_at_utc));
+            user.radio_bans.truncate(MAX_RADIO_BANS_PER_USER);
         }
 
         let mut by_last_seen: Vec<(String, DateTime<Utc>)> = state

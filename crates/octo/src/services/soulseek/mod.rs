@@ -5,6 +5,7 @@
 pub mod external_id_registry;
 pub mod radio_queue_store;
 pub mod rejected_peer_registry;
+pub mod soulseek_candidates;
 pub mod soulseek_client;
 pub mod soulseek_download_service;
 pub mod soulseek_link;

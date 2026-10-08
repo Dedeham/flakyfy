@@ -1,15 +1,39 @@
-//! `Services/Imports`: importing songs from Spotify, a public link or a file. What is here so far
-//! is what the import keeps on disk (`imports.json`, `imports-trickle.json`,
-//! `spotify-accounts.json`), read and written as the C# stores did; the import itself, the
-//! Spotify sign-in and the trickle are group H's.
+//! `Services/Imports`: importing songs from Spotify, a public link or a file (group H). The
+//! Spotify sign-in, reading every list, matching each song against the library, keeping a list as
+//! a Navidrome playlist, and the trickle that fetches the missing songs a few an hour; and what
+//! the import keeps on disk (`imports.json`, `imports-trickle.json`, `spotify-accounts.json`),
+//! read and written as the C# stores did.
 
+pub mod import_file_reader;
+pub mod import_matcher;
 pub mod import_models;
+pub mod import_playlists;
+pub mod import_service;
 pub mod import_store;
+pub mod import_views;
 pub mod spotify_account_store;
+pub mod spotify_auth;
+pub mod spotify_link_reader;
+pub mod spotify_web_api;
 pub mod trickle_queue;
+pub mod trickle_worker;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
+pub use import_file_reader::{FileList, ImportFileReader};
+pub use import_matcher::{ImportMatcher, LibraryIndex};
 pub use import_models::{ImportList, ImportTrack, TrickleJob};
-pub use spotify_account_store::SpotifyAccount;
+pub use import_playlists::{ImportPlaylists, NavidromePlaylists, PlaylistNavidrome};
+pub use import_service::{ImportParts, ImportService};
+pub use import_store::ImportStore;
+pub use import_views::ImportActionResult;
+pub use spotify_account_store::{SpotifyAccount, SpotifyAccountStore};
+pub use spotify_auth::SpotifyAuth;
+pub use spotify_link_reader::SpotifyLinkReader;
+pub use spotify_web_api::{ImportKeys, SpotifyException, SpotifyWebApi};
+pub use trickle_queue::TrickleQueue;
+pub use trickle_worker::{TrickleServices, TrickleWorker};
 
 use std::path::Path;
 

@@ -426,3 +426,88 @@ async fn search_reads_listeners_and_radio_readers_fail_where_the_csharp_threw() 
     );
     assert_eq!(received(&server).await.len(), before);
 }
+
+// LastFmServiceTests.SimilarTracks_ASmallCachedAnswerDoesNotShortChangeABiggerAsk
+#[tokio::test]
+async fn similar_tracks_a_small_cached_answer_does_not_short_change_a_bigger_ask() {
+    // A station refresh asks for a few; a player's radio then asks for many.
+    let server = serve(answer(|request| {
+        let limit: usize = query(request, "limit").parse().unwrap_or(50);
+        if query(request, "method") != "track.getsimilar" {
+            return "{}".into();
+        }
+        let tracks: Vec<String> = (0..limit)
+            .map(|index| {
+                format!(r#"{{"name":"song-{index}","match":1,"artist":{{"name":"Artist {index}"}}}}"#)
+            })
+            .collect();
+        format!(r#"{{"similartracks":{{"track":[{}]}}}}"#, tracks.join(","))
+    }))
+    .await;
+    let service = service(&server);
+
+    assert_eq!(service.get_similar_tracks("Radiohead", "Creep", 5).await.len(), 5);
+    assert_eq!(
+        service.get_similar_tracks("Radiohead", "Creep", 20).await.len(),
+        20
+    );
+    assert_eq!(received(&server).await.len(), 2);
+
+    // A smaller ask after that is served from the bigger answer.
+    assert_eq!(
+        service.get_similar_tracks("Radiohead", "Creep", 10).await.len(),
+        10
+    );
+    assert_eq!(received(&server).await.len(), 2);
+}
+
+/// Rust-only (446d393): how a list of songs like a seed was found. A nightcore title found only
+/// as its original is the original's, an upload's own "Artist - Title" is asked under the artist
+/// it names, and similar artists to a name Last.fm barely knows are a guess.
+#[tokio::test]
+async fn find_similar_tracks_says_how_the_list_was_found() {
+    let server = serve(answer(|request| {
+        let (method, artist, track) = (query(request, "method"), query(request, "artist"), query(request, "track"));
+        match (method.as_str(), artist.as_str(), track.as_str()) {
+            ("track.getsimilar", "Alan Walker", "Faded") => {
+                r#"{"similartracks":{"track":[{"name":"Wake Me Up","artist":{"name":"Avicii"},"match":0.9}]}}"#.into()
+            }
+            ("track.getsimilar", "Massive Attack", "Teardrop") => {
+                r#"{"similartracks":{"track":[{"name":"Roads","artist":{"name":"Portishead"},"match":0.9}]}}"#.into()
+            }
+            ("track.getsimilar", _, _) => r#"{"similartracks":{"track":[]}}"#.into(),
+            ("artist.getsimilar", _, _) => r#"{"similarartists":{"artist":[{"name":"The Year"}]}}"#.into(),
+            ("artist.gettoptracks", _, _) => r#"{"toptracks":{"track":[{"name":"Full Damage"}]}}"#.into(),
+            ("artist.getInfo", "Drake", _) => r#"{"artist":{"stats":{"listeners":"5200000"}}}"#.into(),
+            ("artist.getInfo", _, _) => r#"{"artist":{"stats":{"listeners":40}}}"#.into(),
+            _ => r#"{"error":6,"message":"Track not found"}"#.into(),
+        }
+    }))
+    .await;
+    let service = service(&server);
+
+    let song = service
+        .find_similar_tracks("Massive Attack", "Teardrop", 10)
+        .await;
+    assert_eq!((song.source, song.artist_trusted), (SimilarSource::Song, true));
+
+    let nightcore = service
+        .find_similar_tracks("Nightcore Galaxy", "Alan Walker - Faded (Nightcore)", 10)
+        .await;
+    assert_eq!(nightcore.source, SimilarSource::Original);
+    assert_eq!(nightcore.tracks[0].title, "Wake Me Up");
+
+    let guess = service.find_similar_tracks("Missigno", "SPOOKY", 10).await;
+    assert_eq!(
+        (guess.source, guess.artist_trusted, guess.tracks.len()),
+        (SimilarSource::SimilarArtists, false, 1)
+    );
+    let known = service.find_similar_tracks("Drake", "Brand New", 10).await;
+    assert_eq!(
+        (known.source, known.artist_trusted),
+        (SimilarSource::SimilarArtists, true)
+    );
+
+    assert_eq!(style_versions(Some("Faded (Nightcore)")), ["nightcore"]);
+    assert!(style_versions(Some("Faded (Remastered)")).is_empty());
+}

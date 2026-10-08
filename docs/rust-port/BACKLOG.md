@@ -798,38 +798,48 @@ After `rust/main` `61b1cfb` (F and P) was merged in, every crate file's test cou
 
 ### G4 record: group R (2026-10-08)
 
-Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` `19db112` (B, D, G,
-H and L in; F with P not yet). Final run on the WSL lane, `parity/run.sh --rust-twice`, from
-`f66965c`, against the cached C# recording of corpus `eb2c30598fe12590` (1,837 requests).
+Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` up to `aeb3ed8` (B,
+D, F, G, H, L, N and P in). Final run on the WSL lane, `parity/run.sh --no-build --rust-twice`,
+of `65c9275`'s build, against the cached C# recording of corpus `eb2c30598fe12590` (1,837
+requests). Every crate file's `#[test]` count is at least `rust/main`'s (`git grep -c`), and
+the gate passed (3,320 tests; octo-subsonic 120).
 
 | Comparison | Structural | Bytes |
 | --- | --- | --- |
-| C# against Rust | 254 unexplained, 1,523 explained, 60 identical | not run |
-| Rust against Rust | 1,837 identical, 0 unexplained | 1,837 identical, 0 unexplained |
+| C# against Rust | 106 unexplained, 1,647 explained, 17 intentional, 67 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
 
 | Group | Own before (G2 E record) | Own after R | Diffs after R |
 | --- | ---: | ---: | ---: |
-| R | 96 | 11 | 11 |
-| F (on `port/g3-f`, `20-*` only) | 20 | 5 | 5 |
+| R | 96 | 0 | 0 |
+| F | 24 (G3 F and P record) | 5 | 5 |
+| P | 15 (G3 F and P record) | 6 | 6 |
 
-What is left in R is not R's code:
-
-- `21-static/*` (10): the shared dashboard files changed on `rust/main` (`aa504ee`, the station
-  previews and US spelling); the proposed intentional diff `dashboard-files-2026-10-08` covers
-  them once reviewed. R is tagged there because the dashboard carries its page.
-- `19-health/plant-wait`: Navidrome's `search3` answered while it was still giving the planted
-  albums their covers (the timing noted in the WSL lane record); the Rust side had the covers.
-  A corpus fix (wait for the albums' `coverArt`) is for whoever owns the corpus.
+R is at 0. Rust against Rust's one diff is `19-health/plant-wait`, the Navidrome scan timing
+every record since phase 1 has seen: `search3` answered while Navidrome was still giving the
+planted albums their covers. A corpus fix (wait for the albums' `coverArt`) is for whoever
+owns the corpus. The build run just before (`parity/run.sh --rust-twice`, same commit) had 5
+Rust against Rust diffs, all in `19-health`: Navidrome's scans after planting and after the
+duplicate fix did not end within the corpus's 60 s while the lane was busy, and the requests
+that wait on them followed; the rerun had none of them.
 
 F's 17 requests that waited on R pass: `20-library-edits/plant-copy-seen` captures
 `{{song_cafe_copy}}` and `{{copy_dup_key}}` from `/api/admin/health`, and the `*-copy*` chain,
-`admin-actions-final`, `tag-edits-journal` and `library-actions-journal` match. F's 5 are the
-proposed intentional diffs: `isrc-clear-takes-the-tag-off` (`tags-copy-undone`, and now
-`remove-copy-seen`, whose only difference is Navidrome listing the copy without the code) and
-G's `charts-octo-top-songs-version-2` (the three `extensions-*` requests).
+`admin-actions-final`, `tag-edits-journal` and `library-actions-journal` match, and so do the
+journals' `admin-actions-off`, `-dryrun` and `-cafe` in the whole run. F's 5 are proposals:
+`isrc-clear-takes-the-tag-off` (`tags-copy-undone`, and now `remove-copy-seen`, whose only
+difference is Navidrome listing the copy without the code), and the three `extensions-*`
+requests, octoTopSongs at versions 1 and 2, which G's reviewed
+`charts-octo-top-songs-version-2` does not name in `20-library-edits` (nor D's two in
+`13-downloads`). P's 9 knock-on requests (the planted copy left in the library) pass; its 6 are
+its 3 proposals, J's 2 and the base binder's `covers-start-bad-json`, as in the F and P record.
+`album-without-cafe` and `plant-copy-album`, Rust against Rust in that record, match.
 
-Found and fixed on the way (port fixes to match the C#, known-diffs.md rows updated, Rust
-tests):
+The rest of the 106 is other groups', as the F and P and N records found them: G's `Charts` and
+`ChartCountry` in every settings answer (E 18, I 23, part of J and base), the shared dashboard
+files on `10-static-cors` (base), the update command (L), the extension lists (D, L), H's 17.
+
+Found and fixed on the way (to match the C#; known-diffs.md rows updated; Rust tests):
 
 - **FLAC padding.** TagLib#'s `Flac.File.Save` keeps the metadata's size on disk while its
   blocks fit (the padding takes up the rest; 4096 bytes when they outgrow it); lofty kept the
@@ -844,10 +854,9 @@ tests):
 
 `5d3f096` is in pieces: its download log and Find songs routes came with D (`port/g2-bd`), the
 trash and Put back routes with F, their three Recently removed tests with R
-(`trash_tests.rs`), and its activity card is N's. The activity view's health items
-(`ActivityController.Health`) are N's too: `port/g4-n` has `activity::health` over a
-`HealthActivity` and a `STUB(R)` where it reads `LibraryHealthService::run()` and
-`checking_since()`, which R now provides.
+(`trash_tests.rs`), and its activity card with N. N's `STUB(R)` in `get_activity` is wired: a
+`HealthActivity` from the service's run (`From<&HealthRun>`) and its `checking_since()`, with
+the C# activity tests over a real run in `library_health_server_tests.rs`.
 
 No settings and no new intentional diffs (the ISRC entry gained a request). No "Fix in port"
 line was under R.
@@ -880,7 +889,7 @@ Rust change.
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 15 | done (G3, `port/g3-fp`); what is left is R's knock-on and proposed intentional diffs |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 11 | done (G4, `port/g4-r`; 10 are the shared dashboard files, 1 a corpus timing) |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 0 | done (G4, `port/g4-r`) |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
@@ -1213,7 +1222,7 @@ tests.
 - [x] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
   (download log and Find songs routes with D: `controllers/admin/downloads.rs`; trash and Put
   back with F: `controllers/admin/trash.rs`; the Recently removed tests with R; the activity
-  card is N's)
+  card with N, wired to R's run in G4)
 - [x] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard (no
   Rust change: the shared dashboard files)
 

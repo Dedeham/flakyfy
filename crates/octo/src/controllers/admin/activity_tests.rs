@@ -634,3 +634,44 @@ async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
     .await;
     assert_eq!(signed.json()["signedIn"], true);
 }
+
+/// The rescan reads slskd's own scan fields off the Sharing card's report (group E), and an
+/// slskd that does not answer reads as a rescan that has not started.
+#[test]
+fn a_sharing_report_is_read_as_the_rescan_saw_it() {
+    use octo_core::soulseek::soulseek_sharing::build;
+    use octo_core::soulseek::{PortCheckResult, PortState, ShareControl, ShareSwitchState};
+
+    let app = r#"{"server":{"state":"Connected, LoggedIn","isConnected":true,"isLoggedIn":true},
+        "shares":{"scanning":true,"scanPending":false,"faulted":false,"scanProgress":0.25,"directories":13,"files":2438}}"#;
+    let report = |app: Option<&str>| {
+        build(
+            app,
+            None,
+            None,
+            None,
+            PortCheckResult::new(PortState::Off, None, None, None),
+            ShareSwitchState {
+                on: true,
+                control: ShareControl::Octo,
+                problem: None,
+            },
+            false,
+            now(),
+        )
+    };
+    let scanning = RescanReport::from(&report(Some(app)));
+    assert_eq!(
+        scanning,
+        RescanReport {
+            scanning: true,
+            scan_progress: Some(0.25),
+            scan_failed: false,
+            files: Some(2438),
+        }
+    );
+    let away = RescanReport::from(&report(None));
+    assert_eq!(away, RescanReport::default());
+    let item = rescan(&away, now() - TimeDelta::minutes(1), now());
+    assert_eq!((item.state, item.detail), ("done", None));
+}

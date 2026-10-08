@@ -8,10 +8,10 @@
 //! browser. A job just finished stays listed for [`RECENT_WINDOW`], so a toast can say how it
 //! ended. Behind the same guard as the rest of `/api/admin`.
 //!
-//! The jobs of groups not yet on this branch (Find songs, D; Spotify imports, H; Library health,
-//! R; the slskd rescan, E) are read through small views of their own ([`FindLook`],
-//! [`ImportsActivity`], [`HealthActivity`], [`RescanReport`]), so each lands as a conversion and
-//! one call in [`get_activity`] where its `STUB` marks the place.
+//! Some jobs are read through small views of their own ([`FindLook`], [`ImportsActivity`],
+//! [`HealthActivity`], [`RescanReport`]). Those of groups not yet on this branch (Find songs, D;
+//! Spotify imports, H; Library health, R) each land as a conversion and one call in
+//! [`get_activity`] where its `STUB` marks the place.
 
 use axum::extract::{Request, State};
 use axum::response::Response;
@@ -20,6 +20,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::lyrics::{LyricsLibraryMode, LyricsLibraryRun, LyricsLibraryStatus};
+use octo_core::soulseek::soulseek_sharing::SharingReport;
 use serde::Serialize;
 
 use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, header_value, request_cookie};
@@ -164,9 +165,14 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
         },
         now,
     ));
-    // STUB(E): with `SoulseekSharing` in, when `last_rescan_utc()` is under `RESCAN_WATCH` ago:
-    // its `report(false, ..)` through `rescan(&RescanReport::from(&report), requested, now)`. A
-    // report that fails (slskd away) adds nothing: the Soulseek page says so.
+    if let Some(requested) = state.soulseek_sharing.last_rescan_utc()
+        && now - requested < RESCAN_WATCH
+    {
+        // slskd away is a report that says so (the C# caught a report that threw and added
+        // nothing; the port's report never fails): the Soulseek page tells the rest.
+        let report = state.soulseek_sharing.report(false, None).await;
+        items.push(rescan(&RescanReport::from(&report), requested, now));
+    }
     if let Some(scan) = state.local_library.get_scan_status().await
         && scan.scanning
     {
@@ -890,6 +896,17 @@ pub struct RescanReport {
     pub scan_progress: Option<f64>,
     pub scan_failed: bool,
     pub files: Option<i64>,
+}
+
+impl From<&SharingReport> for RescanReport {
+    fn from(report: &SharingReport) -> Self {
+        RescanReport {
+            scanning: report.scanning,
+            scan_progress: report.scan_progress,
+            scan_failed: report.scan_failed,
+            files: report.files.map(i64::from),
+        }
+    }
 }
 
 /// An slskd rescan the dashboard asked for at `requested`.

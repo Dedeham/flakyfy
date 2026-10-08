@@ -83,7 +83,7 @@
       "lines": [
         "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$"
       ],
-      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); applies once group F's library edits land.",
+      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3).",
       "knownDiff": "Clearing a tag field"
     }
   ]

@@ -27,7 +27,7 @@ use octo_core::common::Clock;
 use octo_core::common::dotnet::{is_blank, to_lower_invariant, to_upper_char};
 use octo_core::json::dom::Node;
 use octo_core::json::format_double;
-use octo_core::models::domain::{Album, Artist, Song};
+use octo_core::models::domain::{Album, Artist, Song, explicit_status};
 use octo_core::models::radio::LastFmRadioStation;
 use octo_core::models::subsonic::ExternalPlaylist;
 use octo_core::settings::SubsonicSettings;
@@ -387,6 +387,10 @@ impl SubsonicResponseBuilder {
         // it; this builds the album DETAIL and did not, so the two disagreed.
         fields.insert("created".into(), millis(&self.clock.now()).into());
         fields.insert("releaseTypes".into(), album.release_types.clone().into());
+        fields.insert(
+            "explicitStatus".into(),
+            explicit_status::for_clients(album.explicit_content_lyrics).into(),
+        );
         if let Some(artist_id) = &album.artist_id {
             fields.insert("artistId".into(), artist_id.clone().into());
         }
@@ -768,7 +772,13 @@ impl SubsonicResponseBuilder {
         fields.insert("albumArtists".into(), artist_list);
         fields.insert("displayAlbumArtist".into(), song.artist.clone().into());
         fields.insert("contributors".into(), Value::Array(Vec::new()));
-        fields.insert("explicitStatus".into(), "".into());
+        // OpenSubsonic's word for the catalog's flag ("explicit", "clean" or ""), so a client can
+        // mark an outside song before it is added. A library song that reaches here carries what
+        // Navidrome said of it, or nothing.
+        fields.insert(
+            "explicitStatus".into(),
+            explicit_status::for_clients(song.explicit_content_lyrics).into(),
+        );
         // OpenSubsonic's isrc is a list. An album track Deezer described carries its code,
         // and a library song keeps the ones Navidrome gave it.
         fields.insert("isrc".into(), song.isrcs_for_clients().into());
@@ -843,6 +853,10 @@ impl SubsonicResponseBuilder {
         // speaks it. Only an outside album comes through here; a library album keeps the
         // types Navidrome gave it.
         fields.insert("releaseTypes".into(), album.release_types.clone().into());
+        fields.insert(
+            "explicitStatus".into(),
+            explicit_status::for_clients(album.explicit_content_lyrics).into(),
+        );
         fields.insert("sortName".into(), to_lower_invariant(&album.title).into());
         fields.insert("isExternal".into(), (!album.is_local).into());
 

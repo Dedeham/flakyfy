@@ -4,6 +4,7 @@
 pub mod album_ownership;
 pub mod chart_playlist_service;
 pub mod duplicate_scan_worker;
+pub mod explicit_backfill;
 pub mod explicit_backfill_store;
 pub mod for_you_lists;
 pub mod generated_playlist_service;
@@ -19,6 +20,7 @@ pub mod library_ownership;
 pub mod library_review_sweep_worker;
 pub mod library_snapshot;
 pub mod library_tag_edits;
+pub mod library_walk;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;

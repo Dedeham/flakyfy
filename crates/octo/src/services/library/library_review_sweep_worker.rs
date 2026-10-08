@@ -29,6 +29,7 @@ use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
+use crate::services::library::library_walk;
 use crate::services::local::ILocalLibraryService;
 use crate::services::soulseek::soulseek_download_service::excluded_folder_names;
 use crate::services::state_file;
@@ -483,7 +484,8 @@ impl LibraryReviewSweepWorker {
                     Self::IDLE_CHECK,
                 );
             }
-            let listed = Arc::new(Self::enumerate(&root));
+            let trash = library_walk::trash_folder(Path::new(&root), &settings);
+            let listed = Arc::new(Self::enumerate(&root, Some(&trash)));
             *self.files.lock() = Some(listed.clone());
             let octo_files: HashSet<String> = if settings.review_sweep_octo_downloads {
                 HashSet::new()
@@ -742,7 +744,9 @@ impl LibraryReviewSweepWorker {
     /// folder holds half-written downloads when it sits in the library. A folder that cannot be
     /// read is skipped (`IgnoreInaccessible`), and hidden entries, whose names start with a dot,
     /// are not walked (the default `AttributesToSkip`).
-    pub fn enumerate(root: &str) -> Vec<String> {
+    /// The trash folder is left out by its configured name too, which may have no dot (port
+    /// fix).
+    pub fn enumerate(root: &str, trash: Option<&Path>) -> Vec<String> {
         let root = Path::new(root);
         let mut found: Vec<String> = Vec::new();
         let mut folders = vec![root.to_path_buf()];
@@ -764,7 +768,9 @@ impl LibraryReviewSweepWorker {
                     Err(_) => false,
                 };
                 if is_dir {
-                    folders.push(path);
+                    if !library_walk::is_trash(&path, trash) {
+                        folders.push(path);
+                    }
                     continue;
                 }
                 let extension = extension_of(&name);

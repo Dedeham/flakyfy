@@ -1286,3 +1286,38 @@ fn merged_responses_write_json_as_it_is_and_xml_by_opensubsonic_rules() {
         "<subsonic-response status=\"ok\" version=\"1.16.1\" xmlns=\"http://subsonic.org/restapi\">\n  <album id=\"a\">\n    <song id=\"s\" />\n  </album>\n</subsonic-response>"
     );
 }
+
+// ---- OutsideExplicitTests: what a client reads ----------------------------------------------
+
+#[test]
+fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml() {
+    let builder = builder();
+    let song = Song {
+        id: "s1".into(),
+        artist: "Tame Impala".into(),
+        title: "Dracula".into(),
+        explicit_content_lyrics: Some(1),
+        ..Default::default()
+    };
+    let plain = Song {
+        id: "s2".into(),
+        artist: "A".into(),
+        title: "T".into(),
+        ..Default::default()
+    };
+    let album = Album {
+        id: "a1".into(),
+        artist: "Kendrick Lamar".into(),
+        title: "GNX".into(),
+        explicit_content_lyrics: Some(3),
+        ..Default::default()
+    };
+
+    assert_eq!(builder.convert_song_to_json(&song)["explicitStatus"], "explicit");
+    assert_eq!(builder.convert_song_to_json(&plain)["explicitStatus"], "");
+    assert_eq!(builder.convert_album_to_json(&album)["explicitStatus"], "clean");
+    assert_eq!(
+        builder.convert_song_to_xml(&song, NS).attribute("explicitStatus"),
+        Some("explicit")
+    );
+}

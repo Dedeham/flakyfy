@@ -187,7 +187,7 @@ fn append_json_writes_the_library_rows_back_as_they_were() {
             r#"{"id":"cat-artist","name":"Stranger","albumCount":1,"coverArt":"cat-artist","isExternal":true}],"#,
             r#""album":[{"id":"cat-album","parent":"cat-artist","isDir":true,"title":"New One","name":"New One","album":"New One","#,
             r#""artist":"Stranger","artistId":"cat-artist","songCount":1,"duration":0,"genre":"","coverArt":"cat-album","#,
-            r#""created":"2026-09-01T12:00:00.005Z","mediaType":"album","displayArtist":"Stranger","releaseTypes":[],"#,
+            r#""created":"2026-09-01T12:00:00.005Z","mediaType":"album","displayArtist":"Stranger","releaseTypes":[],"explicitStatus":"","#,
             r#""sortName":"new one","isExternal":true}]}}}"#
         )
     );

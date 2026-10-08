@@ -17,6 +17,7 @@ pub mod browse;
 pub mod charts;
 pub mod cover_upgrade;
 pub mod downloads;
+pub mod explicit_backfill;
 pub mod genre;
 pub mod health;
 pub mod helpers_6b1;
@@ -115,8 +116,8 @@ pub fn routes() -> RouteSet {
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
-/// genre normalization, and the `CoverUpgradeController`, `LyricsAdminController` and
-/// `UpdateController` routes.
+/// genre normalization, and the `CoverUpgradeController`, `ExplicitBackfillController`,
+/// `LyricsAdminController` and `UpdateController` routes.
 pub fn routes_6b2() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
@@ -125,6 +126,7 @@ pub fn routes_6b2() -> RouteSet {
         .merge(upgrades::routes())
         .merge(genre::routes())
         .merge(cover_upgrade::routes())
+        .merge(explicit_backfill::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
         .merge(downloads::routes())

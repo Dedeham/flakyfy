@@ -872,3 +872,155 @@ fn the_path_helpers_answer_as_dotnet_does() {
         "The download returned no file"
     );
 }
+
+// ---- The cover a download keeps -----------------------------------------------------------
+
+mod cover_keep {
+    use octo_core::settings::MetadataSettings;
+    use octo_media::tags::{TagPicture, front_cover};
+    use url::Url;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::services::cover_art::cover_keep::tests::art;
+    use crate::services::cover_art::{CoverArtAggregator, CoverArtArchiveLookup, DownloadCoverResolver};
+    use crate::services::http_client_factory;
+
+    /// A service that judges covers against a catalog cover, and the server that has it.
+    async fn cover_service(root: &Root, catalog: Vec<u8>) -> (Harness, MockServer) {
+        let server = MockServer::start().await;
+        Mock::given(path("/deezer.example/cover.jpg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(catalog))
+            .mount(&server)
+            .await;
+        let settings = Arc::new(octo_core::settings::SettingsStore::for_tests(AppSettings {
+            metadata: MetadataSettings::default(),
+            ..Default::default()
+        }));
+        let archive = CoverArtArchiveLookup::with_base_url(
+            Url::parse(&format!("{}/coverartarchive/", server.uri())).expect("a base address"),
+        );
+        let resolver = DownloadCoverResolver::new(
+            Arc::new(archive),
+            Arc::new(CoverArtAggregator::new(Vec::new())),
+            http_client_factory::default_client(),
+            settings,
+            None,
+        );
+        let harness = build(
+            root.path(),
+            AppSettings::default(),
+            None,
+            None,
+            DownloadServices {
+                cover_resolver: Some(Arc::new(resolver)),
+                ..Default::default()
+            },
+        );
+        (harness, server)
+    }
+
+    fn flac_with_cover(root: &Root, name: &str, cover: Option<&[u8]>) -> String {
+        let path = root.text(name);
+        std::fs::write(&path, flac()).expect("written");
+        if let Some(cover) = cover {
+            let mut file = TagFile::open(&path).expect("opens");
+            file.set_pictures(&[TagPicture::front_cover(cover.to_vec(), "image/jpeg")]);
+            file.save().expect("saved");
+        }
+        path
+    }
+
+    fn cover_of(path: &str) -> Option<Vec<u8>> {
+        front_cover(&TagFile::open(path).expect("opens")).map(|picture| picture.data)
+    }
+
+    fn cover_song(server: &MockServer) -> Song {
+        Song {
+            album: "Dandelion".into(),
+            cover_art_url_large: Some(format!("{}/deezer.example/cover.jpg", server.uri())),
+            external_provider: Some("test".into()),
+            external_id: Some("x".into()),
+            ..song("Ella Langley", "Choosin' Texas")
+        }
+    }
+
+    /// The one cover line the downloads log shows, read back from the service.
+    fn cover_line(harness: &Harness) -> (String, Option<String>) {
+        let steps = harness.service.cover_steps.lock();
+        assert_eq!(steps.len(), 1, "{steps:?}");
+        steps[0].clone()
+    }
+
+    #[tokio::test]
+    async fn write_metadata_a_good_cover_of_the_same_art_stays_byte_for_byte_and_the_timeline_says_so() {
+        let root = Root::new();
+        let (harness, server) = cover_service(&root, art(1, 1000)).await;
+        let own = art(1, 1400);
+        let path = flac_with_cover(&root, "a.flac", Some(&own));
+
+        harness
+            .service
+            .write_metadata(&path, &mut cover_song(&server))
+            .await;
+
+        assert_eq!(cover_of(&path), Some(own));
+        let (text, detail) = cover_line(&harness);
+        assert_eq!(text, "Kept the cover it came with");
+        let pattern = regex::Regex::new(
+            r"^1400 x 1400 px, \d+ KB, the same art\. Also looked at: the catalog 1000 px\.$",
+        )
+        .expect("a pattern");
+        assert!(
+            pattern.is_match(detail.as_deref().unwrap_or_default()),
+            "{detail:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_metadata_another_picture_is_replaced_by_the_catalogs_cover_and_the_timeline_says_why() {
+        let root = Root::new();
+        let catalog = art(1, 1000);
+        let (harness, server) = cover_service(&root, catalog.clone()).await;
+        let path = flac_with_cover(&root, "b.flac", Some(&art(2, 1400)));
+
+        harness
+            .service
+            .write_metadata(&path, &mut cover_song(&server))
+            .await;
+
+        assert_eq!(cover_of(&path), Some(catalog));
+        let (text, detail) = cover_line(&harness);
+        assert_eq!(
+            text,
+            "Replaced its 1400 px cover with a 1000 x 1000 px one from the catalog"
+        );
+        assert_eq!(
+            detail.as_deref(),
+            Some(
+                "It was a different picture from the album's cover. Also looked at: the catalog 1000 px. \
+                 Now embedded in the song."
+            )
+        );
+    }
+
+    /// Better quality: the new copy gets the old copy's cover, the picture the album already
+    /// shows, instead of the peer's.
+    #[tokio::test]
+    async fn write_metadata_a_replacement_takes_the_old_copys_good_cover() {
+        let root = Root::new();
+        let (harness, server) = cover_service(&root, art(1, 1000)).await;
+        let old_cover = art(1, 1200);
+        let original = flac_with_cover(&root, "old.flac", Some(&old_cover));
+        let staged = flac_with_cover(&root, "new.flac", Some(&art(5, 300)));
+
+        harness
+            .service
+            .write_metadata_replacing(&staged, &mut cover_song(&server), Some(&original))
+            .await;
+
+        assert_eq!(cover_of(&staged), Some(old_cover));
+        assert_eq!(cover_line(&harness).0, "Kept your old copy's cover");
+    }
+}

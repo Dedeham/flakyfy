@@ -16,6 +16,7 @@ mod tests_6a1;
 
 pub(crate) mod album_ownership;
 pub mod browsing;
+pub mod downloads;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
 pub mod imports;
@@ -134,6 +135,7 @@ pub fn routes() -> RouteSet {
         .merge(media::routes())
         .merge(stars::routes())
         .merge(extensions::routes())
+        .merge(downloads::routes())
         .merge(lyrics::routes())
         .merge(imports::routes())
 }

@@ -13,8 +13,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::common::dotnet::{utf16_class_view, utf16_len, word_boundary_view};
-use crate::common::live_version;
 use crate::common::song_identity::{SongIdentity, SongQuery};
+use crate::common::{live_version, version_variant};
 use crate::soulseek::soulseek_client::{SoulseekFileHit, normalize_extension};
 
 fn rx(pattern: &str) -> Regex {
@@ -181,9 +181,13 @@ pub const DURATION_TOLERANCE_SECONDS: i32 = 8;
 ///
 /// The same reading TrackMatchComparer applies to the title AcoustID identified, so a peer
 /// is never chosen for a file the verification would then reject, delete and deny-list. A
-/// remaster, an explicit tag or an "Original Mix" is the same recording and passes.
-pub fn adds_version(filename: &str, title: &str) -> bool {
+/// remaster, an explicit tag or an "Original Mix" is the same recording and passes. A name
+/// that runs its version on with no brackets ("Too Close-radio edit") is read too, and so is a
+/// mash-up of the song with another.
+pub fn adds_version(filename: &str, title: &str, artist: Option<&str>) -> bool {
     !SongIdentity::added_versions(title, &leaf_title(filename), None).is_empty()
+        || !version_variant::unrequested_in_name(filename, Some(title), artist).is_empty()
+        || version_variant::mash_up(filename, Some(title), artist)
 }
 
 /// How many peers' folders are looked in when a search finds only lossy copies.
@@ -204,19 +208,109 @@ pub fn folder_of_file(filename: &str) -> &str {
 /// Mocambo) (2010)/17 - Smile in Your Sleep.flac" is the live take, though its own name says
 /// nothing. The album folder and the one above it are read (a disc folder sits between);
 /// not the share's top level. Never when the request itself asks for a live song or album.
-pub fn from_live_folder(filename: &str, title: &str, album: Option<&str>) -> bool {
+pub fn from_live_folder(filename: &str, title: &str, album: Option<&str>, artist: Option<&str>) -> bool {
     if live_version::requested(Some(title), album) {
         return false;
     }
-    let normalized = filename.replace('\\', "/");
-    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty()).collect();
-    if parts.len() <= 1 {
-        return false;
-    }
-    let folders = &parts[..parts.len() - 1];
-    folders[folders.len().saturating_sub(2)..]
+    version_variant::album_folders(filename)
         .iter()
-        .any(|part| live_version::mentions(Some(part)))
+        .any(|folder| live_version::mentions(Some(&version_variant::without_artist(folder, artist))))
+}
+
+/// Whether a file's album folder makes it a version nobody asked for, as a live folder does:
+/// "Too Close (Radio Edit) - Single\01 - Too Close.flac" is the radio edit, and "Mezzanine
+/// Remix Tapes '98\03 - Angel.flac" a remix, though neither file name says so. The artist's
+/// own name is never read as a version (a band called Live).
+pub fn from_version_folder(filename: &str, title: &str, album: Option<&str>, artist: Option<&str>) -> bool {
+    from_live_folder(filename, title, album, artist)
+        || !version_variant::unrequested_from_folder(filename, Some(title), album, artist).is_empty()
+}
+
+/// What a song's search is ranked against: its title, length, album and artist, and whether
+/// the strict reading applies (see [`planned_queries`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CandidateWant {
+    pub title: String,
+    pub duration: Option<i32>,
+    pub strict: bool,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+}
+
+impl CandidateWant {
+    pub fn new(title: impl Into<String>, duration: Option<i32>) -> Self {
+        CandidateWant {
+            title: title.into(),
+            duration,
+            ..Default::default()
+        }
+    }
+
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    pub fn album(mut self, album: Option<&str>) -> Self {
+        self.album = album.map(str::to_string);
+        self
+    }
+
+    pub fn artist(mut self, artist: Option<&str>) -> Self {
+        self.artist = artist.map(str::to_string);
+        self
+    }
+}
+
+/// How many of the best candidates a song's download tries, one peer after another.
+pub const MAX_PEER_ATTEMPTS: usize = 5;
+
+/// The one ranking every Soulseek download uses: a star, a play, an album walk's song, Better
+/// quality and the weekly upgrade. Only how wide the search behind it looks differs.
+pub fn rank(
+    hits: &[SoulseekFileHit],
+    want: &CandidateWant,
+    preferred_extension: &str,
+    min_file_size_bytes: i64,
+    allowed: impl Fn(&SoulseekFileHit) -> bool,
+) -> Vec<SoulseekFileHit> {
+    let wanted = normalize_extension(Some(preferred_extension), "");
+    let title = want.title.as_str();
+    let artist = want.artist.as_deref();
+    let mut found: Vec<&SoulseekFileHit> = hits
+        .iter()
+        // First because it is the cheapest filter and the only one backed by evidence
+        // from a completed transfer: these exact files were downloaded, inspected and
+        // found to be the wrong recording. Offering them again spends a whole transfer
+        // to reach the same verdict.
+        .filter(|h| allowed(h))
+        .filter(|h| crate::common::dotnet::eq_ignore_case(&h.extension, &wanted))
+        .filter(|h| h.size >= min_file_size_bytes)
+        .filter(|h| filename_plausibly_matches_title(&h.filename, title, want.strict))
+        .filter(|h| duration_plausible(h.length, want.duration, want.strict))
+        .filter(|h| !adds_version(&h.filename, title, artist))
+        .filter(|h| !from_version_folder(&h.filename, title, want.album.as_deref(), artist))
+        // "Song (Acoustic)" is never answered by the plain studio file. A radio edit may be
+        // named plainly, so that one is only ranked, below.
+        .filter(|h| !version_variant::lacks_requested(&h.filename, Some(title), artist))
+        // A radio edit may be named plainly, but only as just the song: never a name with more in it.
+        .filter(|h| !version_variant::cut_not_plain(&h.filename, Some(title), artist))
+        .collect();
+    // The copy that says it is the version asked for goes first: "Too Close (Radio Edit)"
+    // takes "Too Close [Radio Edit].flac" before a plain "Too Close.flac". Then an unnamed
+    // bracketed addition sorts last rather than being dropped: it may be a different take
+    // ("Angel (Angel Dust)"), or only a peer's own label. Stable, as LINQ's OrderBy is.
+    found.sort_by_cached_key(|h| {
+        (
+            version_variant::missing(&h.filename, Some(title), artist).len(),
+            variant_penalty(&h.filename, title),
+            quality_penalty(h),
+            h.queue_length.unwrap_or(i32::MAX),
+            std::cmp::Reverse(h.upload_speed.unwrap_or(0)),
+            size_sort_key(h.size, Some(&wanted)),
+        )
+    });
+    found.into_iter().take(MAX_PEER_ATTEMPTS).cloned().collect()
 }
 
 /// The file's name without its extension, as a title.
@@ -332,6 +426,8 @@ pub fn filename_plausibly_matches_title(filename: &str, title: &str, require_phr
     if filename.is_empty() || title.is_empty() {
         return true;
     }
+    let title = name_title(title);
+    let title = title.as_str();
     // Folded the way titles are, so "Huntin’ Wabbitz" finds "Huntin' Wabbitz" and
     // "Hoppípolla" finds "Hoppipolla".
     let leaf = SongIdentity::plain(leaf_of(filename));
@@ -367,6 +463,46 @@ pub fn filename_plausibly_matches_title(filename: &str, title: &str, require_phr
     tokens
         .iter()
         .all(|t| leaf.contains(t.as_str()) || loose_leaf.contains(stylized(t).as_str()))
+}
+
+static TITLE_BRACKET: LazyLock<Regex> = LazyLock::new(|| rx(r"\s*[\(\[\{]([^\(\)\[\]\{\}]*)[\)\]\}]"));
+
+/// The part of a title a file name has to carry: the title without its guest credit and its
+/// version tags. "Take Care (feat. Rihanna)" used to demand the words "feat" and "Rihanna",
+/// and "Too Close (Radio Edit)" the words "radio" and "edit", so a plainly named
+/// "04 - Take Care.flac" never answered either and only files that spelled the tag out were
+/// ever downloaded. Which version a file is gets decided by the version rules, not here. A
+/// title with nothing left once they are off is kept whole.
+pub fn name_title(title: &str) -> String {
+    fn is_version(tag: &str) -> bool {
+        !SongIdentity::parse_title(&format!("x ({tag})"), None)
+            .versions
+            .is_empty()
+    }
+
+    let text = SongIdentity::strip_features(title);
+    let mut text = TITLE_BRACKET
+        .replace_all(&text, |caps: &regex::Captures| {
+            if is_version(&caps[1]) {
+                " ".to_string()
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .into_owned();
+    // " - Radio Edit", " - Remastered 2011": a dash tail that is only a version tag.
+    for _ in 0..3 {
+        match text.rfind(" - ") {
+            Some(dash) if dash > 0 && is_version(&text[dash + 3..]) => text.truncate(dash),
+            _ => break,
+        }
+    }
+    let text = WHITESPACE.replace_all(&text, " ").trim().to_string();
+    if SongIdentity::key(&text).is_empty() {
+        title.to_string()
+    } else {
+        text
+    }
 }
 
 fn stylized(value: &str) -> String {

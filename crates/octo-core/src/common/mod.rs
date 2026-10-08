@@ -14,6 +14,7 @@ pub mod playlist_id_helper;
 pub mod single_flight;
 pub mod song_identity;
 pub mod supersedable_build_coordinator;
+pub mod version_variant;
 
 pub use album_fill_in::{AlbumFillIn, LibraryTrack};
 pub use clock::Clock;

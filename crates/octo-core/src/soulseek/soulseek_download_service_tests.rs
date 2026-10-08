@@ -429,7 +429,7 @@ fn soulseek_a_file_of_another_version_is_rejected() {
         ("Song (Live).flac", "Song (Remix)"),
     ];
     for (filename, title) in cases {
-        assert!(adds_version(filename, title), "{filename} for {title}");
+        assert!(adds_version(filename, title, None), "{filename} for {title}");
     }
 }
 
@@ -445,7 +445,7 @@ fn soulseek_the_same_version_is_kept() {
         ("Hole - Live Through This - 03 - Doll Parts.flac", "Doll Parts"),
     ];
     for (filename, title) in cases {
-        assert!(!adds_version(filename, title), "{filename} for {title}");
+        assert!(!adds_version(filename, title, None), "{filename} for {title}");
     }
 }
 
@@ -478,7 +478,8 @@ fn a_file_in_a_live_albums_folder_is_not_the_studio_song() {
     assert!(from_live_folder(
         LIVE_PATH,
         "Smile in Your Sleep",
-        Some("Sad Songs Vol. 1")
+        Some("Sad Songs Vol. 1"),
+        None
     ));
 }
 
@@ -487,6 +488,7 @@ fn the_studio_albums_folder_is_fine() {
     assert!(!from_live_folder(
         r"Music\Silverstein\Discovering the Waterfront (2005)\05 - Smile in Your Sleep.flac",
         "Smile in Your Sleep",
+        None,
         None
     ));
 }
@@ -501,7 +503,7 @@ fn live_album_folders_are_read() {
     ];
     for path in paths {
         assert!(
-            from_live_folder(path, "Song", Some("Some Studio Album")),
+            from_live_folder(path, "Song", Some("Some Studio Album"), None),
             "{path}"
         );
     }
@@ -513,7 +515,8 @@ fn a_share_called_live_at_the_top_is_not_the_album() {
     assert!(!from_live_folder(
         r"Live Music\Rock\Silverstein\Discovering the Waterfront\05 - Smile in Your Sleep.flac",
         "Smile in Your Sleep",
-        Some("Discovering the Waterfront")
+        Some("Discovering the Waterfront"),
+        None
     ));
 }
 
@@ -525,7 +528,10 @@ fn a_live_request_takes_a_live_folder() {
         ("Doll Parts", Some("Live Through This")),
     ];
     for (title, album) in cases {
-        assert!(!from_live_folder(LIVE_PATH, title, album), "{title} / {album:?}");
+        assert!(
+            !from_live_folder(LIVE_PATH, title, album, None),
+            "{title} / {album:?}"
+        );
     }
 }
 

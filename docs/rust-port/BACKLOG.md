@@ -613,6 +613,60 @@ R 97, base 29; A, K and S 0. The extension lists (`01-system/extensions-*`,
 octoRadioSources. Rust against Rust's one diff is `19-health/plant-wait` (R), the scan timing
 the G1 and E records saw.
 
+### G2 record: groups B and D (2026-10-08)
+
+Branch `port/g2-bd`, merged with `rust/main` up to `cd89293` (G1, C, O, Q and E in). Final run
+on the WSL lane, `parity/run.sh --lane wsl --rust-twice --bytes`, from `fb30026`, against the
+cached C# recording of corpus `28fc0d5b71a3fce9`; its recordings diffed again with `375b829`'s
+allowlist (one entry added after the run, below). The box run before it (`eb59c77`, without E)
+gave the same B and D counts and also had Rust against Rust at 0.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 664 unexplained, 1,146 explained, 27 identical | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+| Group | Own before (G1 J and I) | Own after B and D | Own now (with C, O, Q, E) | Diffs now |
+| --- | ---: | ---: | ---: | ---: |
+| B | 11 | 5 | 2 | 2 |
+| D | 110 | 21 | 12 | 10 |
+
+"Own after B and D" is the run from `cd6ad65` (B and D on G1, before C was in). No other group
+got worse in any of the runs; the other groups' counts move only with their own merges.
+
+What is left in B and D is other groups' work:
+
+- **P** (`5cea252`, `86ad6b8`): the cover line in the log. C#'s `DownloadCoverResolver` names
+  the chosen cover with its size and the covers it passed over ("Cover from the catalog, 300 x
+  300 px", "It came with no cover of its own. Also looked at: ..."); the port writes C#'s own
+  fallback line, as the C# does when the resolver gives no headline. That one line is B's 2
+  (`heart-neon-log`, `pick-lima-row`) and D's live and saved logs, history file and rows (10).
+- **G and H**: `13-downloads/extensions-json` and `extensions-xml` list 10 extensions against
+  12 (`octoTopSongs` and `octoImports` missing); `octoAcquisitions` matches at versions 1 and 2.
+
+Found and settled on the way:
+
+- `13-downloads/find-library-song-refused` showed Find songs without a library song's length:
+  F's `ed0bd7c` (Navidrome's native API sends 301.37 seconds), ported here with its test, since
+  Find songs' length check needs it.
+- Find songs' small cover of a library song (`95-acquisition/heart-neon-find-cover`) joins the
+  allowlist's `cover-jpeg-bytes` entry: the same 160 px picture, from the `image` crate's
+  encoder instead of ImageSharp's.
+- A relayed download's `Content-Range` total (`heart-neon-relay-download`,
+  `pick-lima-relay-download`, tagged B for `0a700c0`'s file name, which matches) differs by a
+  few hundred to a few thousand bytes: lofty lays out a tagged FLAC or M4A otherwise than
+  TagLib#, while the tags and streams match (`heart-neon-tags`, `pick-lima-tags`). A new
+  known-diffs row, "Audio tags: a tagged file's length", and the allowlist entry
+  `tagged-file-length` (that header on those two requests only).
+- `02cc06b` (the log's "Marked explicit" and "Took off the peer's own album tags") was ported
+  once C was on `rust/main`.
+
+The order of "No lyrics found" against "In the library folder" is a race in both builds (the
+lyrics look runs in the background); the saved logs are compared unordered.
+
+No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
+`5d3f096`'s Recently removed and activity card for F and N.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
@@ -625,9 +679,9 @@ Rust change.
 | Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | done |
-| B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
+| B Download matching | 8 | 644 | 46 | 0.75 | 2 | done (G2, `port/g2-bd`) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
-| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
+| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
@@ -671,7 +725,7 @@ writer does. What the later groups find waiting for them:
 
 | Group | Already there |
 | --- | --- |
-| B, D | `DownloadHistoryEntry.key` and `log` (`octo_core::models::download::{AcquisitionEvent, AcquisitionCandidate}`, with `Quality`); `PickedCopy` (`services::common::download_picks`) and `UpgradeJob.pick`. `base_download_service` records `key: None` (STUB(D)). `GET /api/admin/downloads` already drops `log` and says `hasLog`. |
+| B, D | `DownloadHistoryEntry.key` and `log` (`octo_core::models::download::{AcquisitionEvent, AcquisitionCandidate}`, with `Quality`); `PickedCopy` (`services::common::download_picks`) and `UpgradeJob.pick`. `base_download_service` records `key: None` (STUB(D); G2 records the run's key). `GET /api/admin/downloads` already drops `log` and says `hasLog`. |
 | E | `Soulseek.WebUrl` (`safe_web_url`), `CheckListenPort`, `ShareLibrary`, `SharedFolders` (`shared_folder_list`); the save's WebUrl check and the slskd password rules (9f9502d's admin side). |
 | F | `services::library::library_tag_edits` (`TagEditEntry`, the file); `LibraryActionEntry.copy`, `download_allowed`, `blocks_downloads()` (the journal's never-requested check uses it); `LibraryActionState::Restored`; `QuarantineManifest.sidecars` and `mappings` (written null, STUB(F)). |
 | G, Q | `GeneratedPlaylists.PopularNow`, the Made for you switches and clamps (`any_for_you`); `UserMixes.for_you` and `for_you_covers` (filled by Q in G2). |
@@ -689,15 +743,16 @@ writer does. What the later groups find waiting for them:
 
 ### B. Download matching (versions, mash-ups, wider star search, format rename, relay file name)
 
-- [ ] `15087f6` fix(soulseek): a star searches as wide as Better quality, and wider again when the limit fills
-- [ ] `ff46dde` fix(downloads): a song's version tag is not words its file must carry, and the song itself never takes an edit
-- [ ] `39770ed` fix(downloads): a guest credit inside a version tag, "(Radio Edit - feat. X)", no longer makes the version words a file must carry
-- [ ] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
-- [ ] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
-- [ ] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
+- [x] `15087f6` fix(soulseek): a star searches as wide as Better quality, and wider again when the limit fills
+- [x] `ff46dde` fix(downloads): a song's version tag is not words its file must carry, and the song itself never takes an edit
+- [x] `39770ed` fix(downloads): a guest credit inside a version tag, "(Radio Edit - feat. X)", no longer makes the version words a file must carry
+- [x] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
+- [x] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
+- [x] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
 - [x] `0a700c0` fix(relay): a download keeps the file name Navidrome gave it
   (ported with S: `StreamLengthTests` checks it)
-- [ ] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
+- [x] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
+  (README only; the Rust build serves the same README)
 
 ### C. Tagging polish (one album's facts, explicit advisory, Try it)
 
@@ -710,23 +765,27 @@ writer does. What the later groups find waiting for them:
 
 ### D. Download log, drawer, Find songs picks
 
-- [ ] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
+- [x] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
   (its Lidarr half is on `rust/main` with K: `LidarrRelease`, `LidarrReleasePick`,
   `list_releases`, `grab_release`, the grab in `start_album_search`, the request's `release`,
-  and its two `LidarrClientTests`; D still wires `SongFinder`, `DownloadPicks` and the
+  and its two `LidarrClientTests`; G2 wired `SongFinder`, `DownloadPicks` and the
   download log's `step` to them)
-- [ ] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
-- [ ] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
-- [ ] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
-- [ ] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
-- [ ] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
-- [ ] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way
-- [ ] `e24eca1` fix(downloads): a pick is let go when its download ends, so a later download never takes it
-- [ ] `45f4463` fix(downloads): Find songs runs two looks a person at once, never drops a running one, and a library song's look is for the allowed list
-- [ ] `57ab90d` fix(downloads): Find songs keeps a few passed-over files of each reason on a popular song's list, and its fit count matches the rows
-- [ ] `13ec9f9` fix(downloads): Find songs says how many fitting copies its list shows when it has no room for all of them
+- [x] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
+- [x] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
+  (README only)
+- [x] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
+  (ported once C's `2463c23` was on `rust/main`)
+- [x] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
+- [x] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
+- [x] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way
+- [x] `e24eca1` fix(downloads): a pick is let go when its download ends, so a later download never takes it
+- [x] `45f4463` fix(downloads): Find songs runs two looks a person at once, never drops a running one, and a library song's look is for the allowed list
+- [x] `57ab90d` fix(downloads): Find songs keeps a few passed-over files of each reason on a popular song's list, and its fit count matches the rows
+- [x] `13ec9f9` fix(downloads): Find songs says how many fitting copies its list shows when it has no room for all of them
 - [ ] `696cbff` fix(downloads): a shared download's log names nobody, and import errors show no server paths
-- [ ] `7602787` feat(downloads): keep each finished download's log with its fetched-songs entry
+  (its download log half is in, with D: a shared download's row names nobody on its queued
+  line; the import errors without server paths are group H's `ImportService` and trickle worker)
+- [x] `7602787` feat(downloads): keep each finished download's log with its fetched-songs entry
 
 ### E. slskd sharing and the Share switch
 
@@ -778,7 +837,8 @@ the slskd client's reads, rescan, settings file, scan cancel and upload cancel, 
 - [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
 - [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
 - [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
-- [ ] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
+- [x] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
+  (ported with D in G2: Find songs reads a library song's length through it)
 
 ### G. Top songs, charts, Popular right now
 
@@ -944,6 +1004,8 @@ No Rust server change: both are their own images.
 - [ ] `e36d823` fix(health): check songs in the order the apps read them
 - [ ] `c156710` feat(admin): Library health page on the dashboard
 - [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+  (its download log and Find songs routes are in, with D: `controllers/admin/downloads.rs`;
+  Recently removed, Put back and the activity card wait for F and N)
 - [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
 
 ### S. Estimated stream length fix

@@ -187,7 +187,7 @@ fn the_payload_carries_each_profiles_limits() {
     let s = SoulseekSettings::default();
     assert_eq!(
         limits(&SearchProfile::interactive(&s)),
-        (Some(15_000), Some(250), Some(500), Some(true))
+        (Some(15_000), Some(500), Some(2_000), Some(true))
     );
     assert_eq!(
         limits(&SearchProfile::upgrade(&s)),
@@ -195,7 +195,7 @@ fn the_payload_carries_each_profiles_limits() {
     );
     assert_eq!(
         search_payload("id", "Artist Song", &SearchProfile::interactive(&s)),
-        r#"{"id":"id","searchText":"Artist Song","searchTimeout":15000,"responseLimit":250,"fileLimit":500,"filterResponses":true}"#
+        r#"{"id":"id","searchText":"Artist Song","searchTimeout":15000,"responseLimit":500,"fileLimit":2000,"filterResponses":true}"#
     );
 }
 

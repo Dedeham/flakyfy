@@ -500,7 +500,13 @@ async fn the_card_says_what_is_new_and_what_to_run() {
     assert_eq!(
         view["command"],
         json!(
-            "git fetch --tags && git checkout --detach 2026.10.02.1 && docker compose build && docker compose up -d"
+            "git fetch --tags && git checkout --detach 2026.10.02.1 && (docker compose pull yt-dlp-shim octo-sonic || docker compose build yt-dlp-shim-source octo-sonic-source) && docker compose build octo && docker compose up -d"
+        )
+    );
+    assert_eq!(
+        view["imageCommand"],
+        json!(
+            "docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"
         )
     );
 }
@@ -617,7 +623,7 @@ async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && docker compose build && docker compose up -d","imageCommand":"docker compose pull octo && docker compose up -d octo"}}"#
+            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && (docker compose pull yt-dlp-shim octo-sonic || docker compose build yt-dlp-shim-source octo-sonic-source) && docker compose build octo && docker compose up -d","imageCommand":"docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"}}"#
         )
     );
     let reply = send(

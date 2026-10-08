@@ -43,6 +43,11 @@ impl FromBody for UpdateRequest {
     const SHAPE: &'static Shape = text_record!("Octo.Controllers.UpdateController+UpdateRequest", "tag");
 }
 
+/// The sidecars Octo publishes with every release, and the docker-compose.yml services that
+/// build them from the folder instead.
+const SIDECARS: &str = "yt-dlp-shim octo-sonic";
+const SIDECAR_SOURCES: &str = "yt-dlp-shim-source octo-sonic-source";
+
 async fn get_update(State(state): State<AppState>) -> Response {
     ok(&view(&state, state.release_check.view()))
 }
@@ -153,10 +158,12 @@ fn view(state: &AppState, view: ReleaseCheckView) -> Value {
         "unanswered": host.unanswered(),
         "run": run,
         // What to run by hand, from the Octo folder: the built-from-source install, and the image one.
+        // The built install pulls the sidecars and builds only Octo; a sidecar that will not pull
+        // (no ghcr.io) is built from the folder instead.
         "command": format!(
-            "git fetch --tags && git checkout --detach {tag} && docker compose build && docker compose up -d"
+            "git fetch --tags && git checkout --detach {tag} && (docker compose pull {SIDECARS} || docker compose build {SIDECAR_SOURCES}) && docker compose build octo && docker compose up -d"
         ),
-        "imageCommand": "docker compose pull octo && docker compose up -d octo",
+        "imageCommand": format!("docker compose pull octo {SIDECARS} && docker compose up -d octo {SIDECARS}"),
     })
 }
 

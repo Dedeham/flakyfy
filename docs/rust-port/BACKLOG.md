@@ -467,25 +467,35 @@ What was left in E, structural and bytes alike:
 - `18-dashboard/sharing-share-bad-body`: the C# answered `{"on": "maybe"}` with STJ's own
   words naming the record (`... converted to
   Octo.Controllers.SoulseekSharingController+ShareRequest. Path: $.on | LineNumber: 0 |
-  BytePositionInLine: 14.`, under `$.on`, after `request`). Fixed after the run (`657818c`,
+  BytePositionInLine: 14.`, under `$.on`, after `request`). Fixed after the run (`2537f75`,
   the switch's body refuses a member that is not a bool in those words; read from the box's C#
-  recording, with a Rust test). Not yet confirmed by a run.
+  recording, with a Rust test); the final run below confirms it.
 - `18-dashboard/settings-weburl-ok` and `-ok-read`: the port fix, proposed as
   `slskd-web-url-trimmed` (`reviewed` unset, so still counted).
 - `18-dashboard/activity-rescan-starting` and `-done` (tagged N and E): `/api/admin/activity`
   is N's route (404 in Rust); E's half, `SoulseekSharing::last_rescan_utc`, is in place for it.
 
-So E's own count should be 4 now, 2 with the intentional diff reviewed, and 0 once N's activity
-view lands. The other groups' own counts in the subset (D 3, F 3, H 2, I 0, J 3 for the
+So E's own count is 4 after the fix, 2 with the intentional diff reviewed, and 0 once N's
+activity view lands. The other groups' own counts in the subset (D 3, F 3, H 2, I 0, J 3 for the
 proposed `config-sources` bullets, L 1, N 14, P 1, R 3, base 3) are their own unported routes
 and proposals; the subset cannot show the whole corpus, which the final run below was for.
 
-The final run (`--rust-twice --bytes`, the whole corpus, on `fb3f28f`) did not start: the box
-had 7.0 GB free and `box-run.sh` needs 8. This branch's own image and run folder were removed
-(`lxc131.sh --clean`), which was not enough; the other parity images on the box
-(`port-g1-core`, `port-g1-aks`, `rust-main`, `port-g2-coq`, `port-g2-bd`) belong to other runs
-and were left alone. Rust against Rust on the whole corpus is still to be shown for this
-branch.
+The final run: `parity/lxc131.sh --rust-twice --bytes` on the whole corpus from `7d56cfe`
+(rebased on `3c4c593`, the detached box run), against the cached C# recording (1,837 requests).
+A first attempt on `fb3f28f` stopped before it built: the box had 7.0 GB free and needs 8 (this
+branch's own image and folder were removed with `--clean`; the space came back once other runs
+ended).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 768 unexplained (786 after C, O and Q), 1,044 explained, 25 identical | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+E is 4 own, as expected: `sharing-share-bad-body` now matches the C# byte for byte, and what is
+left is `settings-weburl-ok` and `-ok-read` (the proposed `slskd-web-url-trimmed`, which matched
+its 2 aspects in both modes and is waiting for review) and the two `activity-rescan-*` requests
+of N. No group got worse against the C, O and Q record: B 11, C 9, D 110, F 128, G 47, H 201,
+I 3, J 3, L 45, N 14, O 17, P 68, Q 5, R 96 (97), base 29; A, K and S 0.
 
 ## Gap groups
 
@@ -502,7 +512,7 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 5 | done (G2, `port/g2-eg`; 4 expected, see the E record) |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
@@ -607,7 +617,7 @@ writer does. What the later groups find waiting for them:
 - **Fix in port:** the Soulseek web address (`Soulseek.WebUrl`) is saved with
   the spaces it was typed with (BACKLOG "Found while building the harness");
   save it trimmed, with a Rust test and an intentional diff. Done in G2
-  (`5b2e46b`): saved and read trimmed, tests `slskds_web_address_is_saved_without_spaces`
+  (`fc00777`): saved and read trimmed, tests `slskds_web_address_is_saved_without_spaces`
   and `slskds_web_address_is_read_without_spaces`, proposed intentional diff
   `slskd-web-url-trimmed`.
 

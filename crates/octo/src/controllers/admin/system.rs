@@ -87,13 +87,29 @@ pub async fn test_notification(State(state): State<AppState>) -> Response {
     ok(&json!({ "results": results }))
 }
 
-/// `GET /api/admin/downloads`: the running log of songs Octo has fetched, newest first.
+/// `GET /api/admin/downloads`: the running log of songs Octo has fetched, newest first. Each
+/// entry's saved download log stays out of the list (it can run to hundreds of lines); `hasLog`
+/// says one was kept, and `downloads/log` reads it.
 pub async fn downloads(State(state): State<AppState>) -> Response {
     let recent = state.download_history.get_recent(200);
     // The entries are written to disk PascalCase; the API answer is camelCase, with the
     // report's dictionaries keeping their keys.
-    let value = serde_json::to_value(&recent).unwrap_or_default();
-    ok(&json!({ "downloads": camel_case_value(value, &["fields", "stageSeconds"]) }))
+    let downloads: Vec<serde_json::Value> = recent
+        .iter()
+        .map(|entry| {
+            let value = serde_json::to_value(entry).unwrap_or_default();
+            let mut value = camel_case_value(value, &["fields", "stageSeconds"]);
+            if let Some(fields) = value.as_object_mut() {
+                fields.remove("log");
+                fields.insert(
+                    "hasLog".into(),
+                    serde_json::Value::Bool(entry.log.as_ref().is_some_and(|log| !log.is_empty())),
+                );
+            }
+            value
+        })
+        .collect();
+    ok(&json!({ "downloads": downloads }))
 }
 
 /// `GET /api/admin/acquisitions`: every hearted download in flight or ended in the last half

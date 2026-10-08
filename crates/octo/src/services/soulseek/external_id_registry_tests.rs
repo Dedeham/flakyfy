@@ -255,7 +255,18 @@ fn registry_length_outlives_a_restart() {
 fn the_fixture_round_trips_byte_for_byte() {
     let text = std::fs::read_to_string(FIXTURE).expect("the fixture is in the repo");
     let entries: Vec<Persisted> = serde_json::from_str(&text).expect("the fixture reads");
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 5);
+    // 2026.10.05: an explicit song and its clean edit, which has an id of its own.
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.routing.as_ref().is_some_and(|r| r.explicit_content == Some(1)))
+    );
+    assert!(entries.iter().any(|e| {
+        e.routing
+            .as_ref()
+            .is_some_and(|r| r.version.as_deref() == Some("clean"))
+    }));
     assert_eq!(octo_core::json::to_string(&entries), text.trim_end_matches('\n'));
 }
 
@@ -277,7 +288,7 @@ fn a_load_and_flush_writes_the_fixture_back_unchanged() {
     std::fs::write(&path, &text).expect("writes");
     {
         let registry = ExternalIdRegistry::new(Some(&path));
-        assert_eq!(registry.count(), 3);
+        assert_eq!(registry.count(), 5);
         // Nothing changed, so nothing is written.
         registry.flush();
         assert_eq!(std::fs::read_to_string(&path).expect("reads"), text);

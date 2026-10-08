@@ -6,6 +6,7 @@ pub mod acquisition_worker;
 pub mod base_download_service;
 pub mod cache_cleanup_service;
 pub mod download_concurrency;
+pub mod download_picks;
 pub mod external_search_service;
 pub mod heart_acquisition_coordinator;
 pub mod soulseek_hold_resumer;

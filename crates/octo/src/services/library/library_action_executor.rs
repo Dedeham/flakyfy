@@ -1209,6 +1209,8 @@ impl LibraryActionExecutor {
             at_utc: Utc::now(),
             history_kept: None,
             revealed_path: None,
+            copy: false,
+            download_allowed: false,
         }
     }
 }

@@ -358,6 +358,8 @@ fn identity_journal() -> Arc<LibraryActionJournal> {
         at_utc: Utc::now(),
         history_kept: None,
         revealed_path: None,
+        copy: false,
+        download_allowed: false,
     });
     Arc::new(journal)
 }

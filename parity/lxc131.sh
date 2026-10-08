@@ -2,20 +2,29 @@
 # Run the parity harness on the test box (LXC 131) against the Rust build of the commit you have
 # checked out, and print the diffs per backlog group. For port agents; one command:
 #
-#   parity/lxc131.sh                      # build, record, compare with C# 2026.10.05
+#   parity/lxc131.sh                      # build here, record, compare with C# 2026.10.05
 #   parity/lxc131.sh --only '13-*'        # just some corpus files (the C# side is recorded again)
 #   parity/lxc131.sh --no-build           # same image as last time (corpus or stub changes only)
-#   parity/lxc131.sh --low-memory         # build with one job and no LTO (host short of memory)
+#   parity/lxc131.sh --box-build          # compile on the box instead (Dockerfile.rust whole)
+#   parity/lxc131.sh --box-build --low-memory   # that, with one job and no LTO
 #   parity/lxc131.sh --bytes              # also the bytes-mode diff
 #   parity/lxc131.sh --rust-twice         # also Rust against Rust (the determinism gate)
 #   parity/lxc131.sh --csharp-twice       # also C# against C# (after a corpus change)
 #   parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: no Rust build or run
 #   parity/lxc131.sh --clean              # remove this name's image and folder on the box
 #
-# What it does: bundles HEAD (only the commits the box lacks), copies the bundle to the box
+# What it does: compiles octo here as a static musl binary (cargo build --release --target
+# x86_64-unknown-linux-musl; `rustup target add x86_64-unknown-linux-musl` and musl-tools once),
+# bundles HEAD (only the commits the box lacks), copies the bundle and the binary to the box
 # through the Proxmox host, checks it out in /opt/octo-parity/runs/<name>/src, and runs
-# parity/box-run.sh there (Docker build of Dockerfile.rust, the corpus against both builds, the
-# diff). The full report comes back to parity/.run/lxc131-<name>/. Commit first: only commits
+# parity/box-run.sh there (the image from Dockerfile.rust's runtime stage around that binary,
+# the corpus against both builds, the diff).
+#
+# Compiling here is the default because the box's compile is what hurts the shared Proxmox
+# host: the LTO link takes about 3 GB, and on 2026-10-07 a box build tripped the watchdog with
+# the host at 1 GB and its swap full. The runtime stage is only Debian packages and a copy.
+# A static musl binary runs on bookworm-slim whatever glibc the machine that built it has
+# (a WSL glibc build needs GLIBC_2.38 and does not start there). --box-build is the old way. The full report comes back to parity/.run/lxc131-<name>/. Commit first: only commits
 # travel. Nothing is pushed anywhere and nothing on the box outside /opt/octo-parity, the
 # octo-parity-* compose projects, the octo-rust-parity:<name> image and the octo-parity buildx
 # builder is touched.
@@ -40,12 +49,23 @@ name="${PARITY_NAME:-$branch}"
 name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '-' | tr 'A-Z' 'a-z')"
 args=()
 clean=0
+prebuilt=1
 for a in "$@"; do
   case "$a" in
     --clean) clean=1 ;;
+    --box-build) prebuilt=0 ;;
+    --no-build | --csharp-only) prebuilt=0; args+=("$a") ;;
     *) args+=("$a") ;;
   esac
 done
+if [ "$prebuilt" = 1 ]; then
+  for a in "${args[@]+"${args[@]}"}"; do
+    if [ "$a" = --low-memory ]; then
+      echo "--low-memory is for a box build; add --box-build" >&2
+      exit 64
+    fi
+  done
+fi
 
 # ssh/scp that know the host: the plain ones, or Windows' from WSL.
 SSH=ssh SCP=scp
@@ -68,9 +88,23 @@ if [ "$clean" = 1 ]; then
 fi
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  if [ "$prebuilt" = 1 ]; then
+    # The binary is built from the working tree; the box checks out HEAD. They must agree.
+    echo "commit first: the binary is built from the working tree and the box runs HEAD" >&2
+    exit 1
+  fi
   echo "note: uncommitted changes are not sent; the box runs $(git rev-parse --short HEAD)" >&2
 fi
 sha="$(git rev-parse HEAD)"
+
+# The binary, compiled here (see above).
+musl_target=x86_64-unknown-linux-musl
+binary="$repo/target/$musl_target/release/octo"
+if [ "$prebuilt" = 1 ]; then
+  echo "building octo for $musl_target here"
+  cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
+  echo "built $(du -h "$binary" | cut -f1) binary from $(git rev-parse --short HEAD)"
+fi
 
 # Only the commits the box does not have yet.
 on_box "mkdir -p /opt/octo-parity/incoming && { [ -d /opt/octo-parity/repo.git ] || git init -q --bare /opt/octo-parity/repo.git; }"
@@ -102,6 +136,13 @@ git checkout -q -f $sha
 git clean -q -fdx
 echo \"box: $name at \$(git log --oneline -1)\""
 on_box "$checkout"
+
+if [ "$prebuilt" = 1 ]; then
+  # Into the checkout, after its git clean; box-run.sh --prebuilt wraps it in the runtime stage.
+  "$SCP" -q "$(command -v wslpath > /dev/null && [ "$SCP" = scp.exe ] && wslpath -w "$binary" || echo "$binary")" "$host:/root/parity-$name.octo"
+  "$SSH" "$host" "pct exec $ct -- mkdir -p /opt/octo-parity/runs/$name/src/.parity-bin && pct push $ct /root/parity-$name.octo /opt/octo-parity/runs/$name/src/.parity-bin/octo --perms 755 && rm -f /root/parity-$name.octo"
+  args=(--prebuilt "${args[@]+"${args[@]}"}")
+fi
 
 host_free_mb() { "$SSH" -o ConnectTimeout=20 "$host" "awk '/MemAvailable/ {print int(\$2 / 1024)}' /proc/meminfo" 2> /dev/null || echo 0; }
 stop_box_run() {

@@ -133,6 +133,27 @@
       ],
       "reason": "A picked cover run that matched its albums in bulk ends with no reason line, as the C# meant (its finally sets Reason = null). C# 2026.10.05 reported the bulk match's progress through Progress<string>, which runs the update later on the thread pool, so the last line (\"barcodes 1 of 1 · Apple matched 1\") could land after the finally and stay on the finished run; whether it did changed from run to run (17-covers-explicit/covers-resumed-done had it in one C# recording and not in another).",
       "knownDiff": "Cover upgrade: the bulk match's last line"
+    },
+    {
+      "id": "slskd-web-url-trimmed",
+      "backlog": "E",
+      "requests": [
+        "18-dashboard/settings-weburl-ok",
+        "18-dashboard/settings-weburl-ok-read"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$(\\.persisted)?\\.Soulseek\\.WebUrl: +http://slskd\\.parity\\.test:5030 +!= http://slskd\\.parity\\.test:5030$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"(ok\":true,\"persisted|Subsonic)\":",
+        "^\\+\\{\"(ok\":true,\"persisted|Subsonic)\":"
+      ],
+      "reason": "The C# saved slskd's web address (the Open slskd link) with the spaces it was typed with, and the settings answer and the form showed them; the Rust build saves and reads it trimmed.",
+      "knownDiff": "slskd's web address saved with spaces"
     }
   ]
 }

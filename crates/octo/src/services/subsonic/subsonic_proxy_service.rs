@@ -14,7 +14,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use indexmap::IndexMap;
 use octo_core::settings::SettingsStore;
 use octo_subsonic::subsonic_request_parser::{
@@ -237,7 +237,9 @@ const FORWARD_REQUEST_HEADERS: [&str; 8] = [
 /// Albums, Artists and Tracks pages have nothing to size against and render empty, while Home
 /// and Search, which do not paginate, look perfectly fine (issue #34). The body was always
 /// correct, which is why it read as a client bug.
-const FORWARD_RESPONSE_HEADERS: [&str; 9] = [
+/// Content-Disposition carries a download's file name; without it rest/download saved the song
+/// with no name.
+const FORWARD_RESPONSE_HEADERS: [&str; 10] = [
     "X-Nd-Authorization",
     "ETag",
     "Last-Modified",
@@ -247,6 +249,7 @@ const FORWARD_RESPONSE_HEADERS: [&str; 9] = [
     "Vary",
     "X-Total-Count",
     "Access-Control-Expose-Headers",
+    "Content-Disposition",
 ];
 
 const STREAMING_REQUIRED_HEADERS: [&str; 5] = [
@@ -379,7 +382,8 @@ impl SubsonicProxyService {
         let method = incoming.map_or(Method::GET, |r| r.method.clone());
         let raw_body = incoming.and_then(IncomingRequest::raw_body);
 
-        let query = self.build_query(parameters, raw_body.is_some());
+        let parameters = owned_pairs(parameters);
+        let query = self.build_query(parameters.iter().map(|(k, v)| (k, v)), raw_body.is_some());
         let url = format!("{}/{endpoint}?{query}", base.trim_end_matches('/'));
         let target = request_url(&url)?;
         let mut request = self.shared.client.request(method, target);
@@ -413,7 +417,18 @@ impl SubsonicProxyService {
                 response_headers.push((name.to_string(), value));
             }
         }
-        let body = response.bytes().await.map_err(RelayError::from_reqwest)?;
+        // Read knowing whether the length is Navidrome's estimate (rest/download with a format
+        // and estimateContentLength). The client's timeout still covers the whole body.
+        let body = if length_may_be_estimate(response.status(), response.headers(), &parameters) {
+            let mut upstream = Box::pin(tolerate_early_end(response, endpoint));
+            let mut buffer = bytes::BytesMut::new();
+            while let Some(chunk) = upstream.next().await {
+                buffer.extend_from_slice(&chunk.map_err(RelayError::from_reqwest)?);
+            }
+            buffer.freeze()
+        } else {
+            response.bytes().await.map_err(RelayError::from_reqwest)?
+        };
         Ok(RawRelayResult {
             status,
             body,
@@ -489,7 +504,8 @@ impl SubsonicProxyService {
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        let query = self.build_query(parameters, false);
+        let parameters = owned_pairs(parameters);
+        let query = self.build_query(parameters.iter().map(|(k, v)| (k, v)), false);
         // Not trimmed and not checked, as the C# built it: a URL ending in '/' asks for
         // //rest/stream, and none at all is a relative URI.
         let url = format!("{}/rest/stream?{query}", self.url_setting().unwrap_or_default());
@@ -510,13 +526,33 @@ impl SubsonicProxyService {
         };
         let status = response.status();
         if !status.is_success() {
-            return Ok(status_code_result(status));
+            let mut result = status_code_result(status);
+            // A 416 names the real size ("bytes */N"). A player that asked past the end of a
+            // transcode, usually because it believed an estimate, learns where the end is;
+            // ExoPlayer reads that as the end of the song.
+            if status == StatusCode::RANGE_NOT_SATISFIABLE {
+                for value in response_header_values(response.headers(), "Content-Range") {
+                    if let Ok(value) = HeaderValue::from_str(&value) {
+                        result.headers_mut().append(header::CONTENT_RANGE, value);
+                    }
+                }
+            }
+            return Ok(result);
         }
+
+        // A live transcode's Content-Length is Navidrome's guess, and the real output usually
+        // comes out 2 to 3% smaller. Promising the guess to the client meant the copy failed
+        // after the last real byte and the connection was cut, so that length is left out and
+        // the body goes chunked.
+        let estimate = length_may_be_estimate(status, response.headers(), &parameters);
 
         // Forward HTTP status code (e.g., 206 Partial Content for range requests) and the
         // streaming-required headers from the upstream response.
         let mut builder = Response::builder().status(status);
         for name in STREAMING_REQUIRED_HEADERS {
+            if estimate && name == "Content-Length" {
+                continue;
+            }
             for value in response_header_values(response.headers(), name) {
                 if let Ok(value) = HeaderValue::from_str(&value) {
                     builder = builder.header(name, value);
@@ -543,7 +579,11 @@ impl SubsonicProxyService {
             }
             Precondition::Serve => {}
         }
-        let body = Body::from_stream(response.bytes_stream());
+        let body = if estimate {
+            Body::from_stream(tolerate_early_end(response, "rest/stream"))
+        } else {
+            Body::from_stream(response.bytes_stream())
+        };
         Ok(builder
             .body(body)
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
@@ -591,6 +631,116 @@ impl SubsonicProxyService {
             content_range: None,
         }))
     }
+}
+
+/// The relay's parameters as owned pairs, read once for the query and once for
+/// [`length_may_be_estimate`].
+fn owned_pairs<I, K, V>(parameters: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    parameters
+        .into_iter()
+        .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
+        .collect()
+}
+
+/// True when the upstream Content-Length may be Navidrome's estimate of a transcode rather
+/// than the size of the body it will send. Navidrome serves a file, or a transcode it has
+/// finished and cached, with Accept-Ranges: bytes and an exact length, and a 206 carries an
+/// exact Content-Range. A transcode still being made says Accept-Ranges: none, and then has a
+/// length only because the client asked for an estimate (Verified 2026-10-05: announced
+/// 4,067,983, sent 3,974,093). With neither mark, the request decides: an estimate or a
+/// transcode was asked for.
+pub(crate) fn length_may_be_estimate(
+    status: StatusCode,
+    headers: &HeaderMap,
+    parameters: &[(String, String)],
+) -> bool {
+    use octo_core::common::dotnet::eq_ignore_case;
+
+    if status == StatusCode::PARTIAL_CONTENT {
+        return false;
+    }
+    let accept_ranges = response_header_values(headers, "Accept-Ranges");
+    if accept_ranges.iter().any(|v| eq_ignore_case(v, "bytes")) {
+        return false;
+    }
+    if accept_ranges.iter().any(|v| eq_ignore_case(v, "none")) {
+        return true;
+    }
+
+    let value = |key: &str| {
+        parameters
+            .iter()
+            .find(|(k, _)| eq_ignore_case(k, key))
+            .map(|(_, v)| v.as_str())
+    };
+    if value("estimateContentLength").is_some_and(|v| eq_ignore_case(v, "true")) {
+        return true;
+    }
+    if value("format").is_some_and(|f| !f.is_empty() && !eq_ignore_case(f, "raw")) {
+        return true;
+    }
+    value("maxBitRate")
+        .and_then(crate::controllers::subsonic::helpers_6a1::int_try_parse)
+        .is_some_and(|max_bit_rate| max_bit_rate > 0)
+}
+
+/// A transcode whose Content-Length was an estimate. The HTTP client holds the body to the
+/// length announced and fails when it ends sooner, which here only means the real output was
+/// smaller than the guess, so that early end reads as the end of the song. Any other failure
+/// still fails the body. Once ended, the stream stays ended.
+fn tolerate_early_end(
+    response: reqwest::Response,
+    endpoint: &str,
+) -> impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static {
+    let announced = response.content_length();
+    let endpoint = endpoint.to_string();
+    let upstream = Box::pin(response.bytes_stream());
+    futures::stream::unfold((upstream, 0u64, false), move |(mut upstream, sent, ended)| {
+        let endpoint = endpoint.clone();
+        async move {
+            if ended {
+                return None;
+            }
+            match upstream.next().await? {
+                Ok(chunk) => {
+                    let sent = sent + chunk.len() as u64;
+                    Some((Ok(chunk), (upstream, sent, false)))
+                }
+                Err(error) if ended_early(&error) => {
+                    tracing::debug!(
+                        "{endpoint}: the transcode ended at {sent} bytes, short of the estimated {}",
+                        announced.map_or_else(String::new, |n| n.to_string())
+                    );
+                    None
+                }
+                // A real failure: passed on, and nothing is read after it.
+                Err(error) => Some((Err(error), (upstream, sent, true))),
+            }
+        }
+    })
+    .fuse()
+}
+
+/// Whether a body failed only because the connection closed before the announced
+/// Content-Length was reached (.NET's `HttpRequestError.ResponseEnded`): hyper reports that as
+/// an I/O error of kind `UnexpectedEof` somewhere down the error's sources.
+fn ended_early(error: &reqwest::Error) -> bool {
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::UnexpectedEof)
+        {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
 }
 
 /// The parameter dictionary holds a repeated key as one comma-joined string (`id=A&id=B` reads

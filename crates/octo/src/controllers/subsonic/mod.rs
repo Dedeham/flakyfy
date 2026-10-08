@@ -38,6 +38,8 @@ mod media_tests_6a2;
 mod rating_tests_6a2;
 #[cfg(test)]
 mod scrobble_tests_6a2;
+#[cfg(test)]
+mod stream_length_tests;
 
 use axum::routing::get;
 

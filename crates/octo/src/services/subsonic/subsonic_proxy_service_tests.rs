@@ -615,3 +615,256 @@ fn restore_a_changed_form_field_still_reaches_the_query_when_the_body_is_forward
     // The unchanged ids ride in the body only; a changed value is never dropped.
     assert_eq!(sent, pairs(&[("u", "octo")]));
 }
+
+// ---- A transcode's estimated length (G1 S, 67f3c93) ---------------------------------------------
+
+/// Navidrome as a socket answering every connection with one canned answer and closing it, so a
+/// body shorter than its announced Content-Length fails in the HTTP client exactly as it does
+/// against the real one (the C# `EndsEarlyStream`).
+async fn canned_upstream(status: &str, headers: &[&str], body: Vec<u8>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    let head = format!(
+        "HTTP/1.1 {status}\r\n{}Connection: close\r\n\r\n",
+        headers.iter().map(|h| format!("{h}\r\n")).collect::<String>()
+    );
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let (head, body) = (head.clone(), body.clone());
+            tokio::spawn(async move {
+                let mut seen = Vec::new();
+                let mut one = [0u8; 1];
+                while stream.read(&mut one).await.unwrap_or(0) == 1 {
+                    seen.push(one[0]);
+                    if seen.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
+                let _ = stream.flush().await;
+            });
+        }
+    });
+    url
+}
+
+fn estimated_transcode() -> Parameters {
+    params(&[
+        ("id", "song123"),
+        ("format", "mp3"),
+        ("maxBitRate", "192"),
+        ("estimateContentLength", "true"),
+    ])
+}
+
+fn ninety_seven() -> Vec<u8> {
+    (0..97u8).collect()
+}
+
+#[tokio::test]
+async fn relay_stream_async_estimated_transcode_leaves_the_length_out_and_ends_at_the_real_end() {
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: none",
+            "Content-Length: 100",
+        ],
+        ninety_seven(),
+    )
+    .await;
+
+    let response = scoped(&url, &[]).relay_stream(&estimated_transcode()).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
+    assert_eq!(response.headers()["accept-ranges"], "none");
+    let (_, _, body) = body_of(response).await;
+    assert_eq!(body.as_ref(), ninety_seven().as_slice());
+}
+
+/// Rust-only: the C# also read the stream synchronously and once more after its end; here the
+/// tolerant stream itself stays at its end once it has ended short.
+#[tokio::test]
+async fn an_estimated_body_stays_ended_after_it_ends_short() {
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: none",
+            "Content-Length: 100",
+        ],
+        ninety_seven(),
+    )
+    .await;
+    let response = reqwest::get(&url).await.expect("an answer");
+
+    let mut upstream = Box::pin(tolerate_early_end(response, "rest/stream"));
+    let mut read = Vec::new();
+    while let Some(chunk) = upstream.next().await {
+        read.extend_from_slice(&chunk.expect("no failure"));
+    }
+
+    assert_eq!(read, ninety_seven());
+    assert!(upstream.next().await.is_none());
+}
+
+#[tokio::test]
+async fn relay_stream_async_cached_transcode_keeps_its_exact_length() {
+    // Navidrome serves a transcode it has finished from its cache, with ranges and the real
+    // size, even when the client asked for an estimate.
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: bytes",
+            "Content-Length: 3",
+        ],
+        vec![1, 2, 3],
+    )
+    .await;
+
+    let response = scoped(&url, &[]).relay_stream(&estimated_transcode()).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-length"], "3");
+}
+
+#[tokio::test]
+async fn relay_stream_async_raw_stream_that_ends_early_is_not_passed_off_as_whole() {
+    // An exact length that is not met is a real failure, and must not read as a clean end.
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: bytes",
+            "Content-Length: 6",
+        ],
+        vec![1, 2, 3],
+    )
+    .await;
+
+    let response = scoped(&url, &[])
+        .relay_stream(&params(&[("id", "song123")]))
+        .await;
+
+    assert_eq!(response.headers()["content-length"], "6");
+    assert!(response.into_body().collect().await.is_err());
+}
+
+#[tokio::test]
+async fn relay_stream_async_range_not_satisfiable_passes_the_real_size_on() {
+    let url = canned_upstream(
+        "416 Requested Range Not Satisfiable",
+        &["Content-Range: bytes */3974093", "Content-Length: 0"],
+        Vec::new(),
+    )
+    .await;
+
+    let response = scoped(&url, &[]).relay_stream(&estimated_transcode()).await;
+
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(response.headers()["content-range"], "bytes */3974093");
+}
+
+#[tokio::test]
+async fn relay_raw_async_download_of_an_estimated_transcode_keeps_every_byte() {
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: none",
+            "Content-Length: 100",
+        ],
+        ninety_seven(),
+    )
+    .await;
+
+    let result = scoped(&url, &[])
+        .relay_raw("rest/download", &estimated_transcode())
+        .await
+        .expect("relayed");
+
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body.as_ref(), ninety_seven().as_slice());
+}
+
+/// Rust-only: an exact length the body falls short of stays a failure in the general relay too.
+#[tokio::test]
+async fn relay_raw_async_a_raw_body_that_ends_early_is_a_failure() {
+    let url = canned_upstream(
+        "200 OK",
+        &[
+            "Content-Type: audio/mpeg",
+            "Accept-Ranges: bytes",
+            "Content-Length: 6",
+        ],
+        vec![1, 2, 3],
+    )
+    .await;
+
+    let result = scoped(&url, &[])
+        .relay_raw("rest/download", &params(&[("id", "song123")]))
+        .await;
+
+    assert!(matches!(result, Err(RelayError::Http(_))), "{result:?}");
+}
+
+#[test]
+fn length_may_be_estimate_follows_navidrome_then_the_request() {
+    let cases: [(u16, Option<&'static str>, &str, bool); 11] = [
+        // Navidrome's own marks win: a live transcode says none, a file or cached transcode bytes.
+        (200, Some("none"), "", true),
+        (
+            200,
+            Some("bytes"),
+            "format=mp3&maxBitRate=192&estimateContentLength=true",
+            false,
+        ),
+        (
+            200,
+            Some("none"),
+            "format=mp3&maxBitRate=192&estimateContentLength=true",
+            true,
+        ),
+        // A 206 carries an exact Content-Range.
+        (206, None, "format=mp3&estimateContentLength=true", false),
+        // With no mark, the request decides.
+        (200, None, "estimateContentLength=true", true),
+        (200, None, "format=mp3", true),
+        (200, None, "maxBitRate=128", true),
+        (200, None, "format=raw", false),
+        (200, None, "maxBitRate=0", false),
+        (200, None, "estimateContentLength=false", false),
+        (200, None, "", false),
+    ];
+    for (status, accept_ranges, query, expected) in cases {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = accept_ranges {
+            headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static(value));
+        }
+        let parameters: Vec<(String, String)> = query
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                let (k, v) = pair.split_once('=').expect("a pair");
+                (k.to_string(), v.to_string())
+            })
+            .collect();
+
+        assert_eq!(
+            length_may_be_estimate(
+                StatusCode::from_u16(status).expect("a status"),
+                &headers,
+                &parameters
+            ),
+            expected,
+            "{status} {accept_ranges:?} {query}"
+        );
+    }
+}

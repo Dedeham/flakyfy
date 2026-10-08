@@ -478,7 +478,7 @@ for s in plan["shards"] if isinstance(plan, dict) else plan:
   # Adaptive waits: the Rust recording of a shard waits for the C# one, and reads its waits.
   ADAPTIVE=0
   if python3 parity/parity.py run --help 2> /dev/null | grep -q -- --waits-from; then ADAPTIVE=1; fi
-  say "plan: ${#SHARDS[@]} shard(s): ${SHARDS[*]}$([ "$ADAPTIVE" = 1 ] && echo '; Rust waits adapt to C#')"
+  say "plan: ${#SHARDS[@]} shard(s): ${SHARDS[*]}$([ "$ADAPTIVE" = 1 ] && echo '; Rust waits adapt to C#' || true)"
 
   if [ "$selftest" = 1 ]; then
     export PARITY_SELFTEST=1 PARITY_SLEEP="$sleep_s"
@@ -546,7 +546,7 @@ for s in plan["shards"] if isinstance(plan, dict) else plan:
     cs_dir="$OUT/cs"
   else
     # A C# recording made by a parity.py that keeps wait times is kept apart from an older one.
-    cs_dir="$ROOT/cs-cache/${digest:0:16}-$plan_id$([ "$ADAPTIVE" = 1 ] && echo -waits)"
+    cs_dir="$ROOT/cs-cache/${digest:0:16}-$plan_id$([ "$ADAPTIVE" = 1 ] && echo -waits || true)"
   fi
   CS_DIR="$cs_dir"
   local pids=() what=() p s fail=0

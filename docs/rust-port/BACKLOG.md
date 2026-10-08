@@ -792,6 +792,10 @@ The rest is other groups' (E 18, I 23 and part of J are G's two new `GeneratedPl
 settings, `Charts` and `ChartCountry`, in every settings answer). Rust against Rust's one diff
 is `19-health/plant-wait` (R), the Navidrome scan timing the earlier records saw.
 
+After `rust/main` `61b1cfb` (F and P) was merged in, every crate file's test count matched
+`rust/main`'s apart from N's own additions (`git grep -c`), the gate passed (3,289 tests) and
+`parity/run.sh --only '1[128]-*'` (401 requests) had N at 0.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test

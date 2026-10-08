@@ -510,7 +510,7 @@ impl CoverArtService {
     }
 
     /// A picture's main colors, read from a small copy of it.
-    pub(crate) fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
+    pub fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
         let image = cover_image::decode(picture)?;
         // C# asked ImageSharp's decoder for a 64 by 64 target, which shrinks the picture to fit
         // inside it, keeping its shape, with a box filter; the triangle filter is the nearest

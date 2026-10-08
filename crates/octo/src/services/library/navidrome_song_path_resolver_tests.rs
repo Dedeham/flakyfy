@@ -267,3 +267,22 @@ fn full_paths_resolve_dots_lexically() {
     assert_eq!(extension("/x.d/Song"), "");
     assert_eq!(extension("/x/Song."), "");
 }
+
+/// NavidromeSongPathResolverTests.ASongsLengthIsReadWhetherNavidromeSendsAFractionOrWholeSeconds
+/// (ed0bd7c): Navidrome's /api/song sends 301.37; Subsonic's getSong sends 301.
+#[test]
+fn a_songs_length_is_read_whether_navidrome_sends_a_fraction_or_whole_seconds() {
+    for (body, seconds) in [
+        (r#"{"path":"a.flac","duration":301.37}"#, Some(301)),
+        (r#"{"path":"a.flac","duration":247.5}"#, Some(248)),
+        (r#"{"path":"a.flac","duration":330}"#, Some(330)),
+        (r#"{"path":"a.flac"}"#, None),
+    ] {
+        let json: Value = serde_json::from_str(body).expect("json");
+        let parsed =
+            NavidromeSongPathResolver::from_json(&json, "nd-1", PathSource::NativeApi, Some("libraryPath"))
+                .expect("parsed")
+                .expect("an object");
+        assert_eq!(parsed.duration, seconds, "{body}");
+    }
+}

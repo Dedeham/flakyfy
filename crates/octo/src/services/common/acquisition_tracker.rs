@@ -16,6 +16,7 @@ use futures::future::BoxFuture;
 use octo_core::common::Clock;
 use octo_core::common::acquisition_tracker::{fraction_of, user_safe};
 use octo_core::common::dotnet::{self, compare_ordinal_ignore_case, eq_ignore_case, to_lower_invariant};
+use octo_core::models::download::{AcquisitionCandidate, AcquisitionEvent};
 use parking_lot::Mutex;
 use tracing::{debug, info};
 
@@ -70,6 +71,18 @@ impl AcquisitionState {
     }
 }
 
+/// What a row is for. Sent to clients as is.
+pub mod acquisition_kinds {
+    /// A heart, a play or an album walk.
+    pub const DOWNLOAD: &str = "download";
+    /// A higher quality copy of a song already in the library.
+    pub const UPGRADE: &str = "upgrade";
+    /// The one copy someone picked from Find songs.
+    pub const PICK: &str = "pick";
+}
+
+pub use octo_core::models::download::acquisition_event::acquisition_event_kinds;
+
 /// One acquisition as a reader sees it. A copy, so it never changes under them.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AcquisitionSnapshot {
@@ -91,6 +104,17 @@ pub struct AcquisitionSnapshot {
     pub library_id: Option<String>,
     pub ahead: Option<i32>,
     pub note: Option<String>,
+    /// The row's own key ("provider:id"), which getAcquisition reads it by.
+    pub key: String,
+    /// What the row is for: [`acquisition_kinds`].
+    pub kind: String,
+    /// The copy being fetched, once one is chosen: its quality and its peer.
+    pub quality: Option<String>,
+    pub peer: Option<String>,
+    /// How many lines its log has.
+    pub log_lines: i32,
+    /// The log itself, oldest first; only [`AcquisitionTracker::detail`] fills it in.
+    pub events: Option<Vec<AcquisitionEvent>>,
 }
 
 /// How a row ended. `library_id` is set only for a song Navidrome showed; `album_keys` are
@@ -115,6 +139,10 @@ pub type Rescan = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 
 /// Told when a row ends (the C# `Ended` event).
 pub type EndedListener = Arc<dyn Fn(&AcquisitionEnd) + Send + Sync>;
+
+/// Told, with the row's key, when a line arrives for a row that has already ended (the C#
+/// `LoggedAfterEnd` event).
+pub type LoggedAfterEndListener = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// What the tracker looks in Navidrome with: the services the C# resolved lazily from its
 /// `IServiceProvider` when a song was imported. None of them depends on the tracker, so they
@@ -196,6 +224,18 @@ struct Entry {
     /// Bumped on every restart, so a watcher left over from an earlier run of the
     /// same song can never finish the new one.
     run: i32,
+
+    kind: String,
+
+    /// The copy being fetched, once one is chosen: its quality and its peer.
+    quality: Option<String>,
+    peer: Option<String>,
+
+    /// The log of this run, oldest first.
+    events: Vec<AcquisitionEvent>,
+
+    /// The source the log last said it was looking on, so it says so once.
+    logged_source: Option<String>,
 }
 
 impl Entry {
@@ -219,7 +259,9 @@ struct State {
 }
 
 /// Live progress of every hearted download, from the moment the star is accepted until a while
-/// after it ends, so a client can draw a ring on the button it was tapped on.
+/// after it ends, so a client can draw a ring on the button it was tapped on. Each row keeps a
+/// log of what happened on the way (the searches, the copies found, the one chosen and why, the
+/// checks, the tags, the cover and the lyrics), which the apps' downloads drawer shows.
 ///
 /// Observation only. Nothing in the download path reads it back, and no method here fails: a
 /// bookkeeping mistake must never cost anyone a song. Held in memory and gone on a restart,
@@ -233,6 +275,7 @@ pub struct AcquisitionTracker {
     clock: Clock,
     watch: Mutex<WatchSettings>,
     listeners: Mutex<Vec<(u64, EndedListener)>>,
+    logged_after_end: Mutex<Vec<(u64, LoggedAfterEndListener)>>,
     next_listener: AtomicU64,
 }
 
@@ -274,7 +317,14 @@ fn blank(value: &str) -> bool {
 
 impl AcquisitionTracker {
     /// How long a finished or failed entry stays visible.
-    pub const FINISHED_RETENTION: TimeDelta = TimeDelta::minutes(30);
+    pub const FINISHED_RETENTION: TimeDelta = TimeDelta::hours(3);
+
+    /// Lines kept per run of a download. A walk of five peers with every check logs about
+    /// thirty; past this the oldest lines after the first go.
+    pub const MAX_EVENTS: usize = 150;
+
+    /// Copies kept on one line of the log.
+    pub const MAX_CANDIDATES_PER_EVENT: usize = 30;
 
     /// How long an entry that is still running may go without any news before it is dropped.
     /// Generous on purpose: a star can wait behind a whole album for hours. This only exists so
@@ -292,8 +342,18 @@ impl AcquisitionTracker {
             clock,
             watch: Mutex::new(WatchSettings::default()),
             listeners: Mutex::new(Vec::new()),
+            logged_after_end: Mutex::new(Vec::new()),
             next_listener: AtomicU64::new(1),
         }
+    }
+
+    /// Subscribes to lines that arrive for a row that has already ended (lyrics, an upgrade's
+    /// verdict), told the row's key outside the lock, so a saved copy of the log can catch up
+    /// (`LoggedAfterEnd += listener`). A listener that panics is logged and skipped.
+    pub fn subscribe_logged_after_end(&self, listener: LoggedAfterEndListener) -> u64 {
+        let id = self.next_listener.fetch_add(1, Ordering::SeqCst);
+        self.logged_after_end.lock().push((id, listener));
+        id
     }
 
     /// Changes how an imported song is watched for (the C# internal properties).
@@ -335,17 +395,61 @@ impl AcquisitionTracker {
         title: Option<&str>,
         album: Option<&str>,
     ) {
+        self.begin_kind(
+            provider,
+            external_id,
+            client_id,
+            requested_by,
+            artist,
+            title,
+            album,
+            acquisition_kinds::DOWNLOAD,
+        );
+    }
+
+    /// [`Self::begin`] for a row of another kind: an upgrade, or a pick from Find songs (the
+    /// C# `kind` argument).
+    #[allow(clippy::too_many_arguments)] // the C# signature, member for member
+    pub fn begin_kind(
+        &self,
+        provider: &str,
+        external_id: &str,
+        client_id: Option<&str>,
+        requested_by: Option<&str>,
+        artist: Option<&str>,
+        title: Option<&str>,
+        album: Option<&str>,
+        kind: &str,
+    ) {
         if blank(provider) || blank(external_id) {
             return;
         }
         let now = self.now();
         let mut state = self.state.lock();
+        let fresh = state
+            .entries
+            .get(&key_of(provider, external_id))
+            .is_none_or(Entry::finished);
         let entry = open(&mut state, provider, external_id, true, now);
         if let Some(client_id) = client_id.filter(|c| !blank(c)) {
             entry.client_id = Some(client_id.to_string());
         }
+        // A heart joining a pick or an upgrade does not make it a plain download.
+        if fresh || kind != acquisition_kinds::DOWNLOAD {
+            entry.kind = kind.to_string();
+        }
         add_owner(&mut entry.owners, requested_by);
         name(entry, artist, title, album);
+        // No name on the line: a row is shared by everyone who asked for the song, and each of
+        // them reads the same log.
+        if fresh {
+            let text = match kind {
+                acquisition_kinds::UPGRADE => "Asked for a higher quality copy",
+                acquisition_kinds::PICK => "Asked for the copy you picked",
+                _ => "Asked for",
+            };
+            add(entry, now, acquisition_event_kinds::QUEUED, text, None, None);
+        }
         prune(&mut state, now);
     }
 
@@ -429,6 +533,20 @@ impl AcquisitionTracker {
             };
             union_owners(&mut entry.owners, &owners);
             name(entry, artist.as_deref(), title.as_deref(), album.as_deref());
+            if restart {
+                let from = album
+                    .as_deref()
+                    .filter(|album| !album.is_empty())
+                    .map(|album| format!("From {album}"));
+                add(
+                    entry,
+                    now,
+                    acquisition_event_kinds::QUEUED,
+                    "Asked for with its album",
+                    from.as_deref(),
+                    None,
+                );
+            }
         }
         if let Some(claim) = claim_key.as_deref().and_then(|k| state.albums.get_mut(k)) {
             claim.updated_at = now;
@@ -456,7 +574,9 @@ impl AcquisitionTracker {
             AcquisitionState::Failed => return self.fail(provider, external_id, None),
             _ => {}
         }
+        let now = self.now();
         self.update(provider, external_id, true, |entry| {
+            let was = entry.state;
             // Back to looking means the last transfer is gone, whatever it had reached.
             if matches!(state, AcquisitionState::Queued | AcquisitionState::Searching) {
                 entry.bytes_done = None;
@@ -467,8 +587,47 @@ impl AcquisitionTracker {
             if let Some(source) = source.filter(|s| !blank(s)) {
                 entry.source = Some(source.to_string());
             }
-            if let Some(note) = note.filter(|n| !blank(n)) {
+            if let Some(note) = note.filter(|n| !blank(n) && entry.note.as_deref() != Some(n.trim())) {
                 entry.note = Some(note.trim().to_string());
+                add(entry, now, acquisition_event_kinds::NOTE, note.trim(), None, None);
+            }
+            if let Some(source) = source.filter(|s| {
+                state == AcquisitionState::Searching
+                    && !blank(s)
+                    && !entry
+                        .logged_source
+                        .as_deref()
+                        .is_some_and(|logged| eq_ignore_case(logged, s))
+            }) {
+                entry.logged_source = Some(source.to_string());
+                add(
+                    entry,
+                    now,
+                    acquisition_event_kinds::SEARCH,
+                    &format!("Looking on {source}"),
+                    None,
+                    None,
+                );
+            }
+            if state == AcquisitionState::Verifying && was != AcquisitionState::Verifying {
+                add(
+                    entry,
+                    now,
+                    acquisition_event_kinds::CHECK,
+                    "Checking the file",
+                    None,
+                    None,
+                );
+            }
+            if state == AcquisitionState::Importing && was != AcquisitionState::Importing {
+                add(
+                    entry,
+                    now,
+                    acquisition_event_kinds::TAGS,
+                    "Naming, tagging and filing it",
+                    None,
+                    None,
+                );
             }
         });
     }
@@ -500,7 +659,30 @@ impl AcquisitionTracker {
         percent_complete: Option<f64>,
         source: Option<&str>,
     ) {
+        let now = self.now();
         self.update(provider, external_id, true, |entry| {
+            if entry.state != AcquisitionState::Downloading {
+                let from = source
+                    .filter(|s| !blank(s))
+                    .map(str::to_string)
+                    .or_else(|| entry.source.clone());
+                let text = match (&from, &entry.peer) {
+                    (None, _) => "Downloading".to_string(),
+                    (Some(from), Some(who)) if from == "Soulseek" => {
+                        format!("Downloading from {from} ({who})")
+                    }
+                    (Some(from), _) => format!("Downloading from {from}"),
+                };
+                let size = bytes_total.filter(|total| *total > 0).map(size_text);
+                add(
+                    entry,
+                    now,
+                    acquisition_event_kinds::TRANSFER,
+                    &text,
+                    size.as_deref(),
+                    None,
+                );
+            }
             entry.state = AcquisitionState::Downloading;
             if let Some(source) = source.filter(|s| !blank(s)) {
                 entry.source = Some(source.to_string());
@@ -532,6 +714,14 @@ impl AcquisitionTracker {
             entry.state = AcquisitionState::Importing;
             entry.progress = None;
             entry.updated_at = now;
+            add(
+                entry,
+                now,
+                acquisition_event_kinds::LIBRARY,
+                "In the library folder",
+                Some("Waiting for Navidrome to show it"),
+                None,
+            );
             // A song found already in the library arrives here before anything named it.
             let artist = artist
                 .filter(|a| !blank(a))
@@ -596,6 +786,15 @@ impl AcquisitionTracker {
             entry.progress = None;
             entry.error = Some(user_safe(error).unwrap_or_else(|| "The download failed.".to_string()));
             entry.updated_at = now;
+            let error = entry.error.clone();
+            add(
+                entry,
+                now,
+                acquisition_event_kinds::FAILED,
+                "Could not get it",
+                error.as_deref(),
+                None,
+            );
             end_of(&state, &key)
         };
         self.raise(ended);
@@ -614,6 +813,181 @@ impl AcquisitionTracker {
             if let Some((provider, external_id)) = key.split_once(':') {
                 self.fail(provider, external_id, error);
             }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The log. Unlike the stages, a line may be added to a row that has finished: lyrics are
+    // looked for after the song is in, and an upgrade's verdict comes after its download.
+    // ---------------------------------------------------------------------------------------
+
+    /// One line in a row's log, for this run of it.
+    pub fn log(&self, provider: &str, external_id: &str, kind: &str, text: &str, detail: Option<&str>) {
+        if blank(provider) || blank(external_id) || blank(text) {
+            return;
+        }
+        let key = key_of(provider, external_id);
+        let after_end = {
+            let now = self.now();
+            let mut state = self.state.lock();
+            let Some(entry) = state.entries.get_mut(&key) else {
+                return;
+            };
+            add(entry, now, kind, text, detail, None);
+            entry.finished()
+        };
+        if after_end {
+            let listeners: Vec<LoggedAfterEndListener> = self
+                .logged_after_end
+                .lock()
+                .iter()
+                .map(|(_, l)| l.clone())
+                .collect();
+            for listener in listeners {
+                if catch_unwind(AssertUnwindSafe(|| listener(&key))).is_err() {
+                    debug!("Acquisition log listener failed");
+                }
+            }
+        }
+    }
+
+    /// What a search found: a line with the copies on it, best first.
+    pub fn found(
+        &self,
+        provider: &str,
+        external_id: &str,
+        text: &str,
+        candidates: Vec<AcquisitionCandidate>,
+        detail: Option<&str>,
+    ) {
+        if blank(provider) || blank(external_id) {
+            return;
+        }
+        let now = self.now();
+        let mut state = self.state.lock();
+        let Some(entry) = state
+            .entries
+            .get_mut(&key_of(provider, external_id))
+            .filter(|e| !e.finished())
+        else {
+            return;
+        };
+        let kept: Vec<AcquisitionCandidate> = candidates
+            .into_iter()
+            .take(Self::MAX_CANDIDATES_PER_EVENT)
+            .collect();
+        add(
+            entry,
+            now,
+            acquisition_event_kinds::FOUND,
+            text,
+            detail,
+            Some(kept),
+        );
+    }
+
+    /// The copy being tried now, and why it was chosen. The row shows its quality and peer from
+    /// here on.
+    pub fn trying(
+        &self,
+        provider: &str,
+        external_id: &str,
+        candidate: AcquisitionCandidate,
+        text: &str,
+        why: Option<&str>,
+    ) {
+        if blank(provider) || blank(external_id) {
+            return;
+        }
+        let now = self.now();
+        let mut state = self.state.lock();
+        let Some(entry) = state
+            .entries
+            .get_mut(&key_of(provider, external_id))
+            .filter(|e| !e.finished())
+        else {
+            return;
+        };
+        entry.quality = candidate.quality();
+        entry.peer = candidate.peer.clone();
+        entry.updated_at = now;
+        add(
+            entry,
+            now,
+            acquisition_event_kinds::TRY,
+            text,
+            why,
+            Some(vec![candidate]),
+        );
+    }
+
+    /// Whether the row with this key is still running.
+    pub fn is_running(&self, key: &str) -> bool {
+        self.state
+            .lock()
+            .entries
+            .get(key)
+            .is_some_and(|entry| !entry.finished())
+    }
+
+    /// One row with its whole log, when this user may see it (or anyone, for None).
+    pub fn detail(&self, key: &str, username: Option<&str>) -> Option<AcquisitionSnapshot> {
+        let state = self.state.lock();
+        let entry = state.entries.get(key)?;
+        if let Some(username) = username
+            && !entry.owners.iter().any(|o| eq_ignore_case(o, username.trim()))
+        {
+            return None;
+        }
+        let running: Vec<(i64, &Entry)> = state
+            .entries
+            .values()
+            .filter(|other| !other.finished())
+            .map(|other| (other.seq, other))
+            .collect();
+        Some(snapshot(entry, ahead_of(entry, &running), true))
+    }
+
+    /// Takes finished rows off this user's list, or the one row named. A row someone else
+    /// still sees stays for them; one nobody sees goes. A row still running is never cleared.
+    /// Answers how many left this user's list.
+    pub fn clear(&self, username: &str, key: Option<&str>) -> i32 {
+        if blank(username) {
+            return 0;
+        }
+        let who = username.trim();
+        let mut state = self.state.lock();
+        let mut cleared = 0;
+        let keys: Vec<String> = state.entries.keys().cloned().collect();
+        for entry_key in keys {
+            if key.is_some_and(|key| key != entry_key) {
+                continue;
+            }
+            let Some(entry) = state.entries.get_mut(&entry_key) else {
+                continue;
+            };
+            if !entry.finished() || !entry.owners.iter().any(|o| eq_ignore_case(o, who)) {
+                continue;
+            }
+            entry.owners.retain(|o| !eq_ignore_case(o, who));
+            cleared += 1;
+            if entry.owners.is_empty() {
+                state.entries.remove(&entry_key);
+            }
+        }
+        cleared
+    }
+
+    /// A line for one run only, from a watcher that may outlive it.
+    fn log_run(&self, key: &str, run: i32, kind: &str, text: &str) {
+        let now = self.now();
+        let mut state = self.state.lock();
+        if let Some(entry) = state
+            .entries
+            .get_mut(key)
+            .filter(|e| e.run == run && !e.finished())
+        {
+            add(entry, now, kind, text, None, None);
         }
     }
 
@@ -652,7 +1026,7 @@ impl AcquisitionTracker {
         // OrderByDescending(StartedAt), stable.
         rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));
         rows.into_iter()
-            .map(|entry| snapshot(entry, ahead_of(entry, &running)))
+            .map(|entry| snapshot(entry, ahead_of(entry, &running), false))
             .collect()
     }
 
@@ -698,6 +1072,18 @@ impl AcquisitionTracker {
                 entry.library_id = Some(library_id.to_string());
             }
             entry.updated_at = now;
+            let not_shown = entry
+                .library_id
+                .is_none()
+                .then_some("Navidrome has not shown it yet; it appears after its next scan");
+            add(
+                entry,
+                now,
+                acquisition_event_kinds::DONE,
+                "In your library",
+                not_shown,
+                None,
+            );
             end_of(&state, key)
         };
         self.raise(ended);
@@ -735,6 +1121,12 @@ impl AcquisitionTracker {
                 .await;
             }
             if attempt > 0 && attempt == watch.rescan_after_attempts {
+                self.log_run(
+                    &key,
+                    run,
+                    acquisition_event_kinds::LIBRARY,
+                    "Navidrome had not shown it yet, so Octo asked it to scan again",
+                );
                 self.rescan_once(&path, watch.rescan.clone()).await;
             }
             {
@@ -833,6 +1225,11 @@ fn open<'a>(
         entry.error = None;
         entry.library_id = None;
         entry.note = None;
+        entry.kind = acquisition_kinds::DOWNLOAD.to_string();
+        entry.quality = None;
+        entry.peer = None;
+        entry.logged_source = None;
+        entry.events.clear();
     } else {
         state.entries.set(
             key.clone(),
@@ -856,6 +1253,11 @@ fn open<'a>(
                 note: None,
                 seq,
                 run: 0,
+                kind: acquisition_kinds::DOWNLOAD.to_string(),
+                quality: None,
+                peer: None,
+                events: Vec::new(),
+                logged_source: None,
             },
         );
     }
@@ -930,7 +1332,38 @@ fn prune(state: &mut State, now: DateTime<Utc>) {
     }
 }
 
-fn snapshot(entry: &Entry, ahead: Option<i32>) -> AcquisitionSnapshot {
+/// Adds a line. Caller holds the lock. Past the cap the oldest lines after the first go, so the
+/// log still says how it began.
+fn add(
+    entry: &mut Entry,
+    now: DateTime<Utc>,
+    kind: &str,
+    text: &str,
+    detail: Option<&str>,
+    candidates: Option<Vec<AcquisitionCandidate>>,
+) {
+    entry.events.push(AcquisitionEvent {
+        at: now,
+        kind: kind.to_string(),
+        text: text.trim().to_string(),
+        detail: detail.filter(|d| !blank(d)).map(|d| d.trim().to_string()),
+        candidates: candidates.filter(|copies| !copies.is_empty()),
+    });
+    if entry.events.len() > AcquisitionTracker::MAX_EVENTS {
+        entry.events.remove(1);
+    }
+}
+
+/// "31.4 MB".
+pub fn size_text(bytes: i64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{} MB", dotnet::format_fixed(bytes as f64 / 1_048_576.0, 1))
+    } else {
+        format!("{} KB", (bytes / 1024).max(1))
+    }
+}
+
+fn snapshot(entry: &Entry, ahead: Option<i32>, with_events: bool) -> AcquisitionSnapshot {
     let mut owners = entry.owners.clone();
     owners.sort_by(|a, b| compare_ordinal_ignore_case(a, b));
     AcquisitionSnapshot {
@@ -955,6 +1388,12 @@ fn snapshot(entry: &Entry, ahead: Option<i32>) -> AcquisitionSnapshot {
         library_id: entry.library_id.clone(),
         ahead,
         note: entry.note.clone(),
+        key: key_of(&entry.provider, &entry.external_id),
+        kind: entry.kind.clone(),
+        quality: entry.quality.clone(),
+        peer: entry.peer.clone(),
+        log_lines: entry.events.len() as i32,
+        events: with_events.then(|| entry.events.clone()),
     }
 }
 

@@ -47,16 +47,18 @@ pub type Fields = Map<String, Value>;
 pub const SUBSONIC_NAMESPACE: &str = "http://subsonic.org/restapi";
 pub const SUBSONIC_VERSION: &str = "1.16.1";
 
-/// The OpenSubsonic extension a client checks for before it asks for getAcquisitions.
+/// The OpenSubsonic extension a client checks for before it asks for getAcquisitions. Version 2
+/// adds each row's log (getAcquisition), clearing finished rows (clearAcquisitions) and Find
+/// songs (findSongs, getFoundSongs, pickFoundSong).
 pub const ACQUISITIONS_EXTENSION: &str = "octoAcquisitions";
-pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 1;
+pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 2;
 
 /// The extensions Octo answers itself, with their versions. songLyrics is here because Octo
 /// answers getLyricsBySongId for every song, and for the ones it answers itself it honors
 /// enhanced=true (version 2) with word cues; a Navidrome that lists fewer versions has them
 /// added, never removed.
 pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
-    (ACQUISITIONS_EXTENSION, &[ACQUISITIONS_EXTENSION_VERSION]),
+    (ACQUISITIONS_EXTENSION, &[1, ACQUISITIONS_EXTENSION_VERSION]),
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
     (LIBRARY_ACTIONS_EXTENSION, &[1, LIBRARY_ACTIONS_EXTENSION_VERSION]),
     ("songLyrics", &[1, 2]),

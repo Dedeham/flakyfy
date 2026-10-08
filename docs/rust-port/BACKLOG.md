@@ -400,11 +400,54 @@ lists the planted songs.
 The harness now compiles in WSL by default (`parity/lxc131.sh`, `box-run.sh
 --prebuilt`, README "Compile in WSL"); `--box-build` is the old way.
 
+### G2 record: groups C, O and Q (2026-10-07)
+
+Run on LXC 131 from `port/g2-coq` (`be07a5f`, merged with `rust/main` `13c48b5`) with
+`parity/lxc131.sh --rust-twice`: the binary compiled in WSL, against the cached C# recording of
+the corpus (1,837 requests). The box run outlived the local script, which stopped at its two
+hour limit, and `box-run.sh` stopped with it before the C# against Rust diff; that diff was
+then run on the box by hand with the same arguments.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 786 unexplained (809 after J and I), 1,026 explained, 25 identical |
+| Rust against Rust | 1,837 identical, 0 unexplained |
+
+| Group | Own before (phase 1) | Own after J and I | Own after | Diffs before (phase 1) | Diffs after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| C | 15 | 12 | 9 | 15 | 9 |
+| O | 20 | 20 | 17 | 26 | 0 |
+| Q | 14 | 12 | 5 | 63 | 12 |
+
+What is left is other groups' work, none of it C's, O's or Q's own:
+
+- C 9: all `95-acquisition` (`heart-neon-*`, `pick-lima-*`). They wait on D's
+  `getAcquisition` (404 in Rust), D's Find songs pick and the download log's `Key` and `Log`,
+  and two `getSong` requests miss a capture those requests make. The tagging itself matches:
+  the five `17-covers-explicit/tags-preview-*` requests (C and J) are identical now that J's
+  headers are in.
+- O 17 own, 0 diffs: every differing part of those requests is put on another group.
+- Q 5 own, 12 diffs: `16-lists/listener-popular-*` (4) and the first list in
+  `listener-playlists-lists-*` are G's Popular right now; `16-lists/extensions-*` (4) differ by
+  G's `octoTopSongs`, H's `octoImports` and a second version of an earlier extension; the two
+  `12-imports/nd-find-playlist-*` miss H's imported playlist, while the Deep Cuts list Octo
+  makes beside it matches. `groups.json` puts Popular right now on Q as well as G.
+
+No group got worse against the J and I record: B 11, D 110, E 21, F 128, G 47 (48), H 201
+(202), I 3, J 3 (6), L 45, N 14, P 68, R 97, base 29 (35); A, K and S 0. R is tagged on 151
+requests (150) with the corpus's `plant-scan-done`. The proposed intentional diff
+`isrc-clear-takes-the-tag-off` matched its one aspect (`20-library-edits/tags-copy-undone`, an
+F request); with it reviewed that request no longer differs for the ISRC.
+
+Made for you list order was left out of the gate, as planned; Rust against Rust is 0 on the
+whole corpus all the same.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
-group that differ from C# 2026.10.05): the G1 J and I record above, proposed
+group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
+and Q record for those three), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -412,7 +455,7 @@ Rust change.
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | done |
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
-| C Tagging polish | 4 | 465 | 24 | 1.0 | 12 | open |
+| C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 21 | open |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
@@ -424,9 +467,9 @@ Rust change.
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 45 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
 | N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
-| O Search album ownership | 1 | 808 | 23 | 0.5 | 20 | open |
+| O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
-| Q Made for you lists | 3 | 887 | 26 | 0.75 | 12 | open |
+| Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
 | R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
@@ -460,7 +503,7 @@ writer does. What the later groups find waiting for them:
 | B, D | `DownloadHistoryEntry.key` and `log` (`octo_core::models::download::{AcquisitionEvent, AcquisitionCandidate}`, with `Quality`); `PickedCopy` (`services::common::download_picks`) and `UpgradeJob.pick`. `base_download_service` records `key: None` (STUB(D)). `GET /api/admin/downloads` already drops `log` and says `hasLog`. |
 | E | `Soulseek.WebUrl` (`safe_web_url`), `CheckListenPort`, `ShareLibrary`, `SharedFolders` (`shared_folder_list`); the save's WebUrl check and the slskd password rules (9f9502d's admin side). |
 | F | `services::library::library_tag_edits` (`TagEditEntry`, the file); `LibraryActionEntry.copy`, `download_allowed`, `blocks_downloads()` (the journal's never-requested check uses it); `LibraryActionState::Restored`; `QuarantineManifest.sidecars` and `mappings` (written null, STUB(F)). |
-| G, Q | `GeneratedPlaylists.PopularNow`, the Made for you switches and clamps (`any_for_you`); `UserMixes.for_you` and `for_you_covers` (empty, STUB(Q)). |
+| G, Q | `GeneratedPlaylists.PopularNow`, the Made for you switches and clamps (`any_for_you`); `UserMixes.for_you` and `for_you_covers` (filled by Q in G2). |
 | H | `Imports` settings; `services::imports` (`ImportList`, `ImportTrack`, `TrickleJob`, the three files' load and save). |
 | L | `RadioSources` settings (`effective_weight`); `services::radio::radio_outcome_store` and `services::sonic::sonic_store`; `LastFmRadioBan`; the status page's octo-sonic probe. |
 | P | `SoulseekRouting.explicit_content` and `version`, the clean id rule and the explicit mark kept across registrations; `services::library::explicit_backfill_store`. |
@@ -487,10 +530,12 @@ writer does. What the later groups find waiting for them:
 
 ### C. Tagging polish (one album's facts, explicit advisory, Try it)
 
-- [ ] `2463c23` feat(tagging): a download keeps only its own album's facts, one value per field, and says whether it is explicit
-- [ ] `67f56fa` docs(readme): what a download loses from a peer's tags, DISCTOTAL and the explicit advisory
-- [ ] `099fdd3` feat(tagging): Try it on a song shows whether the song is explicit and what a download would take off the file
-- [ ] `a60f06c` docs(readme): Try it on a song shows the advisory and what a download would take off
+- [x] `2463c23` feat(tagging): a download keeps only its own album's facts, one value per field, and says whether it is explicit
+- [x] `67f56fa` docs(readme): what a download loses from a peer's tags, DISCTOTAL and the explicit advisory
+- [x] `099fdd3` feat(tagging): Try it on a song shows whether the song is explicit and what a download would take off the file
+- [x] `a60f06c` docs(readme): Try it on a song shows the advisory and what a download would take off
+  (the `LogStep` lines `02cc06b` added to these paths are D's; the cover chain's `CoversOnHand` is
+  P's, and C passes no embedded art for a song filed elsewhere, as `2463c23` did)
 
 ### D. Download log, drawer, Find songs picks
 
@@ -533,9 +578,15 @@ writer does. What the later groups find waiting for them:
   (`TagWriterExtras.cs:98-101` returns on an empty value), so undoing an ISRC
   retag answers `isrc: null` and leaves the tag in the file; remove the tag
   (group C's tag writing is the same code), with a Rust test and an
-  intentional diff.
+  intentional diff. Done in G2 with C: the shared tag writer clears it
+  (`tag_writer_extras::set_or_clear_text`, test
+  `clearing_an_isrc_takes_it_off_the_file`), and the proposed intentional diff
+  is `isrc-clear-takes-the-tag-off`; F's tag edits only need to call it.
 
 - [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
+  (G2: `LibraryTagEdits.Set` must write through `tag_writer_extras::set_or_clear_text`, so a
+  cleared field, an ISRC above all, leaves the file; the port-only fix and its intentional diff
+  `isrc-clear-takes-the-tag-off` are in place)
 - [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
 - [ ] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
 - [ ] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
@@ -549,6 +600,8 @@ writer does. What the later groups find waiting for them:
 ### G. Top songs, charts, Popular right now
 
 - [ ] `3e35798` feat(search): an artist's top songs and the chart of the moment, ranked and marked in the library
+  (G2: `TopSongsService.CatalogSong` is `services::library::for_you_lists::catalog_song`, marked
+  `STUB(G)`; New Releases shares it, so `TopSongsService` calls it or replaces it there)
 - [ ] `3d5bea4` feat(top-songs): every app's getTopSongs ranked by Octo, the caller's songs as their own
 - [ ] `43d8325` feat(lists): Popular right now, the chart as a playlist in every app
 - [ ] `2397369` docs(lists): US spelling in a Popular right now comment
@@ -641,7 +694,7 @@ No Rust server change: both are their own images.
 
 ### O. Search album ownership
 
-- [ ] `f49fb80` fix(search): an outside album the library holds is listed as the library's, and one held in part says how much
+- [x] `f49fb80` fix(search): an outside album the library holds is listed as the library's, and one held in part says how much
 
 ### P. Covers keep-or-replace, explicit marks and backfill
 
@@ -661,13 +714,17 @@ No Rust server change: both are their own images.
 
 ### Q. Made for you lists
 
-- [ ] `f54467a` feat(lists): Made for you, three lists per listener from their own plays
-- [ ] `1f940f2` fix(lists): only artists a listener played or hearted are theirs, and a shared song filed under their artist is their copy
-- [ ] `452f47e` fix(lists): Check Mode on Made for you
+- [x] `f54467a` feat(lists): Made for you, three lists per listener from their own plays
+- [x] `1f940f2` fix(lists): only artists a listener played or hearted are theirs, and a shared song filed under their artist is their copy
+- [x] `452f47e` fix(lists): Check Mode on Made for you
+  (the Made for you settings came from g1-core's `generated_playlist.rs` as it wrote them, with its
+  admin settings and raw-config rows, so the two merge cleanly)
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 
 - [ ] `69f577f` feat(health): Library health findings and fixes on the server
+  (G2: `LibrarySnapshot` and `LibraryAlbumIndex` are O's, at `f49fb80`; R adds `ReadAtUtc`,
+  `RefreshAsync`, `Rows` and the song row's health fields)
 - [ ] `e36d823` fix(health): check songs in the order the apps read them
 - [ ] `c156710` feat(admin): Library health page on the dashboard
 - [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard

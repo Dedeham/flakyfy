@@ -42,9 +42,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<DynamicImage> {
         .ok()
 }
 
-/// A picture as a JPEG at `quality`, with no chroma subsampling (the only kind the `image`
-/// encoder writes).
+/// A picture as a JPEG at `quality` with 4:2:0 chroma, as ImageSharp wrote a JPEG whose color
+/// type was not set (`super::jpeg_420`).
 pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
+    super::jpeg_420::encode(&image.to_rgb8(), quality)
+}
+
+/// A picture as a JPEG at `quality` with full-size chroma (4:4:4), for the list covers the C#
+/// encoded with `JpegEncodingColor.YCbCrRatio444`.
+pub(crate) fn encode_jpeg_444(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     JpegEncoder::new_with_quality(&mut output, quality)
         .encode_image(&image.to_rgb8())

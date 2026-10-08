@@ -13,6 +13,7 @@ pub mod cover_layout;
 pub mod cover_painter;
 pub mod cover_veil;
 mod design;
+mod jpeg_420;
 mod text;
 
 pub use cover_art_service::{CoverArtService, CoverSeed, ListCover, list_kinds};

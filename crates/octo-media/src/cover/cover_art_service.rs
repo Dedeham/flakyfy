@@ -430,7 +430,7 @@ impl CoverArtService {
     /// The cover as the server serves it: painted, then a JPEG.
     pub(crate) fn render(&self, spec: &CoverSpec, size: i32, draw_words: bool) -> anyhow::Result<Vec<u8>> {
         let image = self.paint(spec, size, draw_words)?;
-        cover_image::encode_jpeg(&DynamicImage::ImageRgb8(image), JPEG_QUALITY)
+        cover_image::encode_jpeg_444(&DynamicImage::ImageRgb8(image), JPEG_QUALITY)
             .ok_or_else(|| anyhow::anyhow!("the cover does not encode"))
     }
 
@@ -580,7 +580,7 @@ impl CoverArtService {
         );
         let size = size.max(1) as u32;
         let sized = square.resize_exact(size, size, FilterType::CatmullRom);
-        cover_image::encode_jpeg(&sized, JPEG_QUALITY)
+        cover_image::encode_jpeg_444(&sized, JPEG_QUALITY)
     }
 }
 

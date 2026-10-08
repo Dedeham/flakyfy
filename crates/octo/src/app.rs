@@ -62,6 +62,9 @@ use crate::services::last_fm::{
     LastFmService, RandomRadioTuneInSelector,
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
+use crate::services::library::explicit_backfill::{
+    ExplicitBackfill, ExplicitBackfillServices, ExplicitBackfillStore,
+};
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
@@ -89,7 +92,9 @@ use crate::services::lyrics::{
     LyricsChoiceService, LyricsChoiceStore, LyricsLibraryStore, LyricsLibraryWorker, LyricsService,
     LyricsSidecarWriter, LyricsUndoJournal, lyrics_http,
 };
-use crate::services::metadata::{DeezerMetadataService, DeezerRateLimitHandler, DeezerRateLimiter};
+use crate::services::metadata::{
+    DeezerExplicitCatalog, DeezerMetadataService, DeezerRateLimitHandler, DeezerRateLimiter,
+};
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
 use crate::services::soulseek::soulseek_download_service::{SoulseekDownloadParts, SoulseekDownloadService};
@@ -170,6 +175,10 @@ pub struct AppInner {
     pub cover_upgrade_journal: Arc<CoverUpgradeJournal>,
     /// `CoverUpgradeWorker`, singleton and hosted: its queue is the "CoverUpgradeWorker" worker.
     pub cover_upgrade_worker: Arc<CoverUpgradeWorker>,
+    /// `ExplicitBackfill`, singleton and hosted ("Mark explicit songs"): its queue is the
+    /// "ExplicitBackfill" worker, and its store's coalescing flush (a timer in C#) the
+    /// "ExplicitBackfillStore" worker, `<config>/explicit-backfill.json`.
+    pub explicit_backfill: Arc<ExplicitBackfill>,
     /// `UpdateHost`: the handshake files with the host updater, `<config>/update/`.
     pub update_host: Arc<UpdateHost>,
     /// `IHostApplicationLifetime`: cancel it (see [`AppInner::stop_application`]) to shut the
@@ -1097,6 +1106,8 @@ struct GenreAndCoverJobs {
     cover_upgrade_store: Arc<CoverUpgradeStore>,
     cover_upgrade_journal: Arc<CoverUpgradeJournal>,
     cover_upgrade_worker: Arc<CoverUpgradeWorker>,
+    explicit_backfill_store: Arc<ExplicitBackfillStore>,
+    explicit_backfill: Arc<ExplicitBackfill>,
 }
 
 impl GenreAndCoverJobs {
@@ -1105,6 +1116,7 @@ impl GenreAndCoverJobs {
         config_dir: Option<&Path>,
         navidrome: &NavidromeServices,
         clients: &MetadataClients,
+        tag_edit_journal: &Arc<TagEditJournal>,
     ) -> GenreAndCoverJobs {
         // Genre backfill state lives beside the other config-dir files so a run survives a
         // restart and can be resumed deliberately rather than silently restarting.
@@ -1146,6 +1158,22 @@ impl GenreAndCoverJobs {
                 http: Some(navidrome.http.clone()),
             },
         ));
+        // Marking the library explicit or clean: a preview, then the writes it found, journaled
+        // in tag-edits.json like the apps' edits so a run (or one song) can be undone.
+        let explicit_backfill_store = Arc::new(ExplicitBackfillStore::new(
+            config_dir.map(|dir| dir.join("explicit-backfill.json")),
+        ));
+        let explicit_backfill = Arc::new(ExplicitBackfill::new(
+            explicit_backfill_store.clone(),
+            tag_edit_journal.clone(),
+            Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
+            settings.clone(),
+            ExplicitBackfillServices {
+                identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
+                http: Some(navidrome.http.clone()),
+                library: Some(navidrome.local_library.clone()),
+            },
+        ));
         GenreAndCoverJobs {
             genre_backfill_store,
             genre_backfill_journal,
@@ -1154,6 +1182,8 @@ impl GenreAndCoverJobs {
             cover_upgrade_store,
             cover_upgrade_journal,
             cover_upgrade_worker,
+            explicit_backfill_store,
+            explicit_backfill,
         }
     }
 
@@ -1183,6 +1213,16 @@ impl GenreAndCoverJobs {
         });
         let worker = self.cover_upgrade_worker.clone();
         workers.register("CoverUpgradeWorker", move |stopping| worker.clone().run(stopping));
+        let store = self.explicit_backfill_store.clone();
+        workers.register("ExplicitBackfillStore", move |stopping| {
+            let store = store.clone();
+            async move {
+                store.run_flusher(stopping).await;
+                Ok(())
+            }
+        });
+        let worker = self.explicit_backfill.clone();
+        workers.register("ExplicitBackfill", move |stopping| worker.clone().run(stopping));
     }
 }
 
@@ -1609,7 +1649,13 @@ impl AppState {
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, Some(&config_dir), &navidrome);
         lyrics_library.register_workers(&workers);
-        let genre_cover_jobs = GenreAndCoverJobs::build(&settings, Some(&config_dir), &navidrome, &clients);
+        let genre_cover_jobs = GenreAndCoverJobs::build(
+            &settings,
+            Some(&config_dir),
+            &navidrome,
+            &clients,
+            &stores.tag_edit_journal,
+        );
         genre_cover_jobs.register_workers(&workers);
         let acquisition = Acquisition::build(
             &settings,
@@ -1698,6 +1744,7 @@ impl AppState {
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
+            explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
@@ -1853,7 +1900,8 @@ impl AppState {
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, None, &navidrome);
         // The genre backfill and the cover upgrade keep their runs in memory.
-        let genre_cover_jobs = GenreAndCoverJobs::build(&settings, None, &navidrome, &clients);
+        let genre_cover_jobs =
+            GenreAndCoverJobs::build(&settings, None, &navidrome, &clients, &stores.tag_edit_journal);
         // No workers: the acquisition worker, the resumer and the cache cleanup are not run.
         let acquisition = Acquisition::build(
             &settings,
@@ -1943,6 +1991,7 @@ impl AppState {
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
+            explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,

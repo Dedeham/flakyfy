@@ -3,6 +3,7 @@
 
 pub mod album_ownership;
 pub mod duplicate_scan_worker;
+pub mod explicit_backfill;
 pub mod explicit_backfill_store;
 pub mod for_you_lists;
 pub mod generated_playlist_service;

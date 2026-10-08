@@ -75,15 +75,17 @@
       "id": "isrc-clear-takes-the-tag-off",
       "backlog": "F",
       "requests": [
-        "20-library-edits/tags-copy-undone"
+        "20-library-edits/tags-copy-undone",
+        "20-library-edits/remove-copy-seen"
       ],
       "aspects": [
         "body"
       ],
       "lines": [
-        "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$"
+        "^\\$\\.format\\.tags\\.(TSRC|ISRC|isrc): only in A \\(QZPAR2000001\\)$",
+        "^\\$\\.tags\\.isrc: only in A \\(\\[\"QZPAR2000001\"\\]\\)$"
       ],
-      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3).",
+      "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3). Navidrome then lists the removed copy without the code (remove-copy-seen, G4 R).",
       "knownDiff": "Clearing a tag field"
     },
     {

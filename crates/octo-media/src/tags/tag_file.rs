@@ -8,7 +8,7 @@
 //! tag, as TagLib#'s combined tag does.
 
 use std::fs::OpenOptions;
-use std::io::Seek;
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -272,6 +272,109 @@ fn taglib_padding(file: &mut std::fs::File, tag: &Id3v2Tag, options: WriteOption
     })
 }
 
+/// An ID3v1 tag with nothing in it, as TagLib# writes one: `TAG`, every field zero, and genre
+/// 255 (none).
+const BLANK_ID3V1: [u8; 128] = {
+    let mut tag = [0u8; 128];
+    tag[0] = b'T';
+    tag[1] = b'A';
+    tag[2] = b'G';
+    tag[127] = 255;
+    tag
+};
+
+/// The whole file, read from its start.
+fn read_all(file: &mut std::fs::File) -> Result<Vec<u8>, TagError> {
+    let mut bytes = Vec::new();
+    file.rewind()?;
+    std::io::Read::read_to_end(file, &mut bytes)?;
+    file.rewind()?;
+    Ok(bytes)
+}
+
+/// A FLAC's metadata blocks (each block's type and its bytes, header included), and where the
+/// metadata starts (just after `fLaC`, past an ID3v2 tag in front) and ends; None when the bytes
+/// are not a FLAC stream or its blocks run past the end.
+fn flac_metadata(bytes: &[u8]) -> Option<(Vec<(u8, std::ops::Range<usize>)>, usize, usize)> {
+    let mut start = 0usize;
+    if bytes.len() >= 10 && &bytes[..3] == b"ID3" {
+        let size = bytes[6..10]
+            .iter()
+            .fold(0usize, |size, byte| (size << 7) | usize::from(*byte));
+        let footer = if bytes[5] & 0x10 != 0 { 10 } else { 0 };
+        start = 10 + size + footer;
+    }
+    if bytes.get(start..start + 4)? != b"fLaC" {
+        return None;
+    }
+    start += 4;
+    let mut blocks = Vec::new();
+    let mut position = start;
+    loop {
+        let header = bytes.get(position..position + 4)?;
+        let size = usize::from(header[1]) << 16 | usize::from(header[2]) << 8 | usize::from(header[3]);
+        let end = position + 4 + size;
+        if end > bytes.len() {
+            return None;
+        }
+        blocks.push((header[0] & 0x7f, position..end));
+        position = end;
+        if header[0] & 0x80 != 0 {
+            return Some((blocks, start, position));
+        }
+    }
+}
+
+/// The padding TagLib# gives rewritten FLAC metadata (`Flac.File.Save`): the metadata keeps the
+/// size it had on disk when its blocks fit in it, with one padding block last taking up the rest
+/// (none when they fill it exactly), and otherwise gets 4096 bytes of padding. So an edit in place
+/// leaves the file the same size, as the library server last saw it. lofty keeps the old padding
+/// block as it was, so the file grows or shrinks by what the comment did.
+fn taglib_flac_padding(file: &mut std::fs::File, before: usize) -> Result<(), TagError> {
+    const PADDING: u8 = 1;
+    const GROWN_PADDING: usize = 4096;
+    let bytes = read_all(file)?;
+    let Some((blocks, start, end)) = flac_metadata(&bytes) else {
+        return Ok(());
+    };
+    let kept: Vec<&std::ops::Range<usize>> = blocks
+        .iter()
+        .filter(|(kind, _)| *kind != PADDING)
+        .map(|(_, range)| range)
+        .collect();
+    let length: usize = kept.iter().map(|range| range.len()).sum();
+    let padding = before
+        .checked_sub(4 + length)
+        .unwrap_or(GROWN_PADDING)
+        .min(0x00ff_ffff);
+    let mut metadata = Vec::with_capacity(length + 4 + padding);
+    let mut last_header = 0;
+    for range in kept {
+        last_header = metadata.len();
+        metadata.extend_from_slice(&bytes[range.clone()]);
+        metadata[last_header] &= 0x7f;
+    }
+    if padding > 0 {
+        last_header = metadata.len();
+        metadata.push(PADDING);
+        metadata.extend_from_slice(&(padding as u32).to_be_bytes()[1..]);
+        metadata.resize(metadata.len() + padding, 0);
+    }
+    metadata[last_header] |= 0x80;
+    if metadata[..] == bytes[start..end] {
+        return Ok(());
+    }
+    let mut rewritten = Vec::with_capacity(start + metadata.len() + bytes.len() - end);
+    rewritten.extend_from_slice(&bytes[..start]);
+    rewritten.extend_from_slice(&metadata);
+    rewritten.extend_from_slice(&bytes[end..]);
+    file.rewind()?;
+    file.set_len(0)?;
+    std::io::Write::write_all(file, &rewritten)?;
+    file.rewind()?;
+    Ok(())
+}
+
 /// lofty reads what is on disk, unconverted: TagLib# reads a version 3 date its own way (see
 /// `Id3Tag::from_lofty`), and keeps a Vorbis TRACKNUMBER and an MP4 gnre as they are.
 fn parse_options(implicit_conversions: bool) -> ParseOptions {
@@ -471,7 +574,13 @@ impl TagFile {
                     file.rewind()?;
                     match self.id3v1.as_ref().filter(|tag| !tag.is_empty()) {
                         Some(tag) => tag.save_to(&mut file, options)?,
-                        None => TagType::Id3v1.remove_from(&mut file, options)?,
+                        None => {
+                            // TagLib# gives every MPEG file an ID3v1 tag, a blank one when it has
+                            // nothing to say, so a file keeps its size across edits that empty it.
+                            TagType::Id3v1.remove_from(&mut file, options)?;
+                            file.seek(SeekFrom::End(0))?;
+                            std::io::Write::write_all(&mut file, &BLANK_ID3V1)?;
+                        }
                     }
                 }
             }
@@ -488,6 +597,7 @@ impl TagFile {
                 // runs to its end when it has no audio, but then a shrinking comment would wreck
                 // it, so a byte stands in for the audio while lofty writes.
                 let stand_in = flac_metadata_reaches_end(&mut file)?;
+                let metadata_before = flac_metadata(&read_all(&mut file)?).map(|(_, start, end)| end - start);
                 if stand_in {
                     file.seek(std::io::SeekFrom::End(0))?;
                     std::io::Write::write_all(&mut file, &[0])?;
@@ -497,6 +607,9 @@ impl TagFile {
                 if stand_in {
                     let length = file.metadata()?.len();
                     file.set_len(length.saturating_sub(1))?;
+                }
+                if let Some(before) = metadata_before {
+                    taglib_flac_padding(&mut file, before)?;
                 }
             }
             Inner::Opus(opus) => {
@@ -1171,5 +1284,63 @@ mod padding_tests {
         let tag_end = (10 + tag_size(&path)) as usize;
         // Whatever the frames take, 1024 bytes of padding follow them.
         assert!(bytes[tag_end - 1024..tag_end].iter().all(|byte| *byte == 0));
+    }
+
+    fn padding_of(path: &Path) -> Option<usize> {
+        let bytes = std::fs::read(path).expect("there");
+        let (blocks, _, _) = flac_metadata(&bytes).expect("a FLAC");
+        blocks
+            .iter()
+            .find(|(kind, _)| *kind == 1)
+            .map(|(_, range)| range.len() - 4)
+    }
+
+    /// TagLib#'s rule for FLAC (`Flac.File.Save`): rewritten metadata keeps its size on disk
+    /// while its blocks fit, the padding taking up the rest, so an edit in place leaves a FLAC the
+    /// size the library server saw (parity `19-health/settle1-*`); blocks that outgrow it get
+    /// 4096 bytes of padding.
+    #[test]
+    fn rewritten_flac_metadata_keeps_its_size_while_the_blocks_fit() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = write(dir.path(), "song.flac", &crate::tags::test_support::flac());
+        let first = retitled(&path, "A");
+
+        assert_eq!(retitled(&path, "A much longer title than before"), first);
+        assert_eq!(retitled(&path, "B"), first);
+        let audio = TagFile::open(&path).expect("opens");
+        assert_eq!(audio.title().as_deref(), Some("B"));
+
+        let long = "x".repeat(first as usize + 100);
+        let grown = retitled(&path, &long);
+        assert!(grown > first, "{grown} {first}");
+        assert_eq!(padding_of(&path), Some(4096));
+        assert_eq!(
+            TagFile::open(&path).expect("opens").title().as_deref(),
+            Some(long.as_str())
+        );
+    }
+
+    /// TagLib# gives every MPEG file an ID3v1 tag, a blank one when it has nothing to say, so
+    /// an edit that leaves it empty (the undo of an ISRC retag) keeps the file the size the
+    /// library server saw (parity `20-library-edits/remove-copy-seen`).
+    #[test]
+    fn an_mp3_keeps_a_blank_id3v1_tag_across_edits() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = write(dir.path(), "song.mp3", &mp3());
+        let mut file = TagFile::open(&path).expect("opens");
+        file.set_composers(&["Someone".to_string()]);
+        file.save().expect("saved");
+        let first = std::fs::read(&path).expect("there");
+        let tail = &first[first.len() - 128..];
+        assert_eq!(&tail[..3], b"TAG");
+        assert_eq!(tail[127], 255);
+        assert!(tail[3..127].iter().all(|byte| *byte == 0));
+
+        let mut file = TagFile::open(&path).expect("opens");
+        file.set_composers(&["Someone else".to_string()]);
+        file.save().expect("saved");
+        let second = std::fs::read(&path).expect("there");
+        assert_eq!(second.len(), first.len());
+        assert_eq!(&second[second.len() - 128..], tail);
     }
 }

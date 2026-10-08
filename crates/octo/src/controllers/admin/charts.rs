@@ -15,7 +15,7 @@ use crate::services::common::TopSongsService;
 pub async fn get_charts(State(state): State<AppState>) -> Response {
     let top_songs = &state.top_songs;
     let lists = state.settings.current().generated_playlists.clone();
-    let detected = top_songs.apple().detected_country().await;
+    let detected = top_songs.apple().known_country();
     let (used, menu) = top_songs.menu().await;
     let on = lists.chart_ids();
 

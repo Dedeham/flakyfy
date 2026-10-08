@@ -333,11 +333,40 @@ async fn auto_country_uses_the_detected_one() {
         .serve("/us/new/top-charts/songs/", Some("18"), fixture!("us_18"))
         .await;
 
+    // Learned by the warm worker, not by a request.
+    charts.service.learn().await;
     assert_eq!(charts.service.country().await.as_deref(), Some("us"));
     let list = charts.service.chart("18").await;
 
     assert_eq!(list.country.as_deref(), Some("us"));
     assert_eq!(list.songs[0].song.title, "Janice STFU");
+}
+
+#[tokio::test]
+async fn a_request_never_waits_to_learn_the_country() {
+    let charts = Charts::new("auto", None, None).await;
+    Mock::given(method("GET"))
+        .and(path("/new/top-charts/songs"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture!("us_all").as_bytes().to_vec(), "text/html")
+                .set_delay(Duration::from_secs(3)),
+        )
+        .mount(&charts.apple)
+        .await;
+
+    let started = std::time::Instant::now();
+    let (country, menu) = charts.service.menu().await;
+
+    // Apple's own redirect and Octo's English genres serve until the country is learned behind.
+    assert_eq!(country, None);
+    assert!(menu.iter().any(|g| g.id == "18"));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the request waited on Apple"
+    );
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(charts.service.country().await.as_deref(), Some("us"));
 }
 
 #[tokio::test]

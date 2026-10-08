@@ -41,6 +41,11 @@ impl ChartsWarmWorker {
     /// at once without asking anyone (`TopSongsService::chart`).
     pub async fn warm_once(&self) -> usize {
         let on = self.playlists.lists_on();
+        if on.is_empty() {
+            return 0;
+        }
+        // The country and its menu first, so the lists below are read for them.
+        self.top_songs.learn().await;
         let mut fetched = 0;
         for chart in &on {
             if !self.top_songs.chart(chart).await.songs.is_empty() {

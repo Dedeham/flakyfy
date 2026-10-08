@@ -130,6 +130,7 @@ impl AppleMusicPages {
         let client = client_builder()
             .gzip(true)
             .timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(5))
             .user_agent(octo_core::common::octo_user_agent::value())
             .build()
             .expect("the Apple Music client builds");
@@ -186,11 +187,17 @@ impl AppleMusicPages {
 
     /// The country Apple sees the server in, or None while that cannot be learned.
     pub async fn detected_country(&self) -> Option<String> {
-        if let Some(code) = self.country.get("country") {
+        if let Some(code) = self.known_country() {
             return Some(code);
         }
         let page = self.chart(None, OVERALL).await.ok()?;
         is_country_code(&page.country).then(|| page.country.clone())
+    }
+
+    /// The country Apple was last seen to put the server in, without asking: None until it was
+    /// learned.
+    pub fn known_country(&self) -> Option<String> {
+        self.country.get("country")
     }
 
     /// The New page's song rooms this week, asked for in English (so their titles can be

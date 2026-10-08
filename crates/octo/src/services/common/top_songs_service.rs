@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -124,6 +125,8 @@ struct Inner {
     settings: Arc<SettingsStore>,
     cache: MemoryCache<Arc<TopList>>,
     menus: MemoryCache<Arc<Vec<ChartGenre>>>,
+    /// Whether a [`TopSongsService::learn`] started by a request is going.
+    learning: AtomicBool,
     builds: InFlight<(Arc<TopList>, bool)>,
     fetches: Mutex<HashMap<String, ChartFetch>>,
     warned: Mutex<HashMap<String, Instant>>,
@@ -158,6 +161,7 @@ impl TopSongsService {
                 settings,
                 cache: MemoryCache::new(512),
                 menus: MemoryCache::new(64),
+                learning: AtomicBool::new(false),
                 builds: InFlight::new(),
                 fetches: Mutex::new(HashMap::new()),
                 warned: Mutex::new(HashMap::new()),
@@ -268,18 +272,44 @@ impl TopSongsService {
 
     // ---- charts ----------------------------------------------------------------------------
 
-    /// The country the charts are read for: the setting, or the one Apple sees the server in.
+    /// The country the charts are read for: the setting, or the one Apple was last seen to put
+    /// the server in. Never waits on Apple: while Automatic has not learned the country yet this
+    /// is None (Apple's own redirect picks it) and the learning starts behind the answer.
     pub async fn country(&self) -> Option<String> {
         match self.inner.settings.current().generated_playlists.chart_country() {
             ChartCountry::Fixed(code) => Some(code),
-            ChartCountry::Auto => self.inner.apple.detected_country().await,
+            ChartCountry::Auto => {
+                let known = self.inner.apple.known_country();
+                if known.is_none() {
+                    self.learn_behind();
+                }
+                known
+            }
         }
     }
 
     /// The country's genre menu, "All Genres" first, as Apple lists it; Octo's English list
-    /// while Apple's cannot be read.
+    /// while Apple's is not known yet (learned behind the answer, never waited on).
     pub async fn menu(&self) -> (Option<String>, Arc<Vec<ChartGenre>>) {
         let country = self.country().await;
+        let Some(code) = country.clone() else {
+            return (None, Arc::new(english_menu()));
+        };
+        if let Some(menu) = self.inner.menus.get(&code) {
+            return (country, menu);
+        }
+        self.learn_behind();
+        (country, Arc::new(english_menu()))
+    }
+
+    /// Learns the country (when Automatic) and its genre menu from Apple, waiting for them: for
+    /// the warm worker and tests, never a request. What cannot be learned stays unknown, so the
+    /// English menu and Apple's redirect go on serving.
+    pub async fn learn(&self) -> (Option<String>, Arc<Vec<ChartGenre>>) {
+        let country = match self.inner.settings.current().generated_playlists.chart_country() {
+            ChartCountry::Fixed(code) => Some(code),
+            ChartCountry::Auto => self.inner.apple.detected_country().await,
+        };
         let Some(code) = country.clone() else {
             return (None, Arc::new(english_menu()));
         };
@@ -292,12 +322,21 @@ impl TopSongsService {
                 self.inner.menus.set(code, menu.clone(), 1, MENU_TTL);
                 (country, menu)
             }
-            _ => {
-                let menu = Arc::new(english_menu());
-                self.inner.menus.set(code, menu.clone(), 1, SHORT_TTL);
-                (country, menu)
-            }
+            _ => (country, Arc::new(english_menu())),
         }
+    }
+
+    /// [`Self::learn`] in the background, one at a time; Apple's own memo of what failed keeps a
+    /// server that cannot reach it from asking again for a while.
+    fn learn_behind(&self) {
+        if self.inner.learning.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let this = self.clone();
+        tokio::spawn(async move {
+            this.learn().await;
+            this.inner.learning.store(false, Ordering::Release);
+        });
     }
 
     /// A chart's name as a playlist and a chip: `Popular right now`, `Best New Songs`,

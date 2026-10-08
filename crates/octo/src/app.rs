@@ -65,6 +65,7 @@ use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector
 use crate::services::library::for_you_lists::NewReleasesBuilder;
 use crate::services::library::generated_playlist_service::ForYouServices;
 use crate::services::library::library_review_sweep_worker::SweepVerification;
+use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
@@ -352,6 +353,9 @@ pub struct AppInner {
     /// `LibraryActionJournal`: the write-ahead journal, `<config>/library-actions.json`. Its
     /// 10-second flush (a timer in C#) is the "LibraryActionJournal" worker.
     pub library_action_journal: Arc<LibraryActionJournal>,
+    /// : the tag edits made from the apps and by the explicit marking,
+    /// .
+    pub tag_edit_journal: Arc<TagEditJournal>,
     /// `LibraryActionQuarantine` (singleton).
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
     /// `LibraryActionExecutor` (singleton): the only code in library actions that touches a file.
@@ -832,6 +836,7 @@ struct Stores {
     release_check: Arc<ReleaseCheck>,
     subsonic_response_builder: Arc<SubsonicResponseBuilder>,
     library_action_journal: Arc<LibraryActionJournal>,
+    tag_edit_journal: Arc<TagEditJournal>,
     upgrade_queue: Arc<UpgradeQueue>,
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
@@ -888,6 +893,7 @@ impl Stores {
             library_action_journal: Arc::new(LibraryActionJournal::with_path(Some(
                 config_dir.join("library-actions.json"),
             ))),
+            tag_edit_journal: Arc::new(TagEditJournal::new(Some(config_dir.join("tag-edits.json")))),
             upgrade_queue: Arc::new(UpgradeQueue::with_path(Some(config_dir.join("upgrades.json")))),
             quality_upgrade_store: Arc::new(QualityUpgradeStore::with_path(Some(
                 config_dir.join("quality-upgrade.json"),
@@ -1768,6 +1774,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
+            tag_edit_journal: stores.tag_edit_journal,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,
@@ -2012,6 +2019,7 @@ impl AppState {
             generated_playlists: radio.generated_playlists,
             sync_catalog,
             library_action_journal: stores.library_action_journal,
+            tag_edit_journal: stores.tag_edit_journal,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,

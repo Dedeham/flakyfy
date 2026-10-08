@@ -698,6 +698,23 @@ again. Its one new J diff, `11-signin/alt-admin-index`, is `aa504ee`'s edit of
 `octo/wwwroot/admin/index.html` (the dashboard served differs from the C# image's by one byte),
 not N's; `21-static` will show it too.
 
+Then `rust/main` `b4b33cd` (B and D) and `19db112` (G) were merged in, the activity view
+read Find songs (D), and the final run was `parity/run.sh --rust-twice` on the whole corpus from
+`d839fb7` (corpus `eb2c30598fe12590`, so C# was recorded again; 0h49m on the WSL lane):
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 469 unexplained, 1,337 explained, 31 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+No activity or ambient request differs. N's 10 are all `21-static` (`static-index`, `-css`,
+`-js` and their HEAD and `If-None-Match` forms): the dashboard files `rust/main` changed after
+2026.10.05 (`aa504ee`'s spelling and station previews, G's Charts card), covered by G's proposed
+`dashboard-files-2026-10-08` (`reviewed` unset, so still counted); with it reviewed N is 0.
+The rest is other groups' (E 18, I 23 and part of J are G's two new `GeneratedPlaylists`
+settings, `Charts` and `ChartCountry`, in every settings answer). Rust against Rust's one diff
+is `19-health/plant-wait` (R), the Navidrome scan timing the earlier records saw.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test

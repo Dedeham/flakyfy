@@ -245,7 +245,8 @@ no LTO, slower and with its own cache, and a later `--no-build` run reuses that 
 # Record a build: recreate the stack from scratch, replay the corpus, tear it down again.
 python3 parity/parity.py run --image ghcr.io/winters27/octo:2026.10.05 --out /tmp/parity/csharp
 
-# Compare two recordings. Exit 0 = no unexplained diff, 1 = diffs (report on stdout).
+# Compare two recordings. Exit 0 = no unexplained diff, 1 = diffs (report on stdout), 3 = --only
+# picked no request (--only takes what record's does: a file name, a glob, several with commas).
 python3 parity/parity.py diff /tmp/parity/csharp /tmp/parity/csharp-again
 python3 parity/parity.py diff --mode bytes /tmp/parity/csharp /tmp/parity/csharp-again
 

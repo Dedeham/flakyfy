@@ -15,7 +15,9 @@ Commands (stdlib only, Python 3.10+):
       shortens the waits the reference recording (C#) met to a multiple of its times.
   parity.py diff    A B [--mode structural|bytes] [--allowlist FILE] [--report FILE] [--only GLOB]
       Compare two recordings after normalisation. Exit 1 on any diff not covered by the
-      allowlist or the intentional diffs, 0 otherwise. Ends with the diffs per backlog group.
+      allowlist or the intentional diffs, 0 otherwise, 3 when --only picks no request. Ends
+      with the diffs per backlog group. --only picks as record's does (a file name, a glob over
+      the file names or over <file>/<request>, several comma-separated).
   parity.py run     --out recordings/<name>/ [up options] [record options] [--keep]
       up + record + down in one go.
   parity.py merge   RUN-DIR SHARD-DIR...
@@ -251,6 +253,15 @@ def only_match(rid: str, globs: list[str]) -> bool:
     """Whether "<file>/<name>" is picked by any of the globs; a glob may also name the file alone."""
     stem = rid.split("/", 1)[0]
     return any(fnmatch.fnmatch(rid, g) or fnmatch.fnmatch(stem, g) for g in globs)
+
+
+def refuse_empty_only(only: str | None) -> None:
+    """Exit 3 when --only picks no request (00-setup, which always runs, aside)."""
+    globs = only_globs(only)
+    if globs and not any(only_match(f"{stem}/{r['name']}", globs)
+                         for stem, doc in load_corpus(only) for r in doc["requests"]):
+        log(f"--only {only!r} picks no request (only 00-setup would run)")
+        sys.exit(3)
 
 
 def load_corpus(only: str | None) -> list[tuple[str, dict]]:
@@ -657,6 +668,7 @@ def cmd_record(args) -> None:
     captured: dict[str, str] = {}
     kept: dict[str, str] = {}
     corpus = load_corpus(args.only)
+    refuse_empty_only(args.only)
     refs = load_wait_refs(args.waits_from, shard)
     total = 0
     failures = 0
@@ -1624,6 +1636,11 @@ def cmd_diff(args) -> None:
     ids = [i for i in order_a if not globs or only_match(i, globs)]
     missing_b = [i for i in ids if i not in eb]
     extra_b = [i for i in order_b if i not in ea and (not globs or only_match(i, globs))]
+    if not ids and not extra_b:
+        # Never a silent "0 compared": a selection that picks nothing is a mistake, not a pass.
+        what = f"--only {args.only!r} picks no request" if globs else "no requests in the recordings"
+        log(f"diff: {what} ({args.a}: {len(order_a)} requests, {args.b}: {len(order_b)})")
+        sys.exit(3)
     for rid in missing_b + extra_b:
         report.append(f"MISSING in {'B' if rid in missing_b else 'A'}: {rid}")
         unexplained += 1
@@ -1758,6 +1775,7 @@ def save_logs(args) -> None:
 
 
 def cmd_run(args) -> None:
+    refuse_empty_only(args.only)  # before a stack is started for nothing
     cmd_up(args)
     try:
         args.target = f"http://127.0.0.1:{args.port}"
@@ -1820,7 +1838,7 @@ def main() -> None:
     p.add_argument("--report")
     p.add_argument("--groups-out", help="write {group: [request ids with diffs]} as JSON")
     p.add_argument("--summary", action="store_true", help="print the summary and the group table only")
-    p.add_argument("--only")
+    p.add_argument("--only", help="as record's --only: file names or globs over <file>/<request>, comma-separated")
     p.set_defaults(func=cmd_diff)
 
     p = sub.add_parser("digest", help="print the hash of the corpus, stubs, fixtures and compose file")

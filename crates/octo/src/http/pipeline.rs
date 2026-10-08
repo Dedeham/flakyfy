@@ -20,8 +20,10 @@
 
 use std::convert::Infallible;
 
+use std::sync::Arc;
+
 use axum::extract::Request;
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower::util::BoxCloneSyncService;
@@ -30,7 +32,10 @@ use super::routes::RouteSet;
 use super::static_files::StaticAssets;
 use super::{admin_root, catch_all};
 use crate::app::AppState;
-use crate::middleware::{admin_guard, cors, exception, forwarded, request_log};
+use crate::middleware::admin_sign_in_gate::GateState;
+use crate::middleware::{
+    admin_guard, admin_headers, admin_port_split, admin_sign_in_gate, cors, exception, forwarded, request_log,
+};
 
 /// The whole application as one service, for `axum::serve` and for tests (`oneshot`).
 pub type App = BoxCloneSyncService<Request, Response, Infallible>;
@@ -44,18 +49,33 @@ pub fn app_routes(assets: &StaticAssets) -> RouteSet {
         .merge(crate::controllers::admin::routes())
 }
 
-pub fn build(state: AppState, assets: &StaticAssets) -> App {
-    build_with(state, app_routes(assets))
+/// The whole application. `admin_port`: the dashboard's own port (`Admin:Port`, 0 when it
+/// shares Octo's), which the listener puts on each request it takes.
+pub fn build(state: AppState, assets: &StaticAssets, admin_port: u16) -> App {
+    build_with_port(state, app_routes(assets), admin_port)
 }
 
-/// The pipeline around an explicit route set (tests add their own routes this way).
+/// The pipeline around an explicit route set (tests add their own routes this way), with the
+/// dashboard on Octo's own port.
 pub fn build_with(state: AppState, routes: RouteSet) -> App {
+    build_with_port(state, routes, 0)
+}
+
+/// [`build_with`] with the dashboard on a port of its own.
+pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> App {
     let (router, canon) = routes.finish(catch_all::catch_all);
+    let gate = GateState {
+        app: state.clone(),
+        canon: Arc::new(canon.clone()),
+    };
     let router = router.with_state(state);
     let service = ServiceBuilder::new()
         .layer(from_fn(request_log::request_log))
         .layer(from_fn(forwarded::forwarded_proto))
+        .layer(from_fn_with_state(admin_port, admin_port_split::admin_port_split))
+        .layer(from_fn(admin_headers::admin_security_headers))
         .layer(from_fn(admin_guard::admin_request_guard))
+        .layer(from_fn_with_state(gate, admin_sign_in_gate::admin_sign_in_gate))
         .layer(from_fn(cors::cors))
         .layer(from_fn(exception::catch_panic))
         .map_request(move |mut req: Request| {

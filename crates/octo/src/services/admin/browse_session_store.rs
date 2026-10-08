@@ -18,6 +18,10 @@ struct Session {
     user: String,
     expires: DateTime<Utc>,
     saved_expires: DateTime<Utc>,
+    /// How far each use slides the expiry: 90 days, or an hour for the recovery code.
+    lifetime: TimeDelta,
+    /// Written to disk. A recovery-code session never is.
+    persist: bool,
 }
 
 /// One line of `browse-sessions.json` (the private record `Saved(string Hash, string User, DateTime Expires)`).
@@ -44,11 +48,11 @@ impl Default for Saved {
 
 /// Tokens proving the holder authenticated as a Navidrome admin.
 ///
-/// The admin UI has no authentication of its own, which is tolerable for settings
-/// on a LAN but not for an endpoint that lists directories or replaces files:
-/// unauthenticated, that would make every Octo install an arbitrary directory-enumeration
-/// service. Rather than invent a login system, those endpoints verify credentials against
-/// the Navidrome that Octo already fronts and hand back one of these.
+/// The dashboard and the admin API sign in with the Navidrome that Octo already fronts rather
+/// than a login system of their own, and hand back one of these. A session made with the
+/// recovery code is one too, but it names [`BrowseSessionStore::RECOVERY_USER`], lasts an hour,
+/// is never written to disk, and the endpoints that touch library files do not accept it
+/// ([`BrowseSessionStore::navidrome_user_of`]).
 ///
 /// Remembered per browser, on disk, for as long as it keeps being used. These used to live
 /// in memory for twelve hours, so every restart and every deploy asked for the sign-in again,
@@ -67,6 +71,12 @@ pub struct BrowseSessionStore {
 impl BrowseSessionStore {
     /// Sliding lifetime of a session: it lapses only after this long without a visit.
     pub const TTL: TimeDelta = TimeDelta::days(90);
+
+    /// The name a recovery-code session carries. Not a name Navidrome would give anyone.
+    pub const RECOVERY_USER: &'static str = "(recovery code)";
+
+    /// Sliding lifetime of a recovery-code session: long enough to fix the settings.
+    pub const RECOVERY_TTL: TimeDelta = TimeDelta::hours(1);
 
     /// A slide is written to disk at most once a day per session; the rest only moves it in memory.
     const SAVE_SLIDE_EVERY: TimeDelta = TimeDelta::days(1);
@@ -103,6 +113,8 @@ impl BrowseSessionStore {
                                     user: saved.user,
                                     expires: saved.expires,
                                     saved_expires: saved.expires,
+                                    lifetime: Self::TTL,
+                                    persist: true,
                                 },
                             );
                         }
@@ -127,18 +139,31 @@ impl BrowseSessionStore {
 
     /// Mint a token for a verified admin. Sliding expiry starts now.
     pub fn create(&self, username: &str) -> String {
+        self.mint(username, Self::TTL, true)
+    }
+
+    /// Mint a recovery-code session: an hour, in memory only.
+    pub fn create_recovery(&self) -> String {
+        self.mint(Self::RECOVERY_USER, Self::RECOVERY_TTL, false)
+    }
+
+    fn mint(&self, username: &str, lifetime: TimeDelta, persist: bool) -> String {
         self.prune();
         let token = hex::encode_upper(rand::random::<[u8; 32]>());
-        let expires = self.clock.now() + Self::TTL;
+        let expires = self.clock.now() + lifetime;
         self.sessions.lock().insert(
             Self::hash(&token),
             Session {
                 user: username.to_string(),
                 expires,
                 saved_expires: expires,
+                lifetime,
+                persist,
             },
         );
-        self.save();
+        if persist {
+            self.save();
+        }
         token
     }
 
@@ -155,15 +180,37 @@ impl BrowseSessionStore {
         self.touch(token).map(|s| s.user)
     }
 
+    /// Like [`BrowseSessionStore::user_of`], but None for a recovery-code session: what the
+    /// endpoints that read or change library files accept, so the recovery code fixes settings
+    /// and nothing else.
+    pub fn navidrome_user_of(&self, token: Option<&str>) -> Option<String> {
+        self.user_of(token).filter(|user| user != Self::RECOVERY_USER)
+    }
+
     /// Forget a token: the browser's Sign out.
     pub fn revoke(&self, token: Option<&str>) {
         let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
             return;
         };
-        let removed = self.sessions.lock().shift_remove(&Self::hash(token)).is_some();
-        if removed {
+        let removed = self.sessions.lock().shift_remove(&Self::hash(token));
+        if removed.is_some_and(|gone| gone.persist) {
             self.save();
         }
+    }
+
+    /// Forget every session of one person: Sign out everywhere, or Navidrome took their admin
+    /// role away. Answers how many were ended.
+    pub fn revoke_user(&self, user: &str) -> usize {
+        let gone = {
+            let mut sessions = self.sessions.lock();
+            let before = sessions.len();
+            sessions.retain(|_, session| !octo_core::common::dotnet::eq_ignore_case(&session.user, user));
+            before - sessions.len()
+        };
+        if gone > 0 {
+            self.save();
+        }
+        gone
     }
 
     fn touch(&self, token: Option<&str>) -> Option<Session> {
@@ -175,14 +222,16 @@ impl BrowseSessionStore {
         if session.expires <= now {
             sessions.shift_remove(&key);
             drop(sessions);
-            self.save();
+            if session.persist {
+                self.save();
+            }
             return None;
         }
         let mut slid = Session {
-            expires: now + Self::TTL,
+            expires: now + session.lifetime,
             ..session.clone()
         };
-        let save = slid.expires - session.saved_expires >= Self::SAVE_SLIDE_EVERY;
+        let save = session.persist && slid.expires - session.saved_expires >= Self::SAVE_SLIDE_EVERY;
         if save {
             slid.saved_expires = slid.expires;
         }
@@ -210,6 +259,7 @@ impl BrowseSessionStore {
             .sessions
             .lock()
             .iter()
+            .filter(|(_, s)| s.persist)
             .map(|(hash, s)| Saved {
                 hash: hash.clone(),
                 user: s.user.clone(),
@@ -324,6 +374,67 @@ mod tests {
         assert!(!store.validate(Some("anything")));
         let token = store.create("winters");
         assert!(store.validate(Some(&token)));
+    }
+
+    #[test]
+    fn a_recovery_sign_in_lapses_after_an_hour_a_navidrome_one_does_not() {
+        let now = Arc::new(Mutex::new(Utc.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap()));
+        let clock = {
+            let now = now.clone();
+            Clock::new(move || *now.lock())
+        };
+        let store = BrowseSessionStore::in_memory().with_clock(clock);
+        let recovery = store.create_recovery();
+        let admin = store.create("admin");
+
+        *now.lock() += TimeDelta::minutes(61);
+        assert!(!store.validate(Some(&recovery)));
+        assert!(store.validate(Some(&admin)));
+    }
+
+    #[test]
+    fn a_recovery_sign_in_never_counts_as_a_navidrome_admin() {
+        let store = BrowseSessionStore::in_memory();
+        let recovery = store.create_recovery();
+        let admin = store.create("admin");
+
+        assert_eq!(
+            store.user_of(Some(&recovery)).as_deref(),
+            Some(BrowseSessionStore::RECOVERY_USER)
+        );
+        assert_eq!(store.navidrome_user_of(Some(&recovery)), None);
+        assert_eq!(store.navidrome_user_of(Some(&admin)).as_deref(), Some("admin"));
+    }
+
+    #[test]
+    fn revoke_user_ends_every_sign_in_of_that_person_and_no_one_else() {
+        let store = BrowseSessionStore::in_memory();
+        let first = store.create("Admin");
+        let second = store.create("admin");
+        let other = store.create("other");
+
+        assert_eq!(store.revoke_user("ADMIN"), 2);
+        assert!(!store.validate(Some(&first)));
+        assert!(!store.validate(Some(&second)));
+        assert!(store.validate(Some(&other)));
+    }
+
+    // AdminSignInTests.ARecoverySignInIsNeverWrittenToDisk
+    #[test]
+    fn a_recovery_sign_in_is_never_written_to_disk() {
+        let (_dir, path) = temp_file();
+        let store = BrowseSessionStore::new(Some(&path));
+        store.create("admin");
+        let recovery = store.create_recovery();
+
+        assert_eq!(
+            store.user_of(Some(&recovery)).as_deref(),
+            Some(BrowseSessionStore::RECOVERY_USER)
+        );
+        assert_eq!(store.navidrome_user_of(Some(&recovery)), None);
+        let written: Vec<serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("parses");
+        assert_eq!(written.len(), 1);
     }
 
     // ---- Rust-only ----------------------------------------------------------------------

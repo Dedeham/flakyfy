@@ -16,14 +16,33 @@ use tracing::warn;
 use super::helpers_6b1::{SECRET_PLACEHOLDER, accepted, bind_body, error_json, ok, query_value};
 use crate::app::AppState;
 use crate::http::error::validation_problem;
+use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
+use crate::services::admin::AdminCallerKind;
 use crate::services::last_fm::last_fm_scrobble_service::{LastFmConnectError, LastFmScrobbleService};
 
 /// `GET /api/admin/lastfm/radio`: the radio's switches, its listeners, and the selected
 /// listener's learning progress and stations (the first known listener when none is asked for).
-pub async fn get_last_fm_radio(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
+/// The Octo app with a listener's own sign-in sees that listener and nobody else.
+pub async fn get_last_fm_radio(
+    State(state): State<AppState>,
+    caller: Caller,
+    RawQuery(query): RawQuery,
+) -> Response {
     let radio = &state.last_fm_radio_state;
-    let summaries = radio.get_summaries();
-    let selected = match query_value(query.as_deref(), "user").as_deref() {
+    let listener = caller_of(&caller)
+        .filter(|caller| caller.kind == AdminCallerKind::Listener)
+        .and_then(|caller| caller.user.clone());
+    let user = listener.clone().or_else(|| query_value(query.as_deref(), "user"));
+    let summaries: Vec<_> = radio
+        .get_summaries()
+        .into_iter()
+        .filter(|summary| {
+            listener
+                .as_deref()
+                .is_none_or(|listener| octo_core::common::dotnet::eq_ignore_case(&summary.username, listener))
+        })
+        .collect();
+    let selected = match user.as_deref() {
         Some(user) if !is_blank(user) => Some(user.trim().to_string()),
         _ => summaries.first().map(|summary| summary.username.clone()),
     };
@@ -94,8 +113,9 @@ pub async fn get_last_fm_radio(State(state): State<AppState>, RawQuery(query): R
 /// Checks the ListenBrainz token that applies to a listener (or the default) against
 /// ListenBrainz, so a mistyped token shows up before a play is lost.
 async fn validate_listen_brainz(state: &AppState, user: Option<&str>, token: Option<&str>) -> Response {
+    // The page only ever holds the placeholder for a saved token; checking it means the saved one.
     let candidate = match token {
-        Some(token) if !is_blank(token) => token.to_string(),
+        Some(token) if !is_blank(token) && token != SECRET_PLACEHOLDER => token.to_string(),
         _ => state
             .settings
             .current()
@@ -325,13 +345,21 @@ pub struct RadioUserRequest {
 /// `POST /api/admin/lastfm/radio/refresh`.
 pub async fn refresh_last_fm_radio(
     State(state): State<AppState>,
+    caller: Caller,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let request: RadioUserRequest = match bind_body(&headers, &body, "request") {
+    let mut request: RadioUserRequest = match bind_body(&headers, &body, "request") {
         Ok(request) => request,
         Err(res) => return res,
     };
+    // A listener signed in from the Octo app rebuilds their own stations, whoever the body names.
+    if let Some(caller) = caller_of(&caller)
+        && caller.kind == AdminCallerKind::Listener
+        && let Some(listener) = &caller.user
+    {
+        request.user = Some(listener.clone());
+    }
     let user = request.user.as_deref().unwrap_or("");
     if is_blank(user) {
         return error_json(StatusCode::BAD_REQUEST, "A known Navidrome user is required");

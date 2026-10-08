@@ -68,9 +68,16 @@ fn settable_properties() -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+/// The sections the C# test's `Sections` table left out: who may use the dashboard is not a
+/// dashboard setting (it is set in .env and needs a restart), and neither GET lists it.
+const NOT_LISTED: [&str; 1] = ["Admin"];
+
 fn missing_from(document: &Value) -> Vec<String> {
     let mut missing = Vec::new();
     for (section, names) in settable_properties() {
+        if NOT_LISTED.contains(&section.as_str()) {
+            continue;
+        }
         for name in names {
             if document.get(&section).and_then(|s| s.get(&name)).is_none() {
                 missing.push(format!("{section}.{name}"));
@@ -380,7 +387,10 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         None,
     )
     .await;
-    assert_eq!(reply.text(), r#"{"signedIn":true,"user":"admin"}"#);
+    assert_eq!(
+        reply.text(),
+        r#"{"signedIn":true,"user":"admin","recovery":false,"signInOff":true}"#
+    );
     assert_eq!(cookie_of(&reply), token);
     let reply = send(
         &app,
@@ -390,7 +400,10 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         None,
     )
     .await;
-    assert_eq!(reply.text(), r#"{"signedIn":false}"#);
+    assert_eq!(
+        reply.text(),
+        r#"{"signedIn":false,"user":null,"recovery":false,"signInOff":true}"#
+    );
     assert!(reply.header("set-cookie").is_none());
 
     // A stale cookie hides a valid header.
@@ -427,7 +440,7 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         None,
     )
     .await;
-    assert_eq!(reply.text(), r#"{"ok":true}"#);
+    assert_eq!(reply.text(), r#"{"ok":true,"ended":0}"#);
     assert_eq!(
         reply.header("set-cookie"),
         Some("octo_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
@@ -440,7 +453,10 @@ async fn browse_auth_signs_an_admin_in_with_a_cookie_and_refuses_everyone_else()
         None,
     )
     .await;
-    assert_eq!(reply.text(), r#"{"signedIn":false}"#);
+    assert_eq!(
+        reply.text(),
+        r#"{"signedIn":false,"user":null,"recovery":false,"signInOff":true}"#
+    );
 }
 
 #[tokio::test]
@@ -458,7 +474,7 @@ async fn browse_auth_without_a_navidrome_url_is_503_and_an_unreachable_one_502()
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(
         reply.text(),
-        r#"{"error":"Navidrome URL is not configured yet."}"#
+        r#"{"error":"Navidrome URL is not configured yet. Use the recovery code instead."}"#
     );
 
     let (_, app) = factory();
@@ -472,7 +488,7 @@ async fn browse_auth_without_a_navidrome_url_is_503_and_an_unreachable_one_502()
     assert_eq!(reply.status, StatusCode::BAD_GATEWAY);
     assert_eq!(
         reply.text(),
-        r#"{"error":"Could not reach Navidrome to verify credentials."}"#
+        r#"{"error":"Could not reach Navidrome to verify credentials. If it is down, use the recovery code."}"#
     );
 }
 
@@ -632,7 +648,7 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    assert_eq!(rows.len(), 151);
+    assert_eq!(rows.len(), 177);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 

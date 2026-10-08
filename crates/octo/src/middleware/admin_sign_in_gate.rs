@@ -1,0 +1,280 @@
+//! `Middleware/AdminSignInGate.cs`: nothing under /api/admin answers without a sign-in, apart
+//! from the endpoints listed in [`OPEN_ENDPOINTS`]. The dashboard signs in with a Navidrome admin
+//! account (`browse/auth`) or the recovery code; a script does the same with a cookie jar; the
+//! Octo app signs the calls in [`APP_CALL_ENDPOINTS`] with its own Subsonic sign-in.
+//!
+//! One layer in front of every admin route, denying by default. The C# gate read `[AdminOpen]`
+//! and `[AdminAppCall]` off the matched endpoint; axum has no endpoint attributes to read, so the
+//! open and app routes are named here, by method and template, and everything else, routes
+//! added later and paths no route knows included, asks for a sign-in. A test walks every
+//! registered admin route to prove it (`admin_sign_in_tests.rs`).
+//!
+//! Runs after the request guard (`admin_guard`): that stops other websites, this stops people.
+//! Both are needed: a page on a sibling subdomain or another port of the same host is same-site,
+//! so the browser sends it the cookie, and only the guard's header rule stops its writes.
+
+use std::sync::Arc;
+
+use axum::Extension;
+use axum::body::Bytes;
+use axum::extract::{ConnectInfo, Request, State};
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use indexmap::IndexMap;
+use octo_subsonic::SubsonicCredential;
+use serde_json::json;
+
+use super::admin_guard::is_admin_path;
+use super::forwarded::RequestScheme;
+use crate::app::AppState;
+use crate::controllers::admin::helpers_6b1::{
+    BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, browse_cookie_for, header_value, is_https, request_cookie,
+};
+use crate::http::error::json_relaxed_response;
+use crate::http::routes::PathCanon;
+use crate::services::admin::sign_in_throttle::key_of;
+use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore};
+use crate::services::subsonic::{CredentialVerdict, IncomingRequest, navidrome_admin_role};
+
+/// The admin endpoints that answer without a sign-in (`[AdminOpen]`): signing in and out, who is
+/// signed in, and a bare status for `install.sh` and the app's Octo check.
+pub const OPEN_ENDPOINTS: &[(Method, &str)] = &[
+    (Method::POST, "/api/admin/auth/recovery"),
+    (Method::POST, "/api/admin/browse/auth"),
+    (Method::GET, "/api/admin/browse/session"),
+    (Method::POST, "/api/admin/browse/signout"),
+    (Method::GET, "/api/admin/status"),
+];
+
+/// The admin endpoints the Octo app may call with its own Subsonic sign-in (`[AdminAppCall]`),
+/// and whether only a Navidrome admin's sign-in will do (`adminOnly`); a listener's reaches the
+/// others, scoped to themselves.
+pub const APP_CALL_ENDPOINTS: &[(Method, &str, bool)] = &[
+    (Method::GET, "/api/admin/downloads", true),
+    (Method::GET, "/api/admin/lastfm/radio", false),
+    (Method::POST, "/api/admin/lastfm/radio/refresh", false),
+    (Method::GET, "/api/admin/library-status", true),
+    (Method::GET, "/api/admin/status", true),
+];
+
+/// What the gate needs beside the request: the services, and the route templates to name the
+/// endpoint a path reaches the way the router will.
+#[derive(Clone)]
+pub struct GateState {
+    pub app: AppState,
+    pub canon: Arc<PathCanon>,
+}
+
+/// The endpoint a request reaches, spelled as its template, when it reaches one of ours.
+fn endpoint_of(canon: &PathCanon, path: &str) -> String {
+    canon.canonical(path).unwrap_or_else(|| path.to_string())
+}
+
+fn is_open(method: &Method, endpoint: &str) -> bool {
+    OPEN_ENDPOINTS
+        .iter()
+        .any(|(m, template)| m == method && *template == endpoint)
+}
+
+fn app_call(method: &Method, endpoint: &str) -> Option<bool> {
+    APP_CALL_ENDPOINTS
+        .iter()
+        .find(|(m, template, _)| m == method && *template == endpoint)
+        .map(|(_, _, admin_only)| *admin_only)
+}
+
+/// `AdminCookie.Token`: the cookie first (the dashboard), the header second (curl, tests).
+pub fn admin_token(req: &Request) -> Option<String> {
+    request_cookie(req.headers(), BROWSE_COOKIE_NAME)
+        .filter(|cookie| !cookie.is_empty())
+        .or_else(|| header_value(req.headers(), BROWSE_TOKEN_HEADER))
+}
+
+/// `context.Request.Query.ToDictionary(...)`: each name once (matched ignoring case, as
+/// `Request.Query` keys are, and spelled as it first came), repeated values joined with commas.
+fn query_dictionary(query: Option<&str>) -> IndexMap<String, String> {
+    let mut values: IndexMap<String, Vec<String>> = IndexMap::new();
+    for (key, value) in url::form_urlencoded::parse(query.unwrap_or("").as_bytes()) {
+        let existing = values.keys().find(|k| k.eq_ignore_ascii_case(&key)).cloned();
+        values
+            .entry(existing.unwrap_or_else(|| key.into_owned()))
+            .or_default()
+            .push(value.into_owned());
+    }
+    values
+        .into_iter()
+        .map(|(key, list)| (key, list.join(",")))
+        .collect()
+}
+
+/// The gate's 401, as `WriteAsJsonAsync` wrote it.
+fn sign_in_required() -> Response {
+    json_relaxed_response(
+        StatusCode::UNAUTHORIZED,
+        &json!({
+            "error": "Sign in to Octo's dashboard with a Navidrome admin account.",
+            "signIn": true,
+        }),
+        "application/json; charset=utf-8",
+    )
+    .into_response()
+}
+
+pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if !is_admin_path(&path) {
+        return next.run(req).await;
+    }
+    let state = &gate.app;
+    if state.settings.current().admin.sign_in_off() {
+        req.extensions_mut()
+            .insert(AdminCaller::new(None, AdminCallerKind::SignInOff));
+        return next.run(req).await;
+    }
+
+    let endpoint = endpoint_of(&gate.canon, &path);
+    let open = is_open(req.method(), &endpoint);
+    let app_call = app_call(req.method(), &endpoint);
+
+    if let Some(user) = state.browse_sessions.user_of(admin_token(&req).as_deref()) {
+        let recovery = user == BrowseSessionStore::RECOVERY_USER;
+        if !recovery && !state.admin_role_check.still_admin(&user).await {
+            return if open {
+                next.run(req).await
+            } else {
+                sign_in_required()
+            };
+        }
+        let kind = if recovery {
+            AdminCallerKind::Recovery
+        } else {
+            AdminCallerKind::Dashboard
+        };
+        // The cookie's age is set again on every signed-in call, so the browser keeps it as long
+        // as the server keeps the session. Appended ahead of whatever the endpoint sets.
+        let renew = request_cookie(req.headers(), BROWSE_COOKIE_NAME)
+            .filter(|cookie| !cookie.is_empty())
+            .map(|cookie| {
+                let https = is_https(req.extensions().get::<RequestScheme>());
+                let age = if recovery {
+                    BrowseSessionStore::RECOVERY_TTL
+                } else {
+                    BrowseSessionStore::TTL
+                };
+                browse_cookie_for(&cookie, https, age)
+            });
+        req.extensions_mut().insert(AdminCaller::new(Some(user), kind));
+        let mut res = next.run(req).await;
+        if let Some(cookie) = renew {
+            prepend_set_cookie(&mut res, cookie);
+        }
+        return res;
+    }
+
+    if let Some(admin_only) = app_call {
+        let parameters = query_dictionary(req.uri().query());
+        let try_key = key_of(
+            req.extensions()
+                .get::<ConnectInfo<std::net::SocketAddr>>()
+                .map(|info| info.0),
+        );
+        let credential = SubsonicCredential::from(&parameters);
+        if let Some(credential) = credential
+            && state.sign_in_throttle.retry_after(&try_key).is_none()
+        {
+            let relay = state.subsonic_proxy.with_request(Arc::new(IncomingRequest::new(
+                req.method().clone(),
+                req.headers().clone(),
+                req.uri().query().map(str::to_string),
+                Bytes::new(),
+            )));
+            // A URL the client cannot use at all is an error the C# let out of the gate; here
+            // it counts as Navidrome not answering, so the request is simply not signed in.
+            let verdict = state
+                .credential_check
+                .check(Some(&credential), &relay)
+                .await
+                .unwrap_or(CredentialVerdict::Unreachable);
+            if verdict == CredentialVerdict::Refused {
+                state.sign_in_throttle.failed(&try_key);
+            }
+            if verdict == CredentialVerdict::Accepted
+                && let Ok(Some(name)) = state.request_identity.username(&parameters, &relay).await
+            {
+                if navidrome_admin_role::is_admin(&credential, &name, &relay).await {
+                    req.extensions_mut()
+                        .insert(AdminCaller::new(Some(name), AdminCallerKind::NavidromeAdmin));
+                    return next.run(req).await;
+                }
+                if !admin_only {
+                    req.extensions_mut()
+                        .insert(AdminCaller::new(Some(name), AdminCallerKind::Listener));
+                    return next.run(req).await;
+                }
+                if !open {
+                    return json_relaxed_response(
+                        StatusCode::FORBIDDEN,
+                        &json!({ "error": "That needs a Navidrome admin account." }),
+                        "application/json; charset=utf-8",
+                    )
+                    .into_response();
+                }
+            }
+        }
+    }
+
+    if open {
+        return next.run(req).await;
+    }
+    sign_in_required()
+}
+
+/// Puts a `Set-Cookie` ahead of the ones the endpoint wrote, as the gate's
+/// `Response.Cookies.Append` ran before the endpoint did.
+fn prepend_set_cookie(res: &mut Response, cookie: HeaderValue) {
+    let existing: Vec<HeaderValue> = res
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .cloned()
+        .collect();
+    res.headers_mut().remove(header::SET_COOKIE);
+    res.headers_mut().append(header::SET_COOKIE, cookie);
+    for value in existing {
+        res.headers_mut().append(header::SET_COOKIE, value);
+    }
+}
+
+/// The caller the gate let in, for an endpoint that answers differently (`AdminCaller.Of`).
+pub type Caller = Option<Extension<AdminCaller>>;
+
+/// `AdminCaller.Of(HttpContext)` from the extractor.
+pub fn caller_of(caller: &Caller) -> Option<&AdminCaller> {
+    caller.as_ref().map(|Extension(caller)| caller)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_query_is_read_as_a_dictionary() {
+        let parameters = query_dictionary(Some("u=admin&p=pw&U=again&c=octo&c=two&empty="));
+        assert_eq!(parameters.get("u").map(String::as_str), Some("admin,again"));
+        assert_eq!(parameters.get("c").map(String::as_str), Some("octo,two"));
+        assert_eq!(parameters.get("empty").map(String::as_str), Some(""));
+        assert!(query_dictionary(None).is_empty());
+    }
+
+    #[test]
+    fn only_the_listed_endpoints_are_open_or_app_calls() {
+        assert!(is_open(&Method::GET, "/api/admin/status"));
+        assert!(!is_open(&Method::HEAD, "/api/admin/status"));
+        assert!(!is_open(&Method::POST, "/api/admin/status"));
+        assert!(!is_open(&Method::GET, "/api/admin/browse/auth"));
+        assert_eq!(app_call(&Method::GET, "/api/admin/lastfm/radio"), Some(false));
+        assert_eq!(app_call(&Method::GET, "/api/admin/downloads"), Some(true));
+        assert_eq!(app_call(&Method::GET, "/api/admin/settings"), None);
+    }
+}

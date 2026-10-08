@@ -13,9 +13,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::app::AppState;
-use crate::http::pipeline;
+use crate::http::pipeline::{self, App};
 use crate::http::static_files::{StaticAssets, StaticRoots};
 use crate::logging::{self, HOSTING_LIFETIME};
+use crate::middleware::admin_port_split::{LocalPort, effective_admin_port};
 use crate::workers::SHUTDOWN_TIMEOUT;
 
 /// Kestrel's address in the C# image (`ASPNETCORE_URLS=http://+:8080`).
@@ -120,7 +121,19 @@ pub async fn run() -> anyhow::Result<()> {
             roots.wwwroot, roots.assets
         );
     }
-    let app = pipeline::build(state.clone(), &assets);
+    // The dashboard on a port of its own, when asked for (read once: restart to apply). Its port
+    // is added to the one Octo already listens on.
+    let urls = std::env::var("ASPNETCORE_URLS").ok();
+    let http_ports = std::env::var("ASPNETCORE_HTTP_PORTS").ok();
+    let configured_admin_port = state.settings.current().admin.port;
+    let admin_port = effective_admin_port(urls.as_deref(), http_ports.as_deref(), configured_admin_port);
+    if configured_admin_port > 0 && admin_port == 0 {
+        eprintln!(
+            "Admin:Port {configured_admin_port} is already one of Octo's own ports, so the dashboard keeps sharing it."
+        );
+    }
+    announce_sign_in(&state, admin_port);
+    let app = pipeline::build(state.clone(), &assets, admin_port);
     // The Brotli and gzip variants, after the listener is up; plain bodies until then.
     let warming = assets.clone();
     tokio::task::spawn_blocking(move || warming.warm_all());
@@ -132,11 +145,21 @@ pub async fn run() -> anyhow::Result<()> {
     // the server started listening.
     state.startup_validation.start().await;
 
-    let addr = bind_address(std::env::var("ASPNETCORE_URLS").ok().as_deref());
+    let addr = bind_address(urls.as_deref());
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
     info!(target: HOSTING_LIFETIME, "Now listening on: http://{addr}");
+    let admin_listener = if admin_port > 0 {
+        let admin_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), admin_port);
+        let bound = tokio::net::TcpListener::bind(admin_addr)
+            .await
+            .with_context(|| format!("binding {admin_addr}"))?;
+        info!(target: HOSTING_LIFETIME, "Now listening on: http://{admin_addr}");
+        Some(bound)
+    } else {
+        None
+    };
 
     state.workers.start();
     info!(target: HOSTING_LIFETIME, "Application started. Press Ctrl+C to shut down.");
@@ -144,11 +167,30 @@ pub async fn run() -> anyhow::Result<()> {
     let lifetime = state.lifetime.clone();
     let stop = CancellationToken::new();
     let server_stop = stop.clone();
+    let main_app = on_port(app.clone(), addr.port());
     let server = tokio::spawn(async move {
-        axum::serve(listener, axum::ServiceExt::into_make_service(app))
-            .with_graceful_shutdown(async move { server_stop.cancelled().await })
-            .await
+        axum::serve(
+            listener,
+            axum::ServiceExt::into_make_service_with_connect_info::<SocketAddr>(main_app),
+        )
+        .with_graceful_shutdown(async move { server_stop.cancelled().await })
+        .await
     });
+    if let Some(admin_listener) = admin_listener {
+        let admin_app = on_port(app, admin_port);
+        let admin_stop = stop.clone();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(
+                admin_listener,
+                axum::ServiceExt::into_make_service_with_connect_info::<SocketAddr>(admin_app),
+            )
+            .with_graceful_shutdown(async move { admin_stop.cancelled().await })
+            .await
+            {
+                error!("The dashboard's own port failed: {e}");
+            }
+        });
+    }
 
     shutdown_signal(lifetime.clone()).await;
     info!(target: HOSTING_LIFETIME, "Application is shutting down...");
@@ -174,6 +216,62 @@ pub async fn run() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// The app as one listener serves it: every request carries the port it came in on
+/// (`Connection.LocalPort`), which the admin port split reads.
+fn on_port(app: App, port: u16) -> App {
+    use tower::ServiceExt as _;
+    App::new(app.map_request(move |mut req: axum::extract::Request| {
+        req.extensions_mut().insert(LocalPort(port));
+        req
+    }))
+}
+
+/// What `Program.cs` said about the sign-in at start: an unknown `Admin:SignIn` value, the
+/// sign-in being off, or where the recovery code is (the code itself while no Navidrome is set,
+/// since there is no other way in then), and the dashboard's own port.
+fn announce_sign_in(state: &AppState, admin_port: u16) {
+    let settings = state.settings.current();
+    let admin = &settings.admin;
+    if !admin.sign_in_known() {
+        warn!(
+            target: "Program",
+            "Admin:SignIn is \"{}\", which Octo does not know, so the dashboard sign-in stays on.",
+            admin.sign_in
+        );
+    }
+    if admin.sign_in_off() {
+        warn!(
+            target: "Program",
+            "The dashboard sign-in is OFF (ADMIN_SIGN_IN=off). Anyone who can reach Octo can change it."
+        );
+    } else {
+        let recovery = &state.admin_recovery_code;
+        let code = recovery.current();
+        let no_navidrome = state
+            .settings
+            .raw("Subsonic:Url")
+            .is_none_or(|url| octo_core::common::dotnet::is_blank(&url));
+        match code {
+            Some(code) if no_navidrome => warn!(
+                target: "Program",
+                "No Navidrome is set yet, so sign in to the dashboard with the recovery code {code} (also in {}).",
+                recovery.file_path().display()
+            ),
+            _ => info!(
+                target: "Program",
+                "Locked out of the dashboard? The recovery code is in {}.",
+                recovery.file_path().display()
+            ),
+        }
+    }
+    if admin_port > 0 {
+        info!(
+            target: "Program",
+            "The dashboard answers only on port {admin_port} now; Octo's own port refuses it."
+        );
+    }
 }
 
 /// First-run automation (best-effort, background). Octo is an accessory to an existing

@@ -67,6 +67,14 @@ impl RouteSet {
         self
     }
 
+    /// Every template registered so far, in registration order (the sign-in tests walk them).
+    pub fn templates(&self) -> Vec<String> {
+        self.routes
+            .iter()
+            .map(|(template, _, _)| template.clone())
+            .collect()
+    }
+
     /// Builds the router. Every route falls back to `catch_all` for methods it does not
     /// answer, and so does every unmatched path.
     pub fn finish<H, T>(self, catch_all: H) -> (Router<AppState>, PathCanon)

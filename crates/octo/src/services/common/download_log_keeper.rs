@@ -62,7 +62,7 @@ impl DownloadLogKeeper {
 #[cfg(test)]
 mod tests {
     use octo_core::common::Clock;
-    use octo_core::models::download::DownloadHistoryEntry;
+    use octo_core::models::download::{AcquisitionCandidate, DownloadHistoryEntry};
 
     use super::*;
     use crate::services::common::acquisition_tracker::acquisition_event_kinds;
@@ -77,66 +77,92 @@ mod tests {
         )
     }
 
+    /// AdminDownloadsTests.AFinishedDownloadsLogIsSaved_AndALineAfterTheEndSavesItAgain_AndAFailureSavesNothing.
     #[test]
-    fn a_finished_download_keeps_its_log_and_a_late_line_saves_it_again() {
+    fn a_finished_downloads_log_is_saved_and_a_line_after_the_end_saves_it_again_and_a_failure_saves_nothing()
+    {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let history = Arc::new(DownloadHistoryService::new(
-            dir.path().join("downloads-history.json"),
-        ));
+        let path = dir.path().join("downloads-history.json");
+        let history = Arc::new(DownloadHistoryService::new(&path));
         let tracker = Arc::new(AcquisitionTracker::new(None, Clock::system()));
         DownloadLogKeeper::attach(&tracker, history.clone());
-        tracker.begin("soulseek", "abc", Some("abc"), Some("alice"), None, None, None);
+
+        tracker.begin(
+            "soulseek",
+            "song-1",
+            Some("song-1"),
+            Some("alice"),
+            Some("Daft Punk"),
+            Some("Digital Love"),
+            None,
+        );
+        tracker.found(
+            "soulseek",
+            "song-1",
+            "Found 2 copies",
+            vec![
+                AcquisitionCandidate {
+                    source: "Soulseek".into(),
+                    peer: Some("peer1".into()),
+                    rank: Some(1),
+                    ..Default::default()
+                },
+                AcquisitionCandidate {
+                    source: "Soulseek".into(),
+                    peer: Some("peer2".into()),
+                    note: Some("Too short".into()),
+                    ..Default::default()
+                },
+            ],
+            None,
+        );
+        tracker.trying(
+            "soulseek",
+            "song-1",
+            AcquisitionCandidate {
+                source: "Soulseek".into(),
+                peer: Some("peer1".into()),
+                format: Some("flac".into()),
+                ..Default::default()
+            },
+            "Trying peer1",
+            Some("The best copy"),
+        );
         history.record(DownloadHistoryEntry {
-            artist: "Air".into(),
-            title: "Sexy Boy".into(),
+            artist: "Daft Punk".into(),
+            title: "Digital Love".into(),
             downloaded_at: now_text(),
-            key: Some("soulseek:abc".into()),
+            key: Some("soulseek:song-1".into()),
             ..Default::default()
         });
+        tracker.complete("soulseek", "song-1", Some("nd-1"));
 
-        tracker.complete("soulseek", "abc", Some("nd-1"));
-        let kinds = |entry: &DownloadHistoryEntry| -> Vec<String> {
-            entry.log.iter().flatten().map(|line| line.kind.clone()).collect()
-        };
-        assert_eq!(
-            kinds(&history.get_recent(1)[0]),
-            [acquisition_event_kinds::QUEUED, acquisition_event_kinds::DONE]
-        );
+        let log = history.get_recent(200)[0].log.clone().expect("a saved log");
+        assert_eq!(log[log.len() - 1].kind, acquisition_event_kinds::DONE);
+        assert!(log.iter().any(|line| line.kind == acquisition_event_kinds::FOUND
+            && line.candidates.as_ref().map(Vec::len) == Some(2)));
 
         tracker.log(
             "soulseek",
-            "abc",
+            "song-1",
             acquisition_event_kinds::LYRICS,
-            "Synced lyrics from LRCLIB",
+            "Found word-timed lyrics",
             None,
         );
-        assert_eq!(
-            kinds(&history.get_recent(1)[0]),
-            [
-                acquisition_event_kinds::QUEUED,
-                acquisition_event_kinds::DONE,
-                acquisition_event_kinds::LYRICS
-            ]
+        let reopened = DownloadHistoryService::new(&path).get_recent(200);
+        let log = reopened[0].log.clone().expect("a saved log");
+        assert_eq!(log[log.len() - 1].text, "Found word-timed lyrics");
+
+        tracker.begin(
+            "soulseek",
+            "song-2",
+            Some("song-2"),
+            Some("alice"),
+            Some("Daft Punk"),
+            Some("Aerodynamic"),
+            None,
         );
-    }
-
-    #[test]
-    fn a_failed_download_keeps_nothing() {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let history = Arc::new(DownloadHistoryService::new(
-            dir.path().join("downloads-history.json"),
-        ));
-        let tracker = Arc::new(AcquisitionTracker::new(None, Clock::system()));
-        DownloadLogKeeper::attach(&tracker, history.clone());
-        tracker.begin("soulseek", "abc", Some("abc"), Some("alice"), None, None, None);
-        history.record(DownloadHistoryEntry {
-            downloaded_at: now_text(),
-            key: Some("soulseek:abc".into()),
-            ..Default::default()
-        });
-
-        tracker.fail("soulseek", "abc", Some("nope"));
-
-        assert!(history.get_recent(1)[0].log.is_none());
+        tracker.fail("soulseek", "song-2", Some("No copy that fits was found."));
+        assert_eq!(DownloadHistoryService::new(&path).get_recent(200).len(), 1);
     }
 }

@@ -15,6 +15,7 @@
 
 pub mod browse;
 pub mod cover_upgrade;
+pub mod downloads;
 pub mod genre;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
@@ -117,6 +118,7 @@ pub fn routes_6b2() -> RouteSet {
         .merge(cover_upgrade::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
+        .merge(downloads::routes())
 }
 
 #[cfg(test)]
@@ -142,3 +144,7 @@ mod admin_sign_in_tests;
 #[cfg(test)]
 #[path = "admin_secret_tests.rs"]
 mod admin_secret_tests;
+
+#[cfg(test)]
+#[path = "admin_downloads_tests.rs"]
+mod admin_downloads_tests;

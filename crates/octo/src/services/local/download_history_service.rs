@@ -296,80 +296,156 @@ mod tests {
         assert_eq!(all[499].title, "5");
     }
 
-    fn line(kind: &str, text: &str) -> AcquisitionEvent {
+    // ---- AdminDownloadsTests: the saved log ------------------------------------------------
+
+    fn at_text(at: chrono::DateTime<chrono::Utc>) -> String {
+        format!(
+            "{}.{:07}Z",
+            at.format("%Y-%m-%dT%H:%M:%S"),
+            at.timestamp_subsec_nanos() / 100
+        )
+    }
+
+    fn keyed(title: &str, key: Option<&str>, at: chrono::DateTime<chrono::Utc>) -> DownloadHistoryEntry {
+        DownloadHistoryEntry {
+            key: key.map(str::to_string),
+            downloaded_at: at_text(at),
+            ..entry(title)
+        }
+    }
+
+    fn line(at: chrono::DateTime<chrono::Utc>, kind: &str, text: &str, copies: usize) -> AcquisitionEvent {
         AcquisitionEvent {
-            at: chrono::Utc::now(),
+            at,
             kind: kind.into(),
             text: text.into(),
             detail: None,
-            candidates: None,
+            candidates: (copies > 0).then(|| {
+                (1..=copies)
+                    .map(|i| octo_core::models::download::AcquisitionCandidate {
+                        source: "Soulseek".into(),
+                        peer: Some(format!("peer{i}")),
+                        file: Some(format!("/share/{i}.flac")),
+                        format: Some("flac".into()),
+                        bit_depth: Some(16),
+                        sample_rate: Some(44100),
+                        size: Some(30_000_000),
+                        rank: Some(i as i32),
+                        ..Default::default()
+                    })
+                    .collect()
+            }),
         }
     }
 
-    /// Rust-only (7602787 has no C# test): a saved log keeps its first line, says how many it
-    /// left out, keeps the newest, and caps each text.
     #[test]
-    fn a_saved_log_is_trimmed() {
-        let mut events: Vec<AcquisitionEvent> =
-            (0..100).map(|i| line("note", &format!("line {i}"))).collect();
-        events[99].text = "x".repeat(400);
-        let kept = DownloadHistoryService::trimmed(&events);
-        assert_eq!(kept.len(), DownloadHistoryService::MAX_LOG_LINES);
-        assert_eq!(kept[0].text, "line 0");
-        assert_eq!(kept[1].text, "21 lines left out to keep the saved log short");
-        assert_eq!(kept[2].text, "line 22");
-        let last = &kept[kept.len() - 1].text;
-        assert_eq!(last.chars().count(), DownloadHistoryService::MAX_SAVED_TEXT);
-        assert!(last.ends_with("..."));
-    }
-
-    /// Rust-only: a log lands on the entry with its key written since the run began, and past
-    /// the room the oldest entries let go of theirs.
-    #[test]
-    fn a_log_is_kept_with_its_entry_within_the_room() {
+    fn a_log_lands_on_the_entry_this_run_wrote_never_an_older_fetch_of_the_same_song() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let service = DownloadHistoryService::new(dir.path().join("downloads-history.json"));
-        let now = chrono::Utc::now();
-        let written = |minutes: i64| {
-            (now - chrono::TimeDelta::minutes(minutes))
-                .format("%Y-%m-%dT%H:%M:%S%.6fZ")
-                .to_string()
-        };
-        for (title, key, minutes) in [("old", "soulseek:a", 30), ("new", "soulseek:b", 1)] {
-            service.record(DownloadHistoryEntry {
-                key: Some(key.into()),
-                downloaded_at: written(minutes),
-                ..entry(title)
-            });
+        let path = dir.path().join("downloads-history.json");
+        let history = DownloadHistoryService::new(&path);
+        let start = chrono::Utc::now();
+        history.record(keyed(
+            "Digital Love",
+            Some("soulseek:a"),
+            start - TimeDelta::days(2),
+        ));
+        history.record(keyed("Old song", None, start - TimeDelta::days(1)));
+        history.record(keyed(
+            "Digital Love",
+            Some("soulseek:a"),
+            start + TimeDelta::seconds(30),
+        ));
+        let asked = [line(start, acquisition_event_kinds::QUEUED, "Asked for", 0)];
+
+        assert!(history.attach_log("soulseek:a", start, &asked));
+        // A run that began after every entry for it has no entry yet.
+        assert!(!history.attach_log("soulseek:a", start + TimeDelta::minutes(5), &asked));
+
+        let reopened = DownloadHistoryService::new(&path);
+        let entries = reopened.get_recent(200);
+        assert_eq!(entries[0].log.as_ref().map(Vec::len), Some(1));
+        assert!(entries[1].log.is_none());
+        assert!(entries[2].log.is_none());
+        assert_eq!(
+            reopened
+                .find("soulseek:a", Some(&entries[0].downloaded_at))
+                .and_then(|e| e.log)
+                .map(|log| log[0].text.clone())
+                .as_deref(),
+            Some("Asked for")
+        );
+        assert!(
+            reopened
+                .find("soulseek:a", Some(&entries[2].downloaded_at))
+                .is_some_and(|e| e.log.is_none())
+        );
+    }
+
+    #[test]
+    fn a_saved_log_keeps_its_beginning_and_newest_lines_and_the_best_copies_of_each_line() {
+        let at = chrono::Utc::now();
+        let mut lines = vec![line(at, acquisition_event_kinds::FOUND, "Found 30 copies", 30)];
+        lines.extend((1..200).map(|i| {
+            line(
+                at + TimeDelta::seconds(i),
+                acquisition_event_kinds::NOTE,
+                &format!("line {i}"),
+                0,
+            )
+        }));
+        lines.push(line(
+            at + TimeDelta::seconds(500),
+            acquisition_event_kinds::NOTE,
+            &"x".repeat(2000),
+            0,
+        ));
+
+        let saved = DownloadHistoryService::trimmed(&lines);
+
+        assert_eq!(saved.len(), DownloadHistoryService::MAX_LOG_LINES);
+        assert_eq!(saved[0].text, "Found 30 copies");
+        let copies = saved[0].candidates.as_ref().expect("copies");
+        assert_eq!(copies.len(), DownloadHistoryService::MAX_SAVED_CANDIDATES);
+        assert_eq!(copies[0].peer.as_deref(), Some("peer1"));
+        assert!(saved[1].text.contains("left out"));
+        assert_eq!(
+            saved[saved.len() - 1].text.chars().count(),
+            DownloadHistoryService::MAX_SAVED_TEXT
+        );
+        assert_eq!(saved[saved.len() - 2].text, "line 199");
+    }
+
+    #[test]
+    fn when_the_logs_fill_their_room_the_oldest_let_go_and_their_entries_stay() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("downloads-history.json");
+        let history = DownloadHistoryService::new(&path);
+        history.set_log_room(1200);
+        let start = chrono::Utc::now() - TimeDelta::minutes(10);
+        for i in 0..4 {
+            history.record(keyed(
+                &format!("Song {i}"),
+                Some(&format!("soulseek:{i}")),
+                start + TimeDelta::minutes(i + 1),
+            ));
+            let steps: Vec<AcquisitionEvent> = (0..5)
+                .map(|n| {
+                    line(
+                        start,
+                        acquisition_event_kinds::NOTE,
+                        &format!("step {n} of song {i}"),
+                        0,
+                    )
+                })
+                .collect();
+            assert!(history.attach_log(&format!("soulseek:{i}"), start + TimeDelta::minutes(i), &steps));
         }
 
-        assert!(!service.attach_log(
-            "soulseek:a",
-            now - chrono::TimeDelta::minutes(5),
-            &[line("done", "In your library")]
-        ));
-        assert!(service.attach_log(
-            "soulseek:a",
-            now - chrono::TimeDelta::hours(1),
-            &[line("done", "In your library")]
-        ));
-        assert!(service.attach_log(
-            "soulseek:b",
-            now - chrono::TimeDelta::minutes(2),
-            &[line("done", "In your library")]
-        ));
-        assert!(service.find("soulseek:a", None).and_then(|e| e.log).is_some());
-
-        service.set_log_room(100);
-        assert!(service.attach_log(
-            "soulseek:b",
-            now - chrono::TimeDelta::minutes(2),
-            &[line("done", "In your library")]
-        ));
-        assert!(service.find("soulseek:b", None).and_then(|e| e.log).is_some());
-        assert!(service.find("soulseek:a", None).and_then(|e| e.log).is_none());
-        let reopened = DownloadHistoryService::new(dir.path().join("downloads-history.json"));
-        assert!(reopened.find("soulseek:a", None).is_some_and(|e| e.log.is_none()));
+        let entries = DownloadHistoryService::new(&path).get_recent(200);
+        assert_eq!(entries.len(), 4);
+        assert!(entries[0].log.is_some());
+        assert!(entries[3].log.is_none());
+        assert!(std::fs::metadata(&path).expect("written").len() < 4000);
     }
 
     #[test]

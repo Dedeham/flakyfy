@@ -6,7 +6,12 @@
 # octo-parity-*, the image octo-rust-parity:<name> and the buildx builder octo-parity. It never
 # touches the starter rig (/opt/octo, project octo) or other images.
 #
-#   box-run.sh NAME [--no-build] [--csharp-only] [--only GLOB] [--bytes] [--csharp-twice] [--rust-twice]
+#   box-run.sh NAME [--no-build] [--low-memory] [--csharp-only] [--only GLOB] [--bytes]
+#              [--csharp-twice] [--rust-twice]
+#
+# --low-memory builds with one job and without LTO: the same program, but no 3 GB link, for
+# when the Proxmox host has too little memory to spare for the usual build (the watchdog in
+# lxc131.sh stops a run when the host falls under 1.5 GB). Slower, and its own cache.
 #
 # One run at a time (a lock), since a stack of two Octos, Navidrome and the stubs takes about
 # 2 GB and the box has 6. The C# recording is kept per corpus version (parity.py digest), so it
@@ -16,9 +21,11 @@ set -euo pipefail
 name="$1"
 shift
 build=1 only="" bytes=0 cs_twice=0 rs_twice=0 rust=1
+build_args=(--build-arg CARGO_BUILD_JOBS=3)
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) build=0 ;;
+    --low-memory) build_args=(--build-arg CARGO_BUILD_JOBS=1 --build-arg CARGO_PROFILE_RELEASE_LTO=off) ;;
     --csharp-only) build=0; rust=0 ;;
     --only) only="$2"; shift ;;
     --bytes) bytes=1 ;;
@@ -71,7 +78,7 @@ if [ "$build" = 1 ]; then
   say "building $RS_IMAGE from $(git rev-parse --short HEAD)"
   start=$(date +%s)
   docker buildx build --builder "$BUILDER" --progress plain -f Dockerfile.rust \
-    --build-arg CARGO_BUILD_JOBS=3 -t "$RS_IMAGE" --load . > "$RUN/build.log" 2>&1 || {
+    "${build_args[@]}" -t "$RS_IMAGE" --load . > "$RUN/build.log" 2>&1 || {
     tail -n 40 "$RUN/build.log"
     echo "the Rust image did not build; the whole log is $RUN/build.log on the box" >&2
     exit 1

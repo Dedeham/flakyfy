@@ -5,6 +5,7 @@
 #   parity/lxc131.sh                      # build, record, compare with C# 2026.10.05
 #   parity/lxc131.sh --only '13-*'        # just some corpus files (the C# side is recorded again)
 #   parity/lxc131.sh --no-build           # same image as last time (corpus or stub changes only)
+#   parity/lxc131.sh --low-memory         # build with one job and no LTO (host short of memory)
 #   parity/lxc131.sh --bytes              # also the bytes-mode diff
 #   parity/lxc131.sh --rust-twice         # also Rust against Rust (the determinism gate)
 #   parity/lxc131.sh --csharp-twice       # also C# against C# (after a corpus change)

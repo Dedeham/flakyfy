@@ -32,6 +32,7 @@ branch, in WSL or Git Bash:
 ```sh
 parity/lxc131.sh                    # build the Rust image from HEAD, run the corpus, diff with C#
 parity/lxc131.sh --no-build         # same image as last time (corpus or stub changes only)
+parity/lxc131.sh --low-memory       # build with one job and no LTO, when the host is short
 parity/lxc131.sh --only '13-*'      # some corpus files (00-setup always runs; C# is recorded again)
 parity/lxc131.sh --bytes            # also the bytes-mode diff
 parity/lxc131.sh --rust-twice       # also Rust against Rust (the determinism gate)
@@ -58,6 +59,10 @@ On 2026-10-07 a run while the host had about 5 GB free pushed it into swap until
 answered for minutes. So `lxc131.sh` starts only with 3.5 GB free on the host
 (`PARITY_MIN_HOST_MB`), and a watchdog takes the parity stacks down if the host falls under
 1.5 GB while it runs. Never run two parity runs side by side, and never raise the limits.
+On 2026-10-07 another container's load swung by 4 GB a minute and left the host about 3.6 GB
+to spare, so the usual build (its LTO link takes about 3 GB) tripped the watchdog every time;
+`--low-memory` builds the same program with one job and no LTO instead, slower and with its
+own cache, and a later `--no-build` run reuses that image.
 
 ## Running it by hand
 

@@ -127,6 +127,19 @@ impl BaseDownloadService {
             plan.fields
                 .insert("advisory".to_string(), explicit_advisory::field(advisory));
         }
+        if let Some(advisory) = &advisory {
+            let text = match advisory.value {
+                explicit_advisory::EXPLICIT => "Marked explicit",
+                explicit_advisory::CLEAN => "Marked as the clean edit",
+                _ => "Marked not explicit",
+            };
+            let why = if advisory.source == explicit_advisory::FILE_NAME_SOURCE {
+                "The file's name says it is the clean edit"
+            } else {
+                "The catalog's match for this exact version says so"
+            };
+            self.log_song_step(song, acquisition_event_kinds::TAGS, text, Some(why));
+        }
 
         let sibling = if self.settings.current().subsonic.folder_structure == FolderStructure::Organized {
             self.album_sibling(song, requested, file_path)
@@ -498,6 +511,20 @@ impl BaseDownloadService {
                         plan.notes.push(format!("took off the file's own {names}: {why}"));
                     }
                     info!("Took off {names} from {file_path}: {why}");
+                    let detail = if filed_elsewhere {
+                        format!(
+                            "The peer had it filed under \"{}\": {names}",
+                            arrived_album.as_deref().unwrap_or("")
+                        )
+                    } else {
+                        format!("A new download starts its own album: {names}")
+                    };
+                    self.log_song_step(
+                        song,
+                        acquisition_event_kinds::TAGS,
+                        "Took off the peer's own album tags",
+                        Some(&detail),
+                    );
                 }
                 (existing, embedded, filed_elsewhere)
             }

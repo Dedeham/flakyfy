@@ -1201,6 +1201,62 @@ fn files_below(dir: &Path) -> Vec<String> {
     found
 }
 
+/// DownloadTaggingTests.TheDownloadsLogSaysWhatCameOffThePeersTagsAndWhetherTheSongIsExplicit
+/// (02cc06b).
+#[tokio::test]
+async fn the_downloads_log_says_what_came_off_the_peers_tags_and_whether_the_song_is_explicit() {
+    let song = Song {
+        external_provider: Some("test".into()),
+        external_id: Some("1".into()),
+        ..money_trees()
+    };
+    let tracker = Arc::new(AcquisitionTracker::new(None, octo_core::common::Clock::system()));
+    let tagging = build_with(
+        vec![("1", song)],
+        serve(money_trees_routes()).await,
+        Options {
+            tracker: Some(tracker.clone()),
+            ..Options::default()
+        },
+    )
+    .await;
+    let root = tagging.root().to_path_buf();
+    tagging.harness.backend.land(move |_, _| {
+        landed_flac(&root, "peer share", |file| {
+            file.set_title(Some("Money Trees"));
+            file.set_performers(&["Kendrick Lamar".to_string()]);
+            tag_writer_extras::set_text(file, octo_media::tags::TagFields::ISRC, Some("USUM71210782"));
+            set_vorbis(
+                file,
+                "MUSICBRAINZ_ALBUMID",
+                "0b1c2d3e-4f50-4617-8899-aabbccddeeff",
+            );
+        })
+    });
+    tracker.begin("test", "1", None, Some("alice"), None, None, None);
+
+    tagging.download("1").await.expect("downloaded");
+
+    let log = tracker
+        .detail("test:1", Some("alice"))
+        .and_then(|row| row.events)
+        .expect("the log");
+    assert!(
+        log.iter().any(|e| e.kind == "tags"
+            && e.text == "Marked explicit"
+            && e.detail.as_deref() == Some("The catalog's match for this exact version says so")),
+        "{log:?}"
+    );
+    assert!(
+        log.iter().any(|e| e.kind == "tags"
+            && e.text == "Took off the peer's own album tags"
+            && e.detail
+                .as_deref()
+                .is_some_and(|d| d.to_uppercase().contains("MUSICBRAINZ_ALBUMID"))),
+        "{log:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_log_and_report_say_so() {
     let song = Song {

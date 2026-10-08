@@ -271,10 +271,10 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
                     None => Err(WebError(format!("{n} is not a valid value"))),
                 }
             }
-            Value::Object(m) if m.len() == 1 => {
-                let (k, v) = m.iter().next().unwrap();
-                visitor.visit_enum(Enum { variant: k, value: v })
-            }
+            Value::Object(m) if m.len() == 1 => match m.iter().next() {
+                Some((k, v)) => visitor.visit_enum(Enum { variant: k, value: v }),
+                None => Err(WebError("expected an enum, found an empty object".into())),
+            },
             other => Err(WebError(format!("expected an enum, found {other}"))),
         }
     }

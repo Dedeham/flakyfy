@@ -7,14 +7,13 @@
 //!
 //! Use with `#[serde(with = "octo_core::json::datetime::utc")]` and friends.
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat, TimeZone, Utc};
 
 /// `DateTime.MinValue`, which STJ writes without a `Z` whatever the kind.
 pub fn min_value() -> DateTime<Utc> {
     NaiveDate::from_ymd_opt(1, 1, 1)
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
+        .unwrap_or(NaiveDate::MIN)
+        .and_time(NaiveTime::MIN)
         .and_utc()
 }
 
@@ -79,7 +78,7 @@ pub fn parse_utc(text: &str) -> Option<DateTime<Utc>> {
     }
     NaiveDate::parse_from_str(t, "%Y-%m-%d")
         .ok()
-        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+        .map(|d| d.and_time(NaiveTime::MIN).and_utc())
 }
 
 /// Parses a `DateTimeOffset`; a value without an offset is taken as UTC.

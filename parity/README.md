@@ -774,6 +774,7 @@ What still cannot be made repeatable is left out, with the reason:
 | Stopping a health fix run (a lookup run is covered), the noLength fix | No fix step can be made reliably slow; the upgrade queue ticks every 2 s |
 | The cover run's `reason` once a resumed run is done (`17-covers-explicit/covers-resumed-done`) | The bulk match reports its progress through `Progress<string>`, which can post the last "barcodes 3 of 3" after the run cleared it (`CoverUpgrade.cs:509,518`); it then stays |
 | The `coverArt` of the playlists an import keeps (`12-imports/nd-*playlist-gym`, `-listener`) | Navidrome gives a new, empty playlist its cover id a moment later, sometimes after the corpus reads it, sometimes not for 15 s |
+| The album's `genres` in `20-library-edits/album-without-cafe` | Navidrome sometimes keeps the genre of a song that joined the album and went back (Post-Rock beside Electronic), in either build |
 | The planted artist's and albums' covers in `19-health/plant-wait` | Navidrome adds them after its scan reports done, and on a busy machine sometimes not within a minute; the request is there for its captures |
 
 Answers the C# app gives that are timing-dependent but settle (the share switch's 10 minute

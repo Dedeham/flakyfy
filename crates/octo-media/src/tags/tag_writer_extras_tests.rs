@@ -359,3 +359,92 @@ fn set_multi_value_writes_one_value_per_artist() {
         assert_eq!(values, strings(&["Bizarrap", "Rauw Alejandro"]), "{name}");
     }
 }
+
+// ---- Fixed in the port: clearing a field takes it off the file -------------------------------
+
+/// C# `LibraryTagEdits.Set` wrote an ISRC through `SetText`, which returns on an empty value
+/// (`TagWriterExtras.cs:98-101`), so clearing an ISRC, and undoing an ISRC retag, left the code in
+/// the file. `set_or_clear_text` takes it off under every container's name for it, and an empty
+/// value given to `set_text` still leaves a peer's value alone.
+#[test]
+fn clearing_an_isrc_takes_it_off_the_file() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut paths = vec![new_mp3(dir.path()), new_flac(dir.path())];
+    if crate::audio::test_support::ffmpeg_available() {
+        crate::audio::test_support::run_ffmpeg(
+            dir.path(),
+            "-f lavfi -i sine=frequency=440:duration=1 -c:a aac -b:a 128k song.m4a",
+        );
+        paths.push(dir.path().join("song.m4a"));
+    } else {
+        eprintln!("the MP4 case is skipped: ffmpeg is not on the PATH");
+    }
+    for path in paths {
+        {
+            let mut file = open(&path);
+            extras::set_text(&mut file, TagFields::ISRC, Some("GBAAA9800001"));
+            file.save().expect("saved");
+        }
+        {
+            let mut file = open(&path);
+            extras::set_text(&mut file, TagFields::ISRC, None);
+            extras::set_text(&mut file, TagFields::ISRC, Some("  "));
+            file.save().expect("saved");
+        }
+        assert_eq!(
+            extras::read_text(&open(&path), TagFields::ISRC).as_deref(),
+            Some("GBAAA9800001"),
+            "set_text never clears: {path:?}"
+        );
+        {
+            let mut file = open(&path);
+            extras::set_or_clear_text(&mut file, TagFields::ISRC, Some(" GBAAA9800002 "));
+            file.save().expect("saved");
+        }
+        assert_eq!(
+            extras::read_text(&open(&path), TagFields::ISRC).as_deref(),
+            Some("GBAAA9800002"),
+            "{path:?}"
+        );
+        {
+            let mut file = open(&path);
+            extras::set_or_clear_text(&mut file, TagFields::ISRC, Some(""));
+            file.save().expect("saved");
+        }
+        let file = open(&path);
+        assert_eq!(extras::read_text(&file, TagFields::ISRC), None, "{path:?}");
+        assert_eq!(file.isrc(), None, "{path:?}");
+        if let Some(id3) = &file.id3v2 {
+            assert!(!id3.has_frames("TSRC"), "{path:?}");
+        }
+    }
+}
+
+/// A TXXX field is cleared whatever case it was written in, and the other fields stay.
+#[test]
+fn clearing_a_txxx_field_leaves_the_rest() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = new_mp3(dir.path());
+    {
+        let mut file = open(&path);
+        extras::set_text(&mut file, TagFields::BARCODE, Some("724384559922"));
+        extras::set_text(&mut file, TagFields::CATALOG_NUMBER, Some("CDV 2851"));
+        extras::id3_for(&mut file)
+            .expect("an ID3v2 tag")
+            .set_user_text("barcode", &strings(&["0000"]), true);
+        file.save().expect("saved");
+    }
+    {
+        let mut file = open(&path);
+        extras::set_or_clear_text(&mut file, TagFields::BARCODE, None);
+        file.save().expect("saved");
+    }
+    let file = open(&path);
+    assert_eq!(extras::read_text(&file, TagFields::BARCODE), None);
+    let id3: &Id3Tag = file.id3v2.as_ref().expect("an ID3v2 tag");
+    assert_eq!(id3.user_text("barcode", false), None);
+    assert_eq!(
+        extras::read_text(&file, TagFields::CATALOG_NUMBER).as_deref(),
+        Some("CDV 2851")
+    );
+}

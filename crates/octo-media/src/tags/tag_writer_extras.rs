@@ -10,7 +10,7 @@ use octo_core::common::dotnet::is_null_or_white_space;
 use octo_core::common::song_identity::SongIdentity;
 use octo_core::tagging::{FileFacts, FileFactsReader};
 
-use super::apple::AppleTag;
+use super::apple::{AppleTag, DataBox, flags as apple_flags, names as apple_names};
 use super::id3::Id3Tag;
 use super::tag_file::{Format, TagFile};
 use super::xiph::XiphComment;
@@ -116,6 +116,7 @@ impl TagFields {
     pub const ALBUM_ARTISTS: TagField = txxx("ALBUMARTISTS", "ALBUMARTISTS", "ALBUMARTISTS");
     pub const ALBUM_VERSION: TagField = txxx("ALBUMVERSION", "ALBUMVERSION", "ALBUMVERSION");
     pub const RELEASE_DATE: TagField = txxx("RELEASEDATE", "RELEASEDATE", "RELEASEDATE");
+    pub const ADVISORY: TagField = txxx("ITUNESADVISORY", "ITUNESADVISORY", "ITUNESADVISORY");
 }
 
 /// The containers' own tags a setter writes to.
@@ -214,6 +215,38 @@ pub fn set_text(file: &mut TagFile, field: TagField, value: Option<&str>) {
     }
     if let Some(apple) = tags.apple {
         apple.set_dash_box(APPLE_MEAN, field.mp4, Some(text));
+    }
+}
+
+/// One value in one field, or none at all: an empty value takes the field off the file, from
+/// every container that holds it under the field's names. For an edit someone asked for,
+/// where an empty value means "clear it" (the apps' tag edits, their undo). The download
+/// writer keeps [`set_text`], where an empty value means "not found", which must never strip
+/// what a peer wrote.
+///
+/// Fixed in the port only: C# `LibraryTagEdits.Set` wrote an ISRC through `SetText`, so
+/// clearing it, and the undo of an ISRC retag, left the tag in the file
+/// (`TagWriterExtras.cs:98-101`; `docs/rust-migration/known-diffs.md`).
+pub fn set_or_clear_text(file: &mut TagFile, field: TagField, value: Option<&str>) {
+    if trimmed(value).is_some() {
+        set_text(file, field, value);
+        return;
+    }
+    if let Some(id3) = file.id3v2.as_mut() {
+        if let Some(frame) = field.id3_frame {
+            id3.remove_frames(frame);
+        }
+        if let Some(description) = field.id3_description {
+            id3.retain_user_texts(|own| !octo_core::common::dotnet::eq_ignore_case(own, description));
+        }
+    }
+    if let Some(xiph) = file.xiph.as_mut() {
+        xiph.remove_field(field.vorbis);
+    }
+    if let Some(apple) = file.apple.as_mut() {
+        while apple.dash_boxes(APPLE_MEAN, field.mp4).is_some() {
+            apple.remove_dash_box(APPLE_MEAN, field.mp4);
+        }
     }
 }
 
@@ -328,6 +361,48 @@ pub fn set_replay_gain(
     if let Some(peak) = album_peak {
         set_text(file, TagFields::ALBUM_PEAK, Some(&peak_text(peak)));
     }
+}
+
+/// Whether the words are explicit (1), the clean edit (2) or neither (0), where the library
+/// server reads a song's explicit status from: ITUNESADVISORY on ID3 and Vorbis, the rtng atom
+/// on MP4, which holds it as a one-byte number. Anything else leaves the file as it is.
+pub fn set_advisory(file: &mut TagFile, value: Option<i32>) {
+    let Some(value) = value.filter(|value| matches!(value, 0..=2)) else {
+        return;
+    };
+    let text = value.to_string();
+    let tags = native_tags(file);
+    if let (Some(id3), Some(description)) = (tags.id3, TagFields::ADVISORY.id3_description) {
+        id3.set_user_text(description, std::slice::from_ref(&text), true);
+    }
+    if let Some(xiph) = tags.xiph {
+        xiph.set_field(TagFields::ADVISORY.vorbis, &[&text]);
+    }
+    if let Some(apple) = tags.apple {
+        apple.set_data(
+            apple_names::RTNG,
+            vec![DataBox {
+                flags: apple_flags::FOR_TEMPO,
+                data: vec![value as u8],
+            }],
+        );
+        // A freeform copy beside the atom would be a second value.
+        if apple.dash_box(APPLE_MEAN, TagFields::ADVISORY.mp4).is_some() {
+            apple.set_dash_box(APPLE_MEAN, TagFields::ADVISORY.mp4, None);
+        }
+    }
+}
+
+/// The advisory a file carries, from whichever frame holds it; None when none does.
+pub fn read_advisory(file: &TagFile) -> Option<i32> {
+    if let Some(apple) = &file.apple
+        && let Some(data) = apple
+            .first_data(apple_names::RTNG)
+            .filter(|data| !data.data.is_empty())
+    {
+        return data.data.last().map(|byte| i32::from(*byte));
+    }
+    read_text(file, TagFields::ADVISORY).and_then(|text| super::net::parse_int(&text))
 }
 
 /// `gainDb.ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + " dB"`: a negative value
@@ -557,5 +632,21 @@ pub struct TagWriterExtras;
 impl FileFactsReader for TagWriterExtras {
     fn read_facts(&self, path: &str, tags_are_evidence: bool) -> FileFacts {
         read_facts(path, tags_are_evidence)
+    }
+
+    /// What the writer would take off the file, worked out on the file in memory and never
+    /// saved: the preview writes nothing.
+    fn would_take_off(&self, path: &str, album: &str) -> Vec<String> {
+        match TagFile::open(path) {
+            Ok(mut file) => {
+                let elsewhere =
+                    super::release_fact_tags::filed_elsewhere(file.album().as_deref(), Some(album));
+                super::release_fact_tags::tidy(&mut file, elsewhere, None)
+            }
+            Err(error) => {
+                tracing::debug!("preview could not read {path}: {error}");
+                Vec::new()
+            }
+        }
     }
 }

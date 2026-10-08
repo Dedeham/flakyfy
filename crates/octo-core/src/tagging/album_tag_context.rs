@@ -24,6 +24,7 @@ pub struct SettledRelease {
     pub original_date: Option<String>,
     pub release_date: Option<String>,
     pub total_tracks: Option<i32>,
+    pub total_discs: Option<i32>,
     pub album_artist_ids: Vec<String>,
     pub captured: bool,
 }
@@ -131,6 +132,7 @@ impl<L: Clone> AlbumTagContext<L> {
             original_date: song.original_date.clone(),
             release_date: song.release_date.clone(),
             total_tracks: song.total_tracks,
+            total_discs: song.total_discs,
             album_artist_ids: song.music_brainz_album_artist_ids.clone(),
             captured: true,
         };
@@ -199,6 +201,9 @@ impl<L: Clone> AlbumTagContext<L> {
         song.release_date = settled.release_date.clone();
         if settled.total_tracks.is_some() {
             song.total_tracks = settled.total_tracks;
+        }
+        if settled.total_discs.is_some() {
+            song.total_discs = settled.total_discs;
         }
         song.music_brainz_album_artist_ids = settled.album_artist_ids.clone();
     }

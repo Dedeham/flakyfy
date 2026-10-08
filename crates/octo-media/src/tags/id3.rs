@@ -166,6 +166,11 @@ impl Id3Tag {
         }
     }
 
+    /// `GetFrames(ident).Any()`: whether any frame has the id.
+    pub(crate) fn has_frames(&self, id: &str) -> bool {
+        self.frames.iter().any(|frame| frame.id_str() == id)
+    }
+
     /// `RemoveFrames(ident)`.
     pub(crate) fn remove_frames(&mut self, id: &str) {
         self.frames.retain(|frame| frame.id_str() != id);

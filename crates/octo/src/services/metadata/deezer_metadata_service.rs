@@ -445,6 +445,7 @@ impl DeezerMetadataService {
             Some(Value::Bool(flag)) => Some(*flag),
             _ => None,
         };
+        let mut explicit_content = int(t, "explicit_content_lyrics")?;
         let mut gain = None;
         let mut track_id = None;
         if let Some(tid @ Value::Number(_)) = try_get_property(t, "id")? {
@@ -465,6 +466,7 @@ impl DeezerMetadataService {
                 if let Some(Value::Bool(flag)) = try_get_property(track, "explicit_lyrics")? {
                     explicit_lyrics = Some(*flag);
                 }
+                explicit_content = int(track, "explicit_content_lyrics")?.or(explicit_content);
                 if let Some(gn @ Value::Number(_)) = try_get_property(track, "gain")? {
                     gain = Some(get_double(gn)?);
                 }
@@ -507,6 +509,7 @@ impl DeezerMetadataService {
             album_id: (alb_id > 0).then(|| alb_id.to_string()),
             barcode: barcode.filter(|b| !is_blank(b)),
             explicit_lyrics,
+            explicit_content,
             catalog_gain: gain,
         };
         Ok((meta, detail_unresolved))

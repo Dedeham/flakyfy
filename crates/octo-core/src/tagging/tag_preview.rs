@@ -20,6 +20,7 @@ use crate::metadata::deezer_metadata_service::FullTrackMeta;
 use crate::models::domain::song::Song;
 use crate::settings::SettingsStore;
 use crate::tagging::album_tag_context::AlbumTagContext;
+use crate::tagging::explicit_advisory;
 use crate::tagging::release_identifier::{Cancelled, FileFactsReader, ReleaseIdentifier};
 use crate::tagging::tag_plan::{FieldDecision, TagReport};
 
@@ -171,6 +172,19 @@ impl TagPreview {
         plan.apply_to(&mut song);
         self.catalog
             .fill_blanks_from_catalog(&mut song, plan.catalog_best.as_ref());
+        if let Some(advisory) = explicit_advisory::decide(&song, Some(&plan), path) {
+            plan.fields
+                .insert("advisory".to_string(), explicit_advisory::field(&advisory));
+        }
+        if let Some(path) = path {
+            let off = self.facts.would_take_off(path, &song.album);
+            if !off.is_empty() {
+                plan.notes.push(format!(
+                    "a download would take off the file's own {}",
+                    off.join(", ")
+                ));
+            }
+        }
 
         if let Some(task) = loudness {
             let measured = match task.await {

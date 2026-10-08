@@ -14,13 +14,14 @@ use octo_core::metadata::genre_normalizer::{GenreNormalizer, GenreTagAction};
 use octo_core::models::domain::Song;
 use octo_core::settings::{FolderStructure, GenreFallbackSource, GenreSettings, MetadataSettings};
 use octo_core::tagging::{
-    AlbumTagContext, CatalogBlankFiller, MeasuredLoudness, PreviewLoudnessMeter, ReleaseIdentifier,
-    ReplayGainText,
+    AlbumGrouping, AlbumTagContext, CatalogBlankFiller, FileFacts, MeasuredLoudness, PreviewLoudnessMeter,
+    ReleaseIdentifier, ReplayGainText, explicit_advisory,
 };
 use octo_media::audio::{ILoudnessMeter, Loudness, ReplayGainTags};
 use octo_media::cover::cover_image;
 use octo_media::tags::{
-    GenreWrite, TagFile, embed_cover, front_cover, tag_writer_extras, write_album_gain, write_song,
+    GenreWrite, KeptIdentityTags, TagFile, embed_cover, front_cover, release_fact_tags, tag_writer_extras,
+    write_album_gain, write_song,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -118,6 +119,23 @@ impl BaseDownloadService {
         fill_album_from_file(song, file_path);
         Self::apply_single_fallback(song, settings.album_from_title);
 
+        // Explicit or clean, from what landed; the library server shows it on every song.
+        let advisory = explicit_advisory::decide(song, song.tag_plan.as_deref(), song.source_file.as_deref());
+        song.advisory = advisory.as_ref().map(|advisory| advisory.value);
+        if let (Some(plan), Some(advisory)) = (song.tag_plan.as_deref_mut(), advisory.as_ref()) {
+            plan.fields
+                .insert("advisory".to_string(), explicit_advisory::field(advisory));
+        }
+
+        let sibling = if self.settings.current().subsonic.folder_structure == FolderStructure::Organized {
+            self.album_sibling(song, requested, file_path)
+        } else {
+            None
+        };
+        if let Some(sibling) = &sibling {
+            join_album(song, sibling);
+        }
+
         if planned && !settings.tag_rehearsal {
             match album {
                 Some(album) => {
@@ -126,10 +144,11 @@ impl BaseDownloadService {
                         album.capture(plan, song);
                     }
                 }
-                None if self.settings.current().subsonic.folder_structure == FolderStructure::Organized => {
-                    self.pin_to_sibling(song, requested, file_path)
+                None => {
+                    if let Some(sibling) = &sibling {
+                        pin_to_sibling(song, sibling);
+                    }
                 }
-                None => {}
             }
         }
     }
@@ -227,37 +246,36 @@ impl BaseDownloadService {
         }
     }
 
-    /// A single joining an album folder that is already there takes that album's release facts
-    /// from one of its files, when the two agree on the album and its artist, so the album the
-    /// library server shows keeps one label, one catalog number and one year.
-    fn pin_to_sibling(&self, song: &mut Song, requested: &RequestedIdentity, current_path: &str) {
+    /// One file of the album folder this song will join, when the folder is already there and
+    /// the file agrees on the album and its artist; its facts as read, with its path.
+    fn album_sibling(
+        &self,
+        song: &Song,
+        requested: &RequestedIdentity,
+        current_path: &str,
+    ) -> Option<AlbumSiblingFile> {
         if dotnet::is_blank(&song.album) || self.download_path().is_empty() {
-            return;
+            return None;
         }
         let target = self.organized_target(song, requested, get_extension(current_path));
-        let Some(dir) = get_directory_name(&target).filter(|d| !d.is_empty() && Path::new(d).is_dir()) else {
-            return;
-        };
+        let dir = get_directory_name(&target).filter(|d| !d.is_empty() && Path::new(d).is_dir())?;
         let current = get_full_path(current_path);
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) => {
                 debug!("could not read the album folder's sibling for {current_path}: {e}");
-                return;
+                return None;
             }
         };
         let sibling = entries
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path().to_string_lossy().into_owned())
-            .find(|file| is_audio_file(file) && !dotnet::eq_ignore_case(&get_full_path(file), &current));
-        let Some(sibling) = sibling else {
-            return;
-        };
+            .find(|file| is_audio_file(file) && !dotnet::eq_ignore_case(&get_full_path(file), &current))?;
 
         let facts = tag_writer_extras::read_facts(&sibling, true);
         if SongIdentity::key(facts.album.as_deref().unwrap_or("")) != SongIdentity::key(&song.album) {
-            return;
+            return None;
         }
         let album_artist = song
             .album_artist
@@ -268,27 +286,9 @@ impl BaseDownloadService {
             && !album_artist.is_empty()
             && !SongIdentity::same_artist_name(theirs, &album_artist)
         {
-            return;
+            return None;
         }
-
-        if let Some(year) = facts.year.filter(|y| *y > 0) {
-            song.year = Some(year);
-        }
-        if let Some(label) = facts.label.filter(|l| !l.is_empty()) {
-            song.label = Some(label);
-        }
-        if let Some(number) = facts.catalog_number.filter(|n| !n.is_empty()) {
-            song.catalog_number = Some(number);
-        }
-        if let Some(barcode) = facts.barcode.filter(|b| !b.is_empty()) {
-            song.barcode = Some(barcode);
-        }
-        if let Some(plan) = song.tag_plan.as_deref_mut() {
-            plan.notes.push(format!(
-                "album facts taken from the album folder's own '{}'",
-                get_file_name(&sibling)
-            ));
-        }
+        Some(AlbumSiblingFile { path: sibling, facts })
     }
 
     /// Start measuring a landed file, beside identification, when ReplayGain is on.
@@ -431,8 +431,41 @@ impl BaseDownloadService {
     /// first, and the file opened again to write, so no file is held across a wait.
     pub async fn write_metadata(&self, file_path: &str, song: &mut Song) -> Option<Vec<u8>> {
         info!("Writing metadata to: {file_path}");
-        let (existing, embedded) = match TagFile::open(file_path) {
-            Ok(file) => (file.genres(), front_cover(&file).map(|picture| picture.data)),
+        // A peer tags a file for the release it ripped. What it wrote about that release goes
+        // before Octo writes its own, so the file never names two albums at once (a barcode, a
+        // release id or a track number of the album it was filed away from). Worked out on this
+        // first read, and done again on the file that is written.
+        let (existing, embedded, filed_elsewhere) = match TagFile::open(file_path) {
+            Ok(mut file) => {
+                let arrived_album = file.album();
+                let filed_elsewhere =
+                    release_fact_tags::filed_elsewhere(arrived_album.as_deref(), Some(&song.album));
+                // The art of the album the file was filed away from is not this album's, so it
+                // never outranks the chain; it stays on the file only when the chain finds nothing.
+                let embedded = if filed_elsewhere {
+                    None
+                } else {
+                    front_cover(&file).map(|picture| picture.data)
+                };
+                let existing = file.genres();
+                let dropped = release_fact_tags::tidy(&mut file, filed_elsewhere, song.joins_album.as_ref());
+                if !dropped.is_empty() {
+                    let why = if filed_elsewhere {
+                        format!(
+                            "it arrived filed under '{}'",
+                            arrived_album.as_deref().unwrap_or("")
+                        )
+                    } else {
+                        "a new download keeps no album grouping values".to_string()
+                    };
+                    let names = dropped.join(", ");
+                    if let Some(plan) = song.tag_plan.as_deref_mut() {
+                        plan.notes.push(format!("took off the file's own {names}: {why}"));
+                    }
+                    info!("Took off {names} from {file_path}: {why}");
+                }
+                (existing, embedded, filed_elsewhere)
+            }
             Err(e) => {
                 error!("Failed to write metadata to: {file_path}: {e}");
                 return None;
@@ -524,7 +557,8 @@ impl BaseDownloadService {
 
         let written = (|| {
             let mut file = TagFile::open(file_path)?;
-            write_song(&mut file, song, &genres);
+            release_fact_tags::tidy(&mut file, filed_elsewhere, song.joins_album.as_ref());
+            write_song(&mut file, song, &genres, filed_elsewhere);
             if let Some(bytes) = embed {
                 let mime = cover_image::mime_type(&bytes);
                 embed_cover(&mut file, bytes, mime);
@@ -571,6 +605,61 @@ impl BaseDownloadService {
             measured.len()
         );
     }
+}
+
+/// One file of the album folder a song will join, and its facts as read.
+struct AlbumSiblingFile {
+    path: String,
+    facts: FileFacts,
+}
+
+/// A single joining an album folder that is already there takes that album's release facts from
+/// one of its files, so the album the library server shows keeps one label, one catalog number
+/// and one year.
+fn pin_to_sibling(song: &mut Song, sibling: &AlbumSiblingFile) {
+    let facts = &sibling.facts;
+    if let Some(year) = facts.year.filter(|y| *y > 0) {
+        song.year = Some(year);
+    }
+    if let Some(label) = facts.label.clone().filter(|l| !l.is_empty()) {
+        song.label = Some(label);
+    }
+    if let Some(number) = facts.catalog_number.clone().filter(|n| !n.is_empty()) {
+        song.catalog_number = Some(number);
+    }
+    if let Some(barcode) = facts.barcode.clone().filter(|b| !b.is_empty()) {
+        song.barcode = Some(barcode);
+    }
+    if let Some(plan) = song.tag_plan.as_deref_mut() {
+        plan.notes.push(format!(
+            "album facts taken from the album folder's own '{}'",
+            get_file_name(&sibling.path)
+        ));
+    }
+}
+
+/// The values the library server groups the folder's album by, read the way it reads them, so
+/// the new track carries exactly the same ones and lands in that album rather than one of its
+/// own. Not a matching decision, so a rehearsal keeps it too.
+fn join_album(song: &mut Song, sibling: &AlbumSiblingFile) {
+    let Some(kept) = KeptIdentityTags::read(Path::new(&sibling.path), None) else {
+        return;
+    };
+    if kept.album_id.is_none() && kept.release_date.is_none() && kept.album_version.is_none() {
+        return;
+    }
+    song.joins_album = Some(AlbumGrouping::new(
+        kept.album_id,
+        kept.release_date,
+        kept.album_version,
+    ));
+    if let Some(plan) = song.tag_plan.as_deref_mut() {
+        plan.notes.push(format!(
+            "album grouping copied from the album folder's own '{}'",
+            get_file_name(&sibling.path)
+        ));
+    }
+    debug!("{} joins the album of {}", song.title, sibling.path);
 }
 
 /// A source's own album tag beats nothing, and beats filing the track under its title. Its

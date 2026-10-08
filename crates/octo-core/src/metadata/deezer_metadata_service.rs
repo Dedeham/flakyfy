@@ -51,6 +51,9 @@ pub struct FullTrackMeta {
     pub album_id: Option<String>,
     pub barcode: Option<String>,
     pub explicit_lyrics: Option<bool>,
+    /// The catalog's word for this version's lyrics: 0 not explicit, 1 explicit, 3 the clean
+    /// edit; any other value says it does not know.
+    pub explicit_content: Option<i32>,
     pub catalog_gain: Option<f64>,
 }
 

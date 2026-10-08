@@ -127,6 +127,40 @@ async fn another_answer_is_unavailable_and_asked_again() {
 }
 
 #[tokio::test]
+async fn an_unreachable_apple_is_not_asked_again_for_a_while() {
+    // Requests five seconds apart: a second request would wait on the gate.
+    let base = format!("http://{}", crate::services::test_support::refused_address());
+    let pages = AppleMusicPages::with_base_url(&base, Duration::from_secs(5));
+
+    let first = pages.detected_country().await;
+    let started = std::time::Instant::now();
+    let again = pages.chart(None, "34").await;
+
+    assert_eq!(first, None);
+    assert_eq!(again.unwrap_err(), PageError::Unavailable("no connection".into()));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "Apple was asked again"
+    );
+}
+
+#[tokio::test]
+async fn requests_waiting_at_the_gate_take_the_failure_before_them() {
+    let base = format!("http://{}", crate::services::test_support::refused_address());
+    let pages = AppleMusicPages::with_base_url(&base, Duration::from_secs(2));
+
+    // Five asks at once: the first fails, the four behind it must not each wait their turn.
+    let started = std::time::Instant::now();
+    let asks = futures::future::join_all((0..5).map(|_| pages.detected_country())).await;
+
+    assert!(asks.iter().all(Option::is_none));
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "every waiting ask went to Apple"
+    );
+}
+
+#[tokio::test]
 async fn rooms_come_from_the_new_page_in_english_and_are_kept_an_hour() {
     let (server, pages) = apple().await;
     Mock::given(method("GET"))

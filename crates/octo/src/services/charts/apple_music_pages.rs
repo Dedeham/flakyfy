@@ -29,6 +29,10 @@ const ROOMS_TTL: Duration = Duration::from_secs(60 * 60);
 const MISSING_TTL: Duration = Duration::from_secs(60 * 60);
 /// How long a failed New page is not asked for again.
 const FAILED_TTL: Duration = Duration::from_secs(10 * 60);
+/// How long Apple is not asked again after it could not be reached at all (no connection, or no
+/// answer in time): a server that cannot reach Apple must not wait out the timeout on every
+/// request that asks for its country or a chart.
+const UNREACHABLE_TTL: Duration = Duration::from_secs(5 * 60);
 /// How long a fetched page is kept here: long enough that finding the country, which reads the
 /// overall chart, does not read it a second time a moment later.
 const PAGE_TTL: Duration = Duration::from_secs(10 * 60);
@@ -82,13 +86,24 @@ impl Gate {
 
     /// Waits for this request's turn. Waiters queue on the lock, so they go one after another.
     pub async fn wait(&self) {
+        self.wait_unless(|| false).await;
+    }
+
+    /// Waits for this request's turn unless, when its place in the queue comes up, `answered`
+    /// says it needs none (a request before it already learned the answer). True when the
+    /// request may go.
+    pub async fn wait_unless(&self, answered: impl Fn() -> bool) -> bool {
         let mut next = self.next.lock().await;
+        if answered() {
+            return false;
+        }
         if let Some(at) = *next
             && at > Instant::now()
         {
             tokio::time::sleep_until(at).await;
         }
         *next = Some(Instant::now() + self.interval);
+        true
     }
 }
 
@@ -244,13 +259,20 @@ impl AppleMusicPages {
         if let Some(error) = self.missing.get(url) {
             return Err(error);
         }
-        self.gate.wait().await;
-        let mut response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| PageError::Unavailable(short(&e)))?;
+        // A request that waited in the queue while the one before it failed takes that failure.
+        if !self.gate.wait_unless(|| self.missing.get(url).is_some()).await
+            && let Some(error) = self.missing.get(url)
+        {
+            return Err(error);
+        }
+        let mut response = match self.client.get(url).send().await {
+            Ok(response) => response,
+            Err(e) => {
+                let error = PageError::Unavailable(short(&e));
+                self.missing.set(url, error.clone(), 1, UNREACHABLE_TTL);
+                return Err(error);
+            }
+        };
         let status = response.status();
         if status.as_u16() == 404 || status.as_u16() == 500 {
             self.missing.set(url, PageError::NoSuchPage, 1, MISSING_TTL);

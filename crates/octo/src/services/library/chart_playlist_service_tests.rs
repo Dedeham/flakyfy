@@ -291,6 +291,21 @@ async fn the_explicit_filter_leaves_out_what_it_should() {
 }
 
 #[tokio::test]
+async fn a_changed_explicit_filter_makes_the_list_again_on_the_next_ask() {
+    let lists = Lists::new("").await;
+    lists.library(Vec::new()).await;
+    assert_eq!(lists.service.songs("alice", OVERALL, &auth()).await.len(), 5);
+
+    let mut changed = (*lists.settings.current()).clone();
+    changed.subsonic.explicit_filter = ExplicitFilter::CleanOnly;
+    lists.settings.set(changed);
+
+    let songs = lists.service.songs("alice", OVERALL, &auth()).await;
+    let titles: Vec<&str> = songs.iter().filter_map(|s| s["title"].as_str()).collect();
+    assert_eq!(titles, vec!["Cold Shoulder", "Choosin' Texas", "BbY WOW"]);
+}
+
+#[tokio::test]
 async fn a_list_turned_off_is_gone_on_the_next_list() {
     let lists = Lists::new("18").await;
     lists.library(Vec::new()).await;

@@ -27,6 +27,10 @@ pub struct Album {
     /// filed them under, sent as `ownedCount` beside `songCount`. None when its songs were not
     /// looked at, which a client reads as it always has.
     pub owned_count: Option<i32>,
+
+    /// Whether the album's words are explicit (1), the clean edit (3) or neither (0), as the
+    /// catalog says; None when it does not. See [`super::explicit_status`].
+    pub explicit_content_lyrics: Option<i32>,
     pub external_provider: Option<String>,
     pub external_id: Option<String>,
     pub songs: Vec<Song>,

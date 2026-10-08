@@ -21,6 +21,7 @@ pub mod helpers_6b2;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
+pub mod radio_admin;
 pub mod raw_config;
 pub mod secrets;
 pub mod settings;
@@ -119,6 +120,7 @@ pub fn routes_6b2() -> RouteSet {
         .merge(lyrics_admin::routes())
         .merge(update::routes())
         .merge(soulseek_sharing::routes())
+        .merge(radio_admin::routes())
 }
 
 #[cfg(test)]

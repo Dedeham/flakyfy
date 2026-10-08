@@ -752,9 +752,15 @@ async fn similar_songs_need_an_id_and_relay_their_own_path_with_radio_off() {
         .respond_with(json_reply(ok_json(r#""similarSongs2":{}"#)))
         .mount(&server)
         .await;
+    // Radio is on by default, and since 2026.10.05 it answers without a Last.fm key (ListenBrainz
+    // and Sounds alike need none), so this test turns it off.
     let app = app(AppState::for_tests(AppSettings {
         subsonic: SubsonicSettings {
             url: Some(server.uri()),
+            ..Default::default()
+        },
+        last_fm: octo_core::settings::LastFmSettings {
+            enable_radio: false,
             ..Default::default()
         },
         ..Default::default()

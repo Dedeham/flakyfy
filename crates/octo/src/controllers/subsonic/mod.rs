@@ -38,6 +38,8 @@ mod lyrics_endpoint_tests_6a2;
 #[cfg(test)]
 mod media_tests_6a2;
 #[cfg(test)]
+mod radio_ban_tests;
+#[cfg(test)]
 mod rating_tests_6a2;
 #[cfg(test)]
 mod scrobble_tests_6a2;

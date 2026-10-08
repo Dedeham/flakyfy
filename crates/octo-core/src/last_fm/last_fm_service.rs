@@ -4,6 +4,8 @@
 /// One song Last.fm suggested or found.
 ///
 /// `listeners`: how many people Last.fm counts for the row, where the call says.
+/// `you_tube_id`: the video a source already knows plays this song. `provider`: the
+/// `services::radio::radio_provider` key of the source that suggested it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimilarTrack {
     pub artist: String,
@@ -11,6 +13,8 @@ pub struct SimilarTrack {
     pub r#match: f64,
     pub duration: Option<i32>,
     pub listeners: Option<i64>,
+    pub you_tube_id: Option<String>,
+    pub provider: Option<String>,
 }
 
 impl SimilarTrack {
@@ -22,6 +26,8 @@ impl SimilarTrack {
             r#match,
             duration: None,
             listeners: None,
+            you_tube_id: None,
+            provider: None,
         }
     }
 
@@ -34,6 +40,18 @@ impl SimilarTrack {
     /// `with { Listeners = .. }`.
     pub fn with_listeners(mut self, listeners: Option<i64>) -> Self {
         self.listeners = listeners;
+        self
+    }
+
+    /// `with { YouTubeId = .. }`.
+    pub fn with_you_tube_id(mut self, you_tube_id: Option<String>) -> Self {
+        self.you_tube_id = you_tube_id;
+        self
+    }
+
+    /// `with { Provider = .. }`.
+    pub fn with_provider(mut self, provider: Option<String>) -> Self {
+        self.provider = provider;
         self
     }
 }

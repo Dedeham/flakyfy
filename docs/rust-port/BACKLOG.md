@@ -26,6 +26,10 @@ Baseline: Rust at 2026.10.04 parity. Target: `main` at `ce63143` (release
   incremental caches). Keep 30 GB free in WSL.
 - **At most 3 agents compile at once** in WSL's 16 GB: a test rebuild peaks
   at 2.3 to 3.4 GB with incremental caches, 4 to 4.7 GB cold.
+- **Shared slots.** Run cargo through `~/bin/cargo-slot` (one of WSL's
+  three build slots). Parity runs go through `parity/lxc131.sh`, whose run
+  on the box outlives the script: `--attach` follows it again and fetches
+  its reports, `--queue` shows who holds the box and who waits.
 - **The loop.** `cargo test -p <crate> <filter>` while working; the full
   `cargo test --workspace`, `cargo clippy --workspace --tests -- -D warnings`
   and `cargo fmt --all --check` before merging into `rust/main`.

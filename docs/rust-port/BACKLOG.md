@@ -24,12 +24,19 @@ Baseline: Rust at 2026.10.04 parity. Target: `main` at `ce63143` (release
   `target/`; never point several at one `CARGO_TARGET_DIR`. Incremental
   builds are on, so a `target/` grows to about 7.3 GB (3.8 GB of it
   incremental caches). Keep 30 GB free in WSL.
-- **At most 3 agents compile at once** in WSL's 16 GB: a test rebuild peaks
-  at 2.3 to 3.4 GB with incremental caches, 4 to 4.7 GB cold.
-- **Shared slots.** Run cargo through `~/bin/cargo-slot` (one of WSL's
-  three build slots). Parity runs go through `parity/lxc131.sh`, whose run
-  on the box outlives the script: `--attach` follows it again and fetches
-  its reports, `--queue` shows who holds the box and who waits.
+- **One memory budget in WSL.** Run cargo through `~/bin/cargo-slot`. It is
+  now a weighted budget of WSL's 16 GB for builds and parity stacks together
+  (`parity/budget.sh`, README "WSL's budget"): 12.5 GB, a cargo build 3.5 GB
+  (a test rebuild peaks at 2.3 to 3.4 GB with incremental caches, 4 to
+  5.3 GB cold), a parity stack 1.25 GB. A build that does not fit waits in
+  line; a stack never takes the last build's share. `cargo-slot --status`
+  shows who holds what.
+- **Parity runs: `parity/run.sh`.** One command, the options of
+  `parity/lxc131.sh`. It runs in WSL's own Docker by default, as many stacks
+  at once as the budget allows (the runs of several branches side by side),
+  or on the test box with `--lane box`. The run outlives the script:
+  `--attach` follows it again and fetches its reports, `--queue` shows both
+  lanes. `parity/lxc131.sh` still works for the box.
 - **The loop.** `cargo test -p <crate> <filter>` while working; the full
   `cargo test --workspace`, `cargo clippy --workspace --tests -- -D warnings`
   and `cargo fmt --all --check` before merging into `rust/main`.
@@ -169,6 +176,9 @@ Done 2026-10-07 (`parity/README.md` has the details):
   corpus, structural and bytes (record below).
 - [x] One script for the test box: `parity/lxc131.sh` (README, "For port
   agents").
+- [x] Parallel parity lanes in WSL: `parity/run.sh` picks WSL or the box, and
+  WSL's `cargo-slot` is one memory budget for builds and stacks
+  (`parity/budget.sh`; README "The WSL lane", record below).
 - [ ] `parity/recordings/csharp` stays the 2026.10.03.2 baseline: the Rust
   golden tests (`subsonic_wire_golden_tests.rs`) pin the wire format the port
   has today. A group that changes those answers moves its golden tests onto a
@@ -445,6 +455,43 @@ F request); with it reviewed that request no longer differs for the ISRC.
 
 Made for you list order was left out of the gate, as planned; Rust against Rust is 0 on the
 whole corpus all the same.
+
+### WSL lane record (2026-10-08)
+
+The parity harness now also runs in WSL's own Docker (29.1.3, compose 2.40), many stacks at
+once, through `parity/run.sh` (README "The WSL lane"), under one memory budget with the cargo
+builds (`parity/budget.sh`, installed as `~/bin/cargo-slot`: 12.5 GB, a build 3.5 GB, a C#
+stack 1.25 GB, a stack of the Rust build 0.75 GB).
+
+`rust/main` (`3c4c593`, the same code and corpus as the G2 record's `be07a5f`) with
+`parity/run.sh --lane wsl --rust-twice`: the C# recording made afresh in WSL beside the Rust one
+and the Rust one again, three stacks at once.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 786 unexplained, 1,026 explained, 25 identical (the G2 box record's numbers) | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+The one Rust against Rust diff is `19-health/plant-wait`: its `search3` was answered while
+Navidrome was still giving the planted albums their covers after `plant-scan-done` saw the
+scan end (one recording has `coverArt` on the albums, the other not, and the two albums
+in another order). It showed with five stacks and port agents' builds going at once; the
+sharded run below with `--rust-twice` had it 0. A corpus fix (wait for the planted albums'
+`coverArt`) is for whoever owns the corpus.
+
+| Run (WSL) | Stacks at once | Wall time |
+| --- | --- | --- |
+| `rust/main` `--rust-twice`, C# not cached | 3 (C# 741 s, Rust 3,087 s, Rust again 3,088 s) | 51 min run, 55 min with the musl compile |
+| `port/g2-bd` (`eb59c77`) beside it and `port/g2-coq` | 1 each (they waited for, then shared, the C# recording `rust/main` was making) | 47 and 52 min run; 684 and 786 unexplained |
+| A trial four-shard plan, C# not cached, Rust waits from C# | 4 C# shards, then each Rust shard after its C# one | 28 min |
+| The same, C# cached, `--rust-twice` | 8 Rust shards | 17 min; Rust against Rust 0 in both modes |
+
+On the box the same `rust/main --rust-twice` is about 11 min of C# (when not cached) and two
+45 to 55 min Rust recordings one after the other, about 2 hours, after the wait for the box
+lock (seven runs were queued for it while these ran). The trial plan was a timing test with
+the shards work in progress; its C# against Rust count (795) is not yet the whole corpus's.
+The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
+Rust, so that shard sets the time of a sharded run.
 
 ## Gap groups
 

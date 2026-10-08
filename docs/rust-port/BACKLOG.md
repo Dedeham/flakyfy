@@ -282,17 +282,53 @@ diff.
   a search registers them again (`95-acquisition` starts with that search).
 - **The Soulseek web address is saved with the spaces it was typed with.**
 
+### G1 record: groups A, K and S (2026-10-07)
+
+Run on LXC 131 from `port/g1-aks` (`7411096`) with `parity/lxc131.sh --no-build --rust-twice
+--bytes`, against the cached C# recording of the same corpus.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 1,433 unexplained (1,458 in phase 1), 385 explained, 18 identical | the same |
+| Rust against Rust | 1,835 identical, 1 unexplained | the same |
+
+| Group | Own before | Own after | Diffs before | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| A | 5 | 0 | 5 | 0 |
+| K | 5 | 0 | 6 | 0 |
+| S | 5 | 0 | 4 | 0 |
+| B (`0a700c0`, the relayed file name) | 18 | 11 | 22 | 11 |
+| base | 204 | 201 | 164 | 163 |
+
+Every other group is as in phase 1 except R, one more (138 own, 131 diffs): the Rust against
+Rust diff, `19-health/plant-wait`. That request stops polling once the 7 planted songs are
+listed, while Navidrome's full scan is still filling in album covers and MusicBrainz ids, so
+which album comes first and whether it has a cover depends on the scan's timing. It touches
+none of A, K and S, and it was identical in the phase 1 gate runs; the fix is a wait for the
+scan to finish (`getScanStatus`) before it, in the corpus.
+
+The image was not built by the harness: the Proxmox host had about 3.6 GB to spare (another
+container's load swings by 4 GB a minute), and both the usual build and `--low-memory` tripped
+the watchdog while compiling the `octo` crate. It was the same commit built in WSL as a static
+musl binary (`cargo build --release --target x86_64-unknown-linux-musl`, since a WSL glibc
+build needs glibc 2.38 and the image is bookworm's 2.36), put into `Dockerfile.rust`'s own
+runtime stage on the box and tagged `octo-rust-parity:port-g1-aks`; the runs then used
+`--no-build`. The targeted run first (`--only '[01][348]-*'`, 456 requests): A, K and S at 0;
+03-search 5 (unchanged), 04-media 2 to 0, 08-catchall-native 4 to 3, 13-downloads 108 to 101,
+14-settings-media 149 to 134, 18-dashboard 63 (unchanged).
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the phase 1 record's "own" count (requests
-tagged with the group that differ from C# 2026.10.05). Status: open, in
+tagged with the group that differ from C# 2026.10.05), or the G1 record's for A, B, K and S.
+Status: open, in
 progress, done, or no Rust change.
 
 | Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 5 | open |
-| B Download matching | 8 | 644 | 46 | 0.75 | 18 | open |
+| A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | done |
+| B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 15 | open |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 133 | open |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 45 | open |
@@ -301,7 +337,7 @@ progress, done, or no Rust change.
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 208 | open |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 76 | open |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 252 | open |
-| K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 5 | open |
+| K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 75 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
 | N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 48 | open |
@@ -309,7 +345,7 @@ progress, done, or no Rust change.
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 106 | open |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 14 | open |
 | R Library health on the server | 5 | 3,130 | 39 | 2.0 | 137 | open |
-| S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 5 | open |
+| S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
 
@@ -328,7 +364,7 @@ vars; the `zip` crate for imports.
 
 ### A. Last.fm search cleanup polish
 
-- [ ] `6f90ce1` fix(lastfm): the rest of the mislabelled search rows, and a gap inside "Connected as"
+- [x] `6f90ce1` fix(lastfm): the rest of the mislabelled search rows, and a gap inside "Connected as"
 
 ### B. Download matching (versions, mash-ups, wider star search, format rename, relay file name)
 
@@ -338,7 +374,8 @@ vars; the `zip` crate for imports.
 - [ ] `066ea88` fix(downloads): a drumless, piano, 8D or other performance edition is a version, while deluxe and anniversary editions stay the same recording
 - [ ] `53731d2` fix(downloads): a mash-up, medley or megamix never passes as the song, and only a file named as just the song is taken for its radio edit
 - [ ] `85bba0f` feat(downloads): a file named for another format is renamed to the one it holds before tagging
-- [ ] `0a700c0` fix(relay): a download keeps the file name Navidrome gave it
+- [x] `0a700c0` fix(relay): a download keeps the file name Navidrome gave it
+  (ported with S: `StreamLengthTests` checks it)
 - [ ] `a38487d` docs(readme): a download named for the wrong format is renamed before tagging
 
 ### C. Tagging polish (one album's facts, explicit advisory, Try it)
@@ -351,6 +388,10 @@ vars; the `zip` crate for imports.
 ### D. Download log, drawer, Find songs picks
 
 - [ ] `9ac4e5a` feat(downloads): every download keeps a log, and Find songs picks the copy to fetch
+  (its Lidarr half is on `rust/main` with K: `LidarrRelease`, `LidarrReleasePick`,
+  `list_releases`, `grab_release`, the grab in `start_album_search`, the request's `release`,
+  and its two `LidarrClientTests`; D still wires `SongFinder`, `DownloadPicks` and the
+  download log's `step` to them)
 - [ ] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
 - [ ] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
 - [ ] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
@@ -419,8 +460,10 @@ vars; the `zip` crate for imports.
 
 ### K. Lidarr stale guid, bare address 302 (#80)
 
-- [ ] `e3aed24` fix(lidarr): a picked release Lidarr forgot is found again by its title, and a pick an album search already covers says it was not grabbed
-- [ ] `4a329aa` fix(proxy): the bare server address sends to the web app, as Navidrome does (#80)
+- [x] `e3aed24` fix(lidarr): a picked release Lidarr forgot is found again by its title, and a pick an album search already covers says it was not grabbed
+  (the Lidarr client and track fetcher; `PickedCopy.Size`, `SongFinder`'s size and the
+  Soulseek service's `Step` belong to D's picks and come with them)
+- [x] `4a329aa` fix(proxy): the bare server address sends to the web app, as Navidrome does (#80)
 
 ### L. Multi-source radio (#78, sources, blend, learning, bans, Sounds alike client)
 
@@ -487,7 +530,7 @@ No Rust server change: both are their own images.
 
 ### S. Estimated stream length fix
 
-- [ ] `67f3c93` fix(stream): a transcode's estimated length is never promised to the client
+- [x] `67f3c93` fix(stream): a transcode's estimated length is never promised to the client
 
 ### T. Starter stack, install.sh, README, CI, sidecar images, updater
 

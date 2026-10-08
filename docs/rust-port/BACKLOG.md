@@ -491,8 +491,7 @@ The order of "No lyrics found" against "In the library folder" in the log is a r
 builds (the lyrics look runs in the background); C# recorded it both ways in one run, and it
 shows only because the two C lines shift every index after them.
 
-No intentional diffs and no settings were added. `02cc06b` waits for C, `696cbff`'s import
-half for H, and `5d3f096`'s Recently removed and activity card for F and N.
+No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and `5d3f096`'s Recently removed and activity card for F and N.
 
 ## Gap groups
 
@@ -600,9 +599,8 @@ writer does. What the later groups find waiting for them:
 - [x] `6113fec` fix(downloads): a picked copy waiting in the upgrade queue is saved without its derived fields
 - [x] `1469b8c` docs(readme): the downloads drawer, Find songs and their endpoints
   (README only)
-- [ ] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
-  (blocked on C: the advisory and the tags a download drops are group C's `2463c23`; the two
-  log lines come with it)
+- [x] `02cc06b` feat(downloads): a download's log says what came off the peer's tags and whether the song is explicit
+  (ported once C's `2463c23` was on `rust/main`)
 - [x] `11900f1` fix(downloads): Find songs picks a copy by its own id, and only once the search has ended
 - [x] `c3e80bb` fix(downloads): a picked copy meets the deny list, and in place of a library file the search's own checks
 - [x] `25b1d67` fix(downloads): a second pick before the upgrade starts replaces the first, and otherwise says another copy is on its way

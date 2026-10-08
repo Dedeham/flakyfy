@@ -262,7 +262,11 @@ if [ "$prebuilt" = 1 ]; then
   # never makes a fourth compile beside the port agents' own.
   slot=()
   if [ -x "$HOME/bin/cargo-slot" ]; then slot=("$HOME/bin/cargo-slot"); fi
-  "${slot[@]}" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
+  # The harness compares with C# 2026.10.05, so the binary claims that release (build.rs reads
+  # OCTO_VERSION first). A VERSION ahead of it, as on a release branch, would otherwise differ in
+  # every answer that names the release. PARITY_OCTO_VERSION picks another.
+  OCTO_VERSION="${PARITY_OCTO_VERSION:-2026.10.05}" \
+    "${slot[@]}" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
   echo "built $(du -h "$binary" | cut -f1) binary from $(git rev-parse --short HEAD)"
 fi
 

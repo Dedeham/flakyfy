@@ -469,7 +469,11 @@ elif [ "$build" = 1 ]; then
   old_id="$(docker image inspect -f '{{.Id}}' "$RS_IMAGE" 2> /dev/null || true)"
   say "building $RS_IMAGE from $(git rev-parse --short HEAD)"
   start=$(date +%s)
+  # The harness compares with C# 2026.10.05, so the binary claims that release (build.rs reads
+  # OCTO_VERSION first). A VERSION ahead of it, as on a release branch, would otherwise differ in
+  # every answer that names the release. PARITY_OCTO_VERSION picks another.
   docker buildx build --builder "$BUILDER" --progress plain -f Dockerfile \
+    --build-arg "OCTO_VERSION=${PARITY_OCTO_VERSION:-2026.10.05}" \
     "${build_args[@]}" -t "$RS_IMAGE" --load . > "$RUN/build.log" 2>&1 || {
     tail -n 40 "$RUN/build.log"
     echo "the Rust image did not build; the whole log is $RUN/build.log on the box" >&2

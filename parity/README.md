@@ -628,6 +628,14 @@ ends with a table of requests with an unexplained diff per group (one request ca
 several); `--groups-out FILE` writes the request ids per group as JSON. This table is the port's
 worklist ([`docs/rust-port/BACKLOG.md`](../docs/rust-port/BACKLOG.md)).
 
+## The release the Rust build claims
+
+The harness compares with C# 2026.10.05, so `run.sh`, `lxc131.sh` and `box-run.sh` build the
+Rust binary with `OCTO_VERSION=2026.10.05` (octo-core's `build.rs` reads it before the `VERSION`
+file). Otherwise a branch whose `VERSION` is ahead of 2026.10.05, as the release branch's is,
+would differ in every answer that names the release (the update card's `running`, the
+User-Agent). `PARITY_OCTO_VERSION` picks another release.
+
 ## Intentional diffs
 
 The port does not have to stay one to one: Brandon wants it improved. A deliberate improvement

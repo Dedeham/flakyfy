@@ -304,7 +304,7 @@
         "body"
       ],
       "lines": [
-        "^\\$\\.command: +git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull yt-dlp-shim octo-sonic \\|\\| docker compose build yt-dlp-shim-source octo-sonic-source\\) && docker compose build octo && docker compose up -d +!= git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull octo yt-dlp-shim octo-sonic \\|\\| docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source\\) && docker compose up -d$",
+        "^\\$\\.command: git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull yt-dlp-shim octo-sonic \\|\\| docker compose .* != git fetch --tags && git checkout --detach \\S+ && \\(docker compose pull octo yt-dlp-shim octo-sonic \\|\\| .*$",
         "^\\$\\.reinstallCommand: only in B \\(scripts/updater/install-updater\\.sh\\)$",
         "^--- A$",
         "^\\+\\+\\+ B$",

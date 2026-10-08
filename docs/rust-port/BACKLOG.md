@@ -507,6 +507,42 @@ its 2 aspects in both modes and is waiting for review) and the two `activity-res
 of N. No group got worse against the C, O and Q record: B 11, C 9, D 110, F 128, G 47, H 201,
 I 3, J 3, L 45, N 14, O 17, P 68, Q 5, R 96 (97), base 29; A, K and S 0.
 
+### G3 record: group L (2026-10-08)
+
+Branch `port/g3-l` (`1b4d021`, merged with `rust/main` `cd89293`). A first targeted run on
+LXC 131 (`--only '1[15]-*'`, `694e9ee`, 218 requests compared) left nothing of L's own: every
+`15-radio` diff was another group's. The final run: `parity/run.sh --rust-twice` on the WSL lane,
+the whole corpus (1,837 requests) against the cached C# recording, 49 minutes.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 741 unexplained (768 after E), 1,069 explained, 27 identical | not run |
+| Rust against Rust | 1,837 identical, 0 unexplained | 1,837 identical, 0 unexplained |
+
+| Group | Own before (phase 1) | Own after J and I | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| L | 75 | 45 | 18 | 6 |
+
+Song radio, station provenance, bans, learning, the outcome stats, Sounds alike's pass and
+controls and the octo-sonic status card all match. What is left on L is other groups' work:
+
+- L 18 own: 15 `getSimilarSongs` answers differ only by P's `explicitStatus` on one outside song;
+  the 3 `extensions-radio-*` answers by D's second `octoAcquisitions` version and G's and H's
+  extensions (octoRadioSources is listed and placed as the C# places it).
+- L 6 diffs: those 3 extension answers, and `09-admin/update`, `11-signin/in-get-update` and
+  `90-mutations/update-check`, whose update commands pull `yt-dlp-shim` and `octo-sonic`
+  (`610dba2`, group T, the release phase); `groups.json` puts them on L for `octo-sonic`.
+
+The registry fix shows in no request of this corpus: the C# answers carry the album too
+(`95-acquisition` searches again before it reads the songs, as the harness notes said), so no
+`intentional-diffs.json` entry is proposed: like G1's two unreachable fixes, it has a Rust test
+and a known-diffs row. No group got worse against the E record: B 11, C 9, D 110, E 4, F 128,
+G 47, H 201, I 3, J 3, N 14, O 17, P 68, Q 5, R 96, base 29; A, K and S 0.
+
+The full run was started on the box first and stopped while queued; WSL full runs on `78234a5`
+stopped silently after the image build (`run.sh`'s ADAPTIVE substitution under `set -e`), fixed
+on `rust/main` in `cd89293`.
+
 ### WSL lane record (2026-10-08)
 
 The parity harness now also runs in WSL's own Docker (29.1.3, compose 2.40), many stacks at
@@ -566,7 +602,7 @@ Rust change.
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
 | J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
-| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 45 | open |
+| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 18 | done (G3) |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
 | N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
@@ -774,8 +810,8 @@ Rust change beyond the settings they name.
   ISRC and explicit mark are kept), with a Rust test and an intentional diff.
   Done in G3 (`external_id_registry::register`, test
   `a_registration_without_an_album_keeps_the_album_already_known`, known-diffs
-  "An outside song's album in the registry", proposed intentional diff
-  `registry-keeps-the-album`, `reviewed` unset).
+  "An outside song's album in the registry"; no corpus request reaches it, so it has no
+  intentional-diffs entry, see the G3 record).
 
 Done in G3 on `port/g3-l`. The pure parts are `octo_core::radio` (`RadioProvider`,
 `RadioTypes`, `RadioBlend`) and `octo_core::last_fm::radio_filler`; the sources, the set,

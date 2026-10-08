@@ -60,10 +60,16 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (LYRICS_EXTENSION, &[LYRICS_EXTENSION_VERSION]),
     (LIBRARY_ACTIONS_EXTENSION, &[1, LIBRARY_ACTIONS_EXTENSION_VERSION]),
     ("songLyrics", &[1, 2]),
-    // The other groups' extensions (octoTopSongs, octoImports, octoRadioSources) come before
-    // this one, as the C# lists them, when those groups land.
+    // octoTopSongs (group G) comes before octoImports, and octoRadioSources (group L) after it,
+    // as the C# lists them, when those groups land.
+    (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
+
+/// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
+/// getImport, importAction).
+pub const IMPORTS_EXTENSION: &str = "octoImports";
+pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
 
 /// octoLists v1 (f54467a): Made for you (New Releases, Rediscover, Deep Cuts) are read-only
 /// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.

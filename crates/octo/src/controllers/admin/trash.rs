@@ -131,3 +131,7 @@ async fn restore(State(state): State<AppState>, request: Request) -> Response {
     );
     ok(&json!({ "state": outcome.state, "detail": outcome.detail }))
 }
+
+#[cfg(test)]
+#[path = "trash_tests.rs"]
+mod tests;

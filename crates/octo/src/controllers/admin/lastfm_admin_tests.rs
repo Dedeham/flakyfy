@@ -471,3 +471,53 @@ async fn navidromes_address_is_saved_without_a_trailing_slash() {
     let sections: Vec<&String> = saved.as_object().expect("an object").keys().collect();
     assert_eq!(sections, ["Subsonic", "Lidarr"]);
 }
+
+// SoulseekSharingTests.SavingAWebUrl_KeepsOnlyWebAddresses: Open slskd puts the address in a
+// link, so only a whole http or https address is kept; a blank one clears it.
+#[tokio::test]
+async fn saving_a_web_url_keeps_only_web_addresses() {
+    let factory = ScrobbleAdminFactory::new("{}").await;
+    for (body, expected) in [
+        (
+            r#"{ "Soulseek": { "WebUrl": "javascript:alert(1)" } }"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{ "Soulseek": { "WebUrl": "http://192.168.1.5:5030" } }"#,
+            StatusCode::OK,
+        ),
+        (r#"{ "Soulseek": { "WebUrl": "" } }"#, StatusCode::OK),
+    ] {
+        let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+        assert_eq!(save.status, expected, "{body}: {}", save.text());
+    }
+}
+
+/// A port fix: slskd's web address is saved without the spaces it was typed with (settings and
+/// Raw config), where the C# kept them and GET settings showed them.
+#[tokio::test]
+async fn slskds_web_address_is_saved_without_spaces() {
+    let factory = ScrobbleAdminFactory::new("{}").await;
+    let web_url = |factory: &ScrobbleAdminFactory| {
+        Node::parse(&factory.saved())
+            .expect("the file parses")
+            .get("Soulseek")
+            .and_then(|s| s.get("WebUrl"))
+            .and_then(Node::as_str)
+            .map(str::to_string)
+    };
+    let body = r#"{ "Soulseek": { "WebUrl": " http://slskd.lan:5030 " } }"#;
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    assert_eq!(web_url(&factory).as_deref(), Some("http://slskd.lan:5030"));
+    assert!(
+        save.text().contains(r#""WebUrl":"http://slskd.lan:5030""#),
+        "{}",
+        save.text()
+    );
+
+    let body = r#"{ "Soulseek": { "WebUrl": "\thttps://slskd.example/web/ " } }"#;
+    let put = admin_write(&factory.app, Method::PUT, "/api/admin/raw-config", Some(body)).await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.text());
+    assert_eq!(web_url(&factory).as_deref(), Some("https://slskd.example/web/"));
+}

@@ -87,6 +87,27 @@
       "knownDiff": "Clearing a tag field"
     },
     {
+      "id": "slskd-web-url-trimmed",
+      "backlog": "E",
+      "requests": [
+        "18-dashboard/settings-weburl-ok",
+        "18-dashboard/settings-weburl-ok-read"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$(\\.persisted)?\\.Soulseek\\.WebUrl: +http://slskd\\.parity\\.test:5030 +!= http://slskd\\.parity\\.test:5030$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"(ok\":true,\"persisted|Subsonic)\":",
+        "^\\+\\{\"(ok\":true,\"persisted|Subsonic)\":"
+      ],
+      "reason": "The C# saved slskd's web address (the Open slskd link) with the spaces it was typed with, and the settings answer and the form showed them; the Rust build saves and reads it trimmed.",
+      "knownDiff": "slskd's web address saved with spaces"
+    },
+    {
       "id": "charts-top-chart-says-which-chart",
       "backlog": "G",
       "requests": [

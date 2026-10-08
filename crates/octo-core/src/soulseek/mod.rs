@@ -10,6 +10,8 @@ pub mod soulseek_client;
 pub mod soulseek_download_service;
 pub mod soulseek_link;
 pub mod soulseek_metadata_service;
+pub mod soulseek_share_switch;
+pub mod soulseek_sharing;
 
 pub use album_folder_picker::{AlbumFolderChoice, AlbumFolderPicker, AlbumTrack};
 pub use search_profile::SearchProfile;
@@ -20,3 +22,7 @@ pub use soulseek_client::{
 };
 pub use soulseek_link::{SoulseekLinkState, SoulseekServerReading};
 pub use soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+pub use soulseek_sharing::{
+    PortCheckResult, PortState, ShareControl, ShareSwitchState, SharedFolder, SharingReport, SharingWarning,
+    UploadActivity,
+};

@@ -19,5 +19,6 @@ pub use lidarr_import_handoff::{LidarrImport, LidarrImportHandoff};
 pub use lidarr_track_fetcher::{ILidarrTrackFetcher, LidarrTrackFetcher};
 pub use octo_core::lidarr::{
     LidarrAlbumCandidate, LidarrAlbumImportState, LidarrAlbumState, LidarrChoice, LidarrError,
-    LidarrImportedTrack, LidarrOptions, LidarrRootFolder, LidarrSearchStarted, LidarrTrackRequest,
+    LidarrImportedTrack, LidarrOptions, LidarrRelease, LidarrReleasePick, LidarrRootFolder,
+    LidarrSearchStarted, LidarrStep, LidarrTrackRequest,
 };

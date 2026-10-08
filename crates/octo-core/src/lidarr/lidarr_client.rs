@@ -107,6 +107,52 @@ pub struct LidarrSearchStarted {
     pub was_monitored: bool,
 }
 
+/// One release an indexer offered for an album, as Lidarr's interactive search lists it.
+/// `rejected` says Lidarr would not take it on its own, and `rejections` says why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LidarrRelease {
+    pub guid: String,
+    pub indexer_id: i32,
+    pub title: String,
+    pub indexer: Option<String>,
+    pub quality: Option<String>,
+    pub size: Option<i64>,
+    pub seeders: Option<i32>,
+    pub leechers: Option<i32>,
+    pub protocol: Option<String>,
+    pub age_days: Option<i32>,
+    pub rejected: bool,
+    pub rejections: Vec<String>,
+}
+
+/// A release someone picked in Find songs, grabbed instead of Lidarr's own search. Its title
+/// and size find it again when Lidarr has forgotten the search that listed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LidarrReleasePick {
+    pub guid: String,
+    pub indexer_id: i32,
+    pub title: Option<String>,
+    pub size: Option<i64>,
+}
+
+/// `LidarrClient.PickGoneText`: a picked release no indexer offers any more.
+pub const PICK_GONE_TEXT: &str =
+    "The release you picked is no longer offered by the indexers. Search again and pick another.";
+
+/// What `GrabPickedAsync` says when Lidarr refuses the release found again.
+pub const PICK_REFUSED_TEXT: &str =
+    "Lidarr would not take the release you picked. Search again and pick another.";
+
+/// `SameRelease`: the same release in a newer listing: the same indexer and title, and the same
+/// size when both say.
+pub fn same_release(release: &LidarrRelease, pick: &LidarrReleasePick) -> bool {
+    release.indexer_id == pick.indexer_id
+        && pick.title.as_deref().is_some_and(|title| {
+            !dotnet::is_blank(title) && dotnet::eq_ignore_case(release.title.trim(), title.trim())
+        })
+        && (release.size.is_none() || pick.size.is_none() || release.size == pick.size)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LidarrAlbumImportState {
     pub tracks: Vec<LidarrImportedTrack>,
@@ -269,6 +315,51 @@ pub fn parse_album(row: &Map<String, Value>) -> Result<LidarrAlbumCandidate, Lid
         },
         year,
         resource: row.clone(),
+    })
+}
+
+/// `NullableNumber`: a whole number however Lidarr wrote it (`TryGetValue<double>`, then
+/// `(int)Math.Round`). Anything but a number is None.
+fn nullable_number(o: &Map<String, Value>, key: &str) -> Option<i32> {
+    o.get(key)
+        .and_then(Value::as_f64)
+        .map(|n| n.round_ties_even() as i32)
+}
+
+/// `ParseRelease`: one row of `GET /api/v1/release`.
+pub fn parse_release(row: &Map<String, Value>) -> Result<LidarrRelease, LidarrError> {
+    let quality = object(row, "quality").and_then(|q| object(q, "quality"));
+    let age_days = match row.get("ageHours").and_then(Value::as_f64) {
+        Some(hours) => Some((hours / 24.0).round_ties_even() as i32),
+        None => nullable_number(row, "age"),
+    };
+    let rejections = match row.get("rejections") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| match item {
+                Value::Null => Ok(String::new()),
+                other => value_str(other).map(str::to_string),
+            })
+            .filter(|r| r.as_ref().map_or(true, |r| !r.is_empty()))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => Vec::new(),
+    };
+    Ok(LidarrRelease {
+        guid: nullable_str(row, "guid")?.unwrap_or_default(),
+        indexer_id: nullable_number(row, "indexerId").unwrap_or(0),
+        title: nullable_str(row, "title")?.unwrap_or_default(),
+        indexer: nullable_str(row, "indexer")?,
+        quality: match quality {
+            Some(q) => nullable_str(q, "name")?,
+            None => None,
+        },
+        size: row.get("size").and_then(Value::as_f64).map(|bytes| bytes as i64),
+        seeders: nullable_number(row, "seeders"),
+        leechers: nullable_number(row, "leechers"),
+        protocol: nullable_str(row, "protocol")?,
+        age_days,
+        rejected: row.get("rejected").and_then(Value::as_bool).unwrap_or(false),
+        rejections,
     })
 }
 

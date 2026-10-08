@@ -2080,6 +2080,8 @@ mod tests {
             duration_seconds: None,
             lossless_only: true,
             original_path: None,
+            release: None,
+            step: None,
         };
         let refused = state
             .lidarr_track_fetcher

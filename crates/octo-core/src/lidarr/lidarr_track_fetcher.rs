@@ -2,7 +2,10 @@
 //! tracks is the song, and whether a file is lossless. The fetcher is
 //! `octo::services::lidarr::lidarr_track_fetcher`.
 
-use super::LidarrImportedTrack;
+use std::fmt;
+use std::sync::Arc;
+
+use super::{LidarrImportedTrack, LidarrReleasePick};
 use crate::common::SongIdentity;
 use crate::common::dotnet;
 
@@ -18,7 +21,40 @@ pub struct LidarrTrackRequest {
     /// The library file this replaces, when there is one: its tags can name the album exactly,
     /// and Lidarr may already be the one managing it.
     pub original_path: Option<String>,
+    /// A release picked in Find songs, grabbed instead of Lidarr's own search.
+    pub release: Option<LidarrReleasePick>,
+    /// Told, in words for the download's log, what became of the picked release.
+    pub step: Option<LidarrStep>,
 }
+
+/// `Action<string, string?>`: a line for the download's log, and its detail.
+#[derive(Clone)]
+pub struct LidarrStep(pub Arc<dyn Fn(&str, Option<&str>) + Send + Sync>);
+
+impl LidarrStep {
+    pub fn new(step: impl Fn(&str, Option<&str>) + Send + Sync + 'static) -> Self {
+        LidarrStep(Arc::new(step))
+    }
+
+    pub fn tell(&self, text: &str, detail: Option<&str>) {
+        (self.0)(text, detail);
+    }
+}
+
+impl fmt::Debug for LidarrStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LidarrStep")
+    }
+}
+
+/// A delegate is equal only to itself, as C# record equality compared it.
+impl PartialEq for LidarrStep {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for LidarrStep {}
 
 const LOSSLESS_SUFFIXES: [&str; 6] = [".flac", ".wav", ".aiff", ".aif", ".ape", ".wv"];
 
@@ -96,6 +132,8 @@ mod tests {
             duration_seconds: Some(330),
             lossless_only: true,
             original_path: None,
+            release: None,
+            step: None,
         }
     }
 

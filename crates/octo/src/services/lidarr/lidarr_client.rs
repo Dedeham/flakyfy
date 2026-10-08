@@ -10,12 +10,13 @@ use std::time::Duration;
 
 use octo_core::common::dotnet;
 use octo_core::lidarr::lidarr_client::{
-    child, int_or_zero, map_options, nullable_bool, nullable_int, nullable_long, nullable_str, object,
-    parse_album, parse_track_number, select_best_album, str_or_empty, value_str,
+    PICK_GONE_TEXT, PICK_REFUSED_TEXT, child, int_or_zero, map_options, nullable_bool, nullable_int,
+    nullable_long, nullable_str, object, parse_album, parse_release, parse_track_number, same_release,
+    select_best_album, str_or_empty, value_str,
 };
 use octo_core::lidarr::{
     LidarrAlbumCandidate, LidarrAlbumImportState, LidarrAlbumState, LidarrError, LidarrImportedTrack,
-    LidarrOptions, LidarrSearchStarted,
+    LidarrOptions, LidarrRelease, LidarrReleasePick, LidarrSearchStarted,
 };
 use octo_core::settings::{LidarrSettings, SettingsStore};
 use reqwest::Method;
@@ -135,7 +136,7 @@ impl LidarrClient {
         &self,
         candidate: &LidarrAlbumCandidate,
     ) -> Result<i32, LidarrError> {
-        Ok(self.start_album_search(candidate).await?.album_id)
+        Ok(self.start_album_search(candidate, None).await?.album_id)
     }
 
     /// The album as Lidarr has it now, or None when Lidarr does not have it yet.
@@ -177,11 +178,84 @@ impl LidarrClient {
         Ok(())
     }
 
-    /// Adds the album when Lidarr lacks it, monitors it, and starts an AlbumSearch. Says whether the
-    /// album was there before and monitored, so a caller that only borrowed it can put it back.
+    /// How long an interactive search may take: Lidarr asks every indexer before it answers.
+    pub const RELEASE_SEARCH_TIMEOUT: Duration = Duration::from_secs(120);
+
+    /// Every release the indexers offer for an album Lidarr has, as its interactive search
+    /// lists them, best first by Lidarr's own order. Nothing is grabbed.
+    pub async fn list_releases(&self, album_id: i32) -> Result<Vec<LidarrRelease>, LidarrError> {
+        let mut request = self.request(Method::GET, &format!("/api/v1/release?albumId={album_id}"), None)?;
+        request.timeout = Some(Self::RELEASE_SEARCH_TIMEOUT);
+        let rows = match self.read_json(request).await? {
+            Value::Array(items) => items
+                .into_iter()
+                .filter_map(|item| match item {
+                    Value::Object(o) => Some(o),
+                    _ => None,
+                })
+                .collect(),
+            // `as JsonArray` on anything else: no rows.
+            _ => Vec::new(),
+        };
+        let mut releases = Vec::new();
+        for row in &rows {
+            let release = parse_release(row)?;
+            if !release.guid.is_empty() {
+                releases.push(release);
+            }
+        }
+        Ok(releases)
+    }
+
+    /// Asks Lidarr to download one release an interactive search listed.
+    pub async fn grab_release(&self, release: &LidarrReleasePick) -> Result<(), LidarrError> {
+        self.send_json(
+            Method::POST,
+            "/api/v1/release",
+            json!({ "guid": release.guid, "indexerId": release.indexer_id })
+                .as_object()
+                .expect("an object literal"),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Grabs a picked release. Lidarr keeps an interactive search's releases only for a while,
+    /// and a pick made before that ran out is refused by its guid; the album's releases are
+    /// then listed once more and the same release, by its indexer, title and size, is grabbed
+    /// under its new guid.
+    pub async fn grab_picked(&self, album_id: i32, pick: &LidarrReleasePick) -> Result<(), LidarrError> {
+        match self.grab_release(pick).await {
+            Ok(()) => return Ok(()),
+            // Most likely forgotten; found again below, or refused in plain words.
+            Err(LidarrError::Http(_)) => {}
+            Err(e) => return Err(e),
+        }
+        let again = self
+            .list_releases(album_id)
+            .await?
+            .into_iter()
+            .find(|release| same_release(release, pick))
+            .ok_or_else(|| LidarrError::InvalidOperation(PICK_GONE_TEXT.into()))?;
+        let fresh = LidarrReleasePick {
+            guid: again.guid,
+            indexer_id: again.indexer_id,
+            title: Some(again.title),
+            size: again.size,
+        };
+        match self.grab_release(&fresh).await {
+            Err(LidarrError::Http(_)) => Err(LidarrError::InvalidOperation(PICK_REFUSED_TEXT.into())),
+            other => other,
+        }
+    }
+
+    /// Adds the album when Lidarr lacks it, monitors it, and starts an AlbumSearch, or grabs the
+    /// release someone picked. Says whether the album was there before and monitored, so a
+    /// caller that only borrowed it can put it back.
     pub async fn start_album_search(
         &self,
         candidate: &LidarrAlbumCandidate,
+        grab: Option<&LidarrReleasePick>,
     ) -> Result<LidarrSearchStarted, LidarrError> {
         let settings = self.require_settings(true)?;
         let existing = self
@@ -272,14 +346,18 @@ impl LidarrClient {
             self.ensure_artist_monitored(existing_artist).await?;
         }
 
-        self.send_json(
-            Method::POST,
-            "/api/v1/command",
-            json!({ "name": "AlbumSearch", "albumIds": [album_id] })
-                .as_object()
-                .expect("an object literal"),
-        )
-        .await?;
+        if let Some(grab) = grab {
+            self.grab_picked(album_id, grab).await?;
+        } else {
+            self.send_json(
+                Method::POST,
+                "/api/v1/command",
+                json!({ "name": "AlbumSearch", "albumIds": [album_id] })
+                    .as_object()
+                    .expect("an object literal"),
+            )
+            .await?;
+        }
         Ok(LidarrSearchStarted {
             album_id,
             existed: !existing.is_empty(),
@@ -428,10 +506,13 @@ impl LidarrClient {
             api_key: api_key.to_string(),
             // JsonContent.Create: the web serializer's escaping.
             body: body.map(octo_core::json::to_string),
+            timeout: None,
         }
     }
 
     async fn send(&self, request: Request) -> Result<reqwest::Response, LidarrError> {
+        let timeout = request.timeout.unwrap_or(Self::TIMEOUT);
+        let failed = |error: reqwest::Error| transport_error(error, timeout);
         let url = reqwest::Url::parse(&request.url).map_err(|_| {
             LidarrError::InvalidOperation(
                 "An invalid request URI was provided. Either the request URI must be an absolute URI or BaseAddress must be set."
@@ -439,6 +520,9 @@ impl LidarrClient {
             )
         })?;
         let mut builder = self.http.request(request.method, url);
+        if let Some(timeout) = request.timeout {
+            builder = builder.timeout(timeout);
+        }
         // TryAddWithoutValidation: a value a header cannot hold is left out.
         if let Ok(value) = reqwest::header::HeaderValue::from_str(&request.api_key) {
             builder = builder.header("X-Api-Key", value);
@@ -448,10 +532,10 @@ impl LidarrClient {
                 .header(reqwest::header::CONTENT_TYPE, "application/json; charset=utf-8")
                 .body(body);
         }
-        let response = builder.send().await.map_err(transport_error)?;
+        let response = builder.send().await.map_err(failed)?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let body = response.text().await.map_err(transport_error)?;
+            let body = response.text().await.map_err(failed)?;
             return Err(LidarrError::Http(format!(
                 "Lidarr returned HTTP {status}: {}",
                 truncate(&body, 300)
@@ -461,8 +545,12 @@ impl LidarrClient {
     }
 
     async fn read_json(&self, request: Request) -> Result<Value, LidarrError> {
+        let timeout = request.timeout.unwrap_or(Self::TIMEOUT);
         let response = self.send(request).await?;
-        let text = response.text().await.map_err(transport_error)?;
+        let text = response
+            .text()
+            .await
+            .map_err(|error| transport_error(error, timeout))?;
         serde_json::from_str(&text).map_err(|e| LidarrError::Json(e.to_string()))
     }
 
@@ -529,12 +617,14 @@ struct Request {
     url: String,
     api_key: String,
     body: Option<String>,
+    /// `client.Timeout` for this request, when it is not the usual 20 s.
+    timeout: Option<Duration>,
 }
 
 /// What HttpClient threw for a request that got no answer: its timeout, or the connection.
-fn transport_error(error: reqwest::Error) -> LidarrError {
+fn transport_error(error: reqwest::Error, timeout: Duration) -> LidarrError {
     if error.is_timeout() {
-        LidarrError::Canceled(http_client_factory::timeout_message(LidarrClient::TIMEOUT))
+        LidarrError::Canceled(http_client_factory::timeout_message(timeout))
     } else {
         LidarrError::Http(http_client_factory::connect_failure_message(&error))
     }

@@ -361,6 +361,9 @@ impl SoulseekDownloadService {
             duration_seconds: routing.duration.or(song.duration),
             lossless_only,
             original_path: download.replacing_path.clone(),
+            // Find songs picks (group D) are not in the port yet; Lidarr runs its own search.
+            release: None,
+            step: None,
         };
         download.fetched_from = Some("Lidarr".to_string());
         Ok(fetcher.fetch(&request, &job_dir, ct).await?)

@@ -97,9 +97,6 @@ impl Reply {
     fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
-    fn json(&self) -> serde_json::Value {
-        serde_json::from_slice(&self.body).expect("JSON body")
-    }
     fn has_cors(&self) -> bool {
         self.headers
             .keys()
@@ -639,21 +636,19 @@ async fn admin_redirects_to_the_dashboard_page() {
     }
 }
 
+/// G1 K (`4a329aa`, #80): the bare address sends to Navidrome's web app, relative, so a
+/// reverse proxy's path prefix is kept. Amperfy checks the address before signing in.
 #[tokio::test]
-async fn root_is_the_endpoint_required_validation_problem() {
-    let r = get_("/", &[]).await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        r.header("content-type"),
-        Some("application/problem+json; charset=utf-8")
-    );
-    let body = r.text();
-    let prefix = r#"{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1","title":"One or more validation errors occurred.","status":400,"errors":{"endpoint":["The endpoint field is required."]},"traceId":"00-"#;
-    assert!(body.starts_with(prefix), "{body}");
-    let trace = r.json()["traceId"].as_str().expect("traceId").to_string();
-    let parts: Vec<&str> = trace.split('-').collect();
-    assert_eq!(parts.len(), 4);
-    assert_eq!((parts[1].len(), parts[2].len()), (32, 16));
+async fn root_redirects_to_the_web_app() {
+    for uri in ["/", "/?u=admin&p=secret&v=1.16.1&c=Amperfy&f=json"] {
+        let r = get_(uri, &[]).await;
+        assert_eq!(r.status, StatusCode::FOUND, "{uri}");
+        assert_eq!(r.header("location"), Some("app/"), "{uri}");
+        assert!(r.body.is_empty(), "{uri}");
+    }
+    let r = send(Method::HEAD, "/", &[]).await;
+    assert_eq!(r.status, StatusCode::FOUND);
+    assert_eq!(r.header("location"), Some("app/"));
 }
 
 #[tokio::test]

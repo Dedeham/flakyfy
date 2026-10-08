@@ -413,7 +413,7 @@ async fn adding_an_album_needs_the_root_folder_and_both_profiles() {
     })));
     assert_eq!(
         client
-            .start_album_search(&candidate("mbid", "Album", "Artist", None))
+            .start_album_search(&candidate("mbid", "Album", "Artist", None), None)
             .await,
         Err(LidarrError::InvalidOperation(
             "Choose a Lidarr root folder, quality profile, and metadata profile.".into()
@@ -458,4 +458,168 @@ async fn a_lookup_with_no_single_match_is_an_invalid_operation() {
     let lookups: Vec<String> = requests(&server).await.iter().map(path_and_query).collect();
     assert!(lookups.contains(&"/api/v1/album/lookup?term=Radiohead%20In%20Rainbows".to_string()));
     assert!(lookups.contains(&"/api/v1/album/lookup?term=lidarr%3AA".to_string()));
+}
+
+// ---- Releases: the Lidarr half of Find songs picks (9ac4e5a), ported with G1 K (e3aed24) ----
+
+#[tokio::test]
+async fn releases_are_listed_with_their_quality_and_why_lidarr_rejects_one() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::path("/api/v1/release"))
+        .and(wiremock::matchers::query_param("albumId", "12"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"[{"guid":"a1","indexerId":3,"indexer":"Redacted","title":"Artist - Album (2020) [FLAC]","size":312000000,
+                 "quality":{"quality":{"name":"FLAC"}},"seeders":14,"leechers":1,"protocol":"torrent","ageHours":49.0,
+                 "rejected":false,"rejections":[]},
+                {"guid":"b2","indexerId":4,"indexer":"NZBgeek","title":"Artist - Album MP3 V0","size":90000000.0,
+                 "quality":{"quality":{"name":"MP3-VBR-V0"}},"protocol":"usenet","age":12,
+                 "rejected":true,"rejections":["Quality is not wanted in profile"]},
+                {"guid":"","indexerId":5,"title":"no guid"}]"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&server)
+        .await;
+
+    let releases = build(&server).list_releases(12).await.expect("releases");
+
+    assert_eq!(releases.len(), 2);
+    let flac = &releases[0];
+    assert_eq!(
+        (
+            flac.guid.as_str(),
+            flac.indexer_id,
+            flac.indexer.as_deref(),
+            flac.quality.as_deref(),
+            flac.size,
+            flac.seeders,
+            flac.age_days,
+            flac.rejected
+        ),
+        (
+            "a1",
+            3,
+            Some("Redacted"),
+            Some("FLAC"),
+            Some(312000000),
+            Some(14),
+            Some(2),
+            false
+        )
+    );
+    let mp3 = &releases[1];
+    assert!(mp3.rejected);
+    assert_eq!(mp3.size, Some(90000000));
+    assert_eq!(mp3.age_days, Some(12));
+    assert_eq!(
+        mp3.rejections,
+        vec!["Quality is not wanted in profile".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn a_picked_release_is_grabbed_instead_of_an_album_search() {
+    let server = serve(|method, path| {
+        match (method, path) {
+            ("GET", "/api/v1/album") => {
+                r#"[{"id":12,"foreignAlbumId":"mbid","monitored":true,"artist":{"id":7,"monitored":true}}]"#
+            }
+            ("POST", "/api/v1/release") => r#"{"guid":"a1"}"#,
+            ("POST", "/api/v1/command") => r#"{"id":9}"#,
+            _ => "[]",
+        }
+        .to_string()
+    })
+    .await;
+    let pick = LidarrReleasePick {
+        guid: "a1".into(),
+        indexer_id: 3,
+        title: Some("Artist - Album (2020) [FLAC]".into()),
+        size: None,
+    };
+
+    let started = build(&server)
+        .start_album_search(&candidate("mbid", "Album", "Artist", Some(2020)), Some(&pick))
+        .await
+        .expect("started");
+
+    assert_eq!(started.album_id, 12);
+    let requests = requests(&server).await;
+    assert!(!requests.iter().any(|r| r.url.path() == "/api/v1/command"));
+    let grabs: Vec<&Request> = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/api/v1/release")
+        .collect();
+    assert_eq!(grabs.len(), 1);
+    let grab = body(grabs[0]);
+    assert_eq!(grab["guid"], "a1");
+    assert_eq!(grab["indexerId"], 3);
+}
+
+/// Rust-only, G1 K at the client: a forgotten guid is found again by indexer, title (any case,
+/// trimmed) and size, and a size that differs is another release.
+#[tokio::test]
+async fn a_forgotten_pick_is_grabbed_again_under_its_new_guid() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/release"))
+        .and(wiremock::matchers::body_partial_json(json!({ "guid": "stale" })))
+        .respond_with(ResponseTemplate::new(404).set_body_string(
+            r#"{"message":"Couldn't find requested release in cache, cache timeout probably expired."}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/v1/release"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&server)
+        .await;
+    Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/v1/release"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"[{"guid":"bigger","indexerId":3,"title":"Air - Moon Safari [FLAC]","size":999},
+                {"guid":"fresh","indexerId":3,"title":" air - moon safari [flac] ","size":300}]"#,
+        ))
+        .mount(&server)
+        .await;
+    let client = build(&server);
+    let pick = |size| LidarrReleasePick {
+        guid: "stale".into(),
+        indexer_id: 3,
+        title: Some("Air - Moon Safari [FLAC]".into()),
+        size,
+    };
+
+    client
+        .grab_picked(7, &pick(Some(300)))
+        .await
+        .expect("found again");
+
+    let grabbed: Vec<Value> = requests(&server)
+        .await
+        .iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .map(body)
+        .collect();
+    assert_eq!(grabbed.len(), 2);
+    assert_eq!(grabbed[1]["guid"], "fresh");
+    // Without a size of its own the pick takes the first of that title.
+    client.grab_picked(7, &pick(None)).await.expect("found again");
+    let last = requests(&server)
+        .await
+        .into_iter()
+        .rev()
+        .find(|r| r.method.as_str() == "POST");
+    assert_eq!(body(&last.expect("a grab"))["guid"], "bigger");
+    // A pick with no title cannot be found again.
+    let untitled = LidarrReleasePick {
+        title: None,
+        ..pick(Some(300))
+    };
+    assert_eq!(
+        client.grab_picked(7, &untitled).await,
+        Err(LidarrError::InvalidOperation(PICK_GONE_TEXT.into()))
+    );
 }

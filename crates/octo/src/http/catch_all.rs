@@ -1,8 +1,8 @@
 //! The catch-all `/{**endpoint}` (`SubsonicController.GenericEndpoint`, L3682; endpoints.md
 //! §3.9): every method, every path no route claims.
 //!
-//! - `/` has no `endpoint`, which the implicit `[Required]` on a non-nullable `string` turns
-//!   into the automatic validation 400 before the action runs;
+//! - `/` has no `endpoint`: a GET or HEAD is a 302 to `app/`, Navidrome's web app (#80), and
+//!   any other method goes on with an empty endpoint;
 //! - Octo-owned paths (lower-cased path starting with `admin` (which also matches
 //!   `administrator`...) or `api/admin`, starting with `assets/`, or equal to `favicon.ico`)
 //!   get `NotFound()`, the ProblemDetails 404, and are never relayed;
@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use octo_subsonic::subsonic_request_parser::unescape_data_string;
 
-use super::error::{problem, validation_problem};
+use super::error::problem;
 use crate::app::AppState;
 use crate::controllers::subsonic::native::{self, NativeRequest};
 use crate::services::subsonic::{IncomingRequest, RawRelayResult};
@@ -30,8 +30,12 @@ const MAX_REQUEST_BODY: usize = 30_000_000;
 
 pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response {
     let endpoint = endpoint_of(req.uri().path());
-    if endpoint.is_empty() {
-        return validation_problem(&[("endpoint", &["The endpoint field is required."])]);
+    // The bare address binds no endpoint at all. Required by [ApiController], that null was a
+    // 400 before any of this ran, and Amperfy checks the server address before signing in
+    // (#80). Navidrome answers it with its web app, so Octo does too; relative, so a reverse
+    // proxy's path prefix is kept. Other methods go on with an empty endpoint.
+    if endpoint.is_empty() && (req.method() == Method::GET || req.method() == Method::HEAD) {
+        return redirect_to_app();
     }
     if is_octo_owned(&endpoint) {
         return problem(StatusCode::NOT_FOUND);
@@ -83,6 +87,15 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
             )
             .into_response(),
     }
+}
+
+/// `Redirect("app/")`: a 302 with an empty body, to Navidrome's web app beside this address.
+fn redirect_to_app() -> Response {
+    let mut res = Response::new(Body::empty());
+    *res.status_mut() = StatusCode::FOUND;
+    res.headers_mut()
+        .insert(header::LOCATION, HeaderValue::from_static("app/"));
+    res
 }
 
 /// The route value `{**endpoint}` held: the path without its leading `/`, decoded as Kestrel

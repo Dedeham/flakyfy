@@ -8,6 +8,7 @@ pub mod lidarr_track_fetcher;
 
 pub use lidarr_client::{
     LidarrAlbumCandidate, LidarrAlbumImportState, LidarrAlbumState, LidarrChoice, LidarrError,
-    LidarrImportedTrack, LidarrOptions, LidarrRootFolder, LidarrSearchStarted,
+    LidarrImportedTrack, LidarrOptions, LidarrRelease, LidarrReleasePick, LidarrRootFolder,
+    LidarrSearchStarted,
 };
-pub use lidarr_track_fetcher::LidarrTrackRequest;
+pub use lidarr_track_fetcher::{LidarrStep, LidarrTrackRequest};

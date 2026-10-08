@@ -15,6 +15,7 @@ use wiremock::MockServer;
 use super::*;
 use crate::services::common::test_fakes::until;
 use crate::services::lidarr::fake_lidarr::{ALBUM_ID, FakeLidarr};
+use octo_core::lidarr::LidarrStep;
 
 struct Fixture {
     root: TempDir,
@@ -112,6 +113,8 @@ fn teardrop(lossless_only: bool, original: Option<String>) -> LidarrTrackRequest
         duration_seconds: Some(330),
         lossless_only,
         original_path: original,
+        release: None,
+        step: None,
     }
 }
 
@@ -278,6 +281,128 @@ async fn an_album_lidarr_does_not_know_is_not_found() {
 
     assert!(matches!(missed, Err(LidarrError::FileNotFound(_))), "{missed:?}");
     assert_eq!(f.lidarr.searches(), 0);
+}
+
+// ---- Picked releases (G1 K, e3aed24) ---------------------------------------------------------
+
+const RELEASE: &str = "Massive Attack - Mezzanine (1998) [FLAC]";
+
+fn pick(guid: &str) -> LidarrReleasePick {
+    LidarrReleasePick {
+        guid: guid.into(),
+        indexer_id: 3,
+        title: Some(RELEASE.into()),
+        size: Some(400_000_000),
+    }
+}
+
+/// `Step = (text, _) => steps.Add(text)`.
+fn recording_steps() -> (LidarrStep, Arc<parking_lot::Mutex<Vec<String>>>) {
+    let steps = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let sink = steps.clone();
+    (
+        LidarrStep::new(move |text, _| sink.lock().push(text.to_string())),
+        steps,
+    )
+}
+
+#[tokio::test]
+async fn a_pick_lidarr_has_forgotten_is_found_again_by_its_title_indexer_and_size() {
+    let f = Fixture::new().await;
+    f.lidarr.offer("fresh-guid", 3, RELEASE, 400_000_000);
+    f.lidarr.offer(
+        "other-guid",
+        3,
+        "Massive Attack - Mezzanine (1998) [MP3]",
+        90_000_000,
+    );
+    f.lidarr.on_search(&[(3, "Teardrop", "FLAC")]);
+    let (step, steps) = recording_steps();
+
+    let copy = f
+        .fetch(
+            &f.fetcher(10),
+            LidarrTrackRequest {
+                release: Some(pick("stale-guid")),
+                step: Some(step),
+                ..teardrop(true, None)
+            },
+        )
+        .await
+        .expect("a copy");
+
+    assert_eq!(std::fs::read_to_string(&copy).expect("the copy"), "Teardrop");
+    assert_eq!(f.lidarr.grabs(), vec!["fresh-guid".to_string()]);
+    assert_eq!(*steps.lock(), vec!["Grabbing the release you picked".to_string()]);
+}
+
+#[tokio::test]
+async fn a_pick_no_longer_offered_is_refused_in_plain_words() {
+    let f = Fixture::new().await;
+    f.lidarr.offer(
+        "other-guid",
+        3,
+        "Massive Attack - Mezzanine (1998) [MP3]",
+        90_000_000,
+    );
+
+    let refused = f
+        .fetch(
+            &f.fetcher(10),
+            LidarrTrackRequest {
+                release: Some(pick("stale-guid")),
+                ..teardrop(true, None)
+            },
+        )
+        .await;
+
+    assert_eq!(
+        refused,
+        Err(LidarrError::InvalidOperation(
+            octo_core::lidarr::lidarr_client::PICK_GONE_TEXT.into()
+        ))
+    );
+    assert!(f.lidarr.grabs().is_empty());
+}
+
+#[tokio::test]
+async fn a_pick_for_an_album_already_being_fetched_says_it_was_not_grabbed() {
+    let f = Arc::new(Fixture::new().await);
+    f.lidarr.offer("guid", 3, RELEASE, 400_000_000);
+    f.lidarr
+        .on_search(&[(1, "Angel", "FLAC"), (3, "Teardrop", "FLAC")]);
+    f.lidarr.hold_imports();
+    let fetcher = f.fetcher(10);
+    let (step, steps) = recording_steps();
+
+    let teardrop_task = {
+        let (f, fetcher) = (f.clone(), fetcher.clone());
+        tokio::spawn(async move { f.fetch(&fetcher, teardrop(true, None)).await })
+    };
+    until(|| f.lidarr.searches() == 1).await;
+    let angel_task = {
+        let (f, fetcher) = (f.clone(), fetcher.clone());
+        tokio::spawn(async move {
+            let angel = LidarrTrackRequest {
+                title: "Angel".into(),
+                duration_seconds: Some(380),
+                release: Some(pick("guid")),
+                step: Some(step),
+                ..teardrop(true, None)
+            };
+            f.fetch(&fetcher, angel).await
+        })
+    };
+    until(|| steps.lock().len() == 1).await;
+    f.lidarr.release_imports();
+    teardrop_task.await.expect("the task").expect("a copy");
+    angel_task.await.expect("the task").expect("a copy");
+
+    assert_eq!(
+        *steps.lock(),
+        vec!["Lidarr is already fetching this album, so the release you picked was not grabbed".to_string()]
+    );
+    assert!(f.lidarr.grabs().is_empty());
 }
 
 // TheSongIsMatchedByTitleNeverByNumber is in octo_core::lidarr::lidarr_track_fetcher's tests,

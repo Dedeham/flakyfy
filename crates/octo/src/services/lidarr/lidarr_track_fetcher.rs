@@ -12,7 +12,8 @@ use futures::future::{BoxFuture, Shared};
 use octo_core::common::dotnet;
 use octo_core::lidarr::lidarr_track_fetcher::{is_lossless, match_track};
 use octo_core::lidarr::{
-    LidarrAlbumCandidate, LidarrError, LidarrImportedTrack, LidarrSearchStarted, LidarrTrackRequest,
+    LidarrAlbumCandidate, LidarrError, LidarrImportedTrack, LidarrReleasePick, LidarrSearchStarted,
+    LidarrTrackRequest,
 };
 use octo_core::settings::{LidarrSettings, SettingsStore};
 use parking_lot::Mutex;
@@ -91,6 +92,8 @@ struct SessionState {
     users: usize,
     before: Option<SharedTask<Arc<Vec<LidarrImportedTrack>>>>,
     search: Option<SharedTask<LidarrSearchStarted>>,
+    /// The release the album's search grabbed, when it was a pick.
+    grabbed: Option<LidarrReleasePick>,
 }
 
 impl LidarrTrackFetcher {
@@ -281,18 +284,48 @@ impl Inner {
             }
         }
 
-        let search = {
+        let (search, joined, grabbed) = {
             let mut state = session.state.lock();
-            if state.search.is_none() {
+            let joined = state.search.is_some();
+            if !joined {
+                state.grabbed = request.release.clone();
                 let client = self.client.clone();
                 let candidate = session.candidate.clone();
+                let grab = request.release.clone();
                 // CancellationToken.None: the search is the album's, not this caller's.
                 state.search = Some(spawn_shared(async move {
-                    client.start_album_search(&candidate).await
+                    client.start_album_search(&candidate, grab.as_ref()).await
                 }));
             }
-            state.search.clone().expect("just set")
+            (
+                state.search.clone().expect("just set"),
+                joined,
+                state.grabbed.clone(),
+            )
         };
+        if let Some(pick) = &request.release {
+            if !joined || grabbed.as_ref().is_some_and(|g| g.guid == pick.guid) {
+                if let Some(step) = &request.step {
+                    step.tell("Grabbing the release you picked", pick.title.as_deref());
+                }
+            } else {
+                // One album, one search: the song comes from the one already running, not the
+                // pick.
+                info!(
+                    "Lidarr is already fetching '{} - {}', so the release picked for '{}' ({}) is not grabbed",
+                    session.candidate.artist,
+                    session.candidate.title,
+                    request.title,
+                    pick.title.as_deref().unwrap_or_default()
+                );
+                if let Some(step) = &request.step {
+                    step.tell(
+                        "Lidarr is already fetching this album, so the release you picked was not grabbed",
+                        Some("The song comes from the album's search already running"),
+                    );
+                }
+            }
+        }
         let started = search.await?;
         info!(
             "Lidarr is searching '{} - {}' for a copy of '{}'",

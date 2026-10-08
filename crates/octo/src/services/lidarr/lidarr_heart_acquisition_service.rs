@@ -618,7 +618,7 @@ impl Inner {
                     .map(|t| t.track_file_id)
                     .collect(),
             };
-            let started = self.client.start_album_search(&job.candidate).await?;
+            let started = self.client.start_album_search(&job.candidate, None).await?;
             Ok::<_, LidarrError>((started, before))
         }
         .await;

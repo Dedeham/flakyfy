@@ -34,6 +34,13 @@ struct State {
     searches: usize,
     deleted: Vec<i32>,
     monitor_changes: Vec<bool>,
+    /// The releases an interactive search lists now: (guid, indexer id, title, size). A grab by
+    /// any other guid is refused the way Lidarr refuses a release it has forgotten.
+    offered: Vec<(String, i32, String, i64)>,
+    grabs: Vec<String>,
+    /// While set, a search's imports wait for [`FakeLidarr::release_imports`] (the C# test's
+    /// `TaskCompletionSource`).
+    hold_imports: bool,
 }
 
 impl FakeLidarr {
@@ -52,6 +59,9 @@ impl FakeLidarr {
                 searches: 0,
                 deleted: Vec::new(),
                 monitor_changes: Vec::new(),
+                offered: Vec::new(),
+                grabs: Vec::new(),
+                hold_imports: false,
             })),
         };
         let server = MockServer::start().await;
@@ -73,6 +83,32 @@ impl FakeLidarr {
 
     pub fn searches(&self) -> usize {
         self.state.lock().searches
+    }
+
+    /// `Offered.Add((guid, indexerId, title, size))`.
+    pub fn offer(&self, guid: &str, indexer_id: i32, title: &str, size: i64) {
+        self.state
+            .lock()
+            .offered
+            .push((guid.to_string(), indexer_id, title.to_string(), size));
+    }
+
+    pub fn grabs(&self) -> Vec<String> {
+        self.state.lock().grabs.clone()
+    }
+
+    /// A search's imports wait until [`FakeLidarr::release_imports`].
+    pub fn hold_imports(&self) {
+        self.state.lock().hold_imports = true;
+    }
+
+    /// Lets the held imports in now.
+    pub fn release_imports(&self) {
+        let mut state = self.state.lock();
+        state.hold_imports = false;
+        for (track_id, title, quality) in state.on_search.clone() {
+            Self::import_into(&self.octo_root, &mut state, track_id, &title, &quality);
+        }
     }
 
     pub fn deleted(&self) -> Vec<i32> {
@@ -164,6 +200,18 @@ impl FakeLidarr {
         )
     }
 
+    /// An AlbumSearch, or a grab, which brings in the same files.
+    fn search(&self, state: &mut State) -> ResponseTemplate {
+        state.searches += 1;
+        // Before the answer, the way a quick Lidarr would have it, so no test races the clock.
+        if !state.hold_imports {
+            for (track_id, title, quality) in state.on_search.clone() {
+                Self::import_into(&self.octo_root, state, track_id, &title, &quality);
+            }
+        }
+        Self::json(json!({ "id": 1, "name": "AlbumSearch" }))
+    }
+
     fn json(body: Value) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json")
     }
@@ -204,13 +252,26 @@ impl Respond for FakeLidarr {
                 state.monitor_changes.push(monitored);
                 Self::json(Self::album(state, 7))
             }
-            ("POST", "/api/v1/command") => {
-                state.searches += 1;
-                // Before the answer, the way a quick Lidarr would have it, so no test races the clock.
-                for (track_id, title, quality) in state.on_search.clone() {
-                    Self::import_into(&self.octo_root, state, track_id, &title, &quality);
+            ("POST", "/api/v1/command") => self.search(state),
+            ("GET", "/api/v1/release") => Self::json(Value::Array(
+                state
+                    .offered
+                    .iter()
+                    .map(|(guid, indexer_id, title, size)| {
+                        json!({ "guid": guid, "indexerId": indexer_id, "title": title, "size": size })
+                    })
+                    .collect(),
+            )),
+            ("POST", "/api/v1/release") => {
+                let body: Value = serde_json::from_slice(&request.body).expect("a JSON body");
+                let guid = body["guid"].as_str().expect("guid").to_string();
+                if !state.offered.iter().any(|(offered, ..)| *offered == guid) {
+                    return ResponseTemplate::new(404).set_body_string(
+                        r#"{"message":"Couldn't find requested release in cache, cache timeout probably expired."}"#,
+                    );
                 }
-                Self::json(json!({ "id": 1, "name": "AlbumSearch" }))
+                state.grabs.push(guid);
+                self.search(state)
             }
             ("GET", "/api/v1/track") => Self::json(Self::tracks(state)),
             ("GET", "/api/v1/trackFile") => Self::json(Self::files(state)),

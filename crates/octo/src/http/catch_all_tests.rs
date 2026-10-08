@@ -230,9 +230,31 @@ async fn octo_owned_paths_and_the_root_are_never_relayed() {
         send(&app, Method::POST, "/%61dmin/x", &[], "").await.status,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(
-        send(&app, Method::GET, "/", &[], "").await.status,
-        StatusCode::BAD_REQUEST
-    );
+    for method in [Method::GET, Method::HEAD] {
+        assert_eq!(
+            send(&app, method.clone(), "/", &[], "").await.status,
+            StatusCode::FOUND,
+            "{method} /"
+        );
+    }
     assert!(server.received_requests().await.expect("recording").is_empty());
+}
+
+/// G1 K (#80): the bare address with another method binds an empty endpoint and is relayed
+/// to Navidrome's own root, as the C# went on past the redirect.
+#[tokio::test]
+async fn a_post_to_the_bare_address_is_relayed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(405).set_body_raw("nope", "text/plain"))
+        .mount(&server)
+        .await;
+    let app = app(state(&server.uri()));
+
+    let r = send(&app, Method::POST, "/", &[], "").await;
+
+    assert_eq!(r.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(r.body, "nope");
+    assert_eq!(server.received_requests().await.expect("recording").len(), 1);
 }

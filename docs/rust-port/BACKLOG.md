@@ -924,6 +924,8 @@ previews' em dash Brandon saw is in the dashboard (`octo/wwwroot/admin/admin.js`
 page's station grid joins artist and title with one), which both builds serve as is; no Rust
 radio code builds a string with one.
 
+- **Radio placement (port/radio-placement):** the ported song radio keeps `last_fm_radio_placement::place` as its last ordering step for callers without `octoMix=client`, and skips it when library-led; Your Mix keeps the placement at the end of `shape`.
+
 - [x] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
 - [x] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
 - [x] `f621926` fix(radio): British-spelled bookkeeping tags are not station genres again

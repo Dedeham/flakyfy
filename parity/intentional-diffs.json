@@ -225,9 +225,9 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"h26dNsyVlzJjYyCpRqpiIUmsgnpxJOmN2LHJHHVZsaw=\"'\\]$",
+        "^B:\\ \\['\"rcpA1tHoZaHvxg3rXUNK27MBZKToEDIdJJ96TMX9icQ=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ 876e9d36cc959732636320a946aa622149ac827a7124e98dd8b1c91c7559b1ac\\ \\(194100\\ bytes,\\ text\\)$",
+        "^B:\\ adca40d6d1e865a1efc60deb5d434adbb30164a4e810321d249f7a4cc5fd89c4\\ \\(194157\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
         "^B:\\ \\['\"z22B4a4ywBh\\+9GwKouPeUkxwM8pVBoxppR8ypUsjRMU=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
@@ -237,8 +237,46 @@
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ a4a313d775a29712d170c8458d5c2ff7bec1cf96f2364ef77e698b67d886e7c4\\ \\(115954\\ bytes,\\ text\\)$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated.",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Also the Discovery balance help in index.html, which now names song radio in other apps (row \"Radio: where outside songs land\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated.",
       "knownDiff": "Dashboard Charts card"
+    },
+    {
+      "id": "radio-placement-song-radio",
+      "backlog": "L",
+      "requests": [
+        "15-radio/similar-polar-json",
+        "15-radio/similar2-polar-xml",
+        "15-radio/similar-polar-count5-json",
+        "15-radio/similar-polar-count500-json",
+        "15-radio/similar-polar-post-form-json",
+        "15-radio/similar2-remix-original-json",
+        "15-radio/similar2-remix-original-xml",
+        "15-radio/similar2-artist-json",
+        "15-radio/similar-artist-xml",
+        "15-radio/similar-guessed-artists-json",
+        "15-radio/similar-external-json",
+        "15-radio/similar2-external-xml",
+        "15-radio/similar-external-badpass-json",
+        "15-radio/similar-local-badpass-json",
+        "15-radio/similar-listener-polar-json",
+        "15-radio/similar-listener-polar-banned-json",
+        "15-radio/similar-admin-polar-not-banned-json",
+        "15-radio/similar-listener-polar-unbanned-json",
+        "15-radio/similar-listener-learning-off-json",
+        "15-radio/similar-polar-ytm-weight-zero-json",
+        "15-radio/similar-polar-ytm-weight-restored-json",
+        "15-radio/similar-polar-listenbrainz-off-json",
+        "15-radio/similar-polar-listenbrainz-on-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.similarSongs2?\\.song\\[\\d+\\][.\\[].*: (.* != .*|only in [AB] \\(.*\\))$",
+        "^/subsonic-response\\[0\\]/similarSongs2?\\[\\d+\\]/song(\\[\\d+\\]/\\w+)*(@\\w+: .* != .*| text: .* != .*|: \\d+ children != \\d+)$"
+      ],
+      "reason": "For apps other than Octo's, song radio places its outside songs at random at the Discovery balance instead of in score order, so a radio no longer plays a fixed or clustered pattern of library and outside songs (Brandon 2026-10-08, the radio tuning plan). The songs are the same; only their places change, drawn again for each answer, so the lines pin changes inside the song list, never its length. Octo's own apps send octoMix=client and get the score order. Proposed: Brandon reviews.",
+      "knownDiff": "Radio: where outside songs land"
     }
   ]
 }

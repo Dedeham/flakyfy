@@ -400,6 +400,54 @@ lists the planted songs.
 The harness now compiles in WSL by default (`parity/lxc131.sh`, `box-run.sh
 --prebuilt`, README "Compile in WSL"); `--box-build` is the old way.
 
+### G2 record: groups B and D (2026-10-07)
+
+Run on LXC 131 from `port/g2-bd` with `parity/lxc131.sh --rust-twice --bytes` (the binary
+compiled in WSL), against the cached C# recording of corpus `28fc0d5b71a3fce9`. RUN_LINE
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | CS_RS | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+Own counts against the G1 J and I record:
+
+| Group | Own before | Own after | Diffs after |
+| --- | ---: | ---: | ---: |
+| B | 11 | B_OWN | B_DIFFS |
+| D | 110 | D_OWN | D_DIFFS |
+
+What is left in B and D is other groups' work, none of it B's or D's own:
+
+- **C** (`2463c23`, `02cc06b`): the log's "Marked explicit" or "Marked not explicit" and
+  "Took off the peer's own album tags" lines, so every log is two lines short (the live and
+  saved logs, `logLines` in both acquisitions lists, `downloads-history.json`); the history
+  entry's `advisory` and `discCount` fields and its note; the tags themselves (`LABEL`, `disc`
+  as `1/2`, the M4A's `rating` advisory), and with them the size of a relayed download
+  (`heart-neon-relay-download`, `pick-lima-relay-download`, `pick-lima-tags`).
+- **P** (`5cea252`, `86ad6b8`): the cover line. C#'s `DownloadCoverResolver` names the chosen
+  cover with its size and the covers it passed over ("Cover from the catalog, 300 x 300 px",
+  "It came with no cover of its own. Also looked at: ..."); the port writes C#'s own fallback
+  line, as the C# does when the resolver gives no headline.
+- **G, H, Q**: `13-downloads/extensions-json` and `extensions-xml` list 9 extensions against 12;
+  `octoAcquisitions` itself now matches at versions 1 and 2.
+- `pick-lima-album-now` (Navidrome's albums after the pick) follows from C's tags, which
+  decide the album the song is filed under and its label, and P's explicit marks.
+
+Two changes on the way: `13-downloads/find-library-song-refused` showed Find songs without the
+library song's length, which is F's `ed0bd7c` (Navidrome's native API sends 301.37 seconds); it
+is ported here with its test, since Find songs' length check needs it. And Find songs' small
+cover of a library song (`95-acquisition/heart-neon-find-cover`) joins the allowlist's
+`cover-jpeg-bytes` entry: the same 160 px picture, encoded by the `image` crate instead of
+ImageSharp.
+
+The order of "No lyrics found" against "In the library folder" in the log is a race in both
+builds (the lyrics look runs in the background); C# recorded it both ways in one run, and it
+shows only because the two C lines shift every index after them.
+
+No intentional diffs and no settings were added. `02cc06b` waits for C, `696cbff`'s import
+half for H, and `5d3f096`'s Recently removed and activity card for F and N.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
@@ -550,7 +598,8 @@ writer does. What the later groups find waiting for them:
 - [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
 - [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
 - [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
-- [ ] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
+- [x] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
+  (ported with D in G2: Find songs reads a library song's length through it)
 
 ### G. Top songs, charts, Popular right now
 

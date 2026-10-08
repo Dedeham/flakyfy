@@ -544,12 +544,37 @@ the shards work in progress; its C# against Rust count (795) is not yet the whol
 The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
 Rust, so that shard sets the time of a sharded run.
 
+### G4 record: group N (2026-10-08)
+
+Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
+WSL lane with `parity/run.sh`: first `--only '1[18]-*'` from `f6b9ee1` (C# recorded again for
+the subset, 195 compared), then the whole corpus with `--rust-twice` from `7d1f3f2` against
+the cached C# recording (1,837 requests, 1h04m).
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 752 unexplained (768 after E), 1,060 explained, 25 identical |
+| Rust against Rust | 1,837 identical, 0 unexplained (bytes: the same) |
+
+| Group | Own before (phase 1) | Own after E | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| N | 48 | 14 | 0 | 0 |
+
+All 14 are gone: `ambient-seeded` (and `-again-cached`, `-recovery`, `-alt-admin-unseeded`)
+light the page with the C# recording's colors exactly (the parity cover's palette is also a
+Rust test), and the ten `activity-*` requests, `11-signin/in-get-activity` and `in-get-ambient`
+match, `activity-rescan-starting` and `-done` included (E's two, now that the Sharing card is
+in). Base went from 29 to 27: the genre run's `pending` (`09-admin`), which phase 1 put on N.
+E is 2, the proposed `slskd-web-url-trimmed`. No group got worse: B 11, C 9, D 110, F 128, G
+47, H 201, I 3, J 3, L 45, O 17, P 68, Q 5, R 96; A, K and S 0. N has no proposed intentional
+diff.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three), proposed
+and Q record for those three, the G4 record for E and N), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -559,7 +584,7 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
@@ -568,7 +593,7 @@ Rust change.
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 45 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; D, H and R's jobs wait on those groups) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
@@ -800,14 +825,27 @@ No Rust server change: both are their own images.
 
 ### N. Afterglow dashboard, activity view, toasts
 
-- [ ] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
-- [ ] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
-- [ ] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
-- [ ] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
-- [ ] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
-- [ ] `d52ae54` feat(admin): Fetched songs in the Afterglow look
-- [ ] `ca47988` feat(admin): one activity view of everything Octo is working on
-- [ ] `af48eb1` feat(admin): live progress toasts for Octo's background work
+- [x] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
+- [x] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
+- [x] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
+- [x] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
+- [x] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
+- [x] `d52ae54` feat(admin): Fetched songs in the Afterglow look
+- [x] `ca47988` feat(admin): one activity view of everything Octo is working on
+- [x] `af48eb1` feat(admin): live progress toasts for Octo's background work
+
+Done in G4 (`port/g4-n`): `31e3715`, `2e4fdcf`, `d52ae54` and the dashboard half of
+`5a00fb1`, `ca47988` and `af48eb1` are `octo/wwwroot`, which the Rust build serves as is. The
+server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
+`services::admin::{cover_palette, ambient_palette_service}` and `cover_colours::from_lch`) and
+`GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
+the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
+reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
+on both). The activity view reads three jobs of groups not on `rust/main` yet through views of
+its own, with a `STUB` where each is read: Find songs (D, `FindLook` from `FindSnapshot`),
+Spotify imports (H, `ImportsActivity` from `ImportOverview`), Library health (R,
+`HealthActivity` from `HealthRun`). Each is a conversion and one call in `get_activity`; the
+word mapping and its tests are in already. The slskd rescan (E) is read.
 
 ### O. Search album ownership
 

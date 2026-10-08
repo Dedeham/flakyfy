@@ -598,7 +598,7 @@ async fn the_real_admin_ui_is_served_with_the_c_sharp_etags() {
     ] {
         assert_eq!(assets.get(url).map(|a| a.etag()), Some(etag.as_str()), "{url}");
     }
-    let app = build(AppState::for_tests(AppSettings::default()), &assets);
+    let app = build(AppState::for_tests(AppSettings::default()), &assets, 0);
     for (url, ty) in [
         ("/admin/index.html", "text/html"),
         ("/admin/admin.js", "text/javascript"),

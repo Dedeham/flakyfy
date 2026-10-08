@@ -117,6 +117,8 @@ impl ScrobbleAdminFactory {
             ("Library__DownloadPath", &directory.to_string_lossy()),
             ("LastFm__ApiKey", API_KEY),
             ("LastFm__ApiSecret", SECRET),
+            // These tests are about what the endpoints do, not who may call them.
+            ("Admin__SignIn", "off"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -398,4 +400,74 @@ async fn finish_when_the_settings_file_cannot_be_written_says_so() {
     assert_eq!(finish.status, StatusCode::CONFLICT);
     assert!(finish.text().contains("could not be saved"), "{}", finish.text());
     assert!(!factory.saved().contains("sk-alice"));
+}
+
+/// The Soulseek page's Connection form sends the slskd sign-in back as it was shown. The
+/// placeholder keeps the stored password; with a new username it is refused, because the old
+/// password under a new name is a pairing nobody typed. (`FormSave_WithTheSlskdPlaceholder_
+/// KeepsTheStoredPassword`, 9f9502d.)
+#[tokio::test]
+async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
+    let stored = r#"{ "Soulseek": { "Username": "octo", "Password": "slskd-secret" } }"#;
+    let factory = ScrobbleAdminFactory::new(stored).await;
+    // The running settings come from the file; the watcher's reload is made explicit.
+    factory.store.reload_now().expect("the file reloads");
+    let password = |factory: &ScrobbleAdminFactory| {
+        Node::parse(&factory.saved())
+            .expect("the file parses")
+            .get("Soulseek")
+            .and_then(|s| s.get("Password"))
+            .and_then(Node::as_str)
+            .map(str::to_string)
+    };
+
+    let body =
+        serde_json::json!({ "Soulseek": { "Username": "octo", "Password": SECRET_PLACEHOLDER } }).to_string();
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(&body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    assert!(!save.text().contains("slskd-secret"));
+    assert_eq!(password(&factory).as_deref(), Some("slskd-secret"));
+
+    let body = serde_json::json!({ "Soulseek": { "Username": "someone", "Password": SECRET_PLACEHOLDER } })
+        .to_string();
+    let renamed = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(&body)).await;
+    assert_eq!(renamed.status, StatusCode::BAD_REQUEST);
+
+    let body =
+        serde_json::json!({ "Soulseek": { "Password": format!("{SECRET_PLACEHOLDER}x") } }).to_string();
+    let appended = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(&body)).await;
+    assert_eq!(appended.status, StatusCode::BAD_REQUEST);
+    assert_eq!(password(&factory).as_deref(), Some("slskd-secret"));
+}
+
+/// A port fix: Navidrome's address is saved without its trailing slash (and the spaces it was
+/// typed with), so the stream relay never asks for `//rest/stream`; the Raw config save the same.
+#[tokio::test]
+async fn navidromes_address_is_saved_without_a_trailing_slash() {
+    let factory = ScrobbleAdminFactory::new("{}").await;
+    let url = |factory: &ScrobbleAdminFactory| {
+        Node::parse(&factory.saved())
+            .expect("the file parses")
+            .get("Subsonic")
+            .and_then(|s| s.get("Url"))
+            .and_then(Node::as_str)
+            .map(str::to_string)
+    };
+    let body = r#"{ "Subsonic": { "Url": " http://navidrome:4533/ " } }"#;
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    assert_eq!(url(&factory).as_deref(), Some("http://navidrome:4533"));
+
+    let body = r#"{ "Subsonic": { "Url": "http://navidrome:4533//" } }"#;
+    let put = admin_write(&factory.app, Method::PUT, "/api/admin/raw-config", Some(body)).await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.text());
+    assert_eq!(url(&factory).as_deref(), Some("http://navidrome:4533"));
+
+    // A section sent in another case is saved under its own name.
+    let body = r#"{ "lidarr": { "BaseUrl": "http://lidarr:8686" } }"#;
+    let save = admin_write(&factory.app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.text());
+    let saved = Node::parse(&factory.saved()).expect("the file parses");
+    let sections: Vec<&String> = saved.as_object().expect("an object").keys().collect();
+    assert_eq!(sections, ["Subsonic", "Lidarr"]);
 }

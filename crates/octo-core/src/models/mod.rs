@@ -33,10 +33,12 @@ pub mod search {
 }
 
 pub mod download {
+    pub mod acquisition_event;
     pub mod download_history_entry;
     pub mod download_info;
     pub mod download_status;
 
+    pub use acquisition_event::{AcquisitionCandidate, AcquisitionEvent};
     pub use download_history_entry::DownloadHistoryEntry;
     pub use download_info::DownloadInfo;
     pub use download_status::DownloadStatus;
@@ -46,8 +48,9 @@ pub mod radio {
     pub mod last_fm_radio_state;
 
     pub use last_fm_radio_state::{
-        LastFmRadioPlay, LastFmRadioStateDocument, LastFmRadioStation, LastFmRadioStationKind,
-        LastFmRadioTrack, LastFmRadioUnavailableTrack, LastFmRadioUserState, LastFmRadioUserSummary,
+        LastFmRadioBan, LastFmRadioPlay, LastFmRadioStateDocument, LastFmRadioStation,
+        LastFmRadioStationKind, LastFmRadioTrack, LastFmRadioUnavailableTrack, LastFmRadioUserState,
+        LastFmRadioUserSummary,
     };
 }
 

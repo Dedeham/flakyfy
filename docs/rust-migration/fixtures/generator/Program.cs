@@ -20,6 +20,9 @@ using Octo.Services.Updates;
 using Octo.Services.Admin;
 using Octo.Services.Fingerprint;
 using Octo.Models.Settings;
+using Octo.Services.Imports;
+using Octo.Services.Radio;
+using Octo.Services.Sonic;
 
 var outDir = args.Length > 0 ? args[0] : "/src/out";
 Directory.CreateDirectory(outDir);
@@ -77,6 +80,21 @@ Type Nested(Type outer, string name) =>
             CoverArtUrl = "https://e-cdns-images.dzcdn.net/images/cover/0b5e5a0c3c1f/1000x1000-000000-80-0-0.jpg",
             SizeBytes = 62914560, TranscodedFrom = null, Tagging = report,
             DownloadedAt = U("2026-10-03T14:22:05.1234567Z").ToString("o"), RequestedBy = ["brandon", "anh"],
+            Key = "soulseek:Hq3k9ZpL2xW7mN1vB4cR8t",
+            Log =
+            [
+                new AcquisitionEvent(U("2026-10-03T14:20:00.0000000Z"), AcquisitionEventKinds.Queued, "Queued for brandon"),
+                new AcquisitionEvent(U("2026-10-03T14:20:31.5000000Z"), AcquisitionEventKinds.Found, "2 copies on Soulseek",
+                    "The best is FLAC 16-bit 44.1 kHz",
+                    [
+                        new AcquisitionCandidate("Soulseek", Peer: "sigur-fan", File: "Music\\Sigur Rós\\02 Svefn-g-englar.flac",
+                            Folder: "Music\\Sigur Rós", Format: "flac", BitDepth: 16, SampleRate: 44100, Size: 62914560,
+                            Length: 604, QueueLength: 0, FreeSlot: true, Speed: 1048576, Rank: 1),
+                        new AcquisitionCandidate("Soulseek", Peer: "mp3hoard", File: "svefn.mp3", Format: "mp3", BitRate: 320,
+                            Note: "A lossy copy"),
+                    ]),
+                new AcquisitionEvent(U("2026-10-03T14:22:05.0000000Z"), AcquisitionEventKinds.Done, "In the library"),
+            ],
         },
         new()
         {
@@ -94,7 +112,9 @@ Type Nested(Type outer, string name) =>
             DownloadedAt = U("2026-10-01T22:10:00.5000000Z").ToString("o"), RequestedBy = ["brandon"],
         },
     };
-    Write("downloads-history.json", JsonSerializer.Serialize(list));
+    // DownloadHistoryService.FileOptions: fields with no value are left out.
+    Write("downloads-history.json", JsonSerializer.Serialize(list,
+        new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
 }
 
 // ---------------------------------------------------------------- lastfm-radio-state.json
@@ -154,6 +174,14 @@ Type Nested(Type outer, string name) =>
                 FailedAtUtc = U("2026-10-03T17:00:00.0000000Z"), RetryAfterUtc = U("2026-10-04T17:00:00.0000000Z"),
             },
         ],
+        RadioBans =
+        [
+            new LastFmRadioBan
+            {
+                Key = "daft punk|digital love", SongId = "1aB2cD3eF4gH5iJ6kL7mN8", Artist = "Daft Punk",
+                Title = "Digital Love", BannedAtUtc = U("2026-10-03T18:25:00.0000000Z"),
+            },
+        ],
         LastRefreshAttemptUtc = U("2026-10-03T06:00:00.2500000Z"),
         LastRefreshSuccessUtc = U("2026-10-03T06:00:03.1415926Z"),
         LastRefreshError = null,
@@ -191,6 +219,16 @@ Type Nested(Type outer, string name) =>
             Album = "First Love", Duration = 257, Track = 1, DiscNumber = 1, TotalTracks = 12, Isrc = "JPTO09900010",
         });
         registry.RememberLength(song, 258, LengthSource.Deezer);
+        registry.Register(new SoulseekRouting
+        {
+            Kind = RoutingKind.Song, Artist = "Eminem", Title = "Lose Yourself", Album = "8 Mile", ExternalAlbumId = "103248",
+            ExplicitContent = 1,
+        });
+        registry.Register(new SoulseekRouting
+        {
+            Kind = RoutingKind.Song, Artist = "Eminem", Title = "Lose Yourself", Album = "8 Mile", ExternalAlbumId = "103249",
+            ExplicitContent = 3, Version = "clean",
+        });
     } // Dispose flushes, exactly as on shutdown
 }
 
@@ -311,6 +349,23 @@ Type Nested(Type outer, string name) =>
         {
             HistoryKept = true, RevealedPath = null,
         },
+        new("Delete|nd-5e6f7a8b|9123456:639323617259999999", LibraryAction.Delete, "nd-5e6f7a8b", "brandon",
+            "First Love", "宇多田ヒカル", "First Love", "/music/宇多田ヒカル/First Love/01 - First Love.m4a",
+            "/music/.octo-trash/2026-10-03/宇多田ヒカル/First Love/01 - First Love.m4a", PathSource.NativeApi,
+            LibraryActionState.Applied, null, false, U("2026-10-03T16:00:00.0000000Z"))
+        {
+            Copy = true,
+        },
+        new("Delete|nd-0a1b2c3d|5000000:639323617260000000", LibraryAction.Delete, "nd-0a1b2c3d", "anh",
+            "Roads", "Portishead", "Dummy", "/music/Portishead/Dummy/08 - Roads.flac",
+            "/music/.octo-trash/2026-10-03/Portishead/Dummy/08 - Roads.flac", PathSource.SubsonicGetSong,
+            LibraryActionState.Applied, null, false, U("2026-10-03T16:30:00.0000000Z"))
+        {
+            DownloadAllowed = true,
+        },
+        new("Delete|nd-77aa88bb|3000000:639323617270000000", LibraryAction.Delete, "nd-77aa88bb", "brandon",
+            "Jóga", "Björk", "Homogenic", "/music/Björk/Homogenic/05 - Jóga.flac", null, PathSource.NativeApi,
+            LibraryActionState.Restored, "Put back from the trash", false, U("2026-10-03T17:00:00.0000000Z")),
     };
     Write("library-actions.json", JsonSerializer.Serialize(entries));
 }
@@ -361,6 +416,12 @@ Type Nested(Type outer, string name) =>
             },
             CountsUtc = U("2026-10-03T06:00:00.5555555Z"),
             Kinds = "genre,decade",
+            ForYou = new(StringComparer.Ordinal)
+            {
+                ["newReleases"] = ["{\"id\":\"ext-1\",\"title\":\"Ný Lög\"}"],
+                ["deepCuts"] = ["{\"id\":\"nd-1\",\"title\":\"Track <1> & more\"}", "{\"id\":\"nd-2\"}"],
+            },
+            ForYouCovers = ["https://e-cdns-images.dzcdn.net/images/cover/abc/500x500-000000-80-0-0.jpg"],
         },
     };
     stateDoc.GetProperty("Users")!.SetValue(doc, users);
@@ -409,6 +470,11 @@ Type Nested(Type outer, string name) =>
             AttemptKey = null, RequestedBy = "anh", Origin = "page", State = UpgradeStates.Queued, Detail = null,
             AcquisitionKey = null, QueuedUtc = U("2026-10-03T11:00:00.1000000Z"), UpdatedUtc = U("2026-10-03T11:00:00.1000000Z"),
             StartedUtc = null, Result = null,
+            Pick = new PickedCopy
+            {
+                Source = "Soulseek", Peer = "bjork-archive", File = "Music\\Björk\\Homogenic\\05 Jóga.flac", Size = 41943040,
+                Format = "flac", BitRate = null, BitDepth = 24, SampleRate = 96000, Length = 305,
+            },
         },
     };
     Write("upgrades.json", JsonSerializer.Serialize(jobs));
@@ -551,7 +617,21 @@ Type Nested(Type outer, string name) =>
 // ---------------------------------------------------------------- quarantine manifest
 {
     var manifest = new QuarantineManifest("/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", "nd-8f7e6d5c",
-        LibraryAction.Delete.ToString(), "brandon", U("2026-10-03T15:00:00.2345678Z"));
+        LibraryAction.Delete.ToString(), "brandon", U("2026-10-03T15:00:00.2345678Z"),
+        [
+            new QuarantinedSidecar("/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc",
+                "/music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.lrc"),
+        ],
+        [
+            new Octo.Services.Local.LocalSongMapping
+            {
+                ExternalProvider = "soulseek", ExternalId = "Hq3k9ZpL2xW7mN1vB4cR8t",
+                LocalPath = "/music/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", LocalSubsonicId = "nd-8f7e6d5c",
+                Title = "Svefn-g-englar", Artist = "Sigur Rós", Album = "Ágætis byrjun",
+                DownloadedAt = U("2026-10-03T14:22:05.1234567Z"), SourcePeer = "sigur-fan",
+                SourceFile = "Music\\Sigur Rós\\02 Svefn-g-englar.flac",
+            },
+        ]);
     Write("music/.octo-trash/2026-10-03/Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac.octo-action.json",
         JsonSerializer.Serialize(manifest));
 }
@@ -562,6 +642,183 @@ Type Nested(Type outer, string name) =>
     Write("cache/radio/3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea.mp3.json",
         JsonSerializer.Serialize(profile));
 }
+
+// ---------------------------------------------------------------- imports.json (2026.10.05)
+{
+    var lists = new List<ImportList>
+    {
+        new()
+        {
+            Id = "spotify-liked-brandon", Owner = "brandon", Name = "Liked Songs", Source = ImportSources.SpotifyLiked,
+            SourceRef = null, By = null, ImageUrl = null, SnapshotId = null, Total = 3,
+            Tracks =
+            [
+                new ImportTrack { Key = "spotify:4uLU6hMCjMI75M1A2tKUQC", Title = "Svefn-g-englar", Artist = "Sigur Rós",
+                    Album = "Ágætis byrjun", Seconds = 604, Isrc = "GBAYE9900012", LibraryId = "nd-8f7e6d5c" },
+                new ImportTrack { Key = "spotify:7ouMYWpwJ422jRcDASZB7P", Title = "Digital Love", Artist = "Daft Punk",
+                    Album = "Discovery", Seconds = 301, Isrc = null, LibraryId = null },
+            ],
+            Partial = "1 song could not be read: Spotify no longer has it.",
+            ReadUtc = U("2026-10-04T08:00:00.1234567Z"), MatchedUtc = U("2026-10-04T08:00:02.5000000Z"),
+            KeepPlaylist = true, PlaylistId = "pl-abc123", PlaylistNote = null, GetMissing = true, Gone = false,
+        },
+        new()
+        {
+            Id = "file-anh-1", Owner = "anh", Name = "Exported <favorites> & more", Source = ImportSources.File,
+            Total = 1,
+            Tracks = [new ImportTrack { Key = "宇多田ヒカル|first love", Title = "First Love", Artist = "宇多田ヒカル" }],
+            ReadUtc = U("2026-10-04T09:30:00.0000000Z"), MatchedUtc = null,
+        },
+    };
+    var shape = Nested(typeof(ImportStore), "FileShape");
+    var file = New(shape);
+    shape.GetProperty("Lists")!.SetValue(file, lists);
+    Write("imports.json", JsonSerializer.Serialize(file, shape));
+}
+
+// ---------------------------------------------------------------- imports-trickle.json (2026.10.05)
+{
+    var jobs = new List<TrickleJob>
+    {
+        new()
+        {
+            Owner = "brandon", Key = "spotify:7ouMYWpwJ422jRcDASZB7P", Title = "Digital Love", Artist = "Daft Punk",
+            Album = "Discovery", Seconds = 301, Isrc = null, State = ImportTrackStates.Queued, Detail = null,
+            AcquisitionKey = null, LibraryId = null, Attempts = 0,
+            QueuedUtc = U("2026-10-04T08:00:03.0000000Z"), UpdatedUtc = U("2026-10-04T08:00:03.0000000Z"), StartedUtc = null,
+        },
+        new()
+        {
+            Owner = "anh", Key = "portishead|roads", Title = "Roads", Artist = "Portishead", Album = null, Seconds = null,
+            State = ImportTrackStates.NotFound, Detail = "No copy on Soulseek; tried again in two weeks.",
+            AcquisitionKey = "soulseek:Zz9Yy8Xx7Ww6Vv5Uu4Tt3s", LibraryId = null, Attempts = 2,
+            QueuedUtc = U("2026-10-02T10:00:00.0000000Z"), UpdatedUtc = U("2026-10-03T10:00:00.7500000Z"),
+            StartedUtc = U("2026-10-03T09:58:00.0000000Z"),
+        },
+    };
+    var shape = Nested(typeof(TrickleQueue), "FileShape");
+    var file = New(shape);
+    shape.GetProperty("Jobs")!.SetValue(file, jobs);
+    shape.GetProperty("Paused")!.SetValue(file, new List<string> { "anh" });
+    shape.GetProperty("LastStartUtc")!.SetValue(file, (DateTime?)U("2026-10-04T08:10:00.0000000Z"));
+    Write("imports-trickle.json", JsonSerializer.Serialize(file, shape));
+}
+
+// ---------------------------------------------------------------- spotify-accounts.json (2026.10.05)
+{
+    var accounts = new Dictionary<string, SpotifyAccount>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["brandon"] = new()
+        {
+            AccessToken = "BQD-synthetic-access-token", RefreshToken = "AQB-synthetic-refresh-token",
+            ExpiresUtc = U("2026-10-04T09:00:00.0000000Z"), ConnectedUtc = U("2026-09-01T12:00:00.0000000Z"),
+            SpotifyId = "brandon.w", DisplayName = "Brandon", Problem = null,
+        },
+        ["anh"] = new()
+        {
+            AccessToken = "", RefreshToken = "AQB-synthetic-refresh-token-2",
+            ExpiresUtc = U("2026-10-01T00:00:00.0000000Z"), ConnectedUtc = U("2026-04-01T00:00:00.0000000Z"),
+            SpotifyId = null, DisplayName = null, Problem = "Spotify ended this sign-in after six months; connect again.",
+        },
+    };
+    Write("spotify-accounts.json", JsonSerializer.Serialize(accounts));
+}
+
+// ---------------------------------------------------------------- radio-outcomes.json (2026.10.05)
+{
+    var state = new OutcomeState();
+    state.Listeners["brandon"] = new Dictionary<string, OutcomeCounts>(StringComparer.Ordinal)
+    {
+        ["lastfm"] = new() { Kept = 12.75, Skipped = 3.0625, UpdatedUtc = U("2026-10-04T07:00:00.1234567Z") },
+        ["ytmusic"] = new() { Kept = 0.5, Skipped = 1, UpdatedUtc = U("2026-10-03T21:00:00.0000000Z") },
+    };
+    state.Listeners["anh"] = new Dictionary<string, OutcomeCounts>(StringComparer.Ordinal)
+    {
+        ["sonic"] = new() { Kept = 1.0 / 3, Skipped = 0, UpdatedUtc = U("2026-10-02T12:00:00.0000000Z") },
+    };
+    Write("radio-outcomes.json", JsonSerializer.Serialize(state));
+}
+
+// ---------------------------------------------------------------- sonic-features.json (2026.10.05)
+{
+    var state = new SonicState
+    {
+        Paused = false, Pass = 2, PassFinishedUtc = U("2026-10-04T03:00:00.0000000Z"), NextPassUtc = null,
+    };
+    state.Songs["nd-8f7e6d5c"] = new SonicSong
+    {
+        Stamp = "62914560:639323617251234567", Title = "Svefn-g-englar", Artist = "Sigur Rós", Album = "Ágætis byrjun",
+        Duration = 604, Version = 2,
+        F = [0.1f, -0.25f, 1e-05f, 3.4028235E+38f, 0.33333334f, 123.456f, -1, 0, 7.5e-08f, 0.9999999f],
+    };
+    state.Songs["nd-1a2b3c4d"] = new SonicSong
+    {
+        Stamp = "8650752:639322000000000000", Title = "Don't Stop Me Now", Artist = "Queen", Album = null, Duration = null,
+        Version = 2, F = [0.5f, 0.25f],
+    };
+    state.Failed["nd-0a1b2c3d"] = new SonicFailure
+    {
+        Stamp = "5000000:639323617260000000", Error = "octo-sonic could not read the file: unsupported codec",
+        AtUtc = U("2026-10-04T02:00:00.0000000Z"),
+    };
+    Write("sonic-features.json", JsonSerializer.Serialize(state));
+}
+
+// ---------------------------------------------------------------- tag-edits.json (2026.10.05)
+{
+    var entries = new List<TagEditEntry>
+    {
+        new("e1", "nd-77aa88bb", "/music/Björk/Homogenic/05 - Jóga.flac", TagEditKinds.Retag, "brandon",
+            new Dictionary<string, string?> { ["title"] = "Joga", ["isrc"] = null },
+            new Dictionary<string, string?> { ["title"] = "Jóga", ["isrc"] = "GBAAA9700050" },
+            31457280, 639323617251234567, U("2026-10-04T10:00:00.1234567Z")),
+        new("e2", "nd-1a2b3c4d", "/music/Queen/Jazz/12 - Don't Stop Me Now.flac", TagEditKinds.JoinAlbum, "anh",
+            new Dictionary<string, string?> { ["album"] = "Jazz (Deluxe)" },
+            new Dictionary<string, string?> { ["album"] = "Jazz" },
+            31457281, 639323617251239999, U("2026-10-04T10:05:00.0000000Z"))
+        {
+            AlbumBefore = new KeptIdentity("Don't Stop Me Now", "Jazz (Deluxe)", ["Queen"], [], "Deluxe", "2011-03-14",
+                "b2c3d4e5-0000-4000-8000-000000000001", null, 12, 13, 1, 2, false),
+            Undone = true,
+        },
+        new("e3", "nd-5e6f7a8b", "/music/Eminem/8 Mile/01 - Lose Yourself.mp3", TagEditKinds.Advisory, "brandon",
+            new Dictionary<string, string?> { ["ITUNESADVISORY"] = null },
+            new Dictionary<string, string?> { ["ITUNESADVISORY"] = "1" },
+            8650752, 639323617251240000, U("2026-10-04T10:10:00.0000000Z"))
+        {
+            RunId = "run-explicit-1",
+        },
+    };
+    Write("tag-edits.json", JsonSerializer.Serialize(entries));
+}
+
+// ---------------------------------------------------------------- explicit-backfill.json (2026.10.05)
+{
+    var run = new ExplicitBackfillRun
+    {
+        RunId = "run-explicit-1", Status = ExplicitBackfillStatus.Completed, Mode = ExplicitBackfillMode.Preview,
+        StartedUtc = U("2026-10-04T09:00:00.0000000Z"), FinishedUtc = U("2026-10-04T09:30:00.2500000Z"),
+        Total = 4, Processed = 4, Explicit = 1, Clean = 1, NotExplicit = 1, Unsure = 1, AlreadyMarked = 2, Failed = 0,
+        StepTotal = 0, StepDone = 0, Written = 0, LeftAlone = 0, LastSong = "Eminem - Lose Yourself", Reason = null,
+        Errors = ["Deezer did not answer for Portishead - Roads"],
+        Rows =
+        [
+            new ExplicitBackfillRow { Path = "/music/Eminem/8 Mile/01 - Lose Yourself.mp3", NavidromeId = "nd-5e6f7a8b",
+                Artist = "Eminem", Title = "Lose Yourself", Outcome = "explicit", How = "Deezer's track 103248",
+                CatalogTrackId = "103248", Size = 8650752, WriteTicks = 639323617251240000, Written = false },
+            new ExplicitBackfillRow { Path = "/music/Queen/Jazz/12 - Don't Stop Me Now.flac", NavidromeId = "nd-1a2b3c4d",
+                Artist = "Queen", Title = "Don't Stop Me Now", Outcome = "notExplicit", How = "Deezer says clean lyrics",
+                CatalogTrackId = null, Size = 31457281, WriteTicks = 639323617251239999, Written = false },
+        ],
+        Queue = [new ExplicitBackfillSong("/music/Portishead/Dummy/08 - Roads.flac", null)],
+        Cursor = 1, AppliedRunId = null,
+    };
+    Write("explicit-backfill.json", JsonSerializer.Serialize(run));
+}
+
+// ---------------------------------------------------------------- admin-recovery-code (2026.10.05)
+// AdminRecoveryCode.Write: the code and a line end. A fixed code here; Octo's are random.
+File.WriteAllText(P("admin-recovery-code"), "ABCDE-FGHJK-LMNPQ-RSTUV" + "\n");
 
 // ---------------------------------------------------------------- settings.json (via the real writer)
 {

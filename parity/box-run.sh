@@ -6,8 +6,13 @@
 # octo-parity-*, the image octo-rust-parity:<name> and the buildx builder octo-parity. It never
 # touches the starter rig (/opt/octo, project octo) or other images.
 #
-#   box-run.sh NAME [--no-build] [--low-memory] [--csharp-only] [--only GLOB] [--bytes]
-#              [--csharp-twice] [--rust-twice]
+#   box-run.sh NAME [--prebuilt | --no-build] [--low-memory] [--csharp-only] [--only GLOB]
+#              [--bytes] [--csharp-twice] [--rust-twice]
+#
+# --prebuilt takes the binary lxc131.sh compiled (a static musl build, .parity-bin/octo in this
+# checkout) and builds the image from Dockerfile.rust's runtime stage around it: no compile on
+# the box, only Debian packages (cached after the first time) and a copy. lxc131.sh does this
+# by default. Without it the whole Dockerfile.rust builds here, compile included.
 #
 # --low-memory builds with one job and without LTO: the same program, but no 3 GB link, for
 # when the Proxmox host has too little memory to spare for the usual build (the watchdog in
@@ -25,6 +30,7 @@ build_args=(--build-arg CARGO_BUILD_JOBS=3)
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) build=0 ;;
+    --prebuilt) build=2 ;;
     --low-memory) build_args=(--build-arg CARGO_BUILD_JOBS=1 --build-arg CARGO_PROFILE_RELEASE_LTO=off) ;;
     --csharp-only) build=0; rust=0 ;;
     --only) only="$2"; shift ;;
@@ -67,7 +73,28 @@ if [ "$(free_gb)" -lt "$MIN_FREE_GB" ]; then
 fi
 
 # ---- The Rust image, built from this checkout.
-if [ "$build" = 1 ]; then
+if [ "$build" = 2 ]; then
+  # Dockerfile.rust's runtime stage with the build stage swapped for the binary sent along.
+  [ -x .parity-bin/octo ] || { echo "no .parity-bin/octo in the checkout; lxc131.sh sends it" >&2; exit 1; }
+  old_id="$(docker image inspect -f '{{.Id}}' "$RS_IMAGE" 2> /dev/null || true)"
+  say "building $RS_IMAGE around the binary built for $(git rev-parse --short HEAD)"
+  {
+    echo "FROM scratch AS build"
+    echo "COPY .parity-bin/octo /out/octo"
+    sed -n '/^# ---- Runtime ----/,$p' Dockerfile.rust
+  } > .parity-bin/Dockerfile
+  start=$(date +%s)
+  docker build -q -f .parity-bin/Dockerfile -t "$RS_IMAGE" . > "$RUN/build.log" 2>&1 || {
+    tail -n 40 "$RUN/build.log"
+    echo "the Rust image did not build; the whole log is $RUN/build.log on the box" >&2
+    exit 1
+  }
+  echo "built in $(($(date +%s) - start)) s"
+  new_id="$(docker image inspect -f '{{.Id}}' "$RS_IMAGE")"
+  if [ -n "$old_id" ] && [ "$old_id" != "$new_id" ]; then
+    docker rmi "$old_id" > /dev/null 2>&1 || true
+  fi
+elif [ "$build" = 1 ]; then
   if ! docker buildx inspect "$BUILDER" > /dev/null 2>&1; then
     # Its own builder, capped below the box's memory (the LTO link takes about 3 GB), with its
     # own cache, so a rebuild after a change in the Octo crates skips the dependencies.

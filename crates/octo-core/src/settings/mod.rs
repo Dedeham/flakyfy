@@ -6,14 +6,17 @@
 //! initializers in its `Default`; [`crate::config::bind`] fills it from a configuration
 //! section. `Effective*` properties are methods that clamp at read time, as the C# did.
 
+pub mod admin;
 pub mod generated_playlist;
 pub mod genre;
+pub mod import;
 pub mod last_fm;
 pub mod library_action;
 pub mod lidarr;
 pub mod listen_brainz;
 pub mod metadata;
 pub mod notification;
+pub mod radio_source;
 pub mod restart_tracker;
 pub mod server;
 pub mod soulseek;
@@ -28,10 +31,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{BindWarning, ConfigTree, bind};
 
+pub use admin::AdminSettings;
 pub use generated_playlist::GeneratedPlaylistSettings;
 pub use genre::{
     GenreEmptyBehavior, GenreFallbackSource, GenreMappingSettings, GenreMatchMode, GenreSettings,
 };
+pub use import::ImportSettings;
 pub use last_fm::{DiscoveryStationSettings, LastFmSettings, LastFmUserSession};
 pub use library_action::{
     LibraryAction, LibraryActionDefinition, LibraryActionSettings, LibraryActionTrigger, LibraryRatingScope,
@@ -41,6 +46,7 @@ pub use lidarr::{LidarrCompletionMode, LidarrSettings};
 pub use listen_brainz::ListenBrainzSettings;
 pub use metadata::{LyricsSaveTo, MetadataSettings};
 pub use notification::NotificationSettings;
+pub use radio_source::RadioSourceSettings;
 pub use restart_tracker::RestartTracker;
 pub use server::ServerSettings;
 pub use soulseek::SoulseekSettings;
@@ -63,6 +69,7 @@ pub struct AppSettings {
     pub soulseek: SoulseekSettings,
     pub lidarr: LidarrSettings,
     pub last_fm: LastFmSettings,
+    pub radio_sources: RadioSourceSettings,
     pub genre: GenreSettings,
     pub library_actions: LibraryActionSettings,
     pub generated_playlists: GeneratedPlaylistSettings,
@@ -71,11 +78,13 @@ pub struct AppSettings {
     pub server: ServerSettings,
     pub listen_brainz: ListenBrainzSettings,
     pub updates: UpdateSettings,
+    pub admin: AdminSettings,
+    pub imports: ImportSettings,
 }
 
 impl AppSettings {
     /// The configuration section names, in `Program.cs` registration order.
-    pub const SECTIONS: [&'static str; 12] = [
+    pub const SECTIONS: [&'static str; 15] = [
         "Genre",
         "LibraryActions",
         "GeneratedPlaylists",
@@ -83,11 +92,14 @@ impl AppSettings {
         "Soulseek",
         "Lidarr",
         "LastFm",
+        "RadioSources",
         "Notifications",
         "Metadata",
         "Server",
         "ListenBrainz",
         "Updates",
+        "Admin",
+        "Imports",
     ];
 
     /// Binds every section from the merged configuration. A value that does not convert
@@ -95,7 +107,7 @@ impl AppSettings {
     /// starts with the section name.
     pub fn bind(tree: &ConfigTree) -> (AppSettings, Vec<BindWarning>) {
         let mut warnings = Vec::new();
-        let settings = AppSettings {
+        let mut settings = AppSettings {
             genre: bind_section(tree, "Genre", &mut warnings),
             library_actions: bind_section(tree, "LibraryActions", &mut warnings),
             generated_playlists: bind_section(tree, "GeneratedPlaylists", &mut warnings),
@@ -103,14 +115,30 @@ impl AppSettings {
             soulseek: bind_section(tree, "Soulseek", &mut warnings),
             lidarr: bind_section(tree, "Lidarr", &mut warnings),
             last_fm: bind_section(tree, "LastFm", &mut warnings),
+            radio_sources: bind_section(tree, "RadioSources", &mut warnings),
             notifications: bind_section(tree, "Notifications", &mut warnings),
             metadata: bind_section(tree, "Metadata", &mut warnings),
             server: bind_section(tree, "Server", &mut warnings),
             listen_brainz: bind_section(tree, "ListenBrainz", &mut warnings),
             updates: bind_section(tree, "Updates", &mut warnings),
+            admin: bind_section(tree, "Admin", &mut warnings),
+            imports: bind_section(tree, "Imports", &mut warnings),
         };
+        // A port fix: Navidrome's address is read without the spaces and trailing slashes it
+        // may have been typed with, so every upstream URL Octo builds from it has one slash
+        // (the C# stream relay asked for `//rest/stream`; BACKLOG, "Found while building the
+        // harness"; known-diffs.md).
+        if let Some(url) = settings.subsonic.url.as_mut() {
+            *url = normalize_server_url(url);
+        }
         (settings, warnings)
     }
+}
+
+/// A server address as Octo keeps it: trimmed, with no trailing slash (`http://nd:4533/ ` is
+/// `http://nd:4533`).
+pub fn normalize_server_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
 }
 
 /// `Configuration.GetSection(name).Get<T>()`, collecting conversion warnings under the
@@ -130,4 +158,23 @@ pub fn bind_section<T: DeserializeOwned + Default>(
         message: w.message,
     }));
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navidromes_address_is_read_without_trailing_slashes_or_spaces() {
+        let mut tree = ConfigTree::new();
+        tree.set("Subsonic:Url", Some(" http://navidrome:4533// ".into()));
+        let (settings, warnings) = AppSettings::bind(&tree);
+        assert!(warnings.is_empty());
+        assert_eq!(settings.subsonic.url.as_deref(), Some("http://navidrome:4533"));
+        assert_eq!(
+            normalize_server_url("http://nd:4533/base/"),
+            "http://nd:4533/base"
+        );
+        assert_eq!(normalize_server_url(""), "");
+    }
 }

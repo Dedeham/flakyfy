@@ -16,8 +16,10 @@ use super::apple::names;
 use super::tag_file::{Format, TagError, TagFile};
 use super::tag_writer_extras::{self as extras, APPLE_MEAN, TagFields};
 
-/// The tag values Navidrome builds a song's track and album ids from, as it reads them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The tag values Navidrome builds a song's track and album ids from, as it reads them. A
+/// tag-edits.json entry keeps one (an album join's album as it was), in the record's names.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
 pub struct KeptIdentity {
     pub title: String,
     pub album: Option<String>,

@@ -16,6 +16,35 @@ pub struct SoulseekSettings {
     /// slskd web UI / API admin password (Basic Auth).
     pub password: Option<String>,
 
+    /// The address the dashboard's Open slskd button opens in your browser. Blank works it out:
+    /// BaseUrl when that is an address a browser can reach, otherwise this server's own name on
+    /// BaseUrl's port (5030). Only http and https addresses are used. The browser gets the address
+    /// and nothing else: slskd asks for its own sign-in, and Octo's slskd login never leaves Octo.
+    /// Environment variable: SLSKD_WEB_URL
+    pub web_url: String,
+
+    /// Ask Soulseek's own port test (tools.slsknet.org) whether other people can connect to
+    /// slskd's listening port, for the Sharing card. It tests the address the request comes from,
+    /// so it only means something when Octo and slskd reach the internet the same way. Sends the
+    /// port number and nothing else, at most every 6 hours unless you press Test. Off never asks.
+    /// Environment variable: SLSKD_CHECK_PORT
+    pub check_listen_port: bool,
+
+    /// Share the music library with the Soulseek network, through slskd. On, Octo writes
+    /// SharedFolders into slskd's own settings file and has slskd look through them; off, it
+    /// writes an empty list, has slskd forget what it shared and cancels uploads still waiting or
+    /// under way. Applied within seconds, without a restart. Off here so an existing install never
+    /// starts sharing on an update by itself; the installer and .env.example turn it on for new
+    /// ones.
+    /// Environment variable: SLSKD_SHARE_LIBRARY
+    pub share_library: bool,
+
+    /// What slskd shares while ShareLibrary is on, as slskd sees the folders, separated by ";".
+    /// "[Music]/share" is the library's read-only mount in the bundled compose file, shown to
+    /// other people as a folder named Music. A "!" in front keeps a folder out.
+    /// Environment variable: SLSKD_SHARED_DIR
+    pub shared_folders: String,
+
     /// How long to wait (seconds) for a Soulseek search to gather peer responses
     /// before returning results. Soulseek searches stream in over time, so this is
     /// the difference between finding a lossless file and silently settling for a
@@ -177,6 +206,10 @@ impl Default for SoulseekSettings {
             base_url: None,
             username: None,
             password: None,
+            web_url: String::new(),
+            check_listen_port: true,
+            share_library: false,
+            shared_folders: "[Music]/share".to_string(),
             search_wait_seconds: 30,
             upgrade_search_wait_seconds: 90,
             min_file_size_bytes: 5 * 1024 * 1024,
@@ -252,6 +285,32 @@ impl SoulseekSettings {
     pub fn effective_min_score_fraction(&self) -> f64 {
         f64::from(self.effective_min_match_score()) / 100.0
     }
+
+    /// SharedFolders as a list, blanks dropped.
+    pub fn shared_folder_list(&self) -> Vec<String> {
+        self.shared_folders
+            .split(';')
+            .map(str::trim)
+            .filter(|folder| !folder.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// WebUrl when it is an absolute http or https address, otherwise None.
+    pub fn effective_web_url(&self) -> Option<String> {
+        Self::safe_web_url(Some(&self.web_url))
+    }
+
+    /// An absolute http or https address, trimmed, or None. Anything else (a script: or file:
+    /// address, a bare host) is never handed to the browser as a link.
+    ///
+    /// `Uri.TryCreate(..., UriKind.Absolute)` and `Uri.ToString()` in the C#; the `url` crate
+    /// parses and writes the same addresses for http and https (a bare host gains its "/").
+    pub fn safe_web_url(value: Option<&str>) -> Option<String> {
+        let parsed = url::Url::parse(value?.trim()).ok()?;
+        let web = matches!(parsed.scheme(), "http" | "https");
+        (web && parsed.host_str().is_some_and(|host| !host.is_empty())).then(|| parsed.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +348,39 @@ mod tests {
         };
         assert_eq!(s.effective_min_match_score(), 99);
         assert_eq!(SoulseekSettings::default().effective_min_score_fraction(), 0.85);
+    }
+
+    #[test]
+    fn shared_folders_split_on_semicolons_and_drop_blanks() {
+        let s = SoulseekSettings {
+            shared_folders: " [Music]/share ; ;!/share/private;".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s.shared_folder_list(), ["[Music]/share", "!/share/private"]);
+        assert_eq!(
+            SoulseekSettings::default().shared_folder_list(),
+            ["[Music]/share"]
+        );
+    }
+
+    #[test]
+    fn only_a_whole_web_address_is_a_web_url() {
+        let cases: [(&str, Option<&str>); 7] = [
+            ("http://192.168.1.5:5030", Some("http://192.168.1.5:5030/")),
+            ("  https://slskd.example/ ", Some("https://slskd.example/")),
+            ("javascript:alert(1)", None),
+            ("file:///etc/passwd", None),
+            ("slskd:5030", None),
+            ("/slskd", None),
+            ("", None),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(
+                SoulseekSettings::safe_web_url(Some(value)).as_deref(),
+                expected,
+                "{value}"
+            );
+        }
+        assert_eq!(SoulseekSettings::default().effective_web_url(), None);
     }
 }

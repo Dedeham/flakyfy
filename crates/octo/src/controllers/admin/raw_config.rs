@@ -1,6 +1,7 @@
 //! `AdminController`'s Raw config editor and the config-sources table (L1643–L2086):
 //! `GET`/`PUT /api/admin/raw-config` and `GET /api/admin/config-sources`.
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -12,14 +13,15 @@ use octo_core::settings::writer::to_indented_json;
 use serde_json::json;
 use tracing::{error, info};
 
-use super::helpers_6b1::{
-    SECRET_PLACEHOLDER, body_text, child, error_json, json_text, key_of, n_obj, parse_json_node,
+use super::helpers_6b1::{body_text, error_json, json_text, parse_json_node};
+use super::secrets::{
+    normalize_saved_addresses, restore_secret_placeholders, running_secrets, secret_sent_elsewhere,
+    secret_typed_into_placeholder, session_key_typed_into_placeholder,
 };
-use super::settings::{
-    effective_document, restore_secret_placeholders, session_key_typed_into_placeholder, string_value,
-};
+use super::settings::effective_document;
 use crate::app::AppState;
 use crate::http::error::json_ok;
+use crate::services::admin::AdminCaller;
 
 /// `GET /api/admin/raw-config`: the *effective* configuration as a JSON document, with values
 /// from the live settings (what the app actually sees). Anything persisted to settings.json
@@ -34,18 +36,14 @@ pub async fn get_raw_config(State(state): State<AppState>) -> Response {
     json_text(StatusCode::OK, to_indented_json(&document), "application/json")
 }
 
-/// The secret's value when it starts with the placeholder: someone typed onto its end.
-fn typed_onto_placeholder(section: Option<&JsonObject>, name: &str) -> bool {
-    section
-        .and_then(|section| key_of(section, name).and_then(|key| section.get(&key)))
-        .and_then(|node| string_value(Some(node)))
-        .is_some_and(|text| text.starts_with(SECRET_PLACEHOLDER))
-}
-
 /// `PUT /api/admin/raw-config`: replaces settings.json wholesale with the request body, after
 /// checking that it parses as a JSON object, so the user cannot save a broken file that crashes
 /// the next start.
-pub async fn put_raw_config(State(state): State<AppState>, body: Bytes) -> Response {
+pub async fn put_raw_config(
+    State(state): State<AppState>,
+    caller: Option<Extension<AdminCaller>>,
+    body: Bytes,
+) -> Response {
     let body = body_text(&body);
     if is_blank(&body) {
         return error_json(StatusCode::BAD_REQUEST, "empty body");
@@ -62,57 +60,25 @@ pub async fn put_raw_config(State(state): State<AppState>, body: Bytes) -> Respo
     };
 
     // Don't merge: this is the "I know exactly what I want" power-user endpoint. It goes
-    // through the writer so it shares the lock and atomic write with form saves, and the hidden
-    // admin password comes back as a placeholder that must not be saved literally. When the
-    // file cannot be read, the running value is the only copy of the password left, and this
+    // through the writer so it shares the lock and atomic write with form saves, and every hidden
+    // credential comes back as a placeholder that must not be saved literally. When the file
+    // cannot be read, the running values are the only copy of the credentials left, and this
     // save is the recovery path the 409 points people to.
-    let existing = if state.settings_writer.is_readable() {
+    let existing: JsonObject = if state.settings_writer.is_readable() {
         state.settings_writer.load()
     } else {
-        let current = state.settings.current();
-        let password = current
-            .subsonic
-            .admin_password
-            .as_deref()
-            .map_or(Node::Null, |p| Node::String(p.to_string()));
-        let sessions = Node::Object(
-            current
-                .last_fm
-                .user_sessions
-                .iter()
-                .map(|(user, session)| {
-                    (
-                        user.clone(),
-                        n_obj([
-                            ("SessionKey", Node::String(session.session_key.clone())),
-                            ("LastFmUser", Node::String(session.last_fm_user.clone())),
-                        ]),
-                    )
-                })
-                .collect(),
-        );
-        let mut existing = JsonObject::new();
-        existing.insert("Subsonic".into(), n_obj([("AdminPassword", password)]));
-        existing.insert(
-            "LastFm".into(),
-            n_obj([
-                ("ApiSecret", Node::String(current.last_fm.api_secret.clone())),
-                ("UserSessions", sessions),
-            ]),
-        );
-        existing
+        running_secrets(&state)
     };
-    restore_secret_placeholders(&mut parsed, &existing);
-    if typed_onto_placeholder(child(&parsed, "Subsonic"), "AdminPassword") {
-        return error_json(
-            StatusCode::BAD_REQUEST,
-            "Retype the whole admin password; it was added to the hidden placeholder.",
-        );
+    if let Some(elsewhere) = secret_sent_elsewhere(&parsed, |section, name| {
+        state.settings.raw(&format!("{section}:{name}"))
+    }) {
+        return error_json(StatusCode::BAD_REQUEST, &elsewhere);
     }
-    if typed_onto_placeholder(child(&parsed, "LastFm"), "ApiSecret") {
+    restore_secret_placeholders(&mut parsed, &existing);
+    if let Some(typed) = secret_typed_into_placeholder(&parsed) {
         return error_json(
             StatusCode::BAD_REQUEST,
-            "Retype the whole Last.fm shared secret; it was added to the hidden placeholder.",
+            &format!("Retype the whole {typed}; it was added to the hidden placeholder."),
         );
     }
     if let Some(user) = session_key_typed_into_placeholder(&parsed) {
@@ -123,11 +89,15 @@ pub async fn put_raw_config(State(state): State<AppState>, body: Bytes) -> Respo
             ),
         );
     }
+    normalize_saved_addresses(&mut parsed);
     let pretty = to_indented_json(&parsed);
     match state.settings_writer.replace(&parsed) {
         Ok(()) => {
             let bytes = utf16_len(&pretty);
-            info!("Admin raw-config saved ({bytes} bytes)");
+            info!(
+                "{} saved the raw config ({bytes} bytes)",
+                AdminCaller::describe(caller.as_ref().map(|Extension(caller)| caller))
+            );
             json_ok(&json!({ "ok": true, "bytes": bytes }))
         }
         Err(e) => {
@@ -171,6 +141,10 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Soulseek:BaseUrl",
     "Soulseek:Username",
     "Soulseek:Password",
+    "Soulseek:WebUrl",
+    "Soulseek:CheckListenPort",
+    "Soulseek:ShareLibrary",
+    "Soulseek:SharedFolders",
     "Soulseek:SearchWaitSeconds",
     "Soulseek:UpgradeSearchWaitSeconds",
     "Soulseek:MinFileSizeBytes",
@@ -253,6 +227,17 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LastFm:RefreshIntervalHours",
     "LastFm:MinimumPlays",
     "LastFm:DiscoveryStations",
+    "RadioSources:YouTubeMusic",
+    "RadioSources:ListenBrainz",
+    "RadioSources:SoundsAlike",
+    "RadioSources:SonicUrl",
+    "RadioSources:SonicPauseSeconds",
+    "RadioSources:ListenBrainzAlgorithm",
+    "RadioSources:LastFmWeight",
+    "RadioSources:YouTubeMusicWeight",
+    "RadioSources:ListenBrainzWeight",
+    "RadioSources:SoundsAlikeWeight",
+    "RadioSources:LearnFromListening",
     "Metadata:Language",
     "Metadata:AlbumFromTitle",
     "Metadata:UseCoverArtArchive",
@@ -300,6 +285,10 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Notifications:NotifyAlbumCompleted",
     "ListenBrainz:Token",
     "ListenBrainz:SubmitExternalPlays",
+    "Imports:SpotifyClientId",
+    "Imports:SpotifyRedirectUri",
+    "Imports:SongsPerHour",
+    "Imports:RefreshHours",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token
@@ -312,6 +301,11 @@ fn is_secret_key(key: &str) -> bool {
         .any(|suffix| lower.ends_with(suffix))
 }
 
+/// What a set secret reads as on the config-sources page: always the same eight bullets. A port
+/// fix: the C# showed one bullet per character, up to 16, which told anyone how long a password
+/// or key was (BACKLOG, "Found while building the harness"; known-diffs.md).
+pub const CONFIG_SOURCES_MASK: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
+
 /// `GET /api/admin/config-sources`: every config key the app effectively sees, as
 /// `IConfiguration[key]` reads it (a list reads as `""`, having no value of its own), with
 /// anything that smells like a secret masked so a screenshot of the page does not leak it.
@@ -322,7 +316,7 @@ pub async fn get_config_sources(State(state): State<AppState>) -> Response {
             let value = state.settings.raw(key).unwrap_or_default();
             let secret = is_secret_key(key);
             let display = if secret && !value.is_empty() {
-                "\u{2022}".repeat(utf16_len(&value).min(16))
+                CONFIG_SOURCES_MASK.to_string()
             } else {
                 value
             };

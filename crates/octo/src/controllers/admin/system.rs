@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -19,6 +20,8 @@ use tracing::{info, warn};
 use super::helpers_6b1::{bind_body, camel_case_value, object_result, ok};
 use crate::app::AppState;
 use crate::http::error::json_ok;
+use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
+use crate::services::admin::AdminCaller;
 use crate::services::admin::directory_browser::is_writable;
 use crate::services::http_client_factory::{connect_failure_message, timeout_message};
 use crate::services::soulseek::soulseek_link::ISoulseekLink;
@@ -84,13 +87,29 @@ pub async fn test_notification(State(state): State<AppState>) -> Response {
     ok(&json!({ "results": results }))
 }
 
-/// `GET /api/admin/downloads`: the running log of songs Octo has fetched, newest first.
+/// `GET /api/admin/downloads`: the running log of songs Octo has fetched, newest first. Each
+/// entry's saved download log stays out of the list (it can run to hundreds of lines); `hasLog`
+/// says one was kept, and `downloads/log` reads it.
 pub async fn downloads(State(state): State<AppState>) -> Response {
     let recent = state.download_history.get_recent(200);
     // The entries are written to disk PascalCase; the API answer is camelCase, with the
     // report's dictionaries keeping their keys.
-    let value = serde_json::to_value(&recent).unwrap_or_default();
-    ok(&json!({ "downloads": camel_case_value(value, &["fields", "stageSeconds"]) }))
+    let downloads: Vec<serde_json::Value> = recent
+        .iter()
+        .map(|entry| {
+            let value = serde_json::to_value(entry).unwrap_or_default();
+            let mut value = camel_case_value(value, &["fields", "stageSeconds"]);
+            if let Some(fields) = value.as_object_mut() {
+                fields.remove("log");
+                fields.insert(
+                    "hasLog".into(),
+                    serde_json::Value::Bool(entry.log.as_ref().is_some_and(|log| !log.is_empty())),
+                );
+            }
+            value
+        })
+        .collect();
+    ok(&json!({ "downloads": downloads }))
 }
 
 /// `GET /api/admin/acquisitions`: every hearted download in flight or ended in the last half
@@ -254,6 +273,44 @@ async fn probe_you_tube_shim(state: &AppState) -> ServiceProbe {
     }
 }
 
+/// octo-sonic, the Sounds alike reader; off when Sounds alike is switched off.
+async fn probe_sonic(state: &AppState) -> ServiceProbe {
+    let radio = state.settings.current().radio_sources.clone();
+    if !radio.sounds_alike {
+        return ServiceProbe::new(true, "Sounds alike is off").unconfigured();
+    }
+    let target = format!("{}/health", radio.sonic_url.trim_end_matches('/'));
+    let request = match state.http.get(&target).timeout(PROBE_TIMEOUT).build() {
+        Ok(request) => request,
+        Err(e) => return ServiceProbe::new(false, format!("An invalid request URI was provided. {e}")),
+    };
+    let response = match state.http.execute(request).await {
+        Ok(response) => response,
+        Err(e) => return ServiceProbe::new(false, probe_failure(&e)),
+    };
+    let status = response.status();
+    if status.is_success() {
+        return ServiceProbe::new(true, "reachable");
+    }
+    // Turned off in .env (RADIO_SOUNDS_ALIKE=false): off, like the switch, not a fault.
+    let body = response.bytes().await.unwrap_or_default();
+    let off = serde_json::from_slice::<serde_json::Value>(if body.is_empty() { b"{}" } else { &body })
+        .ok()
+        .and_then(|document| document.get("off").cloned())
+        == Some(serde_json::Value::Bool(true));
+    if off {
+        return ServiceProbe::new(true, "Sounds alike is off in .env").unconfigured();
+    }
+    ServiceProbe::new(
+        false,
+        if status.as_u16() == 503 {
+            "cannot see the music folder".to_string()
+        } else {
+            format!("HTTP {}", status.as_u16())
+        },
+    )
+}
+
 async fn probe_last_fm(state: &AppState) -> ServiceProbe {
     let key = state.settings.current().last_fm.api_key.clone();
     // Optional: without a key search still shows your library and Deezer albums, and radio
@@ -281,27 +338,96 @@ fn round_trip_offset(now: chrono::DateTime<Utc>) -> String {
 }
 
 /// `GET /api/admin/status`: a quick health snapshot of each backing service, so the dashboard
-/// shows at a glance whether Octo can reach Navidrome, slskd, Lidarr, the yt-dlp shim and
-/// Last.fm. The probes run in parallel: the total is the slowest, not the sum.
-pub async fn get_status(State(state): State<AppState>) -> Response {
-    let (navidrome, slskd, lidarr, shim, lastfm) = tokio::join!(
-        probe_navidrome(&state),
-        probe_slskd(&state),
-        probe_lidarr(&state),
-        probe_you_tube_shim(&state),
-        probe_last_fm(&state),
-    );
+/// shows at a glance whether Octo can reach Navidrome, slskd, Lidarr, the yt-dlp shim, octo-sonic
+/// and Last.fm. Open without a sign-in, but then it answers only `ok` and `configured` per service
+/// (see [`anonymous_status`]).
+pub async fn get_status(State(state): State<AppState>, caller: Caller) -> Response {
+    if !caller_of(&caller).is_some_and(AdminCaller::is_admin) {
+        return json_ok(&anonymous_status(&state).await);
+    }
     json_ok(&json!({
         "octo": ServiceProbe::new(true, "Octo is responding"),
-        "services": {
-            "navidrome": navidrome,
-            "slskd": slskd,
-            "lidarr": lidarr,
-            "ytDlpShim": shim,
-            "lastfm": lastfm,
-        },
+        "services": probe_all(&state).await,
         "time": round_trip_offset(Utc::now()),
     }))
+}
+
+/// Every service's probe, by name. They run in parallel: the total is the slowest, not the sum.
+async fn probe_all(state: &AppState) -> serde_json::Map<String, serde_json::Value> {
+    let (navidrome, slskd, lidarr, shim, sonic, lastfm) = tokio::join!(
+        probe_navidrome(state),
+        probe_slskd(state),
+        probe_lidarr(state),
+        probe_you_tube_shim(state),
+        probe_sonic(state),
+        probe_last_fm(state),
+    );
+    [
+        ("navidrome", navidrome),
+        ("slskd", slskd),
+        ("lidarr", lidarr),
+        ("ytDlpShim", shim),
+        ("sonic", sonic),
+        ("lastfm", lastfm),
+    ]
+    .into_iter()
+    .map(|(name, probe)| (name.to_string(), json!(probe)))
+    .collect()
+}
+
+/// The signed-out status answer, kept ten seconds (`AnonymousStatusFor`), with when it was made.
+pub struct AnonymousStatusCache {
+    kept: tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
+}
+
+impl Default for AnonymousStatusCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnonymousStatusCache {
+    pub const KEPT_FOR: Duration = Duration::from_secs(10);
+
+    pub fn new() -> Self {
+        AnonymousStatusCache {
+            kept: tokio::sync::Mutex::new(None),
+        }
+    }
+}
+
+/// Before a sign-in, status says only whether each service is up: enough for install.sh and for
+/// the app to tell this is Octo, and nothing about addresses or errors. Kept ten seconds, because
+/// the Last.fm probe spends the API key and this answers anyone. One probe round at a time: a
+/// caller arriving meanwhile waits for it and gets its answer.
+async fn anonymous_status(state: &AppState) -> serde_json::Value {
+    let mut kept = state.anonymous_status.kept.lock().await;
+    if let Some((at, answer)) = kept.as_ref()
+        && at.elapsed() < AnonymousStatusCache::KEPT_FOR
+    {
+        return answer.clone();
+    }
+    let probes = probe_all(state).await;
+    // configured too, so an optional service nobody set up reads as off, not as working.
+    let services: serde_json::Map<String, serde_json::Value> = probes
+        .into_iter()
+        .map(|(name, probe)| {
+            let ok = probe.get("ok").cloned().unwrap_or(serde_json::Value::Bool(false));
+            let configured = probe
+                .get("configured")
+                .cloned()
+                .unwrap_or(serde_json::Value::Bool(true));
+            (name, json!({ "ok": ok, "configured": configured }))
+        })
+        .collect();
+    let answer = json!({
+        "octo": { "ok": true },
+        "services": services,
+        "time": round_trip_offset(Utc::now()),
+        "signedIn": false,
+    });
+    *kept = Some((std::time::Instant::now(), answer.clone()));
+    answer
 }
 
 /// `GET /api/admin/lidarr/options`: the choices the connected Lidarr offers for add-album
@@ -330,12 +456,21 @@ pub async fn test_lidarr_connection(
         Ok(request) => request,
         Err(res) => return res,
     };
+    let current = state.settings.current();
+    let key = match lidarr_test_key(
+        request.api_key.as_deref(),
+        request.base_url.as_deref(),
+        current.lidarr.api_key.as_deref(),
+        current.lidarr.base_url.as_deref(),
+    ) {
+        Ok(key) => key,
+        Err(words) => {
+            return object_result(StatusCode::BAD_REQUEST, &json!({ "ok": false, "error": words }));
+        }
+    };
     match state
         .lidarr_client
-        .test_connection(
-            request.base_url.as_deref().unwrap_or(""),
-            request.api_key.as_deref().unwrap_or(""),
-        )
+        .test_connection(request.base_url.as_deref().unwrap_or(""), key.unwrap_or(""))
         .await
     {
         Ok(options) => ok(&json!({
@@ -350,10 +485,37 @@ pub async fn test_lidarr_connection(
     }
 }
 
+/// The key `lidarr/test` sends: the page only ever holds the placeholder for a saved key, and
+/// testing it means the saved one, but only at the saved address. A port fix: the C# sent the
+/// saved key to whatever address the request named, so anyone who could reach the admin API
+/// could have it sent to a server of their own; now the saved key follows the saved address
+/// alone, as a save's does (`secrets::secret_sent_elsewhere`, the same comparison), and a new
+/// address needs the key typed (BACKLOG "Found while building the harness"; known-diffs.md).
+/// Anything other than the placeholder is the key as typed.
+fn lidarr_test_key<'a>(
+    typed_key: Option<&'a str>,
+    typed_url: Option<&str>,
+    saved_key: Option<&'a str>,
+    saved_url: Option<&str>,
+) -> Result<Option<&'a str>, &'static str> {
+    if typed_key != Some(super::helpers_6b1::SECRET_PLACEHOLDER) {
+        return Ok(typed_key);
+    }
+    let address = |url: Option<&str>| url.unwrap_or("").trim().trim_end_matches('/').to_string();
+    if octo_core::common::dotnet::eq_ignore_case(&address(typed_url), &address(saved_url)) {
+        Ok(saved_key)
+    } else {
+        Err("Retype the Lidarr API key for the new address.")
+    }
+}
+
 /// `POST /api/admin/restart`: exits the process so docker compose's restart policy brings the
 /// container back up with refreshed config. The caller gets its 202 before the shutdown fires.
-pub async fn restart(State(state): State<AppState>) -> Response {
-    warn!("Admin requested restart; container will exit in 1s");
+pub async fn restart(State(state): State<AppState>, caller: Option<Extension<AdminCaller>>) -> Response {
+    warn!(
+        "{} restarted Octo from the dashboard; it exits in 1s",
+        AdminCaller::describe(caller_of(&caller))
+    );
     // Fire-and-forget so the response can be returned first.
     let inner = state.inner.clone();
     tokio::spawn(async move {
@@ -401,5 +563,39 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 10, 4, 8, 7, 57).unwrap()
             + chrono::TimeDelta::nanoseconds(635_173_300);
         assert_eq!(round_trip_offset(now), "2026-10-04T08:07:57.6351733+00:00");
+    }
+}
+
+#[cfg(test)]
+mod lidarr_test_key_tests {
+    use super::lidarr_test_key;
+    use crate::controllers::admin::helpers_6b1::SECRET_PLACEHOLDER;
+
+    /// The saved key follows the saved address only; a typed key goes anywhere it is sent.
+    #[test]
+    fn the_saved_key_follows_the_saved_address_only() {
+        let saved = (Some("saved-key"), Some("http://lidarr:8686"));
+        let test = |key, url| lidarr_test_key(key, url, saved.0, saved.1);
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some("http://lidarr:8686")),
+            Ok(Some("saved-key"))
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some(" HTTP://LIDARR:8686/ ")),
+            Ok(Some("saved-key"))
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), Some("http://evil.example:8686")),
+            Err("Retype the Lidarr API key for the new address.")
+        );
+        assert_eq!(
+            test(Some(SECRET_PLACEHOLDER), None),
+            Err("Retype the Lidarr API key for the new address.")
+        );
+        assert_eq!(
+            test(Some("typed"), Some("http://evil.example:8686")),
+            Ok(Some("typed"))
+        );
+        assert_eq!(test(None, Some("http://lidarr:8686")), Ok(None));
     }
 }

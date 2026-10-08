@@ -170,9 +170,11 @@ Done 2026-10-07 (`parity/README.md` has the details):
   has today. A group that changes those answers moves its golden tests onto a
   fresh 2026.10.05 recording in its own commit (`parity.py run`, then copy the
   corpus files it needs).
-- [ ] Regenerate the tag and state fixtures with the C# generators at
-  2026.10.05 (`docs/rust-migration/fixtures`): not part of the harness work;
-  wave G1 does it with the 7 new state files.
+- [x] Regenerate the state fixtures with the C# generator at 2026.10.05
+  (`docs/rust-migration/fixtures/state`): done in wave G1, with the 7 new
+  files, `admin-recovery-code` and the new fields (state-files.md §4.26 on).
+- [ ] Regenerate the tag fixtures (`fixtures/tags`) at 2026.10.05: group C
+  (the explicit advisory, `ITUNESADVISORY` and `rtng`), with its tagging.
 
 ## Phase 1 record (2026-10-07)
 
@@ -240,14 +242,19 @@ Diffs per corpus file: 00-setup 4, 01-system 4, 02-browsing 5, 03-search 5,
 **Intentional diffs.** `parity/intentional-diffs.json` holds the deliberate
 improvements, one reviewed entry per change (requests named, the diff lines
 pinned by regex, a reason, and `reviewed` by Brandon for anything a user or an
-app sees). It is empty: no improvement has landed yet. The list under
-"Improvements we want while porting" below is where the entries come from.
+app sees). Wave G1 proposed the first three (`reviewed` unset, so they explain nothing
+until Brandon signs them): `recovery-refused-on-library-files`,
+`lidarr-test-saved-key-stays-home` and `config-sources-fixed-mask`, the port
+fixes below that the corpus reaches. The list under "Improvements we want while
+porting" below is where the rest come from.
 
 ### Found while building the harness
 
-C# 2026.10.05 behavior the corpus records as it is. Each needs a decision:
-fix C# (and the port follows), or fix it in the port only, as an intentional
-diff.
+C# 2026.10.05 behavior the corpus records as it is. **Decided 2026-10-07
+(Brandon): all eleven are fixed in the Rust port only, as intentional diffs**
+(a known-diffs.md row and a `parity/intentional-diffs.json` entry each,
+`reviewed` left for Brandon before shipping). Five are fixed in wave G1
+(marked below); the other six carry a "fix in port" line under their group.
 
 - **"Keep as playlist" on an import answers 500** against Navidrome 0.64.2:
   Octo reads Navidrome's answer to the playlist create as JSON, and it is not
@@ -262,16 +269,42 @@ diff.
 - **The explicit backfill accepts a recovery code session**
   (`ExplicitBackfillController.cs:30`, `UserOf`), so the recovery code can
   write explicit marks into music files; the cover upgrade refuses it.
+  **Fixed in G1** (`4d38b38`): the gate refuses a recovery-code session on
+  every route that reads or changes library files
+  (`admin_sign_in_gate::LIBRARY_FILE_ROUTES`: browse, tags/preview,
+  library-actions, notices, lossy, upgrades, library/resolve, genre/backfill,
+  covers, lyrics, imports, downloads/log, find, trash, health, explicit),
+  with the words each endpoint answered; group P's controller needs no check
+  of its own.
 - **`lidarr/test` sends the saved Lidarr key to any address typed in** when the
   placeholder is sent (`AdminController.cs:2372`); the "a secret never follows
   a new address" rule covers saves only.
+  **Fixed in G1** (`4d38b38`, `lidarr_test_key`): the saved key follows the
+  saved address only; another address answers 400 "Retype the Lidarr API key
+  for the new address.". The other test routes send nothing saved to a typed
+  address: `lastfm/check` (fixed Last.fm host), `listenbrainz/validate`
+  (fixed ListenBrainz host), `test-notification` (the saved ntfy and
+  Discord addresses only), `soulseek/test-port` (no secret), the Spotify
+  connect (a client id, not a secret).
 - **A Navidrome address saved with a trailing slash** passes the same-address
   rule, and the stream relay then calls `//rest/stream`
-  (`SubsonicProxyService.cs:344`).
+  (`SubsonicProxyService.cs:344`). **Fixed in G1** (`4d38b38`): saved
+  trimmed and without trailing slashes (settings and Raw config), and read
+  that way (`normalize_server_url` when the settings bind).
 - **Section names in a settings save:** the secret checks ignore case, the file
   writer does not, so `"lidarr"` writes a second section the config loader
-  rejects on reload.
-- **`config-sources` shows a secret's length** (up to 16 bullets).
+  rejects on reload. **Fixed in G1** (`4d38b38`,
+  `writer::canonical_sections`): a known section is written under its own
+  name, and two spellings of one become one.
+- **`config-sources` shows a secret's length** (up to 16 bullets). **Fixed in
+  G1** (`4d38b38`): eight bullets for every set secret.
+
+The two G1 fixes no corpus request reaches (Navidrome's address with a trailing
+slash, a section name in another case) have their known-diffs.md rows and Rust
+tests but no intentional-diffs.json entry: a parity entry names the requests
+whose answers differ, and none do. A corpus request for each would need its own
+C# recording run; a settings save with `http://navidrome:4533/` would also move
+every later request in its corpus file onto the normalized address.
 - **Resuming a cancelled cover run counts `kept` and `albumsDone` again**
   ("6 of 3 albums", `CoverUpgrade.cs:696,744`).
 - **The cover scan walks into `/music/.octo-trash`**, and the album id of a
@@ -317,34 +350,84 @@ runtime stage on the box and tagged `octo-rust-parity:port-g1-aks`; the runs the
 03-search 5 (unchanged), 04-media 2 to 0, 08-catchall-native 4 to 3, 13-downloads 108 to 101,
 14-settings-media 149 to 134, 18-dashboard 63 (unchanged).
 
+### G1 record: groups J and I (2026-10-07)
+
+Run on LXC 131 from `port/g1-core` (`25b28bc`, rebased on `rust/main` `4a17b3b`
+with A, K and S) with `parity/lxc131.sh --bytes --rust-twice`: the binary
+compiled in WSL, the corpus with `19-health/plant-scan-done` (so the C# side was
+recorded again, 1,837 requests). The numbers below are that recording diffed again
+with `978acef`'s allowlist (the two static-file entries also cover `21-static`
+and the admin port's index) and the three proposed intentional diffs.
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 809 unexplained (1,433 after A, K and S), 1,004 explained, 24 identical | the same |
+| Rust against Rust | 1,837 identical, 0 unexplained | the same |
+
+| Group | Own before | Own after | Diffs before | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| J | 252 | 6 | 927 | 45 |
+| I | 76 | 3 | 76 | 3 |
+
+What is left in J and I is the port fixes and one J bug the run found:
+
+- I 3 and J 3 are the proposed intentional diffs: `config-sources` with eight
+  bullets (6 requests) and `lidarr/test` refusing the saved key at a new address
+  (1). With them reviewed, I is 0 and J is 3.
+- J 3: a sign-out answered the gate's cookie renewal ahead of the cookie's
+  deletion (`14-settings-media/sign-out-this-browser`, `sign-out-everywhere`,
+  `recovery-sign-out-everywhere`; `90-mutations/browse-signout` the same).
+  ASP.NET's `Cookies.Delete` took back the gate's `Append`, so the C# sent the
+  deletion alone. Fixed in `05bf281` with a Rust test; the targeted run below
+  checks it.
+- J's 45 "diffs" are requests of other groups whose differing part
+  `groups.json` puts on J too; none is J's own.
+
+No group got worse. Own counts after, against the A, K, S record: B 11 (11),
+C 12 (15), D 110 (133), E 21 (45), F 128 (140), G 48 (55), H 202 (208), L 45
+(75), N 14 (48), O 20 (20), P 68 (106), Q 12 (14), R 97 (138), base 35 (201);
+A, K and S 0. Most of the drop is the gate and the security headers, which every
+admin answer carried. The other groups' recovery-code requests now meet the
+gate's refusal (`17-covers-explicit/explicit-*-recovery*`, intentional) or
+their unported route (`13-downloads/find-get-recovery`, D;
+`18-dashboard/ambient-recovery`, `activity-recovery-signed`, N;
+`18-dashboard/sharing-get-recovery`, E).
+
+Rust against Rust is 0 again: `19-health` now waits for Navidrome's scan to
+finish (`plant-scan-done`, `getScanStatus` until `scanning` is false) before it
+lists the planted songs.
+
+The harness now compiles in WSL by default (`parity/lxc131.sh`, `box-run.sh
+--prebuilt`, README "Compile in WSL"); `--box-build` is the old way.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
-methods). "Diffs now" is the phase 1 record's "own" count (requests
-tagged with the group that differ from C# 2026.10.05), or the G1 record's for A, B, K and S.
-Status: open, in
-progress, done, or no Rust change.
+methods). "Diffs now" is the latest "own" count (requests tagged with the
+group that differ from C# 2026.10.05): the G1 J and I record above, proposed
+intentional diffs counted as differing. Status: open, in progress, done, or no
+Rust change.
 
 | Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | done |
 | B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
-| C Tagging polish | 4 | 465 | 24 | 1.0 | 15 | open |
-| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 133 | open |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 45 | open |
-| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 140 | open |
-| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 55 | open |
-| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 208 | open |
-| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 76 | open |
-| J Admin sign-in | 6 | 921 | 29 | 1.25 | 252 | open |
+| C Tagging polish | 4 | 465 | 24 | 1.0 | 12 | open |
+| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 21 | open |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
+| G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open |
+| H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 202 | open |
+| I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
+| J Admin sign-in | 6 | 921 | 29 | 1.25 | 6 | done (G1) |
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
-| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 75 | open |
+| L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 45 | open |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 48 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 20 | open |
-| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 106 | open |
-| Q Made for you lists | 3 | 887 | 26 | 0.75 | 14 | open |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 137 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
+| Q Made for you lists | 3 | 887 | 26 | 0.75 | 12 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
@@ -359,6 +442,30 @@ Things the gap brings besides code: 7 new state files
 `tag-edits.json`) plus `admin-recovery-code`; new fields in
 `downloads-history.json`, the trash notes and `upgrades.json`; 34 new env
 vars; the `zip` crate for imports.
+
+**Done in wave G1 (branch `port/g1-core`):** every 2026.10.05 setting and
+env var (config.md §3.6, §3.12, §3.15 to §3.18), bound and clamped, and
+listed by GET settings, raw-config and config-sources. The 7 new state
+files and `admin-recovery-code`, read and written as the C# stores did, each
+with a regenerated fixture and a round trip (state-files.md §4.26 on). The
+new fields in the files Octo already kept, including three the list above
+missed: `external-ids.json` (`ExplicitContent`, `Version`, and a clean
+edit's own id), `generated-playlists.json` (`ForYou`, `ForYouCovers`) and
+`library-actions.json` (`Copy`, `DownloadAllowed`, `BlocksDownloads`, state
+`Restored`); `downloads-history.json` is now written without nulls, as the C#
+writer does. What the later groups find waiting for them:
+
+| Group | Already there |
+| --- | --- |
+| B, D | `DownloadHistoryEntry.key` and `log` (`octo_core::models::download::{AcquisitionEvent, AcquisitionCandidate}`, with `Quality`); `PickedCopy` (`services::common::download_picks`) and `UpgradeJob.pick`. `base_download_service` records `key: None` (STUB(D)). `GET /api/admin/downloads` already drops `log` and says `hasLog`. |
+| E | `Soulseek.WebUrl` (`safe_web_url`), `CheckListenPort`, `ShareLibrary`, `SharedFolders` (`shared_folder_list`); the save's WebUrl check and the slskd password rules (9f9502d's admin side). |
+| F | `services::library::library_tag_edits` (`TagEditEntry`, the file); `LibraryActionEntry.copy`, `download_allowed`, `blocks_downloads()` (the journal's never-requested check uses it); `LibraryActionState::Restored`; `QuarantineManifest.sidecars` and `mappings` (written null, STUB(F)). |
+| G, Q | `GeneratedPlaylists.PopularNow`, the Made for you switches and clamps (`any_for_you`); `UserMixes.for_you` and `for_you_covers` (empty, STUB(Q)). |
+| H | `Imports` settings; `services::imports` (`ImportList`, `ImportTrack`, `TrickleJob`, the three files' load and save). |
+| L | `RadioSources` settings (`effective_weight`); `services::radio::radio_outcome_store` and `services::sonic::sonic_store`; `LastFmRadioBan`; the status page's octo-sonic probe. |
+| P | `SoulseekRouting.explicit_content` and `version`, the clean id rule and the explicit mark kept across registrations; `services::library::explicit_backfill_store`. |
+| H, N, R, D | Their controllers call `BrowseSessionStore::navidrome_user_of` (never the recovery code) and read who called from the gate's `AdminCaller` extension (`middleware::admin_sign_in_gate::{Caller, caller_of}`), as `LibraryHealthController` and `AdminDownloadsController` did. |
+| Every group with a new route that reads or changes library files | Add it to `middleware::admin_sign_in_gate::LIBRARY_FILE_ROUTES` (with the words the C# endpoint answered), so the gate refuses the recovery code there as on the rest; the walk test lists the routes. |
 
 ## Commits by group
 
@@ -407,7 +514,11 @@ vars; the `zip` crate for imports.
 
 ### E. slskd sharing and the Share switch
 
-- [ ] `9f9502d` fix(admin): the slskd password never goes back to the browser
+- **Fix in port:** the Soulseek web address (`Soulseek.WebUrl`) is saved with
+  the spaces it was typed with (BACKLOG "Found while building the harness");
+  save it trimmed, with a Rust test and an intentional diff.
+
+- [x] `9f9502d` fix(admin): the slskd password never goes back to the browser (ported in G1 with group I)
 - [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
 - [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
 - [ ] `c785401` docs(readme): sharing back on Soulseek, the port to forward, and Open slskd
@@ -417,6 +528,12 @@ vars; the `zip` crate for imports.
 - [ ] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
 
 ### F. Library edits from the apps, delete, trash, put back
+
+- **Fix in port:** clearing an ISRC does nothing on disk
+  (`TagWriterExtras.cs:98-101` returns on an empty value), so undoing an ISRC
+  retag answers `isrc: null` and leaves the tag in the file; remove the tag
+  (group C's tag writing is the same code), with a Rust test and an
+  intentional diff.
 
 - [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
 - [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
@@ -438,6 +555,13 @@ vars; the `zip` crate for imports.
 
 ### H. Spotify import and the trickle
 
+- **Fix in port:** "Keep as playlist" answers 500 against Navidrome 0.64.2
+  (Octo reads Navidrome's answer to the playlist create as JSON; likely the
+  `application/json; charset=utf-8` content type makes Navidrome take the
+  body as an M3U import), and every 30 s retry leaves another empty playlist
+  named after the time; create the playlist the way Navidrome reads it and
+  never retry into a new empty one, with a Rust test and an intentional diff.
+
 - [ ] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
 - [ ] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
 - [ ] `1e8cf04` fix(install): a reinstall keeps the Spotify import settings it never asks about
@@ -445,18 +569,24 @@ vars; the `zip` crate for imports.
 
 ### I. Secret masking in the admin API
 
-- [ ] `031e563` fix(admin): every key, token and webhook address in the settings reads as the placeholder, and saving it back keeps the stored one
-- [ ] `9210c63` fix(admin): a saved password, key or token never follows a server address it was not typed again for
-- [ ] `d7e8482` docs(readme): saved credentials never come back out of the admin API
+Done in G1 (`controllers::admin::secrets`). `d7e8482` is the README.
+
+- [x] `031e563` fix(admin): every key, token and webhook address in the settings reads as the placeholder, and saving it back keeps the stored one
+- [x] `9210c63` fix(admin): a saved password, key or token never follows a server address it was not typed again for
+- [x] `d7e8482` docs(readme): saved credentials never come back out of the admin API
 
 ### J. Admin sign-in (gate, recovery code, role check, ADMIN_PORT)
 
-- [ ] `a4333f0` feat(admin): the admin API needs a sign-in with a Navidrome admin account
-- [ ] `3b82267` feat(admin): a sign-in screen in front of the whole dashboard
-- [ ] `7a9f753` docs: signing in to the dashboard, the recovery code, and scripts with a cookie jar
-- [ ] `2eb2299` fix(admin): the hourly role check reads Navidrome's user list, since getUser only answers for yourself
-- [ ] `06e9a60` fix(admin): a demoted admin is signed out even when Octo's own Navidrome token came from them
-- [ ] `f591793` fix(admin): Navidrome refuses its user list to a non-admin with 403, and that now means Octo's token is stale
+Done in G1. `3b82267` is the dashboard (`octo/wwwroot`, served as is by both
+builds) and `7a9f753` the README, compose, `.env.example` and installer: no
+Rust change beyond the settings they name.
+
+- [x] `a4333f0` feat(admin): the admin API needs a sign-in with a Navidrome admin account
+- [x] `3b82267` feat(admin): a sign-in screen in front of the whole dashboard
+- [x] `7a9f753` docs: signing in to the dashboard, the recovery code, and scripts with a cookie jar
+- [x] `2eb2299` fix(admin): the hourly role check reads Navidrome's user list, since getUser only answers for yourself
+- [x] `06e9a60` fix(admin): a demoted admin is signed out even when Octo's own Navidrome token came from them
+- [x] `f591793` fix(admin): Navidrome refuses its user list to a non-admin with 403, and that now means Octo's token is stale
 
 ### K. Lidarr stale guid, bare address 302 (#80)
 
@@ -466,6 +596,12 @@ vars; the `zip` crate for imports.
 - [x] `4a329aa` fix(proxy): the bare server address sends to the web app, as Navidrome does (#80)
 
 ### L. Multi-source radio (#78, sources, blend, learning, bans, Sounds alike client)
+
+- **Fix in port:** an outside song's registry id ignores its album
+  (`ExternalIdRegistry.cs`, `MakeShortId`): radio registers songs from
+  Last.fm without an album and replaces the search's entry, so later answers
+  lose the album; keep the album a registration already had (as the length,
+  ISRC and explicit mark are kept), with a Rust test and an intentional diff.
 
 - [ ] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
 - [ ] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
@@ -508,6 +644,15 @@ No Rust server change: both are their own images.
 - [ ] `f49fb80` fix(search): an outside album the library holds is listed as the library's, and one held in part says how much
 
 ### P. Covers keep-or-replace, explicit marks and backfill
+
+- **Fix in port:** resuming a cancelled cover run counts `kept` and
+  `albumsDone` again ("6 of 3 albums", `CoverUpgrade.cs:696,744`); count each
+  album once, with a Rust test and an intentional diff.
+- **Fix in port:** the cover scan walks into `/music/.octo-trash` (and the
+  album id of a trashed song depends on the dated folder); leave the trash
+  folder out of the scan (group F owns the trash), with a Rust test and an
+  intentional diff.
+- The recovery-code explicit marks are already refused by the gate (G1).
 
 - [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
 - [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
@@ -564,12 +709,17 @@ The Rust tests read the shared case files as they are.
 The port does not have to stay one to one. Each of these is a known diff with
 its reason when it changes an answer.
 
-- [ ] **The admin gate as one router layer, default deny.** Axum has no
+- [x] **The admin gate as one router layer, default deny.** Axum has no
   endpoint attributes to read, so the gate is a layer with an explicit list of
-  open routes; an unknown `/api/admin/<x>` answers 401 too (group J).
-- [ ] **The signed-out status cache** (C# caches it 10 s). Under load the Rust
+  open routes; an unknown `/api/admin/<x>` answers 401 too (group J). Done in
+  G1 (`middleware::admin_sign_in_gate`). No answer changes: the C# gate also
+  answered 401 to an unknown admin path (its catch-all endpoint carries no
+  `[AdminOpen]`), so it needs no intentional-diff entry; a test walks every
+  admin route with four methods.
+- [x] **The signed-out status cache** (C# caches it 10 s). Under load the Rust
   `/api/admin/status` is slower than C# only because it probes five services
-  on every call (group J).
+  on every call (group J). Done in G1, as the C# does it (ten seconds, one
+  probe round at a time).
 - [ ] **Plain error words instead of .NET's.** The port copies .NET exception
   texts the apps can show ("The request was canceled due to the configured
   HttpClient.Timeout of 100 seconds elapsing.", "Connection refused

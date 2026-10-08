@@ -2,6 +2,76 @@
   "description": "Deliberate improvements in the Rust build over C# 2026.10.05: answers that are meant to differ. Policy (parity/README.md, Intentional diffs): one entry per reviewed change, never a wildcard over all requests; \"requests\" names the requests (globs allowed inside one corpus file), \"aspects\" the parts that differ, and \"lines\" (regexes) pins what the diff says, so a different change on the same answer still fails. \"reason\" says why the Rust answer is better, \"backlog\" the group, and \"reviewed\" who approved it and when (\"Brandon 2026-10-08\"). An entry without \"reviewed\" is only proposed: the diff lists it as not reviewed and still counts the request as unexplained. A change a user or an app can see needs Brandon by name. Each entry also gets a row in docs/rust-migration/known-diffs.md.",
   "diffs": [
     {
+      "id": "recovery-refused-on-library-files",
+      "backlog": "J",
+      "requests": [
+        "17-covers-explicit/explicit-get-recovery",
+        "17-covers-explicit/explicit-cancel-recovery-idle"
+      ],
+      "aspects": [
+        "status",
+        "body"
+      ],
+      "lines": [
+        "^200 != 401$",
+        "^202 != 401$",
+        "^\\$\\.[A-Za-z]+: only in A \\(",
+        "^\\$\\.error: only in B \\(Sign in with your Navidrome admin account first\\.\\)$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"(runId|cancelling)\":",
+        "^\\+\\{\"error\":\"Sign in with your Navidrome admin account first\\.\"\\}$"
+      ],
+      "reason": "The recovery code is for fixing settings. The C# explicit marking asked UserOf, so a recovery-code session could read, start and cancel it and write explicit marks into music files; the Rust gate refuses a recovery session on every library-file route (LIBRARY_FILE_ROUTES) with the words those routes already answered.",
+      "knownDiff": "Admin sign-in: the recovery code and library files"
+    },
+    {
+      "id": "lidarr-test-saved-key-stays-home",
+      "backlog": "I",
+      "requests": [
+        "14-settings-media/lidarr-test-placeholder-other-address"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.error: .+ != Retype the Lidarr API key for the new address\\.$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"ok\":false,\"error\":",
+        "^\\+\\{\"ok\":false,\"error\":\"Retype the Lidarr API key for the new address\\.\"\\}$"
+      ],
+      "reason": "The C# sent the saved Lidarr key to whatever address the test named; the Rust build sends it only to the saved address, as a save already does, and asks for the key to be typed for a new one.",
+      "knownDiff": "`lidarr/test` and the saved key"
+    },
+    {
+      "id": "config-sources-fixed-mask",
+      "backlog": "I",
+      "requests": [
+        "09-admin/config-sources",
+        "11-signin/in-header-token",
+        "11-signin/recovery-settings",
+        "11-signin/alt-admin-settings",
+        "11-signin/in-get-config-sources",
+        "14-settings-media/config-sources-env-secrets-masked",
+        "14-settings-media/config-sources-after-roundtrip"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.keys\\[\\d+\\]\\.Value: •+ != •{8}$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"keys\":\\["
+      ],
+      "reason": "The C# showed a set secret as one bullet per character, up to 16, which told its length; the Rust build shows eight bullets for every set secret.",
+      "knownDiff": "`config-sources` secrets"
+    },
+    {
       "id": "isrc-clear-takes-the-tag-off",
       "backlog": "F",
       "requests": [

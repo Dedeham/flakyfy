@@ -90,6 +90,15 @@
           "RetryAfterUtc": "2026-10-04T17:00:00Z"
         }
       ],
+      "RadioBans": [
+        {
+          "Key": "daft punk|digital love",
+          "SongId": "1aB2cD3eF4gH5iJ6kL7mN8",
+          "Artist": "Daft Punk",
+          "Title": "Digital Love",
+          "BannedAtUtc": "2026-10-03T18:25:00Z"
+        }
+      ],
       "LastRefreshAttemptUtc": "2026-10-03T06:00:00.25Z",
       "LastRefreshSuccessUtc": "2026-10-03T06:00:03.1415926Z",
       "LastRefreshError": null,

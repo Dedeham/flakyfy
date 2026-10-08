@@ -5,6 +5,7 @@
 
 use std::fmt::Debug;
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -21,8 +22,12 @@ use super::helpers_6b1::{
     SECRET_PLACEHOLDER, body_text, child, child_mut, error_json, json_node, key_of, mask_secret, n_num,
     n_obj, n_str, n_str_array, parse_json_node,
 };
+use super::secrets::{
+    keep_saved_secrets, mask_tokens, normalize_saved_addresses, redact_secrets, secret_sent_elsewhere,
+};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
+use crate::services::admin::AdminCaller;
 
 /// An enum as `.ToString()` wrote it: the member's name.
 fn name<T: Debug>(value: T) -> Node {
@@ -93,7 +98,8 @@ pub fn mask_sessions<'a>(sessions: impl IntoIterator<Item = (&'a String, &'a Las
 
 /// The *effective* configuration the app sees right now, as GET settings and GET raw-config
 /// both build it: every section, PascalCase keys (a `Dictionary`/`JsonObject`, so no camelCase),
-/// enums by name, and the admin password, Last.fm secret and session keys as the placeholder.
+/// enums by name, and every credential (`secrets::SECRET_FIELDS` and `SECRET_MAPS`) as the
+/// placeholder.
 /// `raw_config` selects raw-config's one difference: `DiscoveryStations` is always the class
 /// serialized, never the file's.
 pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
@@ -222,7 +228,12 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
         n_obj([
             ("BaseUrl", opt(&soulseek.base_url)),
             ("Username", opt(&soulseek.username)),
-            ("Password", opt(&soulseek.password)),
+            // slskd's web login opens slskd entirely, so it goes out as the placeholder too.
+            ("Password", n_str(&mask_secret(soulseek.password.as_deref()))),
+            ("WebUrl", n_str(&soulseek.web_url)),
+            ("CheckListenPort", Node::Bool(soulseek.check_listen_port)),
+            ("ShareLibrary", Node::Bool(soulseek.share_library)),
+            ("SharedFolders", n_str(&soulseek.shared_folders)),
             ("SearchWaitSeconds", n_num(soulseek.search_wait_seconds)),
             (
                 "UpgradeSearchWaitSeconds",
@@ -232,7 +243,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("PreferredExtension", n_str(&soulseek.preferred_extension)),
             ("DownloadTimeoutSeconds", n_num(soulseek.download_timeout_seconds)),
             ("VerifyDownloads", Node::Bool(soulseek.verify_downloads)),
-            ("AcoustIdApiKey", n_str(&soulseek.acoust_id_api_key)),
+            (
+                "AcoustIdApiKey",
+                n_str(&mask_secret(Some(&soulseek.acoust_id_api_key))),
+            ),
             ("MinMatchScore", n_num(soulseek.min_match_score)),
             ("TagFromMusicBrainz", Node::Bool(soulseek.tag_from_music_brainz)),
             ("NameFromMatch", Node::Bool(soulseek.name_from_match)),
@@ -258,14 +272,17 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 "SubmitConfirmedFingerprints",
                 Node::Bool(soulseek.submit_confirmed_fingerprints),
             ),
-            ("AcoustIdUserApiKey", n_str(&soulseek.acoust_id_user_api_key)),
+            (
+                "AcoustIdUserApiKey",
+                n_str(&mask_secret(Some(&soulseek.acoust_id_user_api_key))),
+            ),
         ]),
     );
     doc.insert(
         "Lidarr".into(),
         n_obj([
             ("BaseUrl", opt(&lidarr.base_url)),
-            ("ApiKey", opt(&lidarr.api_key)),
+            ("ApiKey", n_str(&mask_secret(lidarr.api_key.as_deref()))),
             ("RootFolderPath", opt(&lidarr.root_folder_path)),
             ("QualityProfileId", n_num(lidarr.quality_profile_id)),
             ("MetadataProfileId", n_num(lidarr.metadata_profile_id)),
@@ -280,6 +297,24 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             n_str(&state.settings.raw("YouTube:ShimUrl").unwrap_or_default()),
         )]),
     );
+    // Radio's other sources and their weights (multi-source radio).
+    let radio = &current.radio_sources;
+    doc.insert(
+        "RadioSources".into(),
+        n_obj([
+            ("YouTubeMusic", Node::Bool(radio.you_tube_music)),
+            ("ListenBrainz", Node::Bool(radio.listen_brainz)),
+            ("SoundsAlike", Node::Bool(radio.sounds_alike)),
+            ("SonicUrl", n_str(&radio.sonic_url)),
+            ("SonicPauseSeconds", n_num(radio.sonic_pause_seconds)),
+            ("ListenBrainzAlgorithm", n_str(&radio.listen_brainz_algorithm)),
+            ("LastFmWeight", n_num(radio.last_fm_weight)),
+            ("YouTubeMusicWeight", n_num(radio.you_tube_music_weight)),
+            ("ListenBrainzWeight", n_num(radio.listen_brainz_weight)),
+            ("SoundsAlikeWeight", n_num(radio.sounds_alike_weight)),
+            ("LearnFromListening", Node::Bool(radio.learn_from_listening)),
+        ]),
+    );
     let discovery_stations = if raw_config {
         discovery_stations_node(&lastfm.discovery_stations)
     } else {
@@ -292,7 +327,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "LastFm".into(),
         n_obj([
-            ("ApiKey", n_str(&lastfm.api_key)),
+            ("ApiKey", n_str(&mask_secret(Some(&lastfm.api_key)))),
             // Placeholders, which the saves swap back for what is stored.
             ("ApiSecret", n_str(&mask_secret(Some(&lastfm.api_secret)))),
             (
@@ -494,8 +529,12 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
         "Notifications".into(),
         n_obj([
             ("NtfyUrl", n_str(&notif.ntfy_url)),
-            ("NtfyToken", n_str(&notif.ntfy_token)),
-            ("DiscordWebhookUrl", n_str(&notif.discord_webhook_url)),
+            ("NtfyToken", n_str(&mask_secret(Some(&notif.ntfy_token)))),
+            // The address carries the webhook's own token, so the whole address is the secret.
+            (
+                "DiscordWebhookUrl",
+                n_str(&mask_secret(Some(&notif.discord_webhook_url))),
+            ),
             ("NotifyDownloadStarted", Node::Bool(notif.notify_download_started)),
             (
                 "NotifyDownloadCompleted",
@@ -514,21 +553,22 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "ListenBrainz".into(),
         n_obj([
-            ("Token", n_str(&listen_brainz.token)),
+            ("Token", n_str(&mask_secret(Some(&listen_brainz.token)))),
             (
                 "SubmitExternalPlays",
                 Node::Bool(listen_brainz.submit_external_plays),
             ),
-            (
-                "UserTokens",
-                Node::Object(
-                    listen_brainz
-                        .user_tokens
-                        .iter()
-                        .map(|(user, token)| (user.clone(), n_str(token)))
-                        .collect(),
-                ),
-            ),
+            ("UserTokens", mask_tokens(&listen_brainz.user_tokens)),
+        ]),
+    );
+    let imports = &current.imports;
+    doc.insert(
+        "Imports".into(),
+        n_obj([
+            ("SpotifyClientId", n_str(&imports.spotify_client_id)),
+            ("SpotifyRedirectUri", n_str(&imports.effective_redirect_uri())),
+            ("SongsPerHour", n_num(imports.songs_per_hour)),
+            ("RefreshHours", n_num(imports.refresh_hours)),
         ]),
     );
     doc
@@ -536,9 +576,8 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
 
 /// `GET /api/admin/settings`: the *effective* configuration the app sees right now, so the UI
 /// shows the same values code is using regardless of whether they came from an env var,
-/// appsettings.json, or the editable settings file. Most secrets are returned in clear
-/// because this admin endpoint is intended for trusted LAN-only access (as Navidrome's admin
-/// pages are); the admin password, the Last.fm secret and the session keys are placeholders.
+/// appsettings.json, or the editable settings file. No credential is returned in clear: each
+/// reads as the placeholder.
 pub async fn get_settings(State(state): State<AppState>) -> Response {
     let mut doc = effective_document(&state, false);
     let path = state.settings_writer.file_path();
@@ -791,118 +830,15 @@ pub fn validate_discovery_stations(stations: &[Node]) -> Result<Option<String>, 
     Ok(None)
 }
 
-// ---- secrets ---------------------------------------------------------------------------------
-
-/// Swaps one placeholder back for the stored value, or drops the key when nothing is stored.
-/// A real value is left alone.
-fn restore_placeholder(incoming: Option<&mut JsonObject>, existing: Option<&JsonObject>, name: &str) {
-    let Some(incoming) = incoming else { return };
-    let Some(key) = key_of(incoming, name) else { return };
-    if string_value(incoming.get(&key)) != Some(SECRET_PLACEHOLDER) {
-        return;
-    }
-    let stored = existing
-        .and_then(|existing| key_of(existing, name).and_then(|k| existing.get(&k)))
-        .and_then(|node| string_value(Some(node)))
-        .filter(|text| !text.is_empty())
-        .map(str::to_string);
-    match stored {
-        Some(text) => {
-            incoming.insert(key, Node::String(text));
-        }
-        None => {
-            incoming.shift_remove(&key);
-        }
-    }
-}
-
-/// Undo the placeholder in a Raw config document before it replaces the file: keep the stored
-/// password when the file has one, otherwise drop the key so an environment value keeps
-/// applying. A real value is left alone.
-pub fn restore_secret_placeholders(incoming: &mut JsonObject, existing_file: &JsonObject) {
-    restore_placeholder(
-        child_mut(incoming, "Subsonic"),
-        child(existing_file, "Subsonic"),
-        "AdminPassword",
-    );
-    restore_placeholder(
-        child_mut(incoming, "LastFm"),
-        child(existing_file, "LastFm"),
-        "ApiSecret",
-    );
-
-    // Each listener's session the same way, matched by username. An entry whose key is only in
-    // the environment is dropped whole, so the environment keeps applying.
-    let Some(sessions) = child_mut(incoming, "LastFm").and_then(|lastfm| child_mut(lastfm, "UserSessions"))
-    else {
-        return;
-    };
-    let stored_sessions = child(existing_file, "LastFm").and_then(|lastfm| child(lastfm, "UserSessions"));
-    let users: Vec<String> = sessions.keys().cloned().collect();
-    for user in users {
-        let Some(Node::Object(session)) = sessions.get_mut(&user) else {
-            continue;
-        };
-        let stored = stored_sessions
-            .and_then(|stored| key_of(stored, &user).and_then(|k| stored.get(&k)))
-            .and_then(Node::as_object);
-        restore_placeholder(Some(session), stored, "SessionKey");
-        if key_of(session, "SessionKey").is_none() {
-            sessions.shift_remove(&user);
-        }
-    }
-}
-
-/// The listener whose Last.fm session key, after the placeholders were restored, still starts
-/// with the placeholder: someone typed onto the end of it. Saved, it would be a key Last.fm
-/// refuses, and the listener would be disconnected for it. None when there is none.
-pub fn session_key_typed_into_placeholder(incoming: &JsonObject) -> Option<String> {
-    let sessions = child(incoming, "LastFm").and_then(|lastfm| child(lastfm, "UserSessions"))?;
-    sessions.iter().find_map(|(user, node)| {
-        let session = node.as_object()?;
-        let key = key_of(session, "SessionKey")?;
-        string_value(session.get(&key))
-            .filter(|text| text.starts_with(SECRET_PLACEHOLDER))
-            .map(|_| user.clone())
-    })
-}
-
-fn mask_in(section: Option<&mut JsonObject>, name: &str) {
-    let Some(section) = section else { return };
-    let keys: Vec<String> = section
-        .keys()
-        .filter(|key| octo_core::common::dotnet::eq_ignore_case(key, name))
-        .cloned()
-        .collect();
-    for key in keys {
-        if let Some(Node::String(text)) = section.get(&key) {
-            let masked = mask_secret(Some(text));
-            section.insert(key, Node::String(masked));
-        }
-    }
-}
-
-/// The merged file echoed after a save, with the admin password, the Last.fm secret and every
-/// session key masked the same way the GET masks them.
-pub fn redact_secrets(merged: &JsonObject) -> JsonObject {
-    let mut copy = merged.clone();
-    mask_in(child_mut(&mut copy, "Subsonic"), "AdminPassword");
-    if let Some(lastfm) = child_mut(&mut copy, "LastFm") {
-        mask_in(Some(lastfm), "ApiSecret");
-        if let Some(sessions) = child_mut(lastfm, "UserSessions") {
-            for (_, session) in sessions.iter_mut() {
-                mask_in(session.as_object_mut(), "SessionKey");
-            }
-        }
-    }
-    copy
-}
-
 /// `POST /api/admin/settings`: writes a partial settings patch to the JSON file. The body
 /// shape matches the GET; any subset of keys may be supplied. The file watcher picks the write
 /// up within moments, so live settings reflect it on the next read, but services that captured
 /// a value at startup keep theirs until a restart.
-pub async fn save_settings(State(state): State<AppState>, body: Bytes) -> AppResult {
+pub async fn save_settings(
+    State(state): State<AppState>,
+    caller: Option<Extension<AdminCaller>>,
+    body: Bytes,
+) -> AppResult {
     let body = body_text(&body);
     if is_blank(&body) {
         return Ok(error_json(StatusCode::BAD_REQUEST, "empty body"));
@@ -945,6 +881,14 @@ pub async fn save_settings(State(state): State<AppState>, body: Bytes) -> AppRes
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
 
+    // A saved credential never follows a new address it was not typed again for: with the admin
+    // API open to the LAN, that would hand it to whatever server the address names.
+    if let Some(elsewhere) = secret_sent_elsewhere(&patch, |section, name| {
+        state.settings.raw(&format!("{section}:{name}"))
+    }) {
+        return Ok(error_json(StatusCode::BAD_REQUEST, &elsewhere));
+    }
+
     // The form echoes the placeholder back when the admin password was left alone; that means
     // "keep what is saved", so it must not be written. Anything typed after the placeholder
     // would otherwise be saved as the password. Keys are matched without regard to case, as
@@ -975,31 +919,67 @@ pub async fn save_settings(State(state): State<AppState>, body: Bytes) -> AppRes
         }
     }
 
-    if let Some(lastfm_secrets) = child_mut(&mut patch, "LastFm") {
-        // Sessions are made by Connect and removed by Disconnect. No form sends them, and an
-        // echoed placeholder must never overwrite a real key.
-        if let Some(sessions_key) = key_of(lastfm_secrets, "UserSessions") {
-            lastfm_secrets.shift_remove(&sessions_key);
+    // The slskd sign-in the same way.
+    if let Some(soulseek_patch) = child_mut(&mut patch, "Soulseek")
+        && let Some(password_key) = key_of(soulseek_patch, "Password")
+        && let Some(password) = string_value(soulseek_patch.get(&password_key))
+        && password.starts_with(SECRET_PLACEHOLDER)
+    {
+        if password != SECRET_PLACEHOLDER {
+            return Ok(error_json(
+                StatusCode::BAD_REQUEST,
+                "Retype the whole slskd password; it was added to the hidden placeholder.",
+            ));
         }
-        if let Some(secret_key) = key_of(lastfm_secrets, "ApiSecret")
-            && let Some(secret) = string_value(lastfm_secrets.get(&secret_key))
-            && secret.starts_with(SECRET_PLACEHOLDER)
+        let new_user = key_of(soulseek_patch, "Username")
+            .and_then(|key| string_value(soulseek_patch.get(&key)).map(str::to_string));
+        if let Some(new_user) = new_user
+            && new_user.trim() != current.soulseek.username.as_deref().unwrap_or("").trim()
         {
-            if secret != SECRET_PLACEHOLDER {
-                return Ok(error_json(
-                    StatusCode::BAD_REQUEST,
-                    "Retype the whole Last.fm shared secret; it was added to the hidden placeholder.",
-                ));
-            }
-            lastfm_secrets.shift_remove(&secret_key);
+            return Ok(error_json(
+                StatusCode::BAD_REQUEST,
+                "Retype the slskd password for the new username.",
+            ));
         }
+        soulseek_patch.shift_remove(&password_key);
     }
+
+    // Open slskd puts this address in a link, so only a web address is kept.
+    if let Some(web_patch) = child(&patch, "Soulseek")
+        && let Some(web_key) = key_of(web_patch, "WebUrl")
+        && let Some(web) = string_value(web_patch.get(&web_key))
+        && !is_blank(web)
+        && octo_core::settings::SoulseekSettings::safe_web_url(Some(web)).is_none()
+    {
+        return Ok(error_json(
+            StatusCode::BAD_REQUEST,
+            "slskd's page must be a whole http:// or https:// address, such as http://192.168.1.5:5030.",
+        ));
+    }
+
+    // Sessions are made by Connect and removed by Disconnect. No form sends them, and an echoed
+    // placeholder must never overwrite a real key.
+    if let Some(lastfm_secrets) = child_mut(&mut patch, "LastFm")
+        && let Some(sessions_key) = key_of(lastfm_secrets, "UserSessions")
+    {
+        lastfm_secrets.shift_remove(&sessions_key);
+    }
+    // Every other credential the same way: the placeholder sent back keeps what is saved.
+    if let Some(secret_error) = keep_saved_secrets(&mut patch, Some(&current.listen_brainz.user_tokens)) {
+        return Ok(error_json(StatusCode::BAD_REQUEST, &secret_error));
+    }
+
+    normalize_saved_addresses(&mut patch);
 
     // UserTokens is a dictionary: merged, a user removed in the dashboard would stay.
     match state.settings_writer.merge(&patch, &["ListenBrainz.UserTokens"]) {
         Ok(merged) => {
             let keys: Vec<&str> = patch.keys().map(String::as_str).collect();
-            info!("Admin settings updated: {}", keys.join(","));
+            info!(
+                "{} saved settings: {}",
+                AdminCaller::describe(caller.as_ref().map(|Extension(caller)| caller)),
+                keys.join(",")
+            );
             let mut answer = JsonObject::new();
             answer.insert("ok".into(), Node::Bool(true));
             answer.insert("persisted".into(), Node::Object(redact_secrets(&merged)));
@@ -1028,6 +1008,7 @@ pub async fn save_settings(State(state): State<AppState>, body: Bytes) -> AppRes
 
 #[cfg(test)]
 mod tests {
+    use super::super::secrets::{restore_secret_placeholders, session_key_typed_into_placeholder};
     use super::*;
 
     fn obj(json: &str) -> JsonObject {

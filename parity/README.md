@@ -271,12 +271,13 @@ Options: `--image` (also `OCTO_IMAGE`), `--port` (`PARITY_PORT`, default 18480),
 after Octo first answers, default 10), `--keep` on `run` to leave the stack up.
 
 A run of the whole corpus takes about 25 minutes against C# (most of it waiting for background
-jobs and Navidrome rescans). The stack is capped at roughly 2.1 GB of RAM (`mem_limit` on each
+jobs and Navidrome rescans). The stack is capped at roughly 2.3 GB of RAM (`mem_limit` on each
 service) and needs two small images besides Octo: `deluan/navidrome:0.64.2` and
 `python:3.13-alpine`. Nothing is built; nothing is pruned. `run` saves the containers' logs in
 `<out>/logs/` (`stubs.log` lists every upstream call with the mapping row that answered it, or
 `UNMATCHED`). `--until-patience N` (default 3): after N waits in one corpus file time out, its
-other waits get 5 s, so a build missing a feature does not sit out every wait.
+other waits get at most 20 s, so a build missing a feature does not sit out every wait (see also
+"Adaptive waits").
 
 **The C# image.** The harness only ever runs a prebuilt image; nothing in `parity/` builds
 one. The released C# image is on ghcr.io (`ghcr.io/winters27/octo:<release>`). To compare a
@@ -299,6 +300,136 @@ python3 parity/parity.py run --out /tmp/parity/check
 python3 parity/parity.py diff parity/recordings/csharp /tmp/parity/check                # must be 0
 python3 parity/parity.py diff --mode bytes parity/recordings/csharp /tmp/parity/check   # must be 0
 ```
+
+## Shards
+
+One stack replays the corpus one file after another: about 11 minutes against C# and 45 to 55
+against Rust. Most of that is waiting (timers, background jobs, Navidrome scans, and for Rust the
+waits for features it does not have yet), so the corpus is cut into shards that run side by side,
+each on a fresh stack of its own, and joined again before the diff.
+
+[`shards.json`](shards.json) is the plan, an ordered list of shards:
+
+```jsonc
+[
+ {"name": "acquisition",                          // lower-case letters, digits and dashes
+  "files": ["95-acquisition", "96-covers-explicit-writes"],   // the files it owns, in corpus order
+  "setup": ["13-downloads/setup-ext-song3", "20-library-edits"],   // run first, not kept
+  "reads": {"96-covers-explicit-writes": {"95-acquisition": "why"}}}   // what a file depends on
+]
+```
+
+- Every corpus file is owned by exactly one shard; merge keeps the owner's recording of it.
+  `00-setup` runs in every shard (as with `--only`), whoever owns it.
+- `setup` holds request globs (`--only` style) run for what they capture or leave behind; their
+  answers come from the shard that owns them. A whole file there costs its whole run time.
+- `reads` says, per corpus file, which earlier files leave state its answers depend on, with the
+  reason. It is kept with the shard that runs the file.
+
+`parity.py shards check` fails when a corpus file is in no shard or in two, when a shard lists its
+files out of corpus order, when a request uses a `{{variable}}` (or a sign-in) captured by a
+request its shard does not run before it, and when a file's `reads` are not all run in full
+before it in its shard. `shards show --times RECORDING` prints each shard with its length from a
+recording's per-file times (every recording keeps them, `fileSeconds` in `meta.json`), and
+`shards digest` prints the plan's hash (the C# cache key includes it, so a new plan records C#
+again).
+
+```sh
+python3 parity/parity.py shards check
+python3 parity/parity.py run --shard library --project p-library --port 18600 --nd-port 18605 \
+    --out /tmp/parity/cs-library      # one shard: its files and setup, on its own stack
+python3 parity/parity.py merge /tmp/parity/cs /tmp/parity/cs-*/   # one recording, corpus order
+python3 parity/parity.py diff /tmp/parity/cs /tmp/parity/rs
+```
+
+Each shard needs its own `--project` and ports (the main port and the next two, and the Navidrome
+port). `merge RUN-DIR SHARD-DIR...` copies each corpus file from the shard that owns it (from
+`meta.json`'s `shard`, which `--shard` writes), refuses two owners, a missing file (unless
+`--partial`), and shards recorded from other corpus inputs, another image or another plan, and
+copies each shard's logs to `RUN-DIR/logs/<shard>/`. Every stack mints its own Navidrome ids and
+sign-ins on its own ports, so the merged `meta.json` keeps each shard's host and volatile captures
+with the files it recorded (`parts`), and `diff` normalizes each file with its own shard's values.
+`diff`, the per-group report and `--only` work on a merged recording as on any other, and a merged
+recording diffs against an unsharded one.
+
+**How the plan was made.** By what each file writes and reads, then measured: every corpus file
+recorded alone after `00-setup` on a fresh C# stack and diffed against an unsharded C# recording.
+Twenty files answered the same alone; the other six showed what they read:
+
+| File | Reads what these leave | Seen as |
+| --- | --- | --- |
+| `08-catchall-native` | `02-browsing` | the artists' `externalInfoUpdatedAt`, which Navidrome fills in after 02's artist info calls |
+| `10-static-cors` | `05-playlists` | the internet radio station 05 leaves |
+| `18-dashboard` | `14-settings-media` | 14's saves write the whole settings file, so 18's saves answer with every section under `persisted` |
+| `20-library-edits` | `19-health` | 19's fixes in the library actions history and the tag edits journal |
+| `90-mutations` | `05-playlists`, `14-settings-media`, `20-library-edits` | the admin's Deep Cuts list, made by 05's `getPlaylists` and kept for the day; the whole settings file; 20's retags in the file sizes |
+| `96-covers-explicit-writes` | `95-acquisition`, `20-library-edits` | the album 95 files, 20's trash folder and file sizes |
+
+Each smallest set was then checked the same way (for example `05`, `14`, `20` and `90` alone give
+`90` its unsharded answers; `20` without `19` is enough for `96`). Two files also take a capture
+from another: `90-mutations` the browse token from `09-admin/browse-auth-admin`, `95-acquisition`
+Paper Moons' id from `13-downloads/setup-ext-song3` (the checker finds these by itself).
+`99-signed-out-writes` ends with the restart, so it is last in its shard.
+
+Two files wait on timers, which set where they go:
+
+- `15-radio` waits for Sounds alike's first look, about 125 s after Octo starts, so `14` runs
+  before it in the `radio` shard.
+- `16-lists` waits for the second Made for you attempt for the listener, which comes 5 minutes
+  after the first; unsharded, `05-playlists`' `getPlaylists` made the first long before. The
+  `lists` shard runs `05` first; even so `16` waits about 5 minutes there, which makes it a shard
+  of its own (nothing before it would shorten the wait).
+
+| Shard | Owns | Runs first, not kept |
+| --- | --- | --- |
+| `radio` | 14, 15 | |
+| `lists` | 16 | 05 |
+| `imports` | 12, 13, 21 | |
+| `dashboard` | 17, 18 | 14 |
+| `library` | 00 to 11, 19, 20, 90, 99 | 14 |
+| `acquisition` | 95, 96 | `13-downloads/setup-ext-song3`, 20 |
+
+SHARD_TIMES_TODO
+
+## Adaptive waits
+
+A Rust build without a file's feature sits out that file's waits until each times out (57 to 65
+of them, 2,400 to 2,800 s of a Rust recording on 2026-10-08). Every recording now keeps how long
+each wait took (`waitMs`), its limit (`waitLimitMs`) and when it ended on a clock that starts with
+the stack's Octo container (`atMs`); the diff never compares these. `record` (and `run`)
+`--waits-from REF` reads them from a reference recording, the C# one, and gives each wait a new
+limit:
+
+- C# met it: `max(20 s, 3 x its C# time)`, and at least until 20 s past the instant C# met it on
+  that clock (a timer counted from Octo's start fires at the same instant in both builds, however
+  fast each got there). Never more than the corpus's `timeoutMs`.
+- C# timed out too, or the reference has no time for it: the corpus's `timeoutMs`, as before.
+- `--until-patience` still applies on top: after that many timeouts in one file, at most 20 s.
+
+A wait is still recorded as met or timed out exactly as before, so the answers stay comparable;
+only how long a missing feature is waited for changes. The reference must be recorded with the
+same shard plan, so the instants line up (the C# cache is per plan). For a shard, `--waits-from`
+reads the reference's recording of the same shard: give it that shard's folder (as
+`parity/run.sh` does), or a merged recording whose `parts` folders are still there. Only the
+same shard ran the shard's setup files on the same clock; with any other reference the instants
+of files the shard does not own are not used.
+
+**The numbers, 3 and 20 s,** come from the waits of one sharded C# and one sharded Rust
+recording (2026-10-08, the Rust build of `3c4c593`):
+
+- Of the 65 waits both builds met, the slowest in Rust took 4.3 s
+  (`96-covers-explicit-writes/covers-apply-aurora-done`, 4.3 s in C# too), and none took more
+  than a third of `max(10 s, 3 x C#)`.
+- The waits Rust does not meet yet take C# 0 to 12 s, timers aside: Navidrome seeing a change
+  5.6 to 8.2 s, a download 8 to 12 s. Three times that leaves room for a port that is slower
+  than C#.
+- A floor of 10 s was tried first, and it cut a correct wait short: `19-health/plant-wait`
+  waits on Navidrome alone (C# met it at once), and on a busy WSL Navidrome took over 11 s. The
+  floor is 20 s, the time `--until-patience` already gives a build that has the feature.
+- Waits that ride a fixed timer (Sounds alike's passes in `15-radio`, 41 to 60 s in C#) get 124
+  to 181 s, which is more than the corpus's 90 s for two of them, so they keep their 90 s.
+
+WAITS_TIMES_TODO
 
 ## What runs
 

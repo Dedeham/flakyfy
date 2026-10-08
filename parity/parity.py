@@ -8,14 +8,20 @@ Commands (stdlib only, Python 3.10+):
       finish scanning the fixture library, add the extra Navidrome users, and wait for Octo.
   parity.py down    [--project NAME]
       Remove the project's containers, networks and volumes (never images).
-  parity.py record  --target http://127.0.0.1:18480 --out recordings/<name>/ [--only GLOB]
+  parity.py record  --target http://127.0.0.1:18480 --out recordings/<name>/ [--only GLOB[,GLOB...]]
+                    [--shard NAME] [--waits-from REF]
       Replay the corpus (corpus/*.json, in file order) against a running target and write
-      one JSON file per corpus file.
+      one JSON file per corpus file. --shard records one shard of shards.json; --waits-from
+      shortens the waits the reference recording (C#) met to a multiple of its times.
   parity.py diff    A B [--mode structural|bytes] [--allowlist FILE] [--report FILE] [--only GLOB]
       Compare two recordings after normalisation. Exit 1 on any diff not covered by the
       allowlist or the intentional diffs, 0 otherwise. Ends with the diffs per backlog group.
-  parity.py run     --out recordings/<name>/ [up options] [--keep]
+  parity.py run     --out recordings/<name>/ [up options] [record options] [--keep]
       up + record + down in one go.
+  parity.py merge   RUN-DIR SHARD-DIR...
+      Join shard recordings into one recording in corpus order, for diff.
+  parity.py shards  check|show|digest [--times RECORDING]
+      Check the shard plan (shards.json), show it with each shard's length, or print its hash.
 
 See parity/README.md for the corpus format, the normalisation rules and what is covered.
 """
@@ -51,6 +57,7 @@ DEFAULT_PORT = 18480
 DEFAULT_ND_PORT = 18453
 INTENTIONAL = os.path.join(HERE, "intentional-diffs.json")
 GROUPS_FILE = os.path.join(HERE, "groups.json")
+SHARDS_FILE = os.path.join(HERE, "shards.json")
 # Each run works on a fresh, writable copy of the fixture library (library edits, the trash,
 # explicit marks and downloads write to it), kept under parity/.run/<project>/.
 RUN_DIR = os.path.join(HERE, ".run")
@@ -235,8 +242,20 @@ def cmd_down(args) -> None:
 # Corpus
 # --------------------------------------------------------------------------------------
 
+def only_globs(only: str | None) -> list[str]:
+    """--only is one glob or several, comma-separated (a shard's file list)."""
+    return [g.strip() for g in (only or "").split(",") if g.strip()]
+
+
+def only_match(rid: str, globs: list[str]) -> bool:
+    """Whether "<file>/<name>" is picked by any of the globs; a glob may also name the file alone."""
+    stem = rid.split("/", 1)[0]
+    return any(fnmatch.fnmatch(rid, g) or fnmatch.fnmatch(stem, g) for g in globs)
+
+
 def load_corpus(only: str | None) -> list[tuple[str, dict]]:
     files = sorted(glob.glob(os.path.join(CORPUS_DIR, "*.json")))
+    globs = only_globs(only)
     out = []
     for path in files:
         with open(path, encoding="utf-8") as fh:
@@ -247,10 +266,9 @@ def load_corpus(only: str | None) -> list[tuple[str, dict]]:
             if req["name"] in names:
                 raise SystemExit(f"{path}: duplicate request name {req['name']}")
             names.add(req["name"])
-        if only and stem != "00-setup":
+        if globs and stem != "00-setup":
             doc = dict(doc)
-            doc["requests"] = [r for r in doc["requests"] if fnmatch.fnmatch(f"{stem}/{r['name']}", only)
-                               or fnmatch.fnmatch(stem, only)]
+            doc["requests"] = [r for r in doc["requests"] if only_match(f"{stem}/{r['name']}", globs)]
             if not doc["requests"]:
                 continue
         out.append((stem, doc))
@@ -554,6 +572,76 @@ def send_once(args, servers, server, method, cmd, target, headers, body, timeout
     return send(servers[server], method, target, headers, body, timeout)
 
 
+def octo_started(project: str) -> float | None:
+    """When the stack's Octo container started (epoch seconds), or None without one."""
+    try:
+        cid = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE, "-p", project, "ps", "-q", "octo"],
+                             capture_output=True, text=True, timeout=30, check=False).stdout.strip()
+        if not cid:
+            return None
+        when = subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", cid.splitlines()[0]],
+                              capture_output=True, text=True, timeout=30, check=False).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?Z$", when)
+    if not m:
+        return None
+    import calendar
+    return calendar.timegm(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")) + float(m.group(2) or 0)
+
+
+# Adaptive waits (record --waits-from REF): a wait whose condition the reference recording (the
+# C# one) met gets max(WAIT_FLOOR_MS, WAIT_FACTOR x the time it took there) instead of the
+# corpus's timeoutMs, never more than that. README "Adaptive waits" has the numbers' reasons.
+WAIT_FACTOR = 3
+WAIT_FLOOR_MS = 20000
+
+
+def load_wait_refs(path: str | None, shard: dict | None) -> dict[str, dict]:
+    """The waits of a reference recording, by request id: {waitMs, atMs, timedOut}. Waits the
+    reference has no times for (a recording made before waitMs) are left out. For a shard, the
+    reference's recording of the same shard is read (a merged reference names it in "parts"):
+    only that one ran the shard's setup files on the same clock. Without it, the instants (atMs)
+    of files the shard does not own are dropped, since they come from another shard's clock."""
+    if not path:
+        return {}
+    owned = None
+    if shard:
+        with open(os.path.join(path, "meta.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
+        same = [p for p in meta.get("parts") or [] if p.get("name") == shard["name"]]
+        if same and os.path.exists(os.path.join(same[0]["dir"], "meta.json")):
+            path = same[0]["dir"]
+            meta = {"shard": {"name": shard["name"]}}
+        if (meta.get("shard") or {}).get("name") != shard["name"]:
+            owned = set(shard["files"])
+            log(f"  --waits-from {path}: not shard {shard['name']}'s own recording; "
+                f"the instants of files it does not own are not used")
+    _, entries, _ = load_recording(path)
+    out = {}
+    for rid, e in entries.items():
+        if "waitMs" in e:
+            at = e.get("atMs") if owned is None or rid.split("/", 1)[0] in owned else None
+            out[rid] = {"waitMs": e["waitMs"], "atMs": at, "timedOut": bool(e.get("untilTimedOut"))}
+    if not out:
+        raise SystemExit(f"--waits-from {path}: the recording has no wait times (made before waitMs)")
+    return out
+
+
+def adaptive_limit(ref: dict | None, corpus_ms: int, clock_ms: int) -> int:
+    """The wait limit for one request under --waits-from. A wait the reference timed out on, or has
+    no time for, keeps the corpus's limit. A met one gets the larger of the floor and WAIT_FACTOR
+    times the reference's time, and also enough to reach the instant the reference met it (a timer
+    counted from Octo's start, such as Sounds alike's first look, fires at the same instant in both
+    builds however fast each got there), plus the floor. Never more than the corpus's limit."""
+    if ref is None or ref["timedOut"]:
+        return corpus_ms
+    limit = max(WAIT_FLOOR_MS, WAIT_FACTOR * ref["waitMs"])
+    if ref.get("atMs") is not None:
+        limit = max(limit, ref["atMs"] - clock_ms + WAIT_FLOOR_MS)
+    return min(corpus_ms, limit)
+
+
 def cmd_record(args) -> None:
     base = urllib.parse.urlsplit(args.target.rstrip("/"))
     if base.scheme != "http":
@@ -561,6 +649,7 @@ def cmd_record(args) -> None:
     servers = server_targets(args, base)
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
+    shard = apply_shard(args)
     vars_: dict[str, str] = dict(BUILTIN_VARS)
     vars_["host"] = base.netloc
     vars_["host_alt"] = servers["alt"].netloc
@@ -568,9 +657,19 @@ def cmd_record(args) -> None:
     captured: dict[str, str] = {}
     kept: dict[str, str] = {}
     corpus = load_corpus(args.only)
+    refs = load_wait_refs(args.waits_from, shard)
     total = 0
     failures = 0
+    # Wait times are kept in every recording (waitMs, and atMs on this clock), so a later
+    # recording can adapt its waits to them. The clock starts when the stack's Octo started (its
+    # own timers count from there), or with the recording when there is no stack to ask.
+    record_start = time.time()
+    inputs = inputs_digest()  # as the recording starts: the files may change while it runs
+    clock0 = octo_started(args.project) or record_start
+    file_seconds: dict[str, float] = {}
+    adapted = 0
     for stem, doc in corpus:
+        file_start = time.time()
         defaults = doc.get("defaults", {})
         entries = []
         # A build that lacks a file's feature would sit out every wait in it. After
@@ -607,9 +706,15 @@ def cmd_record(args) -> None:
                     entries.append({"name": req["name"], "skipped": str(exc)})
                     continue
             wait_ms = req.get("timeoutMs", 60000)
+            wait_start = time.time()
+            if until and refs:
+                limit = adaptive_limit(refs.get(rid), wait_ms, int((wait_start - clock0) * 1000))
+                if limit < wait_ms:
+                    adapted += 1
+                    wait_ms = limit
             if timeouts_here >= args.until_patience:
                 wait_ms = min(wait_ms, 20000)
-            deadline = time.time() + wait_ms / 1000.0
+            deadline = wait_start + wait_ms / 1000.0
             timed_out = False
             try:
                 while True:
@@ -629,6 +734,7 @@ def cmd_record(args) -> None:
                 entries.append({"name": req["name"], "request": {"method": method, "target": target},
                                 "error": f"{type(exc).__name__}: {exc}"})
                 continue
+            wait_end = time.time()
             total += 1
             for var, spec in (req.get("capture") or {}).items():
                 # A capture is either "kind:expr" (a volatile value: the diff normalises it back
@@ -664,31 +770,301 @@ def cmd_record(args) -> None:
                 entry["server"] = server
             if timed_out:
                 entry["untilTimedOut"] = True
+            if until:
+                # How long the wait took, its limit and when it ended (on the clock above). The
+                # diff never compares these; record --waits-from reads them.
+                entry["waitMs"] = round((wait_end - wait_start) * 1000)
+                entry["waitLimitMs"] = wait_ms
+                entry["atMs"] = round((wait_end - clock0) * 1000)
             entries.append(entry)
             if args.verbose:
                 log(f"  {status} {method} {target[:110]} ({elapsed * 1000:.0f} ms)")
         with open(os.path.join(out_dir, f"{stem}.json"), "w", encoding="utf-8") as fh:
             json.dump({"group": doc.get("group", stem), "entries": entries}, fh, ensure_ascii=False, indent=1)
             fh.write("\n")
-        log(f"recorded {stem}: {len(entries)} requests")
+        file_seconds[stem] = round(time.time() - file_start, 1)
+        log(f"recorded {stem}: {len(entries)} requests in {file_seconds[stem]:.0f} s")
     meta = {
         "target": args.target,
         "host": base.netloc,
         "hosts": {"host_alt": servers["alt"].netloc, "host_alt_admin": servers["alt-admin"].netloc},
         "image": args.image_label,
-        "inputs": inputs_digest(),
+        "inputs": inputs,
         "recordedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "vars": captured,
         "keptVars": kept,
         "requests": total,
         "errors": failures,
+        "seconds": round(time.time() - record_start, 1),
+        "fileSeconds": file_seconds,
+        "clock": "octo-start" if clock0 != record_start else "record-start",
     }
+    if refs:
+        meta["waitsFrom"] = {"recording": os.path.abspath(args.waits_from), "factor": WAIT_FACTOR,
+                             "floorMs": WAIT_FLOOR_MS, "adapted": adapted}
+    if shard:
+        meta["shard"] = shard
     with open(os.path.join(out_dir, "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
     log(f"recorded {total} responses into {out_dir} ({failures} transport errors)")
     if failures:
         sys.exit(2)
+
+
+# --------------------------------------------------------------------------------------
+# Shards: the corpus in pieces that run side by side, each on a fresh stack of its own
+# --------------------------------------------------------------------------------------
+
+def file_digest(path: str) -> str:
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def load_shards(path: str | None = None) -> list[dict]:
+    """shards.json: an ordered list of {"name", "files", "setup"?, "reads"?, "why"?}. "files" are
+    the corpus files the shard owns (its recordings are the ones merge keeps), in corpus order;
+    00-setup runs in every shard whoever owns it. "setup" are request globs from other files run
+    for their captures only (the owner's recording of those is the one kept). "reads" holds, per
+    corpus file, the earlier files whose leftover state its answers depend on, with the reason."""
+    path = path or SHARDS_FILE
+    with open(path, encoding="utf-8") as fh:
+        plan = json.load(fh)
+    if not isinstance(plan, list) or not plan:
+        raise SystemExit(f"{path}: the plan is an ordered list of shards")
+    names = set()
+    for shard in plan:
+        if not isinstance(shard, dict) or not shard.get("name") or not isinstance(shard.get("files"), list):
+            raise SystemExit(f"{path}: every shard needs a name and a files list ({shard!r})")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", shard["name"]):
+            raise SystemExit(f"{path}: shard name {shard['name']!r} must be lower-case letters, digits and dashes")
+        if shard["name"] in names:
+            raise SystemExit(f"{path}: two shards named {shard['name']}")
+        names.add(shard["name"])
+    return plan
+
+
+def apply_shard(args) -> dict | None:
+    """--shard NAME: record that shard of the plan (its files and setup requests, as --only would).
+    The recording's meta.json then says which shard it is, which is what merge goes by."""
+    if not getattr(args, "shard", None):
+        return None
+    if args.only:
+        raise SystemExit("--shard and --only do not go together (a shard is its own --only)")
+    path = args.shards or SHARDS_FILE
+    plan = load_shards(path)
+    found = [s for s in plan if s["name"] == args.shard]
+    if not found:
+        raise SystemExit(f"no shard {args.shard!r} in {path} ({', '.join(s['name'] for s in plan)})")
+    shard = found[0]
+    args.only = ",".join(shard["files"] + shard.get("setup", []))
+    return {"name": shard["name"], "files": shard["files"], "setup": shard.get("setup", []),
+            "plan": file_digest(path)}
+
+
+def corpus_runs(only: str | None) -> list[tuple[str, dict]]:
+    """Every request a recording with this --only sends, in order: (request id, request with its
+    file's defaults)."""
+    return [(f"{stem}/{req['name']}", {**doc.get("defaults", {}), **req})
+            for stem, doc in load_corpus(only) for req in doc["requests"]]
+
+
+def var_uses(req: dict) -> set[str]:
+    """The variables a request needs: its {{vars}}, and the sign-in its "session" sends."""
+    found = set(VAR_RE.findall(json.dumps({k: v for k, v in req.items() if k != "capture"})))
+    if req.get("session") in SESSIONS and str(req.get("path", "")).startswith("/api/admin"):
+        found.add(SESSIONS[req["session"]])
+    return found
+
+
+def providers(runs: list[tuple[str, dict]]) -> dict[str, dict[str, str]]:
+    """For each request, the request that captured each variable it uses (the latest capture
+    before it), as {request id: {var: capturing request id}}."""
+    last: dict[str, str] = {}
+    out: dict[str, dict[str, str]] = {}
+    for rid, req in runs:
+        out[rid] = {v: last[v] for v in var_uses(req) if v in last}
+        for var in (req.get("capture") or {}):
+            last[var] = rid
+    return out
+
+
+def check_shards(plan: list[dict]) -> list[str]:
+    """What is wrong with a plan: a corpus file in no shard or in two, files out of corpus order,
+    a request whose variables come from a request its shard does not run first, and a file whose
+    "reads" (state earlier files leave) its shard does not run before it in full."""
+    problems: list[str] = []
+    stems = [s for s, _ in load_corpus(None)]
+    owner: dict[str, str] = {}
+    reads: dict[str, dict[str, str]] = {}
+    for shard in plan:
+        files = shard["files"]
+        for stem in files:
+            if stem not in stems:
+                problems.append(f"{shard['name']}: no corpus file {stem}")
+            elif stem in owner:
+                problems.append(f"{stem} is in two shards: {owner[stem]} and {shard['name']}")
+            else:
+                owner[stem] = shard["name"]
+        known = [s for s in files if s in stems]
+        if known != sorted(known):
+            problems.append(f"{shard['name']}: files out of corpus order ({', '.join(files)})")
+        for g in shard.get("setup", []):
+            if not any(only_match(rid, [g]) for rid, _ in corpus_runs(None)):
+                problems.append(f"{shard['name']}: setup {g!r} matches no request")
+        for stem, deps in (shard.get("reads") or {}).items():
+            if stem in reads:
+                problems.append(f"{stem}: reads declared twice")
+            reads[stem] = deps
+    for stem in stems:
+        if stem not in owner:
+            problems.append(f"{stem} is in no shard")
+    full = corpus_runs(None)
+    need = providers(full)
+    for shard in plan:
+        only = ",".join(shard["files"] + shard.get("setup", []))
+        runs = corpus_runs(only)
+        ran = {rid for rid, _ in runs}
+        got = providers(runs)
+        short_of: dict[tuple[str, str, str], list[str]] = {}
+        for rid, _ in runs:
+            for var, src in need.get(rid, {}).items():
+                if got[rid].get(var) != src:
+                    short_of.setdefault((rid.split("/")[0], var, src), []).append(rid)
+        for (stem, var, src), rids in short_of.items():
+            problems.append(f"{shard['name']}: {len(rids)} request(s) of {stem} (first {rids[0]}) use "
+                            f"{{{{{var}}}}} from {src}, which the shard does not run before them")
+        files_run = [s for s, _ in load_corpus(only)]
+        for stem in shard["files"]:
+            for dep, why in (reads.get(stem) or {}).items():
+                if dep not in stems:
+                    problems.append(f"{stem} reads {dep}, which is no corpus file")
+                    continue
+                whole = all(f"{dep}/{r['name']}" in ran for r in dict(load_corpus(None))[dep]["requests"])
+                if not (dep in files_run and whole and stems.index(dep) < stems.index(stem)):
+                    problems.append(f"{shard['name']}: {stem} reads what {dep} leaves ({why}), "
+                                    f"and the shard does not run all of {dep} before it")
+    for stem in reads:
+        if stem not in stems:
+            problems.append(f"reads names {stem}, which is no corpus file")
+    return problems
+
+
+def cmd_shards(args) -> None:
+    path = args.shards or SHARDS_FILE
+    if args.action == "digest":
+        print(file_digest(path))
+        return
+    plan = load_shards(path)
+    times: dict[str, float] = {}
+    if args.times:
+        with open(os.path.join(args.times, "meta.json"), encoding="utf-8") as fh:
+            times = json.load(fh).get("fileSeconds") or {}
+        if not times:
+            raise SystemExit(f"{args.times}: no fileSeconds in its meta.json")
+    for shard in plan:
+        line = f"  {shard['name']:<12} {len(shard['files']):>2} files"
+        if times:
+            # Every file the shard runs whole (00-setup, its own, whole files run as setup).
+            whole = {"00-setup", *shard["files"], *(g for g in shard.get("setup", []) if "/" not in g)}
+            line += f"  ~{sum(times.get(s, 0) for s in whole):>5.0f} s"
+        print(line + f"  {', '.join(shard['files'])}" + (f"  (setup: {', '.join(shard['setup'])})"
+                                                          if shard.get("setup") else ""))
+    if args.action == "show":
+        return
+    problems = check_shards(plan)
+    for p in problems:
+        print(f"FAIL {p}")
+    if problems:
+        sys.exit(1)
+    print(f"shards check: {len(plan)} shards cover the {len(load_corpus(None))} corpus files")
+
+
+def cmd_merge(args) -> None:
+    """Join shard recordings into one recording in corpus order. Each corpus file comes from the
+    shard that owns it; the per-shard values the diff normalizes (the host, volatile captures)
+    stay with that shard's files (meta.json "parts")."""
+    import shutil
+    parts = []
+    owner: dict[str, int] = {}
+    for i, d in enumerate(args.shard_dirs):
+        mpath = os.path.join(d, "meta.json")
+        if not os.path.exists(mpath):
+            raise SystemExit(f"{d}: no meta.json (not a finished recording)")
+        with open(mpath, encoding="utf-8") as fh:
+            meta = json.load(fh)
+        recorded = sorted(os.path.splitext(os.path.basename(f))[0]
+                          for f in glob.glob(os.path.join(d, "*.json")) if os.path.basename(f) != "meta.json")
+        if "parts" in meta:
+            raise SystemExit(f"{d} is a merged recording already")
+        shard = meta.get("shard")
+        name = shard["name"] if shard else os.path.basename(os.path.normpath(d))
+        owns = list(shard["files"]) if shard else [s for s in recorded if s != "00-setup" or "00-setup" not in owner]
+        for stem in owns:
+            if stem not in recorded:
+                raise SystemExit(f"{d}: shard {name} owns {stem} but did not record it")
+            if stem in owner:
+                raise SystemExit(f"{stem} is owned by two shards: {parts[owner[stem]]['name']} and {name}")
+            owner[stem] = i
+        parts.append({"name": name, "dir": os.path.abspath(d), "meta": meta, "files": owns})
+    if not parts:
+        raise SystemExit("merge needs at least one shard recording")
+    first = parts[0]["meta"]
+    for p in parts[1:]:
+        for key in ("inputs", "image"):
+            if p["meta"].get(key) != first.get(key):
+                raise SystemExit(f"shard {p['name']} was recorded with another {key} "
+                                 f"({p['meta'].get(key)} against {first.get(key)})")
+        a, b = (first.get("shard") or {}).get("plan"), (p["meta"].get("shard") or {}).get("plan")
+        if a != b:
+            raise SystemExit(f"shard {p['name']} comes from another shard plan")
+    missing = [s for s, _ in load_corpus(None) if s not in owner]
+    if missing and not args.partial:
+        raise SystemExit(f"no shard recorded {', '.join(missing)} (--partial merges what there is)")
+    out = args.run_dir
+    os.makedirs(out, exist_ok=True)
+    for f in glob.glob(os.path.join(out, "*.json")):
+        os.remove(f)
+    file_seconds: dict[str, float] = {}
+    for stem, i in sorted(owner.items()):
+        shutil.copyfile(os.path.join(parts[i]["dir"], f"{stem}.json"), os.path.join(out, f"{stem}.json"))
+        if stem in (parts[i]["meta"].get("fileSeconds") or {}):
+            file_seconds[stem] = parts[i]["meta"]["fileSeconds"][stem]
+    for p in parts:
+        logs = os.path.join(p["dir"], "logs")
+        if os.path.isdir(logs):
+            dest = os.path.join(out, "logs", p["name"])
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(logs, dest)
+    entries = []
+    for f in glob.glob(os.path.join(out, "*.json")):
+        with open(f, encoding="utf-8") as fh:
+            entries += json.load(fh)["entries"]
+    merged = {
+        "target": first.get("target"),
+        "host": first.get("host"),
+        "hosts": first.get("hosts"),
+        "image": first.get("image"),
+        "inputs": first.get("inputs"),
+        "recordedAt": max(p["meta"].get("recordedAt", "") for p in parts),
+        "vars": {},
+        "keptVars": {},
+        "requests": sum(1 for e in entries if "status" in e),
+        "errors": sum(1 for e in entries if "error" in e),
+        "seconds": max(p["meta"].get("seconds", 0) for p in parts),
+        "fileSeconds": file_seconds,
+        "shardPlan": (first.get("shard") or {}).get("plan"),
+        "parts": [{"name": p["name"], "dir": p["dir"], "files": p["files"],
+                   "host": p["meta"].get("host"), "hosts": p["meta"].get("hosts"),
+                   "vars": p["meta"].get("vars") or {}, "keptVars": p["meta"].get("keptVars") or {},
+                   "seconds": p["meta"].get("seconds"), "waitsFrom": p["meta"].get("waitsFrom")}
+                  for p in parts],
+    }
+    with open(os.path.join(out, "meta.json"), "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, ensure_ascii=False, indent=1)
+        fh.write("\n")
+    log(f"merged {len(parts)} shards into {out}: {len(owner)} corpus files, {merged['requests']} responses, "
+        f"slowest shard {merged['seconds']:.0f} s" + (f"; missing {', '.join(missing)}" if missing else ""))
 
 
 def inputs_digest() -> str:
@@ -830,6 +1206,19 @@ class Normalizer:
             # Order between different header names carries no meaning; repeats keep their order.
             out = sorted(out, key=lambda kv: kv[0])
         return out
+
+
+def normalizers(meta: dict, rules: dict, mode: str):
+    """The normalizer for each corpus file of a recording, as a function of the file. A merged
+    recording (parity.py merge) keeps each shard's host and volatile captures with the files that
+    shard recorded, since every shard ran on a stack of its own."""
+    whole = Normalizer(meta, rules, mode)
+    by_stem: dict[str, Normalizer] = {}
+    for part in meta.get("parts") or []:
+        norm = Normalizer(part, rules, mode)
+        for stem in part["files"]:
+            by_stem[stem] = norm
+    return lambda stem: by_stem.get(stem, whole)
 
 
 def apply_ignore(value: Any, keys: set[str]) -> Any:
@@ -1218,7 +1607,7 @@ def cmd_diff(args) -> None:
     meta_a, ea, order_a = load_recording(args.a)
     meta_b, eb, order_b = load_recording(args.b)
     rules = load_normalize_rules()
-    na, nb = Normalizer(meta_a, rules, args.mode), Normalizer(meta_b, rules, args.mode)
+    na, nb = normalizers(meta_a, rules, args.mode), normalizers(meta_b, rules, args.mode)
     allow = load_allowlist(args.allowlist)
     intent = load_intentional(args.intentional)
     group_rules = load_groups()
@@ -1231,9 +1620,10 @@ def cmd_diff(args) -> None:
     by_group: dict[str, set[str]] = {}
     diffed: set[str] = set()
 
-    ids = [i for i in order_a if not args.only or fnmatch.fnmatch(i, args.only)]
+    globs = only_globs(args.only)
+    ids = [i for i in order_a if not globs or only_match(i, globs)]
     missing_b = [i for i in ids if i not in eb]
-    extra_b = [i for i in order_b if i not in ea and (not args.only or fnmatch.fnmatch(i, args.only))]
+    extra_b = [i for i in order_b if i not in ea and (not globs or only_match(i, globs))]
     for rid in missing_b + extra_b:
         report.append(f"MISSING in {'B' if rid in missing_b else 'A'}: {rid}")
         unexplained += 1
@@ -1245,7 +1635,8 @@ def cmd_diff(args) -> None:
         if rid not in eb:
             continue
         req_spec = reqs.get(rid, {})
-        diffs = compare_entry(rid, ea[rid], eb[rid], na, nb, args.mode, req_spec)
+        stem = rid.split("/", 1)[0]
+        diffs = compare_entry(rid, ea[rid], eb[rid], na(stem), nb(stem), args.mode, req_spec)
         if not diffs:
             same += 1
             continue
@@ -1396,7 +1787,12 @@ def main() -> None:
         p.add_argument("--until-patience", type=int, default=3,
                        help="after this many timed-out waits in one corpus file, its other waits get at most 20 s")
         p.add_argument("--alt-admin-port", type=int, default=None, help="its admin port (default --port + 2)")
-        p.add_argument("--only", help="glob over <corpus-file>/<request-name>")
+        p.add_argument("--only", help="glob over <corpus-file>/<request-name>, or several, comma-separated")
+        p.add_argument("--shard", help="record this shard of the plan (shards.json): its files and setup requests")
+        p.add_argument("--shards", default=None, help="the shard plan (default parity/shards.json)")
+        p.add_argument("--waits-from", default=None,
+                       help="a recording of the reference build (C#): each wait it met gets "
+                            f"max({WAIT_FLOOR_MS // 1000} s, {WAIT_FACTOR} x its time there) at most")
         p.add_argument("--timeout", type=float, default=60.0)
         p.add_argument("--image-label", default=None, help="label stored in meta.json (default: --image)")
         p.add_argument("-v", "--verbose", action="store_true")
@@ -1429,6 +1825,18 @@ def main() -> None:
 
     p = sub.add_parser("digest", help="print the hash of the corpus, stubs, fixtures and compose file")
     p.set_defaults(func=lambda _args: print(inputs_digest()))
+
+    p = sub.add_parser("merge", help="join shard recordings into one recording, in corpus order")
+    p.add_argument("run_dir", help="the merged recording (its *.json files are replaced)")
+    p.add_argument("shard_dirs", nargs="+", help="the shards' recordings (record or run --shard)")
+    p.add_argument("--partial", action="store_true", help="merge even when corpus files are missing")
+    p.set_defaults(func=cmd_merge)
+
+    p = sub.add_parser("shards", help="the shard plan: check it, show it, or print its hash")
+    p.add_argument("action", choices=["check", "show", "digest"])
+    p.add_argument("--shards", default=None, help="the plan (default parity/shards.json)")
+    p.add_argument("--times", default=None, help="a recording whose fileSeconds give each shard's length")
+    p.set_defaults(func=cmd_shards)
 
     p = sub.add_parser("show", help="print recorded entries matching a glob")
     p.add_argument("recording")

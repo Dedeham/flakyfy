@@ -387,3 +387,55 @@ fn songs_filed_under_finds_one_row_per_recording_newest_first() {
             .is_empty()
     );
 }
+
+// ---- OutsideExplicitTests: ids ------------------------------------------------------------
+
+/// The seed an id is made from is unchanged for everything but a clean copy, so a star, a
+/// playlist place or a pin made before keeps working. Pinned to the ids the old seed made.
+#[test]
+fn ids_only_a_clean_copy_gets_a_new_one() {
+    let registry = ExternalIdRegistry::in_memory();
+    let song = |version: Option<&str>| SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Kendrick Lamar".into()),
+        title: Some("luther".into()),
+        duration: Some(177),
+        version: version.map(String::from),
+        ..Default::default()
+    };
+    let album = |version: Option<&str>| SoulseekRouting {
+        kind: RoutingKind::Album,
+        artist: Some("Kendrick Lamar".into()),
+        album: Some("GNX".into()),
+        version: version.map(String::from),
+        ..Default::default()
+    };
+
+    assert_eq!(registry.register(song(None)), "tkNhkzBNCpsT1buw9JyZd5");
+    assert_eq!(
+        registry.register(song(Some("explicit"))),
+        "tkNhkzBNCpsT1buw9JyZd5"
+    );
+    assert_eq!(registry.register(album(None)), "7tcNOznFZSzl3pGOYcZfl7");
+    assert_ne!(registry.register(song(Some("clean"))), "tkNhkzBNCpsT1buw9JyZd5");
+    assert_ne!(registry.register(album(Some("clean"))), "7tcNOznFZSzl3pGOYcZfl7");
+}
+
+#[test]
+fn registry_a_search_row_minted_again_keeps_what_the_catalog_said() {
+    let registry = ExternalIdRegistry::in_memory();
+    let id = registry.register(SoulseekRouting {
+        explicit_content: Some(1),
+        ..song("Tame Impala", "Dracula")
+    });
+    registry.register(song("Tame Impala", "Dracula"));
+
+    assert_eq!(
+        registry
+            .lookup(&id)
+            .expect("registered")
+            .snapshot()
+            .explicit_content,
+        Some(1)
+    );
+}

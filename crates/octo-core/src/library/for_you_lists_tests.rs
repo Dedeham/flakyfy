@@ -265,6 +265,7 @@ fn release(id: &str, kind: &str, date: Option<&str>) -> AlbumHit {
         track_count: 10,
         record_type: Some(kind.into()),
         release_date: date.map(str::to_string),
+        explicit_lyrics: None,
     }
 }
 

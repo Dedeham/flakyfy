@@ -95,6 +95,50 @@ fn recorded_with_lists(file: &str, name: &str) -> Recorded {
     want
 }
 
+/// A recorded answer with the outside albums' `explicitStatus` (P, 4f2aeb6), which Octo
+/// 2026.10.05 sends right after `releaseTypes` on every outside album, "" when the catalog did
+/// not say. The 2026.10.03.2 recording predates it; these inputs carry no explicit word, so the
+/// field is empty everywhere.
+fn recorded_with_explicit_status(file: &str, name: &str) -> Recorded {
+    let mut want = recorded(file, name);
+    if want.content_type.contains("json") {
+        let mut out = String::new();
+        let mut rest = want.body.as_str();
+        while let Some(at) = rest.find(r#""releaseTypes":["#) {
+            let end = at + rest[at..].find(']').expect("the end of the list") + 1;
+            out.push_str(&rest[..end]);
+            out.push_str(r#","explicitStatus":"""#);
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        want.body = out;
+    } else {
+        // An album row has it before its sortName, the album detail after its created.
+        let lines: Vec<String> = want
+            .body
+            .split('\n')
+            .map(|line| {
+                if !line.trim_start().starts_with("<album ") {
+                    line.to_string()
+                } else if line.contains(" sortName=") {
+                    line.replacen(" sortName=", " explicitStatus=\"\" sortName=", 1)
+                } else {
+                    let at = line.find(" created=\"").expect("a created");
+                    let end = at + 10 + line[at + 10..].find('"').expect("its end") + 1;
+                    format!("{} explicitStatus=\"\"{}", &line[..end], &line[end..])
+                }
+            })
+            .collect();
+        want.body = lines.join("\n");
+    }
+    want.content_length = None;
+    want
+}
+
+fn assert_golden_with_explicit_status(reply: SubsonicReply, file: &str, name: &str) {
+    assert_recorded(reply, recorded_with_explicit_status(file, name), file, name);
+}
+
 fn assert_recorded(reply: SubsonicReply, want: Recorded, file: &str, name: &str) {
     assert_eq!(reply.text(), want.body, "{file}/{name}: body");
     assert_eq!(
@@ -432,12 +476,12 @@ fn an_outside_artist_matches_the_recordings() {
         album_count: Some(2),
         ..Default::default()
     };
-    assert_golden(
+    assert_golden_with_explicit_status(
         builder_at("2026-10-04T08:07:45.947Z").create_artist_response("json", &artist, &zephyr_albums()),
         "02-browsing",
         "artist-external-json",
     );
-    assert_golden(
+    assert_golden_with_explicit_status(
         builder_at("2026-10-04T08:07:45.952Z").create_artist_response("xml", &artist, &zephyr_albums()),
         "02-browsing",
         "artist-external-xml",
@@ -492,12 +536,12 @@ fn an_outside_album_matches_the_recordings() {
         songs,
         ..Default::default()
     };
-    assert_golden(
+    assert_golden_with_explicit_status(
         builder_at("2026-10-04T08:07:46.052Z").create_album_response("json", &album),
         "02-browsing",
         "album-external-json",
     );
-    assert_golden(
+    assert_golden_with_explicit_status(
         builder_at("2026-10-04T08:07:46.056Z").create_album_response("xml", &album),
         "02-browsing",
         "album-external-xml",
@@ -883,7 +927,7 @@ fn a_discovery_only_search_matches_the_recordings() {
         let mapper = SubsonicModelMapper::new(builder.clone());
         let local = mapper.parse_search_response(empty_json.as_bytes(), Some("application/json"));
         let rows = mapper.merge_search_results(local.0, local.1, local.2, &zephyr_search(), &[], true, None);
-        assert_golden(search_reply(&builder, "searchResult3", true, rows), file, name);
+        assert_golden_with_explicit_status(search_reply(&builder, "searchResult3", true, rows), file, name);
     }
 
     let builder = builder_at("2026-10-04T08:07:46.890Z");
@@ -891,7 +935,7 @@ fn a_discovery_only_search_matches_the_recordings() {
     let empty_xml = r#"<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"><searchResult3></searchResult3></subsonic-response>"#;
     let local = mapper.parse_search_response(empty_xml.as_bytes(), Some("application/xml"));
     let rows = mapper.merge_search_results(local.0, local.1, local.2, &zephyr_search(), &[], false, None);
-    assert_golden(
+    assert_golden_with_explicit_status(
         search_reply(&builder, "searchResult3", false, rows),
         "03-search",
         "s3-discovery-only-xml",

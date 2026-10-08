@@ -24,7 +24,8 @@
         "^\\+\\{\"error\":\"Sign in with your Navidrome admin account first\\.\"\\}$"
       ],
       "reason": "The recovery code is for fixing settings. The C# explicit marking asked UserOf, so a recovery-code session could read, start and cancel it and write explicit marks into music files; the Rust gate refuses a recovery session on every library-file route (LIBRARY_FILE_ROUTES) with the words those routes already answered.",
-      "knownDiff": "Admin sign-in: the recovery code and library files"
+      "knownDiff": "Admin sign-in: the recovery code and library files",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "lidarr-test-saved-key-stays-home",
@@ -44,7 +45,8 @@
         "^\\+\\{\"ok\":false,\"error\":\"Retype the Lidarr API key for the new address\\.\"\\}$"
       ],
       "reason": "The C# sent the saved Lidarr key to whatever address the test named; the Rust build sends it only to the saved address, as a save already does, and asks for the key to be typed for a new one.",
-      "knownDiff": "`lidarr/test` and the saved key"
+      "knownDiff": "`lidarr/test` and the saved key",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "config-sources-fixed-mask",
@@ -84,7 +86,8 @@
         "^\\$\\.keys\\[155\\]\\.Value:\\ 30\\ !=\\ 24$"
       ],
       "reason": "The C# showed a set secret as one bullet per character, up to 16, which told its length; the Rust build shows eight bullets for every set secret. These answers also list the charts plan's two settings (entry charts-settings-listed), which moves every key after GeneratedPlaylists:PopularNow two places on; those lines are pinned here too.",
-      "knownDiff": "`config-sources` secrets"
+      "knownDiff": "`config-sources` secrets",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "isrc-clear-takes-the-tag-off",
@@ -111,7 +114,8 @@
         "^[-+]\\{\"bookmarkPosition\":0,\"id\":\"\\{\\{song_cafe_copy\\}\\}\","
       ],
       "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3). Navidrome then lists the removed copy without the code (remove-copy-seen, G4 R).",
-      "knownDiff": "Clearing a tag field"
+      "knownDiff": "Clearing a tag field",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "cover-resume-counts-once",
@@ -127,7 +131,8 @@
         "^\\$\\.reason: barcodes \\d+ of \\d+ · Apple matched \\d+ != null$"
       ],
       "reason": "A cover run resumed after a stop counts each album and song once, and goes on with only what the stop left undone. C# 2026.10.05 ran the stopped batch again and counted it again (CoverUpgrade.cs:696,744): the picked preview of 3 albums ended with albumsDone 6, songsRead 20 of 10, kept and files doubled; a replace also counted an album it had written as kept. Fixed in the port only (Brandon, 2026-10-07). The run's reason line may also differ: see cover-run-reason-cleared (the C# left its last bulk-match line there by a race).",
-      "knownDiff": "Cover upgrade: a resumed run's counts"
+      "knownDiff": "Cover upgrade: a resumed run's counts",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "cover-scan-leaves-the-trash-out",
@@ -144,7 +149,8 @@
         "^\\$\\.preview\\[\\d+\\]\\.(folder|artist|album|fromSide|toSide|files|folderCover|result|source|looksSame): .* != .*$"
       ],
       "reason": "The cover scan leaves the trash folder out: C# 2026.10.05 walked into /music/.octo-trash and listed a song deleted from disk in 20-library-edits as an album of its own (one more album, song and soft row, and the sorted preview shifted by one). Fixed in the port only (Brandon, 2026-10-07). Until group F's delete and put back land, this request also differs for F's sake. The albumsDone line also carries the second port fix on this answer: albums done are counted the way albums in all are (the C# ended 6 of 5; known-diffs \"Cover upgrade: albums done and albums in all\").",
-      "knownDiff": "Library walks and the trash"
+      "knownDiff": "Library walks and the trash",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "cover-run-reason-cleared",
@@ -159,7 +165,8 @@
         "^\\$\\.reason: barcodes \\d+ of \\d+ · Apple matched \\d+ != null$"
       ],
       "reason": "A picked cover run that matched its albums in bulk ends with no reason line, as the C# meant (its finally sets Reason = null). C# 2026.10.05 reported the bulk match's progress through Progress<string>, which runs the update later on the thread pool, so the last line (\"barcodes 1 of 1 · Apple matched 1\") could land after the finally and stay on the finished run; whether it did changed from run to run (17-covers-explicit/covers-resumed-done had it in one C# recording and not in another).",
-      "knownDiff": "Cover upgrade: the bulk match's last line"
+      "knownDiff": "Cover upgrade: the bulk match's last line",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "slskd-web-url-trimmed",
@@ -182,7 +189,8 @@
         "^\\$(\\.persisted)?\\.GeneratedPlaylists\\.ChartCountry: only in B \\(auto\\)$"
       ],
       "reason": "The C# saved slskd's web address (the Open slskd link) with the spaces it was typed with, and the settings answer and the form showed them; the Rust build saves and reads it trimmed. These answers also list the charts plan's two chart settings (entry charts-settings-listed); those lines are pinned here too.",
-      "knownDiff": "slskd's web address saved with spaces"
+      "knownDiff": "slskd's web address saved with spaces",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "keep-as-playlist-navidrome-takes-it",
@@ -252,7 +260,8 @@
         "^\\+\\{\"ok\":true,\"message\":\"Removed\\ Gym\\ Mix\\.\\ Its\\ playlist\\ stays\\ in\\ Navidrome;\\ delete\\ it\\ there\\ if\\ you\\ no\\ longer\\ want\\ it\\.\",\"url\":null,\"listId\":null,\"count\":0\\}$"
       ],
       "reason": "Keep as playlist works. The C# sent the playlist create as application/json; charset=utf-8, which Navidrome 0.64.2 reads as an M3U import: an empty playlist named after the time, an M3U answer the C# could not read, a 500 for the person, and another empty playlist every 30 s pass while the switch stayed on. The port sends application/json exactly, so the playlist is named after the list, holds its songs, belongs to the list's owner, and the list remembers it; a failed sync deletes what it made and backs off.",
-      "knownDiff": "Spotify import: Keep as playlist"
+      "knownDiff": "Spotify import: Keep as playlist",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "charts-top-chart-says-which-chart",
@@ -390,7 +399,8 @@
         "^\\+\\{\"enabled\":"
       ],
       "reason": "Octo is pulled from this release on (the bridge release, shipped with the Rust one): docker compose build octo builds nothing, so the hand command pulls Octo with its sidecars and builds the -source services only when the pull fails. reinstallCommand is what the card shows when the update helper is older than version 2, which would otherwise restart the same Octo and call it an update.",
-      "knownDiff": "Update card: Octo pulled, helper version 2"
+      "knownDiff": "Update card: Octo pulled, helper version 2",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "charts-settings-listed",
@@ -463,7 +473,8 @@
         "^\\+\\{\"ok\":true,\"bytes\":7233\\}$"
       ],
       "reason": "The charts plan's two settings (Brandon 2026-10-07: chart lists beyond Popular right now, read for one country) are settings like the others: GET settings, a save's persisted answer, Raw config and the settings file list GeneratedPlaylists.Charts (the chart lists to make, empty for the default set) and GeneratedPlaylists.ChartCountry (auto by default), and config-sources lists their keys. C# 2026.10.05 has neither. A Raw config save that writes them back is 46 bytes longer. Values only added; no other setting changes.",
-      "knownDiff": "Chart settings in the settings answers"
+      "knownDiff": "Chart settings in the settings answers",
+      "reviewed": "Brandon 2026-10-08"
     },
     {
       "id": "plain-error-words",
@@ -483,7 +494,8 @@
         "^\\+\\{\"ok\":false,\"error\":\"Could\\ not\\ connect\\ to\\ stubs:9:\\ the\\ connection\\ was\\ refused\\.\"\\}$"
       ],
       "reason": "A failed call says what happened in plain words instead of .NET's exception text (BACKLOG, Improvements we want while porting): \"Could not connect to stubs:9: the connection was refused.\" for \"Connection refused (stubs:9)\", and likewise a timeout (\"No answer came within 100 seconds, so Octo stopped waiting.\"), a name that cannot be looked up and a status that is not a success (\"The server answered 404 (Not Found).\"). The Lidarr test is the one answer the corpus reaches.",
-      "knownDiff": "Plain error words"
+      "knownDiff": "Plain error words",
+      "reviewed": "Brandon 2026-10-08"
     }
   ]
 }

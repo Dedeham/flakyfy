@@ -51,6 +51,14 @@ fn library_song(id: &str) -> Option<Value> {
             "al-brand-new",
             "Hip-Hop",
         ),
+        "blend" => song(
+            "blend",
+            "Blend",
+            "Blend Artist",
+            "Blends",
+            "al-blends",
+            "Trip-Hop",
+        ),
         "faded-nightcore" => song(
             "faded-nightcore",
             "Alan Walker - Faded (Nightcore)",
@@ -60,6 +68,22 @@ fn library_song(id: &str) -> Option<Value> {
             "",
         ),
         _ => return None,
+    })
+}
+
+/// The library's copy of one of Blend's thirty radio songs: every third one ("Band 3 Tune 3",
+/// "Band 6 Tune 6", ...) is in the library.
+fn blend_library_song(query: &str) -> Option<Value> {
+    let i: i32 = query.strip_prefix("Band ")?.split(' ').next()?.parse().ok()?;
+    (i % 3 == 0).then(|| {
+        song(
+            &format!("lib-band-{i}"),
+            &format!("Tune {i}"),
+            &format!("Band {i}"),
+            "Blends",
+            "al-blends",
+            "Trip-Hop",
+        )
     })
 }
 
@@ -143,6 +167,10 @@ fn last_fm(query: &HashMap<String, String>) -> Value {
                 {"name": "Angel", "artist": {"name": "Massive Attack"}, "match": 0.9},
                 {"name": "Unfinished Sympathy", "artist": {"name": "Massive Attack"}, "match": 0.8}
             ]}}),
+            // Thirty songs, every third one in the library (see `blend_library_song`).
+            ("Blend Artist", "Blend") => json!({"similartracks": {"track": (1..=30).map(|i| {
+                json!({"name": format!("Tune {i}"), "artist": {"name": format!("Band {i}")}, "match": 0.95 - f64::from(i) / 100.0})
+            }).collect::<Vec<_>>()}}),
             ("Alan Walker", "Faded") => json!({"similartracks": {"track": [
                 {"name": "Wake Me Up", "artist": {"name": "Avicii"}, "match": 0.9}
             ]}}),
@@ -269,7 +297,10 @@ impl Respond for Upstream {
                 json!({"randomSongs": {"song": []}})
             })
         } else if path.ends_with("/rest/search3") {
-            Some(json!({"searchResult3": {}}))
+            Some(match query.get("query").and_then(|q| blend_library_song(q)) {
+                Some(found) => json!({"searchResult3": {"song": [found]}}),
+                None => json!({"searchResult3": {}}),
+            })
         } else if path.ends_with("/rest/getSimilarSongs2") {
             // Navidrome's own agents, for when Octo's sources have nothing.
             Some(json!({"similarSongs2": {"song": [
@@ -780,6 +811,64 @@ async fn artist_id_is_the_top_songs_of_artists_like_them() {
 fn interleave_takes_one_from_each_in_turn() {
     use crate::services::last_fm::last_fm_radio_track_resolver::interleave;
     assert_eq!(interleave(&[vec![1, 2, 3], vec![10, 20]]), [1, 10, 2, 20, 3]);
+}
+
+/// L for a library song, O for one from outside it.
+fn kinds(ids: &[String]) -> String {
+    ids.iter()
+        .map(|id| if id.starts_with("lib-") { 'L' } else { 'O' })
+        .collect()
+}
+
+// Radio placement (port/radio-placement, 2026-10-08), no C# test: Octo's own apps
+// (octoMix=client) get the order of fit; every other app gets the same songs with the outside
+// ones placed at random at the Discovery balance, each kind still in its own order.
+#[tokio::test]
+async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit() {
+    let f = fixture(|_| {}).await;
+    async fn blend(f: &Fixture, extra: &str) -> Vec<String> {
+        let body = get_string(
+            &f.app,
+            &format!("/rest/getSimilarSongs2?id=blend&u=alice&t=token&s=salt&f=json&count=30{extra}"),
+        )
+        .await;
+        songs(&body).into_iter().map(|(id, _)| id).collect()
+    }
+    let fit: Vec<String> = (1..=30)
+        .map(|i| {
+            if i % 3 == 0 {
+                format!("lib-band-{i}")
+            } else {
+                format!("ext-Band {i}-Tune {i}")
+            }
+        })
+        .collect();
+
+    // Every artist differs, so the order of fit is Last.fm's own order.
+    assert_eq!(blend(&f, "&octoMix=client").await, fit);
+
+    let mut sorted_fit = fit.clone();
+    sorted_fit.sort();
+    let of_kind = |ids: &[String], library: bool| -> Vec<String> {
+        ids.iter()
+            .filter(|id| id.starts_with("lib-") == library)
+            .cloned()
+            .collect()
+    };
+    let mut patterns = Vec::new();
+    for _ in 0..5 {
+        let placed = blend(&f, "").await;
+        let mut sorted = placed.clone();
+        sorted.sort();
+        assert_eq!(sorted, sorted_fit, "the same songs: {placed:?}");
+        assert_eq!(of_kind(&placed, true), of_kind(&fit, true), "{placed:?}");
+        assert_eq!(of_kind(&placed, false), of_kind(&fit, false), "{placed:?}");
+        patterns.push(kinds(&placed));
+    }
+    assert!(
+        patterns.iter().any(|pattern| *pattern != kinds(&fit)),
+        "placed as the order of fit every time: {patterns:?}"
+    );
 }
 
 // SimilarSongsSeedTests.NothingFromOctosSources_LetsNavidromeAnswer

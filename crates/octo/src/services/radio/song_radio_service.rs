@@ -6,9 +6,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use octo_core::last_fm::last_fm_radio_recommendation_service::IgnoreCaseKeys;
+use octo_core::last_fm::last_fm_radio_recommendation_service::{IgnoreCaseKeys, default_randomizer};
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
-use octo_core::last_fm::last_fm_radio_spacing;
+use octo_core::last_fm::{last_fm_radio_placement, last_fm_radio_spacing};
 use octo_core::models::domain::Song;
 use octo_core::radio::radio_blend::{self, RadioPick};
 use octo_core::radio::radio_provider::{self, LIBRARY};
@@ -59,7 +59,9 @@ impl SongRadioService {
     }
 
     /// `listener`: who the radio is for, named the way scrobbles name them (RequestIdentity), so
-    /// what they play teaches their own weights; None for nobody.
+    /// what they play teaches their own weights; None for nobody. `client_order`: the caller
+    /// mixes the radio itself (Octo's apps send `octoMix=client`) and wants the order of fit, so
+    /// outside songs are not placed.
     pub async fn build(
         &self,
         seed: &RadioSeed,
@@ -68,6 +70,7 @@ impl SongRadioService {
         auth: &IndexMap<String, String>,
         bans: &IgnoreCaseKeys,
         resolver: &LastFmRadioTrackResolver,
+        client_order: bool,
     ) -> Vec<Song> {
         // Strip collab/feature decoration so the catalogs find the canonical artist.
         let lookup = RadioSeed {
@@ -205,11 +208,27 @@ impl SongRadioService {
         // back.
         if library_led {
             songs
-        } else {
+        } else if client_order {
+            // Octo's own apps mix the radio themselves and ask for the order of fit
+            // (octoMix=client).
             last_fm_radio_spacing::spread(
                 &songs,
                 |song: &Song| Some(song.artist.clone()),
                 Some(&seed.artist),
+            )
+        } else {
+            // For every other app this order is the radio, so outside songs are placed at random
+            // at the Discovery balance (last_fm_radio_placement), spaced by artist as spread
+            // spaces them.
+            let share = f64::from(self.settings.current().last_fm.effective_discovery_percent()) / 100.0;
+            let mut random = default_randomizer()();
+            last_fm_radio_placement::place(
+                &songs,
+                |song: &Song| !song.is_local,
+                |song: &Song| Some(song.artist.clone()),
+                Some(&seed.artist),
+                share,
+                &mut *random,
             )
         }
     }

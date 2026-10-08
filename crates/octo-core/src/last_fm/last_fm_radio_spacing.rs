@@ -34,7 +34,7 @@ where
     spread
 }
 
-fn played(recent: &mut Vec<String>, artist: Option<&str>) {
+pub(crate) fn played(recent: &mut Vec<String>, artist: Option<&str>) {
     let key = artist_key(artist);
     if key.is_empty() {
         return;
@@ -47,7 +47,7 @@ fn played(recent: &mut Vec<String>, artist: Option<&str>) {
 }
 
 /// The main artist, however the credit is written: "Drake feat. Future" is Drake.
-fn artist_key(artist: Option<&str>) -> String {
+pub(crate) fn artist_key(artist: Option<&str>) -> String {
     match artist {
         Some(artist) if !dotnet::is_blank(artist) => SongIdentity::key(&SongIdentity::primary_artist(artist)),
         _ => String::new(),

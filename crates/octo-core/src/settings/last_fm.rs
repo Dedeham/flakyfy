@@ -98,6 +98,9 @@ pub struct LastFmSettings {
     pub radio_loudness_target_lufs: i32,
 
     pub history_retention_days: i32,
+    /// The share of Your Mix kept for music new to the listener, in percent (the dashboard's
+    /// Discovery balance). Song radio for apps other than Octo's places outside songs at this
+    /// share too (last_fm_radio_placement).
     pub discovery_percent: i32,
     pub refresh_interval_hours: i32,
     pub minimum_plays: i32,

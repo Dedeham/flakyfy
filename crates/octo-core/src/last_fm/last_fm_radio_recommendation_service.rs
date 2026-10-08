@@ -285,7 +285,8 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
 /// songs of itself and a title not within [`TITLE_GAP`]. A new song heard in the last
 /// [`HEARD_LATELY`], or one the gaps refused, waits; if the walk falls short they fill the rest,
 /// never the same artist twice in a row. The caps are the marginal-relevance idea applied
-/// greedily, with artist and source repetition as the redundancy.
+/// greedily, with artist and source repetition as the redundancy; and, with a familiar quota,
+/// the two halves placed at random at the discovery share.
 pub fn shape(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
@@ -372,6 +373,7 @@ pub fn shape(
         per_source: HashMap::new(),
         familiar_taken: 0,
         output: Vec::new(),
+        familiar_flags: Vec::new(),
         output_artists: Vec::new(),
         output_titles: Vec::new(),
     };
@@ -390,7 +392,29 @@ pub fn shape(
         }
         walk.admit(candidate, false);
     }
-    walk.output
+    let Walk {
+        output,
+        familiar_flags,
+        ..
+    } = walk;
+    // Your Mix: the familiar tracks and the discoveries take turns at random at the discovery
+    // share (last_fm_radio_placement), instead of the walk's order putting the familiar first.
+    if let Some(quota) = familiar_quota.filter(|_| target > 0) {
+        let share = f64::from(target - quota) / f64::from(target);
+        let flagged: Vec<(LastFmRadioTrack, bool)> = output.into_iter().zip(familiar_flags).collect();
+        return super::last_fm_radio_placement::place(
+            &flagged,
+            |(_, familiar): &(LastFmRadioTrack, bool)| !*familiar,
+            |(track, _): &(LastFmRadioTrack, bool)| Some(track.artist.clone()),
+            None,
+            share,
+            random,
+        )
+        .into_iter()
+        .map(|(track, _)| track)
+        .collect();
+    }
+    output
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,6 +439,8 @@ struct Walk<'a> {
     per_source: HashMap<String, i32>,
     familiar_taken: i32,
     output: Vec<LastFmRadioTrack>,
+    /// Beside each output track: whether it is a familiar one, for Your Mix's placement.
+    familiar_flags: Vec<bool>,
     output_artists: Vec<String>,
     output_titles: Vec<String>,
 }
@@ -488,6 +514,7 @@ impl Walk<'_> {
             }),
             ..Default::default()
         });
+        self.familiar_flags.push(is_familiar);
         self.output_artists.push(artist);
         self.output_titles.push(title);
         *self.per_artist.entry(artist_folded).or_insert(0) += 1;
@@ -857,6 +884,65 @@ mod tests {
         ];
         suppress_station_overlap(&mut stations);
         assert_eq!(stations[1].tracks.len(), 12);
+    }
+
+    /// Decision D10 (radio placement, 2026-10-08): Your Mix places its familiar tracks and its
+    /// discoveries at random at the discovery share, so the familiar ones no longer gather at
+    /// the front, and the order is not the apps' old every-third-song schedule either.
+    #[test]
+    fn your_mix_mixes_familiar_and_discovery_throughout() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..40)
+            .map(|i| candidate(format!("Familiar {i}"), format!("Song {i}"), 2.0, FAMILIAR_SOURCE))
+            .chain((0..40).map(|i| candidate(format!("New {i}"), format!("Tune {i}"), 0.3, "tag:x")))
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        let schedule = "FFD".repeat(17);
+        let mut mixed_early = 0;
+        for seed in 0..100 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                50,
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            let pattern: String = tracks
+                .iter()
+                .map(|track| {
+                    if track.artist.starts_with("Familiar") {
+                        'F'
+                    } else {
+                        'D'
+                    }
+                })
+                .collect();
+            // Placement changes the order only: the quota still holds.
+            assert_eq!(pattern.len(), 50, "seed {seed}: {pattern}");
+            assert_eq!(pattern.matches('D').count(), 18, "seed {seed}: {pattern}");
+            assert_ne!(pattern, schedule[..50], "seed {seed} reads the old schedule");
+            if pattern[..10].matches('D').count() >= 2 {
+                mixed_early += 1;
+            }
+        }
+        assert!(
+            mixed_early >= 90,
+            "only {mixed_early} of 100 mixes had 2 discoveries in their first 10"
+        );
     }
 
     #[test]

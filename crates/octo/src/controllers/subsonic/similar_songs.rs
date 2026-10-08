@@ -146,6 +146,10 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         library_song: library_seed,
         you_tube_id: seed_video,
     };
+    // Octo's own apps mix the radio themselves and ask for the order of fit (octoMix=client);
+    // for every other app this order is the radio, so outside songs are placed at random at the
+    // Discovery balance (last_fm_radio_placement).
+    let client_order = dotnet::eq_ignore_case(call.param_or("octoMix", ""), "client");
     let resolved_songs = state
         .song_radio
         .build(
@@ -155,6 +159,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
             &call.parameters,
             &bans,
             &resolver,
+            client_order,
         )
         .await;
     if resolved_songs.is_empty() {
@@ -170,10 +175,12 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
     }
 
     let local_count = resolved_songs.iter().filter(|song| song.is_local).count();
+    let share = f64::from(settings.last_fm.effective_discovery_percent()) / 100.0;
     info!(
-        "Radio for '{artist_name} - {track_title}' -> {} songs ({local_count} local, {} external)",
+        "Radio for '{artist_name} - {track_title}' -> {} songs ({local_count} local, {} external), share {share}, {}",
         resolved_songs.len(),
-        resolved_songs.len() - local_count
+        resolved_songs.len() - local_count,
+        if client_order { "client order" } else { "placed" }
     );
 
     // Track this radio queue so scrobble events can drive the sliding-window

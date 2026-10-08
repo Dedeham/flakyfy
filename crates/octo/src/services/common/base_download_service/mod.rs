@@ -311,6 +311,10 @@ pub struct BaseDownloadService {
     download_lock: Semaphore,
 
     identifier: OnceLock<Arc<ReleaseIdentifier>>,
+
+    /// The cover lines the downloads log would have shown, for tests (STUB(D)).
+    #[cfg(test)]
+    pub(crate) cover_steps: Mutex<Vec<(String, Option<String>)>>,
 }
 
 impl BaseDownloadService {
@@ -355,6 +359,8 @@ impl BaseDownloadService {
             active_downloads: Mutex::new(HashMap::new()),
             download_lock: Semaphore::new(1),
             identifier: OnceLock::new(),
+            #[cfg(test)]
+            cover_steps: Mutex::new(Vec::new()),
         });
 
         for dir in [service.download_path(), service.cache_path.clone()] {
@@ -821,7 +827,10 @@ impl BaseDownloadService {
         // arrive bare (YouTube: artist/title and a video thumbnail; Soulseek: whatever the peer
         // tagged), so this is what makes every fetched song a properly-tagged library citizen.
         let writing = std::time::Instant::now();
-        let cover = self.write_metadata(&local_path, &mut song).await;
+        let replacing = options.replacement.as_ref().map(|r| r.original_path.clone());
+        let cover = self
+            .write_metadata_replacing(&local_path, &mut song, replacing.as_deref())
+            .await;
         if let Some(replacement) = &options.replacement {
             placement = self
                 .reveal_replacement(&song, &requested, &local_path, replacement)

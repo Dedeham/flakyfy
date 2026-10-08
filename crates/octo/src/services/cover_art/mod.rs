@@ -5,6 +5,7 @@
 pub mod album_cover_finder;
 pub mod cover_art_aggregator;
 pub mod cover_art_archive_lookup;
+pub mod cover_keep;
 pub mod cover_upgrade;
 pub mod deezer_cover_art_lookup;
 pub mod download_cover_resolver;
@@ -21,7 +22,7 @@ pub use cover_upgrade::{
     CoverUpgradeStore, CoverUpgradeWorker,
 };
 pub use deezer_cover_art_lookup::DeezerCoverArtLookup;
-pub use download_cover_resolver::{CoverChoice, DownloadCoverResolver};
+pub use download_cover_resolver::{CoverChoice, CoversOnHand, DownloadCoverResolver};
 pub use i_cover_art_source::ICoverArtSource;
 pub use itunes_cover_art_lookup::ITunesCoverArtLookup;
 pub use last_fm_cover_art_lookup::LastFmCoverArtLookup;

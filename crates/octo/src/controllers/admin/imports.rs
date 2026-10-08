@@ -14,10 +14,10 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
 
-use super::helpers_6b1::{error_json, header_value, object_result, ok, request_cookie};
-use super::helpers_6b2::query;
 use super::json_body::bind_body;
 use super::json_body::{FromBody, Kind, Member, Shape};
+use super::plumbing::{error_json, header_value, object_result, ok, request_cookie};
+use super::request_binding::query;
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult, problem};
 use crate::http::routes::RouteSet;
@@ -53,8 +53,8 @@ pub fn routes() -> RouteSet {
 /// `SignedIn(header)`: `NavidromeUserOf(cookie ?? header)`. Never the recovery code, and the
 /// cookie is not renewed here.
 fn signed_in(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let token = request_cookie(headers, super::helpers_6b1::BROWSE_COOKIE_NAME)
-        .or_else(|| header_value(headers, super::helpers_6b1::BROWSE_TOKEN_HEADER));
+    let token = request_cookie(headers, super::plumbing::BROWSE_COOKIE_NAME)
+        .or_else(|| header_value(headers, super::plumbing::BROWSE_TOKEN_HEADER));
     state.browse_sessions.navidrome_user_of(token.as_deref())
 }
 
@@ -182,7 +182,7 @@ impl FromBody for FinishRequest {
 }
 
 async fn split(request: Request) -> (axum::http::request::Parts, axum::body::Bytes) {
-    super::helpers_6b2::split(request).await
+    super::request_binding::split(request).await
 }
 
 // ---- The endpoints ----------------------------------------------------------------------------

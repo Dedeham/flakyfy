@@ -12,7 +12,7 @@ use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key};
 use octo_core::models::download::DownloadHistoryEntry;
 use serde::Serialize;
 
-use super::helpers_6b2::ok;
+use super::request_binding::ok;
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 
@@ -109,7 +109,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::app::AppState;
-    use crate::controllers::admin::test_support_6b1::{app, send};
+    use crate::controllers::admin::test_app::{app, send};
 
     fn entry(title: &str, cover: Option<String>) -> DownloadHistoryEntry {
         DownloadHistoryEntry {

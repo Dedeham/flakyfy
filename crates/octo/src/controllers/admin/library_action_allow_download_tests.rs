@@ -6,7 +6,7 @@ use axum::http::{Method, StatusCode};
 use chrono::Utc;
 use octo_core::settings::{AppSettings, LibraryAction};
 
-use super::test_support_6b1::{app, send};
+use super::test_app::{app, send};
 use crate::app::AppState;
 use crate::services::library::{LibraryActionEntry, LibraryActionJournal, LibraryActionState, PathSource};
 

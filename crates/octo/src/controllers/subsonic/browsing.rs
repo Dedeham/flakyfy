@@ -16,7 +16,7 @@ use serde_json::Value;
 use tracing::{debug, error};
 
 use super::album_ownership::{outside_album_with_owned_songs, settle_artist_albums};
-use super::helpers_6a2::{SubsonicCall, as_json, file};
+use super::caller_checks::{SubsonicCall, as_json, file};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;

@@ -16,7 +16,7 @@ use octo_core::settings::{AppSettings, RadioSourceSettings, SoulseekSettings, Su
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::test_support_6b1::{Reply, admin_write, app, get, send};
+use super::test_app::{Reply, admin_write, app, get, send};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::{App, app_routes};
 use crate::http::static_files::StaticAssets;

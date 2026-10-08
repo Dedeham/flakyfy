@@ -11,7 +11,7 @@ use axum::http::Method;
 use octo_core::settings::{AppSettings, SettingsFileWriter, SettingsStore, SubsonicSettings};
 use serde_json::Value;
 
-use super::test_support_6a2::{app, get, send};
+use super::test_app::{app, get, send};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::{App, app_routes, build_with};
 use crate::http::static_files::StaticAssets;

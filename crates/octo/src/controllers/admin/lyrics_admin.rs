@@ -20,10 +20,10 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use super::helpers_6b2::{
+use super::json_body::{FromBody, Kind, Member, Shape, text_record};
+use super::request_binding::{
     anonymous, bind_body, error, ok, query, required, sign_in, signed, split, status, utc, utc_opt,
 };
-use super::json_body::{FromBody, Kind, Member, Shape, text_record};
 use crate::app::AppState;
 use crate::http::error::{AppError, validation_problem};
 use crate::http::routes::RouteSet;
@@ -231,7 +231,7 @@ async fn start_library_run(State(state): State<AppState>, request: Request) -> R
     if !signed(&state, &parts) {
         return sign_in();
     }
-    let mode = mode_from(super::helpers_6b2::enum_try_parse(
+    let mode = mode_from(super::request_binding::enum_try_parse(
         &MODES,
         request.mode.as_deref(),
     ));

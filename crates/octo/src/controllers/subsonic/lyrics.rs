@@ -17,7 +17,7 @@ use octo_core::models::domain::Song;
 use octo_subsonic::xml::XElement;
 use tokio_util::sync::CancellationToken;
 
-use super::helpers_6a2::{
+use super::caller_checks::{
     SubsonicCall, check_caller, file, is_successful_subsonic_response, is_true, native_username,
 };
 use super::media::draws_its_own_marks;
@@ -611,5 +611,5 @@ async fn library_song(call: &SubsonicCall, id: &str) -> Option<Song> {
 }
 
 #[cfg(test)]
-#[path = "lyrics_tests_6a2.rs"]
+#[path = "lyrics_timing_tests.rs"]
 mod tests;

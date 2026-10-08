@@ -15,12 +15,12 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use super::helpers_6b1::{
+use super::json_body::{FromBody, Shape, text_record};
+use super::json_body::{bind_body, bind_optional_body};
+use super::plumbing::{
     BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, browse_cookie, browse_cookie_deleted,
     browse_cookie_for, camel_case_value, error_json, header_value, is_https, ok, query_value, request_cookie,
 };
-use super::json_body::{FromBody, Shape, text_record};
-use super::json_body::{bind_body, bind_optional_body};
 use crate::app::AppState;
 use crate::middleware::forwarded::RequestScheme;
 use crate::services::admin::sign_in_throttle::key_of;
@@ -316,7 +316,7 @@ pub async fn browse_sign_out(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    let everywhere = match super::helpers_6b2::query_bool(&uri, "everywhere") {
+    let everywhere = match super::request_binding::query_bool(&uri, "everywhere") {
         Ok(everywhere) => everywhere,
         Err(res) => return *res,
     };

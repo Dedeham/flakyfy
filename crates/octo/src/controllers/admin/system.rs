@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 
-use super::helpers_6b1::{camel_case_value, object_result, ok};
 use super::json_body::bind_body;
 use super::json_body::{FromBody, Shape, text_record};
+use super::plumbing::{camel_case_value, object_result, ok};
 use crate::app::AppState;
 use crate::http::error::json_ok;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
@@ -508,7 +508,7 @@ fn lidarr_test_key<'a>(
     saved_key: Option<&'a str>,
     saved_url: Option<&str>,
 ) -> Result<Option<&'a str>, &'static str> {
-    if typed_key != Some(super::helpers_6b1::SECRET_PLACEHOLDER) {
+    if typed_key != Some(super::plumbing::SECRET_PLACEHOLDER) {
         return Ok(typed_key);
     }
     let address = |url: Option<&str>| url.unwrap_or("").trim().trim_end_matches('/').to_string();
@@ -579,7 +579,7 @@ mod tests {
 #[cfg(test)]
 mod lidarr_test_key_tests {
     use super::lidarr_test_key;
-    use crate::controllers::admin::helpers_6b1::SECRET_PLACEHOLDER;
+    use crate::controllers::admin::plumbing::SECRET_PLACEHOLDER;
 
     /// The saved key follows the saved address only; a typed key goes anywhere it is sent.
     #[test]

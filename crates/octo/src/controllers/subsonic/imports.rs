@@ -15,7 +15,7 @@ use octo_subsonic::subsonic_response_builder::SubsonicReply;
 use serde_json::{Value, json};
 use tracing::info;
 
-use super::helpers_6a2::{SubsonicCall, is_successful_subsonic_response};
+use super::caller_checks::{SubsonicCall, is_successful_subsonic_response};
 use crate::app::AppState;
 use crate::controllers::admin::imports::app_error;
 use crate::http::error::{AppError, AppResult, SUBSONIC_VERSION};

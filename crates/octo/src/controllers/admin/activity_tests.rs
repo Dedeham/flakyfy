@@ -10,7 +10,7 @@ use octo_core::settings::AppSettings;
 
 use super::*;
 use crate::app::AppState;
-use crate::controllers::admin::test_support_6b1::{app, send};
+use crate::controllers::admin::test_app::{app, send};
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, AcquisitionState};
 use crate::services::cover_art::{CoverUpgradeMode, CoverUpgradeRun, CoverUpgradeStatus};
 use crate::services::library::duplicate_scan_worker::DuplicateScanResult;

@@ -9,7 +9,7 @@ use chrono::{TimeDelta, Utc};
 use octo_core::settings::{AppSettings, LibraryAction, LibraryActionSettings};
 
 use crate::app::{AppState, TestServices};
-use crate::controllers::admin::test_support_6b1::{Reply, app, send};
+use crate::controllers::admin::test_app::{Reply, app, send};
 use crate::http::pipeline::App;
 use crate::services::library::library_action_quarantine::QuarantinedSidecar;
 use crate::services::library::{

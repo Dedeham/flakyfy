@@ -10,8 +10,8 @@ use octo_core::settings::{
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer};
 
-use super::playlist_names_6a2::playlist_names;
-use super::test_support_6a2::*;
+use super::playlist_names::playlist_names;
+use super::test_app::*;
 use crate::services::library::library_action_test_support::asked_about;
 
 /// Navidrome answering ok to everything.

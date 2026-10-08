@@ -7,7 +7,7 @@ use octo_core::models::domain::Song;
 use octo_core::soulseek::{RoutingKind, SoulseekRouting};
 use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
-use super::test_support_6a2::*;
+use super::test_app::*;
 
 /// Navidrome as the rating path sees it: a ping that passes or fails, one library song, and
 /// setRating answering ok.

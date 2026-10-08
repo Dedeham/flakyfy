@@ -15,8 +15,8 @@ use octo_core::last_fm::last_fm_scrobble_service::sign;
 use octo_core::settings::{AppSettings, SettingsFileWriter, SettingsStore};
 use parking_lot::Mutex;
 
-use super::helpers_6b1::SECRET_PLACEHOLDER;
-use super::test_support_6b1::{admin_write, app, get, send};
+use super::plumbing::SECRET_PLACEHOLDER;
+use super::test_app::{admin_write, app, get, send};
 use crate::app::AppState;
 use crate::http::pipeline::App;
 use crate::services::last_fm::last_fm_scrobble_service::{

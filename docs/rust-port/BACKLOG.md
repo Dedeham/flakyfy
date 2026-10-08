@@ -721,7 +721,7 @@ What is left in P is J's, R's knock-on and the proposed intentional diffs:
   `explicit-undo-1-done`, `-2-done`, `explicit-state-after-apply-1`) and the cover run
   embeds into it too (`covers-journal-after-apply`, `covers-undo-done`).
 - **base** (1): `covers-start-bad-json`, the admin JSON binder's `$` against the C#'s `$.scope`
-  for a cut-off body (`helpers_6b1.rs`).
+  for a cut-off body (`plumbing.rs`).
 
 No other group moved because of F or P. The counts that differ from the earlier records come
 with `19db112` (G's charts plan): every settings answer carries `GeneratedPlaylists.Charts` and
@@ -1293,8 +1293,8 @@ its reason when it changes an answer.
   inside the code only, never a stored key or a JSON field.
 - [ ] **`.unwrap()` outside tests** (about 92 in non-test files): turn the
   reachable ones into errors that are logged and answered.
-- [ ] **Module names from the port's waves** (`tests_6a1`, `helpers_6b1`,
-  `test_support_6a2` and 13 more): name them for what they hold.
+- [ ] **Module names from the port's waves** (`route_tests`, `plumbing`,
+  `test_app` and 13 more): name them for what they hold.
 - [ ] **Smaller list cover JPEGs.** The Rust encoder writes 4:4:4 (17.6 KB
   against C#'s 11.8 KB on the 600 px placeholder); 4:2:0 should match the
   size with no visible change.

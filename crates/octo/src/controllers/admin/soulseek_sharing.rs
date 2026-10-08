@@ -14,8 +14,8 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
-use super::helpers_6b2::{bind_body, error as error_answer, ok, split, status};
 use super::json_body::{FromBody, Kind, Member, Shape};
+use super::request_binding::{bind_body, error as error_answer, ok, split, status};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 
@@ -94,7 +94,7 @@ mod tests {
     use super::ShareRequest;
     use crate::app::{AppState, TestServices};
     use crate::controllers::admin::json_body::FromBody;
-    use crate::controllers::admin::test_support_6b1::{app, get, send};
+    use crate::controllers::admin::test_app::{app, get, send};
 
     /// slskd at a port nothing listens on, and the port test off, as the C# tests ran
     /// (`TestEnvironment.TurnOffPortChecks`).

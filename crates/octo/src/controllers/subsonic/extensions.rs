@@ -19,7 +19,7 @@ use octo_subsonic::subsonic_response_builder::{
 use serde_json::Value;
 use tracing::info;
 
-use super::helpers_6a2::{SubsonicCall, check_caller, is_successful_subsonic_response, signed_in_user};
+use super::caller_checks::{SubsonicCall, check_caller, is_successful_subsonic_response, signed_in_user};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;

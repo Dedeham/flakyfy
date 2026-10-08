@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};
 
-use super::test_support_6a2::*;
+use super::test_app::*;
 use crate::app::AppState;
 use crate::http::pipeline::App;
 use crate::services::lyrics::{LyricsChoiceService, LyricsChoiceStore, LyricsService};

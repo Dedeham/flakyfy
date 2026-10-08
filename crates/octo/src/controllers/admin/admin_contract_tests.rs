@@ -13,8 +13,8 @@ use serde_json::Value;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::helpers_6b1::SECRET_PLACEHOLDER;
-use super::test_support_6b1::{Reply, admin_write, app, get, send};
+use super::plumbing::SECRET_PLACEHOLDER;
+use super::test_app::{Reply, admin_write, app, get, send};
 use crate::app::AppState;
 use crate::http::pipeline::App;
 

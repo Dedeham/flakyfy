@@ -22,8 +22,8 @@ use octo_core::lyrics::{LyricsLibraryMode, LyricsLibraryRun, LyricsLibraryStatus
 use octo_core::soulseek::soulseek_sharing::SharingReport;
 use serde::Serialize;
 
-use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, header_value, request_cookie};
-use super::helpers_6b2::ok;
+use super::plumbing::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, header_value, request_cookie};
+use super::request_binding::ok;
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, AcquisitionState};

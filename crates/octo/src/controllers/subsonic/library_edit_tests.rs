@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};
 
-use super::test_support_6a2::*;
+use super::test_app::*;
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 use crate::services::cover_art::{AlbumCoverQuery, FoundCover, IAlbumCoverFinder};
@@ -911,7 +911,7 @@ async fn lookup_an_unknown_song_is_unresolved_with_the_lookup_shape() {
 /// signed out it is refused, signed in it lists the song with its own files and puts it back.
 #[tokio::test]
 async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {
-    use crate::controllers::admin::test_support_6b1::{app as admin_app, send};
+    use crate::controllers::admin::test_app::{app as admin_app, send};
     use axum::http::{Method, StatusCode};
 
     let f = Factory::new().await;

@@ -13,7 +13,7 @@ use octo_core::settings::LibraryRatingScope;
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
 use tracing::{debug, info};
 
-use super::helpers_6a2::{
+use super::caller_checks::{
     SubsonicCall, favorite_credential, file, is_successful_subsonic_response, is_true,
     refuse_unless_signed_in, requester_for, signed_in_user,
 };

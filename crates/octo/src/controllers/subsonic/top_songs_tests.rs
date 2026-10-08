@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, Request as MockRequest, ResponseTemplate};
 
-use super::super::test_support_6a2::*;
+use super::super::test_app::*;
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 

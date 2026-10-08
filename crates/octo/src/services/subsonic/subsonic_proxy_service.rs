@@ -686,7 +686,7 @@ pub(crate) fn length_may_be_estimate(
         return true;
     }
     value("maxBitRate")
-        .and_then(crate::controllers::subsonic::helpers_6a1::int_try_parse)
+        .and_then(crate::controllers::subsonic::action_helpers::int_try_parse)
         .is_some_and(|max_bit_rate| max_bit_rate > 0)
 }
 

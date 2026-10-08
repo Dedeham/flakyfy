@@ -10,7 +10,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::super::test_support_6b1::{Reply, app, get, send};
+use super::super::test_app::{Reply, app, get, send};
 use super::*;
 use crate::app::TestServices;
 use crate::http::pipeline::App;

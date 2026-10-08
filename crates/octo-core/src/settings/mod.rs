@@ -131,6 +131,8 @@ impl AppSettings {
         if let Some(url) = settings.subsonic.url.as_mut() {
             *url = normalize_server_url(url);
         }
+        // The same for slskd's web address: read without the spaces it may have been typed with.
+        settings.soulseek.web_url = settings.soulseek.web_url.trim().to_string();
         (settings, warnings)
     }
 }
@@ -176,5 +178,15 @@ mod tests {
             "http://nd:4533/base"
         );
         assert_eq!(normalize_server_url(""), "");
+    }
+
+    /// A port fix: slskd's web address is read without the spaces it was typed with.
+    #[test]
+    fn slskds_web_address_is_read_without_spaces() {
+        let mut tree = ConfigTree::new();
+        tree.set("Soulseek:WebUrl", Some(" http://slskd.lan:5030/ ".into()));
+        let (settings, warnings) = AppSettings::bind(&tree);
+        assert!(warnings.is_empty());
+        assert_eq!(settings.soulseek.web_url, "http://slskd.lan:5030/");
     }
 }

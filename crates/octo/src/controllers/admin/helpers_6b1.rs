@@ -290,7 +290,7 @@ pub fn child_mut<'a>(obj: &'a mut JsonObject, name: &str) -> Option<&'a mut Json
 
 // ---- [FromBody] --------------------------------------------------------------------------
 
-fn is_json_content_type(headers: &HeaderMap) -> bool {
+pub(crate) fn is_json_content_type(headers: &HeaderMap) -> bool {
     let Some(value) = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) else {
         return false;
     };

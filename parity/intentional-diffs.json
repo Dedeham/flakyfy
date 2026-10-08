@@ -85,6 +85,27 @@
       ],
       "reason": "Undoing an ISRC retag takes the code off the file, as the undo's own answer (isrc: null) says. C# 2026.10.05 left it there: LibraryTagEdits.Set wrote the ISRC through SetText, which returns on an empty value. Fixed in the port only (Brandon, 2026-10-07); group F's LibraryTagEdits.write clears it through tag_writer_extras::set_or_clear_text (G3).",
       "knownDiff": "Clearing a tag field"
+    },
+    {
+      "id": "slskd-web-url-trimmed",
+      "backlog": "E",
+      "requests": [
+        "18-dashboard/settings-weburl-ok",
+        "18-dashboard/settings-weburl-ok-read"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$(\\.persisted)?\\.Soulseek\\.WebUrl: +http://slskd\\.parity\\.test:5030 +!= http://slskd\\.parity\\.test:5030$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"(ok\":true,\"persisted|Subsonic)\":",
+        "^\\+\\{\"(ok\":true,\"persisted|Subsonic)\":"
+      ],
+      "reason": "The C# saved slskd's web address (the Open slskd link) with the spaces it was typed with, and the settings answer and the form showed them; the Rust build saves and reads it trimmed.",
+      "knownDiff": "slskd's web address saved with spaces"
     }
   ]
 }

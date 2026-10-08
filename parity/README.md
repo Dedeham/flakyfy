@@ -23,25 +23,128 @@ entry in [`intentional-diffs.json`](intentional-diffs.json) (a deliberate improv
 
 Everything is Python 3.10+ standard library plus Docker Compose. No `pip install`.
 
-## For port agents: one command on the test box
+## For port agents: one command, two lanes
 
-There is no Docker on the PC or in WSL. The harness runs on the test box, LXC 131, through the
-Proxmox host (`ssh pmx`). Commit first (only commits travel, and the binary is built from the
-working tree, so the script refuses a dirty one), then from the checkout of your branch, in
-WSL:
+Commit first (the binary is built from the working tree and the run uses HEAD, so the script
+refuses a dirty tree), then from the checkout of your branch, in WSL:
 
 ```sh
-parity/lxc131.sh                    # compile here, image on the box, run the corpus, diff with C#
-parity/lxc131.sh --no-build         # same image as last time (corpus or stub changes only)
+parity/run.sh                       # compile here, run the corpus against C# and Rust, diff
+parity/run.sh --no-build            # same image as last time (corpus or stub changes only)
+parity/run.sh --only '13-*'         # some corpus files (00-setup always runs; C# is recorded again)
+parity/run.sh --bytes               # also the bytes-mode diff
+parity/run.sh --rust-twice          # also Rust against Rust (the determinism gate)
+parity/run.sh --csharp-only --csharp-twice   # corpus work: C# against C#, no Rust
+parity/run.sh --attach              # follow this branch's run again, fetch its reports
+parity/run.sh --queue               # both lanes: WSL's budget and runs, the box's lock and queue
+parity/run.sh --selftest            # a dry run of the lane's own machinery (no build, no Docker)
+parity/run.sh --clean               # remove this branch's image and folder (on the lane picked)
+parity/run.sh --lane wsl|box ...    # pick the lane yourself
+parity/run.sh --stop-run <branch>   # stop a WSL run and its stacks by hand, as its watchdog would
+```
+
+[`run.sh`](run.sh) picks a lane. **WSL** (the default when WSL has Docker): WSL's own Docker,
+as many stacks at once as WSL's memory budget allows, so the runs of several branches, and the
+shards of one run, go side by side. **The box** (LXC 131, [`lxc131.sh`](lxc131.sh), one run
+at a time): when WSL has no Docker, when you ask for a box build (`--box-build`,
+`--low-memory`), or when WSL's budget is full with stacks already waiting and the box is free.
+`--lane box` takes the box whatever; it is `lxc131.sh` with the same options, and `lxc131.sh`
+itself still works as before. `--attach` without `--lane` follows the WSL run of the branch,
+or the box's when WSL has none.
+
+Either way the run is detached and outlives the script: the script follows its log, fetches
+the reports into `parity/.run/wsl-<branch>/` (or `lxc131-<branch>/`) and exits with the run's
+exit status (0: the run went through, diffs or not; 143: it was stopped). When the script is
+stopped (a background limit, a lost terminal), `--attach` follows the run again. A second
+start of a branch whose run is still going is refused (exit 75), and so is `--clean`.
+
+### The WSL lane
+
+`run.sh` compiles `octo` in your checkout as a static musl binary (as for the box, below,
+through `cargo-slot`), checks HEAD out into the run's own folder
+(`~/.octo-parity/runs/<branch>/src`, sharing your repository's objects, so you can go on
+working or switch branches while it runs), copies itself beside it (`runs/<branch>/run.sh`: the
+lane's machinery is the script you started; the corpus, the stubs and `parity.py` are the
+commit's) and starts the run there under `setsid nohup`. The run builds
+`octo-rust-lane:<branch>` from `Dockerfile.rust`'s runtime stage around the binary, records the
+corpus against the C# image and the Rust image, and diffs, like the box.
+
+- **Side by side.** Every stack has its own compose project,
+  `octo-lane-<branch>-<run id>-<recording>-<shard>`, and so its own volumes; its own block of
+  host ports from 21000 to 22999 (blocks of 10, taken under a lock in `~/.octo-parity/ports/`
+  for the stack's life and checked free first); and its own two networks on the subnets that go
+  with that block, `10.213.<block>.0/25` (sandbox, internal) and `.128/25` (edge). The lane
+  makes those networks itself before the stack and removes them after: Docker's own address
+  pools hold only about 30 networks for everyone in WSL (two per stack), and they ran out on
+  2026-10-08 with 15 stacks up ("all predefined address pools have been fully subnetted").
+  No fixed host port, and nothing named like the box's `octo-parity-*` projects.
+- **The recordings go at once.** C#, Rust, Rust again (`--rust-twice`) and C# again
+  (`--csharp-twice`) are each recorded on stacks of their own at the same time, each stack
+  taking a stack's share of the budget for its life, and waiting for it when there is none.
+- **The C# cache** is `~/.octo-parity/cs-cache/<corpus digest>-<shard plan>[-waits]/`. The
+  box keys by the corpus digest alone; the shard plan is part of the key here because every
+  shard starts on a fresh stack, and `-waits` marks a recording made by a `parity.py` that keeps
+  wait times (which adaptive waits read). One run records a missing one while others that need
+  it wait for it and then use it. `--only` records C# for that run alone.
+- **Shards.** When `parity/shards.json` is there and `parity.py` can record one shard of it
+  (`run --shard NAME`) and join shards (`merge`), every recording is cut into those shards,
+  each on a fresh stack of its own, all at once, and joined with `parity.py merge` into the one
+  recording the diff reads (`out/<recording>/all`). Until then a recording is one shard, the
+  whole corpus; with `--only` it is always one shard. When `parity.py run` has
+  `--waits-from`, the Rust recording of a shard starts once the C# recording of that shard is
+  there, and adapts its waits to it.
+- **The WSL memory watchdog** runs beside each WSL run (detached like the run, log
+  `runs/<branch>/watchdog.log`): every 10 s it reads WSL's `MemAvailable`, and under 1.5 GB it
+  stops its own run: everything in the run's session (TERM, KILL after 10 s) and its stacks
+  (`docker compose down -v`), nothing else. When several runs are going, the newest is stopped
+  first: an older run's watchdog waits 25 s and looks again. The Proxmox host watchdog is for
+  the box lane only.
+- **Stacks a killed run left behind** (its supervisor gone, or an up that failed half way)
+  are taken down by the next WSL run, networks included. `run.sh --stop-run <branch>` stops a
+  WSL run by hand the way the watchdog does.
+
+Files: `~/.octo-parity/runs/<branch>/` holds `run-<id>.log`, `.info` and `.done` (as on the
+box), `current`, `out/` (the recordings; `out/jobs/` has each stack's log and state) and the
+reports.
+
+### WSL's budget (`cargo-slot`)
+
+`~/bin/cargo-slot` is now one memory budget for cargo builds and parity stacks
+([`budget.sh`](budget.sh); `bash parity/budget.sh --install` puts it there). `cargo-slot CMD`
+works as before and takes a cargo build's share; `run.sh` takes a stack's share
+(`cargo-slot --stack`, or `--rust-stack` for a stack of the Rust build) for every stack it
+starts; `cargo-slot --status` shows who holds what and who waits. A build that does not fit
+waits in line until enough is free. A stack is a polite taker: it takes its share only while a
+build's share stays free beside it, and waits out of line, so a waiting stack, which then holds
+its share for up to an hour, never stands in line ahead of a build.
+
+| | Units of 256 MB | GB | Measured on 2026-10-08 |
+| --- | ---: | ---: | --- |
+| The budget | 50 | 12.5 | WSL has 15.6 GB; about 1.1 GB goes to the system, dockerd and the shells, and 2 GB is left as headroom |
+| A cargo build | 14 | 3.5 | A test rebuild after an edit peaks at 2.8 GB (2.3 to 3.4 GB in phase 0), the musl release build at 3.4 GB. A cold test build reaches 4.7 to 5.3 GB, which the headroom covers |
+| A parity stack (C#) | 5 | 1.25 | The C# stack (two Octos, Navidrome, the stubs, the gateway) peaks at 1.2 GB of cgroup memory over the whole corpus, 0.8 GB of it not page cache; `parity.py` itself 30 MB |
+| A stack of the Rust build | 3 | 0.75 | The same stack with the Rust Octos peaks at 0.1 to 0.3 GB (eight Rust shard stacks at once: 91 to 284 MB each, under 0.1 GB of it not page cache) |
+
+Builds alone: three at once, as before. A stack starts only while a build's share stays free
+beside it, so stacks never take the last 3.5 GB and one build always finds room: with no build
+going, stacks can take 9 GB (twelve Rust stacks, or seven C#), with one build 5.5 GB (seven
+Rust stacks), with two 2 GB (two Rust stacks). A second or third build waits while stacks hold
+the rest. WSL's page cache counts as available (it is given back on demand), which is why the
+watchdog reads `MemAvailable` and a stack's share is sized by what it uses besides cache. Each unit is a
+file in `/tmp/octo-budget`, held with `flock` on an open file the command and its children
+inherit, so a share is freed when the last of them exits, however it ends (a killed holder
+frees its share). One taker gathers units at a time (the gate), so two takers never each hold
+half of what they need. A build still holding a slot of the old three-slot `cargo-slot` counts
+as a cargo build until it ends.
+
+### The box lane (LXC 131)
+
+The harness runs on the test box through the Proxmox host (`ssh pmx`): `run.sh --lane box`, or
+`parity/lxc131.sh` with the same options, plus these two:
+
+```sh
 parity/lxc131.sh --box-build        # compile on the box instead (avoid: see below)
-parity/lxc131.sh --only '13-*'      # some corpus files (00-setup always runs; C# is recorded again)
-parity/lxc131.sh --bytes            # also the bytes-mode diff
-parity/lxc131.sh --rust-twice       # also Rust against Rust (the determinism gate)
-parity/lxc131.sh --csharp-only --csharp-twice   # corpus work: C# against C#, no Rust
-parity/lxc131.sh --attach           # follow this branch's run on the box again, fetch its reports
-parity/lxc131.sh --queue            # what holds the box lock and what waits for it
-parity/lxc131.sh --selftest         # a dry run of the harness's own machinery (no build, no Docker)
-parity/lxc131.sh --clean            # remove this branch's image and folder on the box
+parity/lxc131.sh --box-build --low-memory   # that, with one job and no LTO
 ```
 
 **Compile in WSL, never on the Proxmox host.** By default `lxc131.sh` compiles `octo` in your
@@ -53,7 +156,7 @@ the box beside the commits, and [`box-run.sh`](box-run.sh) `--prebuilt` builds t
 and a copy. The image is the release image in every way but how the binary was compiled.
 Static musl because a WSL glibc build needs a newer glibc than bookworm-slim has and does not
 start there. Once per WSL install: `rustup target add x86_64-unknown-linux-musl` and
-`apt install musl-tools`. Keep to the WSL compile limit (at most three cargo builds at once).
+`apt install musl-tools`. The compile goes through `~/bin/cargo-slot`, like every build in WSL.
 
 It bundles the commits the box lacks, checks them out in `/opt/octo-parity/runs/<branch>/src`
 and runs [`box-run.sh`](box-run.sh) there: the image (above; with `--box-build`, the whole
@@ -70,7 +173,7 @@ recordings would save little, and it is not done: the stubs count calls (`times`
 files, and the corpus changes Navidrome's library, so every recording starts from a fresh
 stack. To spend less time on the box, rerun only the corpus files you work on (`--only`; the C#
 side is then recorded again too, about 11 minutes for the whole corpus and less for a part).
-One run at a time: a second one waits for the first.
+One run at a time on the box: a second one waits for the first.
 
 **The run is detached on the box, so it outlives the script.** `lxc131.sh` starts
 `box-run.sh --start`, which runs the box side under `setsid nohup` (its wait for the box lock
@@ -128,7 +231,7 @@ containers and the starter rig are left alone (the watchdog that lived in `lxc13
 when the container stops. It reads the run's files through the container's
 `/proc/<init>/root`, so it costs no `pct exec` per poll. Its log is
 `/root/octo-parity-watchdog-<branch>.log` on the Proxmox host. `--attach` starts it again if
-it is not running. Never run two parity runs side by side, and never raise the limits.
+it is not running. Never run two parity runs side by side on the box, and never raise the limits.
 On 2026-10-07 another container's load swung by 4 GB a minute and left the host about 3.6 GB
 to spare, so the box build (its LTO link takes about 3 GB) tripped the watchdog every time,
 once with the host at 1 GB and its swap full. That is why the compile moved to WSL. If you

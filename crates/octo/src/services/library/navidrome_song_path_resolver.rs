@@ -469,9 +469,16 @@ impl NavidromeSongPathResolver {
             artist: text(element, "artist").unwrap_or_default(),
             album: text(element, "album").unwrap_or_default(),
             suffix: text(element, "suffix").unwrap_or_default(),
-            duration: number("duration")?
-                .and_then(serde_json::Number::as_i64)
-                .and_then(|d| i32::try_from(d).ok()),
+            // Navidrome's native API sends seconds with a fraction (301.37); Subsonic's getSong
+            // whole ones.
+            duration: match element.get("duration") {
+                Some(Value::Number(seconds)) => seconds
+                    .as_f64()
+                    .filter(|seconds| *seconds > 0.0)
+                    // `(int)Math.Round(secs, MidpointRounding.AwayFromZero)`.
+                    .map(|seconds| seconds.round() as i32),
+                _ => None,
+            },
             source,
             missing: element.get("missing") == Some(&Value::Bool(true)),
             album_artist: text(element, "albumArtist"),

@@ -247,9 +247,11 @@ app sees). It is empty: no improvement has landed yet. The list under
 
 ### Found while building the harness
 
-C# 2026.10.05 behavior the corpus records as it is. Each needs a decision:
-fix C# (and the port follows), or fix it in the port only, as an intentional
-diff.
+C# 2026.10.05 behavior the corpus records as it is. **Decided 2026-10-07
+(Brandon): all eleven are fixed in the Rust port only, as intentional diffs**
+(a known-diffs.md row and a `parity/intentional-diffs.json` entry each,
+`reviewed` left for Brandon before shipping). Five are fixed in wave G1
+(marked below); the other six carry a "fix in port" line under their group.
 
 - **"Keep as playlist" on an import answers 500** against Navidrome 0.64.2:
   Octo reads Navidrome's answer to the playlist create as JSON, and it is not
@@ -264,26 +266,35 @@ diff.
 - **The explicit backfill accepts a recovery code session**
   (`ExplicitBackfillController.cs:30`, `UserOf`), so the recovery code can
   write explicit marks into music files; the cover upgrade refuses it.
-  *Port (G1):* not fixed. `BrowseSessionStore::user_of` accepts the recovery
-  session and `navidrome_user_of` does not; when group P ports the
-  controller it calls `user_of` as the C# does, and the fix is that one call
-  becoming `navidrome_user_of` (or `helpers_6b2::signed`, which already
-  refuses it).
+  **Fixed in G1** (`c290439`): the gate refuses a recovery-code session on
+  every route that reads or changes library files
+  (`admin_sign_in_gate::LIBRARY_FILE_ROUTES`: browse, tags/preview,
+  library-actions, notices, lossy, upgrades, library/resolve, genre/backfill,
+  covers, lyrics, imports, downloads/log, find, trash, health, explicit),
+  with the words each endpoint answered; group P's controller needs no check
+  of its own.
 - **`lidarr/test` sends the saved Lidarr key to any address typed in** when the
   placeholder is sent (`AdminController.cs:2372`); the "a secret never follows
   a new address" rule covers saves only.
-  *Port (G1):* not fixed; the placeholder is read as the saved key, as the C#
-  does, in one function, `lidarr_test_key` (`controllers/admin/system.rs`).
-  The fix is to give it the typed address and keep the saved key only when
-  that address is the saved `Lidarr:BaseUrl` (the comparison
-  `secrets::secret_sent_elsewhere` makes).
+  **Fixed in G1** (`c290439`, `lidarr_test_key`): the saved key follows the
+  saved address only; another address answers 400 "Retype the Lidarr API key
+  for the new address.". The other test routes send nothing saved to a typed
+  address: `lastfm/check` (fixed Last.fm host), `listenbrainz/validate`
+  (fixed ListenBrainz host), `test-notification` (the saved ntfy and
+  Discord addresses only), `soulseek/test-port` (no secret), the Spotify
+  connect (a client id, not a secret).
 - **A Navidrome address saved with a trailing slash** passes the same-address
   rule, and the stream relay then calls `//rest/stream`
-  (`SubsonicProxyService.cs:344`).
+  (`SubsonicProxyService.cs:344`). **Fixed in G1** (`c290439`): saved
+  trimmed and without trailing slashes (settings and Raw config), and read
+  that way (`normalize_server_url` when the settings bind).
 - **Section names in a settings save:** the secret checks ignore case, the file
   writer does not, so `"lidarr"` writes a second section the config loader
-  rejects on reload.
-- **`config-sources` shows a secret's length** (up to 16 bullets).
+  rejects on reload. **Fixed in G1** (`c290439`,
+  `writer::canonical_sections`): a known section is written under its own
+  name, and two spellings of one become one.
+- **`config-sources` shows a secret's length** (up to 16 bullets). **Fixed in
+  G1** (`c290439`): eight bullets for every set secret.
 - **Resuming a cancelled cover run counts `kept` and `albumsDone` again**
   ("6 of 3 albums", `CoverUpgrade.cs:696,744`).
 - **The cover scan walks into `/music/.octo-trash`**, and the album id of a
@@ -394,6 +405,7 @@ writer does. What the later groups find waiting for them:
 | L | `RadioSources` settings (`effective_weight`); `services::radio::radio_outcome_store` and `services::sonic::sonic_store`; `LastFmRadioBan`; the status page's octo-sonic probe. |
 | P | `SoulseekRouting.explicit_content` and `version`, the clean id rule and the explicit mark kept across registrations; `services::library::explicit_backfill_store`. |
 | H, N, R, D | Their controllers call `BrowseSessionStore::navidrome_user_of` (never the recovery code) and read who called from the gate's `AdminCaller` extension (`middleware::admin_sign_in_gate::{Caller, caller_of}`), as `LibraryHealthController` and `AdminDownloadsController` did. |
+| Every group with a new route that reads or changes library files | Add it to `middleware::admin_sign_in_gate::LIBRARY_FILE_ROUTES` (with the words the C# endpoint answered), so the gate refuses the recovery code there as on the rest; the walk test lists the routes. |
 
 ## Commits by group
 
@@ -442,6 +454,10 @@ writer does. What the later groups find waiting for them:
 
 ### E. slskd sharing and the Share switch
 
+- **Fix in port:** the Soulseek web address (`Soulseek.WebUrl`) is saved with
+  the spaces it was typed with (BACKLOG "Found while building the harness");
+  save it trimmed, with a Rust test and an intentional diff.
+
 - [x] `9f9502d` fix(admin): the slskd password never goes back to the browser (ported in G1 with group I)
 - [ ] `9624b57` feat(soulseek): slskd shares the music library back, read-only, with polite upload limits
 - [ ] `0abab4f` feat(soulseek): a Sharing card and an Open slskd button on the Soulseek page
@@ -452,6 +468,12 @@ writer does. What the later groups find waiting for them:
 - [ ] `d2114a6` test(soulseek): the stock slskd.yml sample has Linux line ends however it was checked out
 
 ### F. Library edits from the apps, delete, trash, put back
+
+- **Fix in port:** clearing an ISRC does nothing on disk
+  (`TagWriterExtras.cs:98-101` returns on an empty value), so undoing an ISRC
+  retag answers `isrc: null` and leaves the tag in the file; remove the tag
+  (group C's tag writing is the same code), with a Rust test and an
+  intentional diff.
 
 - [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
 - [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
@@ -472,6 +494,13 @@ writer does. What the later groups find waiting for them:
 - [ ] `2397369` docs(lists): US spelling in a Popular right now comment
 
 ### H. Spotify import and the trickle
+
+- **Fix in port:** "Keep as playlist" answers 500 against Navidrome 0.64.2
+  (Octo reads Navidrome's answer to the playlist create as JSON; likely the
+  `application/json; charset=utf-8` content type makes Navidrome take the
+  body as an M3U import), and every 30 s retry leaves another empty playlist
+  named after the time; create the playlist the way Navidrome reads it and
+  never retry into a new empty one, with a Rust test and an intentional diff.
 
 - [ ] `4008358` feat(imports): Spotify lists matched against the library, kept as playlists, and a trickle that fetches the rest
 - [ ] `ef24d3d` feat(admin): a Spotify import page for connecting, lists, playlists and the trickle
@@ -507,6 +536,12 @@ Rust change beyond the settings they name.
 - [x] `4a329aa` fix(proxy): the bare server address sends to the web app, as Navidrome does (#80)
 
 ### L. Multi-source radio (#78, sources, blend, learning, bans, Sounds alike client)
+
+- **Fix in port:** an outside song's registry id ignores its album
+  (`ExternalIdRegistry.cs`, `MakeShortId`): radio registers songs from
+  Last.fm without an album and replaces the search's entry, so later answers
+  lose the album; keep the album a registration already had (as the length,
+  ISRC and explicit mark are kept), with a Rust test and an intentional diff.
 
 - [ ] `446d393` feat(radio): a song Last.fm cannot place is a radio of its own album and genre (#78)
 - [ ] `02218c1` feat(radio): one star keeps a song off radio, filler left out, a cached answer never short-changes a bigger ask
@@ -549,6 +584,15 @@ No Rust server change: both are their own images.
 - [ ] `f49fb80` fix(search): an outside album the library holds is listed as the library's, and one held in part says how much
 
 ### P. Covers keep-or-replace, explicit marks and backfill
+
+- **Fix in port:** resuming a cancelled cover run counts `kept` and
+  `albumsDone` again ("6 of 3 albums", `CoverUpgrade.cs:696,744`); count each
+  album once, with a Rust test and an intentional diff.
+- **Fix in port:** the cover scan walks into `/music/.octo-trash` (and the
+  album id of a trashed song depends on the dated folder); leave the trash
+  folder out of the scan (group F owns the trash), with a Rust test and an
+  intentional diff.
+- The recovery-code explicit marks are already refused by the gate (G1).
 
 - [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
 - [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win

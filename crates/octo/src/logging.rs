@@ -4,8 +4,11 @@
 //!
 //! Levels come from `RUST_LOG` when it is set. Otherwise the .NET variables are honored:
 //! `Logging__LogLevel__Default` and `Logging__LogLevel__<Category>`, with the .NET level names
-//! (Trace, Debug, Information, Warning, Error, Critical, None). With neither, everything logs
-//! at Information, as the shipped `appsettings.json` (no `Logging` section) did.
+//! (Trace, Debug, Information, Warning, Error, Critical, None). With neither, Octo's own lines
+//! log at Information and [`QUIET_BY_DEFAULT`] leaves out the two lines for every request and
+//! the HTTP client's: they were most of the log, and writing them cost CPU. A variable for one
+//! of those categories (docker-compose.yml passes `LOG_LEVEL_ASPNETCORE` and
+//! `LOG_LEVEL_HTTPCLIENT`) brings it back.
 //!
 //! Redaction happens on the formatted line, so it covers the message, every field and every
 //! span field, whatever level an operator turns them up to.
@@ -27,6 +30,14 @@ pub const HOSTING_LIFETIME: &str = "Microsoft.Hosting.Lifetime";
 
 /// What replaces a secret value.
 pub const MASK: &str = "***";
+
+/// The categories that log only warnings unless a `Logging__LogLevel__<Category>` variable says
+/// otherwise: the request lines ("Request starting ...", "Request finished ...") and the HTTP
+/// client's. The C# bridge release set the same two in its `appsettings.json`.
+pub const QUIET_BY_DEFAULT: [(&str, &str); 2] = [
+    ("Microsoft.AspNetCore", "Warning"),
+    ("System.Net.Http.HttpClient", "Warning"),
+];
 
 /// The text with every secret query parameter's value replaced by [`MASK`]; see
 /// [`octo_core::common::log_redaction`].
@@ -128,8 +139,13 @@ pub fn category_targets(category: &str) -> Vec<String> {
         targets.extend(["axum", "tower_http", "hyper"].map(String::from));
         matched_known = true;
     }
-    if is_prefix_of("System.Net.Http") {
+    // System.Net.Http, a prefix of it, or a category under it (System.Net.Http.HttpClient, the
+    // one .NET's per-call lines logged under).
+    if is_prefix_of("System.Net.Http") || lower.starts_with("system.net.http.") {
         targets.extend(["reqwest", "hyper_util"].map(String::from));
+        if lower.starts_with("system.net.http.") {
+            targets.push(category.to_string());
+        }
         matched_known = true;
     }
     if !matched_known {
@@ -160,7 +176,7 @@ fn snake_case(segment: &str) -> String {
 }
 
 /// The filter directives for an environment: `RUST_LOG` verbatim when set and not blank,
-/// else the `Logging__LogLevel__*` variables translated, else `info`.
+/// else the `Logging__LogLevel__*` variables translated over `info` and [`QUIET_BY_DEFAULT`].
 pub fn filter_directives(env: &[(String, String)]) -> String {
     if let Some((_, v)) = env.iter().find(|(k, v)| k == "RUST_LOG" && !v.trim().is_empty()) {
         return v.clone();
@@ -168,6 +184,23 @@ pub fn filter_directives(env: &[(String, String)]) -> String {
     const PREFIX: &str = "logging__loglevel__";
     let mut default = "info";
     let mut directives = Vec::new();
+    let named = |category: &str| {
+        env.iter().any(|(key, _)| {
+            key.to_ascii_lowercase()
+                .strip_prefix(PREFIX)
+                .is_some_and(|c| c.eq_ignore_ascii_case(category))
+        })
+    };
+    for (category, level) in QUIET_BY_DEFAULT {
+        if !named(category) {
+            let level = dotnet_level(level).unwrap_or("warn");
+            directives.extend(
+                category_targets(category)
+                    .into_iter()
+                    .map(|t| format!("{t}={level}")),
+            );
+        }
+    }
     for (key, value) in env {
         let lower = key.to_ascii_lowercase();
         let Some(category) = lower.strip_prefix(PREFIX).map(|_| &key[PREFIX.len()..]) else {

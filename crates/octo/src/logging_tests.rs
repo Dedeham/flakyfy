@@ -160,7 +160,11 @@ fn filter_directives_prefer_rust_log_then_dotnet_variables_then_information() {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
     };
-    assert_eq!(filter_directives(&env(&[])), "info");
+    // Nothing set: Octo's own lines at Information, the request lines and the HTTP client's
+    // only from Warning (QUIET_BY_DEFAULT).
+    let quiet = "Microsoft.AspNetCore=warn,axum=warn,tower_http=warn,hyper=warn,\
+                 reqwest=warn,hyper_util=warn,System.Net.Http.HttpClient=warn";
+    assert_eq!(filter_directives(&env(&[])), format!("info,{quiet}"));
     assert_eq!(
         filter_directives(&env(&[
             ("RUST_LOG", "octo=debug"),
@@ -170,7 +174,7 @@ fn filter_directives_prefer_rust_log_then_dotnet_variables_then_information() {
     );
     assert_eq!(
         filter_directives(&env(&[("LOGGING__LOGLEVEL__DEFAULT", "Warning")])),
-        "warn"
+        format!("warn,{quiet}")
     );
     let d = filter_directives(&env(&[
         ("Logging__LogLevel__Default", "Debug"),
@@ -205,6 +209,54 @@ fn filter_directives_prefer_rust_log_then_dotnet_variables_then_information() {
     assert!(!text.contains("Request starting"), "{text}");
     assert!(text.contains("a warning"), "{text}");
     assert!(text.contains("a debug line"), "{text}");
+}
+
+#[test]
+fn the_request_lines_are_left_out_unless_asked_for() {
+    let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let logged = |directives: &str| {
+        let filter = EnvFilter::builder().parse(directives).expect("directives parse");
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry().with(filter).with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(RedactingMakeWriter::new(capture.clone())),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: HOSTING_DIAGNOSTICS, "Request starting");
+            tracing::info!(target: HOSTING_LIFETIME, "Now listening on");
+            tracing::info!("an own line");
+        });
+        capture.text()
+    };
+
+    // By default: Octo's own lines and the start-up lines, no request lines.
+    let text = logged(&filter_directives(&env(&[])));
+    assert!(!text.contains("Request starting"), "{text}");
+    assert!(text.contains("Now listening on"), "{text}");
+    assert!(text.contains("an own line"), "{text}");
+
+    // LOG_LEVEL_ASPNETCORE=Information through compose brings them back, whatever the case.
+    for key in [
+        "Logging__LogLevel__Microsoft.AspNetCore",
+        "LOGGING__LOGLEVEL__MICROSOFT.ASPNETCORE",
+    ] {
+        let directives = filter_directives(&env(&[(key, "Information")]));
+        assert!(!directives.contains("Microsoft.AspNetCore=warn"), "{directives}");
+        assert!(logged(&directives).contains("Request starting"), "{key}");
+    }
+    // The HTTP client's category alone leaves the request lines out.
+    let directives = filter_directives(&env(&[(
+        "Logging__LogLevel__System.Net.Http.HttpClient",
+        "Information",
+    )]));
+    assert!(directives.contains("reqwest=info"), "{directives}");
+    assert!(!logged(&directives).contains("Request starting"));
 }
 
 #[test]

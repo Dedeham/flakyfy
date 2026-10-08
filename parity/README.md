@@ -390,22 +390,22 @@ Two files wait on timers, which set where they go:
 | `library` | 00 to 11, 19, 20, 90, 99 | 14 |
 | `acquisition` | 95, 96 | `13-downloads/setup-ext-song3`, 20 |
 
-Each shard's recording time on 2026-10-08 in WSL (C# 2026.10.05, and the Rust build of
-`3c4c593` with adaptive waits), not counting the stack's start and removal (about 30 s) or
-waiting for the budget:
+Each shard's recording time on 2026-10-08 in WSL, two recordings of each (C# 2026.10.05, and
+the Rust build of `rust/main` `19db112` with adaptive waits), not counting the stack's start and
+removal (about 30 s) or waiting for the budget:
 
 | Shard | C# | Rust |
 | --- | ---: | ---: |
-| `radio` | 278 s | 490 s |
-| `lists` | 311 s | 411 s |
-| `imports` | 43 s | 195 s |
-| `dashboard` | 141 to 198 s | 221 s |
-| `library` | 252 to 254 s | 500 s |
-| `acquisition` | 259 to 267 s | 598 s |
+| `radio` | 279 s | 274 to 279 s |
+| `lists` | 311 s | 306 to 307 s |
+| `imports` | 42 to 45 s | 42 to 49 s |
+| `dashboard` | 139 to 140 s | 194 to 196 s |
+| `library` | 272 to 275 s | 527 to 528 s |
+| `acquisition` | 262 to 263 s | 526 to 533 s |
 
-One unsharded recording on the same WSL took 703 s against C# and 3,023 s against Rust (748 and
-3,055 s with the stack). `acquisition` sets the length against Rust: `96` needs what `95` files and
-what `20` leaves, so the three cannot be split.
+The same commit unsharded, on one stack each: 692 s against C# and 1,199 s against Rust (with
+adaptive waits). `library` and `acquisition` set the length against Rust: `20` reads `19`, `90`
+reads `20`, and `96` needs what `95` files and what `20` leaves, so they cannot be split further.
 
 ## Adaptive waits
 
@@ -416,8 +416,9 @@ the stack's Octo container (`atMs`); the diff never compares these. `record` (an
 `--waits-from REF` reads them from a reference recording, the C# one, and gives each wait a new
 limit:
 
-- C# met it: `max(20 s, 3 x its C# time)`, and at least until 20 s past the instant C# met it on
-  that clock (a timer counted from Octo's start fires at the same instant in both builds, however
+- C# met it: `max(20 s, 3 x its C# time)`; when C# took a second or more (a job, a download, a
+  Navidrome scan, not an answer that was already there), at least its C# time plus 60 s; and at
+  least until 20 s past the instant C# met it on that clock (a timer counted from Octo's start fires at the same instant in both builds, however
   fast each got there). Never more than the corpus's `timeoutMs`.
 - C# timed out too, or the reference has no time for it: the corpus's `timeoutMs`, as before.
 - `--until-patience` still applies on top: after that many timeouts in one file, at most 20 s.
@@ -430,7 +431,7 @@ reads the reference's recording of the same shard: give it that shard's folder (
 same shard ran the shard's setup files on the same clock; with any other reference the instants
 of files the shard does not own are not used.
 
-**The numbers, 3 and 20 s,** come from the waits of one sharded C# and one sharded Rust
+**The numbers, 3, 20 s and 60 s,** come from the waits of one sharded C# and one sharded Rust
 recording (2026-10-08, the Rust build of `3c4c593`):
 
 - Of the 65 waits both builds met, the slowest in Rust took 4.3 s
@@ -442,6 +443,11 @@ recording (2026-10-08, the Rust build of `3c4c593`):
 - A floor of 10 s was tried first, and it cut a correct wait short: `19-health/plant-wait`
   waits on Navidrome alone (C# met it at once), and on a busy WSL Navidrome took over 11 s. The
   floor is 20 s, the time `--until-patience` already gives a build that has the feature.
+- `max(20 s, 3 x C#)` alone cut one too, once `rust/main` had group D: `95-acquisition`'s heart
+  on Neon Tide took Rust 12 s in one recording and over 40 s in the other, run at the same time
+  (C# 12 s, limit 39 s). A job that ends in a Navidrome scan can wait for the scan before it,
+  and Octo spaces its own scans 30 s apart, so a wait on background work gets a minute on top of
+  C#'s time.
 - Waits that ride a fixed timer (Sounds alike's passes in `15-radio`, 41 to 60 s in C#) get 124
   to 181 s, which is more than the corpus's 90 s for two of them, so they keep their 90 s.
 
@@ -632,9 +638,9 @@ it). `--only GLOB` always keeps `00-setup`, whose captures the rest needs.
 | `21-static` | 31 | The 2026.10.05 dashboard files with the admin security headers |
 | `90-mutations` | 57 | Run last: star/unstar/rating/scrobble/now playing/reportPlayback, a playlist create-update-delete round trip, a settings patch and re-read, the side-effect admin POSTs (caches, notifications, update check, Last.fm connect flow, job cancel/resume/undo, lyrics choices), sign-out (its heart moved to `95-acquisition`) |
 | `95-acquisition` | 43 | Groups D, B, C, P: two hearts and a pick end to end: slskd search, transfer of a fixture file, length, AcoustID and spectrum checks, tagging, filing, Navidrome scan, logs and state files |
-| `96-covers-explicit-writes` | 42 | Group P: cover replace and explicit marks written into the library files, checked with `ffprobe` and Navidrome, and undone |
+| `96-covers-explicit-writes` | 47 | Group P: cover replace and explicit marks written into the library files, checked with `ffprobe` and Navidrome, and undone |
 | `99-signed-out-writes` | 77 | Group J: every admin write signed out (written by `tools/admin_routes.py`); runs last, the restart last of all |
-| **Total** | **1837** | |
+| **Total** | **1842** | |
 
 ## Recordings
 

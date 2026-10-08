@@ -603,9 +603,13 @@ def octo_started(project: str) -> float | None:
 
 # Adaptive waits (record --waits-from REF): a wait whose condition the reference recording (the
 # C# one) met gets max(WAIT_FLOOR_MS, WAIT_FACTOR x the time it took there) instead of the
-# corpus's timeoutMs, never more than that. README "Adaptive waits" has the numbers' reasons.
+# corpus's timeoutMs, never more than that, and a wait that took the reference WAIT_JOB_MS or
+# more (background work, not an answer already there) at least WAIT_JOB_EXTRA_MS more than it
+# took. README "Adaptive waits" has the numbers' reasons.
 WAIT_FACTOR = 3
 WAIT_FLOOR_MS = 20000
+WAIT_JOB_MS = 1000
+WAIT_JOB_EXTRA_MS = 60000
 
 
 def load_wait_refs(path: str | None, shard: dict | None) -> dict[str, dict]:
@@ -642,12 +646,16 @@ def load_wait_refs(path: str | None, shard: dict | None) -> dict[str, dict]:
 def adaptive_limit(ref: dict | None, corpus_ms: int, clock_ms: int) -> int:
     """The wait limit for one request under --waits-from. A wait the reference timed out on, or has
     no time for, keeps the corpus's limit. A met one gets the larger of the floor and WAIT_FACTOR
-    times the reference's time, and also enough to reach the instant the reference met it (a timer
-    counted from Octo's start, such as Sounds alike's first look, fires at the same instant in both
-    builds however fast each got there), plus the floor. Never more than the corpus's limit."""
+    times the reference's time; one that took the reference a second or more (a job, a download,
+    a Navidrome scan) at least a minute more than that time, since a scan can wait for the one
+    before it; and also enough to reach the instant the reference met it (a timer counted from
+    Octo's start, such as Sounds alike's first look, fires at the same instant in both builds
+    however fast each got there), plus the floor. Never more than the corpus's limit."""
     if ref is None or ref["timedOut"]:
         return corpus_ms
     limit = max(WAIT_FLOOR_MS, WAIT_FACTOR * ref["waitMs"])
+    if ref["waitMs"] >= WAIT_JOB_MS:
+        limit = max(limit, ref["waitMs"] + WAIT_JOB_EXTRA_MS)
     if ref.get("atMs") is not None:
         limit = max(limit, ref["atMs"] - clock_ms + WAIT_FLOOR_MS)
     return min(corpus_ms, limit)
@@ -1810,7 +1818,8 @@ def main() -> None:
         p.add_argument("--shards", default=None, help="the shard plan (default parity/shards.json)")
         p.add_argument("--waits-from", default=None,
                        help="a recording of the reference build (C#): each wait it met gets "
-                            f"max({WAIT_FLOOR_MS // 1000} s, {WAIT_FACTOR} x its time there) at most")
+                            f"max({WAIT_FLOOR_MS // 1000} s, {WAIT_FACTOR} x its time there), and its time "
+                            f"+ {WAIT_JOB_EXTRA_MS // 1000} s when that was a second or more, at most")
         p.add_argument("--timeout", type=float, default=60.0)
         p.add_argument("--image-label", default=None, help="label stored in meta.json (default: --image)")
         p.add_argument("-v", "--verbose", action="store_true")

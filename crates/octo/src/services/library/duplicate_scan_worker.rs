@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -119,6 +119,10 @@ pub struct DuplicateScanWorker {
     spectrum: Option<Arc<SpectrumAnalyzer>>,
     /// `SemaphoreSlim(0, 1)`: one stored request, a second absorbed.
     requested: Notify,
+    /// Whether that stored request is there (`CurrentCount > 0`), which `Notify` cannot say.
+    request_waiting: AtomicBool,
+    /// When the scan walking the library now began; None between scans.
+    scan_started_utc: Mutex<Option<DateTime<Utc>>>,
     last_scan_utc: Mutex<DateTime<Utc>>,
     last_result: Mutex<Option<DuplicateScanResult>>,
 
@@ -157,6 +161,8 @@ impl DuplicateScanWorker {
             resolver,
             spectrum,
             requested: Notify::new(),
+            request_waiting: AtomicBool::new(false),
+            scan_started_utc: Mutex::new(None),
             last_scan_utc: Mutex::new(datetime::min_value()),
             last_result: Mutex::new(None),
             spectra: Mutex::new(HashMap::new()),
@@ -167,8 +173,24 @@ impl DuplicateScanWorker {
         self.last_result.lock().clone()
     }
 
+    /// A scan walking the library right now.
+    pub fn is_scanning(&self) -> bool {
+        self.scan_started_utc.lock().is_some()
+    }
+
+    /// When the scan walking the library now began.
+    pub fn scan_started_utc(&self) -> Option<DateTime<Utc>> {
+        *self.scan_started_utc.lock()
+    }
+
+    /// "Scan now" pressed and not yet picked up.
+    pub fn is_requested(&self) -> bool {
+        self.request_waiting.load(Ordering::SeqCst)
+    }
+
     /// The dashboard's "Scan now". A scan already waiting to run absorbs a second request.
     pub fn request_scan(&self) {
+        self.request_waiting.store(true, Ordering::SeqCst);
         self.requested.notify_one();
     }
 
@@ -180,6 +202,9 @@ impl DuplicateScanWorker {
                 answer = tokio::time::timeout(wait, self.requested.notified()) => answer.is_ok(),
                 _ = stopping.cancelled() => break,
             };
+            if requested {
+                self.request_waiting.store(false, Ordering::SeqCst);
+            }
             wait = Self::CHECK_INTERVAL;
 
             // Read afresh every tick, so switching Duplicates on needs no restart and the first
@@ -196,14 +221,19 @@ impl DuplicateScanWorker {
 
             // Per-scan catch is mandatory: BackgroundServiceExceptionBehavior defaults to
             // StopHost, so one unhandled exception here would take Octo down.
+            *self.scan_started_utc.lock() = Some(Utc::now());
             let scan = tokio::select! {
                 scan = self.scan(&settings) => scan,
-                _ = stopping.cancelled() => break,
+                _ = stopping.cancelled() => {
+                    *self.scan_started_utc.lock() = None;
+                    break;
+                }
             };
             if let Err(e) = scan {
                 error!("Duplicate scan failed: {e}");
             }
             *self.last_scan_utc.lock() = Utc::now();
+            *self.scan_started_utc.lock() = None;
         }
         Ok(())
     }

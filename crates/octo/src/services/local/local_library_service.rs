@@ -487,10 +487,16 @@ impl ILocalLibraryService for LocalLibraryService {
 
     async fn get_scan_status(&self) -> Option<ScanStatus> {
         let result: anyhow::Result<Option<ScanStatus>> = async {
-            // Note: This endpoint works without authentication on most Subsonic/Navidrome servers
-            // when called from localhost.
+            // Navidrome answers getScanStatus only with a sign-in, so it gets the same admin
+            // identity startScan uses.
             let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
-            let url = format!("{base}/rest/getScanStatus?f=json");
+            let url = match self.nav_identity.get_scan_auth() {
+                Some((user, token, salt)) => format!(
+                    "{base}/rest/getScanStatus?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
+                    escape_data_string(&user)
+                ),
+                None => format!("{base}/rest/getScanStatus?f=json"),
+            };
             let response = self.http.get(&url).send().await?;
             if !response.status().is_success() {
                 return Ok(None);
@@ -501,14 +507,15 @@ impl ILocalLibraryService for LocalLibraryService {
         }
         .await;
         result.unwrap_or_else(|e| {
-            error!(error = %e, "Error getting Subsonic scan status");
+            debug!(error = %e, "Error getting Subsonic scan status");
             None
         })
     }
 }
 
 /// `subsonic-response.scanStatus`, read as `JsonElement` did: a property of the wrong kind
-/// (`scanning` not a bool, `count` not an Int32, a node that is not an object) throws.
+/// (`scanning` not a bool, `count` not a number, a node that is not an object) throws; a
+/// `count` that is a number but not an Int32 is none.
 fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
     fn property<'a>(element: &'a Value, name: &str) -> anyhow::Result<Option<&'a Value>> {
         match element {
@@ -527,13 +534,11 @@ fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
         Some(_) => anyhow::bail!("scanning is not a boolean"),
         None => false,
     };
+    // TryGetInt32: a number that is not an Int32 reads as none; a count that is not a number
+    // at all still throws.
     let count = match property(scan_status, "count")? {
-        Some(value) => Some(
-            value
-                .as_i64()
-                .and_then(|n| i32::try_from(n).ok())
-                .ok_or_else(|| anyhow::anyhow!("count is not an Int32"))?,
-        ),
+        Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+        Some(_) => anyhow::bail!("count is not a number"),
         None => None,
     };
     Ok(Some(ScanStatus { scanning, count }))

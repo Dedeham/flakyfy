@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use octo_core::last_fm::last_fm_radio_placement::{self, Spacing};
-use octo_core::last_fm::last_fm_radio_recommendation_service::{IgnoreCaseKeys, default_randomizer};
+use octo_core::last_fm::last_fm_radio_recommendation_service::{
+    IgnoreCaseKeys, Randomizer, default_randomizer,
+};
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use octo_core::last_fm::last_fm_radio_spacing;
 use octo_core::models::domain::Song;
@@ -15,6 +17,7 @@ use octo_core::radio::radio_blend::{self, RadioPick};
 use octo_core::radio::radio_provider::{self, LIBRARY};
 use octo_core::radio::{RadioAnswer, RadioMatch, RadioSeed};
 use octo_core::settings::{ExplicitFilter, SettingsStore};
+use parking_lot::Mutex;
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
@@ -34,6 +37,9 @@ pub struct SongRadioService {
     settings: Arc<SettingsStore>,
     sonic: Option<Arc<SonicStore>>,
     outcomes: Option<Arc<RadioOutcomeStore>>,
+    /// Source of the placement's draw. Tests replace it with a seeded one so a radio repeats
+    /// exactly.
+    randomizer: Mutex<Randomizer>,
 }
 
 impl SongRadioService {
@@ -48,7 +54,13 @@ impl SongRadioService {
             settings,
             sonic,
             outcomes,
+            randomizer: Mutex::new(default_randomizer()),
         }
+    }
+
+    /// The draw placement uses from now on, as the station service's `set_randomizer`.
+    pub fn set_randomizer(&self, randomizer: Randomizer) {
+        *self.randomizer.lock() = randomizer;
     }
 
     pub fn sources(&self) -> &Arc<RadioSourceSet> {
@@ -208,10 +220,12 @@ impl SongRadioService {
         // uploader for a whole playlist), and spacing by artist would push every one of them
         // back.
         if library_led {
+            info!("Radio for '{} - {}': led by the library", seed.artist, seed.title);
             songs
         } else if client_order {
             // Octo's own apps mix the radio themselves and ask for the order of fit
             // (octoMix=client).
+            info!("Radio for '{} - {}': client order", seed.artist, seed.title);
             last_fm_radio_spacing::spread(
                 &songs,
                 |song: &Song| Some(song.artist.clone()),
@@ -219,10 +233,21 @@ impl SongRadioService {
             )
         } else {
             // For every other app this order is the radio, so outside songs are placed at random
-            // at the Discovery balance (last_fm_radio_placement), artists spaced as spread spaces
-            // them, and no title gap.
-            let share = f64::from(self.settings.current().last_fm.effective_discovery_percent()) / 100.0;
-            let mut random = default_randomizer()();
+            // at the radio's own mix: the share of its songs from outside the library, not the
+            // Discovery balance, which is Your Mix's (last_fm_radio_placement). Artists are
+            // spaced as spread spaces them, with no title gap.
+            let outside = songs.iter().filter(|song| !song.is_local).count();
+            let share = if songs.is_empty() {
+                0.0
+            } else {
+                outside as f64 / songs.len() as f64
+            };
+            info!(
+                "Radio for '{} - {}': placed at share {share:.2}",
+                seed.artist, seed.title
+            );
+            let randomizer = self.randomizer.lock().clone();
+            let mut random = randomizer();
             last_fm_radio_placement::place(
                 &songs,
                 |song: &Song| !song.is_local,

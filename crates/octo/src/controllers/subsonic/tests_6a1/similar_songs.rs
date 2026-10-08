@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
+use octo_core::last_fm::last_fm_radio_recommendation_service::seeded_randomizer;
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, LastFmSettings, RadioSourceSettings, SubsonicSettings};
 use parking_lot::Mutex;
@@ -51,6 +52,7 @@ fn library_song(id: &str) -> Option<Value> {
             "al-brand-new",
             "Hip-Hop",
         ),
+        "wide" => song("wide", "Wide", "Wide Artist", "Wides", "al-wides", "Trip-Hop"),
         "blend" => song(
             "blend",
             "Blend",
@@ -170,6 +172,10 @@ fn last_fm(query: &HashMap<String, String>) -> Value {
             // Thirty songs, every third one in the library (see `blend_library_song`).
             ("Blend Artist", "Blend") => json!({"similartracks": {"track": (1..=30).map(|i| {
                 json!({"name": format!("Tune {i}"), "artist": {"name": format!("Band {i}")}, "match": 0.95 - f64::from(i) / 100.0})
+            }).collect::<Vec<_>>()}}),
+            // More songs than any radio asks for, none in the library.
+            ("Wide Artist", "Wide") => json!({"similartracks": {"track": (1..=WIDE_SONGS).map(|i| {
+                json!({"name": format!("Far {i}"), "artist": {"name": format!("Crowd {i}")}, "match": 0.99 - i as f64 / 200.0})
             }).collect::<Vec<_>>()}}),
             ("Alan Walker", "Faded") => json!({"similartracks": {"track": [
                 {"name": "Wake Me Up", "artist": {"name": "Avicii"}, "match": 0.9}
@@ -822,10 +828,13 @@ fn kinds(ids: &[String]) -> String {
 
 // Radio placement (port/radio-placement, 2026-10-08), no C# test: Octo's own apps
 // (octoMix=client) get the order of fit; every other app gets the same songs with the outside
-// ones placed at random at the Discovery balance, each kind still in its own order.
+// ones placed at random at the radio's own mix (here 20 of 30), each kind still in its own
+// order. The Discovery balance, set to 90 here, plays no part. The draw is seeded, so the placed
+// order repeats exactly.
 #[tokio::test]
 async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit() {
-    let f = fixture(|_| {}).await;
+    let f = fixture(|settings| settings.last_fm.discovery_percent = 90).await;
+    f.state.song_radio.set_randomizer(seeded_randomizer(7));
     async fn blend(f: &Fixture, extra: &str) -> Vec<String> {
         let body = get_string(
             &f.app,
@@ -855,20 +864,45 @@ async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit
             .cloned()
             .collect()
     };
-    let mut patterns = Vec::new();
-    for _ in 0..5 {
-        let placed = blend(&f, "").await;
-        let mut sorted = placed.clone();
-        sorted.sort();
-        assert_eq!(sorted, sorted_fit, "the same songs: {placed:?}");
-        assert_eq!(of_kind(&placed, true), of_kind(&fit, true), "{placed:?}");
-        assert_eq!(of_kind(&placed, false), of_kind(&fit, false), "{placed:?}");
-        patterns.push(kinds(&placed));
-    }
+    let placed = blend(&f, "").await;
+    let mut sorted = placed.clone();
+    sorted.sort();
+    assert_eq!(sorted, sorted_fit, "the same songs: {placed:?}");
+    assert_eq!(of_kind(&placed, true), of_kind(&fit, true), "{placed:?}");
+    assert_eq!(of_kind(&placed, false), of_kind(&fit, false), "{placed:?}");
+    // Placed, not the order of fit: the kinds land elsewhere.
+    let pattern = kinds(&placed);
+    assert_ne!(pattern, kinds(&fit), "placed as the order of fit");
+    // At the radio's own mix the library is the rarer kind (10 of 30): never three library songs
+    // in a row, not even at the end, and the first ten hold some of both kinds.
+    assert!(!pattern.contains("LLL"), "{pattern}");
     assert!(
-        patterns.iter().any(|pattern| *pattern != kinds(&fit)),
-        "placed as the order of fit every time: {patterns:?}"
+        pattern[..10].contains('L') && pattern[..10].contains('O'),
+        "{pattern}"
     );
+    // The same seed, the same radio.
+    assert_eq!(blend(&f, "").await, placed);
+}
+
+/// A seed with 120 songs like it on Last.fm, none of them in the library.
+const WIDE_SONGS: usize = 120;
+
+// "Ask for more songs" (the radio tuning Check Mode, Brandon 2026-10-08), no C# test: Octo's
+// own apps (octoMix=client) may ask for up to 100 songs, whatever RadioTrackCount is (50 here,
+// the default). Every other app is still cut to RadioTrackCount.
+#[tokio::test]
+async fn octos_apps_may_ask_for_100_songs_and_other_apps_get_the_configured_count() {
+    let f = fixture(|_| {}).await;
+    async fn wide(f: &Fixture, extra: &str) -> usize {
+        let body = get_string(
+            &f.app,
+            &format!("/rest/getSimilarSongs2?id=wide&u=alice&t=token&s=salt&f=json&count=100{extra}"),
+        )
+        .await;
+        songs(&body).len()
+    }
+    assert_eq!(wide(&f, "&octoMix=client").await, 100);
+    assert_eq!(wide(&f, "").await, 50);
 }
 
 // SimilarSongsSeedTests.NothingFromOctosSources_LetsNavidromeAnswer

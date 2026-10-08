@@ -287,8 +287,8 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
 /// [`HEARD_LATELY`], or one the gaps refused, waits; if the walk falls short they fill the rest,
 /// never the same artist twice in a row. The caps are the marginal-relevance idea applied
 /// greedily, with artist and source repetition as the redundancy; and, with a familiar quota,
-/// the two halves placed at random at the discovery share, keeping the walk's artist and title
-/// gaps.
+/// the two halves placed at random at the discovery share, paced to what the walk took, keeping
+/// the walk's artist and title gaps.
 pub fn shape(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
@@ -401,9 +401,13 @@ pub fn shape(
         output_titles,
         ..
     } = walk;
-    // Your Mix: the familiar tracks and the discoveries take turns at random at the discovery
-    // share (last_fm_radio_placement), instead of the walk's order putting the familiar first.
-    // The placement keeps the walk's own artist and title gaps, on the walk's own keys.
+    // Your Mix (and Starter Radio): the familiar tracks and the discoveries take turns at random
+    // at the discovery share (last_fm_radio_placement), instead of the walk's order putting the
+    // familiar first. The share is paced to what the walk took, so a short walk ends on no block
+    // of discoveries. The placement keeps the walk's artist and title gaps. It is handed the
+    // walk's keys, and folds the artist key again with the spacing's `artist_key`, which groups
+    // artists as the walk does or more coarsely: a gap the placement keeps, the walk's keys
+    // keep too.
     if let Some(quota) = familiar_quota.filter(|_| target > 0) {
         let share = f64::from(target - quota) / f64::from(target);
         let flagged: Vec<Placed> = output
@@ -1029,6 +1033,57 @@ mod tests {
             mixed_early >= 90,
             "only {mixed_early} of 100 mixes had 2 discoveries in their first 10"
         );
+    }
+
+    /// The Check Mode finding M1 (2026-10-08): a walk that falls short of its quota, 5 familiar
+    /// tracks and 18 discoveries where Your Mix wants 32 and 18 of 50, was placed at the quota's
+    /// 36% and ended on 16 discoveries in a row. Paced to what the walk took, it ends on 6 at
+    /// most over 200 seeds, and no more than 2 familiar tracks come in a row.
+    #[test]
+    fn a_short_your_mix_walk_ends_on_no_long_run_of_discoveries() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..5)
+            .map(|i| candidate(format!("Familiar {i}"), format!("Song {i}"), 2.0, FAMILIAR_SOURCE))
+            .chain((0..18).map(|i| candidate(format!("New {i}"), format!("Tune {i}"), 0.3, "tag:x")))
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..200 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                50,
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            let pattern: String = tracks
+                .iter()
+                .map(|track| {
+                    if track.artist.starts_with("Familiar") {
+                        'F'
+                    } else {
+                        'D'
+                    }
+                })
+                .collect();
+            assert_eq!(pattern.len(), 23, "seed {seed}: {pattern}");
+            let tail = pattern.len() - pattern.trim_end_matches('D').len();
+            assert!(tail <= 6, "seed {seed} ends on {tail} discoveries: {pattern}");
+            assert!(!pattern.contains("FFF"), "seed {seed}: {pattern}");
+        }
     }
 
     #[test]

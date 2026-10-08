@@ -790,3 +790,38 @@ fn a_scan_request_is_stored_once() {
     assert!(worker.requested.notified().now_or_never().is_none());
     assert!(worker.last_result().is_none());
 }
+
+/// The activity view's reading of the worker (ca47988): "Scan now" waits until the worker picks
+/// it up, and no scan is walking while the switch is off.
+#[tokio::test]
+async fn a_scan_request_is_seen_until_the_worker_takes_it() {
+    let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
+    let http = reqwest::Client::new();
+    let worker = Arc::new(DuplicateScanWorker::new(
+        Arc::new(NoticeQueue::new()),
+        NavidromeIdentityService::new(settings.clone(), http.clone()),
+        http,
+        settings,
+        None,
+        None,
+    ));
+    assert!(!worker.is_requested());
+    worker.request_scan();
+    assert!(worker.is_requested());
+    assert!(!worker.is_scanning());
+    assert_eq!(worker.scan_started_utc(), None);
+
+    let stopping = tokio_util::sync::CancellationToken::new();
+    let running = tokio::spawn(worker.clone().run(stopping.clone()));
+    for _ in 0..200 {
+        if !worker.is_requested() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(!worker.is_requested(), "the worker took the request");
+    // Duplicates are off by default, so the request is taken and nothing walks.
+    assert!(!worker.is_scanning());
+    stopping.cancel();
+    running.await.expect("the worker ends").expect("cleanly");
+}

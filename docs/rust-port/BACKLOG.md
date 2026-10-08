@@ -744,6 +744,58 @@ No settings were added, and no route was added to `LIBRARY_FILE_ROUTES`: the new
 (`/api/admin/library-actions/allow-download`, `/api/admin/explicit/backfill/*`) sit under
 prefixes G1 already listed.
 
+### G4 record: group N (2026-10-08)
+
+Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
+WSL lane with `parity/run.sh`: first `--only '1[18]-*'` from `f6b9ee1` (C# recorded again for
+the subset, 195 compared), then the whole corpus with `--rust-twice` from `7d1f3f2` against
+the cached C# recording (1,837 requests, 1h04m).
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 752 unexplained (768 after E), 1,060 explained, 25 identical |
+| Rust against Rust | 1,837 identical, 0 unexplained (bytes: the same) |
+
+| Group | Own before (phase 1) | Own after E | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| N | 48 | 14 | 0 | 0 |
+
+All 14 are gone: `ambient-seeded` (and `-again-cached`, `-recovery`, `-alt-admin-unseeded`)
+light the page with the C# recording's colors exactly (the parity cover's palette is also a
+Rust test), and the ten `activity-*` requests, `11-signin/in-get-activity` and `in-get-ambient`
+match, `activity-rescan-starting` and `-done` included (E's two, now that the Sharing card is
+in). Base went from 29 to 27: the genre run's `pending` (`09-admin`), which phase 1 put on N.
+E is 2, the proposed `slskd-web-url-trimmed`. No group got worse: B 11, C 9, D 110, F 128, G
+47, H 201, I 3, J 3, L 45, O 17, P 68, Q 5, R 96; A, K and S 0. N has no proposed intentional
+diff.
+
+After `rust/main` `d83eb7c` (H and L) was merged in and the activity view read the Spotify read
+and the trickle (`16b07f0`), `parity/run.sh --only '1[128]-*'` (401 requests) had N at 0
+again. Its one new J diff, `11-signin/alt-admin-index`, is `aa504ee`'s edit of
+`octo/wwwroot/admin/index.html` (the dashboard served differs from the C# image's by one byte),
+not N's; `21-static` will show it too.
+
+Then `rust/main` `b4b33cd` (B and D) and `19db112` (G) were merged in, the activity view
+read Find songs (D), and the final run was `parity/run.sh --rust-twice` on the whole corpus from
+`d839fb7` (corpus `eb2c30598fe12590`, so C# was recorded again; 0h49m on the WSL lane):
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 469 unexplained, 1,337 explained, 31 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+No activity or ambient request differs. N's 10 are all `21-static` (`static-index`, `-css`,
+`-js` and their HEAD and `If-None-Match` forms): the dashboard files `rust/main` changed after
+2026.10.05 (`aa504ee`'s spelling and station previews, G's Charts card), covered by G's proposed
+`dashboard-files-2026-10-08` (`reviewed` unset, so still counted); with it reviewed N is 0.
+The rest is other groups' (E 18, I 23 and part of J are G's two new `GeneratedPlaylists`
+settings, `Charts` and `ChartCountry`, in every settings answer). Rust against Rust's one diff
+is `19-health/plant-wait` (R), the Navidrome scan timing the earlier records saw.
+
+After `rust/main` `61b1cfb` (F and P) was merged in, every crate file's test count matched
+`rust/main`'s apart from N's own additions (`git grep -c`), the gate passed (3,289 tests) and
+`parity/run.sh --only '1[128]-*'` (401 requests) had N at 0.
+
 ### G4 record: group R (2026-10-08)
 
 Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` `19db112` (B, D, G,
@@ -805,7 +857,7 @@ line was under R.
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three, the G3 H record for H), proposed
+and Q record for those three, the G3 H record for H, the G4 record for E and N), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -815,7 +867,7 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 2 | done (G2, `port/g2-bd`) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 24 | done (G3, `port/g3-fp`); what is left waits for R |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | done on `port/g-charts`, with the charts plan (parity pending) |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
@@ -824,7 +876,7 @@ Rust change.
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 18 | done (G3) |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; R's job waits on R) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 15 | done (G3, `port/g3-fp`); what is left is R's knock-on and proposed intentional diffs |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
@@ -1084,14 +1136,27 @@ No Rust server change: both are their own images.
 
 ### N. Afterglow dashboard, activity view, toasts
 
-- [ ] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
-- [ ] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
-- [ ] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
-- [ ] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
-- [ ] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
-- [ ] `d52ae54` feat(admin): Fetched songs in the Afterglow look
-- [ ] `ca47988` feat(admin): one activity view of everything Octo is working on
-- [ ] `af48eb1` feat(admin): live progress toasts for Octo's background work
+- [x] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
+- [x] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
+- [x] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
+- [x] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
+- [x] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
+- [x] `d52ae54` feat(admin): Fetched songs in the Afterglow look
+- [x] `ca47988` feat(admin): one activity view of everything Octo is working on
+- [x] `af48eb1` feat(admin): live progress toasts for Octo's background work
+
+Done in G4 (`port/g4-n`): `31e3715`, `2e4fdcf`, `d52ae54` and the dashboard half of
+`5a00fb1`, `ca47988` and `af48eb1` are `octo/wwwroot`, which the Rust build serves as is. The
+server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
+`services::admin::{cover_palette, ambient_palette_service}` and `cover_colours::from_lch`) and
+`GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
+the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
+reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
+on both). The activity view reads Library health (group R, not on `rust/main` yet) through a
+view of its own, `HealthActivity` (from `HealthRun`), with a `STUB` where it is read: a
+conversion and one call in `get_activity`; the word mapping and its tests are in already. The
+slskd rescan (E), the Spotify read and trickle (H, `ImportsActivity` from `ImportOverview`) and
+Find songs (D, `FindLook` from `FindSnapshot`) are read.
 
 ### O. Search album ownership
 

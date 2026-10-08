@@ -121,6 +121,12 @@ impl GenreBackfillWorker {
         self.store.read(|run| run.status == GenreBackfillStatus::Running)
     }
 
+    /// A run accepted and still reading the library before it turns Running. Without it the
+    /// dashboard reads the last run's answer right after Start and thinks nothing began.
+    pub fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::SeqCst)
+    }
+
     /// The run the dashboard polls. Exposed here so the controller has one thing to talk to
     /// rather than needing the store as well.
     pub fn current(&self) -> GenreBackfillRun {

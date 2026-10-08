@@ -258,6 +258,9 @@ pub struct AppInner {
     /// in `<config>/covers` replace the generated cover of the playlist they are named after.
     /// `Program.cs` warmed it in the background at startup: the "CoverArtService" worker.
     pub cover_art_service: Arc<CoverArtService>,
+    /// `AmbientPaletteService` (singleton, "ambient-palette" client, 6 s): the colors of the
+    /// fetched songs' covers, the dashboard's light.
+    pub ambient_palettes: Arc<crate::services::admin::AmbientPaletteService>,
     /// `DownloadHistoryService`: the fetched-songs log, `downloads-history.json` beside settings.json.
     pub download_history: Arc<DownloadHistoryService>,
     /// `DownloadConcurrency`: how many downloads transfer at once.
@@ -2197,6 +2200,7 @@ impl AppState {
             cover_art_aggregator: clients.cover_art_aggregator,
             cover_art_archive: clients.cover_art_archive,
             cover_art_service,
+            ambient_palettes: Arc::new(crate::services::admin::AmbientPaletteService::new()),
             last_fm: integrations.last_fm,
             last_fm_scrobbles: integrations.last_fm_scrobbles,
             listen_brainz: integrations.listen_brainz,
@@ -2506,6 +2510,7 @@ impl AppState {
             cover_art_aggregator: clients.cover_art_aggregator,
             cover_art_archive: clients.cover_art_archive,
             cover_art_service,
+            ambient_palettes: Arc::new(crate::services::admin::AmbientPaletteService::new()),
             last_fm: integrations.last_fm,
             last_fm_scrobbles: integrations.last_fm_scrobbles,
             listen_brainz: integrations.listen_brainz,

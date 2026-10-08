@@ -13,6 +13,8 @@
 //! from its few open endpoints. The endpoints that read files also need a Navidrome admin's own
 //! sign-in, never the recovery code ([`helpers_6b1::BrowseUser`]).
 
+pub mod activity;
+pub mod ambient;
 pub mod browse;
 pub mod charts;
 pub mod cover_upgrade;
@@ -112,7 +114,10 @@ pub fn routes_6b1() -> RouteSet {
 
 /// Every AdminController route.
 pub fn routes() -> RouteSet {
-    routes_6b1().merge(routes_6b2()).merge(imports::routes())
+    routes_6b1()
+        .merge(routes_6b2())
+        .merge(imports::routes())
+        .merge(routes_n())
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
@@ -132,6 +137,12 @@ pub fn routes_6b2() -> RouteSet {
         .merge(downloads::routes())
         .merge(soulseek_sharing::routes())
         .merge(radio_admin::routes())
+}
+
+/// The routes of group N: the activity view behind the progress toasts, and the Afterglow
+/// light (`ActivityController`, `AmbientController`).
+pub fn routes_n() -> RouteSet {
+    RouteSet::new().merge(activity::routes()).merge(ambient::routes())
 }
 
 #[cfg(test)]

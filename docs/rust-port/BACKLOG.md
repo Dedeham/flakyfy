@@ -544,52 +544,59 @@ the shards work in progress; its C# against Rust count (795) is not yet the whol
 The longest shard (15-radio to 18-dashboard) took 707 s against C# and about 1,000 s against
 Rust, so that shard sets the time of a sharded run.
 
-### G2 record: groups B and D (2026-10-07)
+### G2 record: groups B and D (2026-10-08)
 
-Run on LXC 131 from `port/g2-bd` with `parity/lxc131.sh --rust-twice --bytes` (the binary
-compiled in WSL), against the cached C# recording of corpus `28fc0d5b71a3fce9`. RUN_LINE
+Branch `port/g2-bd`, merged with `rust/main` up to `cd89293` (G1, C, O, Q and E in). Final run
+on the WSL lane, `parity/run.sh --lane wsl --rust-twice --bytes`, from `fb30026`, against the
+cached C# recording of corpus `28fc0d5b71a3fce9`; its recordings diffed again with `375b829`'s
+allowlist (one entry added after the run, below). The box run before it (`eb59c77`, without E)
+gave the same B and D counts and also had Rust against Rust at 0.
 
 | Comparison | Structural | Bytes |
 | --- | --- | --- |
-| C# against Rust | CS_RS | the same |
+| C# against Rust | 664 unexplained, 1,146 explained, 27 identical | the same |
 | Rust against Rust | 1,837 identical, 0 unexplained | the same |
 
-Own counts against the G1 J and I record:
+| Group | Own before (G1 J and I) | Own after B and D | Own now (with C, O, Q, E) | Diffs now |
+| --- | ---: | ---: | ---: | ---: |
+| B | 11 | 5 | 2 | 2 |
+| D | 110 | 21 | 12 | 10 |
 
-| Group | Own before | Own after | Diffs after |
-| --- | ---: | ---: | ---: |
-| B | 11 | B_OWN | B_DIFFS |
-| D | 110 | D_OWN | D_DIFFS |
+"Own after B and D" is the run from `cd6ad65` (B and D on G1, before C was in). No other group
+got worse in any of the runs; the other groups' counts move only with their own merges.
 
-What is left in B and D is other groups' work, none of it B's or D's own:
+What is left in B and D is other groups' work:
 
-- **C** (`2463c23`, `02cc06b`): the log's "Marked explicit" or "Marked not explicit" and
-  "Took off the peer's own album tags" lines, so every log is two lines short (the live and
-  saved logs, `logLines` in both acquisitions lists, `downloads-history.json`); the history
-  entry's `advisory` and `discCount` fields and its note; the tags themselves (`LABEL`, `disc`
-  as `1/2`, the M4A's `rating` advisory), and with them the size of a relayed download
-  (`heart-neon-relay-download`, `pick-lima-relay-download`, `pick-lima-tags`).
-- **P** (`5cea252`, `86ad6b8`): the cover line. C#'s `DownloadCoverResolver` names the chosen
-  cover with its size and the covers it passed over ("Cover from the catalog, 300 x 300 px",
-  "It came with no cover of its own. Also looked at: ..."); the port writes C#'s own fallback
-  line, as the C# does when the resolver gives no headline.
-- **G, H, Q**: `13-downloads/extensions-json` and `extensions-xml` list 9 extensions against 12;
-  `octoAcquisitions` itself now matches at versions 1 and 2.
-- `pick-lima-album-now` (Navidrome's albums after the pick) follows from C's tags, which
-  decide the album the song is filed under and its label, and P's explicit marks.
+- **P** (`5cea252`, `86ad6b8`): the cover line in the log. C#'s `DownloadCoverResolver` names
+  the chosen cover with its size and the covers it passed over ("Cover from the catalog, 300 x
+  300 px", "It came with no cover of its own. Also looked at: ..."); the port writes C#'s own
+  fallback line, as the C# does when the resolver gives no headline. That one line is B's 2
+  (`heart-neon-log`, `pick-lima-row`) and D's live and saved logs, history file and rows (10).
+- **G and H**: `13-downloads/extensions-json` and `extensions-xml` list 10 extensions against
+  12 (`octoTopSongs` and `octoImports` missing); `octoAcquisitions` matches at versions 1 and 2.
 
-Two changes on the way: `13-downloads/find-library-song-refused` showed Find songs without the
-library song's length, which is F's `ed0bd7c` (Navidrome's native API sends 301.37 seconds); it
-is ported here with its test, since Find songs' length check needs it. And Find songs' small
-cover of a library song (`95-acquisition/heart-neon-find-cover`) joins the allowlist's
-`cover-jpeg-bytes` entry: the same 160 px picture, encoded by the `image` crate instead of
-ImageSharp.
+Found and settled on the way:
 
-The order of "No lyrics found" against "In the library folder" in the log is a race in both
-builds (the lyrics look runs in the background); C# recorded it both ways in one run, and it
-shows only because the two C lines shift every index after them.
+- `13-downloads/find-library-song-refused` showed Find songs without a library song's length:
+  F's `ed0bd7c` (Navidrome's native API sends 301.37 seconds), ported here with its test, since
+  Find songs' length check needs it.
+- Find songs' small cover of a library song (`95-acquisition/heart-neon-find-cover`) joins the
+  allowlist's `cover-jpeg-bytes` entry: the same 160 px picture, from the `image` crate's
+  encoder instead of ImageSharp's.
+- A relayed download's `Content-Range` total (`heart-neon-relay-download`,
+  `pick-lima-relay-download`, tagged B for `0a700c0`'s file name, which matches) differs by a
+  few hundred to a few thousand bytes: lofty lays out a tagged FLAC or M4A otherwise than
+  TagLib#, while the tags and streams match (`heart-neon-tags`, `pick-lima-tags`). A new
+  known-diffs row, "Audio tags: a tagged file's length", and the allowlist entry
+  `tagged-file-length` (that header on those two requests only).
+- `02cc06b` (the log's "Marked explicit" and "Took off the peer's own album tags") was ported
+  once C was on `rust/main`.
 
-No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and `5d3f096`'s Recently removed and activity card for F and N.
+The order of "No lyrics found" against "In the library folder" is a race in both builds (the
+lyrics look runs in the background); the saved logs are compared unordered.
+
+No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
+`5d3f096`'s Recently removed and activity card for F and N.
 
 ## Gap groups
 
@@ -603,9 +610,9 @@ Rust change.
 | Group | Commits | C# lines | Test methods | Agent-days | Diffs now | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | A Last.fm search cleanup polish | 1 | 40 | 5 | 0.25 | 0 | done |
-| B Download matching | 8 | 644 | 46 | 0.75 | 11 | open (`0a700c0` done) |
+| B Download matching | 8 | 644 | 46 | 0.75 | 2 | done (G2, `port/g2-bd`) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
-| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 110 | open |
+| D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
 | E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
 | F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | open, owned by `port/g-charts` |

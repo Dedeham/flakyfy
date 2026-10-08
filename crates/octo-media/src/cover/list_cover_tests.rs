@@ -815,6 +815,46 @@ fn spec_names_the_list_and_says_what_it_is() {
     }
 }
 
+#[test]
+fn the_cover_says_chart() {
+    let spec = CoverArtService::spec("Popular right now", Some(list_kinds::CHART), Some(50), None);
+    assert_eq!(
+        ("Popular right now", Some("Chart"), Some("50 songs")),
+        (spec.name.as_str(), spec.line.as_deref(), spec.footer.as_deref())
+    );
+    // A chart that already says it is one keeps its name and no second line.
+    let top = CoverArtService::spec("Top 50 Chart", Some(list_kinds::CHART), Some(50), None);
+    assert_eq!(
+        ("Top 50", Some("Chart")),
+        (top.name.as_str(), top.line.as_deref())
+    );
+    let charts = CoverArtService::spec("My Charts", Some(list_kinds::CHART), None, None);
+    assert_eq!(None, charts.line.as_deref());
+}
+
+#[test]
+fn top_hip_hop_rap_keeps_its_whole_name() {
+    let spec = CoverArtService::spec("Top Hip-Hop/Rap", Some(list_kinds::CHART), Some(50), None);
+    assert_eq!(
+        ("Top Hip-Hop/Rap", Some("Chart")),
+        (spec.name.as_str(), spec.line.as_deref())
+    );
+}
+
+#[test]
+fn best_new_songs_says_new_and_trending_songs_says_trending() {
+    let new = CoverArtService::spec("Best New Songs", Some(list_kinds::NEW_SONGS), Some(100), None);
+    assert_eq!(
+        ("Best New Songs", Some("New"), Some("100 songs")),
+        (new.name.as_str(), new.line.as_deref(), new.footer.as_deref())
+    );
+    let trending = CoverArtService::spec("Trending Songs", Some(list_kinds::TRENDING), Some(29), None);
+    assert_eq!(
+        ("Trending Songs", Some("Trending")),
+        (trending.name.as_str(), trending.line.as_deref())
+    );
+}
+
 /// A name that already ends in what it is gets no second line saying it again.
 #[test]
 fn spec_name_that_says_what_it_is_has_no_second_line() {

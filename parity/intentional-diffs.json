@@ -213,6 +213,80 @@
       ],
       "reason": "Keep as playlist works. The C# sent the playlist create as application/json; charset=utf-8, which Navidrome 0.64.2 reads as an M3U import: an empty playlist named after the time, an M3U answer the C# could not read, a 500 for the person, and another empty playlist every 30 s pass while the switch stayed on. The port sends application/json exactly, so the playlist is named after the list, holds its songs, belongs to the list's owner, and the list remembers it; a failed sync deletes what it made and backs off.",
       "knownDiff": "Spotify import: Keep as playlist"
+    },
+    {
+      "id": "charts-top-chart-says-which-chart",
+      "backlog": "G",
+      "requests": [
+        "16-lists/top-chart-json",
+        "16-lists/top-chart-listener-json",
+        "16-lists/top-chart-count3-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.topSongs\\.chart: only in B \\(34\\)$",
+        "^\\$\\.subsonic-response\\.topSongs\\.name: only in B \\(Popular right now\\)$",
+        "^\\$\\.subsonic-response\\.topSongs\\.country: only in B \\((null|[a-z]{2})\\)$"
+      ],
+      "reason": "getTopChart takes chart (the overall chart, Best New Songs, Trending Songs or an Apple genre; the charts plan, Brandon 2026-10-07), so a chart's answer says which chart it is, its name and the country it was read for (null while Apple's country is not known). Added fields only: old apps send no chart and read the old ones. The explicitStatus lines on the same answers are group P's.",
+      "knownDiff": "`getTopChart`"
+    },
+    {
+      "id": "charts-octo-top-songs-version-2",
+      "backlog": "G",
+      "requests": [
+        "16-lists/extensions-json",
+        "16-lists/extensions-xml",
+        "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-final-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$"
+      ],
+      "reason": "octoTopSongs version 2 tells an app that getTopChart takes chart and getCharts lists the country's charts (the charts plan, Brandon 2026-10-07); version 1 is still listed, so an app that knows only that one keeps working. The other lines on these answers are other groups': octoAcquisitions [1, 2] and the octoImports entry the port has not reached yet.",
+      "knownDiff": "`octoTopSongs`"
+    },
+    {
+      "id": "dashboard-files-2026-10-08",
+      "backlog": "G",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match"
+      ],
+      "aspects": [
+        "body",
+        "header:etag"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"h26dNsyVlzJjYyCpRqpiIUmsgnpxJOmN2LHJHHVZsaw=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 876e9d36cc959732636320a946aa622149ac827a7124e98dd8b1c91c7559b1ac\\ \\(194100\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"z22B4a4ywBh\\+9GwKouPeUkxwM8pVBoxppR8ypUsjRMU=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ cf6d81e1ae32c0187ef46c0aa2e3de524c7033ca55068c69a51f32a54b2344c5\\ \\(375408\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"pKMT13WilxLRcMhFjVwv977Bz5byNk73fmmLZ9iG58Q=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ a4a313d775a29712d170c8458d5c2ff7bec1cf96f2364ef77e698b67d886e7c4\\ \\(115954\\ bytes,\\ text\\)$"
+      ],
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated.",
+      "knownDiff": "Dashboard Charts card"
     }
   ]
 }

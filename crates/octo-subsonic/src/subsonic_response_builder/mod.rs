@@ -13,6 +13,7 @@
 mod library_actions;
 mod lyrics;
 mod reply;
+mod top_songs;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -42,6 +43,10 @@ pub use library_actions::{
 };
 pub use lyrics::{CueLineOut, CueWord, LYRICS_EXTENSION, LYRICS_EXTENSION_VERSION};
 pub use reply::{ReplyKind, SubsonicReply};
+pub use top_songs::{
+    ChartChoiceRow, POPULAR_COMMENT, RankedRow, TopSongRow, TopSongsHeader, chart_playlist_comment,
+    json_as_xml, library_song_xml,
+};
 
 /// A `Dictionary<string, object>` of response fields, in insertion order.
 pub type Fields = Map<String, Value>;
@@ -55,6 +60,11 @@ pub const SUBSONIC_VERSION: &str = "1.16.1";
 pub const ACQUISITIONS_EXTENSION: &str = "octoAcquisitions";
 pub const ACQUISITIONS_EXTENSION_VERSION: i32 = 2;
 
+/// getArtistTopSongs and getTopChart. Version 2: getTopChart takes `chart` (Best New Songs,
+/// Trending Songs, a genre) and getCharts lists the charts.
+pub const TOP_SONGS_EXTENSION: &str = "octoTopSongs";
+pub const TOP_SONGS_EXTENSION_VERSION: i32 = 2;
+
 /// The extensions Octo answers itself, with their versions. songLyrics is here because Octo
 /// answers getLyricsBySongId for every song, and for the ones it answers itself it honors
 /// enhanced=true (version 2) with word cues; a Navidrome that lists fewer versions has them
@@ -67,7 +77,8 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
         &[1, 2, LIBRARY_ACTIONS_EXTENSION_VERSION],
     ),
     ("songLyrics", &[1, 2]),
-    // octoTopSongs (group G) comes before octoImports, as the C# lists it, when that group lands.
+    // After songLyrics, where the C# lists it.
+    (TOP_SONGS_EXTENSION, &[1, TOP_SONGS_EXTENSION_VERSION]),
     (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
@@ -510,7 +521,8 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.)
+    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs and
+    /// octoRadioSources are left out; [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
         format: &str,
@@ -526,11 +538,14 @@ impl SubsonicResponseBuilder {
             lyrics_choices,
             library_actions,
             false,
+            false,
         )
     }
 
-    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoRadioSources
-    /// listed while radio can answer (`radio_sources`; the C# default was false).
+    /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
+    /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
+    /// discovery being off hides, and octoRadioSources while radio can answer
+    /// (`radio_sources`). The C# defaults were true and false.
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -538,6 +553,7 @@ impl SubsonicResponseBuilder {
         content_type: Option<&str>,
         lyrics_choices: bool,
         library_actions: bool,
+        top_songs: bool,
         radio_sources: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
@@ -550,6 +566,7 @@ impl SubsonicResponseBuilder {
             .copied()
             .filter(|(name, _)| lyrics_choices || *name != LYRICS_EXTENSION)
             .filter(|(name, _)| library_actions || *name != LIBRARY_ACTIONS_EXTENSION)
+            .filter(|(name, _)| top_songs || *name != TOP_SONGS_EXTENSION)
             .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .collect();
 

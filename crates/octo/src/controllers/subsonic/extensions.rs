@@ -112,6 +112,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             relay.as_ref().and_then(|r| r.content_type.as_deref()),
             settings.metadata.fetch_lyrics,
             settings.library_actions.enabled,
+            settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
         )
         .into_response()

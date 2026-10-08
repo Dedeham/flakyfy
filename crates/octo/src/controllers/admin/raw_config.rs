@@ -259,6 +259,8 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Metadata:ReplayGainTimeoutSeconds",
     "Metadata:TagRehearsal",
     "GeneratedPlaylists:PopularNow",
+    "GeneratedPlaylists:Charts",
+    "GeneratedPlaylists:ChartCountry",
     "GeneratedPlaylists:Enabled",
     "GeneratedPlaylists:Genres",
     "GeneratedPlaylists:Decades",

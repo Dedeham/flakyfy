@@ -16,6 +16,7 @@
 pub mod browse;
 pub mod cover_upgrade;
 pub mod genre;
+pub mod health;
 pub mod helpers_6b1;
 pub mod helpers_6b2;
 pub mod lastfm;
@@ -115,6 +116,7 @@ pub fn routes_6b2() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
         .merge(trash::routes())
+        .merge(health::routes())
         .merge(upgrades::routes())
         .merge(genre::routes())
         .merge(cover_upgrade::routes())

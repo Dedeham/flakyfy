@@ -45,6 +45,7 @@ pub struct LibraryAlbumIndex {
     albums_by_base: HashMap<String, Vec<Arc<LibraryAlbum>>>,
     artists: HashSet<String>,
     song_count: usize,
+    rows: Vec<Arc<LibrarySongRow>>,
 }
 
 /// Lenient: a length within the ownership tolerance.
@@ -59,10 +60,11 @@ impl LibraryAlbumIndex {
         // In the order each album was first seen, as the C# dictionary enumerated.
         let mut by_album: IndexMap<String, Vec<Arc<LibrarySongRow>>> = IndexMap::new();
         for row in rows {
+            let row = Arc::new(row);
+            index.rows.push(Arc::clone(&row));
             if is_null_or_white_space(Some(&row.title)) {
                 continue;
             }
-            let row = Arc::new(row);
             add(
                 &mut index.by_key,
                 SongIdentity::match_key(&row.artist, &row.title),
@@ -114,6 +116,11 @@ impl LibraryAlbumIndex {
     /// How many songs the library has.
     pub fn song_count(&self) -> usize {
         self.song_count
+    }
+
+    /// Every row as it was read, for the checks that look at the whole library (Library health).
+    pub fn rows(&self) -> &[Arc<LibrarySongRow>] {
+        &self.rows
     }
 
     pub fn album(&self, id: &str) -> Option<&Arc<LibraryAlbum>> {

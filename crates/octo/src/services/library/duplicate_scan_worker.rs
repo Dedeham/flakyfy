@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use octo_core::common::SongIdentity;
 use octo_core::common::dotnet::{self, eq_ignore_case};
-use octo_core::fingerprint::TrackMatchComparer;
 use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::settings::{LibraryActionSettings, SettingsStore};
@@ -26,6 +24,8 @@ use super::NavidromeSongPathResolver;
 use super::notice_queue::NoticeQueue;
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::framework::http::{HttpAnswer, parse_json};
+use crate::services::health::IHealthFields;
+use crate::services::health::library_health;
 use crate::services::subsonic::NavidromeIdentityService;
 
 /// One library row, as much of it as telling copies apart needs.
@@ -43,6 +43,9 @@ pub struct LibraryTrack {
     /// For a lossless file whose spectrum says it was made from a lossy one, what it was likely
     /// made from ("about 128 kbps MP3"). Only ever set on a copy inside a duplicate group.
     pub transcoded_from: Option<String>,
+
+    /// The ISRCs its tags carry, which name the recording as a MusicBrainz id does.
+    pub isrcs: Vec<String>,
 }
 
 impl LibraryTrack {
@@ -68,7 +71,89 @@ impl LibraryTrack {
             bit_rate,
             duration,
             transcoded_from: None,
+            isrcs: Vec::new(),
         }
+    }
+}
+
+/// What the shared duplicate finder reads of a track: who, what, how long, and its codes.
+pub struct LibraryTrackFields;
+
+impl IHealthFields<LibraryTrack> for LibraryTrackFields {
+    fn id<'a>(&'a self, song: &'a LibraryTrack) -> &'a str {
+        &song.id
+    }
+
+    fn title<'a>(&'a self, song: &'a LibraryTrack) -> &'a str {
+        &song.title
+    }
+
+    fn artist<'a>(&'a self, song: &'a LibraryTrack) -> Option<&'a str> {
+        (!song.artist.is_empty()).then_some(song.artist.as_str())
+    }
+
+    fn album<'a>(&'a self, song: &'a LibraryTrack) -> Option<&'a str> {
+        Some(&song.album)
+    }
+
+    fn album_id<'a>(&'a self, _song: &'a LibraryTrack) -> Option<&'a str> {
+        None
+    }
+
+    fn album_artist<'a>(&'a self, _song: &'a LibraryTrack) -> Option<&'a str> {
+        None
+    }
+
+    fn genres<'a>(&'a self, _song: &'a LibraryTrack) -> Vec<&'a str> {
+        Vec::new()
+    }
+
+    fn year(&self, _song: &LibraryTrack) -> Option<i32> {
+        None
+    }
+
+    fn disc(&self, _song: &LibraryTrack) -> Option<i32> {
+        None
+    }
+
+    fn track(&self, _song: &LibraryTrack) -> Option<i32> {
+        None
+    }
+
+    fn seconds(&self, song: &LibraryTrack) -> i32 {
+        song.duration
+    }
+
+    fn format(&self, song: &LibraryTrack) -> Option<String> {
+        Some(song.suffix.clone())
+    }
+
+    fn lossless(&self, song: &LibraryTrack) -> bool {
+        is_lossless(song)
+    }
+
+    fn bit_rate(&self, song: &LibraryTrack) -> Option<i32> {
+        Some(song.bit_rate)
+    }
+
+    fn bit_depth(&self, _song: &LibraryTrack) -> Option<i32> {
+        None
+    }
+
+    fn sample_rate(&self, _song: &LibraryTrack) -> Option<i32> {
+        None
+    }
+
+    fn isrcs<'a>(&'a self, song: &'a LibraryTrack) -> Vec<&'a str> {
+        song.isrcs.iter().map(String::as_str).collect()
+    }
+
+    fn recording_id<'a>(&'a self, song: &'a LibraryTrack) -> Option<&'a str> {
+        Some(&song.recording_id)
+    }
+
+    fn cover<'a>(&'a self, _song: &'a LibraryTrack) -> Option<&'a str> {
+        None
     }
 }
 
@@ -104,11 +189,13 @@ pub fn is_lossless(track: &LibraryTrack) -> bool {
 /// Walks the library for recordings it holds more than once (#53) and hands them to the
 /// Duplicates playlists. It only points them out: nothing here touches a file.
 ///
-/// A duplicate is two files with the same MusicBrainz recording id AND the same version: a live
-/// take, a remix, a radio edit or a second part shares a recording id surprisingly often, and
-/// someone who keeps the album cut and the radio edit keeps both on purpose. Files without a
-/// recording id are never grouped, because a guess about which files are the same song is a
-/// guess someone would act on.
+/// A duplicate is what Library health calls one, in the Octo app and on the dashboard alike
+/// ([`library_health::find_duplicates`]): files whose tags name one recording (an ISRC or a
+/// MusicBrainz recording id, lengths within 10 seconds), or files by the same artist whose titles
+/// read the same, version and all (a live take, a remix or a radio edit is never a copy), with
+/// lengths within 3 seconds. Until 2026-10-05 only files sharing a recording id were grouped
+/// here, which found almost nothing in a library where few files carry one, and disagreed with
+/// what Library health showed for the same library.
 pub struct DuplicateScanWorker {
     queue: Arc<NoticeQueue>,
     identity: NavidromeIdentityService,
@@ -244,7 +331,7 @@ impl DuplicateScanWorker {
             complete,
         });
         info!(
-            "Duplicate scan: {} tracks with a recording id, {} groups, {added} new question(s){}",
+            "Duplicate scan: {} tracks, {} groups, {added} new question(s){}",
             tracks.len(),
             groups.len(),
             if complete {
@@ -256,7 +343,7 @@ impl DuplicateScanWorker {
         Ok(())
     }
 
-    /// Every track with a recording id, by paging search3 with the empty query, the same walk
+    /// Every track, by paging search3 with the empty query, the same walk
     /// Symfonium makes to copy a library. Complete only when a short page ends it. `Err` where
     /// the C# threw: the request failed, or the answer was not JSON of the expected shape.
     pub async fn walk(&self) -> anyhow::Result<(Vec<LibraryTrack>, bool)> {
@@ -306,8 +393,8 @@ impl DuplicateScanWorker {
         Ok((tracks, false))
     }
 
-    /// Adds the page's tracks that carry a recording id, and returns how many rows the page held,
-    /// or None when it is not a successful answer at all (a refusal must not read as the end).
+    /// Adds the page's tracks, and returns how many rows the page held, or None when it is not a
+    /// successful answer at all (a refusal must not read as the end).
     /// `Err` where the C# threw: a member read on something that is not an object, or a status
     /// that is not a string.
     pub fn parse_page(root: &Value, into: &mut Vec<LibraryTrack>) -> Result<Option<usize>, String> {
@@ -335,80 +422,44 @@ impl DuplicateScanWorker {
         let mut rows = 0;
         for song in songs {
             rows += 1;
-            let id = text(song, "id")?;
-            let recording = text(song, "musicBrainzId")?;
-            let (Some(id), Some(recording)) =
-                (id.filter(|s| !s.is_empty()), recording.filter(|s| !s.is_empty()))
-            else {
+            let Some(id) = text(song, "id")?.filter(|s| !s.is_empty()) else {
                 continue;
             };
+            // An outside song a server lists beside the library's is not a file to keep or remove.
+            if property(song, "isExternal")? == Some(&Value::Bool(true)) {
+                continue;
+            }
             into.push(LibraryTrack {
                 id,
                 title: text(song, "title")?.unwrap_or_default(),
                 artist: text(song, "artist")?.unwrap_or_default(),
                 album: text(song, "album")?.unwrap_or_default(),
-                recording_id: recording,
+                recording_id: text(song, "musicBrainzId")?.unwrap_or_default(),
                 suffix: text(song, "suffix")?.unwrap_or_default(),
                 bit_rate: int(song, "bitRate")?,
                 duration: int(song, "duration")?,
                 transcoded_from: None,
+                isrcs: isrcs_of(song)?,
             });
         }
         Ok(Some(rows))
     }
 
-    /// Copies of one recording in one version. Grouped by recording id first, then clustered by
-    /// title and artist, because a recording id alone groups a remix or a live take with the
-    /// original more often than it should.
+    /// Copies of one recording, by Library health's own rule, so the Duplicates playlist asks
+    /// about exactly the sets Library health shows. Each set is ranked here for keeping, which can
+    /// also weigh a fake lossless copy ([`Self::check_transcodes`]).
     pub fn find_groups(tracks: &[LibraryTrack]) -> Vec<DuplicateGroup> {
-        // GroupBy(RecordingId, OrdinalIgnoreCase): groups in the order their first track came.
-        let mut recordings: Vec<(String, Vec<&LibraryTrack>)> = Vec::new();
-        for track in tracks.iter().filter(|track| !track.recording_id.is_empty()) {
-            match recordings
-                .iter_mut()
-                .find(|(key, _)| eq_ignore_case(key, &track.recording_id))
-            {
-                Some((_, members)) => members.push(track),
-                None => recordings.push((track.recording_id.clone(), vec![track])),
-            }
-        }
-
-        let strict = SongIdentity::strict_titles();
-        let mut groups = Vec::new();
-        for (_, mut recording) in recordings {
-            recording.sort_by(|a, b| compare_ordinal(&a.id, &b.id));
-            let mut clusters: Vec<Vec<LibraryTrack>> = Vec::new();
-            for track in recording {
-                let home = clusters.iter_mut().find(|cluster| {
-                    let first = &cluster[0];
-                    SongIdentity::same_title(&track.title, &first.title, Some(&strict)).is_same()
-                        && TrackMatchComparer::artist_matches(
-                            &track.artist,
-                            &first.artist,
-                            &[first.artist.as_str()],
-                        )
-                        && TrackMatchComparer::artist_matches(
-                            &first.artist,
-                            &track.artist,
-                            &[track.artist.as_str()],
-                        )
-                });
-                match home {
-                    Some(cluster) => cluster.push(track.clone()),
-                    None => clusters.push(vec![track.clone()]),
-                }
-            }
-
-            for cluster in clusters.into_iter().filter(|cluster| cluster.len() > 1) {
-                let mut ids: Vec<&str> = cluster.iter().map(|track| track.id.as_str()).collect();
+        library_health::find_duplicates(tracks, &LibraryTrackFields)
+            .into_iter()
+            .map(|set| {
+                let mut ids: Vec<&str> = set.copies.iter().map(|track| track.id.as_str()).collect();
                 ids.sort_by(|a, b| compare_ordinal(a, b));
-                groups.push(DuplicateGroup {
+                DuplicateGroup {
                     key: format!("dup|{}", ids.join(",")),
-                    tracks: Self::rank_for_keeping(&cluster),
-                });
-            }
-        }
-        groups
+                    tracks: Self::rank_for_keeping(&set.copies),
+                }
+            })
+            .collect()
     }
 
     /// The groups again, with every lossless copy in a group that has two or more of them
@@ -516,6 +567,20 @@ fn text(element: &Value, name: &str) -> Result<Option<String>, String> {
     Ok(match property(element, name)? {
         Some(Value::String(s)) => Some(s.clone()),
         _ => None,
+    })
+}
+
+/// OpenSubsonic's isrc list; one written as a single string is a list of one.
+fn isrcs_of(song: &Value) -> Result<Vec<String>, String> {
+    Ok(match property(song, "isrc")? {
+        Some(Value::String(one)) if !one.is_empty() => vec![one.clone()],
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
     })
 }
 

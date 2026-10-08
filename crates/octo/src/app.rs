@@ -52,6 +52,7 @@ use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
     MusicBrainzClient,
 };
+use crate::services::health::{HealthServices, LibraryHealthService};
 use crate::services::http_client_factory;
 use crate::services::i_download_service::IDownloadService;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
@@ -366,8 +367,8 @@ pub struct AppInner {
     /// `LibraryActionJournal`: the write-ahead journal, `<config>/library-actions.json`. Its
     /// 10-second flush (a timer in C#) is the "LibraryActionJournal" worker.
     pub library_action_journal: Arc<LibraryActionJournal>,
-    /// : the tag edits made from the apps and by the explicit marking,
-    /// .
+    /// `TagEditJournal`: the tag edits made from the apps and by the explicit marking,
+    /// `<config>/tag-edits.json`.
     pub tag_edit_journal: Arc<TagEditJournal>,
     /// `LibraryActionQuarantine` (singleton).
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
@@ -416,6 +417,32 @@ pub struct AppInner {
     /// `LibraryEditService` (singleton): the apps' Library health fixes, tags written in place,
     /// albums joined, covers added, and a removed song put back.
     pub library_edits: Arc<LibraryEditService>,
+    /// `LibraryHealthService` (singleton, 69f577f): Library health for the dashboard, the app's
+    /// checks and fixes run on the server.
+    pub library_health: Arc<LibraryHealthService>,
+}
+
+/// Library health for the dashboard (`Program.cs`, 69f577f): the app's checks over the library
+/// snapshot, and its fixes through the edit service and the library actions executor.
+fn library_health(
+    settings: &Arc<SettingsStore>,
+    snapshot: &Arc<LibrarySnapshot>,
+    rescan: &Arc<LibraryRescan>,
+    edits: &Arc<LibraryEditService>,
+    executor: &Arc<LibraryActionExecutor>,
+    upgrade_sources: &Arc<UpgradeSources>,
+) -> Arc<LibraryHealthService> {
+    Arc::new(LibraryHealthService::new(
+        Arc::clone(snapshot),
+        Arc::clone(rescan),
+        Arc::clone(settings),
+        HealthServices {
+            edits: Some(Arc::clone(edits)),
+            executor: Some(Arc::clone(executor)),
+            upgrade_sources: Some(Arc::clone(upgrade_sources)),
+        },
+        Clock::system(),
+    ))
 }
 
 /// The apps' Library health fixes (`Program.cs`, 374dac8): the rescan and the edit service, over
@@ -1756,6 +1783,14 @@ impl AppState {
             &tagging,
             genre_cover_jobs.album_cover_finder.clone(),
         );
+        let library_health = library_health(
+            &settings,
+            &library_snapshot,
+            &library_rescan,
+            &library_edits,
+            &library_actions.executor,
+            &acquisition.upgrade_sources,
+        );
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -1875,6 +1910,7 @@ impl AppState {
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
+            library_health,
         };
         AppState {
             inner: Arc::new(inner),
@@ -2017,6 +2053,14 @@ impl AppState {
                 .clone()
                 .unwrap_or_else(|| genre_cover_jobs.album_cover_finder.clone()),
         );
+        let library_health = library_health(
+            &settings,
+            &library_snapshot,
+            &library_rescan,
+            &library_edits,
+            &library_actions.executor,
+            &acquisition.upgrade_sources,
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2136,6 +2180,7 @@ impl AppState {
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
             library_edits,
+            library_health,
         };
         AppState {
             inner: Arc::new(inner),

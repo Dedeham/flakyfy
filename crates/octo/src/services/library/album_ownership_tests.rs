@@ -54,6 +54,7 @@ pub(crate) mod drake_search {
             album_id: Some(album_id.into()),
             album_artist: Some(album_artist.into()),
             isrcs: Vec::new(),
+            ..Default::default()
         }
     }
 

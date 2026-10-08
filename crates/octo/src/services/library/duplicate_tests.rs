@@ -1,5 +1,5 @@
-//! `DuplicateTests.cs`: what counts as a copy, which copy is suggested, and that a question a
-//! person settled stays settled (#53). `DuplicateSettingsTests`' two settings tests went with
+//! `DuplicateTests.cs`: what counts as a copy (Library health's rule since 69f577f), which copy
+//! is suggested, and that a question a person settled stays settled (#53). `DuplicateSettingsTests`' two settings tests went with
 //! 1-A; its `ScanNow_WithDuplicatesOff_SaysWhatToTurnOn` is the admin controller's (6-B).
 
 use std::collections::HashSet;
@@ -58,47 +58,100 @@ fn find_groups_same_recording_same_version_is_a_group_with_the_keeper_first() {
     assert_eq!(ids(&groups[0].tracks), ["a", "b"]);
 }
 
-#[test]
-fn find_groups_same_recording_different_version_is_not_a_group() {
-    assert!(
-        DuplicateScanWorker::find_groups(&[track("a"), with("b", |t| t.title = "Teardrop (Live)".into())])
-            .is_empty()
-    );
+// Since 2026-10-05 a copy is what Library health calls one (`library_health::find_duplicates`,
+// the Octo app's rule): tags that name one recording, or the same title, artist and version with
+// lengths within 3 seconds. Before, only a shared recording id in the same version counted.
+
+fn uncoded(id: &str, change: impl FnOnce(&mut LibraryTrack)) -> LibraryTrack {
+    with(id, |t| {
+        t.recording_id = String::new();
+        change(t);
+    })
 }
 
 #[test]
-fn find_groups_different_artist_is_not_a_group() {
-    assert!(
-        DuplicateScanWorker::find_groups(&[track("a"), with("b", |t| t.artist = "Elbow".into())]).is_empty()
-    );
-}
-
-#[test]
-fn find_groups_different_recordings_are_not_a_group() {
-    assert!(
-        DuplicateScanWorker::find_groups(&[track("a"), with("b", |t| t.recording_id = "rec-2".into())])
-            .is_empty()
-    );
-}
-
-/// A guess about which files are the same song is a guess someone would act on.
-#[test]
-fn find_groups_no_recording_id_is_never_grouped() {
+fn find_groups_another_version_without_a_shared_code_is_not_a_group() {
     assert!(
         DuplicateScanWorker::find_groups(&[
-            with("a", |t| t.recording_id = String::new()),
-            with("b", |t| t.recording_id = String::new()),
+            uncoded("a", |_| {}),
+            uncoded("b", |t| t.title = "Teardrop (Live)".into()),
+        ])
+        .is_empty()
+    );
+}
+
+/// The tags say it is one recording, so it is, whatever the title says: the app's rule.
+#[test]
+fn find_groups_a_shared_recording_id_at_a_close_length_is_a_group_whatever_the_title() {
+    let groups = DuplicateScanWorker::find_groups(&[
+        track("a"),
+        with("b", |t| {
+            t.title = "Tear Drop (Album Version)".into();
+            t.duration = 331;
+        }),
+    ]);
+    assert_eq!(groups.len(), 1);
+}
+
+#[test]
+fn find_groups_a_shared_recording_id_at_a_far_length_is_a_tagging_mistake() {
+    assert!(
+        DuplicateScanWorker::find_groups(&[
+            track("a"),
+            with("b", |t| {
+                t.title = "Angel".into();
+                t.duration = 379;
+            }),
         ])
         .is_empty()
     );
 }
 
 #[test]
+fn find_groups_different_artist_without_a_shared_code_is_not_a_group() {
+    assert!(
+        DuplicateScanWorker::find_groups(&[
+            uncoded("a", |_| {}),
+            uncoded("b", |t| t.artist = "Elbow".into()),
+        ])
+        .is_empty()
+    );
+}
+
+#[test]
+fn find_groups_no_recording_id_same_title_artist_and_length_is_a_group() {
+    let groups =
+        DuplicateScanWorker::find_groups(&[uncoded("a", |_| {}), uncoded("b", |t| t.duration = 333)]);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].key, "dup|a,b");
+}
+
+#[test]
+fn find_groups_no_recording_id_lengths_four_seconds_apart_is_not_a_group() {
+    assert!(
+        DuplicateScanWorker::find_groups(&[uncoded("a", |_| {}), uncoded("b", |t| t.duration = 334),])
+            .is_empty()
+    );
+}
+
+#[test]
+fn find_groups_a_shared_isrc_is_a_group() {
+    let groups = DuplicateScanWorker::find_groups(&[
+        uncoded("a", |t| t.isrcs = vec!["GBAAA9800003".into()]),
+        uncoded("b", |t| {
+            t.title = "Tear Drop".into();
+            t.isrcs = vec!["GB-AAA-98-00003".into()];
+        }),
+    ]);
+    assert_eq!(groups.len(), 1);
+}
+
+#[test]
 fn find_groups_three_copies_two_versions_groups_only_the_matching_pair() {
     let groups = DuplicateScanWorker::find_groups(&[
-        track("a"),
-        with("b", |t| t.title = "Teardrop (Mad Professor mix)".into()),
-        with("c", |t| {
+        uncoded("a", |_| {}),
+        uncoded("b", |t| t.title = "Teardrop (Mad Professor mix)".into()),
+        uncoded("c", |t| {
             t.title = "Teardrop - Remastered 2011".into();
             t.suffix = "mp3".into();
             t.bit_rate = 320;
@@ -264,30 +317,37 @@ fn sync_duplicates_says_which_copy_is_transcoded() {
 }
 
 #[test]
-fn parse_page_counts_every_row_but_keeps_only_tracks_with_a_recording_id() {
+fn parse_page_keeps_every_library_track_with_its_codes() {
     let mut tracks = Vec::new();
     let root: Value = serde_json::from_str(
         r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[
-          {"id":"a","title":"Teardrop","artist":"Massive Attack","album":"Mezzanine","musicBrainzId":"rec-1","suffix":"flac","bitRate":1011,"duration":330},
-          {"id":"b","title":"Angel","artist":"Massive Attack","suffix":"mp3","bitRate":320,"duration":379}
+          {"id":"a","title":"Teardrop","artist":"Massive Attack","album":"Mezzanine","musicBrainzId":"rec-1","suffix":"flac","bitRate":1011,"duration":330,"isrc":["GBAAA9800003"]},
+          {"id":"b","title":"Angel","artist":"Massive Attack","suffix":"mp3","bitRate":320,"duration":379},
+          {"id":"x","title":"Outside","artist":"Someone","isExternal":true}
         ]}}}"#,
     )
     .expect("json");
 
-    assert_eq!(DuplicateScanWorker::parse_page(&root, &mut tracks), Ok(Some(2)));
+    assert_eq!(DuplicateScanWorker::parse_page(&root, &mut tracks), Ok(Some(3)));
+    assert_eq!(ids(&tracks), ["a", "b"]);
     assert_eq!(
-        tracks,
-        [LibraryTrack::new(
-            "a",
-            "Teardrop",
-            "Massive Attack",
-            "Mezzanine",
-            "rec-1",
-            "flac",
-            1011,
-            330
-        )]
+        tracks[0],
+        LibraryTrack {
+            isrcs: tracks[0].isrcs.clone(),
+            ..LibraryTrack::new(
+                "a",
+                "Teardrop",
+                "Massive Attack",
+                "Mezzanine",
+                "rec-1",
+                "flac",
+                1011,
+                330
+            )
+        }
     );
+    assert_eq!(tracks[0].isrcs, ["GBAAA9800003"]);
+    assert_eq!(tracks[1].recording_id, "");
 }
 
 #[test]

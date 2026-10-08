@@ -6,9 +6,11 @@ pub mod acquisition_worker;
 pub mod base_download_service;
 pub mod cache_cleanup_service;
 pub mod download_concurrency;
+pub mod download_log_keeper;
 pub mod download_picks;
 pub mod external_search_service;
 pub mod heart_acquisition_coordinator;
+pub mod song_finder;
 pub mod soulseek_hold_resumer;
 pub mod soulseek_hold_store;
 pub mod star_on_arrival;
@@ -26,8 +28,11 @@ pub use base_download_service::{
 };
 pub use cache_cleanup_service::CacheCleanupService;
 pub use download_concurrency::{DownloadConcurrency, TransferLimiter, TransferSlot};
+pub use download_log_keeper::DownloadLogKeeper;
+pub use download_picks::{DownloadPicks, PickedCopy};
 pub use external_search_service::ExternalSearchService;
 pub use heart_acquisition_coordinator::{HeartAcquisitionCoordinator, HeartCoordinatorExtras};
+pub use song_finder::{SongFinder, SongFinderServices};
 pub use soulseek_hold_resumer::SoulseekHoldResumer;
 pub use soulseek_hold_store::{HeldAcquisition, HeldKind, SoulseekHoldStore};
 pub use star_on_arrival::{StarNavidrome, StarOnArrival};
@@ -37,5 +42,9 @@ pub use track_acquisition_queue::{
 
 #[cfg(test)]
 mod download_attribution_tests;
+#[cfg(test)]
+pub(crate) mod download_log_tests;
+#[cfg(test)]
+mod find_songs_pick_tests;
 #[cfg(test)]
 pub(crate) mod test_fakes;

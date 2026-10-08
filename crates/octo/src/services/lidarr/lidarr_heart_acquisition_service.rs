@@ -1062,6 +1062,7 @@ impl Inner {
                 album: Some(album.to_string()),
                 suffix: Some(owned.suffix.clone()),
                 attempt_key: None,
+                pick: None,
             }],
             &askers[0],
             "heart",

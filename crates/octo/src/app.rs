@@ -37,9 +37,10 @@ use crate::services::admin::{
 };
 use crate::services::common::{
     AcquisitionActivity, AcquisitionTracker, AcquisitionWorker, CacheCleanupService, CatalogBlanks,
-    DownloadConcurrency, DownloadCore, DownloadServices, ExternalSearchService, HeartAcquisitionCoordinator,
-    HeartCoordinatorExtras, MeterPreview, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome,
-    StarOnArrival, TrackAcquisitionQueue, TrackerServices,
+    DownloadConcurrency, DownloadCore, DownloadLogKeeper, DownloadPicks, DownloadServices,
+    ExternalSearchService, HeartAcquisitionCoordinator, HeartCoordinatorExtras, MeterPreview, SongFinder,
+    SongFinderServices, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome, StarOnArrival,
+    TrackAcquisitionQueue, TrackerServices,
 };
 use crate::services::cover_art::{
     AlbumCoverFinder, CoverArtAggregator, CoverArtArchiveLookup, CoverUpgradeJournal, CoverUpgradeServices,
@@ -228,6 +229,8 @@ pub struct AppInner {
     pub download_history: Arc<DownloadHistoryService>,
     /// `DownloadConcurrency`: how many downloads transfer at once.
     pub download_concurrency: Arc<DownloadConcurrency>,
+    /// `DownloadPicks`: copies picked in Find songs, waiting for their download.
+    pub download_picks: Arc<DownloadPicks>,
     /// `SoulseekHoldStore`: hearts waiting out a Soulseek outage, `soulseek-holds.json`.
     pub soulseek_holds: Arc<SoulseekHoldStore>,
     /// `YouTubeResolver`: the yt-dlp shim client (its address captured at startup).
@@ -302,6 +305,8 @@ pub struct AppInner {
     pub acquisition_activity: Arc<AcquisitionActivity>,
     /// `AcquisitionTracker(logger, sp)`: where each hearted download has got to, in memory.
     pub acquisition_tracker: Arc<AcquisitionTracker>,
+    /// `SongFinder`: Find songs, a song's search run again by hand and a copy picked from it.
+    pub song_finder: Arc<SongFinder>,
     /// `StarOnArrival`, built eagerly as `Program.cs` resolved it after `Build()`, so it is
     /// listening when the first download finishes.
     pub star_on_arrival: Arc<StarOnArrival>,
@@ -468,6 +473,7 @@ struct Acquisition {
     track_acquisition_queue: Arc<TrackAcquisitionQueue>,
     acquisition_activity: Arc<AcquisitionActivity>,
     acquisition_tracker: Arc<AcquisitionTracker>,
+    song_finder: Arc<SongFinder>,
     star_on_arrival: Arc<StarOnArrival>,
     upgrade_queue: Arc<UpgradeQueue>,
     upgrade_sources: Arc<UpgradeSources>,
@@ -499,6 +505,10 @@ impl Acquisition {
             }),
             Clock::system(),
         ));
+        // A download's lyrics look reports to its row in the downloads log, and each finished
+        // download's log is saved with its fetched-songs entry, for the dashboard.
+        downloads.lyrics.set_tracker(acquisition_tracker.clone());
+        DownloadLogKeeper::attach(&acquisition_tracker, stores.download_history.clone());
         let star_on_arrival = StarOnArrival::new(
             acquisition_tracker.clone(),
             Some(StarNavidrome {
@@ -526,21 +536,22 @@ impl Acquisition {
         let lidarr_client = Arc::new(LidarrClient::new(settings.clone()));
         let lidarr_album_claims = Arc::new(LidarrAlbumClaims::new());
         let lidarr_import_handoff = Arc::new(LidarrImportHandoff::new());
-        let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = Arc::new(LidarrTrackFetcher::new(
+        let lidarr_fetcher = Arc::new(LidarrTrackFetcher::new(
             lidarr_client.clone(),
             settings.clone(),
             navidrome.navidrome_identity.clone(),
             lidarr_album_claims.clone(),
             Some(clients.music_brainz.clone()),
         ));
+        let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = lidarr_fetcher.clone();
 
         // The download service (4-C): the base's service-provider lookups are the services built
         // above, and the Soulseek backend's optional ones the link and Lidarr's two.
         // A handler test may swap in its own (the C# factories replaced the registration).
-        let download_service: Arc<dyn IDownloadService> = match download_service {
-            Some(fake) => fake,
+        let (download_service, soulseek_backend): (Arc<dyn IDownloadService>, _) = match download_service {
+            Some(fake) => (fake, None),
             None => {
-                let (download_base, _) = SoulseekDownloadService::build(
+                let (download_base, backend) = SoulseekDownloadService::build(
                     DownloadCore {
                         settings: settings.clone(),
                         local_library: navidrome.local_library.clone(),
@@ -566,6 +577,7 @@ impl Acquisition {
                         cover_resolver: Some(downloads.tagging.download_cover_resolver.clone()),
                         lyrics: Some(downloads.lyrics.clone()),
                         last_fm: Some(integrations.last_fm.clone()),
+                        picks: Some(stores.download_picks.clone()),
                     },
                     SoulseekDownloadParts {
                         slskd: downloads.soulseek_client.clone(),
@@ -578,7 +590,7 @@ impl Acquisition {
                         lidarr_fetcher: Some(lidarr_track_fetcher.clone()),
                     },
                 );
-                download_base
+                (download_base as Arc<dyn IDownloadService>, Some(backend))
             }
         };
         acquisition_activity.set_downloads(&download_service);
@@ -618,12 +630,28 @@ impl Acquisition {
             HeartCoordinatorExtras {
                 tracker: Some(acquisition_tracker.clone()),
                 id_registry: Some(stores.external_id_registry.clone()),
-                soulseek: Some(soulseek_link),
+                soulseek: Some(soulseek_link.clone()),
                 holds: Some(stores.soulseek_holds.clone()),
                 owned: Some(heart_ownership.clone()),
                 stars: Some(star_on_arrival.clone()),
             },
         );
+        let song_finder = Arc::new(SongFinder::new(SongFinderServices {
+            settings: Some(settings.clone()),
+            upgrade_queue: Some(upgrade_queue.clone()),
+            upgrade_sources: Some(upgrade_sources.clone()),
+            executor: true,
+            tracker: Some(acquisition_tracker.clone()),
+            acquisitions: Some(track_acquisition_queue.clone()),
+            picks: Some(stores.download_picks.clone()),
+            local_library: Some(navidrome.local_library.clone()),
+            id_registry: Some(stores.external_id_registry.clone()),
+            resolver: Some(navidrome.navidrome_song_path_resolver.clone()),
+            soulseek: soulseek_backend,
+            soulseek_link: Some(soulseek_link.clone()),
+            lidarr_fetcher: Some(lidarr_fetcher),
+            lidarr_client: Some(lidarr_client.clone()),
+        }));
         let external_search = Arc::new(ExternalSearchService::new(
             music_metadata,
             Some(integrations.last_fm.clone()),
@@ -639,6 +667,7 @@ impl Acquisition {
             track_acquisition_queue,
             acquisition_activity,
             acquisition_tracker,
+            song_finder,
             star_on_arrival,
             upgrade_queue,
             upgrade_sources,
@@ -815,6 +844,7 @@ impl AdminSignIn {
 struct Stores {
     download_history: Arc<DownloadHistoryService>,
     download_concurrency: Arc<DownloadConcurrency>,
+    download_picks: Arc<DownloadPicks>,
     soulseek_holds: Arc<SoulseekHoldStore>,
     you_tube_resolver: Arc<YouTubeResolver>,
     external_id_registry: Arc<ExternalIdRegistry>,
@@ -853,6 +883,7 @@ impl Stores {
                 config_dir.join("downloads-history.json"),
             )),
             download_concurrency: Arc::new(DownloadConcurrency::new(settings.clone())),
+            download_picks: Arc::new(DownloadPicks::default()),
             soulseek_holds: Arc::new(SoulseekHoldStore::new(Some(
                 config_dir.join("soulseek-holds.json"),
             ))),
@@ -1447,6 +1478,7 @@ impl LibraryJobs {
                 attempts: Some(stores.quality_upgrade_store.clone()),
                 settings: Some(settings.clone()),
                 sources: Some(acquisition.upgrade_sources.clone()),
+                picks: Some(stores.download_picks.clone()),
             },
         ));
         let quality_upgrade_worker = Arc::new(QualityUpgradeWorker::new(
@@ -1666,6 +1698,7 @@ impl AppState {
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,
+            download_picks: stores.download_picks,
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
@@ -1718,6 +1751,7 @@ impl AppState {
             track_acquisition_queue: acquisition.track_acquisition_queue,
             acquisition_activity: acquisition.acquisition_activity,
             acquisition_tracker: acquisition.acquisition_tracker,
+            song_finder: acquisition.song_finder,
             star_on_arrival: acquisition.star_on_arrival,
             upgrade_queue: acquisition.upgrade_queue,
             upgrade_sources: acquisition.upgrade_sources,
@@ -1897,6 +1931,7 @@ impl AppState {
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,
+            download_picks: stores.download_picks,
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
@@ -1949,6 +1984,7 @@ impl AppState {
             track_acquisition_queue: acquisition.track_acquisition_queue,
             acquisition_activity: acquisition.acquisition_activity,
             acquisition_tracker: acquisition.acquisition_tracker,
+            song_finder: acquisition.song_finder,
             star_on_arrival: acquisition.star_on_arrival,
             upgrade_queue: acquisition.upgrade_queue,
             upgrade_sources: acquisition.upgrade_sources,

@@ -28,6 +28,7 @@ use tracing::{debug, error, info, warn};
 
 use super::placement::{get_directory_name, get_file_name, is_audio_file};
 use super::{BaseDownloadService, RequestedIdentity, get_extension};
+use crate::services::common::acquisition_tracker::acquisition_event_kinds;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::soulseek::soulseek_download_service::INCOMING_FOLDER_NAME;
 
@@ -306,7 +307,15 @@ impl BaseDownloadService {
                     "{path} is {}; renamed from {} to {} before tagging",
                     fix.format, fix.from, fix.to
                 );
-                let _ = (provider, external_id);
+                self.track(|t| {
+                    t.log(
+                        provider,
+                        external_id,
+                        acquisition_event_kinds::CHECK,
+                        &format!("Renamed to {}: the file is {}", fix.to, fix.format),
+                        Some(&format!("It arrived named {}", fix.from)),
+                    )
+                });
                 Some(fix)
             }
             Ok(None) => None,
@@ -543,6 +552,16 @@ impl BaseDownloadService {
                     cover_image::fit_within(&cover.bytes, MetadataSettings::EMBEDDED_COVER_SIDE as u32)
                 };
                 info!("Cover art embedded from {}: {} bytes", cover.source, bytes.len());
+                let side = match cover_image::measure(&bytes) {
+                    Some((width, height)) => format!("{width} x {height} px, embedded in the song"),
+                    None => "Embedded in the song".to_string(),
+                };
+                self.log_song_step(
+                    song,
+                    acquisition_event_kinds::COVER,
+                    &format!("Cover from {}", cover.source),
+                    Some(&side),
+                );
                 embed = Some(bytes);
             }
             chosen_cover = Some(cover.bytes);
@@ -560,6 +579,12 @@ impl BaseDownloadService {
         match written {
             Ok(()) => {
                 info!("Metadata written successfully to: {file_path}");
+                self.log_song_step(
+                    song,
+                    acquisition_event_kinds::TAGS,
+                    "Tags written",
+                    Some(file_path.rsplit('/').next().unwrap_or(file_path)),
+                );
                 chosen_cover
             }
             Err(e) => {

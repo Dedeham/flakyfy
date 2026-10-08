@@ -22,7 +22,10 @@ use octo_subsonic::subsonic_response_builder::{
 };
 use serde_json::{Value, json};
 
-use crate::services::common::acquisition_tracker::AcquisitionSnapshot;
+use octo_core::models::download::{AcquisitionCandidate, AcquisitionEvent};
+
+use crate::services::common::acquisition_tracker::{AcquisitionSnapshot, key_of};
+use crate::services::common::song_finder::{FindSnapshot, PickOutcome};
 use crate::services::library::{GeneratedPlaylist, LibraryActionOutcome, UpgradeJob};
 use crate::services::soulseek::ExternalIdRegistry;
 
@@ -80,6 +83,20 @@ pub trait SubsonicResponseBuilderExt {
     /// Navidrome id that was asked for, and it stays the same after the swap. progress is 0 to
     /// 1, or null.
     fn create_upgrades_response(&self, jobs: &[(UpgradeJob, Option<f64>)]) -> SubsonicReply;
+
+    /// getAcquisition: one row with its whole log.
+    fn create_acquisition_response(&self, row: &AcquisitionSnapshot) -> SubsonicReply;
+
+    /// clearAcquisitions: how many rows left the caller's list.
+    fn create_cleared_response(&self, cleared: i32) -> SubsonicReply;
+
+    /// findSongs and getFoundSongs: the song, how each source's look went, and every copy found.
+    /// A copy's id names it on this look for good, and pickFoundSong takes it as copy; its index
+    /// is its place in the list, which older apps pick by once the search has ended.
+    fn create_find_songs_response(&self, found: &FindSnapshot) -> SubsonicReply;
+
+    /// pickFoundSong: what picking did.
+    fn create_pick_response(&self, outcome: &PickOutcome) -> SubsonicReply;
 }
 
 impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
@@ -156,9 +173,166 @@ impl SubsonicResponseBuilderExt for SubsonicResponseBuilder {
                 "detail": job.detail,
                 "progress": progress,
                 "updatedAt": round_trip(&job.updated_utc),
+                // The downloads row that fetches the replacement, once there is one, for its log.
+                "acquisition": job.acquisition_key.as_deref().and_then(|key| {
+                    key.split_once(':')
+                        .filter(|(provider, _)| !provider.is_empty())
+                        .map(|(provider, id)| key_of(provider, id))
+                }),
+                "picked": job.pick.as_ref().map(|pick| pick.describe()),
             })).collect::<Vec<_>>(),
         }))
     }
+
+    fn create_acquisition_response(&self, row: &AcquisitionSnapshot) -> SubsonicReply {
+        let mut json = acquisition_json(row);
+        json.insert(
+            "event".into(),
+            Value::Array(
+                row.events
+                    .iter()
+                    .flatten()
+                    .map(|line| Value::Object(event_json(line)))
+                    .collect(),
+            ),
+        );
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "acquisition": json,
+        }))
+    }
+
+    fn create_cleared_response(&self, cleared: i32) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "cleared": { "count": cleared },
+        }))
+    }
+
+    fn create_find_songs_response(&self, found: &FindSnapshot) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "foundSongs": found_songs_json(found),
+        }))
+    }
+
+    fn create_pick_response(&self, outcome: &PickOutcome) -> SubsonicReply {
+        self.create_json_response(json!({
+            "status": "ok",
+            "version": SUBSONIC_VERSION,
+            "type": "octo",
+            "pick": {
+                "state": outcome.state,
+                "detail": outcome.detail,
+                "key": outcome.key,
+            },
+        }))
+    }
+}
+
+/// A Find songs search as the apps and the dashboard read it.
+pub fn found_songs_json(found: &FindSnapshot) -> Fields {
+    let mut fields = Fields::new();
+    fields.insert("id".into(), found.id.clone().into());
+    fields.insert("state".into(), found.state.clone().into());
+    fields.insert("error".into(), json!(found.error));
+    fields.insert("startedAt".into(), utc(&found.started_at).into());
+    let target = &found.target;
+    fields.insert(
+        "song".into(),
+        json!({
+            "artist": target.artist,
+            "title": target.title,
+            "album": target.album,
+            "duration": target.duration,
+            "coverArt": target.cover_art,
+            "libraryId": target.library_id,
+            "format": target.owned_format,
+            "quality": target.owned_quality,
+            "size": target.owned_size,
+        }),
+    );
+    fields.insert(
+        "source".into(),
+        Value::Array(
+            found
+                .sources
+                .iter()
+                .map(|source| {
+                    json!({
+                        "name": source.name,
+                        "state": source.state,
+                        "text": source.text,
+                        "query": source.queries,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    fields.insert(
+        "candidate".into(),
+        Value::Array(
+            found
+                .copies
+                .iter()
+                .enumerate()
+                .map(|(index, copy)| {
+                    let mut json = candidate_json(&copy.shown);
+                    json.insert("id".into(), copy.id.clone().into());
+                    json.insert("index".into(), index.into());
+                    Value::Object(json)
+                })
+                .collect(),
+        ),
+    );
+    fields
+}
+
+/// One line of a download's log, for the apps and the dashboard alike.
+pub fn event_json(line: &AcquisitionEvent) -> Fields {
+    let mut fields = Fields::new();
+    fields.insert("at".into(), utc(&line.at).into());
+    fields.insert("kind".into(), line.kind.clone().into());
+    fields.insert("text".into(), line.text.clone().into());
+    fields.insert("detail".into(), json!(line.detail));
+    fields.insert(
+        "candidate".into(),
+        match &line.candidates {
+            Some(copies) => Value::Array(copies.iter().map(|c| Value::Object(candidate_json(c))).collect()),
+            None => Value::Null,
+        },
+    );
+    fields
+}
+
+/// One copy a source offered, in the log and in Find songs alike.
+pub fn candidate_json(copy: &AcquisitionCandidate) -> Fields {
+    let mut fields = Fields::new();
+    fields.insert("source".into(), copy.source.clone().into());
+    fields.insert("peer".into(), json!(copy.peer));
+    fields.insert("file".into(), json!(copy.file));
+    fields.insert("folder".into(), json!(copy.folder));
+    fields.insert("title".into(), json!(copy.title));
+    fields.insert("album".into(), json!(copy.album));
+    fields.insert("format".into(), json!(copy.format));
+    fields.insert("quality".into(), json!(copy.quality()));
+    fields.insert("bitRate".into(), json!(copy.bit_rate));
+    fields.insert("bitDepth".into(), json!(copy.bit_depth));
+    fields.insert("sampleRate".into(), json!(copy.sample_rate));
+    fields.insert("size".into(), json!(copy.size));
+    fields.insert("length".into(), json!(copy.length));
+    fields.insert("queueLength".into(), json!(copy.queue_length));
+    fields.insert("freeSlot".into(), json!(copy.free_slot));
+    fields.insert("speed".into(), json!(copy.speed));
+    fields.insert("rank".into(), json!(copy.rank));
+    fields.insert("note".into(), json!(copy.note));
+    fields
 }
 
 /// The default action of C#'s `CreateLibraryActionResponse(songId, outcome)`.
@@ -184,6 +358,17 @@ pub fn acquisition_json(row: &AcquisitionSnapshot) -> Fields {
     // Added for the app's words beside the ring. Older apps ignore them.
     fields.insert("ahead".into(), json!(row.ahead));
     fields.insert("note".into(), json!(row.note));
+    // Added for the downloads drawer: the row's own key for getAcquisition, what it is for, the
+    // copy being fetched, the picture to draw, and how long its log is.
+    fields.insert("key".into(), row.key.clone().into());
+    fields.insert("kind".into(), row.kind.clone().into());
+    fields.insert("quality".into(), json!(row.quality));
+    fields.insert("peer".into(), json!(row.peer));
+    fields.insert(
+        "coverArt".into(),
+        row.library_id.clone().unwrap_or_else(|| row.id.clone()).into(),
+    );
+    fields.insert("logLines".into(), row.log_lines.into());
     fields
 }
 
@@ -265,7 +450,8 @@ mod tests {
                 r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","acquisitions":{"acquisition":[{"#,
                 r#""id":"deezer:1","artist":"A","title":null,"album":null,"state":"downloading","progress":0.25,"#,
                 r#""bytesDone":10,"bytesTotal":null,"source":null,"startedAt":"2026-10-04T08:07:45Z","#,
-                r#""updatedAt":"2026-10-04T08:07:45Z","error":null,"libraryId":null,"ahead":2,"note":null}]}}}"#
+                r#""updatedAt":"2026-10-04T08:07:45Z","error":null,"libraryId":null,"ahead":2,"note":null,"#,
+                r#""key":"","kind":"","quality":null,"peer":null,"coverArt":"deezer:1","logLines":0}]}}}"#
             )
         );
     }
@@ -289,7 +475,7 @@ mod tests {
         };
         assert_eq!(
             builder().create_upgrades_response(&[(job, Some(0.5))]).text(),
-            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"upgrades":[{"id":"n1","title":"T","artist":null,"album":null,"state":"working","detail":null,"progress":0.5,"updatedAt":"2026-10-04T08:07:45.1234567Z"}]}}"#
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"upgrades":[{"id":"n1","title":"T","artist":null,"album":null,"state":"working","detail":null,"progress":0.5,"updatedAt":"2026-10-04T08:07:45.1234567Z","acquisition":null,"picked":null}]}}"#
         );
     }
 

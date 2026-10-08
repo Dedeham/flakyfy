@@ -62,7 +62,8 @@ use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::services::common::{AcquisitionState, AcquisitionTracker, DownloadConcurrency};
+use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
+use crate::services::common::{AcquisitionState, AcquisitionTracker, DownloadConcurrency, DownloadPicks};
 use crate::services::cover_art::DownloadCoverResolver;
 use crate::services::fingerprint::MusicBrainzClient;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
@@ -259,6 +260,8 @@ pub struct DownloadServices {
     pub cover_resolver: Option<Arc<DownloadCoverResolver>>,
     pub lyrics: Option<Arc<LyricsSidecarWriter>>,
     pub last_fm: Option<Arc<LastFmService>>,
+    /// `DownloadPicks`: copies picked in Find songs, taken instead of a search.
+    pub picks: Option<Arc<DownloadPicks>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -446,6 +449,23 @@ impl BaseDownloadService {
     pub fn track(&self, step: impl FnOnce(&Arc<AcquisitionTracker>)) {
         if let Some(tracker) = &self.services.tracker {
             step(tracker);
+        }
+    }
+
+    /// One line in the downloads log of this source's row for a song. Watching only, like
+    /// [`Self::track`].
+    pub fn log_step(&self, external_id: &str, kind: &str, text: &str, detail: Option<&str>) {
+        let provider = self.provider_name().to_string();
+        self.track(|t| t.log(&provider, external_id, kind, text, detail));
+    }
+
+    /// The same for a song that carries its own outside id.
+    pub(crate) fn log_song_step(&self, song: &Song, kind: &str, text: &str, detail: Option<&str>) {
+        if let (Some(provider), Some(id)) = (
+            song.external_provider.as_deref().filter(|p| !p.is_empty()),
+            song.external_id.as_deref().filter(|i| !i.is_empty()),
+        ) {
+            self.track(|t| t.log(provider, id, kind, text, detail));
         }
     }
 
@@ -670,6 +690,19 @@ impl BaseDownloadService {
                 }
             );
             self.track(|t| {
+                t.log(
+                    external_provider,
+                    external_id,
+                    acquisition_event_kinds::LIBRARY,
+                    &format!(
+                        "Already in your library as {}, so no second copy",
+                        dotnet::to_upper_invariant(&owned.suffix)
+                    ),
+                    (decision == OwnedDecision::KeepAndUpgrade)
+                        .then_some("A higher quality copy is being looked for instead"),
+                )
+            });
+            self.track(|t| {
                 t.imported(
                     external_provider,
                     external_id,
@@ -807,6 +840,32 @@ impl BaseDownloadService {
             ));
         }
         self.apply_loudness(&mut song, loudness, &landed_path).await;
+        let identified = [
+            (!dotnet::is_blank(&song.album)).then(|| match song.year.filter(|y| *y > 0) {
+                Some(year) => format!("on {} ({year})", song.album),
+                None => format!("on {}", song.album),
+            }),
+            song.tag_plan
+                .as_ref()
+                .map(|plan| format!("{} match", dotnet::to_lower_invariant(plan.confidence.name()))),
+            song.verification
+                .as_ref()
+                .filter(|v| v.verdict == octo_core::fingerprint::VerificationVerdict::Confirmed)
+                .map(|_| "AcoustID agrees".to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ");
+        self.track(|t| {
+            t.log(
+                external_provider,
+                external_id,
+                acquisition_event_kinds::TAGS,
+                &format!("Identified as {} - {}", song.artist, song.title),
+                Some(&identified),
+            )
+        });
 
         // Placed from the Song, so the path and the tags come from one decision (#48). The file
         // used to be moved inside DownloadTrackAsync, before any of this was known. A library
@@ -840,6 +899,15 @@ impl BaseDownloadService {
                 .await?;
             local_path = placement.path.clone();
             song.local_path = Some(local_path.clone());
+            self.track(|t| {
+                t.log(
+                    external_provider,
+                    external_id,
+                    acquisition_event_kinds::LIBRARY,
+                    "Swapped in where your old copy was",
+                    Some("It keeps the old copy's place in Navidrome, so plays and favorites stay"),
+                )
+            });
         }
         if !is_cache {
             self.write_sidecars(&song, &placement, cover.as_deref());
@@ -900,6 +968,7 @@ impl BaseDownloadService {
                 silence || muted,
                 fetched_from.as_deref(),
                 options.requested_by.as_deref(),
+                Some(&key_of(external_provider, external_id)),
             )
             .await;
             self.ask_for_review(&song, &local_path, options.requested_by.as_deref());
@@ -1407,6 +1476,7 @@ impl BaseDownloadService {
                     album: Some(song.album.clone()),
                     suffix: Some(owned.suffix.clone()),
                     attempt_key: None,
+                    pick: None,
                 }],
                 requested_by.first().map(String::as_str).unwrap_or(""),
                 "heart",
@@ -1426,6 +1496,7 @@ impl BaseDownloadService {
         suppress_notify: bool,
         fetched_from: Option<&str>,
         requested_by: Option<&[String]>,
+        key: Option<&str>,
     ) {
         let mut cover = song
             .cover_art_url_large
@@ -1469,9 +1540,9 @@ impl BaseDownloadService {
             tagging: song.tag_plan.as_ref().map(|plan| plan.to_report()),
             downloaded_at: round_trip(&Utc::now()),
             requested_by: requested_by.clone(),
-            // STUB(D): the live row's key, which its saved log is found by on the dashboard,
-            // and the log itself (DownloadLogKeeper), come with the download log.
-            key: None,
+            // The live row's key, which its saved log is found by on the dashboard. The log
+            // itself is saved when the row ends (DownloadLogKeeper).
+            key: key.map(str::to_string),
             log: None,
         });
 

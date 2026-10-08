@@ -10,9 +10,10 @@ use chrono::{DateTime, TimeDelta, Utc};
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use octo_core::common::Clock;
+use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::common::dotnet;
 use octo_core::json::datetime;
-use octo_core::settings::{LibraryAction, SettingsStore, SoulseekSettings};
+use octo_core::settings::{DownloadSource, LibraryAction, SettingsStore, SoulseekSettings};
 use octo_core::soulseek::soulseek_link::SoulseekLinkState;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -25,9 +26,11 @@ use super::quality_upgrade_worker::{QualityUpgradeAttempt, QualityUpgradeStore};
 use super::{
     LibraryActionOutcome, LibraryActionState, NavidromeSongPathResolver, ResolvedSongFile, UpgradeSources,
 };
+use crate::services::common::acquisition_tracker::{acquisition_event_kinds, acquisition_kinds};
+use crate::services::common::download_picks::{DownloadPicks, PickedCopy};
 use crate::services::common::{AcquisitionTracker, DownloadConcurrency};
 use crate::services::framework::DotnetDictionary;
-use crate::services::soulseek::ISoulseekLink;
+use crate::services::soulseek::{ISoulseekLink, SoulseekMetadataService};
 use crate::services::state_file;
 
 /// The words a job's state goes by on the wire. A contract with the Octo apps.
@@ -163,6 +166,8 @@ pub struct UpgradeAsk {
     pub album: Option<String>,
     pub suffix: Option<String>,
     pub attempt_key: Option<String>,
+    /// The copy someone picked in Find songs, fetched instead of searching.
+    pub pick: Option<PickedCopy>,
 }
 
 impl UpgradeAsk {
@@ -285,6 +290,7 @@ impl UpgradeQueue {
                 album: ask.album,
                 suffix: ask.suffix,
                 attempt_key: ask.attempt_key,
+                pick: ask.pick,
                 requested_by: requester.to_string(),
                 origin: origin.to_string(),
                 state: UpgradeStates::QUEUED.to_string(),
@@ -305,6 +311,23 @@ impl UpgradeQueue {
             )
         });
         (answer, refused)
+    }
+
+    /// Puts another picked copy on a job that has not started, for the person who asked for it.
+    /// Answers the job as it now stands, or None when it has started or is someone else's: the
+    /// copy it fetches is settled then.
+    pub fn replace_pick(&self, navidrome_id: &str, requester: &str, pick: PickedCopy) -> Option<UpgradeJob> {
+        let mut jobs = self.jobs.lock();
+        let now = self.clock.now();
+        let job = jobs.get_mut(navidrome_id).filter(|job| {
+            matches!(job.state.as_str(), UpgradeStates::QUEUED | UpgradeStates::WAITING)
+                && dotnet::eq_ignore_case(&job.requested_by, requester.trim())
+        })?;
+        job.pick = Some(pick);
+        job.updated_utc = now;
+        let copy = job.clone();
+        self.save(&jobs);
+        Some(copy)
     }
 
     /// Every job, as copies, oldest first (`Snapshot()`).
@@ -519,6 +542,7 @@ pub struct UpgradeWorkerParts {
     pub attempts: Option<Arc<QualityUpgradeStore>>,
     pub settings: Option<Arc<SettingsStore>>,
     pub sources: Option<Arc<UpgradeSources>>,
+    pub picks: Option<Arc<DownloadPicks>>,
 }
 
 /// Runs the upgrade queue: Better quality on each song, up to as many at once as downloads may
@@ -533,6 +557,8 @@ pub struct UpgradeWorker {
     settings: Option<Arc<SettingsStore>>,
     seams: UpgradeWorkerSeams,
     running: Mutex<Vec<JoinHandle<()>>>,
+    /// Copies picked in Find songs, handed to the replacement's download.
+    picks: Option<Arc<DownloadPicks>>,
 }
 
 impl UpgradeWorker {
@@ -556,7 +582,13 @@ impl UpgradeWorker {
                     .map_or_else(|| "Soulseek".to_string(), |s| s.name())
             }),
         };
-        Self::with_seams(queue, seams, parts.tracker, parts.attempts, parts.settings)
+        Self::with_seams(queue, seams, parts.tracker, parts.attempts, parts.settings).with_picks(parts.picks)
+    }
+
+    /// The picks a job's chosen copy is pinned in for its download (the C# `picks` argument).
+    pub fn with_picks(mut self, picks: Option<Arc<DownloadPicks>>) -> Self {
+        self.picks = picks;
+        self
     }
 
     /// A worker over the given seams (the C# tests' object initializer).
@@ -574,6 +606,7 @@ impl UpgradeWorker {
             settings,
             seams,
             running: Mutex::new(Vec::new()),
+            picks: None,
         }
     }
 
@@ -649,27 +682,70 @@ impl UpgradeWorker {
 
         let queue = self.queue.clone();
         let tracker = self.tracker.clone();
+        let picks = self.picks.clone();
         let followed = job.clone();
+        // One pick for the whole job, so the one pinned is the one let go below.
+        let pick = job.pick.clone().map(Arc::new);
+        let acquired: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let mut request =
             LibraryActionRequest::new(LibraryAction::BetterQuality, &job.navidrome_id, &job.requested_by);
+        let (pinned, heard) = (pick.clone(), acquired.clone());
         request.on_replacement_queued = Some(Arc::new(move |provider: &str, external_id: &str| {
+            *heard.lock() = Some(external_id.to_string());
             queue.update(&followed.navidrome_id, |j| {
                 j.acquisition_key = Some(format!("{provider}:{external_id}"));
             });
-            // The tracker follows only rows that were opened, so the replacement gets one.
+            // A copy picked in Find songs is fetched as it is, with no search.
+            if let (Some(pick), Some(picks)) = (&pinned, &picks) {
+                picks.pin(external_id, pick.clone());
+            }
+            // The tracker follows only rows that were opened, so the replacement gets one. It
+            // carries the library song's id, so the apps draw that song's cover on it.
             if let Some(tracker) = &tracker {
-                tracker.begin(
+                tracker.begin_kind(
                     provider,
                     external_id,
-                    None,
+                    Some(&followed.navidrome_id),
                     Some(&followed.requested_by),
                     followed.artist.as_deref(),
                     followed.title.as_deref(),
                     followed.album.as_deref(),
+                    acquisition_kinds::UPGRADE,
+                );
+                let note = match &pinned {
+                    Some(chosen) => format!("Getting {}", chosen.describe()),
+                    None => format!(
+                        "Your copy is {}; looking for a lossless one",
+                        followed
+                            .suffix
+                            .as_deref()
+                            .map_or_else(|| "lossy".to_string(), dotnet::to_upper_invariant)
+                    ),
+                };
+                tracker.log(
+                    provider,
+                    external_id,
+                    acquisition_event_kinds::NOTE,
+                    &note,
+                    Some("Your copy stays until the new one passes every check"),
                 );
             }
         }));
-        let outcome = (self.seams.apply)(request).await?;
+        request.only_source = pick.as_ref().map(|only| {
+            if only.is_soulseek() {
+                DownloadSource::Soulseek
+            } else {
+                DownloadSource::Lidarr
+            }
+        });
+        let outcome = (self.seams.apply)(request).await;
+        // A pick the replacement never used (it joined another download, or found the song
+        // needed nothing) is let go with the job, not left for a later download.
+        let acquired = acquired.lock().clone();
+        if let (Some(acquired), Some(unused), Some(picks)) = (&acquired, &pick, &self.picks) {
+            picks.forget(acquired, unused);
+        }
+        let outcome = outcome?;
 
         let state = Self::state_for(&outcome);
         let result = (state == UpgradeStates::UPGRADED).then(|| self.report(&outcome, job));
@@ -695,6 +771,43 @@ impl UpgradeWorker {
             )),
             _ => outcome.detail.clone(),
         };
+        // The verdict comes after the download's own row has ended, so it is a line of its own.
+        if let (Some(acquired), Some(tracker)) = (&acquired, &self.tracker) {
+            let text = match state {
+                UpgradeStates::UPGRADED => "Took the place of your old copy",
+                UpgradeStates::NOT_FOUND => "No lossless copy found; your copy is unchanged",
+                UpgradeStates::WAITING => "Waiting for Soulseek",
+                UpgradeStates::REHEARSED => "Only rehearsed; nothing changed",
+                _ => "Your copy is unchanged",
+            };
+            let verdict = match result
+                .as_ref()
+                .and_then(|r| r.after.as_deref().map(|now| (r, now)))
+            {
+                Some((result, now)) if state == UpgradeStates::UPGRADED => Some(format!(
+                    "Now {now}{}, was {}{}",
+                    size(result.after_bytes),
+                    result
+                        .before
+                        .clone()
+                        .or_else(|| job.suffix.as_deref().map(dotnet::to_upper_invariant))
+                        .unwrap_or_default(),
+                    size(result.before_bytes)
+                )),
+                _ => user_safe(outcome.detail.as_deref()),
+            };
+            tracker.log(
+                SoulseekMetadataService::PROVIDER_NAME,
+                acquired,
+                if state == UpgradeStates::UPGRADED {
+                    acquisition_event_kinds::DONE
+                } else {
+                    acquisition_event_kinds::NOTE
+                },
+                text,
+                verdict.as_deref(),
+            );
+        }
         self.queue.update(&job.navidrome_id, |j| {
             j.state = state.to_string();
             j.result = result;

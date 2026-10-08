@@ -29,17 +29,23 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+use super::soulseek_candidates::{self, Judged};
 use super::*;
+use crate::services::common::song_finder::{FindTarget, FoundCopy, SongFinder};
 use crate::services::common::test_fakes::FakeMetadata;
 use crate::services::common::{DownloadConcurrency, DownloadCore, DownloadServices};
+use crate::services::common::{DownloadPicks, PickedCopy};
 use crate::services::fingerprint::{AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter};
 use crate::services::i_download_service::IDownloadService;
+use crate::services::library::ReplacementHandoff;
 use crate::services::local::DownloadHistoryService;
 use crate::services::local::test_support::FakeLocalLibrary;
 use crate::services::notifications::NotificationService;
 use crate::services::soulseek::soulseek_client::Timings;
 use crate::services::subsonic::NavidromeIdentityService;
+use futures::FutureExt;
 use octo_media::audio::AudioFingerprinter;
+use octo_media::tags::KeptIdentity;
 
 fn plausible(file: &str, title: &str) -> bool {
     filename_plausibly_matches_title(file, title, false)
@@ -176,11 +182,44 @@ fn a_mash_up_named_after_the_song_is_not_taken_for_its_radio_edit() {
     );
 
     let ranked = rank_all(
-        &[mash_up, single.clone()],
+        &[mash_up.clone(), single.clone()],
         &want(LUCKY_RADIO_EDIT, Some(248), Some("Get Lucky"), Some("Daft Punk")),
     );
 
     assert_eq!(ranked, vec![single]);
+    let settings = SoulseekSettings::default();
+    assert_eq!(
+        soulseek_candidates::why_not(
+            &mash_up,
+            judged(
+                LUCKY_RADIO_EDIT,
+                Some("Get Lucky"),
+                Some(248),
+                &settings,
+                Some("Daft Punk")
+            )
+        )
+        .as_deref(),
+        Some("A mash-up or medley of this song with another")
+    );
+}
+
+fn judged<'a>(
+    title: &'a str,
+    album: Option<&'a str>,
+    duration: Option<i32>,
+    settings: &'a SoulseekSettings,
+    artist: Option<&'a str>,
+) -> Judged<'a> {
+    Judged {
+        title,
+        album,
+        duration,
+        settings,
+        rejected: None,
+        remembers_rejections: false,
+        artist,
+    }
 }
 
 #[test]
@@ -207,6 +246,24 @@ fn a_mash_up_is_another_version() {
                 || from_version_folder(file, title, Some("Random Access Memories"), Some("Daft Punk")),
             "{file}"
         );
+        if file.ends_with(".mp3") {
+            let settings = SoulseekSettings::default();
+            assert_eq!(
+                soulseek_candidates::why_not(
+                    &lucky(file, 248, "mp3"),
+                    judged(
+                        title,
+                        Some("Random Access Memories"),
+                        Some(248),
+                        &settings,
+                        Some("Daft Punk")
+                    )
+                )
+                .as_deref(),
+                Some("A mash-up or medley of this song with another"),
+                "{file}"
+            );
+        }
     }
 }
 
@@ -1148,4 +1205,208 @@ async fn a_search_that_ran_out_of_answers_is_not_asked_again() {
         ["Drake Take Care", "Take Care"]
     );
     assert!(searches.iter().all(|(_, limit)| *limit == 2_000), "{searches:?}");
+}
+
+// ---- A picked copy meets the same filters --------------------------------------------------
+
+const LIVE_TAKE: &str = r"Music\Drake\Take Care (Live at the O2 Arena 2012)\04 - Take Care.flac";
+
+fn picked(file: &str) -> PickedCopy {
+    PickedCopy {
+        source: "Soulseek".into(),
+        peer: Some("livepeer".into()),
+        file: Some(file.into()),
+        size: flac(277).len() as i64,
+        format: Some("flac".into()),
+        length: Some(277),
+        ..Default::default()
+    }
+}
+
+fn timed_out() -> Answer {
+    Arc::new(|_: &str, _: i32| (Vec::new(), "Completed, TimedOut"))
+}
+
+#[tokio::test]
+async fn a_pick_from_a_live_album_never_takes_the_library_files_place() {
+    let picks = Arc::new(DownloadPicks::default());
+    let star = star(
+        timed_out(),
+        DownloadServices {
+            picks: Some(picks.clone()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let external_id = star.song.external_id.clone().expect("an id");
+    picks.pin(&external_id, Arc::new(picked(LIVE_TAKE)));
+    let original = star._root.path().join("library").join("04 - Take Care.mp3");
+    std::fs::create_dir_all(original.parent().expect("a folder")).expect("made");
+    std::fs::write(&original, [1, 2, 3]).expect("written");
+    let handoff = Arc::new(ReplacementHandoff::new(
+        original.to_string_lossy().into_owned(),
+        KeptIdentity {
+            title: "Take Care".into(),
+            album: Some("Take Care".into()),
+            album_artist: vec!["Drake".into()],
+            album_artists: vec!["Drake".into()],
+            track: 4,
+            disc: 1,
+            ..Default::default()
+        },
+        Arc::new(|_| async { None }.boxed()),
+        None,
+    ));
+
+    let refused = tokio::time::timeout(
+        Duration::from_secs(60),
+        star.service.execute_acquisition(
+            "soulseek",
+            &external_id,
+            false,
+            true,
+            Some(DownloadSource::Soulseek),
+            &CancellationToken::new(),
+            None,
+            true,
+            Some(handoff),
+        ),
+    )
+    .await
+    .expect("within a minute")
+    .expect_err("refused");
+
+    assert!(refused.to_string().contains("From a live album"), "{refused}");
+    assert!(star.slskd.batches().is_empty());
+    assert!(star.slskd.searches().is_empty());
+}
+
+#[tokio::test]
+async fn a_pick_for_a_song_not_in_the_library_is_fetched_as_picked() {
+    let picks = Arc::new(DownloadPicks::default());
+    let star = star(
+        timed_out(),
+        DownloadServices {
+            picks: Some(picks.clone()),
+            ..Default::default()
+        },
+    )
+    .await;
+    picks.pin(
+        star.song.external_id.as_deref().expect("an id"),
+        Arc::new(picked(LIVE_TAKE)),
+    );
+    star.slskd.length(LIVE_TAKE, 277);
+
+    let path = star.acquire().await.expect("fetched");
+
+    let batches = star.slskd.batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].0, "livepeer");
+    assert!(star.slskd.searches().is_empty());
+    assert!(path.ends_with(".flac"), "{path}");
+}
+
+#[test]
+fn a_picked_copy_meets_the_deny_list_always_and_the_searchs_checks_when_it_replaces_a_file() {
+    let settings = SoulseekSettings::default();
+    let file = |user: &str, name: &str, size: i64, extension: &str| SoulseekFileHit {
+        username: user.into(),
+        filename: name.into(),
+        size,
+        length: Some(277),
+        extension: extension.into(),
+        ..Default::default()
+    };
+    let live = file("livepeer", LIVE_TAKE, 30_000_000, "flac");
+    let plain = file(
+        "peer",
+        r"Music\Drake\Take Care (2011)\04 - Take Care.flac",
+        30_000_000,
+        "flac",
+    );
+    let mp3 = file(
+        "peer",
+        r"Music\Drake\Take Care (2011)\04 - Take Care.mp3",
+        11_000_000,
+        "mp3",
+    );
+    let denied = RejectedPeerRegistry::in_memory();
+    denied.deny(
+        Some(&plain.username),
+        Some(&plain.filename),
+        "AcoustID: another recording",
+        "Drake - Take Care",
+    );
+
+    let refusal = |hit: &SoulseekFileHit, replacing: bool, rejected: Option<&RejectedPeerRegistry>| {
+        soulseek_candidates::pick_refusal(
+            hit,
+            Judged {
+                rejected,
+                remembers_rejections: rejected.is_some(),
+                ..judged(
+                    "Take Care (feat. Rihanna)",
+                    Some("Take Care"),
+                    Some(277),
+                    &settings,
+                    Some("Drake"),
+                )
+            },
+            replacing,
+        )
+    };
+
+    assert_eq!(refusal(&live, false, None), None);
+    assert_eq!(refusal(&live, true, None).as_deref(), Some("From a live album"));
+    assert_eq!(refusal(&plain, true, None), None);
+    // The format is the one check a person can see for themselves.
+    assert_eq!(refusal(&mp3, true, None), None);
+    assert_eq!(
+        refusal(&plain, false, Some(&denied)).as_deref(),
+        Some("Octo downloaded this file before and it was the wrong recording")
+    );
+}
+
+#[test]
+fn find_songs_refuses_a_live_take_in_place_of_a_library_song() {
+    let target = FindTarget {
+        library_id: Some("nd-1".into()),
+        owned_format: Some("mp3".into()),
+        ..FindTarget::new(
+            "Drake",
+            "Take Care (feat. Rihanna)",
+            Some("Take Care"),
+            Some(277),
+            "nd-1",
+        )
+    };
+    let pick = PickedCopy {
+        size: 30_000_000,
+        ..picked(LIVE_TAKE)
+    };
+    let copy = FoundCopy::new(
+        soulseek_candidates::of(&pick.to_hit().expect("a hit"), None, None),
+        pick,
+    );
+
+    assert_eq!(
+        SongFinder::replace_refusal(&target, &copy, None, None, false).as_deref(),
+        Some("From a live album, so it cannot take the place of the one in your library.")
+    );
+}
+
+#[test]
+fn a_log_says_a_picked_copy_was_kept_on_the_word_of_the_pick_not_of_its_name() {
+    assert_eq!(
+        checks_passed_text(false, false, false),
+        "the right length; AcoustID could not say, so the name and length decide"
+    );
+    assert_eq!(
+        checks_passed_text(false, false, true),
+        "the right length; AcoustID could not say, and its name or folder did not fit the song: kept because you picked it"
+    );
+    assert!(
+        checks_passed_text(true, true, true).starts_with("the right length; AcoustID: the same recording")
+    );
 }

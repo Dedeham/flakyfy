@@ -144,6 +144,8 @@ struct Options {
     soulseek: SoulseekSettings,
     loudness: Option<Loudness>,
     layout: FolderStructure,
+    /// The downloads log the download reports to, when a test reads it.
+    tracker: Option<Arc<AcquisitionTracker>>,
 }
 
 impl Default for Options {
@@ -153,6 +155,7 @@ impl Default for Options {
             soulseek: SoulseekSettings::default(),
             loudness: Some(Loudness::new(-11.5, 6.3, -0.3)),
             layout: FolderStructure::Flat,
+            tracker: None,
         }
     }
 }
@@ -185,6 +188,7 @@ async fn build_with(songs: Vec<(&str, Song)>, server: MockServer, options: Optio
         deezer: Some(deezer),
         music_brainz: Some(music_brainz),
         loudness_meter: Some(Arc::clone(&meter) as Arc<dyn ILoudnessMeter>),
+        tracker: options.tracker,
         ..Default::default()
     };
     let harness = build(root.path(), settings, None, Some(catalog(songs)), services);
@@ -862,18 +866,23 @@ fn files_below(dir: &Path) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_report_says_so() {
+async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_log_and_report_say_so() {
     let song = Song {
         external_provider: Some("test".into()),
         external_id: Some("1".into()),
         ..teardrop()
     };
+    let tracker = Arc::new(AcquisitionTracker::new(None, octo_core::common::Clock::system()));
     let tagging = build_with(
         vec![("1", song)],
         serve(mezzanine_routes("Mezzanine")).await,
-        Options::default(),
+        Options {
+            tracker: Some(tracker.clone()),
+            ..Options::default()
+        },
     )
     .await;
+    tracker.begin("test", "1", None, Some("alice"), None, None, None);
     let root = tagging.root().to_path_buf();
     tagging.harness.backend.land(move |song, _| {
         confirm(song, confirmed_teardrop());
@@ -901,5 +910,15 @@ async fn a_flac_named_mp3_is_renamed_before_tagging_and_the_report_says_so() {
             .contains(&"renamed from .mp3 to .flac: the file is a FLAC".to_string()),
         "{:?}",
         report.notes
+    );
+    let log = tracker
+        .detail("test:1", Some("alice"))
+        .and_then(|row| row.events)
+        .expect("the log");
+    assert!(
+        log.iter().any(|e| e.kind == "check"
+            && e.text == "Renamed to .flac: the file is a FLAC"
+            && e.detail.as_deref() == Some("It arrived named .mp3")),
+        "{log:?}"
     );
 }

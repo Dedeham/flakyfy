@@ -15,6 +15,7 @@ pub mod similar_songs;
 mod tests_6a1;
 
 pub mod browsing;
+pub mod downloads;
 pub mod extensions;
 pub(crate) mod helpers_6a2;
 pub mod lyrics;
@@ -126,5 +127,6 @@ pub fn routes() -> RouteSet {
         .merge(media::routes())
         .merge(stars::routes())
         .merge(extensions::routes())
+        .merge(downloads::routes())
         .merge(lyrics::routes())
 }

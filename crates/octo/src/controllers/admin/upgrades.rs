@@ -355,6 +355,7 @@ async fn queue_upgrades(State(state): State<AppState>, request: Request) -> Resp
             album: ask.album,
             suffix: ask.suffix,
             attempt_key: ask.attempt_key,
+            pick: None,
         })
         .collect();
     let (jobs, refused) = state.upgrade_queue.add(asks, &user, "page");

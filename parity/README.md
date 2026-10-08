@@ -390,7 +390,22 @@ Two files wait on timers, which set where they go:
 | `library` | 00 to 11, 19, 20, 90, 99 | 14 |
 | `acquisition` | 95, 96 | `13-downloads/setup-ext-song3`, 20 |
 
-SHARD_TIMES_TODO
+Each shard's recording time on 2026-10-08 in WSL (C# 2026.10.05, and the Rust build of
+`3c4c593` with adaptive waits), not counting the stack's start and removal (about 30 s) or
+waiting for the budget:
+
+| Shard | C# | Rust |
+| --- | ---: | ---: |
+| `radio` | 278 s | 490 s |
+| `lists` | 311 s | 411 s |
+| `imports` | 43 s | 195 s |
+| `dashboard` | 141 to 198 s | 221 s |
+| `library` | 252 to 254 s | 500 s |
+| `acquisition` | 259 to 267 s | 598 s |
+
+One unsharded recording on the same WSL took 703 s against C# and 3,023 s against Rust (748 and
+3,055 s with the stack). `acquisition` sets the length against Rust: `96` needs what `95` files and
+what `20` leaves, so the three cannot be split.
 
 ## Adaptive waits
 
@@ -430,7 +445,12 @@ recording (2026-10-08, the Rust build of `3c4c593`):
 - Waits that ride a fixed timer (Sounds alike's passes in `15-radio`, 41 to 60 s in C#) get 124
   to 181 s, which is more than the corpus's 90 s for two of them, so they keep their 90 s.
 
-WAITS_TIMES_TODO
+What it saves, measured in WSL on 2026-10-08 with the Rust build of `3c4c593`: the whole corpus
+on one stack took 3,055 s; in shards without adaptive waits 1,096 s (the longest shard 1,033 s
+of recording, five shards then); in the six shards with adaptive waits the longest shard records
+in 598 s. Adapted per shard: `acquisition` 36 waits, `library` 28, `imports` 9, `dashboard` 6,
+`lists` 3, `radio` 1. Rust against Rust stays at 0 diffs with adaptive waits, and the C# against
+Rust diff lists the same requests as without them.
 
 ## What runs
 
@@ -746,6 +766,8 @@ What still cannot be made repeatable is left out, with the reason:
 | The hourly role re-check of an admin already checked | Its clock is internal to tests (`AdminRoleCheck.cs:30`); a fresh demoted or deleted admin is covered |
 | `GET /api/admin/discover-servers` signed in | Scans the network; the sandbox's addresses change every run |
 | Stopping a health fix run (a lookup run is covered), the noLength fix | No fix step can be made reliably slow; the upgrade queue ticks every 2 s |
+| The cover run's `reason` once a resumed run is done (`17-covers-explicit/covers-resumed-done`) | The bulk match reports its progress through `Progress<string>`, which can post the last "barcodes 3 of 3" after the run cleared it (`CoverUpgrade.cs:509,518`); it then stays |
+| The planted artist's and albums' covers in `19-health/plant-wait` | Navidrome adds them after its scan reports done, and on a busy machine sometimes not within a minute; the request is there for its captures |
 
 Answers the C# app gives that are timing-dependent but settle (the share switch's 10 minute
 recheck, the 10 s signed-out status cache) are read so that the same answer comes out either way.

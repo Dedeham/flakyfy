@@ -667,6 +667,62 @@ lyrics look runs in the background); the saved logs are compared unordered.
 No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
 `5d3f096`'s Recently removed and activity card for F and N.
 
+### G4 record: group R (2026-10-08)
+
+Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` `19db112` (B, D, G,
+H and L in; F with P not yet). Final run on the WSL lane, `parity/run.sh --rust-twice`, from
+`f66965c`, against the cached C# recording of corpus `eb2c30598fe12590` (1,837 requests).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 254 unexplained, 1,523 explained, 60 identical | not run |
+| Rust against Rust | 1,837 identical, 0 unexplained | 1,837 identical, 0 unexplained |
+
+| Group | Own before (G2 E record) | Own after R | Diffs after R |
+| --- | ---: | ---: | ---: |
+| R | 96 | 11 | 11 |
+| F (on `port/g3-f`, `20-*` only) | 20 | 5 | 5 |
+
+What is left in R is not R's code:
+
+- `21-static/*` (10): the shared dashboard files changed on `rust/main` (`aa504ee`, the station
+  previews and US spelling); the proposed intentional diff `dashboard-files-2026-10-08` covers
+  them once reviewed. R is tagged there because the dashboard carries its page.
+- `19-health/plant-wait`: Navidrome's `search3` answered while it was still giving the planted
+  albums their covers (the timing noted in the WSL lane record); the Rust side had the covers.
+  A corpus fix (wait for the albums' `coverArt`) is for whoever owns the corpus.
+
+F's 17 requests that waited on R pass: `20-library-edits/plant-copy-seen` captures
+`{{song_cafe_copy}}` and `{{copy_dup_key}}` from `/api/admin/health`, and the `*-copy*` chain,
+`admin-actions-final`, `tag-edits-journal` and `library-actions-journal` match. F's 5 are the
+proposed intentional diffs: `isrc-clear-takes-the-tag-off` (`tags-copy-undone`, and now
+`remove-copy-seen`, whose only difference is Navidrome listing the copy without the code) and
+G's `charts-octo-top-songs-version-2` (the three `extensions-*` requests).
+
+Found and fixed on the way (port fixes to match the C#, known-diffs.md rows updated, Rust
+tests):
+
+- **FLAC padding.** TagLib#'s `Flac.File.Save` keeps the metadata's size on disk while its
+  blocks fit (the padding takes up the rest; 4096 bytes when they outgrow it); lofty kept the
+  old padding block, so every Library health fix changed a FLAC's size and Navidrome's
+  `getSong`/`getAlbum` sizes differed (`19-health/settle1-*`, `settle4-tidewater-bare`,
+  `cleanup-wait`). `tag_file::taglib_flac_padding`. B and D's `tagged-file-length` allowlist
+  entry now applies to one request instead of two (the FLAC relay matches; the M4A does not).
+- **The blank ID3v1 tag.** TagLib# gives every MP3 an ID3v1 tag, blank when it has nothing to
+  say. lofty's remove appends a blank one to a file that has none and takes it off one that has
+  it, so the first save added 128 bytes and the next took them away (`remove-copy-seen`'s size).
+  The tag is now written blank over the one there or after the audio.
+
+`5d3f096` is in pieces: its download log and Find songs routes came with D (`port/g2-bd`), the
+trash and Put back routes with F, their three Recently removed tests with R
+(`trash_tests.rs`), and its activity card is N's. The activity view's health items
+(`ActivityController.Health`) are N's too: `port/g4-n` has `activity::health` over a
+`HealthActivity` and a `STUB(R)` where it reads `LibraryHealthService::run()` and
+`checking_since()`, which R now provides.
+
+No settings and no new intentional diffs (the ISRC entry gained a request). No "Fix in port"
+line was under R.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
@@ -695,7 +751,7 @@ Rust change.
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
 | P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 11 | done (G4, `port/g4-r`; 10 are the shared dashboard files, 1 a corpus timing) |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
@@ -999,15 +1055,25 @@ No Rust server change: both are their own images.
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 
-- [ ] `69f577f` feat(health): Library health findings and fixes on the server
-  (G2: `LibrarySnapshot` and `LibraryAlbumIndex` are O's, at `f49fb80`; R adds `ReadAtUtc`,
-  `RefreshAsync`, `Rows` and the song row's health fields)
-- [ ] `e36d823` fix(health): check songs in the order the apps read them
-- [ ] `c156710` feat(admin): Library health page on the dashboard
-- [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
-  (its download log and Find songs routes are in, with D: `controllers/admin/downloads.rs`;
-  Recently removed, Put back and the activity card wait for F and N)
-- [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
+Done in G4 (`port/g4-r`): `services::health` (`library_health`, `health_words`, `health_fixes`,
+`server_song_fields`, `library_health_service`) and `controllers::admin::health`
+(`/api/admin/health` and its `run`, `preview`, `apply`, `lookup`, `stop`, `undo`), already in
+`LIBRARY_FILE_ROUTES` since G1. The shared cases (`docs/library-health-cases.json`) run as Rust
+tests.
+
+- [x] `69f577f` feat(health): Library health findings and fixes on the server
+  (the song row's health fields, `LibrarySnapshot::read_at_utc` and `refresh`,
+  `LibraryAlbumIndex::rows`; the duplicate scan groups by Library health's rule;
+  `LibraryRescan::hold` came with F; `ActivityController.Health` is N's)
+- [x] `e36d823` fix(health): check songs in the order the apps read them
+- [x] `c156710` feat(admin): Library health page on the dashboard (the shared dashboard files; the
+  controller's `?fresh=1` and slimmer song view)
+- [x] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+  (download log and Find songs routes with D: `controllers/admin/downloads.rs`; trash and Put
+  back with F: `controllers/admin/trash.rs`; the Recently removed tests with R; the activity
+  card is N's)
+- [x] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard (no
+  Rust change: the shared dashboard files)
 
 ### S. Estimated stream length fix
 

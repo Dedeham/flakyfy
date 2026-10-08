@@ -22,7 +22,9 @@ use super::helpers_6b1::{
     SECRET_PLACEHOLDER, body_text, child, child_mut, error_json, json_node, key_of, mask_secret, n_num,
     n_obj, n_str, n_str_array, parse_json_node,
 };
-use super::secrets::{keep_saved_secrets, mask_tokens, redact_secrets, secret_sent_elsewhere};
+use super::secrets::{
+    keep_saved_secrets, mask_tokens, normalize_saved_addresses, redact_secrets, secret_sent_elsewhere,
+};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::services::admin::AdminCaller;
@@ -966,6 +968,8 @@ pub async fn save_settings(
     if let Some(secret_error) = keep_saved_secrets(&mut patch, Some(&current.listen_brainz.user_tokens)) {
         return Ok(error_json(StatusCode::BAD_REQUEST, &secret_error));
     }
+
+    normalize_saved_addresses(&mut patch);
 
     // UserTokens is a dictionary: merged, a user removed in the dashboard would stay.
     match state.settings_writer.merge(&patch, &["ListenBrainz.UserTokens"]) {

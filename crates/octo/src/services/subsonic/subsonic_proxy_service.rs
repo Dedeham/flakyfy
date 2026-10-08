@@ -506,8 +506,9 @@ impl SubsonicProxyService {
     {
         let parameters = owned_pairs(parameters);
         let query = self.build_query(parameters.iter().map(|(k, v)| (k, v)), false);
-        // Not trimmed and not checked, as the C# built it: a URL ending in '/' asks for
-        // //rest/stream, and none at all is a relative URI.
+        // Not checked, as the C# built it: none at all is a relative URI. A URL ending in '/'
+        // asked the C# for //rest/stream; the settings read Navidrome's address without its
+        // trailing slashes (`normalize_server_url`), so this has one slash (a port fix).
         let url = format!("{}/rest/stream?{query}", self.url_setting().unwrap_or_default());
         let target = request_url(&url)?;
         let mut request = self.shared.stream_client.get(target);

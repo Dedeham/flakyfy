@@ -641,9 +641,10 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     let body = get(&app, "/api/admin/config-sources").await.json();
     let rows = body["keys"].as_array().expect("rows");
     let row = |key: &str| rows.iter().find(|r| r["Key"] == key).cloned().expect(key);
-    assert_eq!(row("Soulseek:Password")["Value"], "\u{2022}".repeat(16));
+    // A port fix: one mask for every secret, so the page never tells how long one is.
+    assert_eq!(row("Soulseek:Password")["Value"], "\u{2022}".repeat(8));
     assert_eq!(row("Soulseek:Password")["IsSecret"], true);
-    assert_eq!(row("Lidarr:ApiKey")["Value"], "\u{2022}\u{2022}\u{2022}");
+    assert_eq!(row("Lidarr:ApiKey")["Value"], "\u{2022}".repeat(8));
     assert_eq!(row("Soulseek:BaseUrl")["Value"], "http://127.0.0.1:1");
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");

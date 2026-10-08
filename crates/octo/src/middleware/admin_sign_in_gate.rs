@@ -58,6 +58,68 @@ pub const APP_CALL_ENDPOINTS: &[(Method, &str, bool)] = &[
     (Method::GET, "/api/admin/status", true),
 ];
 
+/// The words most library-file routes refuse a sign-in that is not a Navidrome admin's with.
+pub const SIGN_IN_FIRST: &str = "Sign in with your Navidrome admin account first.";
+
+/// The admin routes that read or change the music library's files, and what each answers a
+/// recovery-code session: the recovery code fixes settings and nothing else. A path matches a
+/// route that is not a prefix exactly, and a prefix route also below it (at a `/`), both
+/// ignoring case.
+///
+/// The C# left this to each endpoint (`NavidromeUserOf`), and one forgot: the explicit marking
+/// (`ExplicitBackfillController.cs:30` asked `UserOf`), so the recovery code could write explicit
+/// marks into music files. A port fix: the gate refuses a recovery session on every one of these
+/// alike, before any endpoint runs, and an endpoint that still checks finds nothing to refuse
+/// (BACKLOG "Found while building the harness"; known-diffs.md). The words are the ones each
+/// endpoint answered, so nothing else changes.
+pub const LIBRARY_FILE_ROUTES: &[(&str, bool, &str)] = &[
+    // The folder picker.
+    ("/api/admin/browse", false, "Browse session required."),
+    // Try it on a song (reads a file's tags).
+    ("/api/admin/tags/preview", false, SIGN_IN_FIRST),
+    // The library actions' history and Allow downloading again.
+    ("/api/admin/library-actions", true, SIGN_IN_FIRST),
+    ("/api/admin/notices", false, SIGN_IN_FIRST),
+    // Better quality: the lossy list and the upgrade queue, which replaces files.
+    ("/api/admin/lossy", false, SIGN_IN_FIRST),
+    ("/api/admin/upgrades", true, SIGN_IN_FIRST),
+    ("/api/admin/library/resolve", false, SIGN_IN_FIRST),
+    // Genre normalization's re-tag of the library.
+    ("/api/admin/genre/backfill", true, SIGN_IN_FIRST),
+    // The cover upgrade (writes covers into folders and files).
+    ("/api/admin/covers", true, SIGN_IN_FIRST),
+    // The Lyrics page (writes lyrics files beside songs).
+    ("/api/admin/lyrics", true, SIGN_IN_FIRST),
+    // Imports (Spotify sign-ins, lists, the trickle that downloads into the library).
+    (
+        "/api/admin/imports",
+        true,
+        "Sign in with your Navidrome account first.",
+    ),
+    // Downloads: a song's log, Find songs and its picks, the trash and Put back.
+    ("/api/admin/downloads/log", false, SIGN_IN_FIRST),
+    ("/api/admin/find", true, SIGN_IN_FIRST),
+    ("/api/admin/trash", true, SIGN_IN_FIRST),
+    // Library health and its fixes (tags written in place, songs removed).
+    ("/api/admin/health", true, SIGN_IN_FIRST),
+    // The explicit marking (writes advisories into files): the route the C# left open.
+    ("/api/admin/explicit", true, SIGN_IN_FIRST),
+];
+
+/// What a recovery-code session is answered on a library-file route, or None when the path is
+/// not one.
+pub fn library_file_refusal(path: &str) -> Option<&'static str> {
+    let path = path.trim_end_matches('/');
+    LIBRARY_FILE_ROUTES.iter().find_map(|(route, prefix, words)| {
+        let head = path.get(..route.len())?;
+        if !head.eq_ignore_ascii_case(route) {
+            return None;
+        }
+        let rest = &path[route.len()..];
+        (rest.is_empty() || (*prefix && rest.starts_with('/'))).then_some(*words)
+    })
+}
+
 /// What the gate needs beside the request: the services, and the route templates to name the
 /// endpoint a path reaches the way the router will.
 #[derive(Clone)]
@@ -164,6 +226,18 @@ pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request,
                 };
                 browse_cookie_for(&cookie, https, age)
             });
+        if recovery && let Some(words) = library_file_refusal(&path) {
+            let mut res = json_relaxed_response(
+                StatusCode::UNAUTHORIZED,
+                &json!({ "error": words }),
+                "application/json; charset=utf-8",
+            )
+            .into_response();
+            if let Some(cookie) = renew {
+                prepend_set_cookie(&mut res, cookie);
+            }
+            return res;
+        }
         req.extensions_mut().insert(AdminCaller::new(Some(user), kind));
         let mut res = next.run(req).await;
         if let Some(cookie) = renew {
@@ -265,6 +339,30 @@ mod tests {
         assert_eq!(parameters.get("c").map(String::as_str), Some("octo,two"));
         assert_eq!(parameters.get("empty").map(String::as_str), Some(""));
         assert!(query_dictionary(None).is_empty());
+    }
+
+    #[test]
+    fn library_file_routes_match_exactly_or_below_a_prefix() {
+        let cases: [(&str, Option<&str>); 12] = [
+            ("/api/admin/browse", Some("Browse session required.")),
+            ("/api/admin/browse/session", None),
+            ("/api/admin/browse/signout", None),
+            ("/API/Admin/Explicit/Backfill", Some(SIGN_IN_FIRST)),
+            ("/api/admin/explicit/backfill/cancel", Some(SIGN_IN_FIRST)),
+            (
+                "/api/admin/imports/lists/x",
+                Some("Sign in with your Navidrome account first."),
+            ),
+            ("/api/admin/downloads", None),
+            ("/api/admin/downloads/log", Some(SIGN_IN_FIRST)),
+            ("/api/admin/genre/presets", None),
+            ("/api/admin/genre/backfill/undo", Some(SIGN_IN_FIRST)),
+            ("/api/admin/lyricsx", None),
+            ("/api/admin/settings", None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(library_file_refusal(path), expected, "{path}");
+        }
     }
 
     #[test]

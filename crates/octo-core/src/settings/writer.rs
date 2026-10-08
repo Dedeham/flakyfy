@@ -110,6 +110,7 @@ impl SettingsFileWriter {
         }
 
         deep_merge(&mut current, patch);
+        canonical_sections(&mut current);
         self.write(&current)?;
         Ok(current)
     }
@@ -132,7 +133,9 @@ impl SettingsFileWriter {
     /// so it shares the lock and the atomic write with `merge`.
     pub fn replace(&self, content: &JsonObject) -> std::io::Result<()> {
         let _guard = self.lock.lock();
-        self.write(content)
+        let mut content = content.clone();
+        canonical_sections(&mut content);
+        self.write(&content)
     }
 
     fn read_for_write(&self) -> Result<JsonObject, SettingsWriteError> {
@@ -176,6 +179,52 @@ impl SettingsFileWriter {
 pub fn to_indented_json(content: &JsonObject) -> String {
     // Node::Object owns its map; the clone is cheap next to the disk write.
     Node::Object(content.clone()).to_json_string(true)
+}
+
+/// The settings sections Octo reads, spelled as its classes are: every bound section, and the
+/// two read raw (`Library:DownloadPath`, `YouTube:ShimUrl`).
+fn known_sections() -> impl Iterator<Item = &'static str> {
+    super::AppSettings::SECTIONS
+        .into_iter()
+        .chain(["Library", "YouTube"])
+}
+
+/// Every top-level key that names a known section in another case is written with the section's
+/// own spelling, and two spellings of one section become one (the later one's keys winning, in
+/// the place of the first). A port fix: the C# writer kept `"lidarr"` beside `"Lidarr"`, and the
+/// configuration reader then refused the file on reload as a duplicate key (BACKLOG, "Found
+/// while building the harness"; known-diffs.md).
+pub fn canonical_sections(doc: &mut JsonObject) {
+    for canonical in known_sections() {
+        let spellings: Vec<String> = doc
+            .keys()
+            .filter(|key| eq_ignore_case(key, canonical))
+            .cloned()
+            .collect();
+        if spellings.is_empty() || (spellings.len() == 1 && spellings[0] == canonical) {
+            continue;
+        }
+        let Some(first) = doc.get_index_of(&spellings[0]) else {
+            continue;
+        };
+        let mut merged: Option<Node> = None;
+        for spelling in &spellings {
+            let Some(value) = doc.shift_remove(spelling) else {
+                continue;
+            };
+            merged = Some(match (merged, value) {
+                (Some(Node::Object(mut into)), Node::Object(from)) => {
+                    deep_merge(&mut into, &from);
+                    Node::Object(into)
+                }
+                (_, value) => value,
+            });
+        }
+        if let Some(value) = merged {
+            let at = first.min(doc.len());
+            doc.shift_insert(at, canonical.to_string(), value);
+        }
+    }
 }
 
 fn find_key(map: &JsonObject, key: &str) -> Option<String> {

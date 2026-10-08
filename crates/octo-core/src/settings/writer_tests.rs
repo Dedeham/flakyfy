@@ -318,3 +318,34 @@ fn write_creates_the_directory() {
     SettingsFileWriter::new(&path).replace(&obj("{}")).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
 }
+
+/// A section sent in another case is written with the section's own name, and a file holding two
+/// spellings of one section is written with one (BACKLOG "Found while building the harness": the
+/// C# wrote "lidarr" beside "Lidarr", which the reader refused on reload).
+#[test]
+fn sections_are_written_with_their_own_names() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("settings.json");
+    let writer = SettingsFileWriter::new(&path);
+
+    let patch =
+        match Node::parse(r#"{ "lidarr": { "BaseUrl": "http://lidarr:8686" }, "custom": { "x": 1 } }"#) {
+            Ok(Node::Object(map)) => map,
+            _ => panic!("an object"),
+        };
+    let merged = writer.merge(&patch, &[]).expect("merges");
+    assert_eq!(merged.keys().collect::<Vec<_>>(), ["Lidarr", "custom"]);
+
+    let doc = match Node::parse(
+        r#"{ "Subsonic": { "Url": "a" }, "LIDARR": { "ApiKey": "k", "BaseUrl": "old" }, "Lidarr": { "BaseUrl": "new" } }"#,
+    ) {
+        Ok(Node::Object(map)) => map,
+        _ => panic!("an object"),
+    };
+    writer.replace(&doc).expect("replaces");
+    let written = writer.load();
+    assert_eq!(written.keys().collect::<Vec<_>>(), ["Subsonic", "Lidarr"]);
+    let lidarr = written["Lidarr"].as_object().expect("a section");
+    assert_eq!(lidarr.get("ApiKey").and_then(Node::as_str), Some("k"));
+    assert_eq!(lidarr.get("BaseUrl").and_then(Node::as_str), Some("new"));
+}

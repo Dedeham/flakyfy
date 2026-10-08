@@ -15,8 +15,8 @@ use tracing::{error, info};
 
 use super::helpers_6b1::{body_text, error_json, json_text, parse_json_node};
 use super::secrets::{
-    restore_secret_placeholders, running_secrets, secret_sent_elsewhere, secret_typed_into_placeholder,
-    session_key_typed_into_placeholder,
+    normalize_saved_addresses, restore_secret_placeholders, running_secrets, secret_sent_elsewhere,
+    secret_typed_into_placeholder, session_key_typed_into_placeholder,
 };
 use super::settings::effective_document;
 use crate::app::AppState;
@@ -89,6 +89,7 @@ pub async fn put_raw_config(
             ),
         );
     }
+    normalize_saved_addresses(&mut parsed);
     let pretty = to_indented_json(&parsed);
     match state.settings_writer.replace(&parsed) {
         Ok(()) => {
@@ -300,6 +301,11 @@ fn is_secret_key(key: &str) -> bool {
         .any(|suffix| lower.ends_with(suffix))
 }
 
+/// What a set secret reads as on the config-sources page: always the same eight bullets. A port
+/// fix: the C# showed one bullet per character, up to 16, which told anyone how long a password
+/// or key was (BACKLOG, "Found while building the harness"; known-diffs.md).
+pub const CONFIG_SOURCES_MASK: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
+
 /// `GET /api/admin/config-sources`: every config key the app effectively sees, as
 /// `IConfiguration[key]` reads it (a list reads as `""`, having no value of its own), with
 /// anything that smells like a secret masked so a screenshot of the page does not leak it.
@@ -310,7 +316,7 @@ pub async fn get_config_sources(State(state): State<AppState>) -> Response {
             let value = state.settings.raw(key).unwrap_or_default();
             let secret = is_secret_key(key);
             let display = if secret && !value.is_empty() {
-                "\u{2022}".repeat(utf16_len(&value).min(16))
+                CONFIG_SOURCES_MASK.to_string()
             } else {
                 value
             };

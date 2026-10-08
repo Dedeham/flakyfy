@@ -638,6 +638,12 @@ E is 2, the proposed `slskd-web-url-trimmed`. No group got worse: B 11, C 9, D 1
 47, H 201, I 3, J 3, L 45, O 17, P 68, Q 5, R 96; A, K and S 0. N has no proposed intentional
 diff.
 
+After `rust/main` `d83eb7c` (H and L) was merged in and the activity view read the Spotify read
+and the trickle (`16b07f0`), `parity/run.sh --only '1[128]-*'` (401 requests) had N at 0
+again. Its one new J diff, `11-signin/alt-admin-index`, is `aa504ee`'s edit of
+`octo/wwwroot/admin/index.html` (the dashboard served differs from the C# image's by one byte),
+not N's; `21-static` will show it too.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test

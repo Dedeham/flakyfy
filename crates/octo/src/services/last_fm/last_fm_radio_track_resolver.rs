@@ -123,13 +123,8 @@ impl LastFmRadioTrackResolver {
             .next()?;
         // A source that already named the video saves the search later, and plays exactly what
         // it suggested.
-        if let Some(video) = you_tube_id.filter(|video| !video.is_empty())
-            && let Some(routing) = self.registry.lookup(&hit.id)
-        {
-            let mut routing = routing.lock();
-            if routing.you_tube_id.as_deref().is_none_or(str::is_empty) {
-                routing.you_tube_id = Some(video.to_string());
-            }
+        if let Some(video) = you_tube_id.filter(|video| !video.is_empty()) {
+            self.registry.pin_video(&hit.id, video, false);
         }
         Some(hit)
     }

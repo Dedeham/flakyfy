@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{Method, StatusCode};
 use octo_core::models::domain::{Album, Song};
 use octo_core::settings::{AppSettings, LastFmSettings, SubsonicSettings};
-use octo_core::soulseek::{RoutingKind, SoulseekRouting};
+use octo_core::soulseek::{RoutingKind, SoulseekRouting, StreamFacts};
 use parking_lot::Mutex;
 use serde_json::Value;
 use wiremock::matchers::any;
@@ -404,7 +404,24 @@ async fn a_native_song_detail_for_an_outside_song_is_answered_by_octo() {
             ..Default::default()
         },
     );
-    let (_server, _state, app) = plain_fixture(metadata).await;
+    let tidal = SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Zephyr Echo".into()),
+        title: Some("Tidal".into()),
+        ..Default::default()
+    };
+    let known = crate::services::soulseek::ExternalIdRegistry::make_short_id(&tidal);
+    metadata.songs.lock().insert(
+        known.clone(),
+        Song {
+            id: known.clone(),
+            title: "Tidal".into(),
+            artist: "Zephyr Echo".into(),
+            duration: Some(241),
+            ..Default::default()
+        },
+    );
+    let (_server, state, app) = plain_fixture(metadata).await;
     let reply = get(&app, "/api/song/ext-soulseek-song-ext-song-1").await;
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(reply.header("content-type"), Some("application/json"));
@@ -415,10 +432,33 @@ async fn a_native_song_detail_for_an_outside_song_is_answered_by_octo() {
     let object = reply.json();
     assert_eq!(object["path"], "Zephyr Echo/Unknown/Glass_Harbor.m4a");
     assert_eq!(object["albumId"], "ext-song-1-al");
-    assert_eq!(object["size"], 241 * 128 * 1000 / 8);
+    // No estimate: the size is the stream's true one, and unknown until it is learned.
+    assert!(object.get("size").is_none());
+    assert_eq!(object["bitRate"], 128);
     assert_eq!(object["year"], 2020);
     assert!(object.get("genre").is_none());
     assert_eq!(object["createdAt"], "2020-01-01T00:00:00Z");
+
+    // Once the stream is known, its true size and its format.
+    assert_eq!(state.external_id_registry.register(tidal), known);
+    state.external_id_registry.set_you_tube_id(&known, "vid-a");
+    state.external_id_registry.remember_stream(
+        &known,
+        "vid-a",
+        &StreamFacts {
+            size: Some(7_012_345),
+            itag: Some("251".into()),
+            ext: Some("webm".into()),
+            bit_rate: Some(160),
+            ..Default::default()
+        },
+    );
+    let object = get(&app, &format!("/api/song/ext-soulseek-song-{known}"))
+        .await
+        .json();
+    assert_eq!(object["size"], 7_012_345);
+    assert_eq!(object["suffix"], "webm");
+    assert_eq!(object["bitRate"], 160);
 }
 
 /// Step 5: a first-page native song search gains discovery rows, and X-Total-Count says so.

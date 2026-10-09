@@ -178,10 +178,14 @@ async fn play_external(
     }
 
     warn!("Direct stream not available for {id}");
-    Ok(state
+    // A 404 with the Subsonic error body: a player that only reads the status still sees the
+    // play failed, instead of trying to decode an error envelope as audio.
+    let mut response = state
         .subsonic_response_builder
         .create_error(format, 70, "No playable source found for this track")
-        .into_response())
+        .into_response();
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    Ok(response)
 }
 
 /// Wait for a queued acquisition and serve the file.
@@ -273,6 +277,18 @@ async fn try_direct_stream(
     // every external song from the queue.
     let range_header = call.header("Range");
 
+    // A range that starts past the end of a stream whose size is known is refused here, the way
+    // a file would refuse it, so a player probing the end learns the length without a relay.
+    if let Some(size) = state
+        .external_id_registry
+        .stream_facts(external_id)
+        .and_then(|facts| facts.size)
+        && let Some(range) = range_header.as_deref()
+        && matches!(parse_range(range, size), RangeOutcome::Unsatisfiable)
+    {
+        return Ok(Some(range_not_satisfiable(size)));
+    }
+
     let Some(direct) = state
         .download_service
         .get_direct_stream(
@@ -291,6 +307,12 @@ async fn try_direct_stream(
         direct.quality.as_deref().unwrap_or(""),
         direct.status_code
     );
+    // The shim measures a played song's loudness; ask for it once it has had time to.
+    if matches!(direct.status_code, 200 | 206)
+        && is_first_byte_request(call.method().as_str(), range_header.as_deref())
+    {
+        state.stream_size_warmer.after_play(external_id);
+    }
 
     // Manual stream copy: the network stream isn't seekable, so the upstream's status code +
     // Content-Range are forwarded verbatim and the bytes copied to the response body.
@@ -310,6 +332,18 @@ async fn try_direct_stream(
         headers.insert(header::CONTENT_RANGE, range);
     }
     Ok(Some(response))
+}
+
+/// 416 with `Content-Range: bytes */<size>`, as a file past its end answers.
+fn range_not_satisfiable(size: u64) -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+    let headers = response.headers_mut();
+    if let Ok(range) = HeaderValue::from_str(&format!("bytes */{size}")) {
+        headers.insert(header::CONTENT_RANGE, range);
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    response
 }
 
 /// `File(File.OpenRead(path), GetContentType(path), enableRangeProcessing: true)`: the file
@@ -336,16 +370,7 @@ async fn serve_file(call: &SubsonicCall, path: &str) -> Result<Response, AppErro
             to - from + 1,
             Some(format!("bytes {from}-{to}/{length}")),
         ),
-        RangeOutcome::Unsatisfiable => {
-            let mut response = Response::new(Body::empty());
-            *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
-            let headers = response.headers_mut();
-            if let Ok(range) = HeaderValue::from_str(&format!("bytes */{length}")) {
-                headers.insert(header::CONTENT_RANGE, range);
-            }
-            headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
-            return Ok(response);
-        }
+        RangeOutcome::Unsatisfiable => return Ok(range_not_satisfiable(length)),
     };
 
     if from > 0 {

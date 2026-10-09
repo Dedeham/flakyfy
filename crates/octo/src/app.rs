@@ -121,7 +121,6 @@ use crate::services::soulseek::{
     SoulseekLink, SoulseekMetadataService, SoulseekPortCheck, SoulseekShareSwitch, SoulseekSharing,
     SoulseekStartupValidator,
 };
-use crate::services::subsonic::new_subsonic_response_builder;
 use crate::services::subsonic::{
     CredentialCheck, NavidromeIdentityService, RecentScrobbles, RequestIdentity, SearchSongOrderCache,
     SubsonicDiscoveryService, SubsonicProxyService, SyncCatalogService,
@@ -131,7 +130,7 @@ use crate::services::updates::UpdateHost;
 use crate::services::validation::{
     IStartupValidator, StartupValidationOrchestrator, SubsonicStartupValidator,
 };
-use crate::services::you_tube::{YouTubeMusicClient, YouTubeResolver};
+use crate::services::you_tube::{StreamSizeWarmer, YouTubeMusicClient, YouTubeResolver};
 use crate::workers::WorkerSupervisor;
 
 /// Cheap to clone; handlers and workers receive it by value.
@@ -274,6 +273,8 @@ pub struct AppInner {
     pub you_tube_resolver: Arc<YouTubeResolver>,
     /// `ExternalIdRegistry`: short external ids, `external-ids.json` (flushed by a worker).
     pub external_id_registry: Arc<ExternalIdRegistry>,
+    /// `StreamSizeWarmer`: learns the true size of outside songs listed without one; a worker.
+    pub stream_size_warmer: Arc<StreamSizeWarmer>,
     /// `RadioQueueStore`: recent search and radio queues for prewarming, in memory.
     pub radio_queues: Arc<RadioQueueStore>,
     /// `DirectoryBrowser`: the dashboard's folder picker.
@@ -978,6 +979,7 @@ struct Stores {
     download_picks: Arc<DownloadPicks>,
     soulseek_holds: Arc<SoulseekHoldStore>,
     you_tube_resolver: Arc<YouTubeResolver>,
+    stream_size_warmer: Arc<StreamSizeWarmer>,
     external_id_registry: Arc<ExternalIdRegistry>,
     radio_queues: Arc<RadioQueueStore>,
     directory_browser: Arc<DirectoryBrowser>,
@@ -1010,6 +1012,12 @@ impl Stores {
                 config_dir.join("external-ids.json"),
             )))
         });
+        let you_tube_resolver = Arc::new(YouTubeResolver::new(settings));
+        // Every row the response builder sends without a size asks this to learn one.
+        let stream_size_warmer = Arc::new(StreamSizeWarmer::new(
+            external_id_registry.clone(),
+            you_tube_resolver.clone(),
+        ));
         Stores {
             download_history: Arc::new(DownloadHistoryService::new(
                 config_dir.join("downloads-history.json"),
@@ -1019,11 +1027,12 @@ impl Stores {
             soulseek_holds: Arc::new(SoulseekHoldStore::new(Some(
                 config_dir.join("soulseek-holds.json"),
             ))),
-            you_tube_resolver: Arc::new(YouTubeResolver::new(settings)),
-            subsonic_response_builder: Arc::new(new_subsonic_response_builder(
-                external_id_registry.clone(),
+            you_tube_resolver,
+            subsonic_response_builder: Arc::new(SubsonicResponseBuilder::new(
+                stream_size_warmer.clone(),
                 &settings.current().subsonic,
             )),
+            stream_size_warmer,
             external_id_registry,
             radio_queues: Arc::new(RadioQueueStore::new()),
             directory_browser: Arc::new(DirectoryBrowser::new()),
@@ -1061,6 +1070,8 @@ impl Stores {
         workers.register("ExternalIdRegistry", move |token| {
             registry.clone().run_flusher(token)
         });
+        let warmer = self.stream_size_warmer.clone();
+        workers.register("StreamSizeWarmer", move |token| warmer.clone().run(token));
         let rejected = self.rejected_peers.clone();
         workers.register("RejectedPeerRegistry", move |token| {
             rejected.clone().run_flusher(token)
@@ -2215,6 +2226,7 @@ impl AppState {
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
+            stream_size_warmer: stores.stream_size_warmer,
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
@@ -2527,6 +2539,7 @@ impl AppState {
             soulseek_holds: stores.soulseek_holds,
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
+            stream_size_warmer: stores.stream_size_warmer,
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,

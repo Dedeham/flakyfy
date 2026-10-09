@@ -31,7 +31,7 @@ use octo_core::models::domain::{Album, Artist, Song, explicit_status};
 use octo_core::models::radio::LastFmRadioStation;
 use octo_core::models::subsonic::ExternalPlaylist;
 use octo_core::settings::SubsonicSettings;
-use octo_core::soulseek::{RoutingKind, SoulseekRouting};
+use octo_core::soulseek::{RoutingKind, SoulseekRouting, StreamFacts};
 use serde_json::{Map, Number, Value, json};
 
 use crate::xml::{XElement, XValue};
@@ -114,6 +114,14 @@ pub const FILE_ONLY_FIELDS: &[&str] = &[
 /// implements this for it.
 pub trait IdRegistry: Send + Sync {
     fn register(&self, routing: SoulseekRouting) -> String;
+
+    /// What is known of the stream an outside song under `song_id` plays, when anything is.
+    fn stream_facts(&self, _song_id: &str) -> Option<StreamFacts> {
+        None
+    }
+
+    /// An outside song went out without its size: a chance to learn it for next time.
+    fn size_wanted(&self, _song_id: &str) {}
 }
 
 /// Handles building Subsonic API responses in both XML and JSON formats.
@@ -797,18 +805,59 @@ impl SubsonicResponseBuilder {
         }
 
         if !song.is_local {
-            // No file on the server, so nothing about one.
-            for key in FILE_ONLY_FIELDS {
-                fields.shift_remove(*key);
-            }
             // A FLAC's rate is a guess until it is fetched; the 128 of the AAC stream is real.
-            if lossless_external {
+            let size = if lossless_external {
                 fields.shift_remove("bitRate");
+                None
+            } else {
+                self.declare_outside_stream(&mut fields, &song.id)
+            };
+            // No file on the server, so nothing about one; the size of the stream it relays is
+            // the one fact it can truthfully give, once known.
+            for key in FILE_ONLY_FIELDS {
+                match (*key, size) {
+                    ("size", Some(size)) => {
+                        fields.insert("size".into(), size.into());
+                    }
+                    _ => {
+                        fields.shift_remove(*key);
+                    }
+                }
             }
             fields.insert("isExternal".into(), true.into());
         }
 
         fields
+    }
+
+    /// An outside song that streams from YouTube: once the stream is known, the suffix, content
+    /// type and bit rate of the format it is served in, and its exact size (returned). A stream
+    /// not known yet keeps the m4a declaration and goes without a size, and is asked about for
+    /// next time. Wait-for-lossless rows never come here: their bytes are not known until the
+    /// FLAC lands.
+    fn declare_outside_stream(&self, fields: &mut Fields, song_id: &str) -> Option<u64> {
+        let facts = self.id_registry.stream_facts(song_id).unwrap_or_default();
+        if let Some(declared) = facts.declared() {
+            fields.insert("suffix".into(), declared.suffix.into());
+            fields.insert("contentType".into(), declared.content_type.into());
+            match declared.bit_rate {
+                Some(rate) => fields.insert("bitRate".into(), rate.into()),
+                None => fields.shift_remove("bitRate"),
+            };
+        }
+        // ReplayGain measured on the very stream that plays (OpenSubsonic's replayGain).
+        if let Some(gain) = facts.track_gain {
+            let mut replay_gain = Fields::new();
+            replay_gain.insert("trackGain".into(), json!(gain));
+            if let Some(peak) = facts.track_peak {
+                replay_gain.insert("trackPeak".into(), json!(peak));
+            }
+            fields.insert("replayGain".into(), Value::Object(replay_gain));
+        }
+        if facts.size.is_none() {
+            self.id_registry.size_wanted(song_id);
+        }
+        facts.size
     }
 
     /// Converts an Album domain model to Subsonic JSON format.
@@ -885,6 +934,13 @@ impl SubsonicResponseBuilder {
         let mut element = XElement::in_namespace(ns, "song");
         attributes(&mut element, &fields);
         text_lists(&mut element, &fields, ns);
+        // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+        if let Some(gain) = fields
+            .get("replayGain")
+            .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+        {
+            element.push(json_shape_to_xml(ns, "replayGain", gain));
+        }
         element
     }
 

@@ -305,6 +305,150 @@ fn external_song_declares_lossless_when_waiting_for_lossless() {
     assert!(!row.contains_key("bitRate"));
 }
 
+/// `TestIds` that also knows the stream of some songs, and notes the ones asked about.
+#[derive(Default)]
+struct StreamIds {
+    facts: std::collections::HashMap<String, StreamFacts>,
+    wanted: std::sync::Mutex<Vec<String>>,
+}
+
+impl IdRegistry for StreamIds {
+    fn register(&self, routing: SoulseekRouting) -> String {
+        TestIds.register(routing)
+    }
+
+    fn stream_facts(&self, song_id: &str) -> Option<StreamFacts> {
+        self.facts.get(song_id).cloned()
+    }
+
+    fn size_wanted(&self, song_id: &str) {
+        self.wanted
+            .lock()
+            .expect("not poisoned")
+            .push(song_id.to_string());
+    }
+}
+
+fn builder_over(ids: Arc<StreamIds>, wait_for_lossless: bool) -> SubsonicResponseBuilder {
+    SubsonicResponseBuilder::new(
+        ids,
+        &SubsonicSettings {
+            wait_for_lossless_on_play: wait_for_lossless,
+            ..Default::default()
+        },
+    )
+}
+
+fn known_stream(itag: &str, ext: &str, size: u64, bit_rate: Option<i32>) -> Arc<StreamIds> {
+    let mut ids = StreamIds::default();
+    ids.facts.insert(
+        "abc123".into(),
+        StreamFacts {
+            size: Some(size),
+            itag: Some(itag.into()),
+            ext: Some(ext.into()),
+            bit_rate,
+            ..Default::default()
+        },
+    );
+    Arc::new(ids)
+}
+
+#[test]
+fn an_outside_song_with_a_known_stream_carries_its_true_size_in_json_and_xml() {
+    let ids = known_stream("140", "m4a", 6_755_585, Some(129));
+    let builder = builder_over(ids.clone(), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(row["size"], 6_755_585);
+    assert_eq!(row["suffix"], "m4a");
+    assert_eq!(row["contentType"], "audio/mp4");
+    assert_eq!(row["bitRate"], 128);
+    // In the place a library song carries it, and still no other file facts.
+    let keys: Vec<&str> = row.keys().map(String::as_str).collect();
+    let at = |key: &str| keys.iter().position(|k| *k == key);
+    assert!(at("size") < at("contentType"), "{keys:?}");
+    assert!(!row.contains_key("path") && !row.contains_key("created"));
+
+    let xml = builder.convert_song_to_xml(&external_song(), NS);
+    assert_eq!(xml.attribute("size"), Some("6755585"));
+    assert_eq!(xml.attribute("suffix"), Some("m4a"));
+    assert!(ids.wanted.lock().expect("not poisoned").is_empty());
+}
+
+#[test]
+fn an_outside_song_served_as_opus_says_so() {
+    let builder = builder_over(known_stream("251", "webm", 7_012_345, Some(160)), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(row["size"], 7_012_345);
+    assert_eq!(row["suffix"], "webm");
+    assert_eq!(row["contentType"], "audio/webm");
+    assert_eq!(row["bitRate"], 160);
+
+    let builder = builder_over(known_stream("251", "webm", 7_012_345, None), false);
+    assert!(
+        !builder
+            .convert_song_to_json(&external_song())
+            .contains_key("bitRate")
+    );
+}
+
+#[test]
+fn an_outside_song_without_a_known_stream_has_no_size_and_is_asked_about() {
+    let ids = Arc::new(StreamIds::default());
+    let row = builder_over(ids.clone(), false).convert_song_to_json(&external_song());
+    assert!(!row.contains_key("size"));
+    assert_eq!(row["suffix"], "m4a");
+    assert_eq!(
+        *ids.wanted.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+}
+
+#[test]
+fn an_outside_song_with_measured_loudness_sends_its_replay_gain() {
+    let mut ids = StreamIds::default();
+    ids.facts.insert(
+        "abc123".into(),
+        StreamFacts {
+            size: Some(6_755_585),
+            itag: Some("140".into()),
+            track_gain: Some(-10.0),
+            track_peak: Some(1.135011),
+            ..Default::default()
+        },
+    );
+    let ids = Arc::new(ids);
+    let builder = builder_over(ids.clone(), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(
+        row["replayGain"],
+        json!({"trackGain": -10.0, "trackPeak": 1.135011})
+    );
+    let xml = builder.convert_song_to_xml(&external_song(), NS);
+    let gain = xml
+        .elements()
+        .find(|e| e.is(NS, "replayGain"))
+        .expect("a replayGain element");
+    assert_eq!(gain.attribute("trackGain"), Some("-10"));
+    assert_eq!(gain.attribute("trackPeak"), Some("1.135011"));
+
+    // Not measured yet: the empty object every row carries.
+    let row = builder_over(Arc::new(StreamIds::default()), false).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
+    // Waiting for lossless: the FLAC is not the stream that was measured.
+    let row = builder_over(ids, true).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
+}
+
+#[test]
+fn a_lossless_wait_never_sends_a_size_even_when_the_stream_is_known() {
+    let ids = known_stream("140", "m4a", 6_755_585, Some(129));
+    let row = builder_over(ids.clone(), true).convert_song_to_json(&external_song());
+    assert!(!row.contains_key("size"));
+    assert_eq!(row["suffix"], "flac");
+    assert!(ids.wanted.lock().expect("not poisoned").is_empty());
+}
+
 #[test]
 fn local_song_always_declares_flac_regardless_of_setting() {
     let local = Song {

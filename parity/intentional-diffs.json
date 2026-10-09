@@ -704,6 +704,23 @@
       ],
       "reason": "Two new library actions, Wrong lyrics and Wrong cover, appended after Keep (the journal stores actions as numbers). Every settings answer lists all actions, so the list grows from five to seven (both new ones off, with no star), and libraryAction's unknown-action message names the two new app names, lyrics and cover-swap. The lines are estimated; they are pinned on the first parity run at integration.",
       "knownDiff": "Wrong lyrics and Wrong cover actions"
+    },
+    {
+      "id": "outside-song-true-size",
+      "backlog": "base",
+      "requests": [
+        "08-catchall-native/native-song-external",
+        "08-catchall-native/native-songs-of-external-album",
+        "08-catchall-native/native-song-by-title-discovery"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$(\\[\\d+\\])?\\.size: only in A \\(\\d+\\)$"
+      ],
+      "reason": "An outside song's size is the true byte count of the stream Octo relays, learned from the shim (yt-dlp's filesize, the URL's clen when that is unknown, and the bytes of a play over both), and absent until it is known. The C# native rows sent duration x bit rate as the size, an estimate that never matched the bytes; strict clients use the size to seek. Subsonic rows (search3 and the rest) gain the true size once known, so a corpus row whose stream the parity stub never sized is unchanged there. The lines need pinning against a parity run.",
+      "knownDiff": "Outside songs: the true stream size"
     }
   ]
 }

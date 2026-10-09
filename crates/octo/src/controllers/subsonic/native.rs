@@ -15,9 +15,10 @@ use octo_core::json::datetime::format_utc;
 use octo_core::json::dom::Node;
 use octo_core::models::domain::{Album, Artist, Song};
 use octo_core::models::radio::LastFmRadioStation;
-use octo_core::soulseek::RoutingKind;
+use octo_core::soulseek::{RoutingKind, StreamFacts};
 use octo_subsonic::Parameters;
 use octo_subsonic::subsonic_model_mapper::album_key;
+use octo_subsonic::subsonic_response_builder::IdRegistry;
 use serde_json::{Value, json};
 
 use super::action_helpers::{
@@ -486,13 +487,33 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
     // path keeps promising m4a while /rest/stream hands back a FLAC. Note the two
     // serializers are not symmetric: this one emits no contentType at all, and
     // defaults an unknown duration to 0 where the Subsonic one uses 180.
+    //
+    // The size is the stream's true byte count once it is known, and absent until then (and
+    // always absent while waiting for lossless, whose bytes are not known until the FLAC lands).
+    // The suffix and bit rate follow the format the stream is served in, when known.
     let lossless = state.settings.current().subsonic.wait_for_lossless_on_play;
-    let suffix = if lossless { "flac" } else { "m4a" };
-    let bit_rate: i64 = if lossless { 950 } else { 128 }; // format 140 AAC ~128 kbps; FLAC lands ~850-1000
-    let size: i64 = if duration > 0 {
-        i64::from(duration) * bit_rate * 1000 / 8
+    let facts = if lossless {
+        StreamFacts::default()
     } else {
-        0
+        state
+            .stream_size_warmer
+            .stream_facts(&song.id)
+            .unwrap_or_default()
+    };
+    if !lossless && facts.size.is_none() {
+        state.stream_size_warmer.size_wanted(&song.id);
+    }
+    let declared = facts.declared();
+    let suffix = match &declared {
+        _ if lossless => "flac".to_string(),
+        Some(declared) => declared.suffix.clone(),
+        None => "m4a".to_string(),
+    };
+    // Format 140 AAC ~128 kbps; FLAC lands ~850-1000.
+    let bit_rate: Option<i64> = match &declared {
+        _ if lossless => Some(950),
+        Some(declared) => declared.bit_rate.map(i64::from),
+        None => Some(128),
     };
     let album_artist = match song.album_artist.as_deref() {
         Some(album_artist) if !album_artist.is_empty() => album_artist.to_string(),
@@ -511,7 +532,7 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
         "hasCoverArt": true,
         "trackNumber": song.track.unwrap_or(0),
         "discNumber": song.disc_number.unwrap_or(1),
-        "size": size,
+        "size": facts.size,
         "suffix": suffix,
         "duration": duration,
         "bitRate": bit_rate,
@@ -522,6 +543,12 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
         "updatedAt": "2020-01-01T00:00:00Z",
     });
     let fields = object.as_object_mut().expect("an object");
+    if facts.size.is_none() {
+        fields.shift_remove("size");
+    }
+    if bit_rate.is_none() {
+        fields.shift_remove("bitRate");
+    }
     if let Some(year) = song.year.filter(|year| *year > 0) {
         fields.insert("year".into(), year.into());
     }

@@ -590,3 +590,61 @@ async fn a_dropped_play_never_strands_a_heart() {
     assert_eq!(path, "/music/b.flac");
     assert!(next.is_star);
 }
+
+fn soulseek_off(
+    settings: SubsonicSettings,
+    queue: Arc<TrackAcquisitionQueue>,
+    direct: Arc<FakeDownloads>,
+) -> Arc<HeartAcquisitionCoordinator> {
+    HeartAcquisitionCoordinator::new(
+        store(settings),
+        queue,
+        direct,
+        Arc::new(FakeLidarr::default()),
+        HeartCoordinatorExtras {
+            soulseek: Some(Arc::new(crate::services::common::test_fakes::OffLink)),
+            ..Default::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn with_soulseek_off_an_album_heart_goes_straight_to_the_next_source() {
+    let direct = Arc::new(FakeDownloads::albums(|source, _| {
+        Ok(source == DownloadSource::YouTube)
+    }));
+    let settings = steps(&[
+        (HeartDownloadSource::Soulseek, true),
+        (HeartDownloadSource::YouTube, true),
+    ]);
+
+    soulseek_off(settings, new_queue(), direct.clone())
+        .acquire_album("soulseek", "album-id", None, None)
+        .await
+        .expect("ran");
+
+    assert_eq!(direct.album_sources(), [DownloadSource::YouTube]);
+}
+
+#[tokio::test]
+async fn with_soulseek_off_a_soulseek_first_play_is_a_you_tube_play() {
+    let queue = new_queue();
+    soulseek_off(
+        play_settings(
+            true,
+            false,
+            vec![
+                step(HeartDownloadSource::Soulseek, true, false),
+                step(HeartDownloadSource::YouTube, true, false),
+            ],
+        ),
+        queue.clone(),
+        Arc::new(FakeDownloads::default()),
+    )
+    .queue_play("soulseek", "track-id", None, None, None);
+
+    assert_eq!(
+        next_queued(&queue).await.expect("queued").source_override,
+        Some(DownloadSource::YouTube)
+    );
+}

@@ -718,6 +718,16 @@ async fn build_with(
     source: DownloadSource,
     answers: impl FnOnce(Vec<Song>) -> Answers,
 ) -> Walk {
+    build_with_soulseek(root, album_folders, source, true, answers).await
+}
+
+async fn build_with_soulseek(
+    root: &Root,
+    album_folders: bool,
+    source: DownloadSource,
+    soulseek_on: bool,
+    answers: impl FnOnce(Vec<Song>) -> Answers,
+) -> Walk {
     let registry = Arc::new(ExternalIdRegistry::in_memory());
     let songs: Vec<Song> = TITLES
         .iter()
@@ -759,6 +769,7 @@ async fn build_with(
         .await;
 
     let soulseek = SoulseekSettings {
+        enabled: soulseek_on,
         base_url: Some(server.uri()),
         username: Some("u".into()),
         password: Some("p".into()),
@@ -1309,4 +1320,47 @@ fn a_transfer_that_has_not_started_names_whom_it_waits_on() {
         waiting_words("tokidoki", "Requested"),
         "Waiting for tokidoki to start sending"
     );
+}
+
+#[tokio::test]
+async fn with_soulseek_off_soulseek_then_you_tube_goes_straight_to_the_mp3() {
+    let root = Root::new("octo-attempts-");
+    let walk = build_with_soulseek(&root, false, DownloadSource::SoulseekThenYouTube, false, |_| {
+        Arc::new(|_: &str| Vec::new())
+    })
+    .await;
+
+    let path = acquire(&walk, walk.songs[3].external_id.as_deref().expect("an id"), None)
+        .await
+        .expect("the YouTube copy lands");
+
+    assert!(path.ends_with(".mp3"), "{path}");
+    assert_eq!(walk.slskd.state.lock().you_tube_downloads.len(), 1);
+    let asked: Vec<String> = walk
+        ._server
+        .received_requests()
+        .await
+        .expect("recording")
+        .iter()
+        .map(|r| r.url.path().to_string())
+        .collect();
+    assert!(!asked.iter().any(|p| p.starts_with("/api/")), "{asked:?}");
+}
+
+#[tokio::test]
+async fn with_soulseek_off_a_soulseek_download_says_so_without_asking_slskd() {
+    let root = Root::new("octo-attempts-");
+    let walk = build_with_soulseek(&root, false, DownloadSource::Soulseek, false, |_| {
+        Arc::new(|_: &str| Vec::new())
+    })
+    .await;
+
+    let error = acquire(&walk, walk.songs[3].external_id.as_deref().expect("an id"), None)
+        .await
+        .expect_err("no source to try");
+
+    assert!(error.to_string().starts_with("Soulseek is off"), "{error:#}");
+    assert!(walk.slskd.searches().is_empty());
+    let asked = walk._server.received_requests().await.expect("recording");
+    assert!(!asked.iter().any(|r| r.url.path().starts_with("/api/")));
 }

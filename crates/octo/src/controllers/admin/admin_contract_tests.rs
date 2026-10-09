@@ -650,9 +650,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
     assert_eq!(row("Lidarr:WebhookSecret")["IsSecret"], true);
-    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan) and
-    // Lidarr:WebhookSecret.
-    assert_eq!(rows.len(), 180);
+    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan),
+    // Lidarr:WebhookSecret and Soulseek:Enabled.
+    assert_eq!(rows.len(), 181);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 
@@ -779,6 +779,20 @@ async fn the_side_effect_posts_answer_as_recorded() {
     let reply = admin_write(&app, Method::POST, "/api/admin/restart", None).await;
     assert_eq!(reply.status, StatusCode::ACCEPTED);
     assert_eq!(reply.text(), r#"{"ok":true,"message":"restarting"}"#);
+}
+
+#[tokio::test]
+async fn status_says_a_switched_off_soulseek_is_off_and_optional() {
+    let mut settings = factory_settings();
+    settings.soulseek.enabled = false;
+    let app = app(AppState::for_tests(settings));
+
+    let body = get(&app, "/api/admin/status").await.json();
+
+    assert_eq!(body["services"]["slskd"]["detail"], "Off. Optional.");
+    assert_eq!(body["services"]["slskd"]["ok"], true);
+    assert_eq!(body["services"]["slskd"]["configured"], false);
+    assert_eq!(body["services"]["slskd"]["warning"], false);
 }
 
 #[tokio::test]

@@ -227,6 +227,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "Soulseek".into(),
         n_obj([
+            ("Enabled", Node::Bool(soulseek.enabled)),
             ("BaseUrl", opt(&soulseek.base_url)),
             ("Username", opt(&soulseek.username)),
             // slskd's web login opens slskd entirely, so it goes out as the placeholder too.

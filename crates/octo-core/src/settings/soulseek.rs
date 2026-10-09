@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct SoulseekSettings {
-    /// Base URL of the slskd REST API (e.g. http://slskd:5030 when running in the same docker network).
+    /// Soulseek is optional: false turns it off even with an address set. Off, Octo never calls
+    /// slskd, and every download goes to the next source.
+    /// Environment variable: Soulseek__Enabled
+    pub enabled: bool,
+
+    /// Base URL of the slskd REST API (e.g. http://slskd:5030 when running in the same docker
+    /// network). Blank turns Soulseek off.
     pub base_url: Option<String>,
 
     /// slskd web UI / API admin username (Basic Auth).
@@ -203,6 +209,7 @@ pub struct SoulseekSettings {
 impl Default for SoulseekSettings {
     fn default() -> Self {
         Self {
+            enabled: true,
             base_url: None,
             username: None,
             password: None,
@@ -263,6 +270,11 @@ impl SoulseekSettings {
 
     pub fn effective_upgrade_search_wait_seconds(&self) -> i32 {
         self.upgrade_search_wait_seconds.clamp(30, 300)
+    }
+
+    /// Whether Octo uses Soulseek at all: switched on and given slskd's address.
+    pub fn is_on(&self) -> bool {
+        self.enabled && self.base_url.as_deref().is_some_and(|url| !url.trim().is_empty())
     }
 
     /// Two days at most: past that the next source is the better answer.
@@ -382,5 +394,24 @@ mod tests {
             );
         }
         assert_eq!(SoulseekSettings::default().effective_web_url(), None);
+    }
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+
+    #[test]
+    fn soulseek_is_on_only_when_switched_on_and_given_an_address() {
+        let with = |enabled: bool, base_url: Option<&str>| SoulseekSettings {
+            enabled,
+            base_url: base_url.map(str::to_string),
+            ..Default::default()
+        };
+        assert!(with(true, Some("http://slskd:5030")).is_on());
+        assert!(!with(false, Some("http://slskd:5030")).is_on());
+        assert!(!with(true, Some("  ")).is_on());
+        assert!(!with(true, None).is_on());
+        assert!(SoulseekSettings::default().enabled);
     }
 }

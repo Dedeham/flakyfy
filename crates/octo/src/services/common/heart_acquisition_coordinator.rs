@@ -517,6 +517,7 @@ impl HeartAcquisitionCoordinator {
     }
 
     fn enabled_steps(&self, album_heart: bool) -> Vec<HeartDownloadSource> {
+        let soulseek_off = self.extras.soulseek.as_ref().is_some_and(|link| link.is_off());
         self.settings
             .current()
             .subsonic
@@ -529,6 +530,7 @@ impl HeartAcquisitionCoordinator {
                     step.song_enabled == Some(true)
                 }
             })
+            .filter(|step| !(soulseek_off && step.source == HeartDownloadSource::Soulseek))
             .map(|step| step.source)
             .collect()
     }

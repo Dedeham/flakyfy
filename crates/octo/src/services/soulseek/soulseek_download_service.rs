@@ -2057,6 +2057,18 @@ impl DownloadBackend for SoulseekDownloadService {
         let source = download
             .source_override
             .unwrap_or(base.subsonic_settings().download_source);
+        // Soulseek switched off: the combined source is YouTube alone, and Soulseek alone has
+        // nothing to try.
+        let source = match source {
+            DownloadSource::SoulseekThenYouTube if !self.slskd.is_on() => DownloadSource::YouTube,
+            DownloadSource::YouTube => DownloadSource::YouTube,
+            _ if !self.slskd.is_on() => {
+                return Err(
+                    InvalidOperationException(super::soulseek_client::SOULSEEK_OFF.to_string()).into(),
+                );
+            }
+            source => source,
+        };
         match source {
             DownloadSource::YouTube => {
                 self.download_via_you_tube(base, &routing, download, true, cancellation_token)
@@ -2116,7 +2128,7 @@ impl DownloadBackend for SoulseekDownloadService {
     ) -> Vec<String> {
         let none = Vec::new();
         let settings = base.current_soulseek_settings();
-        if !settings.album_folders || tracks.len() < 3 {
+        if !settings.album_folders || tracks.len() < 3 || !self.slskd.is_on() {
             return none;
         }
         if !matches!(

@@ -141,6 +141,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Server:PublicUrl",
     "Updates:Check",
     "Updates:Repo",
+    "Soulseek:Enabled",
     "Soulseek:BaseUrl",
     "Soulseek:Username",
     "Soulseek:Password",

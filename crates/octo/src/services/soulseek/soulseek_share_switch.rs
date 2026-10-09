@@ -33,6 +33,10 @@ pub trait ISlskdShares: Send + Sync {
     async fn cancel_share_scan(&self) -> bool;
     /// Cancels one upload.
     async fn cancel_upload(&self, username: &str, id: &str) -> bool;
+    /// Soulseek is on, so slskd may be asked at all.
+    fn is_on(&self) -> bool {
+        true
+    }
 }
 
 #[async_trait]
@@ -54,6 +58,9 @@ impl ISlskdShares for SoulseekClient {
     }
     async fn cancel_upload(&self, username: &str, id: &str) -> bool {
         SoulseekClient::cancel_upload(self, username, id).await
+    }
+    fn is_on(&self) -> bool {
+        SoulseekClient::is_on(self)
     }
 }
 
@@ -125,6 +132,12 @@ impl SoulseekShareSwitch {
     /// and every minute while it cannot be made to.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         while !stopping.is_cancelled() {
+            if !self.slskd.is_on() {
+                tokio::select! {
+                    _ = stopping.cancelled() => return Ok(()),
+                    _ = tokio::time::sleep(Self::CHECK_EVERY) => continue,
+                }
+            }
             let on = self.settings.current().soulseek.share_library;
             let ok = tokio::select! {
                 _ = stopping.cancelled() => return Ok(()),

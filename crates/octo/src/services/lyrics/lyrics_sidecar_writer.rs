@@ -21,6 +21,7 @@ use super::lyrics_undo_journal::{LyricsUndoEntry, LyricsUndoJournal};
 use super::song_lyrics;
 use crate::services::common::AcquisitionTracker;
 use crate::services::common::acquisition_tracker::acquisition_event_kinds;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::local::ILocalLibraryService;
 
 /// One song to find lyrics for.
@@ -204,6 +205,8 @@ pub struct LyricsSidecarWriter {
     scan_pending: Arc<AtomicBool>,
     /// The downloads log a download's look reports to; set once the tracker exists.
     tracker: OnceLock<Arc<AcquisitionTracker>>,
+    /// The music folder's one-writer gate: a write waits while a library job holds it.
+    write_gate: OnceLock<LibraryWriteGate>,
 }
 
 impl LyricsSidecarWriter {
@@ -240,7 +243,13 @@ impl LyricsSidecarWriter {
             receiver: tokio::sync::Mutex::new(receiver),
             scan_pending: Arc::new(AtomicBool::new(false)),
             tracker: OnceLock::new(),
+            write_gate: OnceLock::new(),
         }
+    }
+
+    /// The gate shared with the library jobs. Only the first call counts.
+    pub fn set_write_gate(&self, gate: LibraryWriteGate) {
+        let _ = self.write_gate.set(gate);
     }
 
     /// The downloads log a download's look reports to. Only the first call counts.
@@ -274,8 +283,14 @@ impl LyricsSidecarWriter {
             let Some(job) = job else {
                 break;
             };
+            let share = match self.write_gate.get() {
+                Some(gate) => Some(gate.write().await),
+                None => None,
+            };
+            let written = self.write(&job, false, &stopping).await;
+            drop(share);
             // One job's failure is logged and the loop goes on.
-            match self.write(&job, false, &stopping).await {
+            match written {
                 _ if stopping.is_cancelled() => break,
                 Ok(write) => {
                     self.report(&job, &write);

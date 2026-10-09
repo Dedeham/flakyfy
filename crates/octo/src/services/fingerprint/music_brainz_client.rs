@@ -3,6 +3,7 @@
 //! https://musicbrainz.org/ws/2/, a 10 s timeout, Octo's User-Agent). The query builders and
 //! the readers are in `octo_core::fingerprint::music_brainz_client`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use octo_core::common::{SongIdentity, dotnet, octo_user_agent};
 use octo_core::fingerprint::music_brainz_client as pure;
 use octo_core::json::element::ElementError;
 use octo_core::tagging::{ReleaseDetails, ReleaseLookup};
+use parking_lot::Mutex;
 use serde_json::Value;
 use tokio::time::Instant;
 use tracing::debug;
@@ -59,6 +61,10 @@ pub struct MusicBrainzClient {
     /// Release lookups are remembered a day, since an album's tracks ask for the same
     /// release one by one; searches six hours. Every entry counts as one, so the limit is a count.
     cache: MemoryCache<Cached>,
+    /// Exact-name artist answers by lowercase name, kept for the life of the process.
+    artists: Mutex<HashMap<String, Vec<pure::MusicBrainzArtist>>>,
+    /// Recording credits by lowercase recording id, kept for the life of the process.
+    credits: Mutex<HashMap<String, Vec<pure::CreditPart>>>,
 }
 
 impl MusicBrainzClient {
@@ -88,6 +94,8 @@ impl MusicBrainzClient {
             gate: tokio::sync::Mutex::new(None),
             background_backoff: Self::BACKGROUND_BACKOFF,
             cache: MemoryCache::new(2000),
+            artists: Mutex::new(HashMap::new()),
+            credits: Mutex::new(HashMap::new()),
         }
     }
 
@@ -256,6 +264,76 @@ impl MusicBrainzClient {
         self.cache
             .set(key, Cached::Text(country.clone()), 1, Self::ARTIST_TTL);
         Ok(Some(country))
+}
+
+    /// The MusicBrainz artists named exactly `name`, by name or alias, case and accents aside:
+    /// empty when there is none, None when MusicBrainz could not be asked. Answers are kept for
+    /// the life of the process, so a second preview asks nothing it asked before; a failed
+    /// request is not kept, so it is "could not ask", never "no such artist".
+    pub async fn find_artists_named(
+        &self,
+        name: &str,
+    ) -> Result<Option<Vec<pure::MusicBrainzArtist>>, MusicBrainzError> {
+        let wanted = name.trim();
+        if wanted.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        if let Some(known) = self.known_artists_named(wanted) {
+            return Ok(Some(known));
+        }
+        let Some(doc) = self
+            .get(&pure::artists_named_url(wanted), "artist search")
+            .await?
+        else {
+            return Ok(None);
+        };
+        let found = pure::parse_artists_named(&doc, wanted);
+        self.artists.lock().insert(wanted.to_lowercase(), found.clone());
+        Ok(Some(found))
+    }
+
+    /// The answer [`Self::find_artists_named`] already has for `name`, without asking.
+    pub fn known_artists_named(&self, name: &str) -> Option<Vec<pure::MusicBrainzArtist>> {
+        self.artists.lock().get(&name.trim().to_lowercase()).cloned()
+    }
+
+    /// The artist credits of these recordings, asked 100 to a search: every id asked gets an
+    /// answer, empty when MusicBrainz does not know the recording. None when it could not be
+    /// asked. Answers are kept for the life of the process.
+    pub async fn recording_credits(
+        &self,
+        ids: &[String],
+    ) -> Result<Option<HashMap<String, Vec<pure::CreditPart>>>, MusicBrainzError> {
+        let wanted: Vec<String> = ids
+            .iter()
+            .map(|id| id.trim().to_lowercase())
+            .filter(|id| pure::is_mbid(id) && self.known_credits(id).is_none())
+            .collect();
+        for batch in wanted.chunks(100) {
+            let Some(url) = pure::recording_credits_url(batch) else {
+                continue;
+            };
+            let Some(doc) = self.get(&url, "recording credits").await? else {
+                return Ok(None);
+            };
+            let found = pure::parse_recording_credits(&doc);
+            let mut credits = self.credits.lock();
+            for id in batch {
+                credits.insert(id.clone(), found.get(id).cloned().unwrap_or_default());
+            }
+        }
+        let credits = self.credits.lock();
+        Ok(Some(
+            ids.iter()
+                .map(|id| id.trim().to_lowercase())
+                .filter_map(|id| credits.get(&id).map(|parts| (id, parts.clone())))
+                .collect(),
+        ))
+    }
+
+    /// The credit [`Self::recording_credits`] already has for one recording, without asking.
+    pub fn known_credits(&self, id: &str) -> Option<Vec<pure::CreditPart>> {
+        self.credits.lock().get(&id.trim().to_lowercase()).cloned()
     }
 
     /// One request, spaced at least [`Self::MINIMUM_GAP`] after the last. None on any

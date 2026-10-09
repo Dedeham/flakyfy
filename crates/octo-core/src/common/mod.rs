@@ -2,6 +2,7 @@
 
 pub mod acquisition_tracker;
 pub mod album_fill_in;
+pub mod artist_credit;
 pub mod clock;
 pub mod countries;
 pub mod dotnet;
@@ -9,6 +10,7 @@ pub mod dotnet_random;
 pub mod error;
 pub mod live_version;
 pub mod log_redaction;
+pub mod navidrome_artist_key;
 pub mod octo_user_agent;
 pub mod path_helper;
 pub mod playlist_id_helper;

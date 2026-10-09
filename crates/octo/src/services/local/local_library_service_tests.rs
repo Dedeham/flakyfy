@@ -541,3 +541,105 @@ async fn a_scan_count_that_is_not_an_int32_is_none() {
     let f = Fixture::answering(r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":"5"}}}"#).await;
     assert!(f.service.get_scan_status().await.is_none());
 }
+
+/// A ping names the server even when Navidrome refused the sign-in; nothing answering is none.
+#[tokio::test]
+async fn get_server_info_reads_the_ping_envelope() {
+    let f = Fixture::answering(
+        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","type":"navidrome","serverVersion":"0.64.2 (abc)","error":{"code":40}}}"#,
+    )
+    .await;
+    let info = f.service.get_server_info().await.expect("an answer");
+    assert!(info.is_navidrome());
+    assert_eq!(info.version(), Some((0, 64, 2)));
+    assert!(
+        crate::services::test_support::received(&f.server)
+            .await
+            .iter()
+            .any(|r| r.url.path() == "/rest/ping")
+    );
+
+    let not_subsonic = Fixture::answering("<html>not here</html>").await;
+    assert!(not_subsonic.service.get_server_info().await.is_none());
+}
+
+/// A 200 whose envelope says "failed" (a sign-in Navidrome refused) started no scan.
+#[tokio::test]
+async fn a_scan_answer_that_failed_is_no_scan() {
+    let f = Fixture::answering(r#"{"subsonic-response":{"status":"failed","error":{"code":40}}}"#).await;
+    assert!(!f.service.trigger_library_scan(true).await);
+    let not_json = Fixture::answering("<html>ok</html>").await;
+    assert!(!not_json.service.trigger_library_scan(true).await);
+}
+
+/// Navidrome's last scan time and length, which say when that scan started.
+#[tokio::test]
+async fn scan_status_reads_when_the_last_scan_ran() {
+    let f = Fixture::answering(
+        r#"{"subsonic-response":{"status":"ok","scanStatus":{"scanning":false,"count":12,"folderCount":3,"lastScan":"2026-10-09T10:15:30+02:00","elapsedTime":30000000000}}}"#,
+    )
+    .await;
+    let status = f.service.get_scan_status().await.expect("a status");
+    assert_eq!(status.count, Some(12));
+    assert_eq!(status.folder_count, Some(3));
+    assert_eq!(status.elapsed_time, Some(30_000_000_000));
+    assert_eq!(
+        status.last_scan_started_at().expect("a start").to_rfc3339(),
+        "2026-10-09T08:15:00+00:00"
+    );
+}
+
+/// While the tidy holds scans, Octo's own triggers wait; the holder's own scan goes, and the
+/// last release says a held one is owed.
+#[tokio::test]
+async fn held_scans_wait_and_the_holder_still_scans() {
+    async fn starts(f: &Fixture) -> usize {
+        crate::services::test_support::received(&f.server)
+            .await
+            .iter()
+            .filter(|r| r.url.path() == "/rest/startScan")
+            .count()
+    }
+    let f = Fixture::new().await;
+    let hold = f.service.scan_hold().expect("a hold").hold();
+
+    assert!(f.service.trigger_library_scan(true).await);
+    assert_eq!(starts(&f).await, 0);
+    assert!(f.service.start_scan().await);
+    assert_eq!(starts(&f).await, 1);
+    assert!(hold.release());
+    assert!(f.service.trigger_library_scan(true).await);
+    assert_eq!(starts(&f).await, 2);
+}
+
+/// The tidy moves a folder; every mapping inside it follows, on disk too, so the existing-file
+/// check still finds the song after a restart.
+#[tokio::test]
+async fn update_local_path_the_mapping_follows_a_moved_folder() {
+    let f = Fixture::new().await;
+    let song = Song {
+        title: "Session".into(),
+        artist: "Bizarrap, Rauw Alejandro".into(),
+        external_provider: Some("deezer".into()),
+        external_id: Some("4242".into()),
+        ..Song::default()
+    };
+    let from = f.path("Bizarrap, Rauw Alejandro/Album");
+    let to = f.path("Bizarrap/Album");
+    std::fs::create_dir_all(&to).expect("made");
+    std::fs::write(format!("{to}/Session.flac"), "moved").expect("written");
+    f.service
+        .register_downloaded_song(&song, &format!("{from}/Session.flac"))
+        .await
+        .expect("registered");
+
+    assert_eq!(f.service.update_local_path(&from, &to).await.expect("saved"), 1);
+    assert_eq!(f.service.update_local_path(&from, &to).await.expect("saved"), 0);
+
+    assert_eq!(
+        f.service.get_local_path_for_external_song("deezer", "4242").await,
+        Some(format!("{to}/Session.flac"))
+    );
+    let on_disk = std::fs::read_to_string(f.mappings_file()).expect("written");
+    assert!(on_disk.contains("Bizarrap/Album/Session.flac"), "{on_disk}");
+}

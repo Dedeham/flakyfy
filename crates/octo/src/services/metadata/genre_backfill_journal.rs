@@ -166,6 +166,27 @@ impl GenreBackfillJournal {
         }
     }
 
+    /// Follow a folder the library tidy moved, so an undo of a genre run still finds its
+    /// files. Answers how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        if self.path.is_none() || !self.exists() {
+            return 0;
+        }
+        let mut oldest_first = self.read_all();
+        oldest_first.reverse();
+        let mut moved = 0;
+        for entry in &mut oldest_first {
+            if let Some(now) = octo_core::common::PathHelper::moved_path(&entry.path, from, to) {
+                entry.path = now;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.rewrite(&oldest_first);
+        }
+        moved
+    }
+
     pub fn clear(&self) {
         let Some(path) = &self.path else {
             return;

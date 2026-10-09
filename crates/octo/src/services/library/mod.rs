@@ -22,6 +22,7 @@ pub mod library_review_sweep_worker;
 pub mod library_snapshot;
 pub mod library_tag_edits;
 pub mod library_walk;
+pub mod library_write_gate;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;
@@ -31,6 +32,7 @@ pub mod quality_upgrade_worker;
 pub mod rejections;
 pub mod replacement_handoff;
 mod state_dictionary;
+pub mod tidy;
 pub mod upgrade_queue;
 pub mod upgrade_sources;
 

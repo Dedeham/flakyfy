@@ -35,6 +35,7 @@ pub mod secrets;
 pub mod settings;
 pub mod soulseek_sharing;
 pub mod system;
+pub mod tidy;
 pub mod trash;
 pub mod update;
 pub mod upgrades;
@@ -131,6 +132,7 @@ pub fn library_and_job_routes() -> RouteSet {
         .merge(health::routes())
         .merge(upgrades::routes())
         .merge(genre::routes())
+        .merge(tidy::routes())
         .merge(cover_upgrade::routes())
         .merge(explicit_backfill::routes())
         .merge(lyrics_admin::routes())

@@ -579,6 +579,23 @@ impl TagEditJournal {
         self.save(&entries)
     }
 
+    /// Follow a folder the library tidy moved, so an undo of an edit still finds its file.
+    /// Answers how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut entries = self.entries.lock();
+        let mut moved = 0;
+        for entry in entries.iter_mut() {
+            if let Some(now) = octo_core::common::PathHelper::moved_path(&entry.path, from, to) {
+                entry.path = now;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.save(&entries);
+        }
+        moved
+    }
+
     /// The edits one run made that are not undone yet, oldest first.
     pub fn of_run(&self, run_id: &str) -> Vec<TagEditEntry> {
         self.entries

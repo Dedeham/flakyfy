@@ -578,3 +578,44 @@ async fn unwritable_files_stop_the_run_and_strangers_are_skipped() {
         Some("2 files in a row could not be written. Is the music directory read-only?")
     );
 }
+
+/// An apply that finds another library job holding the music folder writes nothing and says
+/// which job it waited on.
+#[tokio::test]
+async fn an_apply_while_another_library_job_writes_changes_nothing() {
+    let bytes = audio_or_skip!("mp3");
+    let dir = Dir::new();
+    let music = library(&dir, &bytes, &[("b.mp3", &["UK Garage"])]);
+    let (worker, store, journal) = walk_worker(&dir, garage(), &music, None);
+    let gate = crate::services::library::library_write_gate::LibraryWriteGate::new();
+    let worker = Arc::new(
+        Arc::try_unwrap(worker)
+            .ok()
+            .expect("only this test holds the worker")
+            .with_write_gate(gate.clone()),
+    );
+    run_until_idle(
+        &worker,
+        &store,
+        GenreBackfillRequest::new(GenreBackfillScope::WholeLibrary, true),
+    )
+    .await;
+    let tidy = gate.begin_job("Tidy artists").await.expect("free");
+
+    run_until_idle(
+        &worker,
+        &store,
+        GenreBackfillRequest::new(GenreBackfillScope::WholeLibrary, false),
+    )
+    .await;
+
+    assert_eq!(genres_of(&music.join("b.mp3")), ["UK Garage"]);
+    assert!(!journal.exists());
+    assert!(
+        store
+            .current()
+            .reason
+            .is_some_and(|why| why.contains("Tidy artists is changing the music folder"))
+    );
+    drop(tidy);
+}

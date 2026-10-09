@@ -12,8 +12,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
-use octo_core::common::SongIdentity;
 use octo_core::common::dotnet::{self, eq_ignore_case, escape_data_string};
+use octo_core::common::{PathHelper, SongIdentity};
 use octo_core::json::{self, datetime};
 use octo_core::models::domain::Song;
 use octo_core::models::subsonic::ScanStatus;
@@ -26,10 +26,12 @@ use tracing::{debug, error, info, warn};
 
 use super::ILocalLibraryService;
 use super::i_local_library_service::{ParsedExternalId, ParsedSongId};
+use super::scan_wait::ScanHold;
 use crate::services::framework::DotnetDictionary;
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::state_file;
 use crate::services::subsonic::NavidromeIdentityService;
+use crate::services::subsonic::navidrome_version::ServerInfo;
 
 /// Represents the mapping between an external song and its local file
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,6 +122,8 @@ pub struct LocalLibraryService {
     mappings: Mutex<Option<DotnetDictionary<LocalSongMapping>>>,
     /// Debounce to avoid triggering too many scans
     last_scan_trigger: Mutex<Option<DateTime<Utc>>>,
+    /// Octo's own triggers, held back while the library tidy moves files.
+    scan_hold: ScanHold,
 }
 
 impl LocalLibraryService {
@@ -152,6 +156,7 @@ impl LocalLibraryService {
             nav_identity,
             mappings: Mutex::new(None),
             last_scan_trigger: Mutex::new(None),
+            scan_hold: ScanHold::new(),
         }
     }
 
@@ -233,6 +238,77 @@ impl LocalLibraryService {
                 None
             }
         }
+    }
+}
+
+impl LocalLibraryService {
+    /// startScan, debounced unless forced. True only when Navidrome said the scan started: a
+    /// 200 carrying a failed envelope (a sign-in Navidrome refused) is not a scan.
+    async fn send_scan(&self, force: bool) -> bool {
+        // Debounce: avoid triggering too many successive scans. A forced call skips it:
+        // otherwise the last track of a batch can have its scan swallowed and stay
+        // invisible until some unrelated trigger happens along.
+        let now = Utc::now();
+        {
+            let mut last = self.last_scan_trigger.lock();
+            if !force && let Some(previous) = *last {
+                let elapsed = now - previous;
+                if elapsed < Self::SCAN_DEBOUNCE_INTERVAL {
+                    debug!(
+                        "Scan debounced - last scan was {}s ago",
+                        elapsed.num_milliseconds() as f64 / 1000.0
+                    );
+                    return true;
+                }
+            }
+            *last = Some(now);
+        }
+
+        // Navidrome's startScan requires an admin identity. Octo, as a proxy,
+        // gets one from the NavidromeIdentityService (captured from a client's
+        // relayed login or configured admin creds). When available we send the
+        // Subsonic u/t/s triplet; otherwise we fall back to the bare call, which
+        // only works on servers that allow unauthenticated localhost scans.
+        let auth = self.nav_identity.get_scan_auth();
+        let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
+        let url = match &auth {
+            Some((user, token, salt)) => format!(
+                "{base}/rest/startScan?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
+                escape_data_string(user)
+            ),
+            None => format!("{base}/rest/startScan?f=json"),
+        };
+
+        info!(
+            "Triggering Subsonic library scan ({})...",
+            if auth.is_none() {
+                "unauthenticated"
+            } else {
+                "authenticated"
+            }
+        );
+
+        let result: anyhow::Result<bool> = async {
+            let response = self.http.get(&url).send().await?;
+            let status = response.status();
+            if status.is_success() {
+                let content = response.text().await?;
+                if !scan_started(&content) {
+                    warn!("Navidrome did not start a scan: {content}");
+                    return Ok(false);
+                }
+                info!("Subsonic scan triggered successfully: {content}");
+                Ok(true)
+            } else {
+                warn!("Failed to trigger Subsonic scan: {status} - Server may require authentication");
+                Ok(false)
+            }
+        }
+        .await;
+        result.unwrap_or_else(|e| {
+            error!(error = %e, "Error triggering Subsonic library scan");
+            false
+        })
     }
 }
 
@@ -465,66 +541,38 @@ impl ILocalLibraryService for LocalLibraryService {
     }
 
     async fn trigger_library_scan(&self, force: bool) -> bool {
-        // Debounce: avoid triggering too many successive scans. A forced call skips it:
-        // otherwise the last track of a batch can have its scan swallowed and stay
-        // invisible until some unrelated trigger happens along.
-        let now = Utc::now();
-        {
-            let mut last = self.last_scan_trigger.lock();
-            if !force && let Some(previous) = *last {
-                let elapsed = now - previous;
-                if elapsed < Self::SCAN_DEBOUNCE_INTERVAL {
-                    debug!(
-                        "Scan debounced - last scan was {}s ago",
-                        elapsed.num_milliseconds() as f64 / 1000.0
-                    );
-                    return true;
-                }
-            }
-            *last = Some(now);
+        if self.scan_hold.defer() {
+            debug!("Scan held back while the library tidy moves files; one is sent when it is done");
+            return true;
         }
+        self.send_scan(force).await
+    }
 
-        // Navidrome's startScan requires an admin identity. Octo, as a proxy,
-        // gets one from the NavidromeIdentityService (captured from a client's
-        // relayed login or configured admin creds). When available we send the
-        // Subsonic u/t/s triplet; otherwise we fall back to the bare call, which
-        // only works on servers that allow unauthenticated localhost scans.
-        let auth = self.nav_identity.get_scan_auth();
-        let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
-        let url = match &auth {
-            Some((user, token, salt)) => format!(
-                "{base}/rest/startScan?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
-                escape_data_string(user)
-            ),
-            None => format!("{base}/rest/startScan?f=json"),
-        };
-
-        info!(
-            "Triggering Subsonic library scan ({})...",
-            if auth.is_none() {
-                "unauthenticated"
-            } else {
-                "authenticated"
-            }
-        );
-
-        let result: anyhow::Result<bool> = async {
-            let response = self.http.get(&url).send().await?;
-            let status = response.status();
-            if status.is_success() {
-                let content = response.text().await?;
-                info!("Subsonic scan triggered successfully: {content}");
-                Ok(true)
-            } else {
-                warn!("Failed to trigger Subsonic scan: {status} - Server may require authentication");
-                Ok(false)
+    async fn update_local_path(&self, old_path: &str, new_path: &str) -> anyhow::Result<usize> {
+        if dotnet::is_blank(old_path) || dotnet::is_blank(new_path) {
+            return Ok(0);
+        }
+        let mut cached = self.mappings.lock();
+        let mappings = self.loaded(&mut cached)?;
+        let mut moved = 0;
+        for mapping in mappings.values_mut() {
+            if let Some(now) = PathHelper::moved_path(&mapping.local_path, old_path, new_path) {
+                mapping.local_path = now;
+                moved += 1;
             }
         }
-        .await;
-        result.unwrap_or_else(|e| {
-            error!(error = %e, "Error triggering Subsonic library scan");
-            false
-        })
+        if moved > 0 {
+            self.save(mappings)?;
+        }
+        Ok(moved)
+    }
+
+    async fn start_scan(&self) -> bool {
+        self.send_scan(true).await
+    }
+
+    fn scan_hold(&self) -> Option<ScanHold> {
+        Some(self.scan_hold.clone())
     }
 
     async fn get_scan_status(&self) -> Option<ScanStatus> {
@@ -550,6 +598,27 @@ impl ILocalLibraryService for LocalLibraryService {
         .await;
         result.unwrap_or_else(|e| {
             debug!(error = %e, "Error getting Subsonic scan status");
+            None
+        })
+    }
+
+    async fn get_server_info(&self) -> Option<ServerInfo> {
+        let result: anyhow::Result<Option<ServerInfo>> = async {
+            let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
+            let url = match self.nav_identity.get_scan_auth() {
+                Some((user, token, salt)) => format!(
+                    "{base}/rest/ping?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
+                    escape_data_string(&user)
+                ),
+                None => format!("{base}/rest/ping?f=json&c=octo&v=1.16.1"),
+            };
+            let content = self.http.get(&url).send().await?.bytes().await?;
+            let doc: Value = serde_json::from_slice(&content)?;
+            Ok(ServerInfo::read(&doc))
+        }
+        .await;
+        result.unwrap_or_else(|e| {
+            debug!(error = %e, "Could not ask the Subsonic server who it is");
             None
         })
     }
@@ -583,7 +652,25 @@ fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
         Some(_) => anyhow::bail!("count is not a number"),
         None => None,
     };
-    Ok(Some(ScanStatus { scanning, count }))
+    let text = |name: &str| scan_status.get(name).and_then(Value::as_str).map(str::to_string);
+    let number = |name: &str| scan_status.get(name).and_then(Value::as_i64);
+    Ok(Some(ScanStatus {
+        scanning,
+        count,
+        last_scan: text("lastScan"),
+        elapsed_time: number("elapsedTime"),
+        folder_count: number("folderCount"),
+    }))
+}
+
+/// Whether a startScan answer is an "ok" envelope.
+fn scan_started(content: &str) -> bool {
+    serde_json::from_str::<Value>(content).is_ok_and(|doc| {
+        doc.get("subsonic-response")
+            .and_then(|envelope| envelope.get("status"))
+            .and_then(Value::as_str)
+            == Some("ok")
+    })
 }
 
 #[cfg(test)]

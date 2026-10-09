@@ -344,6 +344,145 @@ pub fn pick(root: &Value, artist: &str, title: &str, duration_seconds: i32) -> E
     Ok(if ids.len() == 1 { ids.pop() } else { None })
 }
 
+// ---- artists by name, and the credits of recordings -----------------------------------------
+
+/// One MusicBrainz artist: its id and the name MusicBrainz spells it with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MusicBrainzArtist {
+    pub id: String,
+    pub name: String,
+}
+
+/// One artist of a recording's credit, and the words that join it to the next ("" for the
+/// last, which MusicBrainz leaves out).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreditPart {
+    pub name: String,
+    #[serde(default)]
+    pub join_phrase: String,
+}
+
+/// The search for artists by a name, under their name or any alias.
+pub fn artists_named_url(name: &str) -> String {
+    let wanted = escape_query(name.trim());
+    let query = format!("artist:\"{wanted}\" OR alias:\"{wanted}\"");
+    format!(
+        "artist/?query={}&fmt=json&limit=25",
+        dotnet::escape_data_string(&query)
+    )
+}
+
+/// The artists of a search answer named `name`, by their name or one of their aliases, read the
+/// way Octo reads names (case, accents, "&" and "and" aside). The search ranks near matches
+/// alongside, and a resemblance is somebody else, so those are dropped.
+pub fn parse_artists_named(root: &Value, name: &str) -> Vec<MusicBrainzArtist> {
+    let wanted = SongIdentity::key(name);
+    let mut found: Vec<MusicBrainzArtist> = Vec::new();
+    if wanted.is_empty() {
+        return found;
+    }
+    let Some(artists) = root.get("artists").and_then(Value::as_array) else {
+        return found;
+    };
+    let text =
+        |value: &Value, field: &str| value.get(field).and_then(Value::as_str).unwrap_or("").to_string();
+    for artist in artists {
+        let id = text(artist, "id");
+        let artist_name = text(artist, "name");
+        if id.is_empty() || found.iter().any(|known| known.id.eq_ignore_ascii_case(&id)) {
+            continue;
+        }
+        let by_name = SongIdentity::key(&artist_name) == wanted;
+        let by_alias = artist
+            .get("aliases")
+            .and_then(Value::as_array)
+            .is_some_and(|aliases| {
+                aliases
+                    .iter()
+                    .any(|alias| SongIdentity::key(&text(alias, "name")) == wanted)
+            });
+        if by_name || by_alias {
+            found.push(MusicBrainzArtist {
+                id,
+                name: artist_name,
+            });
+        }
+    }
+    found
+}
+
+/// Whether `id` looks like a MusicBrainz id, so it can go into a query as it is.
+pub fn is_mbid(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(at, b)| match at {
+            8 | 13 | 18 | 23 => *b == b'-',
+            _ => b.is_ascii_hexdigit(),
+        })
+}
+
+/// One search for the credits of up to 100 recordings by id. Ids that are not MusicBrainz ids
+/// are left out.
+pub fn recording_credits_url(ids: &[String]) -> Option<String> {
+    let ids: Vec<String> = ids
+        .iter()
+        .filter(|id| is_mbid(id))
+        .map(|id| id.to_lowercase())
+        .collect();
+    if ids.is_empty() {
+        return None;
+    }
+    let query = format!("rid:({})", ids.join(" OR "));
+    Some(format!(
+        "recording/?query={}&fmt=json&limit=100",
+        dotnet::escape_data_string(&query)
+    ))
+}
+
+/// Each recording of a search answer with its artist credit, by lowercase id.
+pub fn parse_recording_credits(root: &Value) -> std::collections::HashMap<String, Vec<CreditPart>> {
+    let mut credits = std::collections::HashMap::new();
+    let Some(recordings) = root.get("recordings").and_then(Value::as_array) else {
+        return credits;
+    };
+    for recording in recordings {
+        let Some(id) = recording
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        let parts: Vec<CreditPart> = recording
+            .get("artist-credit")
+            .and_then(Value::as_array)
+            .map(|credit| {
+                credit
+                    .iter()
+                    .filter_map(|entry| {
+                        let name = entry.get("name").and_then(Value::as_str).or_else(|| {
+                            entry
+                                .get("artist")
+                                .and_then(|artist| artist.get("name"))
+                                .and_then(Value::as_str)
+                        })?;
+                        Some(CreditPart {
+                            name: name.to_string(),
+                            join_phrase: entry
+                                .get("joinphrase")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        credits.insert(id.to_lowercase(), parts);
+    }
+    credits
+}
+
 #[cfg(test)]
 #[path = "music_brainz_client_tests.rs"]
 mod tests;

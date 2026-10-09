@@ -15,20 +15,26 @@ use serde::{Deserialize, Serialize};
 use super::store_file;
 
 /// What Octo has learned about links in members' libraries.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LinkState {
     /// Navidrome has shown a linked song in a member's library at least once.
     #[serde(default)]
     pub seen: bool,
-    /// How many times a link Navidrome did not show in time became a copy that Navidrome then
-    /// showed.
+    /// How many songs had a link that a finished Navidrome scan did not show, and a copy in its
+    /// place that Navidrome then showed. Each song counts once.
     #[serde(default)]
     pub unshown: u32,
+    /// The pool files of the songs counted in `unshown` (the most recent [`MISSED_KEPT`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missed: Vec<String>,
     /// Links do not work for Navidrome here: members get real copies from now on.
     #[serde(default)]
     pub copies: bool,
 }
+
+/// How many songs [`LinkState::missed`] keeps.
+pub const MISSED_KEPT: usize = 64;
 
 /// The file as it is written.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -133,14 +139,14 @@ impl FamilyPoolStore {
 
     /// What Octo has learned about links.
     pub fn link_state(&self) -> LinkState {
-        *self.links.lock()
+        self.links.lock().clone()
     }
 
     /// Changes what Octo has learned about links, writing the file when it changed.
     pub fn set_link_state(&self, change: impl FnOnce(&mut LinkState)) {
         let changed = {
             let mut links = self.links.lock();
-            let before = *links;
+            let before = links.clone();
             change(&mut links);
             before != *links
         };
@@ -260,13 +266,10 @@ impl FamilyPoolStore {
     }
 
     fn save(&self) {
-        let Some(path) = &self.path else { return };
-        let _saving = self.save_lock.lock();
-        let document = PoolDocument {
-            links: *self.links.lock(),
+        store_file::save_with(self.path.as_deref(), &self.save_lock, || PoolDocument {
+            links: self.links.lock().clone(),
             files: self.files.lock().clone(),
-        };
-        store_file::save(Some(path), &document);
+        });
     }
 }
 

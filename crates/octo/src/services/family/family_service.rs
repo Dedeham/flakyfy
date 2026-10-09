@@ -166,6 +166,10 @@ pub trait PersonalFolders: Send + Sync {
     async fn remove_if_empty(&self, username: &str);
     /// Makes a link in the members folder, reads through it and removes it.
     async fn probe_links(&self) -> LinkMode;
+    /// Writes the pool's marker file (making the pool folder first), as Family is turned on.
+    async fn mark_pool(&self) -> Result<(), String> {
+        Ok(())
+    }
     /// How members' libraries get files now, when it can change after the probe (Navidrome
     /// never showing a linked song switches to copies).
     fn mode(&self) -> Option<LinkMode> {
@@ -1792,6 +1796,11 @@ impl FamilyService {
                 "Octo cannot write to {members_path} ({e}). Give Octo a {members_path} folder it can write to: the members volume in docker-compose.yml."
             ))
         })?;
+        self.hooks(state)
+            .folders
+            .mark_pool()
+            .await
+            .map_err(FamilyError::Conflict)?;
         let links = self.probe_links(state).await;
         match state.family_vault.create_key_if_missing() {
             Ok(true) => {}

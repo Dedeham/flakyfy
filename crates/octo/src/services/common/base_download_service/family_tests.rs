@@ -297,3 +297,46 @@ async fn a_flac_for_a_song_the_pool_has_as_mp3_replaces_it_for_everyone() {
         "Sam has the FLAC now"
     );
 }
+
+/// Family was on, a member downloaded a song into the pool, and Family was turned off with the
+/// member's data left. The owner hearting the same song gets it in the shared library: the pool
+/// copy moves there, still one file, and the pool is never the owner's copy.
+#[tokio::test]
+async fn family_off_owner_heart_of_a_pooled_song_reaches_the_shared_library() {
+    let family = family(World::new(None));
+    family.lands("mp3", false);
+    let pooled = family.get("1", for_members(&["alex"])).await.expect("landed");
+    assert!(pooled.starts_with(&format!("{}/", family.world.pool.pool_root_path())));
+    let mut off = family.world.settings.current().as_ref().clone();
+    off.family.enabled = false;
+    family.world.settings.set(off);
+    let path = family
+        .get("1", AcquisitionPlace::default())
+        .await
+        .expect("answered");
+    assert!(
+        path.starts_with(&format!("{}/", family.world.music())),
+        "the owner's heart was answered with {path}"
+    );
+    assert!(Path::new(&path).is_file());
+    assert!(!Path::new(&pooled).exists(), "one file: it moved");
+    assert!(family.world.pool.store().get(&pooled).is_none());
+}
+
+#[tokio::test]
+async fn a_member_download_waits_while_the_pool_folder_has_no_marker() {
+    let family = family(World::new(None));
+    family.lands("mp3", false);
+    let marker = format!(
+        "{}/{}",
+        family.world.pool.pool_root_path(),
+        crate::services::family::pool::POOL_MARKER
+    );
+    std::fs::remove_file(&marker).expect("the marker went");
+    let refused = family
+        .get("1", for_members(&["alex"]))
+        .await
+        .expect_err("refused");
+    assert_eq!(refused.to_string(), crate::services::family::pool::POOL_NOT_READY);
+    assert!(family.world.pool.store().list().is_empty(), "nothing placed");
+}

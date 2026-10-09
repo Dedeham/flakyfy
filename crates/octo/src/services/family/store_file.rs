@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use parking_lot::Mutex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tracing::warn;
@@ -46,12 +47,19 @@ pub(crate) fn load<T: DeserializeOwned + Default>(path: Option<&Path>) -> (T, Op
     (T::default(), Some(message))
 }
 
-/// Writes `value` to `path` whole (through a temporary file synced to disk), logging a
-/// failure. The write runs as blocking work ([`blocking`]).
-pub(crate) fn save<T: Serialize>(path: Option<&Path>, value: &T) {
+/// Writes what `snapshot` reads to `path` whole (through a temporary file synced to disk),
+/// logging a failure, holding `lock` so two saves never write at
+/// once and the later one writes the newer state. The wait for `lock` is blocking work too
+/// ([`blocking`]), so a save waiting behind another's write never holds up the other tasks on
+/// its async worker.
+pub(crate) fn save_with<T: Serialize>(path: Option<&Path>, lock: &Mutex<()>, snapshot: impl FnOnce() -> T) {
     let Some(path) = path else { return };
-    let text = octo_core::json::to_string(value);
-    if let Err(e) = blocking(|| state_file::save_atomic(path, &text)) {
+    let written = blocking(|| {
+        let _saving = lock.lock();
+        let text = octo_core::json::to_string(&snapshot());
+        state_file::save_atomic(path, &text)
+    });
+    if let Err(e) = written {
         warn!("FAMILY {} could not be written: {e}", file_name(path));
     }
 }
@@ -100,7 +108,9 @@ mod tests {
     fn a_store_file_torn_by_a_crash_is_kept_aside_never_read_as_empty() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("family-pool.json");
-        save(Some(&path), &vec!["one".to_string(), "two".to_string()]);
+        save_with(Some(&path), &Mutex::new(()), || {
+            vec!["one".to_string(), "two".to_string()]
+        });
         let (read, warning) = load::<Vec<String>>(Some(&path));
         assert_eq!(read, ["one", "two"]);
         assert!(warning.is_none());
@@ -136,6 +146,44 @@ mod tests {
             .build()
             .expect("a runtime");
         assert_eq!(single.block_on(async { blocking(|| 8) }), 8);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn a_save_waiting_for_another_save_never_stalls_the_other_tasks() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-requests.json");
+        let lock = Arc::new(Mutex::new(()));
+        // Another save holds the lock through a slow write for 300 ms.
+        let (held, release) = (Arc::new(std::sync::Barrier::new(2)), Arc::clone(&lock));
+        let holder = {
+            let held = Arc::clone(&held);
+            std::thread::spawn(move || {
+                let _saving = release.lock();
+                held.wait();
+                std::thread::sleep(Duration::from_millis(300));
+            })
+        };
+        held.wait();
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&ticks);
+        let ticker = tokio::spawn(async move {
+            loop {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let before = ticks.load(Ordering::SeqCst);
+        save_with(Some(&path), &lock, || vec!["after".to_string()]);
+        let during = ticks.load(Ordering::SeqCst) - before;
+        ticker.abort();
+        holder.join().expect("joins");
+        assert!(
+            during >= 10,
+            "the other task ran {during} times while the save waited for the lock"
+        );
+        let (read, _) = load::<Vec<String>>(Some(&path));
+        assert_eq!(read, ["after"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

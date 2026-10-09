@@ -123,6 +123,35 @@ impl RequestStore {
         (request, true)
     }
 
+    /// Keeps a new request as `decide` settles it, unless one `same` answers true for is kept
+    /// already, in one step: `decide` is handed the member's weekly slots in use with every
+    /// request of theirs counted, so asks at the same moment never pass the weekly limit
+    /// together. Answers the request kept and whether it is the new one, or what `decide`
+    /// refused it with.
+    pub fn create_deciding<E>(
+        &self,
+        mut request: FamilyRequest,
+        now: DateTime<Utc>,
+        same: impl Fn(&FamilyRequest) -> bool,
+        decide: impl FnOnce(u32, &mut FamilyRequest) -> Result<(), E>,
+    ) -> Result<(FamilyRequest, bool), E> {
+        if request.id.trim().is_empty() {
+            request.id = new_request_id();
+        }
+        {
+            let mut requests = self.requests.lock();
+            if let Some(existing) = requests.iter().find(|r| same(r)) {
+                return Ok((existing.clone(), false));
+            }
+            let used = quota_used(&requests, &request.username, now);
+            decide(used, &mut request)?;
+            requests.push(request.clone());
+            prune(&mut requests, now);
+        }
+        self.save();
+        Ok((request, true))
+    }
+
     /// Changes one request and answers it as changed; None when there is no such request.
     pub fn update(&self, id: &str, change: impl FnOnce(&mut FamilyRequest)) -> Option<FamilyRequest> {
         let changed = {
@@ -157,13 +186,14 @@ impl RequestStore {
         Ok(changed)
     }
 
-    /// Cancels every waiting request of `name` (names compared ignoring case) and answers them.
-    pub fn cancel_pending_of(&self, name: &str) -> Vec<FamilyRequest> {
+    /// Cancels every waiting or approved request of `name` (names compared ignoring case) and
+    /// answers them.
+    pub fn cancel_live_of(&self, name: &str) -> Vec<FamilyRequest> {
         let canceled: Vec<FamilyRequest> = {
             let mut requests = self.requests.lock();
             requests
                 .iter_mut()
-                .filter(|r| r.state == RequestState::Pending && eq_ignore_case(&r.username, name))
+                .filter(|r| is_live(r) && eq_ignore_case(&r.username, name))
                 .map(|r| {
                     r.state = RequestState::Cancelled;
                     r.clone()
@@ -182,10 +212,9 @@ impl RequestStore {
     }
 
     fn save(&self) {
-        let Some(path) = &self.path else { return };
-        let _saving = self.save_lock.lock();
-        let requests = self.requests.lock().clone();
-        store_file::save(Some(path), &requests);
+        store_file::save_with(self.path.as_deref(), &self.save_lock, || {
+            self.requests.lock().clone()
+        });
     }
 }
 
@@ -361,13 +390,14 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_members_waiting_requests_are_canceled() {
+    fn a_removed_members_waiting_and_approved_requests_are_canceled() {
         let store = RequestStore::in_memory();
         store.create(request("alex", RequestState::Pending, now()), now());
-        store.create(request("ALEX", RequestState::Pending, now()), now());
+        store.create(request("ALEX", RequestState::Approved, now()), now());
         store.create(request("alex", RequestState::Done, now()), now());
         store.create(request("sam", RequestState::Pending, now()), now());
-        assert_eq!(store.cancel_pending_of("alex").len(), 2);
+        store.create(request("sam", RequestState::Approved, now()), now());
+        assert_eq!(store.cancel_live_of("alex").len(), 2);
         let states: Vec<(String, RequestState)> =
             store.all().into_iter().map(|r| (r.username, r.state)).collect();
         assert_eq!(
@@ -377,8 +407,40 @@ mod tests {
                 ("ALEX".to_string(), RequestState::Cancelled),
                 ("alex".to_string(), RequestState::Done),
                 ("sam".to_string(), RequestState::Pending),
+                ("sam".to_string(), RequestState::Approved),
             ]
         );
+    }
+
+    #[test]
+    fn asks_at_the_same_moment_never_pass_the_weekly_limit_together() {
+        let store = std::sync::Arc::new(RequestStore::in_memory());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let askers: Vec<_> = (0..8)
+            .map(|n| {
+                let (store, barrier) = (store.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    let mut ask = request("alex", RequestState::Pending, now());
+                    ask.target = format!("ext-deezer-song-{n}");
+                    barrier.wait();
+                    store
+                        .create_deciding(
+                            ask,
+                            now(),
+                            |_| false,
+                            |used, _| if used < 3 { Ok(()) } else { Err(()) },
+                        )
+                        .is_ok()
+                })
+            })
+            .collect();
+        let made = askers
+            .into_iter()
+            .map(|asker| asker.join().expect("joins"))
+            .filter(|made| *made)
+            .count();
+        assert_eq!(made, 3);
+        assert_eq!(store.quota_used("alex", now()), 3);
     }
 
     #[test]

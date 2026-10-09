@@ -170,11 +170,26 @@ impl PersonalFolders for PoolFolders {
         let _ = std::fs::remove_dir(self.personal.folder_of(username));
     }
 
+    /// Also writes the pool's marker file when the pool folder has none yet and plainly is the
+    /// pool ([`FamilyPool::keep_marker`]).
     async fn probe_links(&self) -> LinkMode {
         let pool = Arc::clone(self.personal.pool());
-        tokio::task::spawn_blocking(move || pool.probe_links().links)
+        tokio::task::spawn_blocking(move || {
+            pool.keep_marker();
+            pool.probe_links().links
+        })
+        .await
+        .unwrap_or(LinkMode::Copy)
+    }
+
+    async fn mark_pool(&self) -> Result<(), String> {
+        let pool = Arc::clone(self.personal.pool());
+        let root = pool.pool_root_path();
+        tokio::task::spawn_blocking(move || pool.mark_pool_root())
             .await
-            .unwrap_or(LinkMode::Copy)
+            .map_err(|e| e.to_string())
+            .and_then(|marked| marked.map_err(|e| e.to_string()))
+            .map_err(|e| format!("Octo could not write its marker file in {root} ({e})."))
     }
 
     fn mode(&self) -> Option<LinkMode> {

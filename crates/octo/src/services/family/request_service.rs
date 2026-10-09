@@ -45,7 +45,7 @@ use tracing::{info, warn};
 use super::family_playlist_store::FamilyPlaylistStore;
 use super::family_store::{FamilyStore, Member};
 use super::personal_library::PersonalLibrary;
-use super::pool::{FamilyPool, LinkMode, MemberStars, sees_shared_library};
+use super::pool::{FamilyPool, LinkMode, MemberStars, ScanCheck, sees_shared_library};
 use super::request_store::RequestStore;
 use crate::services::common::acquisition_tracker::key_of;
 use crate::services::common::base_download_service::NO_REAL_FLAC;
@@ -655,7 +655,7 @@ impl RequestService {
         }
 
         // 2. Another member has it.
-        if let Some(file) = self.pooled(outside, song.as_ref(), quality)
+        if let Some(file) = self.pooled(outside, song.as_ref(), quality).await
             && (file.refs.iter().any(|r| eq_ignore_case(r, &member.username)) || self.instant_allowed(member))
         {
             return match self.pool().link(&file.path, &member.username).await {
@@ -706,7 +706,7 @@ impl RequestService {
 
     /// A pool file holding the song at a quality that will do: for a FLAC request, only a real
     /// FLAC (never one made from lossy audio).
-    fn pooled(
+    async fn pooled(
         &self,
         outside: &OutsideTarget,
         song: Option<&Song>,
@@ -718,6 +718,7 @@ impl RequestService {
             .unwrap_or((None, "", ""));
         self.pool()
             .find(Some(&key), isrc, artist, title)
+            .await
             .filter(|file| quality != RequestQuality::Flac || file.is_real_flac())
     }
 
@@ -800,54 +801,67 @@ impl RequestService {
     /// and their storage. With `reuse_slot` (a failed approved request asked again) it is
     /// approved at once while the member has a weekly slot free, as the failed one held.
     /// The member's same ask already waiting or approved is the answer instead of a new one.
+    /// The weekly limit is read and the request kept in one step of the request store, so asks
+    /// for different songs at the same moment never pass the limit together.
     fn decide_new(
         &self,
         member: &Member,
-        mut request: FamilyRequest,
+        request: FamilyRequest,
         reuse_slot: bool,
     ) -> Result<FamilyRequest, RequestError> {
         let abilities = member.abilities();
-        let used = self.requests.quota_used(&member.username, Utc::now());
         let storage = self.personal.storage_used(&member.username);
-        let slot_free = abilities.weekly_request_limit == 0 || used < abilities.weekly_request_limit;
-        // A playlist addition always waits for whoever decides on that playlist.
-        let decision = if request.kind == RequestKind::PlaylistAdd {
-            RequestDecision::Pending
-        } else if reuse_slot && slot_free {
-            RequestDecision::AutoApprove
-        } else {
-            policy::request_decision(&abilities, request.quality, used, storage)
-        };
-        match decision {
-            RequestDecision::Refuse(message) => Err(RequestError::new(50, message)),
-            RequestDecision::AutoApprove => {
-                request.state = RequestState::Approved;
-                let (made, new) = self.keep_live(request);
-                if new {
-                    info!(
-                        "FAMILY request {} {} {:?} \"{}\" {:?} -> AutoApproved",
-                        made.id, made.username, made.kind, made.title, made.quality
-                    );
-                    self.events.send(FamilyEvent::RequestDecided(made.clone()));
-                    self.start(made.clone(), false);
+        let (user, kind, target, quality) = (
+            request.username.clone(),
+            request.kind,
+            request.target.clone(),
+            request.quality,
+        );
+        let (made, new) = self.requests.create_deciding(
+            request,
+            Utc::now(),
+            |r| same_live_ask(r, &user, kind, &target, quality),
+            |used, request| {
+                let slot_free = abilities.weekly_request_limit == 0 || used < abilities.weekly_request_limit;
+                // A playlist addition always waits for whoever decides on that playlist.
+                let decision = if request.kind == RequestKind::PlaylistAdd {
+                    RequestDecision::Pending
+                } else if reuse_slot && slot_free {
+                    RequestDecision::AutoApprove
+                } else {
+                    policy::request_decision(&abilities, request.quality, used, storage)
+                };
+                match decision {
+                    RequestDecision::Refuse(message) => return Err(RequestError::new(50, message)),
+                    RequestDecision::AutoApprove => request.state = RequestState::Approved,
+                    RequestDecision::Pending => {
+                        request.state = RequestState::Pending;
+                        if let Some(full) = storage_full(&abilities, storage) {
+                            request.note = full;
+                        }
+                    }
                 }
-                Ok(made)
-            }
-            RequestDecision::Pending => {
-                if let Some(full) = storage_full(&abilities, storage) {
-                    request.note = full;
-                }
-                let (made, new) = self.keep_live(request);
-                if new {
-                    info!(
-                        "FAMILY request {} {} {:?} \"{}\" {:?} -> Pending",
-                        made.id, made.username, made.kind, made.title, made.quality
-                    );
-                    self.events.send(FamilyEvent::RequestCreated(made.clone()));
-                }
-                Ok(made)
-            }
+                Ok(())
+            },
+        )?;
+        if !new {
+            return Ok(made);
         }
+        if made.state == RequestState::Approved {
+            info!(
+                "FAMILY request {} {} {:?} \"{}\" {:?} -> AutoApproved",
+                made.id, made.username, made.kind, made.title, made.quality
+            );
+            self.events.send(FamilyEvent::RequestDecided(made.clone()));
+            self.start(made.clone(), false);
+        } else {
+            info!(
+                "FAMILY request {} {} {:?} \"{}\" {:?} -> Pending",
+                made.id, made.username, made.kind, made.title, made.quality
+            );
+            self.events.send(FamilyEvent::RequestCreated(made.clone()));
+        }
+        Ok(made)
     }
 
     /// Whether `by` may decide requests: the owner, or a member with `ApproveRequests`.
@@ -931,21 +945,31 @@ impl RequestService {
         Ok(canceled)
     }
 
-    /// Closes the requests of a member who is leaving the family: each one still waiting is
-    /// canceled (so nobody can approve it any more), and its playlist addition, if it is one,
-    /// leaves the playlist. Answers how many.
+    /// Closes the requests of a member who is leaving the family: each one still waiting or
+    /// approved is canceled (so nobody can approve it any more, and a restart never starts it
+    /// again), and its playlist addition, if it is one, leaves the playlist. A download already
+    /// on its way for one of them is let go of when it lands ([`FamilyPool::let_go`]), so
+    /// nothing is left in the pool for nobody. Answers how many.
     pub fn close_member(&self, user: &str) -> usize {
-        let canceled = self.requests.cancel_pending_of(user);
+        let canceled = self.requests.cancel_live_of(user);
         for request in &canceled {
             self.drop_playlist_entry(request);
         }
         if !canceled.is_empty() {
             info!(
-                "FAMILY {} waiting request(s) of {user} canceled as they left the family",
+                "FAMILY {} waiting or approved request(s) of {user} canceled as they left the family",
                 canceled.len()
             );
         }
         canceled.len()
+    }
+
+    /// Whether a request is still approved and running: false once it was canceled (its member
+    /// left the family) or finished.
+    fn still_approved(&self, request: &FamilyRequest) -> bool {
+        self.requests
+            .get(&request.id)
+            .is_some_and(|r| r.state == RequestState::Approved)
     }
 
     /// Asks again for an MP3 of a song whose FLAC request failed. The new request takes the
@@ -1039,7 +1063,9 @@ impl RequestService {
         let user = request.username.clone();
         let song = self.catalog.song(&outside.provider, &outside.external_id).await;
         // Someone may have got it since it was asked for.
-        if let Some(file) = self.pooled(&outside, song.as_ref(), request.quality) {
+        if let Some(file) = self.pooled(&outside, song.as_ref(), request.quality).await
+            && self.still_approved(request)
+        {
             match self.pool().link(&file.path, &user).await {
                 Ok(link) => {
                     self.wait_done(request, &link, RequestOutcome::AddedFromFamily)
@@ -1064,6 +1090,12 @@ impl RequestService {
         } else {
             RequestOutcome::Downloaded
         };
+        if let Fetched::Landed(path) = &fetched
+            && !self.still_approved(request)
+        {
+            self.pool().let_go(path, &user).await;
+            return;
+        }
         match fetched {
             Fetched::Landed(path) => match self.pool().link_path(&path, &user) {
                 Some(_) => match self.pool().link(&path, &user).await {
@@ -1116,6 +1148,12 @@ impl RequestService {
             .fetcher
             .album(&request.username, &outside.provider, &outside.external_id)
             .await;
+        if !self.still_approved(request) {
+            for path in &landed {
+                self.pool().let_go(path, &request.username).await;
+            }
+            return;
+        }
         let mut shown = Vec::new();
         let mut failure = None;
         for path in &landed {
@@ -1202,9 +1240,10 @@ impl RequestService {
     /// Done once the library index finds `path` in the member's own library (anywhere, for a
     /// shared path). A link Navidrome does not show in time, before any link was ever shown,
     /// becomes a real copy for this member alone and Octo looks again: a slow scan never
-    /// changes how anyone else gets songs. Only when Navidrome then shows the copy (and that
-    /// has happened [`super::pool::UNSHOWN_LINKS_FOR_COPIES`] times) does every member get
-    /// copies from then on.
+    /// changes how anyone else gets songs. The song counts toward giving up on links only when
+    /// Navidrome said its scan was finished and the index read after that still did not show
+    /// the link, and Navidrome then showed the copy; each song counts once
+    /// ([`FamilyPool::copy_shown_where_link_was_not`]).
     async fn wait_done(&self, request: &FamilyRequest, path: &str, outcome: RequestOutcome) {
         let pool = self.pool();
         let library = pool
@@ -1215,14 +1254,29 @@ impl RequestService {
             self.done(request, Some(outcome), Some(song.id));
             return;
         }
-        if pool.mode() == LinkMode::Symlink
-            && pool.copy_unshown_link(&request.username, path).await
-            && let Some(song) = pool.wait_for_path(path, library).await
-        {
-            pool.copy_shown_where_link_was_not().await;
-            self.stars.star(&request.username, &song.id).await;
-            self.done(request, Some(outcome), Some(song.id));
-            return;
+        if pool.mode() == LinkMode::Symlink {
+            let missed = match pool.after_finished_scan(path, library).await {
+                ScanCheck::Shown(song) => {
+                    self.stars.star(&request.username, &song.id).await;
+                    self.done(request, Some(outcome), Some(song.id));
+                    return;
+                }
+                ScanCheck::Missed => true,
+                ScanCheck::Unsure => false,
+            };
+            if pool.copy_unshown_link(&request.username, path).await
+                && let Some(song) = pool.wait_for_path(path, library).await
+            {
+                if missed {
+                    let pool_file = pool
+                        .pool_path_of_link(&request.username, path)
+                        .unwrap_or_else(|| path.to_string());
+                    pool.copy_shown_where_link_was_not(&pool_file).await;
+                }
+                self.stars.star(&request.username, &song.id).await;
+                self.done(request, Some(outcome), Some(song.id));
+                return;
+            }
         }
         self.failed(request, NOT_SHOWN_MESSAGE);
     }
@@ -1233,13 +1287,18 @@ impl RequestService {
         outcome: Option<RequestOutcome>,
         library_song_id: Option<String>,
     ) {
-        let Some(done) = self.requests.update(&request.id, |r| {
-            r.state = RequestState::Done;
-            r.outcome = outcome;
-            if library_song_id.is_some() {
-                r.library_song_id = library_song_id.clone();
-            }
-        }) else {
+        // A request canceled meanwhile (its member left the family) stays canceled.
+        let Ok(done) = self.requests.update_if(
+            &request.id,
+            |r| r.state == RequestState::Approved,
+            |r| {
+                r.state = RequestState::Done;
+                r.outcome = outcome;
+                if library_song_id.is_some() {
+                    r.library_song_id = library_song_id.clone();
+                }
+            },
+        ) else {
             return;
         };
         info!("FAMILY request {} {} done ({outcome:?})", done.id, done.username);
@@ -1247,10 +1306,14 @@ impl RequestService {
     }
 
     fn failed(&self, request: &FamilyRequest, reason: &str) {
-        let Some(failed) = self.requests.update(&request.id, |r| {
-            r.state = RequestState::Failed;
-            r.failure = Some(reason.to_string());
-        }) else {
+        let Ok(failed) = self.requests.update_if(
+            &request.id,
+            |r| r.state == RequestState::Approved,
+            |r| {
+                r.state = RequestState::Failed;
+                r.failure = Some(reason.to_string());
+            },
+        ) else {
             return;
         };
         warn!(

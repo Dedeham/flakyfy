@@ -765,6 +765,16 @@ async fn turning_family_on_probes_links_and_both_pages_show_them() {
         .await;
     assert_eq!(on.status, StatusCode::OK, "{}", on.body);
     assert_eq!(on.json()["links"], "Symlink");
+    let marker = format!(
+        "{}/{}",
+        w.state.family_pool_service.pool_root_path(),
+        crate::services::family::pool::POOL_MARKER
+    );
+    assert!(
+        Path::new(&marker).is_file(),
+        "turning Family on marks the pool folder"
+    );
+    assert!(w.state.family_pool_service.pool_ready());
     let session = w
         .page(Method::GET, "/api/family/session", "winters", None)
         .await

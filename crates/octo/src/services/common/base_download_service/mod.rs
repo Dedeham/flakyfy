@@ -583,26 +583,35 @@ impl BaseDownloadService {
         let family = self.services.family.as_ref().filter(|f| f.pool_root().is_some());
         let pool_members = options.place.pool_members.clone().filter(|_| family.is_some());
         let flac_only = options.place.flac_only;
+        // A member's download waits while the pool folder is not the disk Octo placed members'
+        // downloads on (its disk is not mounted).
+        if let Some(family) = family
+            && pool_members.is_some()
+            && !family.placement_ready().await
+        {
+            anyhow::bail!("{}", crate::services::family::pool::POOL_NOT_READY);
+        }
 
         // Check if already downloaded (skipped for cache mode, which checks the cache folder).
         // A replacement is always a fresh file: an existing one is what is being replaced.
         if !is_cache && options.replacement.is_none() {
-            if let Some(mut existing) = self
+            let mut existing = self
                 .local_library
                 .get_local_path_for_external_song(external_provider, external_id)
                 .await
                 .filter(|path| file_exists(path))
                 .filter(|path| {
                     !flac_only || (is_flac_path(path) && !family.is_some_and(|f| f.made_from_lossy(path)))
-                })
-            {
-                // A member's copy the shared library now wants moves there, still one file.
-                if let Some(family) = family
-                    && pool_members.is_none()
-                    && family.is_pool_path(&existing)
-                {
-                    existing = family.settle(&existing, &[], true, None).await;
-                }
+                });
+            // The owner's copy is never the pool's: a member's copy (with Family on or off) moves
+            // into the shared library, still one file, or the owner's copy is fetched as usual.
+            if let Some(path) = existing.take() {
+                existing = match (&self.services.family, &pool_members) {
+                    (Some(placement), None) => placement.for_owner(&path).await,
+                    _ => Some(path),
+                };
+            }
+            if let Some(existing) = existing {
                 info!("Song already downloaded: {existing}");
                 // Navidrome shows a member's song at their link, never in the pool.
                 let shown = family
@@ -773,12 +782,13 @@ impl BaseDownloadService {
             && let Some(family) = family
             && let Some(found) = family
                 .find_song(external_provider, external_id, &song)
+                .await
                 .filter(|found| !flac_only || found.is_real_flac())
+            && let Some(path) = match &pool_members {
+                Some(_) => Some(found.path.clone()),
+                None => family.for_owner(&found.path).await,
+            }
         {
-            let path = match &pool_members {
-                Some(_) => found.path.clone(),
-                None => family.settle(&found.path, &[], true, None).await,
-            };
             info!(
                 "'{} - {}' is already on disk for the family at {path}; not downloading another copy",
                 song.artist, song.title

@@ -265,6 +265,38 @@ async fn unmonitored_existing_artist_is_monitored_and_otherwise_unchanged() {
 }
 
 #[tokio::test]
+async fn a_remonitored_artist_does_not_start_following_new_releases() {
+    let server = serve(|method, path| {
+        match (method, path) {
+            ("GET", "/api/v1/album") => {
+                r#"[{"id":12,"foreignAlbumId":"mbid","monitored":true,"artist":{"id":7,"monitored":false}}]"#
+            }
+            ("GET", "/api/v1/artist/7") => {
+                r#"{"id":7,"monitored":false,"monitorNewItems":"all","qualityProfileId":9}"#
+            }
+            ("PUT", "/api/v1/artist/7") => r#"{"id":7,"monitored":true}"#,
+            ("POST", "/api/v1/command") => r#"{"id":9}"#,
+            _ => "[]",
+        }
+        .to_string()
+    })
+    .await;
+
+    build(&server)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    let requests = requests(&server).await;
+    let puts: Vec<&Request> = requests.iter().filter(|r| r.method.as_str() == "PUT").collect();
+    assert_eq!(puts.len(), 1);
+    let update = body(puts[0]);
+    assert_eq!(update["monitored"], true);
+    assert_eq!(update["monitorNewItems"], "none");
+    assert_eq!(update["qualityProfileId"], 9);
+}
+
+#[tokio::test]
 async fn existing_album_is_monitored_without_changing_its_artist() {
     let server = serve(|method, path| {
         match (method, path) {

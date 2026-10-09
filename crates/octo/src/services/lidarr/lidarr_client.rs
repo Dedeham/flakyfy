@@ -376,6 +376,9 @@ impl LidarrClient {
         let id = int_or_zero(artist, "id")?;
         let mut full = self.get_object(&format!("/api/v1/artist/{id}")).await?;
         full.insert("monitored".into(), Value::Bool(true));
+        // Monitoring the artist again is for this album; it must not start fetching every
+        // release the artist puts out from now on.
+        full.insert("monitorNewItems".into(), Value::from("none"));
         self.send_json(Method::PUT, &format!("/api/v1/artist/{id}"), &full)
             .await?;
         Ok(())

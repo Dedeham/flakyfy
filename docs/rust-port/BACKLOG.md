@@ -1336,6 +1336,32 @@ The Rust tests read the shared case files as they are.
 - [ ] `aae574a` test(identity): the shared song cases gain drumless and other editions, karaoke in the style of, and mash-ups, as the apps have them
 - [ ] `97855f1` test: two timing tests wait for what they check instead of sleeping
 
+## Group FAM: Family (wave G5)
+
+Octo Family, multi-user accounts, Rust only (D26): the plan is
+`~/.claude/plans/octo-family/PLAN.md` with `CHECK-DELTA.md` (which wins where they
+differ) and the API contract `FAMILY-API.md`. Branch `port/g5-family`, local only. With
+`Family:Enabled=false` (the default) nothing observable changes.
+
+- [x] G5-0 Start: `argon2 0.6`, `chacha20poly1305 0.11`, `ipnet 2.12`; this section
+- [ ] G5-1 Pure model (`octo-core/src/family/`): abilities, policy, request, device (with the trusted-proxy client address), codes, endpoint classes and `docs/family/opensubsonic-endpoints.txt`
+- [ ] G5-2 Settings: the `Family` section, appsettings.json, the dashboard document, compose `/members`, install.sh
+- [ ] G5-3 Vault, passwords and stores: `family.key` (AEAD half and web JWT half), `family.json`, requests, saved songs and albums, family playlists, the family pool
+- [ ] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`
+- [ ] G5-5 Member bridge, family gate, web session (Octo JWT), device registry
+- [ ] G5-6 Request and answer rules, audio gate, library write gate, player cap sync, bypass suite, stream tracker
+- [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library
+- [ ] G5-8 Family playlists
+- [ ] G5-9 Kid profiles (explicit status from the index)
+- [ ] G5-10 Member sign-in on `/family/`, pairing, invites
+- [ ] G5-11 `octoFamily` extension for the apps
+- [ ] G5-12 Notifications, ListenBrainz fallback rule
+- [ ] G5-13 Dashboards (`/family/` page, admin entry)
+- [ ] G5-14 Owner privacy (index answer filter)
+- [ ] G5-15 Scale (shim threads and single flight, radio cap, fair star queue, load)
+- [ ] G5-16 Apps (`C:\OctoPlayer`, `feat/family`)
+- [ ] G5-17 Parity, live checks, docs
+
 ## Release packaging record (`release/rust`, 2026-10-08)
 
 Local only: nothing pushed, tagged or published; no workflow run. VERSION says 2026.10.08 as a

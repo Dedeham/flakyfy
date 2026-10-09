@@ -737,3 +737,22 @@ async fn exception_envelopes_use_the_relaxed_encoder() {
         r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Set SUBSONIC_URL: an absolute URL, isn't it"}}}"#
     );
 }
+
+// ---- Family ----
+
+/// Octo Family refuses a `/rest` endpoint it has no class for to capped and kid members
+/// (CHECK-DELTA.md C1): every `/rest` route Octo answers itself must have one.
+#[test]
+fn every_rest_route_has_a_family_class() {
+    let names: Vec<String> = app_routes(&StaticAssets::default())
+        .templates()
+        .into_iter()
+        .filter_map(|t| octo_core::family::endpoints::rest_endpoint_name(&t).map(str::to_string))
+        .collect();
+    assert!(names.len() > 40, "{names:?}");
+    let missing: Vec<&String> = names
+        .iter()
+        .filter(|name| octo_core::family::endpoints::rest_class(name).is_none())
+        .collect();
+    assert!(missing.is_empty(), "no family class: {missing:?}");
+}

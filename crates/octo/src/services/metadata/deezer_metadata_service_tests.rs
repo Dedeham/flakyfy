@@ -610,6 +610,101 @@ async fn enrich_track_async_rejects_a_hit_that_matches_nothing() {
     );
 }
 
+// ---- A song track search does not show --------------------------------------
+
+#[tokio::test]
+async fn enrich_track_async_a_song_missing_from_track_search_is_found_on_its_album() {
+    let h = Harness::new(vec![
+        (
+            "/search/album",
+            r#"{"data":[{"id":7,"title":"Hidden Song","record_type":"single",
+                "artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        ("/search", r#"{"data":[]}"#),
+        (
+            "/album/7/tracks",
+            r#"{"data":[{"id":77,"title":"Hidden Song","duration":201,"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/track/77",
+            r#"{"id":77,"title":"Hidden Song","duration":201,
+                "album":{"id":7,"title":"Hidden Song"},"artist":{"id":5,"name":"Some Artist"}}"#,
+        ),
+    ])
+    .await;
+
+    let meta = h
+        .service
+        .enrich_track("Some Artist", "Hidden Song", false, false)
+        .await
+        .expect("found on its album");
+
+    assert_eq!(meta.album_title.as_deref(), Some("Hidden Song"));
+    assert_eq!(meta.duration, Some(201));
+    assert_eq!(h.calls("/artist/5/top"), 0);
+}
+
+#[tokio::test]
+async fn enrich_track_async_a_song_only_on_the_artists_top_songs_is_found_there() {
+    // Track search shows only the demo; the original is among the artist's top songs.
+    let h = Harness::new(vec![
+        ("/search/album", r#"{"data":[]}"#),
+        (
+            "/search",
+            r#"{"data":[{"id":1,"title":"Real Song (Demo)","duration":150,
+                "album":{"id":2,"title":"Demos"},"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/artist/5/top",
+            r#"{"data":[{"id":3,"title":"Real Song","duration":222,
+                "album":{"id":4,"title":"The Record"},"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+    ])
+    .await;
+
+    let meta = h
+        .service
+        .enrich_track("Some Artist", "Real Song", false, false)
+        .await
+        .expect("found on the top songs");
+
+    assert_eq!(meta.album_title.as_deref(), Some("The Record"));
+    assert_eq!(meta.duration, Some(222));
+    assert!(
+        h.queries().await.iter().any(|q| q.contains("limit=50")),
+        "the top songs are read 50 at a time"
+    );
+}
+
+#[tokio::test]
+async fn enrich_track_async_a_song_found_nowhere_costs_one_extra_step() {
+    let h = Harness::new(vec![
+        (
+            "/search/album",
+            r#"{"data":[{"id":7,"title":"Other Record","artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/search",
+            r#"{"data":[{"id":1,"title":"Another Song","artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        ("/artist/5/top", r#"{"data":[]}"#),
+        ("/album/7/tracks", r#"{"data":[]}"#),
+    ])
+    .await;
+
+    assert_eq!(
+        h.service
+            .enrich_track("Some Artist", "Missing Song", false, false)
+            .await,
+        None
+    );
+
+    // One album search (its album is not the song's, so no tracklist) and one top songs read.
+    assert_eq!(h.calls("/search/album"), 1);
+    assert_eq!(h.calls("/artist/5/top"), 1);
+    assert_eq!(h.calls("/album/7/tracks"), 0);
+}
+
 // ---- A throttled year must not cost the whole track -------------------------
 
 #[tokio::test]

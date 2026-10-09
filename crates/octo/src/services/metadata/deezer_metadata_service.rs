@@ -56,6 +56,12 @@ const TRACK_SEARCHES: usize = 3;
 /// recording and the first row is not reliably the right one.
 const MATCH_CANDIDATES: i32 = 5;
 
+/// How many of an artist's top songs a track search miss looks through.
+const ARTIST_TOP_SONGS: i32 = 50;
+
+/// How many songs of an album's tracklist a track search miss looks through.
+const ALBUM_TRACKS_LIMIT: i32 = 300;
+
 /// How many releases an artist's page asks for: the catalog's page size, enough for
 /// all but the longest careers.
 const ARTIST_ALBUMS_LIMIT: i32 = 100;
@@ -1426,12 +1432,18 @@ impl DeezerMetadataService {
     /// "$uicideboy$ $UICIDE", the title without its guests, the primary artist, the title
     /// alone). Every hit is judged against the song as asked, so a looser query never means a
     /// looser match. The first value says a search did not answer: nothing may be cached.
+    ///
+    /// Track search leaves out some songs the catalog has: one listed only on its own album,
+    /// or one whose search shows only a demo while the original is among the artist's top
+    /// songs. A miss gets one bounded extra step for those: the album named after the song,
+    /// then the top songs of the artist the searches named, at most four more requests.
     async fn find_track(
         &self,
         artist: &str,
         title: &str,
         background: bool,
     ) -> ElementResult<(bool, Option<(Value, Option<Value>)>)> {
+        let mut artist_id = None;
         for variant in SongIdentity::query_variants(title, artist)
             .into_iter()
             .take(TRACK_SEARCHES)
@@ -1448,8 +1460,107 @@ impl DeezerMetadataService {
             if let Some(hit) = best_match(r.doc.as_ref(), artist, title)? {
                 return Ok((false, Some((hit, r.doc))));
             }
+            if artist_id.is_none() {
+                artist_id = named_artist_id(r.doc.as_ref(), artist)?;
+            }
         }
-        Ok((false, None))
+
+        let (transient, on_album, album_artist_id) =
+            self.find_track_on_album(artist, title, background).await?;
+        if transient {
+            return Ok((true, None));
+        }
+        if on_album.is_some() {
+            return Ok((false, on_album));
+        }
+
+        let Some(artist_id) = artist_id.or(album_artist_id) else {
+            return Ok((false, None));
+        };
+        let url = format!(
+            "{}/artist/{}/top?limit={ARTIST_TOP_SONGS}",
+            self.base(),
+            escape_data_string(&artist_id)
+        );
+        let r = self.get_json(&url, background).await;
+        if r.transient {
+            return Ok((true, None));
+        }
+        Ok((
+            false,
+            best_match(r.doc.as_ref(), artist, title)?.map(|hit| (hit, r.doc)),
+        ))
+    }
+
+    /// The song on the album named after it: the album search's first match for the artist and
+    /// title, that album's tracklist, then the matching track's own record, which carries its
+    /// album. Also the artist id the album search named, for the next step. The first value says
+    /// a request did not answer.
+    async fn find_track_on_album(
+        &self,
+        artist: &str,
+        title: &str,
+        background: bool,
+    ) -> ElementResult<(bool, Option<(Value, Option<Value>)>, Option<String>)> {
+        let query = plain_query(&[artist, title]);
+        if query.is_empty() {
+            return Ok((false, None, None));
+        }
+        let albums = self
+            .get_json(
+                &format!(
+                    "{}/search/album?q={}&limit={MATCH_CANDIDATES}",
+                    self.base(),
+                    escape_data_string(&query)
+                ),
+                background,
+            )
+            .await;
+        if albums.transient {
+            return Ok((true, None, None));
+        }
+        let artist_id = named_artist_id(albums.doc.as_ref(), artist)?;
+        let album_id = match best_match(albums.doc.as_ref(), artist, title)? {
+            Some(album) => number_id(&album)?,
+            None => None,
+        };
+        let Some(album_id) = album_id else {
+            return Ok((false, None, artist_id));
+        };
+
+        let tracklist = self
+            .get_json(
+                &format!(
+                    "{}/album/{album_id}/tracks?limit={ALBUM_TRACKS_LIMIT}",
+                    self.base()
+                ),
+                background,
+            )
+            .await;
+        if tracklist.transient {
+            return Ok((true, None, None));
+        }
+        let track_id = match best_match(tracklist.doc.as_ref(), artist, title)? {
+            Some(track) => number_id(&track)?,
+            None => None,
+        };
+        let Some(track_id) = track_id else {
+            return Ok((false, None, artist_id));
+        };
+
+        let detail = self
+            .get_json(&format!("{}/track/{track_id}", self.base()), background)
+            .await;
+        if detail.transient {
+            return Ok((true, None, None));
+        }
+        let Some(track) = detail.doc.filter(|doc| matches!(doc, Value::Object(_))) else {
+            return Ok((false, None, artist_id));
+        };
+        if number_id(&track)?.as_deref() != Some(track_id.as_str()) {
+            return Ok((false, None, artist_id));
+        }
+        Ok((false, Some((track, tracklist.doc)), artist_id))
     }
 
     /// Like [`Self::find_track`], but every hit that is this song from the first search that
@@ -1713,6 +1824,37 @@ fn all_matches(doc: Option<&Value>, artist: &str, title: &str) -> ElementResult<
         }
     }
     Ok(hits)
+}
+
+/// An element's numeric `id` as text, when it has one.
+fn number_id(element: &Value) -> ElementResult<Option<String>> {
+    Ok(match try_get_property(element, "id")? {
+        Some(id @ Value::Number(_)) => Some(get_int64(id)?.to_string()),
+        _ => None,
+    })
+}
+
+/// The catalog id of the artist a search answer credits by exactly the name asked for (spaces
+/// kept: "The Sun Days" and "The Sundays" are two bands), from the first hit that does.
+fn named_artist_id(doc: Option<&Value>, artist: &str) -> ElementResult<Option<String>> {
+    let wanted = artist.trim();
+    if wanted.is_empty() {
+        return Ok(None);
+    }
+    let Some(data) = data_array(doc)? else {
+        return Ok(None);
+    };
+    for hit in enumerate_array(data)? {
+        let Some(credit) = try_get_property(hit, "artist")? else {
+            continue;
+        };
+        if str_prop(credit, "name")?.is_some_and(|name| dotnet::eq_ignore_case(name.trim(), wanted))
+            && let Some(id) = number_id(credit)?
+        {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 /// `root.data` when it is an array. Reading a property of a root that is not an object

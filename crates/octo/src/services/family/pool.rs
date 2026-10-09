@@ -11,11 +11,16 @@
 //!
 //! Where links do not work (an rclone mount without `--vfs-links`, some network disks), each
 //! member gets a real copy instead and [`FamilyPool::link_status`] says so in plain words.
+//! What Octo learns about links (Navidrome showed one, or showed a copy where it never showed
+//! the link) is kept in `family-pool.json`, so a restart does not forget it.
+//!
+//! Every change to the pool (a link, an unlink, a better copy, a move into the shared library,
+//! a member let go, a sweep) holds one lock for its whole run, so no change reads the record
+//! while another is halfway through it.
 
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -25,13 +30,14 @@ use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::common::{PathHelper, SongIdentity};
 use octo_core::models::domain::Song;
 use octo_core::settings::{LibraryAction, SettingsStore};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use super::family_playlist_store::FamilyPlaylistStore;
 use super::family_pool_store::{FamilyPoolStore, PoolFile};
-use super::family_store::FamilyStore;
+use super::family_service::valid_username;
+use super::family_store::{FamilyStore, Member, SharedLibraries};
 use super::library_index::{IndexedSong, LibraryIndex};
 use super::member_credentials::MemberCredentials;
 use crate::services::common::acquisition_tracker::key_of;
@@ -143,6 +149,21 @@ pub enum PoolError {
     Io(#[from] io::Error),
 }
 
+impl PoolError {
+    /// What a member reads about it: plain words, never a path inside the server.
+    pub fn for_member(&self) -> &'static str {
+        match self {
+            PoolError::NotMember(_) => "Only family members have their own library.",
+            PoolError::NotInPool(_) => "That copy is no longer in the family library.",
+            PoolError::Io(_) => "Octo could not put the song in your library. Try again later.",
+        }
+    }
+}
+
+/// How many times a link Navidrome did not show had to become a copy that it then showed,
+/// with no link ever shown, before every member gets copies.
+pub const UNSHOWN_LINKS_FOR_COPIES: u32 = 2;
+
 /// How patiently a moved or new file is waited for in the library index.
 #[derive(Debug, Clone, Copy)]
 pub struct PoolTiming {
@@ -230,6 +251,8 @@ pub trait FamilyPlacement: Send + Sync {
     /// A file in the pool holding this song: by its outside id, then its ISRC, then its artist
     /// and title.
     fn find_song(&self, provider: &str, external_id: &str, song: &Song) -> Option<PoolFile>;
+    /// Whether a pool file is a FLAC the spectrum check found was made from lossy audio.
+    fn made_from_lossy(&self, path: &str) -> bool;
     /// The path the first member's link has, for a file about to be linked.
     fn link_path_for(&self, pool_path: &str, user: &str) -> Option<String>;
     /// Records a file just placed in the pool and links it for `members`. A copy of the same
@@ -273,8 +296,11 @@ pub struct FamilyPool {
     /// The shared library's folder, read at use (it follows Navidrome's detected folder).
     shared_root: Box<dyn Fn() -> String + Send + Sync>,
     mode: RwLock<LinkMode>,
-    /// Navidrome has shown a linked song in a member's library at least once.
-    links_seen: AtomicBool,
+    /// Held for the whole of every change to the pool.
+    changes: tokio::sync::Mutex<()>,
+    /// Pool files the last sweep found missing; a file goes only when the next sweep finds it
+    /// missing again.
+    missing_once: Mutex<HashSet<String>>,
     timing: PoolTiming,
 }
 
@@ -298,6 +324,11 @@ impl FamilyPool {
     /// The same pool, waiting for the index on another schedule (tests).
     pub fn with_timing(parts: PoolParts, timing: PoolTiming) -> Arc<Self> {
         let quarantine = LibraryActionQuarantine::new(Arc::clone(&parts.settings));
+        let mode = if parts.store.link_state().copies {
+            LinkMode::Copy
+        } else {
+            LinkMode::Symlink
+        };
         Arc::new_cyclic(|me| FamilyPool {
             me: me.clone(),
             settings: parts.settings,
@@ -309,8 +340,9 @@ impl FamilyPool {
             stars: parts.stars,
             quarantine,
             shared_root: parts.shared_root,
-            mode: RwLock::new(LinkMode::Symlink),
-            links_seen: AtomicBool::new(false),
+            mode: RwLock::new(mode),
+            changes: tokio::sync::Mutex::new(()),
+            missing_once: Mutex::new(HashSet::new()),
             timing,
         })
     }
@@ -386,9 +418,10 @@ impl FamilyPool {
     }
 
     /// Tries a link in the members folder: makes a file, links it, reads through the link and
-    /// removes both. Links when that works, copies when it does not.
+    /// removes both. Links when that works, copies when it does not, and copies whenever
+    /// Octo has learned that Navidrome does not show links here.
     pub fn probe_links(&self) -> LinkStatus {
-        let mode = if probe(Path::new(&self.members_root())) {
+        let mode = if !self.store.link_state().copies && probe(Path::new(&self.members_root())) {
             LinkMode::Symlink
         } else {
             LinkMode::Copy
@@ -400,33 +433,88 @@ impl FamilyPool {
 
     /// Whether Navidrome has shown a linked song in a member's library yet.
     pub fn links_seen(&self) -> bool {
-        self.mode() == LinkMode::Copy || self.links_seen.load(Ordering::SeqCst)
+        self.mode() == LinkMode::Copy || self.store.link_state().seen
     }
 
-    /// Navidrome showed a linked song in a member's library.
+    /// Navidrome showed a linked song in a member's library. Kept, so links are never given up
+    /// on after that.
     pub fn confirm_links_seen(&self) {
-        self.links_seen.store(true, Ordering::SeqCst);
+        self.store.set_link_state(|links| links.seen = true);
     }
 
-    /// Navidrome never showed a linked song: every member gets real copies from now on, and
-    /// every link made so far is replaced by a copy. Answers how many links were replaced.
-    pub fn fall_back_to_copies(&self) -> usize {
+    /// Navidrome did not show `user`'s link at `link` in time. Only that one link becomes a
+    /// real copy (written beside it first, then put in its place), and their library is scanned
+    /// for it. Nothing changes once a link has ever been shown, or for anything but a link.
+    /// Answers whether the link became a copy.
+    pub async fn copy_unshown_link(&self, user: &str, link: &str) -> bool {
+        if self.links_seen() || !is_symlink(link) {
+            return false;
+        }
+        let _changing = self.changes.lock().await;
+        let path = PathBuf::from(link);
+        let copied = tokio::task::spawn_blocking(move || replace_link_with_copy(&path))
+            .await
+            .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
+        if let Err(e) = copied {
+            warn!("FAMILY could not make a copy of {link} for {user}: {e}");
+            return false;
+        }
+        if let Some(library_id) = self.family.member(user).and_then(|m| m.personal_library_id) {
+            let size = std::fs::metadata(link).map(|m| m.len()).unwrap_or(0);
+            self.index.note_placed(library_id, link, size);
+            self.library.trigger_library_scan_of(library_id).await;
+        }
+        info!("FAMILY Navidrome did not show {user}'s link {link}; it is a copy now");
+        true
+    }
+
+    /// Navidrome showed a copy where it never showed the link before it. Once that has
+    /// happened [`UNSHOWN_LINKS_FOR_COPIES`] times with no link ever shown, every member gets
+    /// copies from now on ([`Self::fall_back_to_copies`]). Answers whether that happened now.
+    pub async fn copy_shown_where_link_was_not(&self) -> bool {
+        if self.links_seen() {
+            return false;
+        }
+        self.store
+            .set_link_state(|links| links.unshown = links.unshown.saturating_add(1));
+        if self.store.link_state().unshown < UNSHOWN_LINKS_FOR_COPIES {
+            return false;
+        }
+        self.fall_back_to_copies().await;
+        true
+    }
+
+    /// Links do not work for Navidrome here: every member gets real copies from now on (kept
+    /// across restarts), and every link made so far becomes a copy, written beside the link
+    /// before it takes the link's place. Answers how many links were replaced.
+    pub async fn fall_back_to_copies(&self) -> usize {
+        let _changing = self.changes.lock().await;
         *self.mode.write() = LinkMode::Copy;
-        warn!("FAMILY Navidrome did not show a linked song; members get copies from now on");
-        let mut replaced = 0;
+        self.store.set_link_state(|links| links.copies = true);
+        warn!("FAMILY Navidrome did not show linked songs; members get copies from now on");
+        let mut links = Vec::new();
         for file in self.store.list() {
             for user in &file.refs {
-                let Some(link) = self.link_path(&file.path, user) else {
-                    continue;
-                };
-                let is_link = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_symlink());
-                if is_link && std::fs::remove_file(&link).is_ok() && std::fs::copy(&file.path, &link).is_ok()
-                {
-                    replaced += 1;
+                if let Some(link) = self.link_path(&file.path, user) {
+                    links.push(PathBuf::from(link));
                 }
             }
         }
-        replaced
+        tokio::task::spawn_blocking(move || {
+            links
+                .iter()
+                .filter(|link| is_symlink(&link.to_string_lossy()))
+                .filter(|link| match replace_link_with_copy(link) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        warn!("FAMILY could not make a copy of {}: {e}", link.display());
+                        false
+                    }
+                })
+                .count()
+        })
+        .await
+        .unwrap_or(0)
     }
 
     /// A pool file holding this song: its outside id, then its ISRC, then its artist and title
@@ -467,15 +555,28 @@ impl FamilyPool {
         self.store.upsert(file);
     }
 
+    /// The member named `user`, when their name is one a member's own folder can have. A name
+    /// that starts with a dot, or is not one plain folder name, would reach the pool or the
+    /// members folder itself, so it never gets a library here.
+    fn member_named(&self, user: &str) -> Result<Member, PoolError> {
+        self.family
+            .member(user)
+            .filter(|member| valid_username(&member.username))
+            .ok_or_else(|| PoolError::NotMember(user.to_string()))
+    }
+
     /// Puts a pool file in `user`'s library: a relative link (or a copy in copy mode), plus the
     /// song's lyrics files and the folder's cover. Records the member's reference, tells the
     /// index the file is there, and starts a scan of their library. Doing it twice changes
     /// nothing. Answers the link's path.
     pub async fn link(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
-        let member = self
-            .family
-            .member(user)
-            .ok_or_else(|| PoolError::NotMember(user.to_string()))?;
+        let _changing = self.changes.lock().await;
+        self.link_held(pool_path, user).await
+    }
+
+    /// [`Self::link`] for a change that holds the lock already.
+    async fn link_held(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
+        let member = self.member_named(user)?;
         let relative = self
             .relative_in_pool(pool_path)
             .filter(|_| Path::new(pool_path).is_file())
@@ -493,17 +594,7 @@ impl FamilyPool {
         }
         let size = std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0);
         if self.store.get(pool_path).is_none() {
-            self.store.upsert(PoolFile {
-                path: pool_path.to_string(),
-                size,
-                format: extension_of(pool_path),
-                outside_ids: Vec::new(),
-                isrc: None,
-                title: String::new(),
-                artist: String::new(),
-                album: String::new(),
-                refs: Vec::new(),
-            });
+            self.store.upsert(unrecorded_file(pool_path, size, Vec::new()));
         }
         self.store.add_ref(pool_path, &member.username);
         if let Some(library_id) = member.personal_library_id {
@@ -516,14 +607,12 @@ impl FamilyPool {
     /// Takes a pool file out of `user`'s library and drops their reference; the file goes to
     /// the trash once nobody has it.
     pub async fn unlink(&self, pool_path: &str, user: &str) -> Result<(), PoolError> {
-        let member = self
-            .family
-            .member(user)
-            .ok_or_else(|| PoolError::NotMember(user.to_string()))?;
+        let _changing = self.changes.lock().await;
+        let member = self.member_named(user)?;
         self.remove_link(pool_path, &member.username, &companions(pool_path));
         let left = self.store.remove_ref(pool_path, &member.username);
         if left.is_none_or(|left| left == 0) {
-            self.gc(pool_path).await;
+            self.gc_held(pool_path).await;
         }
         if let Some(library_id) = member.personal_library_id {
             self.library.trigger_library_scan_of(library_id).await;
@@ -532,14 +621,45 @@ impl FamilyPool {
     }
 
     /// Forgets pool files that are no longer on disk (someone deleted one by hand): each
-    /// member's link to it goes, and their library is scanned. Answers how many files went.
+    /// member's link to it goes, and their library is scanned. A file goes only when two sweeps
+    /// in a row find it missing, and nothing goes while the pool folder cannot be read or is
+    /// empty (a members disk that is not mounted looks like every file gone). Answers how many
+    /// files went.
     pub async fn sweep_dangling(&self) -> usize {
-        let gone: Vec<PoolFile> = self
-            .store
-            .list()
+        let _changing = self.changes.lock().await;
+        self.sweep_held().await
+    }
+
+    /// [`Self::sweep_dangling`] for a change that holds the lock already.
+    async fn sweep_held(&self) -> usize {
+        let recorded = self.store.list();
+        if recorded.is_empty() {
+            self.missing_once.lock().clear();
+            return 0;
+        }
+        let root = self.pool_root_path();
+        let readable = std::fs::read_dir(&root).is_ok_and(|mut entries| entries.next().is_some());
+        if !readable {
+            warn!(
+                "FAMILY the pool folder {root} cannot be read or is empty; its records are kept as they are"
+            );
+            self.missing_once.lock().clear();
+            return 0;
+        }
+        let missing: Vec<PoolFile> = recorded
             .into_iter()
             .filter(|file| !Path::new(&file.path).exists())
             .collect();
+        let gone: Vec<PoolFile> = {
+            let mut once = self.missing_once.lock();
+            let now: HashSet<String> = missing.iter().map(|file| file.path.clone()).collect();
+            let gone = missing
+                .into_iter()
+                .filter(|file| once.contains(&file.path))
+                .collect();
+            *once = now;
+            gone
+        };
         for file in &gone {
             for user in &file.refs {
                 self.remove_link(&file.path, user, &[]);
@@ -548,6 +668,7 @@ impl FamilyPool {
                 }
             }
             self.store.remove(&file.path);
+            self.missing_once.lock().remove(&file.path);
             if let Err(e) = self.library.forget_mapping(&file.path).await {
                 warn!("FAMILY could not forget {}'s mapping: {e}", file.path);
             }
@@ -561,13 +682,30 @@ impl FamilyPool {
     }
 
     /// Sends a pool file nobody links any more to the trash (kept as long as library actions
-    /// keep removed songs), with its lyrics files. True when it went.
+    /// keep removed songs), with its lyrics files. A file a member's library still links on
+    /// disk is never trashed, whatever the record says: the record learns of them again.
+    /// True when it went.
     pub async fn gc(&self, pool_path: &str) -> bool {
+        let _changing = self.changes.lock().await;
+        self.gc_held(pool_path).await
+    }
+
+    /// [`Self::gc`] for a change that holds the lock already.
+    async fn gc_held(&self, pool_path: &str) -> bool {
         if self
             .store
             .get(pool_path)
             .is_some_and(|file| !file.refs.is_empty())
         {
+            return false;
+        }
+        let holders = self.linked_on_disk(pool_path);
+        if !holders.is_empty() {
+            self.restore_refs(pool_path, &holders);
+            warn!(
+                "FAMILY {pool_path} had no record of who has it, but {} still do; it stays",
+                holders.join(", ")
+            );
             return false;
         }
         let members_root = self.members_root();
@@ -618,10 +756,45 @@ impl FamilyPool {
         true
     }
 
+    /// The members whose own library has something (a link, or a copy) at this pool file's
+    /// place.
+    fn linked_on_disk(&self, pool_path: &str) -> Vec<String> {
+        let Some(relative) = self.relative_in_pool(pool_path) else {
+            return Vec::new();
+        };
+        let root = self.members_root();
+        self.family
+            .members()
+            .into_iter()
+            .map(|member| member.username)
+            .filter(|name| valid_username(name))
+            .filter(|name| std::fs::symlink_metadata(format!("{root}/{name}/{relative}")).is_ok())
+            .collect()
+    }
+
+    /// Records `holders` as linking a pool file, recording the file first when it is not.
+    fn restore_refs(&self, pool_path: &str, holders: &[String]) {
+        if self.store.get(pool_path).is_none() {
+            let size = std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0);
+            self.store
+                .upsert(unrecorded_file(pool_path, size, holders.to_vec()));
+            return;
+        }
+        for holder in holders {
+            self.store.add_ref(pool_path, holder);
+        }
+    }
+
     /// A better copy of a song replaces `old_path` for everyone who has it: each member's link
     /// moves to `new_path`, the old file goes to the trash, and their stars and family playlist
     /// entries follow the song once the index finds it again. Answers the members moved.
     pub async fn repoint(&self, old_path: &str, new_path: &str) -> Vec<String> {
+        let _changing = self.changes.lock().await;
+        self.repoint_held(old_path, new_path).await
+    }
+
+    /// [`Self::repoint`] for a change that holds the lock already.
+    async fn repoint_held(&self, old_path: &str, new_path: &str) -> Vec<String> {
         if old_path == new_path {
             return Vec::new();
         }
@@ -641,7 +814,7 @@ impl FamilyPool {
                 Some(id) => self.stars.is_starred(user, id).await,
                 None => false,
             };
-            match self.link(new_path, user).await {
+            match self.link_held(new_path, user).await {
                 Ok(_) => {
                     self.remove_link(old_path, user, &companions(old_path));
                     self.store.remove_ref(old_path, user);
@@ -669,7 +842,7 @@ impl FamilyPool {
             }
             self.store.upsert(better);
         }
-        self.gc(old_path).await;
+        self.gc_held(old_path).await;
         info!(
             "FAMILY {} moved from {old_path} to the better copy {new_path}",
             moved.join(", ")
@@ -680,8 +853,17 @@ impl FamilyPool {
 
     /// The shared library wants a pool song: the file moves into the shared library's layout,
     /// every member's link goes (they see it there now), and their stars and family playlist
-    /// entries follow the song. Still one file. Answers its new path.
+    /// entries follow the song. Still one file. A member who cannot see that shared library
+    /// keeps their link, and the pool keeps the file for them: then the shared library gets a
+    /// copy. Answers its new path.
     pub async fn promote(&self, pool_path: &str) -> Result<String, PoolError> {
+        let _changing = self.changes.lock().await;
+        self.promote_held(pool_path, None).await
+    }
+
+    /// [`Self::promote`] for a change that holds the lock already. `leaving` (a member being let
+    /// go) never keeps the file in the pool, whatever they can see.
+    async fn promote_held(&self, pool_path: &str, leaving: Option<&str>) -> Result<String, PoolError> {
         let relative = self
             .relative_in_pool(pool_path)
             .filter(|_| Path::new(pool_path).is_file())
@@ -693,8 +875,16 @@ impl FamilyPool {
             target = PathHelper::resolve_unique_path(&target);
         }
         let refs = self.store.get(pool_path).map(|f| f.refs).unwrap_or_default();
+        let shared_library = self.index.library_of_folder(shared_root);
+        let (seers, keepers): (Vec<String>, Vec<String>) = refs.into_iter().partition(|user| {
+            leaving.is_some_and(|leaving| eq_ignore_case(leaving, user))
+                || self
+                    .family
+                    .member(user)
+                    .is_none_or(|member| sees_shared_library(&member, shared_library))
+        });
         let mut remaps = Vec::new();
-        for user in &refs {
+        for user in &seers {
             let Some(link) = self.link_path(pool_path, user) else {
                 continue;
             };
@@ -712,8 +902,13 @@ impl FamilyPool {
             });
         }
 
+        let stays_pooled = !keepers.is_empty();
         let companions = companions(pool_path);
-        move_file(Path::new(pool_path), Path::new(&target))?;
+        if stays_pooled {
+            copy_file(Path::new(pool_path), Path::new(&target))?;
+        } else {
+            move_file(Path::new(pool_path), Path::new(&target))?;
+        }
         for companion in &companions {
             let Some(name) = Path::new(companion).file_name() else {
                 continue;
@@ -725,7 +920,7 @@ impl FamilyPool {
             let is_cover = COVER_FILES
                 .iter()
                 .any(|cover| eq_ignore_case(cover, &name.to_string_lossy()));
-            let result = if is_cover {
+            let result = if is_cover || stays_pooled {
                 std::fs::copy(companion, &destination).map(|_| ())
             } else {
                 move_file(Path::new(companion), &destination)
@@ -734,13 +929,19 @@ impl FamilyPool {
                 warn!("FAMILY could not move {companion} with its song: {e}");
             }
         }
-        for user in &refs {
+        for user in &seers {
             self.remove_link(pool_path, user, &companions);
         }
-        self.store.remove(pool_path);
-        if let Some(folder) = Path::new(pool_path).parent() {
-            remove_lonely_covers(folder);
-            prune_empty(folder, Path::new(&self.pool_root_path()));
+        if stays_pooled {
+            for user in &seers {
+                self.store.remove_ref(pool_path, user);
+            }
+        } else {
+            self.store.remove(pool_path);
+            if let Some(folder) = Path::new(pool_path).parent() {
+                remove_lonely_covers(folder);
+                prune_empty(folder, Path::new(&self.pool_root_path()));
+            }
         }
         match self.library.forget_mapping(pool_path).await {
             Ok(mappings) => {
@@ -751,12 +952,19 @@ impl FamilyPool {
             Err(e) => warn!("FAMILY could not forget {pool_path}'s mapping: {e}"),
         }
         self.library.trigger_library_scan(true).await;
-        for user in &refs {
+        for user in &seers {
             if let Some(library_id) = self.family.member(user).and_then(|m| m.personal_library_id) {
                 self.library.trigger_library_scan_of(library_id).await;
             }
         }
-        info!("FAMILY {pool_path} moved into the shared library as {target}");
+        if stays_pooled {
+            info!(
+                "FAMILY {pool_path} was copied into the shared library as {target}; it stays in the pool for {}, who cannot see that library",
+                keepers.join(", ")
+            );
+        } else {
+            info!("FAMILY {pool_path} moved into the shared library as {target}");
+        }
         self.carry_over(remaps);
         Ok(target)
     }
@@ -764,41 +972,57 @@ impl FamilyPool {
     /// Lets go of everything a member who is leaving the family has: each of their links goes,
     /// and each pool file only they had follows `choice` (kept aside under
     /// `<members>/.kept/<user>/`, moved into the shared library, or sent to the trash). Files
-    /// another member still has stay where they are. Answers what became of the files.
+    /// another member still has stay where they are. A file that cannot be kept aside or moved
+    /// stays exactly as it was, linked and recorded for the member, and the first such failure
+    /// is the answer once every other file is done, so nothing is left behind without a record.
+    /// Answers what became of the files.
     pub async fn release_member(&self, user: &str, choice: FilesChoice) -> Result<Released, PoolError> {
-        let member = self
-            .family
-            .member(user)
-            .ok_or_else(|| PoolError::NotMember(user.to_string()))?;
+        let _changing = self.changes.lock().await;
+        let member = self.member_named(user)?;
         let name = member.username.clone();
         let mut released = Released::default();
+        let mut failure: Option<PoolError> = None;
         for file in self.store.refs_of(&name) {
             let companions = companions(&file.path);
-            self.remove_link(&file.path, &name, &companions);
-            let left = self.store.remove_ref(&file.path, &name);
-            if left.is_some_and(|left| left > 0) {
+            let only_theirs = file.refs.iter().all(|r| eq_ignore_case(r, &name));
+            if !only_theirs {
+                self.remove_link(&file.path, &name, &companions);
+                self.store.remove_ref(&file.path, &name);
                 released.shared += 1;
                 continue;
             }
             if !Path::new(&file.path).is_file() {
+                self.remove_link(&file.path, &name, &companions);
                 self.store.remove(&file.path);
                 continue;
             }
-            match choice {
-                FilesChoice::Keep => {
-                    self.keep_aside(&file.path, &name, &companions).await?;
+            let outcome = match choice {
+                FilesChoice::Keep => self.keep_aside(&file.path, &name, &companions).await.map(|()| {
+                    self.remove_link(&file.path, &name, &companions);
                     released.kept += 1;
-                }
-                FilesChoice::Promote => {
-                    self.promote(&file.path).await?;
-                    released.promoted += 1;
-                }
+                }),
+                FilesChoice::Promote => self
+                    .promote_held(&file.path, Some(&name))
+                    .await
+                    .map(|_| released.promoted += 1),
                 FilesChoice::Delete => {
-                    if self.gc(&file.path).await {
+                    self.remove_link(&file.path, &name, &companions);
+                    self.store.remove_ref(&file.path, &name);
+                    if self.gc_held(&file.path).await {
                         released.trashed += 1;
+                    } else if Path::new(&file.path).exists() {
+                        released.shared += 1;
                     }
+                    Ok(())
                 }
+            };
+            if let Err(e) = outcome {
+                warn!("FAMILY {}'s file {} stays as it was: {e}", name, file.path);
+                failure.get_or_insert(e);
             }
+        }
+        if let Some(e) = failure {
+            return Err(e);
         }
         // Whatever is left of their folder is empty folders and covers.
         let root = PathBuf::from(self.member_root(&name));
@@ -811,7 +1035,7 @@ impl FamilyPool {
     }
 
     /// Moves a pool file only `user` had to `<members>/.kept/<user>/<layout>`, with its lyrics
-    /// and cover, out of every library.
+    /// and cover, out of every library. Nothing changes when the song itself cannot be moved.
     async fn keep_aside(&self, pool_path: &str, user: &str, companions: &[String]) -> Result<(), PoolError> {
         let relative = self
             .relative_in_pool(pool_path)
@@ -998,6 +1222,12 @@ impl FamilyPlacement for FamilyPool {
         self.find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)
     }
 
+    fn made_from_lossy(&self, path: &str) -> bool {
+        self.store
+            .get(path)
+            .is_some_and(|file| file.transcoded_from.is_some())
+    }
+
     fn link_path_for(&self, pool_path: &str, user: &str) -> Option<String> {
         self.link_path(pool_path, user)
     }
@@ -1010,36 +1240,42 @@ impl FamilyPlacement for FamilyPool {
         external_id: &str,
         members: &[String],
     ) -> Option<String> {
+        let _changing = self.changes.lock().await;
         // Each new pool file is a moment to let go of any that went missing by hand.
-        self.sweep_dangling().await;
+        self.sweep_held().await;
         let key = key_of(provider, external_id);
         let older = self
             .find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)
             .filter(|file| file.path != path);
-        self.record(PoolFile {
+        let format = extension_of(path);
+        let placed = PoolFile {
             path: path.to_string(),
             size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
-            format: extension_of(path),
+            transcoded_from: song
+                .transcoded_from
+                .clone()
+                .filter(|from| format == "flac" && !from.trim().is_empty()),
+            format,
             outside_ids: vec![key],
             isrc: song.isrc.clone().filter(|i| !i.trim().is_empty()),
             title: song.title.clone(),
             artist: song.artist.clone(),
             album: song.album.clone(),
             refs: Vec::new(),
-        });
+        };
+        let bettered = older.filter(|older| better(&placed, older));
+        self.record(placed);
         let mut first = None;
         for member in members {
-            match self.link(path, member).await {
+            match self.link_held(path, member).await {
                 Ok(link) => {
                     first.get_or_insert(link);
                 }
                 Err(e) => warn!("FAMILY could not give {member} {path}: {e}"),
             }
         }
-        if let Some(older) = older
-            && better(path, &older.path)
-        {
-            self.repoint(&older.path, path).await;
+        if let Some(older) = bettered {
+            self.repoint_held(&older.path, path).await;
         }
         first
     }
@@ -1048,8 +1284,9 @@ impl FamilyPlacement for FamilyPool {
         if !self.is_pool_path(path) {
             return path.to_string();
         }
+        let _changing = self.changes.lock().await;
         if wants_shared {
-            return match self.promote(path).await {
+            return match self.promote_held(path, None).await {
                 Ok(moved) => moved,
                 Err(e) => {
                     warn!("FAMILY could not move {path} into the shared library: {e}");
@@ -1058,7 +1295,7 @@ impl FamilyPlacement for FamilyPool {
             };
         }
         for member in members {
-            if let Err(e) = self.link(path, member).await {
+            if let Err(e) = self.link_held(path, member).await {
                 warn!("FAMILY could not give {member} {path}: {e}");
             }
         }
@@ -1066,9 +1303,54 @@ impl FamilyPlacement for FamilyPool {
     }
 }
 
-/// Whether the file at `new` is a better copy than the one at `old`: a FLAC for a lossy file.
-fn better(new: &str, old: &str) -> bool {
-    extension_of(new) == "flac" && extension_of(old) != "flac"
+/// Whether `new` is a better copy than `old`: a real FLAC for a lossy file, or for a FLAC made
+/// from lossy audio.
+fn better(new: &PoolFile, old: &PoolFile) -> bool {
+    new.is_real_flac() && !old.is_real_flac()
+}
+
+/// Whether `member` sees the shared library `library`. One Octo cannot name is seen only by a
+/// member who sees every shared library.
+pub fn sees_shared_library(member: &Member, library: Option<i64>) -> bool {
+    match &member.shared_libraries {
+        SharedLibraries::All => true,
+        SharedLibraries::Ids(ids) => library.is_some_and(|id| ids.contains(&id)),
+    }
+}
+
+/// The record of a pool file Octo knows nothing more about than where it is.
+fn unrecorded_file(pool_path: &str, size: u64, refs: Vec<String>) -> PoolFile {
+    PoolFile {
+        path: pool_path.to_string(),
+        size,
+        format: extension_of(pool_path),
+        outside_ids: Vec::new(),
+        isrc: None,
+        title: String::new(),
+        artist: String::new(),
+        album: String::new(),
+        refs,
+        transcoded_from: None,
+    }
+}
+
+/// Whether `path` is a link (not following it).
+fn is_symlink(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// Puts a real copy of what the link at `link` points to in its place: the copy is written
+/// beside the link first, then renamed over it, so the member never has neither.
+fn replace_link_with_copy(link: &Path) -> io::Result<()> {
+    let mut name = link.as_os_str().to_owned();
+    name.push(".octo-copy");
+    let copy = PathBuf::from(name);
+    copy_file(link, &copy)?;
+    if let Err(e) = std::fs::rename(&copy, link) {
+        let _ = std::fs::remove_file(&copy);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// The lower-case extension without its dot.
@@ -1175,13 +1457,22 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
     if std::fs::rename(from, to).is_ok() {
         return Ok(());
     }
+    copy_file(from, to)?;
+    std::fs::remove_file(from)
+}
+
+/// Copies a file (through a link at `from`, when it is one), checking the copy's size.
+fn copy_file(from: &Path, to: &Path) -> io::Result<()> {
+    if let Some(parent) = to.parent() {
+        make_dirs(parent)?;
+    }
     let length = std::fs::metadata(from)?.len();
     std::fs::copy(from, to)?;
     if std::fs::metadata(to)?.len() != length {
         let _ = std::fs::remove_file(to);
         return Err(io::Error::other("the copy did not match the original's size"));
     }
-    std::fs::remove_file(from)
+    Ok(())
 }
 
 #[cfg(unix)]

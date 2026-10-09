@@ -29,6 +29,8 @@ use crate::services::library::OwnedCopy;
 struct Catalog {
     shared: Mutex<HashSet<String>>,
     lossy_shared: Mutex<HashSet<String>>,
+    /// How long a song lookup takes.
+    delay: Mutex<Duration>,
 }
 
 #[async_trait]
@@ -49,6 +51,10 @@ impl RequestCatalog for Catalog {
     }
 
     async fn song(&self, _: &str, external_id: &str) -> Option<Song> {
+        let delay = *self.delay.lock();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         Some(Song {
             title: format!("Song {external_id}"),
             artist: "Artist".into(),
@@ -377,7 +383,7 @@ async fn done_only_after_index_sees_it() {
 }
 
 #[tokio::test]
-async fn a_song_that_never_shows_fails_after_copies_were_tried() {
+async fn a_song_that_never_shows_fails_after_its_own_copy_was_tried() {
     let world = World::new(None);
     let navidrome = navidrome_knowing(&world, &[]).await;
     world.point_at(&navidrome.uri());
@@ -391,8 +397,7 @@ async fn a_song_that_never_shows_fails_after_copies_were_tried() {
     assert!(failed, "{:?}", setup.service.get(&made.id));
     let request = setup.service.get(&made.id).expect("kept");
     assert_eq!(request.failure.as_deref(), Some(NOT_SHOWN_MESSAGE));
-    // Links never showed in Navidrome, so members get copies from now on.
-    assert_eq!(setup.world.pool.mode(), LinkMode::Copy);
+    // This one link became a copy; nobody else's links change for a scan that was only slow.
     let link = format!("{}/alex/Artist/Album/4.flac", setup.world.members());
     assert!(
         !std::fs::symlink_metadata(&link)
@@ -400,6 +405,270 @@ async fn a_song_that_never_shows_fails_after_copies_were_tried() {
             .file_type()
             .is_symlink()
     );
+    assert_eq!(setup.world.pool.mode(), LinkMode::Symlink);
+}
+
+#[tokio::test]
+async fn a_copy_navidrome_shows_where_it_never_showed_the_link_is_done() {
+    let world = World::new(None);
+    // Navidrome lists the song at Alex's place, but only once it is a real file there.
+    let members = world.members();
+    let rows = json!([song_row(
+        "alex-30",
+        3,
+        &format!("{members}/alex"),
+        "Artist/Album/30.flac",
+        1_000
+    )]);
+    let shows_files = navidrome_with_songs(rows).await;
+    let shows_nothing = navidrome_knowing(&world, &[]).await;
+    world.point_at(&shows_nothing.uri());
+    let setup = setup(world);
+    let link = format!("{members}/alex/Artist/Album/30.flac");
+    let watcher = {
+        let (settings, link) = (setup.world.settings.clone(), link.clone());
+        let url = shows_files.uri();
+        tokio::spawn(async move {
+            loop {
+                let is_file = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_file());
+                if is_file {
+                    let mut now = settings.current().as_ref().clone();
+                    now.subsonic.url = Some(url);
+                    settings.set(now);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+    };
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-30", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert!(eventually_long(|| state_of(&setup, &made.id) == RequestState::Done).await);
+    watcher.await.expect("joins");
+    assert_eq!(setup.world.pool.store().link_state().unshown, 1);
+    assert_eq!(
+        setup.world.pool.mode(),
+        LinkMode::Symlink,
+        "once is not enough to give up on links"
+    );
+}
+
+#[tokio::test]
+async fn approved_requests_resume_after_a_restart() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[("alex-31", 3, "Artist/Album/31.flac")]).await;
+    world.point_at(&navidrome.uri());
+    let setup = setup(world);
+    // Approved before the restart; nothing runs it now.
+    let mut left = setup.service.new_request(
+        &setup.world.family.member("alex").expect("alex"),
+        RequestKind::Song,
+        "ext-test-song-31",
+        RequestQuality::Best,
+        RequestFacts::default(),
+    );
+    left.state = RequestState::Approved;
+    let left = setup.service.store().create(left, chrono::Utc::now());
+    assert_eq!(setup.service.resume_approved(), 1);
+    assert!(eventually(|| state_of(&setup, &left.id) == RequestState::Done).await);
+    assert_eq!(setup.service.resume_approved(), 0, "once per start");
+    // Asking for the same song again is a new ask now, not stuck behind the old one.
+    assert_eq!(setup.fetcher.asked.lock().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_approvers_at_once_start_a_request_once() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[]).await;
+    world.point_at(&navidrome.uri());
+    let mut co = member("cy", Preset::CoAdmin, 7);
+    co.edits.insert("ApproveRequests".into(), json!(true));
+    world.family.upsert_member(co);
+    let mut unlimited = member("sam", Preset::Listener, 4);
+    unlimited.edits.insert("WeeklyRequestLimit".into(), json!(0));
+    world.family.upsert_member(unlimited);
+    let mut setup = setup(world);
+    for n in 0..20 {
+        let made = setup
+            .service
+            .create("sam", &format!("ext-test-song-4{n}0"), RequestQuality::Best, None)
+            .await
+            .expect("made");
+        assert_eq!(made.state, RequestState::Pending);
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let approvers: Vec<_> = ["winters", "cy"]
+            .into_iter()
+            .map(|by| {
+                let (service, barrier, id) = (setup.service.clone(), barrier.clone(), made.id.clone());
+                tokio::task::spawn_blocking(move || {
+                    barrier.wait();
+                    service.approve(&id, by, None)
+                })
+            })
+            .collect();
+        let mut approved = 0;
+        for approver in approvers {
+            match approver.await.expect("joins") {
+                Ok(_) => approved += 1,
+                Err(e) => assert_eq!(e.message, "This request was already decided."),
+            }
+        }
+        assert_eq!(approved, 1, "exactly one approver decides");
+    }
+    let mut decided = 0;
+    while let Ok(event) = setup.events.try_recv() {
+        if matches!(event, FamilyEvent::RequestDecided(_)) {
+            decided += 1;
+        }
+    }
+    assert_eq!(decided, 20, "each approval is told once");
+}
+
+#[tokio::test]
+async fn the_same_ask_twice_at_once_makes_one_request() {
+    let mut setup = setup(World::new(None));
+    *setup.catalog.delay.lock() = Duration::from_millis(50);
+    let (first, second) = tokio::join!(
+        setup
+            .service
+            .create("sam", "ext-test-song-32", RequestQuality::Best, None),
+        setup
+            .service
+            .create("sam", "ext-test-song-32", RequestQuality::Best, None),
+    );
+    let (first, second) = (first.expect("made"), second.expect("made"));
+    assert_eq!(first.id, second.id);
+    assert_eq!(setup.service.requests_of("sam").len(), 1);
+    let mut created = 0;
+    while let Ok(event) = setup.events.try_recv() {
+        if matches!(event, FamilyEvent::RequestCreated(_)) {
+            created += 1;
+        }
+    }
+    assert_eq!(created, 1, "the approvers hear of it once");
+}
+
+#[tokio::test]
+async fn a_failed_flac_asked_again_as_mp3_takes_its_slot_and_its_approval() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[("sam-33", 4, "Artist/Album/33.mp3")]).await;
+    world.point_at(&navidrome.uri());
+    let setup = setup(world);
+    *setup.fetcher.no_flac.lock() = true;
+    let made = setup
+        .service
+        .create("sam", "ext-test-song-33", RequestQuality::Flac, None)
+        .await
+        .expect("made");
+    assert_eq!(made.state, RequestState::Pending, "a listener's request waits");
+    setup
+        .service
+        .approve(&made.id, "winters", None)
+        .expect("approved");
+    assert!(eventually(|| state_of(&setup, &made.id) == RequestState::Failed).await);
+
+    let again = setup
+        .service
+        .retry_as_mp3(&made.id, "sam")
+        .await
+        .expect("asked again");
+    assert_eq!(
+        again.state,
+        RequestState::Approved,
+        "no second wait for an approver"
+    );
+    assert_eq!(setup.service.quota_used("sam"), 1, "one slot, as the FLAC held");
+    assert!(eventually(|| state_of(&setup, &again.id) == RequestState::Done).await);
+}
+
+#[tokio::test]
+async fn a_failed_flac_asked_again_waits_when_its_slot_was_taken() {
+    let world = World::new(None);
+    let mut small = member("sam", Preset::Listener, 4);
+    small.edits.insert("WeeklyRequestLimit".into(), json!(1));
+    world.family.upsert_member(small);
+    let setup = setup(world);
+    *setup.fetcher.no_flac.lock() = true;
+    let made = setup
+        .service
+        .create("sam", "ext-test-song-34", RequestQuality::Flac, None)
+        .await
+        .expect("made");
+    setup
+        .service
+        .approve(&made.id, "winters", None)
+        .expect("approved");
+    assert!(eventually(|| state_of(&setup, &made.id) == RequestState::Failed).await);
+    // The freed slot went to another ask meanwhile.
+    setup
+        .service
+        .create("sam", "ext-test-song-35", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    let refused = setup
+        .service
+        .retry_as_mp3(&made.id, "sam")
+        .await
+        .expect_err("no slot left");
+    assert_eq!(refused.message, "You have used all 1 of your requests this week.");
+}
+
+#[tokio::test]
+async fn a_member_never_reads_a_path_inside_the_server() {
+    let setup = setup(World::new(None));
+    let pooled = setup.world.pool_file("Artist/Album/36.flac", 10);
+    let song = setup.catalog.song("test", "36").await.expect("a song");
+    setup
+        .world
+        .pool
+        .placed(&pooled, &song, "test", "36", &["sam".to_string()])
+        .await;
+    // Alex's own folder cannot be made: a file is in the way.
+    std::fs::write(format!("{}/alex", setup.world.members()), b"in the way").expect("a file");
+    let refused = setup
+        .service
+        .create("alex", "ext-test-song-36", RequestQuality::Best, None)
+        .await
+        .expect_err("could not be linked");
+    assert!(!refused.message.contains('/'), "{}", refused.message);
+    assert!(!refused.message.contains(".pool"), "{}", refused.message);
+}
+
+#[tokio::test]
+async fn a_song_shared_where_the_member_cannot_look_is_not_theirs_already() {
+    let world = World::new(None);
+    let navidrome = navidrome_with_songs(json!([song_row(
+        "shared-Song 37",
+        1,
+        &world.music(),
+        "Artist/Album/37.flac",
+        1_000
+    )]))
+    .await;
+    world.point_at(&navidrome.uri());
+    world.index.refresh().await.expect("read");
+    let mut sam = member("sam", Preset::Listener, 4);
+    sam.shared_libraries = crate::services::family::SharedLibraries::Ids(vec![2]);
+    world.family.upsert_member(sam);
+    let setup = setup(world);
+    setup.catalog.shared.lock().insert("Song 37".into());
+
+    let sams = setup
+        .service
+        .create("sam", "ext-test-song-37", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert_eq!(sams.state, RequestState::Pending, "Sam cannot see that library");
+    assert_eq!(sams.outcome, None);
+    let alexs = setup
+        .service
+        .create("alex", "ext-test-song-37", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert_eq!(alexs.outcome, Some(RequestOutcome::AlreadyShared));
 }
 
 #[tokio::test]

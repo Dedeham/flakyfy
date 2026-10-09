@@ -667,9 +667,15 @@ impl Default for FamilyService {
     }
 }
 
-/// Usernames a member can have: 2 to 32 of `a-z`, `0-9`, `.`, `_` and `-`.
+/// Usernames a member can have: 2 to 32 of `a-z`, `0-9`, `.`, `_` and `-`, starting with a
+/// letter or a digit. The name is a member's own folder under the members folder, so it must be
+/// one plain folder name: never `.` or `..`, and never a hidden name like the pool's `.pool`.
 pub fn valid_username(name: &str) -> bool {
     (2..=32).contains(&name.len())
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
         && name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-'))
@@ -1331,6 +1337,7 @@ impl FamilyService {
             }
         }
         state.family_store.remove_member(&member.username);
+        state.family_request_service.close_member(&member.username);
         state.family_saved.remove_user(&member.username);
         state.browse_sessions.revoke_user(&member.username);
         self.applied_libraries
@@ -1923,8 +1930,9 @@ impl FamilyService {
 pub const LIBRARY_SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Family's own background work while Family is on: probes the members folder for links,
-/// tells people about requests ([`FamilyService::announce`]) and the owner's channels about
-/// new devices, and keeps members' libraries in step with the shared libraries Navidrome has.
+/// starts again approved requests a restart left unfinished, tells people about requests
+/// ([`FamilyService::announce`]) and the owner's channels about new devices, and keeps
+/// members' libraries in step with the shared libraries Navidrome has.
 /// Holds the state weakly, so a dropped state ends it.
 pub async fn run_family_work(
     state: std::sync::Weak<crate::app::AppInner>,
@@ -1936,6 +1944,9 @@ pub async fn run_family_work(
     let mut devices = first.family_devices.subscribe();
     let mut requests = first.family_events.subscribe();
     first.family.probe_links(&first).await;
+    // Approved requests a restart left unfinished start again, now that the pool knows how
+    // members' libraries get files.
+    first.family_request_service.resume_approved();
     drop(first);
     let mut sync = tokio::time::interval(LIBRARY_SYNC_EVERY);
     loop {

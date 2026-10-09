@@ -1,6 +1,10 @@
 //! `family-pool.json`: the one real copy of every song a member downloaded, under
 //! `<members>/.pool/`, and which members link to it from their own library. This file is the
-//! record of who links what; Octo never counts links by walking folders.
+//! record of who links what; Octo never counts links by walking folders. It also keeps what
+//! Octo has learned about links on this server (Navidrome showed one, or never does), so a
+//! restart does not forget it.
+//!
+//! The file is `{"Links": {...}, "Files": [...]}`; a plain list of files is read too.
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +13,47 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use super::store_file;
+
+/// What Octo has learned about links in members' libraries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LinkState {
+    /// Navidrome has shown a linked song in a member's library at least once.
+    #[serde(default)]
+    pub seen: bool,
+    /// How many times a link Navidrome did not show in time became a copy that Navidrome then
+    /// showed.
+    #[serde(default)]
+    pub unshown: u32,
+    /// Links do not work for Navidrome here: members get real copies from now on.
+    #[serde(default)]
+    pub copies: bool,
+}
+
+/// The file as it is written.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PoolDocument {
+    #[serde(default)]
+    links: LinkState,
+    #[serde(default)]
+    files: Vec<PoolFile>,
+}
+
+/// The file as it is read: the plain list of files it once was, or the document. The list is
+/// tried first: a document is never a list, but a list could pass for a document.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredPool {
+    Files(Vec<PoolFile>),
+    Document(PoolDocument),
+}
+
+impl Default for StoredPool {
+    fn default() -> Self {
+        StoredPool::Document(PoolDocument::default())
+    }
+}
 
 /// One file in the pool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,11 +81,23 @@ pub struct PoolFile {
     /// The members whose library links to this file.
     #[serde(default)]
     pub refs: Vec<String>,
+    /// For a FLAC file the spectrum check found was made from lossy audio, what it was likely
+    /// made from ("about 128 kbps MP3"). None for a real FLAC and for every other format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcoded_from: Option<String>,
+}
+
+impl PoolFile {
+    /// A FLAC file that was not made from lossy audio: what a FLAC request takes.
+    pub fn is_real_flac(&self) -> bool {
+        self.format.eq_ignore_ascii_case("flac") && self.transcoded_from.is_none()
+    }
 }
 
 /// The store behind `family-pool.json`.
 pub struct FamilyPoolStore {
     files: Mutex<Vec<PoolFile>>,
+    links: Mutex<LinkState>,
     path: Option<PathBuf>,
     save_lock: Mutex<()>,
     load_warning: Option<String>,
@@ -53,9 +110,17 @@ impl FamilyPoolStore {
 
     pub fn new(path: Option<impl AsRef<Path>>) -> Self {
         let path = store_file::clean_path(path);
-        let (files, load_warning) = store_file::load::<Vec<PoolFile>>(path.as_deref());
+        let (stored, load_warning) = store_file::load::<StoredPool>(path.as_deref());
+        let document = match stored {
+            StoredPool::Document(document) => document,
+            StoredPool::Files(files) => PoolDocument {
+                links: LinkState::default(),
+                files,
+            },
+        };
         FamilyPoolStore {
-            files: Mutex::new(files),
+            files: Mutex::new(document.files),
+            links: Mutex::new(document.links),
             path,
             save_lock: Mutex::new(()),
             load_warning,
@@ -64,6 +129,24 @@ impl FamilyPoolStore {
 
     pub fn load_warning(&self) -> Option<&str> {
         self.load_warning.as_deref()
+    }
+
+    /// What Octo has learned about links.
+    pub fn link_state(&self) -> LinkState {
+        *self.links.lock()
+    }
+
+    /// Changes what Octo has learned about links, writing the file when it changed.
+    pub fn set_link_state(&self, change: impl FnOnce(&mut LinkState)) {
+        let changed = {
+            let mut links = self.links.lock();
+            let before = *links;
+            change(&mut links);
+            before != *links
+        };
+        if changed {
+            self.save();
+        }
     }
 
     pub fn get(&self, path: &str) -> Option<PoolFile> {
@@ -179,8 +262,11 @@ impl FamilyPoolStore {
     fn save(&self) {
         let Some(path) = &self.path else { return };
         let _saving = self.save_lock.lock();
-        let files = self.files.lock().clone();
-        store_file::save(Some(path), &files);
+        let document = PoolDocument {
+            links: *self.links.lock(),
+            files: self.files.lock().clone(),
+        };
+        store_file::save(Some(path), &document);
     }
 }
 
@@ -199,6 +285,7 @@ mod tests {
             artist: "Artist".into(),
             album: "Album".into(),
             refs: refs.iter().map(|r| r.to_string()).collect(),
+            transcoded_from: None,
         }
     }
 
@@ -248,5 +335,51 @@ mod tests {
         assert_eq!(got.refs, ["sam", "alex"]);
         assert_eq!(reloaded.refs_of("sam").len(), 1);
         assert!(reloaded.refs_of("kim").is_empty());
+    }
+
+    #[test]
+    fn what_was_learned_about_links_survives_a_restart() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-pool.json");
+        let store = FamilyPoolStore::new(Some(&path));
+        assert_eq!(store.link_state(), LinkState::default());
+        store.set_link_state(|links| links.seen = true);
+        let mut fake = file(POOL, &["sam"]);
+        fake.transcoded_from = Some("about 128 kbps MP3".into());
+        store.upsert(fake);
+        let reloaded = FamilyPoolStore::new(Some(&path));
+        assert!(reloaded.link_state().seen);
+        assert!(!reloaded.link_state().copies);
+        assert!(!reloaded.get(POOL).expect("there").is_real_flac());
+        assert!(file(POOL, &[]).is_real_flac());
+    }
+
+    #[test]
+    fn a_plain_list_of_files_is_still_read() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-pool.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&vec![file(POOL, &["sam"])]).expect("json"),
+        )
+        .expect("writes");
+        let store = FamilyPoolStore::new(Some(&path));
+        assert!(store.load_warning().is_none());
+        assert_eq!(store.get(POOL).expect("read").refs, ["sam"]);
+    }
+
+    #[test]
+    fn a_torn_pool_file_is_kept_aside_with_a_warning() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-pool.json");
+        let store = FamilyPoolStore::new(Some(&path));
+        store.upsert(file(POOL, &["sam", "alex"]));
+        let whole = std::fs::read(&path).expect("written");
+        std::fs::write(&path, &whole[..whole.len() - 7]).expect("torn by a crash");
+        let reloaded = FamilyPoolStore::new(Some(&path));
+        assert!(reloaded.load_warning().is_some());
+        assert!(reloaded.list().is_empty());
+        std::fs::write(&path, b"").expect("emptied by a crash");
+        assert!(FamilyPoolStore::new(Some(&path)).load_warning().is_some());
     }
 }

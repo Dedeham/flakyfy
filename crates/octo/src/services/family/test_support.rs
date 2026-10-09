@@ -129,16 +129,22 @@ impl ILocalLibraryService for RecordingLibrary {
     }
 }
 
-/// Stars kept in memory: which songs each member has starred, and every star asked for.
+/// Stars kept in memory: which songs each member has starred, and every star asked for. Asking
+/// whether a song is starred takes `delay`, as a call to Navidrome takes a moment.
 #[derive(Default)]
 pub(crate) struct RecordingStars {
     pub starred: Mutex<HashSet<(String, String)>>,
     pub asked: Mutex<Vec<(String, String)>>,
+    pub delay: Mutex<Duration>,
 }
 
 #[async_trait]
 impl MemberStars for RecordingStars {
     async fn is_starred(&self, user: &str, song_id: &str) -> bool {
+        let delay = *self.delay.lock();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         self.starred
             .lock()
             .contains(&(user.to_string(), song_id.to_string()))

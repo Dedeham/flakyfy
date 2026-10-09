@@ -35,7 +35,7 @@ fn song(id: &str) -> Song {
 
 fn family(world: World) -> Family {
     let metadata = FakeMetadata::default();
-    for id in ["1", "2", "3"] {
+    for id in ["1", "2", "3", "4"] {
         metadata
             .songs
             .lock()
@@ -185,6 +185,7 @@ async fn a_song_the_family_has_is_never_downloaded_again() {
         artist: "Artist".into(),
         album: "Album".into(),
         refs: vec!["sam".into()],
+        transcoded_from: None,
     });
     family.lands("mp3", false);
     let path = family.get("2", for_members(&["alex"])).await.expect("found");
@@ -228,6 +229,42 @@ async fn flac_request_rejects_mp3_and_fake_flac() {
     let real = family.get("3", flac_only).await.expect("a real FLAC");
     assert!(real.ends_with(".flac"), "{real}");
     assert!(real.starts_with(&family.world.pool.pool_root_path()));
+}
+
+#[tokio::test]
+async fn a_flac_request_is_never_met_by_a_pool_flac_made_from_mp3() {
+    let family = family(World::new(None));
+    family.lands("flac", true);
+    let fake = family.get("4", for_members(&["sam"])).await.expect("landed");
+    let record = family.world.pool.store().get(&fake).expect("recorded");
+    assert_eq!(record.transcoded_from.as_deref(), Some("MP3 320"));
+    assert!(!record.is_real_flac());
+
+    family.lands("flac", false);
+    let real = family
+        .get(
+            "4",
+            AcquisitionPlace {
+                pool_members: Some(vec!["alex".into()]),
+                flac_only: true,
+            },
+        )
+        .await
+        .expect("a real FLAC");
+    assert_eq!(
+        family.backend.transfers(),
+        2,
+        "the FLAC made from an MP3 was not taken as a real one"
+    );
+    assert_ne!(real, fake);
+    let better = family.world.pool.store().get(&real).expect("recorded");
+    assert!(better.is_real_flac());
+    assert_eq!(
+        better.refs,
+        ["alex", "sam"],
+        "the real FLAC replaced it for Sam too"
+    );
+    assert!(!Path::new(&fake).exists());
 }
 
 #[tokio::test]

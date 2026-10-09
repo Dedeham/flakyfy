@@ -697,6 +697,52 @@ async fn removing_a_member_can_send_their_files_to_the_trash() {
 }
 
 #[tokio::test]
+async fn a_removed_members_waiting_requests_are_canceled_and_cannot_be_approved() {
+    let w = wired(true).await;
+    let waiting = w.state.family_requests.create(
+        octo_core::family::request::FamilyRequest {
+            id: String::new(),
+            username: "alex".into(),
+            kind: RequestKind::Song,
+            target: OUTSIDE.into(),
+            title: "Outside".into(),
+            artist: "Somebody".into(),
+            album: "Elsewhere".into(),
+            cover_art: OUTSIDE.into(),
+            quality: octo_core::family::abilities::RequestQuality::Best,
+            state: RequestState::Pending,
+            created: Utc::now(),
+            decided_by: None,
+            decided: None,
+            note: String::new(),
+            library_song_id: None,
+            failure: None,
+            outcome: None,
+        },
+        Utc::now(),
+    );
+    let removed = w
+        .page(
+            Method::DELETE,
+            "/api/family/members/alex",
+            "winters",
+            Some(json!({ "confirm": "alex", "files": "delete" })),
+        )
+        .await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT, "{}", removed.body);
+    assert_eq!(
+        w.state.family_requests.get(&waiting.id).expect("kept").state,
+        RequestState::Cancelled
+    );
+    assert!(
+        w.state
+            .family_request_service
+            .approve(&waiting.id, "winters", None)
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn turning_family_on_probes_links_and_both_pages_show_them() {
     let w = wired(false).await;
     let admin = format!("octo_browse={}", w.state.browse_sessions.create("winters"));
@@ -725,7 +771,7 @@ async fn turning_family_on_probes_links_and_both_pages_show_them() {
     assert_eq!(summary["links"], "Symlink", "{summary}");
 
     // Navidrome never showing a linked song switches the pool to copies; both pages say so.
-    w.state.family_pool_service.fall_back_to_copies();
+    w.state.family_pool_service.fall_back_to_copies().await;
     let session = w
         .page(Method::GET, "/api/family/session", "winters", None)
         .await

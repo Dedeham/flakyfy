@@ -130,16 +130,22 @@ mod tests {
 
     /// One search, described the way page one left it: a library of `library` matches, a build
     /// of `built` outside songs, and page one asked for `page_one_count` rows, with the
-    /// local/outside split the search uses.
+    /// local/outside split the search uses: the whole page for the library when `library_first`
+    /// (every client but Octo's apps), else the budget's split.
     struct Search {
         page_one_count: i32,
         library: i32,
         built: i32,
+        library_first: bool,
     }
 
     impl Search {
         fn budget(&self) -> (i32, i32) {
-            SearchBudget::compute(self.page_one_count, true)
+            if self.library_first {
+                (SearchBudget::library_first_target(self.page_one_count), 0)
+            } else {
+                SearchBudget::compute(self.page_one_count, true)
+            }
         }
         fn prefix_count(&self) -> i32 {
             self.budget().0.min(self.library)
@@ -236,14 +242,17 @@ mod tests {
         // Page sizes around the budget's edges: the smallest request that earns discovery, the
         // spec default, the last one below the outside ceiling, and big radio-style ones.
         let mut all = Vec::new();
-        for page_one_count in [13, 20, 40, 79, 80, 81, 200] {
-            for library in [0, 5, 12, 13, 30, 100, 400] {
-                for built in [0, 3, 8, 25, 60] {
-                    all.push(Search {
-                        page_one_count,
-                        library,
-                        built,
-                    });
+        for library_first in [false, true] {
+            for page_one_count in [13, 20, 40, 79, 80, 81, 200] {
+                for library in [0, 5, 12, 13, 30, 100, 400] {
+                    for built in [0, 3, 8, 25, 60] {
+                        all.push(Search {
+                            page_one_count,
+                            library,
+                            built,
+                            library_first,
+                        });
+                    }
                 }
             }
         }
@@ -252,8 +261,8 @@ mod tests {
 
     fn name(s: &Search) -> String {
         format!(
-            "pageOne={} library={} built={}",
-            s.page_one_count, s.library, s.built
+            "pageOne={} library={} built={} libraryFirst={}",
+            s.page_one_count, s.library, s.built, s.library_first
         )
     }
 

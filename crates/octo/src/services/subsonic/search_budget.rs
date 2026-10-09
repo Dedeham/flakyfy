@@ -32,6 +32,16 @@ impl SearchBudget {
     /// execution.
     pub const EXTERNAL_CEILING: i32 = external_search_service::BUILD_SIZE;
 
+    /// How many library rows page one of a search asks Navidrome for when the library comes
+    /// first: the whole page. Outside songs then fill only what the library leaves empty
+    /// (`SearchSongOrder::page_one_external_count` with no outside share of its own), so a song
+    /// the user owns is listed once, as their copy, before any outside song, and outside songs
+    /// never push owned ones to a later page. [`Self::compute`] still decides whether the request
+    /// is big enough for discovery at all (a type-ahead count is not).
+    pub fn library_first_target(requested_songs: i32) -> i32 {
+        requested_songs.max(0)
+    }
+
     /// Split `requested_songs` into a local target and an external target. Both are returned
     /// together so the two can never drift apart at a call site.
     ///
@@ -161,6 +171,17 @@ mod tests {
             assert_eq!(
                 SearchBudget::compute(requested, false),
                 (local, 0),
+                "songCount={requested}"
+            );
+        }
+    }
+
+    #[test]
+    fn library_first_target_is_the_whole_page() {
+        for (requested, local) in [(0, 0), (5, 5), (20, 20), (1000, 1000), (-1, 0), (i32::MIN, 0)] {
+            assert_eq!(
+                SearchBudget::library_first_target(requested),
+                local,
                 "songCount={requested}"
             );
         }

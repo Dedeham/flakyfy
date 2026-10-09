@@ -41,13 +41,24 @@ fn outside() -> Vec<String> {
 }
 
 /// The library has 30 matches and Last.fm 25 outside songs, one of which (the third) is a
-/// song the library already listed on page one, so page one leaves it out. With a 20-row
-/// page the search is l0-l11, the other 24 outside songs, then l12-l29.
+/// song the library already listed on page one, so the search leaves it out. The library
+/// comes first and whole: with a 20-row page the search is l0-l19, the other 24 outside
+/// songs, then l20-l29.
 fn whole_search() -> Vec<String> {
+    search_with_prefix(20)
+}
+
+/// The same search as Octo's apps see it: they keep the budget's split, so a 20-row page
+/// is l0-l11, the other 24 outside songs, then l12-l29.
+fn octo_app_search() -> Vec<String> {
+    search_with_prefix(12)
+}
+
+fn search_with_prefix(prefix: usize) -> Vec<String> {
     let library = library();
     library
         .iter()
-        .take(12)
+        .take(prefix)
         .cloned()
         .chain(
             outside()
@@ -56,7 +67,7 @@ fn whole_search() -> Vec<String> {
                 .filter(|(index, _)| *index != 2)
                 .map(|(_, title)| format!("ph-{title}")),
         )
-        .chain(library.iter().skip(12).cloned())
+        .chain(library.iter().skip(prefix).cloned())
         .collect()
 }
 
@@ -332,13 +343,14 @@ async fn three_pages_show_the_whole_search_once_in_page_ones_order() {
         let third = page(app, 40, 20, endpoint, format, "alice", "Test").await;
         let past = page(app, 60, 20, endpoint, format, "alice", "Test").await;
 
-        // Page one is unchanged: the library prefix, then the outside rows its budget allows,
-        // less the one the library already has.
+        // Page one is the library's own 20 best matches: no outside song takes a place while
+        // the library has rows for it. The outside songs follow on the next pages, less the
+        // one the library already has.
         let whole = whole_search();
-        assert_eq!(first, whole[..19], "{endpoint} {format}");
+        assert_eq!(first, whole[..20], "{endpoint} {format}");
         assert_eq!(
             first.len() + second.len() + third.len(),
-            19 + 20 + 15,
+            20 + 20 + 14,
             "{endpoint} {format}"
         );
         let all: Vec<String> = first.iter().chain(&second).chain(&third).cloned().collect();
@@ -349,8 +361,8 @@ async fn three_pages_show_the_whole_search_once_in_page_ones_order() {
 
         // The library rows after the prefix came from Navidrome at the right places.
         let asked = fixture.upstream.song_pages(endpoint);
-        assert!(asked.contains(&(12, 3)), "{endpoint} {format}: {asked:?}");
-        assert!(asked.contains(&(15, 20)), "{endpoint} {format}: {asked:?}");
+        assert!(asked.contains(&(0, 20)), "{endpoint} {format}: {asked:?}");
+        assert!(asked.contains(&(20, 16)), "{endpoint} {format}: {asked:?}");
     }
 }
 
@@ -363,8 +375,7 @@ async fn later_pages_use_page_ones_outside_songs_even_if_a_build_now_would_diffe
     let second = alice(&fixture.app, 20, 20).await;
 
     assert_eq!(calls, fixture.upstream.last_fm_calls.load(Ordering::SeqCst));
-    // Page one showed 19 rows in its 20 places (it left out the song the library has).
-    assert_eq!(second, whole_search()[19..39]);
+    assert_eq!(second, whole_search()[20..40]);
     assert!(first.iter().all(|id| !second.contains(id)));
 }
 
@@ -421,8 +432,8 @@ async fn two_clients_of_one_user_keep_their_own_orders() {
     let desktop_next = page(app, 15, 15, "search3", "json", "alice", "Desktop").await;
 
     let whole = whole_search();
-    assert_eq!(phone, whole[..19]);
-    assert_eq!(phone_next, whole[19..34]);
+    assert_eq!(phone, whole[..20]);
+    assert_eq!(phone_next, whole[20..35]);
     let desktop_all: Vec<&String> = desktop.iter().chain(&desktop_next).collect();
     let distinct: std::collections::HashSet<_> = desktop_all.iter().collect();
     assert_eq!(distinct.len(), desktop_all.len());
@@ -470,7 +481,7 @@ async fn a_later_page_when_navidrome_fails_is_not_made_from_the_order_alone() {
         .store(true, Ordering::SeqCst);
     let failed = super::get(
         &fixture.app,
-        "/rest/search3.view?query=paging&songCount=20&songOffset=20&albumCount=0&artistCount=0\
+        "/rest/search3.view?query=paging&songCount=20&songOffset=40&albumCount=0&artistCount=0\
          &u=alice&t=token&s=salt&v=1.16.1&c=Test&f=json",
     )
     .await
@@ -479,10 +490,49 @@ async fn a_later_page_when_navidrome_fails_is_not_made_from_the_order_alone() {
         .upstream
         .fail_later_song_pages
         .store(false, Ordering::SeqCst);
-    let second = alice(&fixture.app, 20, 20).await;
+    let second = alice(&fixture.app, 40, 20).await;
 
     assert!(!failed.contains("ph-"), "{failed}");
-    assert_eq!(second, whole_search()[19..39]);
+    assert_eq!(second, whole_search()[40..]);
+}
+
+/// A song the user owns is listed once, as the library's copy, before any outside song, and
+/// the library is not cut short to make room for outside songs. A page with room to spare
+/// fills the rest with outside songs, less the one already owned.
+#[tokio::test]
+async fn page_one_lists_the_library_first_and_an_owned_song_only_once() {
+    for (count, locals, outsiders) in [(20, 20, 0), (40, 30, 9)] {
+        let fixture = fixture(true).await;
+
+        let first = alice(&fixture.app, 0, count).await;
+
+        assert_eq!(first[..locals], library()[..locals], "songCount={count}");
+        assert_eq!(first.len() - locals, outsiders, "songCount={count}");
+        assert!(
+            first[locals..].iter().all(|id| id.starts_with("ph-")),
+            "songCount={count}: {first:?}"
+        );
+        assert!(
+            !first.contains(&"ph-Library Song 3".to_string()),
+            "songCount={count}"
+        );
+        let distinct: std::collections::HashSet<_> = first.iter().collect();
+        assert_eq!(distinct.len(), first.len(), "songCount={count}");
+    }
+}
+
+/// Octo's apps split library and outside songs into sections of their own, so page one keeps
+/// the budget's share of outside songs for them, and their later pages carry on from it.
+#[tokio::test]
+async fn octo_apps_keep_outside_songs_on_page_one() {
+    let fixture = fixture(true).await;
+    let app = &fixture.app;
+    let first = page(app, 0, 20, "search3", "json", "alice", "Octo").await;
+    let second = page(app, 20, 20, "search3", "json", "alice", "Octo").await;
+
+    let whole = octo_app_search();
+    assert_eq!(first, whole[..19]);
+    assert_eq!(second, whole[19..39]);
 }
 
 #[tokio::test]

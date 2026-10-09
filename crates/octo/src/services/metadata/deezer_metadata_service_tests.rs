@@ -610,6 +610,101 @@ async fn enrich_track_async_rejects_a_hit_that_matches_nothing() {
     );
 }
 
+// ---- A song track search does not show --------------------------------------
+
+#[tokio::test]
+async fn enrich_track_async_a_song_missing_from_track_search_is_found_on_its_album() {
+    let h = Harness::new(vec![
+        (
+            "/search/album",
+            r#"{"data":[{"id":7,"title":"Hidden Song","record_type":"single",
+                "artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        ("/search", r#"{"data":[]}"#),
+        (
+            "/album/7/tracks",
+            r#"{"data":[{"id":77,"title":"Hidden Song","duration":201,"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/track/77",
+            r#"{"id":77,"title":"Hidden Song","duration":201,
+                "album":{"id":7,"title":"Hidden Song"},"artist":{"id":5,"name":"Some Artist"}}"#,
+        ),
+    ])
+    .await;
+
+    let meta = h
+        .service
+        .enrich_track("Some Artist", "Hidden Song", false, false)
+        .await
+        .expect("found on its album");
+
+    assert_eq!(meta.album_title.as_deref(), Some("Hidden Song"));
+    assert_eq!(meta.duration, Some(201));
+    assert_eq!(h.calls("/artist/5/top"), 0);
+}
+
+#[tokio::test]
+async fn enrich_track_async_a_song_only_on_the_artists_top_songs_is_found_there() {
+    // Track search shows only the demo; the original is among the artist's top songs.
+    let h = Harness::new(vec![
+        ("/search/album", r#"{"data":[]}"#),
+        (
+            "/search",
+            r#"{"data":[{"id":1,"title":"Real Song (Demo)","duration":150,
+                "album":{"id":2,"title":"Demos"},"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/artist/5/top",
+            r#"{"data":[{"id":3,"title":"Real Song","duration":222,
+                "album":{"id":4,"title":"The Record"},"artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+    ])
+    .await;
+
+    let meta = h
+        .service
+        .enrich_track("Some Artist", "Real Song", false, false)
+        .await
+        .expect("found on the top songs");
+
+    assert_eq!(meta.album_title.as_deref(), Some("The Record"));
+    assert_eq!(meta.duration, Some(222));
+    assert!(
+        h.queries().await.iter().any(|q| q.contains("limit=50")),
+        "the top songs are read 50 at a time"
+    );
+}
+
+#[tokio::test]
+async fn enrich_track_async_a_song_found_nowhere_costs_one_extra_step() {
+    let h = Harness::new(vec![
+        (
+            "/search/album",
+            r#"{"data":[{"id":7,"title":"Other Record","artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        (
+            "/search",
+            r#"{"data":[{"id":1,"title":"Another Song","artist":{"id":5,"name":"Some Artist"}}]}"#,
+        ),
+        ("/artist/5/top", r#"{"data":[]}"#),
+        ("/album/7/tracks", r#"{"data":[]}"#),
+    ])
+    .await;
+
+    assert_eq!(
+        h.service
+            .enrich_track("Some Artist", "Missing Song", false, false)
+            .await,
+        None
+    );
+
+    // One album search (its album is not the song's, so no tracklist) and one top songs read.
+    assert_eq!(h.calls("/search/album"), 1);
+    assert_eq!(h.calls("/artist/5/top"), 1);
+    assert_eq!(h.calls("/album/7/tracks"), 0);
+}
+
 // ---- A throttled year must not cost the whole track -------------------------
 
 #[tokio::test]
@@ -812,6 +907,78 @@ async fn get_artist_albums_async_one_title_is_one_row_the_album_kept() {
     }
 }
 
+#[tokio::test]
+async fn get_artist_albums_async_repeat_editions_are_one_row() {
+    // The catalog lists a record once per edition. The page shows it once, the edition with
+    // the most songs; a live or remix album is another record and keeps its row, and a single
+    // stays a single after the records.
+    let json = r#"{"data":[
+        {"id":1,"title":"Take Care","record_type":"album","release_date":"2011-11-15","nb_tracks":17,"explicit_lyrics":true},
+        {"id":2,"title":"Take Care (Deluxe)","record_type":"album","release_date":"2011-11-15","nb_tracks":19,"explicit_lyrics":true},
+        {"id":3,"title":"Take Care - Remastered 2021","record_type":"album","release_date":"2021-01-01","nb_tracks":17,"explicit_lyrics":true},
+        {"id":4,"title":"Take Care (Live)","record_type":"album","release_date":"2012-06-01","nb_tracks":12},
+        {"id":5,"title":"Take Care (Remixes)","record_type":"album","release_date":"2012-02-01","nb_tracks":6},
+        {"id":6,"title":"Take Care (FOMO)","record_type":"album","release_date":"2013-02-01","nb_tracks":4},
+        {"id":7,"title":"Headlines","record_type":"single","release_date":"2011-08-01","nb_tracks":1},
+        {"id":8,"title":"Headlines (Explicit)","record_type":"single","release_date":"2011-08-01","nb_tracks":1}
+    ]}"#;
+    let h = Harness::new(vec![("/artist/9/albums", json)]).await;
+
+    let hits = h.service.get_artist_albums("9", "Drake").await;
+
+    assert_eq!(
+        hits.iter().map(|h| h.title.as_str()).collect::<Vec<_>>(),
+        [
+            "Take Care (FOMO)",
+            "Take Care (Live)",
+            "Take Care (Remixes)",
+            "Take Care (Deluxe)",
+            "Headlines",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn get_artist_albums_on_more_pages_keeps_every_edition() {
+    // New Releases reads the catalog's own listing: a new deluxe edition is news there.
+    let json = r#"{"data":[
+        {"id":1,"title":"Take Care","record_type":"album","release_date":"2011-11-15","nb_tracks":17},
+        {"id":2,"title":"Take Care (Deluxe)","record_type":"album","release_date":"2024-11-15","nb_tracks":19}
+    ]}"#;
+    let h = Harness::new(vec![("/artist/9/albums", json)]).await;
+
+    let hits = h.service.get_artist_albums_on("9", "Drake", true, 3).await;
+
+    assert_eq!(hits.len(), 2);
+}
+
+#[test]
+fn fold_editions_keeps_a_clean_copy_beside_its_explicit_record_when_asked() {
+    let hit = |id: &str, title: &str, tracks: i32, explicit: Option<bool>| AlbumHit {
+        deezer_id: id.into(),
+        title: title.into(),
+        artist: "Drake".into(),
+        cover_url: None,
+        year: None,
+        track_count: tracks,
+        record_type: Some("album".into()),
+        release_date: None,
+        explicit_lyrics: explicit,
+    };
+    let hits = vec![
+        hit("1", "Views", 20, Some(true)),
+        hit("2", "Views", 20, Some(false)),
+        hit("3", "Views (Deluxe Edition)", 22, Some(true)),
+        hit("4", "Nothing Was the Same", 13, Some(true)),
+        hit("5", "Nothing Was the Same (Deluxe)", 15, None),
+    ];
+
+    let ids = |folded: Vec<AlbumHit>| folded.into_iter().map(|h| h.deezer_id).collect::<Vec<_>>();
+    // Search keeps the clean copy, the one of the record's own title, after the record.
+    assert_eq!(ids(fold_editions(hits.clone(), true)), ["3", "2", "4"]);
+    // An artist page lists one copy of each record.
+    assert_eq!(ids(fold_editions(hits, false)), ["3", "4"]);
+}
 #[tokio::test]
 async fn get_artist_albums_async_says_so_when_the_catalog_has_more_than_the_listing() {
     let json = r#"{"total":250,"data":[

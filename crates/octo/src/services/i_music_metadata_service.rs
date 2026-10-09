@@ -72,6 +72,13 @@ pub trait IMusicMetadataService: Send + Sync {
     /// Searches for albums on external providers. `limit` was 20 by default.
     async fn search_albums(&self, query: &str, limit: i32) -> Vec<Album>;
 
+    /// The album rows a search lists: [`Self::search_albums`] with repeat editions of one record
+    /// (deluxe, remastered, explicit and clean copies) as one row. Other album lookups, such as
+    /// finding the catalog album that holds a library album's songs, see every edition.
+    async fn search_album_rows(&self, query: &str, limit: i32) -> Vec<Album> {
+        self.search_albums(query, limit).await
+    }
+
     /// Searches for artists on external providers. `limit` was 20 by default.
     async fn search_artists(&self, query: &str, limit: i32) -> Vec<Artist>;
 

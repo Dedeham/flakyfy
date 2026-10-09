@@ -27,6 +27,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
+use crate::services::family::{LibraryScope, ScopeResolver};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::subsonic::SubsonicProxyService;
@@ -215,6 +216,10 @@ pub struct SyncCatalogService {
     catalogs: Mutex<HashMap<String, Arc<SyncCatalog>>>,
     builds: Mutex<HashMap<String, RunningBuild>>,
     walks: Mutex<HashMap<String, WalkMemo>>,
+
+    /// Which library each song is in, while Family is on: a song only in a family member's own
+    /// library is not owned by anyone else, so their catalog keeps its outside version.
+    scope: Mutex<Option<ScopeResolver>>,
 }
 
 /// What the library holds for one artist: its id, its albums by name, and its
@@ -252,7 +257,56 @@ impl SyncCatalogService {
             catalogs: Mutex::new(HashMap::new()),
             builds: Mutex::new(HashMap::new()),
             walks: Mutex::new(HashMap::new()),
+            scope: Mutex::new(None),
         }
+    }
+
+    /// Keeps what each person owns to their view of the library while Family is on: the
+    /// shared library, and a member's own songs for that member only.
+    pub fn use_library_scope(&self, scope: ScopeResolver) {
+        *self.scope.lock() = Some(scope);
+    }
+
+    /// A library lookup's answer as `user` may see it: with Family on, songs from another
+    /// member's own library go, and so do albums and artists only those songs had. Unchanged
+    /// with Family off or for anyone Octo cannot name.
+    pub(crate) fn scoped_answer(&self, user: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
+        let resolver = self.scope.lock().clone().filter(ScopeResolver::active)?;
+        let user = user.filter(|u| !u.trim().is_empty())?;
+        let scope = LibraryScope::Viewer(user.to_string());
+        let mut document: Value = serde_json::from_slice(body).ok()?;
+        let result = document.pointer_mut("/subsonic-response/searchResult3")?;
+        let songs = result.get_mut("song")?.as_array_mut()?;
+        let (mut kept_albums, mut kept_artists) = (HashSet::new(), HashSet::new());
+        let (mut gone_albums, mut gone_artists) = (HashSet::new(), HashSet::new());
+        songs.retain(|song| {
+            let id = song.get("id").and_then(Value::as_str);
+            let keep = resolver.allows(&scope, id, None);
+            let (albums, artists) = if keep {
+                (&mut kept_albums, &mut kept_artists)
+            } else {
+                (&mut gone_albums, &mut gone_artists)
+            };
+            if let Some(album) = song.get("albumId").and_then(Value::as_str) {
+                albums.insert(album.to_string());
+            }
+            if let Some(artist) = song.get("artistId").and_then(Value::as_str) {
+                artists.insert(artist.to_string());
+            }
+            keep
+        });
+        let only_gone = |gone: &HashSet<String>, kept: &HashSet<String>, row: &Value| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| gone.contains(id) && !kept.contains(id))
+        };
+        if let Some(albums) = result.get_mut("album").and_then(Value::as_array_mut) {
+            albums.retain(|album| !only_gone(&gone_albums, &kept_albums, album));
+        }
+        if let Some(artists) = result.get_mut("artist").and_then(Value::as_array_mut) {
+            artists.retain(|artist| !only_gone(&gone_artists, &kept_artists, artist));
+        }
+        serde_json::to_vec(&document).ok()
     }
 
     /// Whether a request comes from a client that syncs the library rather than searching
@@ -812,7 +866,9 @@ impl SyncCatalogService {
         if result.body.is_empty() {
             return None;
         }
-        match Self::parse_library_artist(&result.body, artist) {
+        let scoped = self.scoped_answer(parameters.get("u").map(String::as_str), &result.body);
+        let body = scoped.as_deref().unwrap_or(&result.body);
+        match Self::parse_library_artist(body, artist) {
             Ok(owned) => owned,
             Err(error) => {
                 debug!("sync catalog library lookup failed for {artist}: {error}");

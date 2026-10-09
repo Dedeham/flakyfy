@@ -157,19 +157,25 @@ async fn play_external(
     }
     if settings.wait_for_lossless_on_play {
         let who = signed_in_user(state, call).await.map_err(anyhow::Error::new)?;
-        let acquisition = state.track_acquisition_queue.enqueue(
-            provider,
-            external_id,
-            false,
-            false,
-            true,
-            None,
-            true,
-            requester_for(state, Some(&who)).as_deref(),
-            false,
-            None,
-        );
-        return serve_acquired(state, call, acquisition, provider, external_id, id, format, true).await;
+        // A family member's play keeps a copy only when they may add songs at once, and then
+        // in their own library; otherwise it plays from the source below.
+        if let Some(target) = state.library_write_gate.play_target(Some(&who)) {
+            let acquisition = state.track_acquisition_queue.enqueue_for(
+                &target,
+                false,
+                provider,
+                external_id,
+                false,
+                false,
+                true,
+                None,
+                true,
+                requester_for(state, Some(&who)).as_deref(),
+                false,
+                None,
+            );
+            return serve_acquired(state, call, acquisition, provider, external_id, id, format, true).await;
+        }
     }
 
     if let Some(direct) = try_direct_stream(state, call, provider, external_id, id).await? {

@@ -25,7 +25,7 @@ pub use import_file_reader::{FileList, ImportFileReader};
 pub use import_matcher::{ImportMatcher, LibraryIndex};
 pub use import_models::{ImportList, ImportTrack, TrickleJob};
 pub use import_playlists::{ImportPlaylists, NavidromePlaylists, PlaylistNavidrome};
-pub use import_service::{ImportParts, ImportService};
+pub use import_service::{ImportFamily, ImportParts, ImportService};
 pub use import_store::ImportStore;
 pub use import_views::ImportActionResult;
 pub use spotify_account_store::{SpotifyAccount, SpotifyAccountStore};

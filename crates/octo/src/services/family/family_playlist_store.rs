@@ -175,6 +175,28 @@ impl FamilyPlaylistStore {
         removed
     }
 
+    /// Points every entry of every playlist that names library song `old` at `new` instead, in
+    /// `scope` (`Shared` or `Personal:<user>`), for a song whose file moved and whose id
+    /// changed with it. Answers how many entries changed.
+    pub fn remap_library_id(&self, old: &str, new: &str, scope: &str) -> usize {
+        let changed = {
+            let mut playlists = self.playlists.lock();
+            let mut changed = 0;
+            for entry in playlists.iter_mut().flat_map(|p| p.entries.iter_mut()) {
+                if entry.library_id.as_deref() == Some(old) {
+                    entry.library_id = Some(new.to_string());
+                    entry.scope = scope.to_string();
+                    changed += 1;
+                }
+            }
+            changed
+        };
+        if changed > 0 {
+            self.save();
+        }
+        changed
+    }
+
     fn change(&self, id: &str, change: impl FnOnce(&mut FamilyPlaylist)) -> bool {
         let found = {
             let mut playlists = self.playlists.lock();

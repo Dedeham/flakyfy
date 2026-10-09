@@ -230,6 +230,7 @@ pub async fn get_upgrades(State(state): State<AppState>, req: Request) -> Respon
 /// Never through a rating: where rating actions are on, one star can remove a song, and this
 /// is how an app removes one without giving it a rating.
 pub async fn apply_library_action(State(state): State<AppState>, req: Request) -> AppResult {
+    let caller = crate::services::family::family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -246,6 +247,11 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
         return Ok(builder
             .create_error(FORMAT, 10, "Required parameter is missing: id and action")
             .into_response());
+    }
+    // A family member's library actions: remove takes a song out of their own library only,
+    // and a better copy of a shared song is asked for.
+    if let Some(member) = caller.filter(|c| c.managed) {
+        return Ok(member_library_action(&state, &member.user, &id, &action).await);
     }
     if dotnet::eq_ignore_case(&action, UPGRADE_ACTION) {
         return Ok(queue_upgrade(&state, &id, call.param_opt("u")));
@@ -323,6 +329,61 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
     Ok(builder
         .create_library_action_outcome_response(&id, &outcome, REMOVE_ACTION)
         .into_response())
+}
+
+/// `libraryAction` for a family member. `remove` takes a song out of their own library (a
+/// shared song answers error 50); `upgrade` asks for a better copy of a shared song, unless
+/// their account only saves songs; every other action is for the server owner.
+async fn member_library_action(state: &AppState, user: &str, id: &str, action: &str) -> Response {
+    const FORMAT: &str = "json";
+    let builder = &state.subsonic_response_builder;
+    if dotnet::eq_ignore_case(action, REMOVE_ACTION) {
+        return match state.personal_library.remove_from_my_library(user, id).await {
+            Ok(()) => builder
+                .create_library_action_outcome_response(
+                    id,
+                    &LibraryActionOutcome::new(
+                        LibraryActionState::Applied,
+                        Some("Removed from your library.".into()),
+                    ),
+                    REMOVE_ACTION,
+                )
+                .into_response(),
+            Err(e) => builder.create_error(FORMAT, e.code, &e.message).into_response(),
+        };
+    }
+    if dotnet::eq_ignore_case(action, UPGRADE_ACTION) {
+        if let crate::services::family::WriteDecision::Refuse { message, .. } =
+            state.library_write_gate.decide(Some(user))
+        {
+            return builder.create_error(FORMAT, 50, &message).into_response();
+        }
+        return match state
+            .family_request_service
+            .create(
+                user,
+                id,
+                octo_core::family::abilities::RequestQuality::Best,
+                Some(octo_core::family::request::RequestKind::Upgrade),
+            )
+            .await
+        {
+            Ok(request) => builder
+                .create_library_action_outcome_response(
+                    id,
+                    &LibraryActionOutcome::new(
+                        LibraryActionState::Pending,
+                        Some(format!("Asked for a better copy ({}).", request.id)),
+                    ),
+                    UPGRADE_ACTION,
+                )
+                .into_response(),
+            Err(e) => builder.create_error(FORMAT, e.code, &e.message).into_response(),
+        };
+    }
+    builder
+        .create_error(FORMAT, 50, "Only the server owner changes library files.")
+        .into_response()
 }
 
 /// octoLibraryActions v3: change a song's file without removing it, or put a removed one back.

@@ -20,15 +20,20 @@ use super::caller_checks::{
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
+use crate::services::common::AcquisitionTarget;
+use crate::services::family::{HeartOutcome, SavedAlbum, SavedSong, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 use crate::services::library::RatingActionRequest;
 use crate::services::soulseek::SoulseekMetadataService;
 use crate::services::subsonic::RelayError;
+use octo_core::family::abilities::RequestQuality;
+use octo_core::family::request::RequestKind;
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .subsonic("star", get(star).post(star))
+        .subsonic("unstar", get(unstar).post(unstar))
         .subsonic("setRating", get(set_rating).post(set_rating))
         .subsonic("scrobble", get(scrobble).post(scrobble))
         .subsonic("reportPlayback", get(report_playback).post(report_playback))
@@ -46,6 +51,8 @@ fn resolver(state: &AppState, call: &SubsonicCall) -> LastFmRadioTrackResolver {
 /// Stars (favorites) an item. For playlists, triggers download. For external songs and
 /// albums, triggers a download and, outside Octo's own apps, favorites it once it arrives.
 pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
+    // Who the family gate found behind this request, read before the request is taken apart.
+    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -54,6 +61,10 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     let builder = &state.subsonic_response_builder;
 
     let item_id = call.param("id").to_string();
+    // What a heart on an outside song or album does for this person: a download into the
+    // shared library (everyone outside the family, as always), into a member's own library, or
+    // a saved link.
+    let heart = state.library_write_gate.heart(caller.as_ref());
 
     // Check if this is a playlist
     if !item_id.is_empty() && playlist_id_helper::is_external_playlist(Some(&item_id)) {
@@ -91,6 +102,14 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         // Navidrome never sees this id, so nothing else would check who is asking.
         if let Some(refused) = refuse_unless_signed_in(&state, &call, &format).await? {
             return Ok(refused);
+        }
+
+        if let HeartOutcome::Save { user, request } = &heart {
+            save_album(&state, user, &album_candidate).await;
+            if let Some(full) = request {
+                ask_for_copy(&state, user, &album_candidate, RequestKind::Album, full).await;
+            }
+            return Ok(builder.create_response(&format, "starred").into_response());
         }
 
         if !sources.iter().any(|step| step.album_enabled == Some(true)) {
@@ -131,8 +150,15 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         // as Navidrome names it), not RequesterFor: it decides who may see the row, and it
         // is never written anywhere.
         let who = signed_in_user(&state, &call).await?;
-        // Held before the download is queued, so one that finishes at once still finds it.
-        if let Some(credential) = favorite_credential(&call) {
+        let target = match &heart {
+            HeartOutcome::Download(target) => target.clone(),
+            HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
+        };
+        // Held before the download is queued, so one that finishes at once still finds it. A
+        // member's album songs are starred for them one by one where they land.
+        if target == AcquisitionTarget::Shared
+            && let Some(credential) = favorite_credential(&call)
+        {
             state
                 .star_on_arrival
                 .hold_album(&album_provider, &album_candidate, &credential, Some(&who));
@@ -140,10 +166,11 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         state
             .acquisition_tracker
             .begin_album(&album_provider, &album_candidate, Some(&who));
-        state.heart_acquisition_coordinator.queue_album(
+        state.heart_acquisition_coordinator.queue_album_for(
             &album_provider,
             &album_candidate,
             requester_for(&state, Some(&who)).as_deref(),
+            target,
         );
 
         // Navidrome has never seen this id, so relaying the star would just error.
@@ -153,13 +180,27 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     // Check if this is an external song (enables download-on-star)
     let (is_external, provider, external_id) = state.local_library.parse_song_id(&item_id);
 
-    if is_external && sources.iter().any(|step| step.song_enabled == Some(true)) {
+    // A saved link needs no download source.
+    let saves = matches!(heart, HeartOutcome::Save { .. });
+    if is_external && (saves || sources.iter().any(|step| step.song_enabled == Some(true))) {
         // Navidrome never sees this id, so nothing else would check who is asking.
         if let Some(refused) = refuse_unless_signed_in(&state, &call, &format).await? {
             return Ok(refused);
         }
         let provider = provider.unwrap_or_default();
         let external_id = external_id.unwrap_or_default();
+
+        if let HeartOutcome::Save { user, request } = &heart {
+            save_song(&state, user, &item_id, &provider, &external_id).await;
+            if let Some(full) = request {
+                ask_for_copy(&state, user, &item_id, RequestKind::Song, full).await;
+            }
+            return Ok(builder.create_response(&format, "starred").into_response());
+        }
+        let target = match heart {
+            HeartOutcome::Download(target) => target,
+            HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
+        };
 
         // No storage-mode gate any more. It used to exclude Permanent on the grounds
         // that playing a track there already downloads it, but that was only ever true
@@ -193,10 +234,11 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             routing.as_ref().and_then(|r| r.title.as_deref()),
             routing.as_ref().and_then(|r| r.album.as_deref()),
         );
-        state.heart_acquisition_coordinator.queue_track(
+        state.heart_acquisition_coordinator.queue_track_for(
             &provider,
             &external_id,
             requester_for(&state, Some(&who)).as_deref(),
+            target,
         );
 
         // Return success response immediately
@@ -231,6 +273,131 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             .into_response()),
         Err(other) => Err(other.into()),
     }
+}
+
+/// Saves an outside song for a family member as a link (it plays from its source and shows in
+/// their starred lists).
+async fn save_song(state: &AppState, user: &str, item_id: &str, provider: &str, external_id: &str) {
+    let song = state.music_metadata.get_song(provider, external_id).await;
+    let routing = state
+        .external_id_registry
+        .lookup(external_id)
+        .map(|r| r.snapshot());
+    let text = |from_song: Option<&str>, from_routing: Option<&str>| {
+        from_song
+            .filter(|t| !t.is_empty())
+            .or(from_routing)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let saved = SavedSong {
+        id: item_id.to_string(),
+        title: text(
+            song.as_ref().map(|s| s.title.as_str()),
+            routing.as_ref().and_then(|r| r.title.as_deref()),
+        ),
+        artist: text(
+            song.as_ref().map(|s| s.artist.as_str()),
+            routing.as_ref().and_then(|r| r.artist.as_deref()),
+        ),
+        album: text(
+            song.as_ref().map(|s| s.album.as_str()),
+            routing.as_ref().and_then(|r| r.album.as_deref()),
+        ),
+        cover_art: item_id.to_string(),
+        duration: song
+            .as_ref()
+            .and_then(|s| s.duration)
+            .or_else(|| routing.as_ref().and_then(|r| r.duration))
+            .map_or(0, i64::from),
+        explicit: song.as_ref().and_then(|s| s.explicit_content_lyrics).unwrap_or(0),
+        saved: Utc::now(),
+    };
+    if state.family_saved.add(user, saved) {
+        info!("FAMILY {user} saved {item_id}");
+    }
+}
+
+/// Saves an outside album for a family member as a link.
+async fn save_album(state: &AppState, user: &str, album_id: &str) {
+    let provider = state
+        .local_library
+        .parse_song_id(album_id)
+        .1
+        .unwrap_or_else(|| SoulseekMetadataService::PROVIDER_NAME.to_string());
+    let album = state.music_metadata.get_album(&provider, album_id).await;
+    let saved = SavedAlbum {
+        id: album_id.to_string(),
+        name: album.as_ref().map(|a| a.title.clone()).unwrap_or_default(),
+        artist: album.as_ref().map(|a| a.artist.clone()).unwrap_or_default(),
+        cover_art: album_id.to_string(),
+        song_count: album.as_ref().map_or(0, |a| a.songs.len() as i64),
+        year: album.as_ref().and_then(|a| a.year),
+        saved: Utc::now(),
+    };
+    if state.family_saved.add_album(user, saved) {
+        info!("FAMILY {user} saved album {album_id}");
+    }
+}
+
+/// A family member whose library is full asks for a copy instead of downloading one.
+async fn ask_for_copy(state: &AppState, user: &str, id: &str, kind: RequestKind, why: &str) {
+    match state
+        .family_request_service
+        .create(user, id, RequestQuality::Best, Some(kind))
+        .await
+    {
+        Ok(request) => info!("FAMILY {why}: {user} asked for a copy of {id} ({})", request.id),
+        Err(e) => info!("FAMILY {user} could not ask for a copy of {id}: {}", e.message),
+    }
+}
+
+/// `unstar`: a family member's saved outside song or album is forgotten. Everything else goes
+/// where it always went.
+pub async fn unstar(State(state): State<AppState>, req: Request) -> axum::response::Response {
+    let member = family_caller(req.extensions())
+        .filter(|caller| caller.managed)
+        .map(|caller| caller.user.clone());
+    let Some(user) = member else {
+        return crate::http::catch_all::catch_all(State(state), req).await;
+    };
+    let call = match SubsonicCall::read(&state, req).await {
+        Ok(call) => call,
+        Err(response) => return response,
+    };
+    let format = call.format();
+    let ids: Vec<String> = ["id", "albumId"]
+        .iter()
+        .map(|key| call.param(key).trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+    let outside: Vec<&String> = ids
+        .iter()
+        .filter(|id| state.family_saved.is_saved(&user, id) || state.local_library.parse_song_id(id).0)
+        .collect();
+    if outside.is_empty() {
+        return match call.proxy.relay("rest/unstar", &call.parameters).await {
+            Ok(result) => {
+                let content_type = result
+                    .content_type
+                    .unwrap_or_else(|| format!("application/{format}"));
+                file(result.body, &content_type)
+            }
+            Err(e) => state
+                .subsonic_response_builder
+                .create_error(&format, 0, &format!("Error connecting to Subsonic server: {e}"))
+                .into_response(),
+        };
+    }
+    for id in outside {
+        if state.family_saved.remove(&user, id) {
+            info!("FAMILY {user} unsaved {id}");
+        }
+    }
+    state
+        .subsonic_response_builder
+        .create_response(&format, "unstar")
+        .into_response()
 }
 
 /// Star ratings.

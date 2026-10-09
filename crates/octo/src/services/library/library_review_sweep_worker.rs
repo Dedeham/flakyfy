@@ -27,6 +27,7 @@ use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, set_aside};
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
+use crate::services::family::{LibraryScope, ScopeResolver};
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
 use crate::services::library::library_walk;
@@ -357,6 +358,9 @@ pub struct LibraryReviewSweepWorker {
     lookup_failures: AtomicI32,
     unfingerprinted: AtomicI32,
     hold: Mutex<(String, Option<String>)>,
+    /// With Family on, the sweep keeps to the shared library: a member's own songs are never
+    /// asked about.
+    scope: Option<ScopeResolver>,
 }
 
 impl LibraryReviewSweepWorker {
@@ -386,7 +390,22 @@ impl LibraryReviewSweepWorker {
             lookup_failures: AtomicI32::new(0),
             unfingerprinted: AtomicI32::new(0),
             hold: Mutex::new(("Off".to_string(), None)),
+            scope: None,
         }
+    }
+
+    /// Keeps the sweep to the shared library while Family is on.
+    pub fn with_library_scope(mut self, scope: ScopeResolver) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// Whether the sweep may ask about the file at `full`: always with Family off, and only
+    /// for a shared song with it on.
+    fn in_shared(&self, full: &str) -> bool {
+        self.scope
+            .as_ref()
+            .is_none_or(|scope| scope.allows(&LibraryScope::Shared, None, Some(full)))
     }
 
     pub fn store(&self) -> &Arc<ReviewSweepStore> {
@@ -532,7 +551,8 @@ impl LibraryReviewSweepWorker {
             let skip = match &file_stamp {
                 None => true,
                 Some(file_stamp) => {
-                    octo_files.contains(&full)
+                    !self.in_shared(&full)
+                        || octo_files.contains(&full)
                         || reviewed.contains(&full)
                         || self
                             .store

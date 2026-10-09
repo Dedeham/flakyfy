@@ -1,7 +1,7 @@
 //! Port of `Services/Common/HeartAcquisitionCoordinator.cs`.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::settings::{DownloadSource, HeartDownloadSource, SettingsStore};
@@ -11,9 +11,12 @@ use tracing::{debug, info, warn};
 
 use super::TrackAcquisitionQueue;
 use super::{
-    AcquisitionState, AcquisitionTracker, HeldAcquisition, HeldKind, SoulseekHoldStore, StarOnArrival,
+    AcquisitionState, AcquisitionTarget, AcquisitionTracker, HeldAcquisition, HeldKind, SoulseekHoldStore,
+    StarOnArrival,
 };
+use crate::services::family::{FamilyPool, LibraryScope, LibraryWriteGate, WriteDecision};
 use crate::services::i_download_service::IDownloadService;
+use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::library::{HeartOwnership, OwnedCopy};
 use crate::services::lidarr::ILidarrHeartAcquisitionService;
 use crate::services::soulseek::soulseek_link::SoulseekLinkState;
@@ -35,6 +38,29 @@ pub struct HeartCoordinatorExtras {
     pub stars: Option<Arc<StarOnArrival>>,
 }
 
+/// How one song's heart chain ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrackOutcome {
+    /// A direct source got it; the file is here (a pool file for a member).
+    Landed(String),
+    /// The library (in the scope the chain looked in) already had it; it was favorited.
+    AlreadyThere,
+    /// Lidarr took it on, for the shared library.
+    HandedToLidarr,
+    /// Every source failed, with the last one's reason.
+    Failed(String),
+}
+
+/// What the coordinator uses for family members: the write gate (where a member's play goes),
+/// the family pool (members' album songs are starred where they land) and the catalog (an
+/// album heart for a member is fetched song by song).
+#[derive(Clone)]
+pub struct FamilyHooks {
+    pub gate: Arc<LibraryWriteGate>,
+    pub pool: Arc<FamilyPool>,
+    pub metadata: Arc<dyn IMusicMetadataService>,
+}
+
 /// Routes explicit heart gestures, and plays when DownloadOnPlay or LidarrAlbumOnPlay ask
 /// for it.
 pub struct HeartAcquisitionCoordinator {
@@ -51,6 +77,10 @@ pub struct HeartAcquisitionCoordinator {
     // Track ids handed to Lidarr on play, so a replay does not search every indexer again.
     // Cleared when full rather than aged: forgetting costs at most one more search.
     lidarr_plays: Mutex<HashSet<String>>,
+
+    // Set once Family's services exist; without them every heart and play goes to the shared
+    // library, as always.
+    family: OnceLock<FamilyHooks>,
 }
 
 impl HeartAcquisitionCoordinator {
@@ -71,7 +101,29 @@ impl HeartAcquisitionCoordinator {
             extras,
             held_plays: Mutex::new(HashSet::new()),
             lidarr_plays: Mutex::new(HashSet::new()),
+            family: OnceLock::new(),
         })
+    }
+
+    /// Gives the coordinator Family's services. Once only; a second call changes nothing.
+    pub fn use_family(&self, hooks: FamilyHooks) {
+        let _ = self.family.set(hooks);
+    }
+
+    /// Where an import list's song goes for `user`, or the words that say why it may not be
+    /// fetched now. A member who must ask first has songs queued only for a list an approver
+    /// said yes to, so theirs go to their own library too.
+    pub fn import_target(&self, user: &str) -> Result<AcquisitionTarget, String> {
+        let Some(family) = self.family.get() else {
+            return Ok(AcquisitionTarget::Shared);
+        };
+        match family.gate.decide(Some(user)) {
+            WriteDecision::Shared => Ok(AcquisitionTarget::Shared),
+            WriteDecision::Member(user) => Ok(AcquisitionTarget::Member(user)),
+            WriteDecision::Request { user, full: None } => Ok(AcquisitionTarget::Member(user)),
+            WriteDecision::Request { full: Some(full), .. } => Err(full),
+            WriteDecision::Refuse { message, .. } => Err(message),
+        }
     }
 
     fn tracker(&self) -> Option<&Arc<AcquisitionTracker>> {
@@ -79,13 +131,24 @@ impl HeartAcquisitionCoordinator {
     }
 
     pub fn queue_track(self: &Arc<Self>, provider: &str, external_id: &str, requested_by: Option<&str>) {
+        self.queue_track_for(provider, external_id, requested_by, AcquisitionTarget::Shared);
+    }
+
+    /// [`Self::queue_track`] into one library: the shared one, or a family member's own.
+    pub fn queue_track_for(
+        self: &Arc<Self>,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        target: AcquisitionTarget,
+    ) {
         let coordinator = Arc::clone(self);
         let (provider, external_id, requested_by) = owned3(provider, external_id, requested_by);
         // Fire and forget: a chain that stops on an error is left as it stands, as the C#
         // discarded the task.
         tokio::spawn(async move {
             let _ = coordinator
-                .acquire_track(&provider, &external_id, requested_by.as_deref(), None)
+                .acquire_track_for(&provider, &external_id, requested_by.as_deref(), None, &target)
                 .await;
         });
     }
@@ -100,6 +163,15 @@ impl HeartAcquisitionCoordinator {
         owner: Option<&str>,
     ) {
         let settings = self.settings.current().subsonic.clone();
+        // A family member's play keeps a copy only when they may add songs at once, and then in
+        // their own library; `owner` is who signed in. Everyone else plays as always.
+        let target = match self.family.get() {
+            Some(family) => match family.gate.play_target(owner) {
+                Some(target) => target,
+                None => return,
+            },
+            None => AcquisitionTarget::Shared,
+        };
         // WaitForLosslessOnPlay acquires the track itself, from its own source.
         if settings.download_on_play
             && !settings.wait_for_lossless_on_play
@@ -111,11 +183,20 @@ impl HeartAcquisitionCoordinator {
                 .as_ref()
                 .is_some_and(|link| link.hold_limit() > TimeDelta::zero());
             if source == DownloadSource::YouTube || !holds {
-                self.queue_play_download(provider, external_id, source, requested_by, client_id, owner);
+                self.queue_play_download(
+                    provider,
+                    external_id,
+                    source,
+                    requested_by,
+                    client_id,
+                    owner,
+                    &target,
+                );
             } else {
                 let coordinator = Arc::clone(self);
                 let (provider, external_id, requested_by) = owned3(provider, external_id, requested_by);
                 let (client_id, owner) = (client_id.map(str::to_string), owner.map(str::to_string));
+                let target = target.clone();
                 tokio::spawn(async move {
                     coordinator
                         .hold_then_queue_play(
@@ -125,12 +206,14 @@ impl HeartAcquisitionCoordinator {
                             requested_by.as_deref(),
                             client_id.as_deref(),
                             owner.as_deref(),
+                            &target,
                         )
                         .await
                 });
             }
         }
-        if !settings.lidarr_album_on_play {
+        // Lidarr adds whole albums to the shared library, never to a member's own.
+        if !settings.lidarr_album_on_play || target != AcquisitionTarget::Shared {
             return;
         }
         let key = format!("{provider}:{external_id}");
@@ -152,6 +235,7 @@ impl HeartAcquisitionCoordinator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // the play's facts and whose library it is for
     fn queue_play_download(
         &self,
         provider: &str,
@@ -160,6 +244,7 @@ impl HeartAcquisitionCoordinator {
         requested_by: Option<&str>,
         client_id: Option<&str>,
         owner: Option<&str>,
+        target: &AcquisitionTarget,
     ) {
         let on_queued = || {
             // Same row a heart gets, opened before the worker can report its first stage.
@@ -192,10 +277,14 @@ impl HeartAcquisitionCoordinator {
                 );
             }
         };
-        let Some(request) =
-            self.direct_queue
-                .try_enqueue_play(provider, external_id, source, requested_by, Some(&on_queued))
-        else {
+        let Some(request) = self.direct_queue.try_enqueue_play_for(
+            target,
+            provider,
+            external_id,
+            source,
+            requested_by,
+            Some(&on_queued),
+        ) else {
             return;
         };
         let tracker = self.tracker().cloned();
@@ -217,6 +306,7 @@ impl HeartAcquisitionCoordinator {
 
     /// A play during a Soulseek outage waits for it like a heart, but only in memory: a play is a
     /// hint, and one lost to a restart costs a replay.
+    #[allow(clippy::too_many_arguments)] // the play's facts and whose library it is for
     async fn hold_then_queue_play(
         &self,
         provider: &str,
@@ -225,6 +315,7 @@ impl HeartAcquisitionCoordinator {
         requested_by: Option<&str>,
         client_id: Option<&str>,
         owner: Option<&str>,
+        target: &AcquisitionTarget,
     ) {
         let key = format!("{provider}:{external_id}");
         let Some(link) = self.extras.soulseek.clone() else {
@@ -237,7 +328,15 @@ impl HeartAcquisitionCoordinator {
             link.wait_for_login(link.utc_now() + link.hold_limit()).await;
             self.held_plays.lock().remove(&key);
         }
-        self.queue_play_download(provider, external_id, source, requested_by, client_id, owner);
+        self.queue_play_download(
+            provider,
+            external_id,
+            source,
+            requested_by,
+            client_id,
+            owner,
+            target,
+        );
     }
 
     async fn hand_play_to_lidarr(
@@ -273,6 +372,99 @@ impl HeartAcquisitionCoordinator {
                 .acquire_album(&provider, &album_id, requested_by.as_deref(), None)
                 .await;
         });
+    }
+
+    /// [`Self::queue_album`] into one library. A member's album comes song by song into the
+    /// family pool, each song starred for them where it lands.
+    pub fn queue_album_for(
+        self: &Arc<Self>,
+        provider: &str,
+        album_external_id: &str,
+        requested_by: Option<&str>,
+        target: AcquisitionTarget,
+    ) {
+        let AcquisitionTarget::Member(user) = target else {
+            self.queue_album(provider, album_external_id, requested_by);
+            return;
+        };
+        let coordinator = Arc::clone(self);
+        let (provider, album_id, requested_by) = owned3(provider, album_external_id, requested_by);
+        tokio::spawn(async move {
+            coordinator
+                .acquire_album_for_member(&provider, &album_id, requested_by.as_deref(), &user, true)
+                .await;
+        });
+    }
+
+    /// Every song of an outside album into `user`'s own library, one heart chain each (no
+    /// Lidarr, which fills the shared library). With `star`, each song is starred for them once
+    /// it shows in their library. Answers where each song that landed is.
+    pub async fn acquire_album_for_member(
+        &self,
+        provider: &str,
+        album_external_id: &str,
+        requested_by: Option<&str>,
+        user: &str,
+        star: bool,
+    ) -> Vec<String> {
+        let Some(family) = self.family.get().cloned() else {
+            return Vec::new();
+        };
+        let Some(album) = family.metadata.get_album(provider, album_external_id).await else {
+            if let Some(tracker) = self.tracker() {
+                tracker.fail_album(
+                    provider,
+                    album_external_id,
+                    Some("Octo could no longer look this album up, so nothing was downloaded."),
+                );
+            }
+            return Vec::new();
+        };
+        let tracks: Vec<_> = album
+            .songs
+            .iter()
+            .filter(|song| song.external_id.as_deref().is_some_and(|id| !id.is_empty()))
+            .collect();
+        if let Some(tracker) = self.tracker() {
+            let listed: Vec<(String, Option<String>, Option<String>, Option<String>)> = tracks
+                .iter()
+                .map(|song| {
+                    (
+                        song.external_id.clone().unwrap_or_default(),
+                        Some(song.artist.clone()),
+                        Some(song.title.clone()),
+                        Some(album.title.clone()),
+                    )
+                })
+                .collect();
+            tracker.announce(provider, Some(album_external_id), None, &listed);
+        }
+        info!(
+            "Album '{}' for {user}: {} song(s) into their own library",
+            album.title,
+            tracks.len()
+        );
+        let target = AcquisitionTarget::Member(user.to_string());
+        let mut landed = Vec::new();
+        for song in tracks {
+            let track_provider = song.external_provider.as_deref().unwrap_or(provider);
+            let track_id = song.external_id.as_deref().unwrap_or_default();
+            match self
+                .acquire_track_outcome(track_provider, track_id, requested_by, None, &target)
+                .await
+            {
+                Ok(TrackOutcome::Landed(path)) => {
+                    if star {
+                        let shown = family.pool.link_path(&path, user).unwrap_or_else(|| path.clone());
+                        family.pool.star_when_indexed(user, &shown);
+                    }
+                    landed.push(path);
+                }
+                Ok(_) => {}
+                Err(e) => warn!("Album song {track_provider}:{track_id} for {user} failed: {e}"),
+            }
+        }
+        landed
     }
 
     /// A heart that was waiting for Soulseek when Octo restarted. Its saved start time
@@ -325,10 +517,55 @@ impl HeartAcquisitionCoordinator {
         requested_by: Option<&str>,
         held_since_utc: Option<DateTime<Utc>>,
     ) -> anyhow::Result<()> {
-        if self.already_yours(provider, external_id, requested_by).await {
-            return Ok(());
+        self.acquire_track_for(
+            provider,
+            external_id,
+            requested_by,
+            held_since_utc,
+            &AcquisitionTarget::Shared,
+        )
+        .await
+    }
+
+    /// [`Self::acquire_track`] into one library.
+    pub(crate) async fn acquire_track_for(
+        &self,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        held_since_utc: Option<DateTime<Utc>>,
+        target: &AcquisitionTarget,
+    ) -> anyhow::Result<()> {
+        self.acquire_track_outcome(provider, external_id, requested_by, held_since_utc, target)
+            .await
+            .map(|_| ())
+    }
+
+    /// The song chain into one library, answering how it ended. A member's chain skips Lidarr,
+    /// which fills the shared library.
+    pub async fn acquire_track_outcome(
+        &self,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        held_since_utc: Option<DateTime<Utc>>,
+        target: &AcquisitionTarget,
+    ) -> anyhow::Result<TrackOutcome> {
+        let scope = match target {
+            AcquisitionTarget::Shared => LibraryScope::Shared,
+            AcquisitionTarget::Member(user) => LibraryScope::Viewer(user.clone()),
+        };
+        if self
+            .already_yours(provider, external_id, requested_by, &scope)
+            .await
+        {
+            return Ok(TrackOutcome::AlreadyThere);
         }
-        let steps = self.enabled_steps(false);
+        let steps: Vec<HeartDownloadSource> = self
+            .enabled_steps(false)
+            .into_iter()
+            .filter(|step| *target == AcquisitionTarget::Shared || *step != HeartDownloadSource::Lidarr)
+            .collect();
         for (index, &step) in steps.iter().enumerate() {
             let is_last = index == steps.len() - 1;
             // One entry for the whole chain. The first direct source is still waiting for the
@@ -360,7 +597,7 @@ impl HeartAcquisitionCoordinator {
                     .try_acquire_track(provider, external_id, is_last, requested_by)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(TrackOutcome::HandedToLidarr);
                 }
                 continue;
             }
@@ -372,7 +609,9 @@ impl HeartAcquisitionCoordinator {
             let failure = loop {
                 self.hold_for_soulseek(HeldKind::Track, provider, external_id, requested_by, wait_until)
                     .await;
-                let completion = self.direct_queue.enqueue(
+                let completion = self.direct_queue.enqueue_for(
+                    target,
+                    false,
                     provider,
                     external_id,
                     true,
@@ -387,7 +626,7 @@ impl HeartAcquisitionCoordinator {
                     None,
                 );
                 match completion.wait().await {
-                    Ok(_) => return Ok(()),
+                    Ok(path) => return Ok(TrackOutcome::Landed(path)),
                     Err(failure) => {
                         if !self.soulseek_dropped(wait_until).await {
                             break failure;
@@ -409,20 +648,17 @@ impl HeartAcquisitionCoordinator {
                 if let Some(tracker) = self.tracker() {
                     tracker.fail(provider, external_id, Some(&failure.to_string()));
                 }
-                return Ok(());
+                return Ok(TrackOutcome::Failed(failure.to_string()));
             }
             // The next enabled source owns the fallback.
         }
         // Only reached when the last source was Lidarr and it said no. It records its own
         // reason first; this is the fallback when it could not.
+        const NO_SOURCE: &str = "No download source could get this song.";
         if let Some(tracker) = self.tracker() {
-            tracker.fail(
-                provider,
-                external_id,
-                Some("No download source could get this song."),
-            );
+            tracker.fail(provider, external_id, Some(NO_SOURCE));
         }
-        Ok(())
+        Ok(TrackOutcome::Failed(NO_SOURCE.to_string()))
     }
 
     /// The album chain. `Err` where the C# let an exception out: a Lidarr step that failed.
@@ -553,11 +789,20 @@ impl HeartAcquisitionCoordinator {
     /// it never waits behind other downloads or a Soulseek outage, and never sends Lidarr for a
     /// whole album. The row closes on the library's own song, which favorites it for whoever
     /// hearted it (StarOnArrival); an owned lossy copy is also queued for Better quality.
-    async fn already_yours(&self, provider: &str, external_id: &str, requested_by: Option<&str>) -> bool {
+    ///
+    /// `scope` is whose library counts: the shared one for the owner, and the shared one plus
+    /// their own for a member. Another member's own songs never count.
+    async fn already_yours(
+        &self,
+        provider: &str,
+        external_id: &str,
+        requested_by: Option<&str>,
+        scope: &LibraryScope,
+    ) -> bool {
         let Some(owned) = &self.extras.owned else {
             return false;
         };
-        let Some((song, copy)) = owned.find_song(provider, external_id).await else {
+        let Some((song, copy)) = owned.find_song_in(scope, provider, external_id).await else {
             return false;
         };
         let upgrading = owned.queue_upgrade_if_wanted(&copy, &song, requested_by);

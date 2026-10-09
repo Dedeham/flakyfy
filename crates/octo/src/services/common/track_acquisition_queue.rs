@@ -1,9 +1,10 @@
 //! Port of `Services/Common/TrackAcquisitionQueue.cs`: `AcquisitionRequest` and the queue.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use indexmap::IndexMap;
 use octo_core::common::dotnet::{self, compare_ordinal_ignore_case, eq_ignore_case};
 use octo_core::settings::DownloadSource;
 use parking_lot::Mutex;
@@ -72,6 +73,37 @@ impl Completion {
     }
 }
 
+/// Whose library an acquisition is for.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AcquisitionTarget {
+    /// The shared library, as every download has always gone.
+    Shared,
+    /// A family member's own library: the file lands in the family pool and is linked into
+    /// their library.
+    Member(String),
+}
+
+impl AcquisitionTarget {
+    /// The member this is for, if any.
+    pub fn member(&self) -> Option<&str> {
+        match self {
+            AcquisitionTarget::Shared => None,
+            AcquisitionTarget::Member(user) => Some(user),
+        }
+    }
+}
+
+/// Where one acquisition's file goes and what it must be, as the worker hands it to the
+/// download service.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcquisitionPlace {
+    /// The members the file is linked for, when it lands in the family pool; None for the
+    /// shared library.
+    pub pool_members: Option<Vec<String>>,
+    /// Only a real FLAC file will do: lossy files and FLAC made from lossy audio are refused.
+    pub flac_only: bool,
+}
+
 /// One queued request to fetch a permanent copy of a track.
 pub struct AcquisitionRequest {
     pub provider: String,
@@ -101,6 +133,13 @@ pub struct AcquisitionRequest {
     /// Case-insensitive, first spelling kept (`ConcurrentDictionary` with `OrdinalIgnoreCase`).
     requested_by: Mutex<Vec<String>>,
 
+    /// Someone wants this file in the shared library.
+    shared_wanted: AtomicBool,
+    /// Members who want this file in their own library, first spelling kept.
+    pool_members: Mutex<Vec<String>>,
+    /// Only a real FLAC file will do.
+    pub flac_only: bool,
+
     pub completion: Completion,
 }
 
@@ -129,8 +168,65 @@ impl AcquisitionRequest {
             heart_joined: AtomicBool::new(false),
             upgrade_search: AtomicBool::new(false),
             requested_by: Mutex::new(Vec::new()),
+            shared_wanted: AtomicBool::new(false),
+            pool_members: Mutex::new(Vec::new()),
+            flac_only: false,
             completion: Completion::default(),
         }
+    }
+
+    /// The same request, wanting only a real FLAC file.
+    pub fn with_flac_only(mut self, flac_only: bool) -> Self {
+        self.flac_only = flac_only;
+        self
+    }
+
+    /// Records whose library this is for. Safe to call after the request is queued: a member
+    /// who joins gets a link when the file lands, and anyone who wants it shared makes it so.
+    pub fn add_target(&self, target: &AcquisitionTarget) {
+        match target {
+            AcquisitionTarget::Shared => self.shared_wanted.store(true, Ordering::SeqCst),
+            AcquisitionTarget::Member(user) => {
+                let user = user.trim();
+                if user.is_empty() {
+                    return;
+                }
+                let mut members = self.pool_members.lock();
+                if !members.iter().any(|name| eq_ignore_case(name, user)) {
+                    members.push(user.to_string());
+                }
+            }
+        }
+    }
+
+    /// Whether someone wants this file in the shared library.
+    pub fn wants_shared(&self) -> bool {
+        self.shared_wanted.load(Ordering::SeqCst)
+    }
+
+    /// Every member who wants this file in their own library.
+    pub fn pool_members(&self) -> Vec<String> {
+        self.pool_members.lock().clone()
+    }
+
+    /// Where the file goes: the family pool for these members when only members asked for it,
+    /// else None (the shared library, as always).
+    pub fn pool_destination(&self) -> Option<Vec<String>> {
+        let members = self.pool_members();
+        (!members.is_empty() && !self.wants_shared()).then_some(members)
+    }
+
+    /// Where this request's file goes and what it must be, as the worker reads it now.
+    pub fn place(&self) -> AcquisitionPlace {
+        AcquisitionPlace {
+            pool_members: self.pool_destination(),
+            flac_only: self.flac_only,
+        }
+    }
+
+    /// The first person who asked, which is whose turn this request takes in the star queue.
+    pub fn first_requester(&self) -> Option<String> {
+        self.requested_by.lock().first().cloned()
     }
 
     pub fn heart_joined(&self) -> bool {
@@ -179,8 +275,14 @@ impl AcquisitionRequest {
         }
     }
 
+    /// `provider:id`, whoever it is for: a second member joins the download in flight. A
+    /// request for a real FLAC copy is its own job.
     pub fn key(&self) -> String {
-        format!("{}:{}", self.provider, self.external_id)
+        if self.flac_only {
+            format!("{}:{}:flac", self.provider, self.external_id)
+        } else {
+            format!("{}:{}", self.provider, self.external_id)
+        }
     }
 }
 
@@ -192,6 +294,37 @@ pub(crate) type OnSkippedPlay = Arc<dyn Fn() + Send + Sync>;
 struct Receivers {
     stars: mpsc::Receiver<Arc<AcquisitionRequest>>,
     plays: mpsc::Receiver<Arc<AcquisitionRequest>>,
+    /// Stars taken off the channel and not yet handed out, by whose turn they take (the first
+    /// requester, ignoring case; nobody is ""), in the order each person's turn comes round.
+    waiting_stars: IndexMap<String, VecDeque<Arc<AcquisitionRequest>>>,
+}
+
+impl Receivers {
+    /// Takes every star waiting in the channel into the per-person lines.
+    fn take_waiting_stars(&mut self) {
+        while let Ok(star) = self.stars.try_recv() {
+            self.line_up(star);
+        }
+    }
+
+    fn line_up(&mut self, star: Arc<AcquisitionRequest>) {
+        let turn = star
+            .first_requester()
+            .map(|name| dotnet::to_lower_invariant(name.trim()))
+            .unwrap_or_default();
+        self.waiting_stars.entry(turn).or_default().push_back(star);
+    }
+
+    /// The next star, one person at a time: the person at the front gives up one request and
+    /// goes to the back of the line while they still have more.
+    fn next_star(&mut self) -> Option<Arc<AcquisitionRequest>> {
+        let (turn, mut line) = self.waiting_stars.shift_remove_index(0)?;
+        let star = line.pop_front();
+        if !line.is_empty() {
+            self.waiting_stars.insert(turn, line);
+        }
+        star
+    }
 }
 
 /// Serializes permanent-copy downloads onto a single background worker.
@@ -241,6 +374,7 @@ impl TrackAcquisitionQueue {
             receivers: tokio::sync::Mutex::new(Receivers {
                 stars: stars_rx,
                 plays: plays_rx,
+                waiting_stars: IndexMap::new(),
             }),
             in_flight: Mutex::new(HashMap::new()),
             waiting_plays: AtomicI32::new(0),
@@ -257,6 +391,13 @@ impl TrackAcquisitionQueue {
     /// Nothing queued or running. The weekly upgrade waits for this so it never queues ahead of a person.
     pub fn is_idle(&self) -> bool {
         self.in_flight.lock().is_empty()
+    }
+
+    /// Whether this song is queued or downloading right now, for anyone.
+    pub fn is_in_flight(&self, provider: &str, external_id: &str) -> bool {
+        self.in_flight
+            .lock()
+            .contains_key(&format!("{provider}:{external_id}"))
     }
 
     #[cfg(test)]
@@ -281,7 +422,9 @@ impl TrackAcquisitionQueue {
         upgrade_search: bool,
         replacement: Option<Arc<ReplacementHandoff>>,
     ) -> Completion {
-        let request = Arc::new(AcquisitionRequest::new(
+        self.enqueue_for(
+            &AcquisitionTarget::Shared,
+            false,
             provider,
             external_id,
             is_star,
@@ -289,9 +432,46 @@ impl TrackAcquisitionQueue {
             force_permanent,
             source_override,
             notify_on_failure,
+            requested_by,
+            upgrade_search,
             replacement,
-        ));
+        )
+    }
+
+    /// [`Self::enqueue`] for one library: the shared one, or a member's own (the file lands in
+    /// the family pool and is linked for them). A member asking for a song already in flight
+    /// joins it. `flac_only` asks for a real FLAC copy and nothing else.
+    #[allow(clippy::too_many_arguments)] // enqueue's arguments and where the file goes
+    pub fn enqueue_for(
+        &self,
+        target: &AcquisitionTarget,
+        flac_only: bool,
+        provider: &str,
+        external_id: &str,
+        is_star: bool,
+        trigger_album_download: bool,
+        force_permanent: bool,
+        source_override: Option<DownloadSource>,
+        notify_on_failure: bool,
+        requested_by: Option<&str>,
+        upgrade_search: bool,
+        replacement: Option<Arc<ReplacementHandoff>>,
+    ) -> Completion {
+        let request = Arc::new(
+            AcquisitionRequest::new(
+                provider,
+                external_id,
+                is_star,
+                trigger_album_download,
+                force_permanent,
+                source_override,
+                notify_on_failure,
+                replacement,
+            )
+            .with_flac_only(flac_only),
+        );
         request.add_requester(requested_by);
+        request.add_target(target);
         if upgrade_search {
             request.ask_for_upgrade_search();
         }
@@ -311,6 +491,7 @@ impl TrackAcquisitionQueue {
             // and record this caller on the request that is actually going to run, so the
             // file is attributed to everyone who asked and not just to whoever was first.
             existing.add_requester(requested_by);
+            existing.add_target(target);
             if upgrade_search {
                 existing.ask_for_upgrade_search();
             }
@@ -354,8 +535,29 @@ impl TrackAcquisitionQueue {
     /// Returns `None` when dropped, otherwise the request carrying this play (new, or one
     /// already queued or running). `on_queued` runs only for a new request, before the worker
     /// can see it.
+    #[cfg(test)]
     pub(crate) fn try_enqueue_play(
         &self,
+        provider: &str,
+        external_id: &str,
+        source_override: DownloadSource,
+        requested_by: Option<&str>,
+        on_queued: Option<&dyn Fn()>,
+    ) -> Option<Arc<AcquisitionRequest>> {
+        self.try_enqueue_play_for(
+            &AcquisitionTarget::Shared,
+            provider,
+            external_id,
+            source_override,
+            requested_by,
+            on_queued,
+        )
+    }
+
+    /// [`Self::try_enqueue_play`] for one library: the shared one, or a member's own.
+    pub(crate) fn try_enqueue_play_for(
+        &self,
+        target: &AcquisitionTarget,
         provider: &str,
         external_id: &str,
         source_override: DownloadSource,
@@ -373,10 +575,12 @@ impl TrackAcquisitionQueue {
             None,
         ));
         request.add_requester(requested_by);
+        request.add_target(target);
         // Already wanted: ride along, whatever is waiting.
         let known = self.in_flight.lock().get(&request.key()).cloned();
         if let Some(known) = known {
             known.add_requester(requested_by);
+            known.add_target(target);
             return Some(known);
         }
         // The waiting slot is taken BEFORE the key is claimed. Claiming first and letting go on a
@@ -412,6 +616,7 @@ impl TrackAcquisitionQueue {
         if let Some(existing) = existing {
             self.waiting_plays.fetch_sub(1, Ordering::SeqCst);
             existing.add_requester(requested_by);
+            existing.add_target(target);
             return Some(existing);
         }
         if let Some(on_queued) = on_queued {
@@ -428,36 +633,41 @@ impl TrackAcquisitionQueue {
         Some(request)
     }
 
-    /// Take the next request, preferring stars. `None` once `cancellation_token` is cancelled
-    /// (where the C# threw `OperationCanceledException`, which every caller caught).
+    /// Take the next request, preferring stars. Stars are handed out one person at a time, so
+    /// one person asking for a hundred songs never holds back someone else's one; one
+    /// person's own stars keep their order. Plays stay first in, first out. `None` once
+    /// `cancellation_token` is canceled.
     pub(crate) async fn dequeue(
         &self,
         cancellation_token: &CancellationToken,
     ) -> Option<Arc<AcquisitionRequest>> {
         let mut receivers = self.receivers.lock().await;
         while !cancellation_token.is_cancelled() {
-            if let Ok(star) = receivers.stars.try_recv() {
+            receivers.take_waiting_stars();
+            if let Some(star) = receivers.next_star() {
                 return Some(star);
             }
             if let Ok(play) = receivers.plays.try_recv() {
                 self.waiting_plays.fetch_sub(1, Ordering::SeqCst);
                 return Some(play);
             }
-            let Receivers { stars, plays } = &mut *receivers;
-            tokio::select! {
+            let Receivers { stars, plays, .. } = &mut *receivers;
+            let star = tokio::select! {
                 biased;
                 _ = cancellation_token.cancelled() => return None,
-                star = stars.recv() => {
-                    if let Some(star) = star {
-                        return Some(star);
-                    }
-                }
+                star = stars.recv() => star,
                 play = plays.recv() => {
                     if let Some(play) = play {
                         self.waiting_plays.fetch_sub(1, Ordering::SeqCst);
                         return Some(play);
                     }
+                    None
                 }
+            };
+            // Lined up with any others that came at the same time, and handed out on the
+            // next turn of the loop.
+            if let Some(star) = star {
+                receivers.line_up(star);
             }
         }
         None
@@ -480,3 +690,7 @@ impl TrackAcquisitionQueue {
 fn queue_full() -> anyhow::Error {
     anyhow::anyhow!("Acquisition queue is full; try again shortly.")
 }
+
+#[cfg(test)]
+#[path = "track_acquisition_queue_tests.rs"]
+mod tests;

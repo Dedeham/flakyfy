@@ -450,6 +450,7 @@ async fn a_native_song_detail_for_an_outside_song_is_answered_by_octo() {
             itag: Some("251".into()),
             ext: Some("webm".into()),
             bit_rate: Some(160),
+            ..Default::default()
         },
     );
     let object = get(&app, &format!("/api/song/ext-soulseek-song-{known}"))

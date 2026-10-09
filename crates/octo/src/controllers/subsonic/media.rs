@@ -306,6 +306,12 @@ async fn try_direct_stream(
         direct.quality.as_deref().unwrap_or(""),
         direct.status_code
     );
+    // The shim measures a played song's loudness; ask for it once it has had time to.
+    if matches!(direct.status_code, 200 | 206)
+        && is_first_byte_request(call.method().as_str(), range_header.as_deref())
+    {
+        state.stream_size_warmer.after_play(external_id);
+    }
 
     // Manual stream copy: the network stream isn't seekable, so the upstream's status code +
     // Content-Range are forwarded verbatim and the bytes copied to the response body.

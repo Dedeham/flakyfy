@@ -481,6 +481,7 @@ fn sized(size: u64) -> StreamFacts {
         itag: Some("140".into()),
         ext: Some("m4a".into()),
         bit_rate: Some(129),
+        ..Default::default()
     }
 }
 

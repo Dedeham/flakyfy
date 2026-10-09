@@ -845,6 +845,15 @@ impl SubsonicResponseBuilder {
                 None => fields.shift_remove("bitRate"),
             };
         }
+        // ReplayGain measured on the very stream that plays (OpenSubsonic's replayGain).
+        if let Some(gain) = facts.track_gain {
+            let mut replay_gain = Fields::new();
+            replay_gain.insert("trackGain".into(), json!(gain));
+            if let Some(peak) = facts.track_peak {
+                replay_gain.insert("trackPeak".into(), json!(peak));
+            }
+            fields.insert("replayGain".into(), Value::Object(replay_gain));
+        }
         if facts.size.is_none() {
             self.id_registry.size_wanted(song_id);
         }
@@ -925,6 +934,13 @@ impl SubsonicResponseBuilder {
         let mut element = XElement::in_namespace(ns, "song");
         attributes(&mut element, &fields);
         text_lists(&mut element, &fields, ns);
+        // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+        if let Some(gain) = fields
+            .get("replayGain")
+            .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+        {
+            element.push(json_shape_to_xml(ns, "replayGain", gain));
+        }
         element
     }
 

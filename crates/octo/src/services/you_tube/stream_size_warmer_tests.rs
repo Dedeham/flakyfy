@@ -39,6 +39,7 @@ fn sized(size: u64) -> StreamFacts {
         itag: Some("140".into()),
         ext: Some("m4a".into()),
         bit_rate: Some(129),
+        ..Default::default()
     }
 }
 
@@ -167,4 +168,44 @@ async fn the_worker_sizes_what_was_queued_and_stops_on_shutdown() {
     .expect("sized");
     token.cancel();
     worker.await.expect("joins").expect("ends cleanly");
+}
+
+#[tokio::test]
+async fn a_played_song_asks_for_its_measured_loudness_even_with_its_size_known() {
+    let mut shim = FakeShim::default();
+    shim.facts.insert(
+        "vid-a".into(),
+        StreamFacts {
+            track_gain: Some(-10.0),
+            track_peak: Some(1.135011),
+            ..sized(6_755_585)
+        },
+    );
+    let (registry, shim, warmer) = warmer_over(shim);
+    let id = registry.register(song("Daft Punk", "Emotion"));
+    registry.set_you_tube_id(&id, "vid-a");
+    registry.remember_stream(&id, "vid-a", &sized(6_755_585));
+
+    // Sized: a listing alone asks nothing.
+    assert!(!warmer.want(&id));
+    assert!(warmer.want_loudness(&id));
+    warmer.warm_one(&id).await;
+
+    let facts = registry.stream_facts(&id).expect("facts");
+    assert_eq!(
+        (facts.track_gain, facts.track_peak),
+        (Some(-10.0), Some(1.135011))
+    );
+    assert_eq!(*shim.asked.lock(), vec!["facts vid-a".to_string()]);
+    // Known now: a later play asks nothing more.
+    warmer.done(&id);
+    assert!(!warmer.want_loudness(&id));
+}
+
+#[test]
+fn a_song_with_no_pinned_video_has_no_loudness_to_ask_for() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    let id = registry.register(song("Daft Punk", "Emotion"));
+    assert!(!warmer.want_loudness(&id));
+    assert!(!warmer.want_loudness("unknown"));
 }

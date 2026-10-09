@@ -47,7 +47,9 @@ from flask import Flask, Response, abort, jsonify, request, stream_with_context
 import ytm
 
 import facts as stream_info
+import loudness as loudness_info
 from gate import TieredGate
+from loudness import LoudnessBook
 
 # The binary baked into the image. Never written to, so a rebuild is always a
 # clean floor to fall back to.
@@ -750,6 +752,56 @@ def _maybe_self_update(reason: str) -> bool:
     return False
 
 
+# ReplayGain for played videos. Measuring reads the whole audio once more, so it runs only on a
+# play, LOUDNESS_PER_MINUTE at most a minute, and only while a background gate slot is free at
+# once (it holds that slot, so it never makes a play or a resolve wait).
+_LOUDNESS = LoudnessBook(per_minute=int(os.environ.get("LOUDNESS_PER_MINUTE", "2")))
+_LOUDNESS_TIMEOUT_SEC = int(os.environ.get("LOUDNESS_TIMEOUT_SEC", "120"))
+
+
+def _measure_loudness(url: str) -> Optional[dict]:
+    try:
+        cp = subprocess.run(
+            loudness_info.ffmpeg_args(url, _UPSTREAM_UA),
+            capture_output=True,
+            text=True,
+            timeout=_LOUDNESS_TIMEOUT_SEC,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log.warning("loudness measurement failed: %s", e)
+        return None
+    measured = loudness_info.parse_ebur128(cp.stderr)
+    if measured is None:
+        return None
+    return loudness_info.replay_gain(*measured)
+
+
+def _maybe_measure_loudness(video_id: str, url: str) -> bool:
+    """Starts measuring a played video's loudness in the background. False when it is known,
+    already running, over the minute's cap, or the shim is busy."""
+    if _LOUDNESS.get(video_id) is not None:
+        return False
+    # A moment, not a wait: the gate spends one budget on its two semaphores, so 0 never succeeds.
+    if not _GATE.acquire(True, 0.05):
+        return False
+    if not _LOUDNESS.begin(video_id):
+        _GATE.release(True)
+        return False
+
+    def run():
+        measured = None
+        try:
+            measured = _measure_loudness(url)
+            log.info("loudness %s: %s", video_id, measured)
+        finally:
+            _LOUDNESS.finish(video_id, measured)
+            _GATE.release(True)
+
+    threading.Thread(target=run, name=f"loudness-{video_id}", daemon=True).start()
+    return True
+
+
 def _open_upstream(url: str, headers: dict, video_id: str):
     try:
         return _SESSION.get(url, stream=True, timeout=(8, 30), headers=headers)
@@ -854,7 +906,8 @@ def ytm_artist_radio():
 
 @app.get("/facts")
 def stream_facts():
-    """What /stream would send for a video: {video_id, itag, size, ext, abr}.
+    """What /stream would send for a video: {video_id, itag, size, ext, abr}, plus
+    {track_gain, track_peak} once a play measured its loudness.
 
     Resolves the URL the way /stream does (same format, same cache, same gate) when this video
     has not been resolved yet, so a later play of it is a cache hit.
@@ -873,6 +926,7 @@ def stream_facts():
         size=known.get("size"),
         ext=known.get("ext"),
         abr=known.get("abr"),
+        **(_LOUDNESS.get(video_id) or {}),
     )
 
 
@@ -963,6 +1017,10 @@ def stream():
             upstream.close()
         log.warning("stream upstream %s for %s", code, video_id)
         return jsonify(error="upstream_failed"), 502
+
+    # A play from the first byte (not a seek) is when a video's loudness is worth measuring.
+    if not incoming_range or incoming_range.replace(" ", "").lower().startswith("bytes=0-"):
+        _maybe_measure_loudness(video_id, url)
 
     @stream_with_context
     def generator():

@@ -32,6 +32,9 @@ pub const CONCURRENT: usize = 2;
 pub const RETRY_AFTER: Duration = Duration::from_secs(3600);
 /// How many tried songs are remembered; the oldest are forgotten first.
 const TRIED_MAX: usize = 4096;
+/// How long after a play its measured loudness is asked for: the shim measures while the song
+/// plays, which takes a few seconds for a whole song.
+pub const LOUDNESS_PICKUP_DELAY: Duration = Duration::from_secs(90);
 
 /// Where the warmer asks: the shim, as background work.
 #[async_trait]
@@ -96,6 +99,8 @@ pub struct StreamSizeWarmer {
     receiver: Mutex<Option<mpsc::Receiver<String>>>,
     queued: Mutex<HashSet<String>>,
     tried: Mutex<HashMap<String, Instant>>,
+    /// Songs played since their loudness was last asked for.
+    loudness_wanted: Mutex<HashSet<String>>,
 }
 
 impl StreamSizeWarmer {
@@ -108,6 +113,7 @@ impl StreamSizeWarmer {
             receiver: Mutex::new(Some(receiver)),
             queued: Mutex::new(HashSet::new()),
             tried: Mutex::new(HashMap::new()),
+            loudness_wanted: Mutex::new(HashSet::new()),
         }
     }
 
@@ -152,7 +158,8 @@ impl StreamSizeWarmer {
             return;
         };
         let r: SoulseekRouting = routing.snapshot();
-        if r.kind != RoutingKind::Song || r.stream_size.is_some() {
+        let loudness = self.loudness_wanted.lock().remove(song_id) && r.track_gain.is_none();
+        if r.kind != RoutingKind::Song || (r.stream_size.is_some() && !loudness) {
             return;
         }
         if let Some(video) = r.you_tube_id.clone().filter(|v| !v.is_empty()) {
@@ -187,6 +194,47 @@ impl StreamSizeWarmer {
         }
         self.registry
             .remember_length(song_id, hit.duration, LengthSource::Video);
+    }
+
+    /// A play of `song_id` started: the shim measures its loudness while it plays, so ask for
+    /// it a little later, unless it is already known.
+    pub fn after_play(self: &Arc<Self>, song_id: &str) {
+        let known = self
+            .registry
+            .stream_facts(song_id)
+            .is_some_and(|facts| facts.track_gain.is_some());
+        if known || song_id.is_empty() {
+            return;
+        }
+        let warmer = self.clone();
+        let song_id = song_id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(LOUDNESS_PICKUP_DELAY).await;
+            warmer.want_loudness(&song_id);
+        });
+    }
+
+    /// Queues a played song for its measured loudness: one /facts call for its pinned video,
+    /// within the same limits as the size lookups. True when it was queued.
+    pub fn want_loudness(&self, song_id: &str) -> bool {
+        let pinned = self.registry.lookup(song_id).is_some_and(|routing| {
+            let r = routing.lock();
+            r.kind == RoutingKind::Song && r.has_you_tube() && r.track_gain.is_none()
+        });
+        if !pinned {
+            return false;
+        }
+        self.loudness_wanted.lock().insert(song_id.to_string());
+        if !self.queued.lock().insert(song_id.to_string()) {
+            // Already waiting: that lookup brings the loudness too.
+            return true;
+        }
+        if self.sender.try_send(song_id.to_string()).is_err() {
+            self.queued.lock().remove(song_id);
+            self.loudness_wanted.lock().remove(song_id);
+            return false;
+        }
+        true
     }
 
     fn done(&self, song_id: &str) {

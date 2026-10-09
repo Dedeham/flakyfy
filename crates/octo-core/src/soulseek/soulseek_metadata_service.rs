@@ -23,7 +23,7 @@ pub enum RoutingKind {
 
 /// Where an outside song, album or artist came from, enough to find it again: what the short
 /// external ids Octo hands to Subsonic clients stand for.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct SoulseekRouting {
     pub kind: RoutingKind,
@@ -93,7 +93,16 @@ pub struct SoulseekRouting {
 
     /// The pinned video's average audio bit rate in kbps.
     pub stream_bit_rate: Option<i32>,
+
+    /// ReplayGain track gain in dB of the pinned video's audio, once a play measured it.
+    pub track_gain: Option<f64>,
+
+    /// ReplayGain track peak (linear) of the pinned video's audio, measured with the gain.
+    pub track_peak: Option<f64>,
 }
+
+/// The gain and peak are plain measured numbers, never NaN, so equality is total.
+impl Eq for SoulseekRouting {}
 
 impl SoulseekRouting {
     pub fn has_you_tube(&self) -> bool {
@@ -107,6 +116,8 @@ impl SoulseekRouting {
             itag: self.stream_itag.clone(),
             ext: self.stream_ext.clone(),
             bit_rate: self.stream_bit_rate,
+            track_gain: self.track_gain,
+            track_peak: self.track_peak,
         }
     }
 
@@ -118,6 +129,8 @@ impl SoulseekRouting {
         self.stream_itag = known.itag;
         self.stream_ext = known.ext;
         self.stream_bit_rate = known.bit_rate;
+        self.track_gain = known.track_gain;
+        self.track_peak = known.track_peak;
     }
 
     /// Pins `video` for playback. A video other than the pinned one forgets the old one's
@@ -131,6 +144,8 @@ impl SoulseekRouting {
         self.stream_itag = None;
         self.stream_ext = None;
         self.stream_bit_rate = None;
+        self.track_gain = None;
+        self.track_peak = None;
         true
     }
 
@@ -150,6 +165,8 @@ impl Serialize for SoulseekRouting {
             self.stream_itag.is_some(),
             self.stream_ext.is_some(),
             self.stream_bit_rate.is_some(),
+            self.track_gain.is_some(),
+            self.track_peak.is_some(),
         ]
         .into_iter()
         .filter(|known| *known)
@@ -182,6 +199,12 @@ impl Serialize for SoulseekRouting {
         }
         if let Some(bit_rate) = &self.stream_bit_rate {
             s.serialize_field("StreamBitRate", bit_rate)?;
+        }
+        if let Some(gain) = &self.track_gain {
+            s.serialize_field("TrackGain", gain)?;
+        }
+        if let Some(peak) = &self.track_peak {
+            s.serialize_field("TrackPeak", peak)?;
         }
         s.serialize_field("HasYouTube", &self.has_you_tube())?;
         s.serialize_field("HasArtistTitle", &self.has_artist_title())?;

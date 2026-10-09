@@ -348,6 +348,7 @@ fn known_stream(itag: &str, ext: &str, size: u64, bit_rate: Option<i32>) -> Arc<
             itag: Some(itag.into()),
             ext: Some(ext.into()),
             bit_rate,
+            ..Default::default()
         },
     );
     Arc::new(ids)
@@ -401,6 +402,42 @@ fn an_outside_song_without_a_known_stream_has_no_size_and_is_asked_about() {
         *ids.wanted.lock().expect("not poisoned"),
         vec!["abc123".to_string()]
     );
+}
+
+#[test]
+fn an_outside_song_with_measured_loudness_sends_its_replay_gain() {
+    let mut ids = StreamIds::default();
+    ids.facts.insert(
+        "abc123".into(),
+        StreamFacts {
+            size: Some(6_755_585),
+            itag: Some("140".into()),
+            track_gain: Some(-10.0),
+            track_peak: Some(1.135011),
+            ..Default::default()
+        },
+    );
+    let ids = Arc::new(ids);
+    let builder = builder_over(ids.clone(), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(
+        row["replayGain"],
+        json!({"trackGain": -10.0, "trackPeak": 1.135011})
+    );
+    let xml = builder.convert_song_to_xml(&external_song(), NS);
+    let gain = xml
+        .elements()
+        .find(|e| e.is(NS, "replayGain"))
+        .expect("a replayGain element");
+    assert_eq!(gain.attribute("trackGain"), Some("-10"));
+    assert_eq!(gain.attribute("trackPeak"), Some("1.135011"));
+
+    // Not measured yet: the empty object every row carries.
+    let row = builder_over(Arc::new(StreamIds::default()), false).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
+    // Waiting for lossless: the FLAC is not the stream that was measured.
+    let row = builder_over(ids, true).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
 }
 
 #[test]

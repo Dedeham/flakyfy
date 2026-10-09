@@ -3,7 +3,7 @@
 
 /// The facts of one video's audio stream. Every field is optional: each is filled when an
 /// answer named it, and none is ever guessed.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamFacts {
     /// The exact byte count of the whole stream.
     pub size: Option<u64>,
@@ -13,7 +13,14 @@ pub struct StreamFacts {
     pub ext: Option<String>,
     /// The average bit rate in kbps.
     pub bit_rate: Option<i32>,
+    /// ReplayGain track gain in dB (EBU R128 loudness against -18 LUFS), once a play measured it.
+    pub track_gain: Option<f64>,
+    /// ReplayGain track peak, linear (1.0 is full scale), measured with the gain.
+    pub track_peak: Option<f64>,
 }
+
+/// The gain and peak are plain measured numbers, never NaN, so equality is total.
+impl Eq for StreamFacts {}
 
 /// What a client is told about the stream: the suffix and content type it picks a decoder
 /// from, and the bit rate when it is known.
@@ -27,7 +34,12 @@ pub struct DeclaredStream {
 impl StreamFacts {
     /// Whether nothing is known.
     pub fn is_empty(&self) -> bool {
-        self.size.is_none() && self.itag.is_none() && self.ext.is_none() && self.bit_rate.is_none()
+        self.size.is_none()
+            && self.itag.is_none()
+            && self.ext.is_none()
+            && self.bit_rate.is_none()
+            && self.track_gain.is_none()
+            && self.track_peak.is_none()
     }
 
     /// Fills what `other` knows; what it does not know is kept.
@@ -43,6 +55,10 @@ impl StreamFacts {
         }
         if other.bit_rate.is_some() {
             self.bit_rate = other.bit_rate;
+        }
+        if other.track_gain.is_some() {
+            self.track_gain = other.track_gain;
+            self.track_peak = other.track_peak;
         }
     }
 
@@ -96,6 +112,7 @@ mod tests {
             itag: itag.map(String::from),
             ext: ext.map(String::from),
             bit_rate,
+            ..Default::default()
         }
     }
 

@@ -351,8 +351,9 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
     }))
 }
 
-/// The stream facts in a /search or /facts answer (`size`, `itag`, `ext`, `abr`). A field that is
-/// missing or not what it should be is left unknown rather than failing the answer.
+/// The stream facts in a /search or /facts answer (`size`, `itag`, `ext`, `abr`, and, once a play
+/// measured it, `track_gain` and `track_peak`). A field that is missing or not what it should be
+/// is left unknown rather than failing the answer.
 fn parse_stream(root: &Value) -> StreamFacts {
     let text = |name: &str| {
         root.get(name)
@@ -361,7 +362,12 @@ fn parse_stream(root: &Value) -> StreamFacts {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
+    let number = |name: &str| root.get(name).and_then(Value::as_f64).filter(|n| n.is_finite());
+    let track_gain = number("track_gain");
     StreamFacts {
+        track_gain,
+        // A peak means nothing without the gain it was measured with.
+        track_peak: track_gain.and(number("track_peak")).filter(|peak| *peak > 0.0),
         size: root.get("size").and_then(Value::as_u64).filter(|size| *size > 0),
         itag: text("itag"),
         ext: text("ext"),
@@ -483,6 +489,7 @@ mod tests {
                 itag: Some("140".into()),
                 ext: Some("m4a".into()),
                 bit_rate: Some(129),
+                ..Default::default()
             }
         );
         // Odd stream fields are unknown, and the hit still counts.
@@ -516,11 +523,26 @@ mod tests {
         let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
         let facts = resolver.facts("abc", true).await.expect("facts");
         assert_eq!(facts.size, Some(7_012_345));
+        assert_eq!((facts.track_gain, facts.track_peak), (None, None));
         assert_eq!(facts.itag.as_deref(), Some("251"));
         assert_eq!(facts.bit_rate, Some(160));
         assert!(resolver.facts("gone", true).await.is_none());
         assert!(resolver.facts("empty", true).await.is_none());
         assert!(resolver.facts(" ", true).await.is_none());
+    }
+
+    #[test]
+    fn facts_read_the_measured_replay_gain_and_its_peak() {
+        let facts = parse_stream(&serde_json::json!({
+            "video_id": "abc", "size": 6755585, "track_gain": -10.0, "track_peak": 1.135011
+        }));
+        assert_eq!(facts.track_gain, Some(-10.0));
+        assert_eq!(facts.track_peak, Some(1.135011));
+        // A silent track has no peak; a peak alone is not taken.
+        let silent = parse_stream(&serde_json::json!({"track_gain": 3.5, "track_peak": null}));
+        assert_eq!((silent.track_gain, silent.track_peak), (Some(3.5), None));
+        let peak_only = parse_stream(&serde_json::json!({"track_peak": 0.9}));
+        assert_eq!(peak_only, StreamFacts::default());
     }
 
     #[tokio::test]

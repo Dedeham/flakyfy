@@ -643,3 +643,95 @@ async fn a_playlist_navidrome_would_not_take_waits_longer_each_time() {
     assert!(made.ok, "{}", made.message);
     assert_eq!(rig.navidrome.playlists.lock().len(), 1);
 }
+
+#[tokio::test]
+async fn a_listeners_list_is_one_request_until_an_approver_says_yes() {
+    use crate::services::family::test_support::{World, member};
+    use crate::services::imports::ImportFamily;
+    use octo_core::family::abilities::Preset;
+    use octo_core::family::request::{RequestKind, RequestState};
+
+    let rig = rig().await;
+    let overview = rig.connect_and_read().await;
+    let road = Rig::list(&overview, "Road trip").id.clone();
+    let world = World::new(None);
+    world.family.upsert_member(member("alice", Preset::Listener, 6));
+    let (requests, _fetcher) = world.list_requests();
+    rig.service.use_family(ImportFamily {
+        gate: world.gate(),
+        requests: Arc::downgrade(&requests),
+    });
+
+    let asked = rig.service.set_get_missing("alice", &road, true);
+    assert!(asked.ok, "{}", asked.message);
+    assert!(asked.message.starts_with("Asked for a copy"), "{}", asked.message);
+    assert!(
+        rig.queue.snapshot(Some("alice")).is_empty(),
+        "nothing fetched yet"
+    );
+    let made = requests.requests_of("alice");
+    assert_eq!(made.len(), 1);
+    assert_eq!(
+        (made[0].kind, made[0].state),
+        (RequestKind::Import, RequestState::Pending)
+    );
+    assert_eq!(made[0].title, "Road trip");
+    // Choosing songs of the list asks the same request again.
+    rig.service.get_songs("alice", &road, &["any".to_string()]);
+    assert_eq!(requests.requests_of("alice").len(), 1);
+
+    // Approved: the list fetches like anyone's.
+    let approved = rig.service.approve_family_list("alice", &road);
+    assert!(approved.ok, "{}", approved.message);
+    assert_eq!(rig.queue.snapshot(Some("alice")).len(), 1);
+}
+
+#[tokio::test]
+async fn an_account_that_only_saves_cannot_fetch_a_list() {
+    use crate::services::family::test_support::{World, member};
+    use crate::services::imports::ImportFamily;
+    use octo_core::family::abilities::Preset;
+
+    let rig = rig().await;
+    let overview = rig.connect_and_read().await;
+    let road = Rig::list(&overview, "Road trip").id.clone();
+    let world = World::new(None);
+    let mut alice = member("alice", Preset::Listener, 6);
+    alice
+        .edits
+        .insert("AddToLibrary".into(), serde_json::json!("SaveOnly"));
+    world.family.upsert_member(alice);
+    let (requests, _fetcher) = world.list_requests();
+    rig.service.use_family(ImportFamily {
+        gate: world.gate(),
+        requests: Arc::downgrade(&requests),
+    });
+    let refused = rig.service.set_get_missing("alice", &road, true);
+    assert!(!refused.ok);
+    assert_eq!(
+        refused.message,
+        crate::services::family::library_write_gate::SAVE_ONLY_MESSAGE
+    );
+    assert!(requests.requests_of("alice").is_empty());
+    assert!(rig.queue.snapshot(Some("alice")).is_empty());
+}
+
+#[tokio::test]
+async fn members_who_add_at_once_fetch_lists_as_always() {
+    use crate::services::family::test_support::{World, member};
+    use crate::services::imports::ImportFamily;
+    use octo_core::family::abilities::Preset;
+
+    let rig = rig().await;
+    let overview = rig.connect_and_read().await;
+    let road = Rig::list(&overview, "Road trip").id.clone();
+    let world = World::new(None);
+    world.family.upsert_member(member("alice", Preset::Member, 6));
+    let (requests, _fetcher) = world.list_requests();
+    rig.service.use_family(ImportFamily {
+        gate: world.gate(),
+        requests: Arc::downgrade(&requests),
+    });
+    assert_eq!(rig.service.set_get_missing("alice", &road, true).count, 1);
+    assert!(requests.requests_of("alice").is_empty());
+}

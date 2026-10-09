@@ -1039,3 +1039,7 @@ fn to_direct_source(source: HeartDownloadSource) -> DownloadSource {
 #[cfg(test)]
 #[path = "heart_acquisition_coordinator_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "heart_acquisition_family_tests.rs"]
+mod family_tests;

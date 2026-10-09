@@ -500,7 +500,7 @@ async fn listener_requests_wait_and_decline_frees_quota() {
         .expect("made");
     assert!(setup.service.cancel(&other.id, "alex").is_err(), "only their own");
     assert_eq!(
-        setup.service.cancel(&other.id, "sam").expect("cancelled").state,
+        setup.service.cancel(&other.id, "sam").expect("canceled").state,
         RequestState::Cancelled
     );
 }

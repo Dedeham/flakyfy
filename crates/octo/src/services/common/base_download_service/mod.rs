@@ -35,6 +35,10 @@ mod ownership_tests;
 #[path = "parallel_lock_split_tests.rs"]
 mod parallel_lock_split_tests;
 
+#[cfg(test)]
+#[path = "family_tests.rs"]
+mod family_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};

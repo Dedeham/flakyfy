@@ -25,9 +25,15 @@ use super::family_pool_store::FamilyPoolStore;
 use super::family_store::{FamilyStore, Member, SharedLibraries};
 use super::library_index::LibraryIndex;
 use super::pool::{FamilyPool, MemberStars, PoolParts, PoolTiming};
+use super::request_service::{
+    FamilyEvents, Fetched, OutsideTarget, RequestCatalog, RequestFacts, RequestFetcher, RequestParts,
+    RequestService,
+};
+use super::{LibraryWriteGate, PersonalLibrary};
 use crate::services::local::i_local_library_service::{ParsedExternalId, ParsedSongId};
 use crate::services::local::{ILocalLibraryService, LocalSongMapping};
 use crate::services::subsonic::NavidromeIdentityService;
+use octo_core::family::abilities::RequestQuality;
 
 /// A library service that remembers what it was asked.
 #[derive(Default)]
@@ -312,4 +318,97 @@ pub(crate) async fn eventually(mut check: impl FnMut() -> bool) -> bool {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     check()
+}
+
+/// A catalog that knows nothing, for requests that need no lookups (import lists).
+pub(crate) struct NoCatalog;
+
+#[async_trait]
+impl RequestCatalog for NoCatalog {
+    fn outside(&self, _: &str) -> Option<OutsideTarget> {
+        None
+    }
+
+    async fn song(&self, _: &str, _: &str) -> Option<Song> {
+        None
+    }
+
+    async fn album(&self, _: &str, _: &str) -> Option<octo_core::models::domain::Album> {
+        None
+    }
+
+    async fn shared_copy(&self, _: &Song) -> Option<crate::services::library::OwnedCopy> {
+        None
+    }
+}
+
+/// A fetcher that fetches nothing and remembers the import lists handed to it.
+#[derive(Default)]
+pub(crate) struct ListFetcher {
+    pub imports: Mutex<Vec<(String, String)>>,
+}
+
+#[async_trait]
+impl RequestFetcher for ListFetcher {
+    fn in_flight(&self, _: &str, _: &str) -> bool {
+        false
+    }
+
+    async fn song(&self, _: &str, _: &str, _: &str, _: RequestQuality, _: Option<&Song>) -> Fetched {
+        Fetched::Failed("Nothing is fetched here.".into())
+    }
+
+    async fn album(&self, _: &str, _: &str, _: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn upgrade(&self, _: &str, _: &str, _: &RequestFacts) -> bool {
+        false
+    }
+
+    fn upgrade_result(&self, _: &str) -> Option<Result<(), String>> {
+        None
+    }
+
+    async fn import(&self, user: &str, list_id: &str) -> Result<String, String> {
+        self.imports.lock().push((user.to_string(), list_id.to_string()));
+        Ok("Queued.".into())
+    }
+}
+
+impl World {
+    /// The world's members' own libraries.
+    pub fn personal(&self) -> Arc<PersonalLibrary> {
+        Arc::new(PersonalLibrary::new(
+            self.settings.clone(),
+            self.family.clone(),
+            self.index.clone(),
+            self.pool.clone(),
+        ))
+    }
+
+    /// The write gate over the world.
+    pub fn gate(&self) -> Arc<LibraryWriteGate> {
+        Arc::new(LibraryWriteGate::new(
+            self.settings.clone(),
+            self.family.clone(),
+            self.personal(),
+        ))
+    }
+
+    /// Requests over the world that look nothing up and fetch only import lists.
+    pub fn list_requests(&self) -> (Arc<RequestService>, Arc<ListFetcher>) {
+        let fetcher = Arc::new(ListFetcher::default());
+        let service = RequestService::new(RequestParts {
+            settings: self.settings.clone(),
+            family: self.family.clone(),
+            requests: Arc::new(super::request_store::RequestStore::in_memory()),
+            personal: self.personal(),
+            catalog: Arc::new(NoCatalog),
+            fetcher: fetcher.clone(),
+            stars: self.stars.clone(),
+            events: Arc::new(FamilyEvents::new()),
+        });
+        (service, fetcher)
+    }
 }

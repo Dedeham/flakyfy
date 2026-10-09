@@ -278,7 +278,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
 /// Saves an outside song for a family member as a link (it plays from its source and shows in
 /// their starred lists).
 async fn save_song(state: &AppState, user: &str, item_id: &str, provider: &str, external_id: &str) {
-    let song = state.music_metadata.get_song(provider, external_id).await;
+    let song = state.metadata_service.get_song(provider, external_id).await;
     let routing = state
         .external_id_registry
         .lookup(external_id)
@@ -325,7 +325,7 @@ async fn save_album(state: &AppState, user: &str, album_id: &str) {
         .parse_song_id(album_id)
         .1
         .unwrap_or_else(|| SoulseekMetadataService::PROVIDER_NAME.to_string());
-    let album = state.music_metadata.get_album(&provider, album_id).await;
+    let album = state.metadata_service.get_album(&provider, album_id).await;
     let saved = SavedAlbum {
         id: album_id.to_string(),
         name: album.as_ref().map(|a| a.title.clone()).unwrap_or_default(),
@@ -835,3 +835,11 @@ mod tests {
         assert_eq!(try_parse_int("x"), None);
     }
 }
+
+#[cfg(test)]
+#[path = "stars_family_tests.rs"]
+mod family_tests;
+
+#[cfg(test)]
+#[path = "family_library_tests.rs"]
+mod family_library_tests;

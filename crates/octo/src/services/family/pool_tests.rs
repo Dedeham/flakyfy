@@ -42,7 +42,7 @@ async fn two_members_one_file() {
         .into_iter()
         .filter(|p| !is_link(p) && p.ends_with(".mp3"))
         .collect();
-    assert_eq!(real, [pooled.clone()]);
+    assert_eq!(real, std::slice::from_ref(&pooled));
     assert_eq!(
         world.pool.store().get(&pooled).expect("recorded").refs,
         ["alex", "sam"]
@@ -113,7 +113,10 @@ async fn remove_last_ref_trashes_file() {
         .filter(|p| p.ends_with("01 Song.mp3"))
         .collect();
     assert_eq!(trashed.len(), 1, "in the trash, kept for the usual days");
-    assert_eq!(world.library.forgotten.lock().as_slice(), [pooled.clone()]);
+    assert_eq!(
+        world.library.forgotten.lock().as_slice(),
+        std::slice::from_ref(&pooled)
+    );
     assert!(!Path::new(&format!("{}/Artist", world.pool.pool_root_path())).exists());
 }
 
@@ -258,7 +261,10 @@ async fn promote_removes_links() {
         assert!(!Path::new(&format!("{}/{user}/Artist", world.members())).exists());
     }
     assert!(world.pool.store().list().is_empty());
-    assert_eq!(world.library.restored.lock().as_slice(), [shared.clone()]);
+    assert_eq!(
+        world.library.restored.lock().as_slice(),
+        std::slice::from_ref(&shared)
+    );
     assert_eq!(world.library.full_scans(), 1);
 }
 
@@ -341,4 +347,21 @@ fn walkdir(root: &str) -> Vec<String> {
     }
     found.sort();
     found
+}
+
+#[tokio::test]
+async fn a_pool_file_deleted_by_hand_takes_its_links_with_it() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    world.library.map("test", "1", &pooled);
+    let link = world.pool.link(&pooled, "alex").await.expect("linked");
+    std::fs::remove_file(&pooled).expect("deleted by hand");
+    assert_eq!(world.pool.sweep_dangling().await, 1);
+    assert!(
+        std::fs::symlink_metadata(&link).is_err(),
+        "the dangling link went"
+    );
+    assert!(world.pool.store().list().is_empty());
+    assert_eq!(world.library.forgotten.lock().as_slice(), [pooled]);
+    assert_eq!(world.pool.sweep_dangling().await, 0);
 }

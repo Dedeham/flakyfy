@@ -470,23 +470,23 @@ impl RequestService {
         }
 
         // 2. Another member has it.
-        if let Some(file) = self.pooled(outside, song.as_ref(), quality) {
-            if file.refs.iter().any(|r| eq_ignore_case(r, &member.username)) || self.instant_allowed(member) {
-                return match self.pool().link(&file.path, &member.username).await {
-                    Ok(_) => {
-                        request.state = RequestState::Done;
-                        request.outcome = Some(RequestOutcome::AddedFromFamily);
-                        let made = self.requests.create(request, Utc::now());
-                        info!(
-                            "FAMILY request {} {}: added from the family library",
-                            made.id, made.username
-                        );
-                        self.events.send(FamilyEvent::RequestDone(made.clone()));
-                        Ok(made)
-                    }
-                    Err(e) => Err(RequestError::new(0, e.to_string())),
-                };
-            }
+        if let Some(file) = self.pooled(outside, song.as_ref(), quality)
+            && (file.refs.iter().any(|r| eq_ignore_case(r, &member.username)) || self.instant_allowed(member))
+        {
+            return match self.pool().link(&file.path, &member.username).await {
+                Ok(_) => {
+                    request.state = RequestState::Done;
+                    request.outcome = Some(RequestOutcome::AddedFromFamily);
+                    let made = self.requests.create(request, Utc::now());
+                    info!(
+                        "FAMILY request {} {}: added from the family library",
+                        made.id, made.username
+                    );
+                    self.events.send(FamilyEvent::RequestDone(made.clone()));
+                    Ok(made)
+                }
+                Err(e) => Err(RequestError::new(0, e.to_string())),
+            };
         }
 
         // 3. Downloading for someone now.

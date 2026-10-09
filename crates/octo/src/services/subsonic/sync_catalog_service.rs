@@ -1000,3 +1000,93 @@ fn rows<'a>(parent: &'a Value, name: &str) -> ElementResult<&'a [Value]> {
 #[cfg(test)]
 #[path = "sync_catalog_service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod family_scope_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::services::common::test_fakes::FakeMetadata;
+    use crate::services::family::library_index::scope_for_tests;
+    use crate::services::family::test_support::{World, navidrome_with_songs, song_row};
+
+    fn service(scope: ScopeResolver) -> SyncCatalogService {
+        let settings = Arc::new(SettingsStore::for_tests(Default::default()));
+        let service = SyncCatalogService::new(
+            SubsonicProxyService::new(settings.clone()),
+            Arc::new(FakeMetadata::default()),
+            Arc::new(ExternalIdRegistry::new(None::<&str>)),
+            settings,
+            Clock::system(),
+        );
+        service.use_library_scope(scope);
+        service
+    }
+
+    /// An admin's lookup answer: one shared song, one in Sam's own library on an album and by
+    /// an artist nobody else has, and one of Alex's on the shared album.
+    fn answer() -> Vec<u8> {
+        serde_json::to_vec(&json!({"subsonic-response": {"status": "ok", "searchResult3": {
+            "artist": [{"id": "ar-shared", "name": "Portishead"}, {"id": "ar-sam", "name": "Sam's band"}],
+            "album": [{"id": "al-shared", "name": "Dummy"}, {"id": "al-sam", "name": "Sam's album"}],
+            "song": [
+                {"id": "shared-1", "albumId": "al-shared", "artistId": "ar-shared"},
+                {"id": "sam-1", "albumId": "al-sam", "artistId": "ar-sam"},
+                {"id": "alex-1", "albumId": "al-shared", "artistId": "ar-shared"}
+            ]
+        }}}))
+        .expect("JSON")
+    }
+
+    fn ids(body: &[u8], kind: &str) -> Vec<String> {
+        let document: Value = serde_json::from_slice(body).expect("JSON");
+        document["subsonic-response"]["searchResult3"][kind]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|row| row["id"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn another_members_songs_are_not_owned() {
+        let world = World::new(None);
+        let members = world.members();
+        let navidrome = navidrome_with_songs(json!([
+            song_row("shared-1", 1, "/music", "a.flac", 1),
+            song_row("sam-1", 4, &format!("{members}/sam"), "b.flac", 1),
+            song_row("alex-1", 3, &format!("{members}/alex"), "c.flac", 1),
+        ]))
+        .await;
+        world.point_at(&navidrome.uri());
+        world.index.refresh().await.expect("read");
+        let service = service(ScopeResolver::new(
+            world.settings.clone(),
+            world.family.clone(),
+            world.index.clone(),
+        ));
+
+        let owner = service.scoped_answer(Some("winters"), &answer()).expect("scoped");
+        assert_eq!(ids(&owner, "song"), ["shared-1"]);
+        assert_eq!(
+            ids(&owner, "album"),
+            ["al-shared"],
+            "Sam's album goes with Sam's song"
+        );
+        assert_eq!(ids(&owner, "artist"), ["ar-shared"]);
+
+        let alex = service.scoped_answer(Some("alex"), &answer()).expect("scoped");
+        assert_eq!(ids(&alex, "song"), ["shared-1", "alex-1"]);
+        let sam = service.scoped_answer(Some("sam"), &answer()).expect("scoped");
+        assert_eq!(ids(&sam, "song"), ["shared-1", "sam-1"]);
+        assert_eq!(ids(&sam, "album"), ["al-shared", "al-sam"]);
+    }
+
+    #[test]
+    fn family_off_leaves_the_answer_alone() {
+        let off = service(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+        assert!(off.scoped_answer(Some("winters"), &answer()).is_none());
+        let on = service(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+        assert!(on.scoped_answer(None, &answer()).is_none(), "nobody named");
+    }
+}

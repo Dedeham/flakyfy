@@ -219,3 +219,7 @@ impl AcquisitionWorker {
 #[cfg(test)]
 #[path = "acquisition_worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "acquisition_worker_family_tests.rs"]
+mod family_tests;

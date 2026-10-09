@@ -259,3 +259,75 @@ mod tests {
         assert_eq!(created, [("🛠 Keep".to_string(), "alice".to_string(), false)]);
     }
 }
+
+#[cfg(test)]
+mod family_tests {
+    use octo_core::family::abilities::Preset;
+    use octo_core::settings::{AppSettings, SubsonicSettings};
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::services::family::test_support::member;
+
+    async fn created_for(user: &str, family_on: bool) -> Vec<String> {
+        let navidrome = MockServer::start().await;
+        Mock::given(path("/rest/createPlaylist"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(r#"{"subsonic-response":{"status":"ok"}}"#, "application/json"),
+            )
+            .mount(&navidrome)
+            .await;
+        let mut app = AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(navidrome.uri()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        app.family.enabled = family_on;
+        let settings = Arc::new(SettingsStore::for_tests(app));
+        let family = Arc::new(FamilyStore::in_memory());
+        family.upsert_member(member("alex", Preset::Member, 3));
+        family.upsert_member(member("sam", Preset::Listener, 4));
+        family.upsert_member(member("kim", Preset::Kid, 5));
+        let provisioner =
+            LibraryActionPlaylistProvisioner::new(SubsonicProxyService::new(settings.clone()), settings)
+                .with_family(family);
+        let auth: IndexMap<String, String> = [("u", user), ("t", "tok"), ("s", "salt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        provisioner.ensure(user, &[], &auth).await;
+        navidrome
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .filter_map(|r| {
+                r.url
+                    .query_pairs()
+                    .find(|(k, _)| k == "name")
+                    .map(|(_, v)| v.into_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn members_get_their_own_request_and_remove_playlists() {
+        assert_eq!(
+            created_for("sam", true).await,
+            [REQUEST_PLAYLIST, REQUEST_FLAC_PLAYLIST, REMOVE_PLAYLIST]
+        );
+        // A kid may ask for MP3 copies only.
+        assert_eq!(
+            created_for("kim", true).await,
+            [REQUEST_PLAYLIST, REMOVE_PLAYLIST]
+        );
+        // A member who adds songs at once has nothing to ask for.
+        assert_eq!(created_for("alex", true).await, [REMOVE_PLAYLIST]);
+        assert!(created_for("winters", true).await.is_empty());
+        assert!(created_for("sam", false).await.is_empty(), "Family off");
+    }
+}

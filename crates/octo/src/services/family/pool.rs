@@ -495,6 +495,35 @@ impl FamilyPool {
         Ok(())
     }
 
+    /// Forgets pool files that are no longer on disk (someone deleted one by hand): each
+    /// member's link to it goes, and their library is scanned. Answers how many files went.
+    pub async fn sweep_dangling(&self) -> usize {
+        let gone: Vec<PoolFile> = self
+            .store
+            .list()
+            .into_iter()
+            .filter(|file| !Path::new(&file.path).exists())
+            .collect();
+        for file in &gone {
+            for user in &file.refs {
+                self.remove_link(&file.path, user, &[]);
+                if let Some(library_id) = self.family.member(user).and_then(|m| m.personal_library_id) {
+                    self.library.trigger_library_scan_of(library_id).await;
+                }
+            }
+            self.store.remove(&file.path);
+            if let Err(e) = self.library.forget_mapping(&file.path).await {
+                warn!("FAMILY could not forget {}'s mapping: {e}", file.path);
+            }
+            warn!(
+                "FAMILY {} is gone from the pool; removed the links of {}",
+                file.path,
+                file.refs.join(", ")
+            );
+        }
+        gone.len()
+    }
+
     /// Sends a pool file nobody links any more to the trash (kept as long as library actions
     /// keep removed songs), with its lyrics files. True when it went.
     pub async fn gc(&self, pool_path: &str) -> bool {
@@ -854,6 +883,8 @@ impl FamilyPlacement for FamilyPool {
         external_id: &str,
         members: &[String],
     ) -> Option<String> {
+        // Each new pool file is a moment to let go of any that went missing by hand.
+        self.sweep_dangling().await;
         let key = key_of(provider, external_id);
         let older = self
             .find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)

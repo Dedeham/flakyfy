@@ -262,3 +262,112 @@ async fn read(inner: &Inner) -> Option<Arc<LibraryAlbumIndex>> {
     );
     Some(index)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::family::library_index::scope_for_tests;
+
+    fn row(id: &str, library_path: &str, artist: &str, title: &str, album: &str) -> LibrarySongRow {
+        LibrarySongRow {
+            id: id.into(),
+            path: format!("{artist}/{album}/{title}.flac"),
+            library_path: Some(library_path.into()),
+            size: 1,
+            suffix: "flac".into(),
+            bit_rate: 900,
+            title: title.into(),
+            artist: artist.into(),
+            duration: Some(200),
+            album: Some(album.into()),
+            album_id: Some(format!("al-{album}")),
+            album_artist: Some(artist.into()),
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(rows: Vec<LibrarySongRow>) -> LibrarySnapshot {
+        LibrarySnapshot::with(
+            Arc::new(move |start, _| {
+                let page = if start == 0 { rows.clone() } else { Vec::new() };
+                let count = page.len();
+                Box::pin(async move { Some((page, count)) })
+            }),
+            Clock::system(),
+        )
+    }
+
+    fn library() -> Vec<LibrarySongRow> {
+        vec![
+            row("shared-1", "/music", "Portishead", "Roads", "Dummy"),
+            row("sam-1", "/members/sam", "Massive Attack", "Teardrop", "Mezzanine"),
+            row("alex-1", "/members/alex", "Bjork", "Joga", "Homogenic"),
+        ]
+    }
+
+    #[tokio::test]
+    async fn listener_search_keeps_outside_song_owned_only_by_another_member() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+        let shared = snapshot.current().await.expect("read");
+        // Only Sam has Teardrop, so to anyone else it is still an outside song to show.
+        assert!(
+            shared
+                .find(
+                    "Teardrop",
+                    Some("Massive Attack"),
+                    Some(200),
+                    &[],
+                    Some("Mezzanine")
+                )
+                .is_none()
+        );
+        assert!(
+            shared
+                .same_album(Some("Mezzanine"), Some("Massive Attack"))
+                .is_empty()
+        );
+        assert!(
+            shared
+                .find("Roads", Some("Portishead"), Some(200), &[], None)
+                .is_some()
+        );
+
+        let alex = snapshot
+            .current_for(&LibraryScope::Viewer("alex".into()))
+            .await
+            .expect("read");
+        assert!(
+            alex.find("Joga", Some("Bjork"), Some(200), &[], None).is_some(),
+            "their own"
+        );
+        assert!(
+            alex.find("Teardrop", Some("Massive Attack"), Some(200), &[], None)
+                .is_none()
+        );
+        assert!(
+            alex.find("Roads", Some("Portishead"), Some(200), &[], None)
+                .is_some()
+        );
+        let sam = snapshot
+            .current_for(&LibraryScope::Viewer("Sam".into()))
+            .await
+            .expect("read");
+        assert!(
+            sam.find("Teardrop", Some("Massive Attack"), Some(200), &[], None)
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn with_family_off_every_song_counts() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+        let all = snapshot.current().await.expect("read");
+        assert_eq!(all.song_count(), 3);
+        let unscoped = snapshot_unscoped().current().await.expect("read");
+        assert_eq!(unscoped.song_count(), 3);
+    }
+
+    fn snapshot_unscoped() -> LibrarySnapshot {
+        snapshot(library())
+    }
+}

@@ -250,6 +250,11 @@ impl LibraryIndex {
         }
     }
 
+    /// How many songs `keep` answers true for.
+    pub fn count_songs(&self, keep: impl Fn(&IndexedSong) -> bool) -> usize {
+        self.songs.read().by_id.values().filter(|song| keep(song)).count()
+    }
+
     /// The bytes one library holds: its songs at full size, plus files Octo placed there since
     /// the last read.
     pub fn bytes_in_library(&self, library_id: i64) -> u64 {

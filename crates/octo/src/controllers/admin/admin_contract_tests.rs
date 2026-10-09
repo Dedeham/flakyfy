@@ -83,6 +83,10 @@ fn missing_from(document: &Value) -> Vec<String> {
             continue;
         }
         for name in names {
+            // The family notices are listed with the Family section.
+            if name.starts_with("NotifyFamily") && document.get("Family").is_none() {
+                continue;
+            }
             if document.get(&section).and_then(|s| s.get(&name)).is_none() {
                 missing.push(format!("{section}.{name}"));
             }

@@ -15,6 +15,137 @@ pub fn is_enabled(s: &NotificationSettings, r#type: NotificationEventType) -> bo
         NotificationEventType::AlbumCompleted => s.notify_album_completed,
         // The test button bypasses toggles by design: it verifies transports.
         NotificationEventType::Test => true,
+        NotificationEventType::FamilyRequestNew
+        | NotificationEventType::FamilyRequestApproved
+        | NotificationEventType::FamilyRequestDeclined
+        | NotificationEventType::FamilyRequestAdded
+        | NotificationEventType::FamilyRequestFailed => s.notify_family_requests,
+        NotificationEventType::FamilyDeviceNew => s.notify_family_devices,
+    }
+}
+
+/// A family member's name for a sentence: their name, or "Someone" when it is not known.
+fn member_name(evt: &NotificationEvent) -> String {
+    evt.family_member
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Someone")
+        .to_string()
+}
+
+/// "Title by Artist", or the title alone, or "a song" when neither is known.
+fn song_words(evt: &NotificationEvent) -> String {
+    let title = evt.title.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let artist = evt.artist.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    match (title, artist) {
+        (Some(title), Some(artist)) => format!("{title} by {artist}"),
+        (Some(title), None) => title.to_string(),
+        (None, Some(artist)) => format!("a song by {artist}"),
+        (None, None) => "a song".to_string(),
+    }
+}
+
+/// The note an approver left, as a sentence of its own after the title; empty without one.
+fn note_words(evt: &NotificationEvent) -> String {
+    match evt
+        .family_note
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
+        Some(note) => format!(". {note}"),
+        None => String::new(),
+    }
+}
+
+/// The text a family member's own push carries, in plain words. Events that are not about a
+/// member's request render as for the owner.
+pub fn render_for_member(evt: &NotificationEvent) -> NotificationMessage {
+    let song = song_words(evt);
+    let message = |title: String, body: &str| NotificationMessage {
+        r#type: evt.r#type,
+        title,
+        body: body.to_string(),
+        image_url: evt.cover_art_url.clone(),
+        description: None,
+        fields: None,
+    };
+    match evt.r#type {
+        NotificationEventType::FamilyRequestApproved => {
+            message(format!("Approved: {song}"), "It will be in your library soon.")
+        }
+        NotificationEventType::FamilyRequestDeclined => message(
+            format!("Declined: {song}{}", note_words(evt)),
+            "You can still play it from where you found it.",
+        ),
+        NotificationEventType::FamilyRequestAdded => message(
+            format!("Added: {song} is in your library"),
+            "Open your library to play it.",
+        ),
+        NotificationEventType::FamilyRequestFailed => message(
+            format!("Could not get {song}"),
+            evt.detail
+                .as_deref()
+                .filter(|d| !d.trim().is_empty())
+                .unwrap_or("Octo could not find a copy to download."),
+        ),
+        _ => render(evt),
+    }
+}
+
+/// The family texts the owner's channels carry.
+fn render_family(evt: &NotificationEvent) -> NotificationMessage {
+    let who = member_name(evt);
+    let song = song_words(evt);
+    let message = |title: String, body: String| NotificationMessage {
+        r#type: evt.r#type,
+        title,
+        body,
+        image_url: evt.cover_art_url.clone(),
+        description: None,
+        fields: None,
+    };
+    let quality = evt
+        .format
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(|q| format!(" ({q})"))
+        .unwrap_or_default();
+    match evt.r#type {
+        NotificationEventType::FamilyRequestNew => message(
+            format!("{who} asked for {song}{quality}"),
+            "Approve or decline it on the Family page.".to_string(),
+        ),
+        NotificationEventType::FamilyRequestApproved => {
+            message(format!("Approved for {who}: {song}"), String::new())
+        }
+        NotificationEventType::FamilyRequestDeclined => message(
+            format!("Declined for {who}: {song}{}", note_words(evt)),
+            String::new(),
+        ),
+        NotificationEventType::FamilyRequestAdded => message(
+            format!("Added for {who}: {song}"),
+            "It is in their library now.".to_string(),
+        ),
+        NotificationEventType::FamilyRequestFailed => message(
+            format!("Could not get {song} for {who}"),
+            evt.detail
+                .clone()
+                .filter(|d| !d.trim().is_empty())
+                .unwrap_or_else(|| "Octo could not find a copy to download.".to_string()),
+        ),
+        NotificationEventType::FamilyDeviceNew => {
+            let app = evt
+                .source
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .unwrap_or("a new app");
+            message(format!("New device for {who}: {app}"), String::new())
+        }
+        _ => message(String::new(), String::new()),
     }
 }
 
@@ -133,6 +264,13 @@ pub fn render(evt: &NotificationEvent) -> NotificationMessage {
             "Transports are wired up correctly.",
             None,
         ),
+
+        NotificationEventType::FamilyRequestNew
+        | NotificationEventType::FamilyRequestApproved
+        | NotificationEventType::FamilyRequestDeclined
+        | NotificationEventType::FamilyRequestAdded
+        | NotificationEventType::FamilyRequestFailed
+        | NotificationEventType::FamilyDeviceNew => render_family(evt),
     }
 }
 
@@ -412,5 +550,75 @@ mod tests {
         assert_eq!(group_thousands(1_234_567), "1,234,567");
         assert_eq!(group_thousands(999), "999");
         assert_eq!(group_thousands(1000), "1,000");
+    }
+
+    fn family_event(r#type: NotificationEventType) -> NotificationEvent {
+        NotificationEvent {
+            title: Some("Hyperballad".into()),
+            artist: Some("Björk".into()),
+            family_member: Some("Alex".into()),
+            ..event(r#type)
+        }
+    }
+
+    #[test]
+    fn render_family_request() {
+        let new = render(&NotificationEvent {
+            format: Some("FLAC".into()),
+            ..family_event(NotificationEventType::FamilyRequestNew)
+        });
+        assert_eq!(new.title, "Alex asked for Hyperballad by Björk (FLAC)");
+        assert_eq!(new.body, "Approve or decline it on the Family page.");
+
+        let device = render(&NotificationEvent {
+            source: Some("Symfonium".into()),
+            ..family_event(NotificationEventType::FamilyDeviceNew)
+        });
+        assert_eq!(device.title, "New device for Alex: Symfonium");
+
+        let failed = render(&NotificationEvent {
+            detail: Some("No real FLAC copy was found.".into()),
+            ..family_event(NotificationEventType::FamilyRequestFailed)
+        });
+        assert_eq!(failed.title, "Could not get Hyperballad by Björk for Alex");
+        assert_eq!(failed.body, "No real FLAC copy was found.");
+
+        let nobody = render(&NotificationEvent::new(NotificationEventType::FamilyRequestNew));
+        assert_eq!(nobody.title, "Someone asked for a song");
+    }
+
+    #[test]
+    fn render_member_decision() {
+        let approved = render_for_member(&family_event(NotificationEventType::FamilyRequestApproved));
+        assert_eq!(approved.title, "Approved: Hyperballad by Björk");
+        let added = render_for_member(&family_event(NotificationEventType::FamilyRequestAdded));
+        assert_eq!(added.title, "Added: Hyperballad by Björk is in your library");
+        let declined = render_for_member(&NotificationEvent {
+            family_note: Some("We have it on vinyl".into()),
+            ..family_event(NotificationEventType::FamilyRequestDeclined)
+        });
+        assert_eq!(
+            declined.title,
+            "Declined: Hyperballad by Björk. We have it on vinyl"
+        );
+        let failed = render_for_member(&family_event(NotificationEventType::FamilyRequestFailed));
+        assert_eq!(failed.title, "Could not get Hyperballad by Björk");
+        // The member's text never names who asked.
+        for message in [&approved, &added, &declined, &failed] {
+            assert!(!message.title.contains("Alex") && !message.body.contains("Alex"));
+        }
+    }
+
+    #[test]
+    fn family_switches_follow_their_settings() {
+        let mut s = NotificationSettings::default();
+        assert!(is_enabled(&s, NotificationEventType::FamilyRequestNew));
+        assert!(is_enabled(&s, NotificationEventType::FamilyDeviceNew));
+        s.notify_family_requests = false;
+        assert!(!is_enabled(&s, NotificationEventType::FamilyRequestNew));
+        assert!(!is_enabled(&s, NotificationEventType::FamilyRequestFailed));
+        assert!(is_enabled(&s, NotificationEventType::FamilyDeviceNew));
+        s.notify_family_devices = false;
+        assert!(!is_enabled(&s, NotificationEventType::FamilyDeviceNew));
     }
 }

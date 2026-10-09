@@ -117,6 +117,8 @@ testPing
 
 # octoFamily
 getFamily
+setFamilyQuality
+setFamilyDeviceQuality
 getFamilyRequests
 requestCopy
 cancelFamilyRequest

@@ -604,6 +604,18 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 ("ManageFromAway", Node::Bool(family.manage_from_away)),
             ]),
         );
+        // The family notices are listed with the Family section, for the same reason.
+        let notif = &current.notifications;
+        if let Some(Node::Object(section)) = doc.get_mut("Notifications") {
+            section.insert(
+                "NotifyFamilyRequests".into(),
+                Node::Bool(notif.notify_family_requests),
+            );
+            section.insert(
+                "NotifyFamilyDevices".into(),
+                Node::Bool(notif.notify_family_devices),
+            );
+        }
     }
     doc
 }

@@ -124,6 +124,10 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
     {
         reply.body = body;
     }
+    // octoFamily is listed only while Family is on.
+    if settings.family.enabled {
+        return super::family::with_family_extension(reply, &format).into_response();
+    }
     reply.into_response()
 }
 

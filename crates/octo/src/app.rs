@@ -57,7 +57,7 @@ use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::family::{
     AnswerRules, AudioGate, DeviceRegistry, FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault,
     LibraryIndex, MemberBridge, MemberCredentials, NavidromeAdmin, PlayerCaps, RequestStore, SavedStore,
-    ScopeResolver,
+    ScopeResolver, family_service::FamilyService,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -508,6 +508,8 @@ pub struct AppInner {
     pub family_answer_rules: Arc<AnswerRules>,
     /// The rules about audio while Family is on, and the live streams.
     pub family_audio: Arc<AudioGate>,
+    /// The Family page's and the apps' family actions, and the hooks they reach other work by.
+    pub family: Arc<FamilyService>,
     /// Whether Family's background work has been started (see [`AppInner::start_family`]).
     family_started: AtomicBool,
 }
@@ -2122,9 +2124,10 @@ impl AppInner {
     /// their family limit ([`PlayerCaps`]). Does nothing while Family is off, so an
     /// install that never turns it on runs no extra worker; turning it on later calls this
     /// again, and only the first call after that does anything.
-    pub fn start_family(&self) {
+    /// Answers whether it started the work now.
+    pub fn start_family(&self) -> bool {
         if !self.settings.current().family.enabled || self.family_started.swap(true, Ordering::AcqRel) {
-            return;
+            return false;
         }
         if !self.family_vault.has_key()
             && !self.family_store.has_sealed_secrets()
@@ -2154,10 +2157,29 @@ impl AppInner {
                 Arc::new(move || store.flush_if_dirty()),
             )
         });
+        true
     }
 }
 
 impl AppState {
+    /// Starts Family's background work once Family is on ([`AppInner::start_family`]), and the
+    /// family work that needs the whole state: the link probe, the new-device notices and
+    /// keeping members' libraries in step with Navidrome's.
+    pub fn start_family(&self) {
+        if !self.inner.start_family() {
+            return;
+        }
+        let weak = Arc::downgrade(&self.inner);
+        self.workers.register("FamilyWork", move |token| {
+            crate::services::family::family_service::run_family_work(weak.clone(), token)
+        });
+    }
+
+    /// The state around an existing inner, for work that keeps only a weak hold on it.
+    pub(crate) fn from_inner(inner: Arc<AppInner>) -> AppState {
+        AppState { inner }
+    }
+
     /// The production state over a loaded settings store. Workers are registered here but not
     /// started; [`crate::host::run`] starts them once the listener is bound.
     pub fn build(settings: SettingsStore) -> AppState {
@@ -2482,13 +2504,15 @@ impl AppState {
             family_bridge: family_edge.bridge,
             family_answer_rules: family_edge.answer_rules,
             family_audio: family_edge.audio,
+            family: Arc::new(FamilyService::default()),
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
-        inner.start_family();
-        AppState {
+        let state = AppState {
             inner: Arc::new(inner),
-        }
+        };
+        state.start_family();
+        state
     }
 
     /// A state for handler tests: `settings` as the live snapshot, no configuration behind it,
@@ -2822,6 +2846,7 @@ impl AppState {
             family_bridge: family_edge.bridge,
             family_answer_rules: family_edge.answer_rules,
             family_audio: family_edge.audio,
+            family: Arc::new(FamilyService::default()),
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();

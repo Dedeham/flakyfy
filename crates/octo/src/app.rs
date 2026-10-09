@@ -55,8 +55,9 @@ use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::family::{
-    AnswerRules, DeviceRegistry, FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault,
-    LibraryIndex, MemberBridge, MemberCredentials, NavidromeAdmin, RequestStore, SavedStore, ScopeResolver,
+    AnswerRules, AudioGate, DeviceRegistry, FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault,
+    LibraryIndex, MemberBridge, MemberCredentials, NavidromeAdmin, PlayerCaps, RequestStore, SavedStore,
+    ScopeResolver,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -505,6 +506,8 @@ pub struct AppInner {
     pub family_bridge: Arc<MemberBridge>,
     /// The rules that rewrite answers for the family, by endpoint.
     pub family_answer_rules: Arc<AnswerRules>,
+    /// The rules about audio while Family is on, and the live streams.
+    pub family_audio: Arc<AudioGate>,
     /// Whether Family's background work has been started (see [`AppInner::start_family`]).
     family_started: AtomicBool,
 }
@@ -2062,10 +2065,16 @@ struct FamilyEdge {
     devices: Arc<DeviceRegistry>,
     bridge: Arc<MemberBridge>,
     answer_rules: Arc<AnswerRules>,
+    audio: Arc<AudioGate>,
 }
 
 impl FamilyEdge {
-    fn build(settings: &Arc<SettingsStore>, store: &Arc<FamilyStore>, vault: &Arc<FamilyVault>) -> Self {
+    fn build(
+        settings: &Arc<SettingsStore>,
+        store: &Arc<FamilyStore>,
+        vault: &Arc<FamilyVault>,
+        index: &Arc<LibraryIndex>,
+    ) -> Self {
         FamilyEdge {
             credentials: Arc::new(MemberCredentials::new(
                 Arc::clone(store),
@@ -2075,6 +2084,11 @@ impl FamilyEdge {
             devices: Arc::new(DeviceRegistry::new(Arc::clone(store))),
             bridge: Arc::new(MemberBridge::default()),
             answer_rules: Arc::new(AnswerRules::standard()),
+            audio: Arc::new(AudioGate::new(
+                Arc::clone(settings),
+                Arc::clone(store),
+                Arc::clone(index),
+            )),
         }
     }
 }
@@ -2092,6 +2106,9 @@ impl AppInner {
             .use_member_credentials(Arc::clone(credentials));
         self.credential_check
             .use_member_credentials(Arc::clone(credentials));
+        self.listen_brainz.use_member_credentials(Arc::clone(credentials));
+        self.last_fm_radio_streams
+            .use_audio_gate(Arc::clone(&self.family_audio));
     }
 
     /// `IHostApplicationLifetime.StopApplication()`: begins a graceful shutdown.
@@ -2101,7 +2118,8 @@ impl AppInner {
 
     /// Starts Family's background work once Family is on: makes `family.key` when there is
     /// none and nothing sealed is waiting for an old one, and writes devices' last-seen details
-    /// every 30 seconds (and once more on the way out). Does nothing while Family is off, so an
+    /// every 30 seconds (and once more on the way out), and keeps members' Navidrome players at
+    /// their family limit ([`PlayerCaps`]). Does nothing while Family is off, so an
     /// install that never turns it on runs no extra worker; turning it on later calls this
     /// again, and only the first call after that does anything.
     pub fn start_family(&self) {
@@ -2119,6 +2137,14 @@ impl AppInner {
         self.workers.register("LibraryIndex", move |token| {
             index.clone().run(token, library.clone())
         });
+        let caps = Arc::new(PlayerCaps::new(
+            self.settings.clone(),
+            self.family_store.clone(),
+            self.navidrome_admin.clone(),
+            self.family_devices.clone(),
+        ));
+        self.workers
+            .register("FamilyPlayerCaps", move |token| caps.clone().run(token));
         let store = self.family_store.clone();
         self.workers.register("FamilyStore", move |token| {
             let store = store.clone();
@@ -2303,7 +2329,12 @@ impl AppState {
             soulseek.link.clone(),
         );
         imports.register_workers(&workers);
-        let family_edge = FamilyEdge::build(&settings, &stores.family_store, &stores.family_vault);
+        let family_edge = FamilyEdge::build(
+            &settings,
+            &stores.family_store,
+            &stores.family_vault,
+            &family_navidrome.1,
+        );
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -2450,6 +2481,7 @@ impl AppState {
             family_devices: family_edge.devices,
             family_bridge: family_edge.bridge,
             family_answer_rules: family_edge.answer_rules,
+            family_audio: family_edge.audio,
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
@@ -2637,7 +2669,12 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
         );
-        let family_edge = FamilyEdge::build(&settings, &stores.family_store, &stores.family_vault);
+        let family_edge = FamilyEdge::build(
+            &settings,
+            &stores.family_store,
+            &stores.family_vault,
+            &family_navidrome.1,
+        );
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2784,6 +2821,7 @@ impl AppState {
             family_devices: family_edge.devices,
             family_bridge: family_edge.bridge,
             family_answer_rules: family_edge.answer_rules,
+            family_audio: family_edge.audio,
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();

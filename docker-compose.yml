@@ -337,6 +337,9 @@ services:
     restart: unless-stopped
     logging: *logging
     environment:
+      # Threads serving requests. Each playing outside song holds one for the whole song,
+      # so this is how many can play at once across the family.
+      SHIM_THREADS: ${SHIM_THREADS:-128}
       MAX_CONCURRENT_YTDLP: ${YTDLP_MAX_CONCURRENT:-5}
       # Slots of the above that background work (prewarm, star-downloads) can
       # never occupy, so pressing play does not queue behind a prewarm burst.

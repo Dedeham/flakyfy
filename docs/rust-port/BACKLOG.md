@@ -1350,15 +1350,18 @@ observable changes.
 - [x] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`. The shared scope is wired into Library health, the weekly quality upgrade, explicit marks and the duplicate scan; album ownership, heart ownership, outside dedupe, the review sweep and the sync catalog take it in G5-7 and G5-14
 - [x] G5-5 Member bridge, family gate (every sign-in form, X-Forwarded-For only for the client address), web session (Octo JWT swapped both ways), device registry with a new-device event, fresh member sign-ins for held work, repair on refusal, rule hooks, log masks; freed preset defaults, personal audio quality and device quality mode in the model and store
 - [ ] G5-6 Request and answer rules, audio gate, library write gate, player cap sync, bypass suite, stream tracker
+  - [x] Audio: unknown endpoints refused for kids and members with a limit, native account, player and share writes refused, the audio gate (quality for every caller from the client, the account and the family limit; away, clean-only, downloads, shares and offline copies; no transcode decisions under a ceiling; outside files relayed as the library copy and never from another member's library), the stream tracker (devices at once, newest device wins with a three minute hold, fast-pull pacing, live streams), player cap sync, the `getUser`, `getNowPlaying` and `getStarred`/`getStarred2` answers, and the bypass suite
 - [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library
 - [x] G5-8 Family playlists: `of` ids while Family is on, listed for the owner and every member, each entry served per viewer (the library song when shared or the viewer's own, else its outside version), additions held for approval with a request hook, changes by ability; create, rename, approval switch and delete for the `/family/` page
 - [x] G5-9 Kid profiles: explicit songs left out of their answers by the index's mark (any client, DSub too), outside songs by the catalog's mark, getSong answers error 70, counts kept; clean stations, mixes, Made for you, charts and song radio; `unrated_count` for "Mark them now"
 - [ ] G5-10 Member sign-in on `/family/`, pairing, invites
 - [ ] G5-11 `octoFamily` extension for the apps
 - [ ] G5-12 Notifications, ListenBrainz fallback rule
+  - [x] ListenBrainz: a managed member uses their own token or none, never the default one
 - [ ] G5-13 Dashboards (`/family/` page, admin entry)
 - [x] G5-14 Owner privacy: members' own songs, albums, artists and libraries left out of the owner's answers, and members' playlists out of getPlaylists, from the index; members' own songs marked `octoPersonal`; setLyricsChoice for the Member preset and up. Not here: getGenres counts still include members' songs, and album ownership, heart ownership, outside dedupe, the review sweep and the sync catalog take the viewer's scope with G5-7
 - [ ] G5-15 Scale (shim threads and single flight, radio cap, fair star queue, load)
+  - [x] Shim threads from `SHIM_THREADS` (128), a single-flight test, active streams and running yt-dlp in the shim's health, and a radio stream limit that grows with the family; the load view's live streams come from the stream tracker
 - [ ] G5-16 Apps (`C:\OctoPlayer`, `feat/family`)
 - [ ] G5-17 Parity, live checks, docs
 

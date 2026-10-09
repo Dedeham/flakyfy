@@ -58,6 +58,12 @@ impl ListenBrainzSettings {
 
     /// The token that applies to this listener, or None when none is configured.
     pub fn token_for(&self, username: &str) -> Option<String> {
+        self.token_for_listener(username, false)
+    }
+
+    /// The token for a listener. A family member Octo manages (`managed`) uses their own
+    /// token or none: the default token is the owner's, and their listening is not.
+    pub fn token_for_listener(&self, username: &str, managed: bool) -> Option<String> {
         if !self.submit_external_plays {
             return None;
         }
@@ -67,7 +73,7 @@ impl ListenBrainzSettings {
         {
             return Some(own.trim().to_string());
         }
-        if self.token.trim().is_empty() {
+        if managed || self.token.trim().is_empty() {
             None
         } else {
             Some(self.token.trim().to_string())
@@ -101,5 +107,23 @@ mod tests {
         assert_eq!(settings.token_for("bob").as_deref(), Some("bobs"));
         settings.submit_external_plays = false;
         assert_eq!(settings.token_for("bob"), None);
+    }
+
+    #[test]
+    fn a_managed_listener_never_gets_the_default_token() {
+        let settings = ListenBrainzSettings {
+            token: "owners".into(),
+            user_tokens: [("alex".to_string(), "alexs".to_string())].into_iter().collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.token_for_listener("alex", true).as_deref(),
+            Some("alexs")
+        );
+        assert_eq!(settings.token_for_listener("sam", true), None);
+        assert_eq!(
+            settings.token_for_listener("sam", false).as_deref(),
+            Some("owners")
+        );
     }
 }

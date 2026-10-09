@@ -502,6 +502,7 @@ fn clone_shared(shared: &Shared_) -> Shared_ {
         last_fm: shared.last_fm.clone(),
         listen_brainz: shared.listen_brainz.clone(),
         last_fm_scrobbles: shared.last_fm_scrobbles.clone(),
+        family: shared.family.clone(),
     }
 }
 

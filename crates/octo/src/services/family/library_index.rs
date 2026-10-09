@@ -930,6 +930,62 @@ mod tests {
         assert_eq!(scope.personal_library_ids(), vec![3, 4]);
     }
 
+    #[tokio::test]
+    async fn family_off_with_member_libraries_left_keeps_library_wide_work_to_the_shared_library() {
+        let server = navidrome().await;
+        mount_songs(
+            &server,
+            json!([
+                song("shared", 1, "/music", "A/B/1.flac", "", 1),
+                song("alex1", 3, "/members/alex", "A/B/2.flac", "", 1),
+            ]),
+        )
+        .await;
+        let (index, settings) = index_for(&server.uri());
+        let store = Arc::new(FamilyStore::in_memory());
+        store.upsert_member(member("alex", 3));
+        let needed = Arc::clone(&store);
+        index.keep_reading_while(move || needed.has_personal_libraries());
+        let index = Arc::new(Arc::into_inner(index).expect("one owner").with_timing(fast()));
+        let scope = ScopeResolver::new(settings, Arc::clone(&store), Arc::clone(&index));
+        assert!(!scope.active(), "Family is off");
+        assert!(scope.keeps_shared(), "Alex's library is still there");
+        assert!(
+            !scope.ready(),
+            "nothing destructive runs before the index is read"
+        );
+
+        let token = CancellationToken::new();
+        let library: Arc<dyn ILocalLibraryService> = Arc::new(FakeLocalLibrary::default());
+        let running = tokio::spawn(Arc::clone(&index).run(token.clone(), library));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            song_reads(&server).await >= 1,
+            "the index is read while member data is left"
+        );
+        assert!(scope.ready());
+        let view = scope.shared_view();
+        assert!(view.apart());
+        assert!(view.allows(&LibraryScope::Shared, Some("shared"), None));
+        assert!(!view.allows(&LibraryScope::Shared, Some("alex1"), None));
+        assert!(!view.allows(&LibraryScope::Shared, None, Some("/members/.pool/A/x.flac")));
+        assert!(!view.allows_library(&LibraryScope::Shared, 3));
+        // A viewer's scope, which only signed-in members have, keeps nothing apart.
+        assert!(!scope.view().apart());
+
+        // Once no member has a library of their own, nothing is kept apart and nothing is read.
+        store.remove_member("alex");
+        assert!(!scope.keeps_shared());
+        assert!(scope.ready());
+        assert!(!scope.shared_view().apart());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let reads = song_reads(&server).await;
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        token.cancel();
+        running.await.expect("joins").expect("stops cleanly");
+        assert_eq!(song_reads(&server).await, reads, "Navidrome is left alone");
+    }
+
     #[test]
     fn row_paths_join_the_library_path() {
         assert_eq!(row_full_path(Some("/music"), "A/B/1.flac"), "/music/A/B/1.flac");

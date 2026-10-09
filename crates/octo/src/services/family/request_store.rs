@@ -452,4 +452,60 @@ mod tests {
         assert!(store.load_warning().is_some());
         assert!(store.all().is_empty());
     }
+
+    #[test]
+    fn a_save_torn_by_a_crash_leaves_the_last_whole_file_and_an_empty_one_is_broken() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-requests.json");
+        let store = RequestStore::new(Some(&path));
+        let made = store.create(request("alex", RequestState::Pending, now()), now());
+        let whole = std::fs::read(&path).expect("written");
+        let temporary = crate::services::state_file::tmp_path(&path);
+        std::fs::write(&temporary, &whole[..whole.len() / 2]).expect("a torn temporary file");
+        let reloaded = RequestStore::new(Some(&path));
+        assert!(reloaded.load_warning().is_none());
+        assert_eq!(reloaded.get(&made.id), Some(made));
+
+        std::fs::write(&path, "").expect("left empty by a crash");
+        let emptied = RequestStore::new(Some(&path));
+        assert!(
+            emptied
+                .load_warning()
+                .is_some_and(|w| w.contains("the file is empty"))
+        );
+        assert!(!path.exists(), "kept aside, never written over as no requests");
+    }
+
+    #[test]
+    fn saves_from_many_threads_leave_the_newest_requests_on_disk() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-requests.json");
+        let store = std::sync::Arc::new(RequestStore::new(Some(&path)));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let writers: Vec<_> = (0..8)
+            .map(|n| {
+                let (store, barrier) = (store.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for m in 0..10 {
+                        let mut ask = request(&format!("member{n}"), RequestState::Pending, now());
+                        ask.target = format!("ext-deezer-song-{n}-{m}");
+                        let made = store.create(ask, now());
+                        if m % 2 == 0 {
+                            store.update(&made.id, |r| r.state = RequestState::Approved);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("joins");
+        }
+        let mut in_memory = store.all();
+        let mut on_disk = RequestStore::new(Some(&path)).all();
+        in_memory.sort_by(|a, b| a.id.cmp(&b.id));
+        on_disk.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(in_memory.len(), 80);
+        assert_eq!(on_disk, in_memory, "the last save wrote the newest requests");
+    }
 }

@@ -27,7 +27,7 @@ use super::family_store::FamilyStore;
 use super::kid_filter;
 use super::library_index::{LibraryIndex, ScopeResolver};
 use super::personal_library::{LibraryError, PersonalLibrary};
-use super::pool::{FamilyPool, FilesChoice, LinkMode};
+use super::pool::{FamilyPool, FilesChoice, LinkMode, NotMarked};
 use super::request_service::{RequestError, RequestService as Requests, facts_from_path};
 use super::stream_tracker::{LiveStreamView, SongName, StreamTracker};
 use crate::services::common::AcquisitionTracker;
@@ -182,14 +182,21 @@ impl PersonalFolders for PoolFolders {
         .unwrap_or(LinkMode::Copy)
     }
 
+    /// Writes the marker only where the pool folder plainly is the pool
+    /// ([`FamilyPool::mark_when_plainly_ours`]): over records whose files are all missing, Family
+    /// stays off and the owner is told the members disk may not be mounted.
     async fn mark_pool(&self) -> Result<(), String> {
         let pool = Arc::clone(self.personal.pool());
         let root = pool.pool_root_path();
-        tokio::task::spawn_blocking(move || pool.mark_pool_root())
+        let marked = tokio::task::spawn_blocking(move || pool.mark_when_plainly_ours())
             .await
-            .map_err(|e| e.to_string())
-            .and_then(|marked| marked.map_err(|e| e.to_string()))
-            .map_err(|e| format!("Octo could not write its marker file in {root} ({e})."))
+            .map_err(|e| format!("Octo could not write its marker file in {root} ({e})."))?;
+        marked.map_err(|e| match e {
+            NotMarked::DiskMissing { recorded } => format!(
+                "Octo cannot find any of the {recorded} family downloads it recorded in {root}, so the members disk may not be mounted. Mount it, then turn Family on again."
+            ),
+            NotMarked::Io(e) => format!("Octo could not write its marker file in {root} ({e})."),
+        })
     }
 
     fn mode(&self) -> Option<LinkMode> {

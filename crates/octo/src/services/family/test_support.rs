@@ -25,7 +25,7 @@ use super::family_playlist_store::FamilyPlaylistStore;
 use super::family_pool_store::FamilyPoolStore;
 use super::family_store::{FamilyStore, Member, SharedLibraries};
 use super::library_index::LibraryIndex;
-use super::pool::{FamilyPool, MemberStars, PoolParts, PoolTiming};
+use super::pool::{FamilyPool, MemberStars, PoolParts, PoolTiming, SteadyClock};
 use super::request_service::{
     FamilyEvents, Fetched, OutsideTarget, RequestCatalog, RequestFacts, RequestFetcher, RequestParts,
     RequestService,
@@ -47,6 +47,9 @@ pub(crate) struct RecordingLibrary {
     pub forgotten: Mutex<Vec<String>>,
     pub restored: Mutex<Vec<String>>,
     pub scanning: AtomicBool,
+    /// While set, starting a scan of one library panics, as a bug in the middle of a change
+    /// would.
+    pub panics: AtomicBool,
 }
 
 impl RecordingLibrary {
@@ -123,6 +126,10 @@ impl ILocalLibraryService for RecordingLibrary {
     }
 
     async fn trigger_library_scan_of(&self, library_id: i64) -> bool {
+        assert!(
+            !self.panics.load(Ordering::SeqCst),
+            "a scan of library {library_id} panicked"
+        );
         self.targeted.lock().push(library_id);
         true
     }
@@ -196,6 +203,8 @@ pub(crate) struct World {
     pub playlists: Arc<FamilyPlaylistStore>,
     pub pool: Arc<FamilyPool>,
     pub now: Arc<Mutex<DateTime<Utc>>>,
+    /// The time that has really passed, by the pool's steady clock.
+    pub elapsed: Arc<Mutex<Duration>>,
 }
 
 impl World {
@@ -261,6 +270,11 @@ impl World {
             Clock::new(move || *now.lock())
         };
         pool.set_clock(clock);
+        let elapsed = Arc::new(Mutex::new(Duration::ZERO));
+        pool.set_steady_clock({
+            let elapsed = elapsed.clone();
+            SteadyClock::new(move || *elapsed.lock())
+        });
         World {
             dir,
             settings,
@@ -271,11 +285,19 @@ impl World {
             playlists,
             pool,
             now,
+            elapsed,
         }
     }
 
-    /// Moves the pool's clock `minutes` on.
+    /// Lets `minutes` really pass: the wall clock and the steady clock both move on.
     pub fn later(&self, minutes: i64) {
+        *self.now.lock() += TimeDelta::minutes(minutes);
+        *self.elapsed.lock() += Duration::from_secs(60 * minutes.max(0) as u64);
+    }
+
+    /// Moves the wall clock alone `minutes` on (back, when negative), as a clock set by hand or
+    /// by a time server does, while no real time passes.
+    pub fn jump_wall(&self, minutes: i64) {
         *self.now.lock() += TimeDelta::minutes(minutes);
     }
 

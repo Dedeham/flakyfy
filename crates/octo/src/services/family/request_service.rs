@@ -945,12 +945,14 @@ impl RequestService {
         Ok(canceled)
     }
 
-    /// Closes the requests of a member who is leaving the family: each one still waiting or
-    /// approved is canceled (so nobody can approve it any more, and a restart never starts it
-    /// again), and its playlist addition, if it is one, leaves the playlist. A download already
-    /// on its way for one of them is let go of when it lands ([`FamilyPool::let_go`]), so
-    /// nothing is left in the pool for nobody. Answers how many.
-    pub fn close_member(&self, user: &str) -> usize {
+    /// Closes the requests of a member who has left the family (called once they are out of
+    /// it): each one still waiting or approved is canceled (so nobody can approve it any more,
+    /// and a restart never starts it again), and its playlist addition, if it is one, leaves
+    /// the playlist. A download already on its way for one of them is let go of when it lands
+    /// ([`FamilyPool::let_go`]), and so is every pool file still recorded for them now: one
+    /// that landed after their files were let go of and before they were out of the family.
+    /// Nothing is left in the pool for nobody. Answers how many requests were canceled.
+    pub async fn close_member(&self, user: &str) -> usize {
         let canceled = self.requests.cancel_live_of(user);
         for request in &canceled {
             self.drop_playlist_entry(request);
@@ -960,6 +962,10 @@ impl RequestService {
                 "FAMILY {} waiting or approved request(s) of {user} canceled as they left the family",
                 canceled.len()
             );
+        }
+        let pool = self.pool();
+        for file in pool.store().refs_of(user) {
+            pool.let_go(&file.path, user).await;
         }
         canceled.len()
     }
@@ -1102,6 +1108,9 @@ impl RequestService {
                     Ok(link) => self.wait_done(request, &link, outcome).await,
                     Err(e) => {
                         warn!("FAMILY request {} could not link {path}: {e}", request.id);
+                        // Not theirs after all (they left the family as it landed, or it could
+                        // not be linked): it is not kept for nobody.
+                        self.pool().let_go(&path, &user).await;
                         self.failed(request, e.for_member());
                     }
                 },
@@ -1158,7 +1167,18 @@ impl RequestService {
         let mut failure = None;
         for path in &landed {
             if let Some(link) = self.pool().link_path(path, &request.username) {
-                shown.push(link);
+                // A song placed without their link (they left the family as it landed) is not
+                // kept for nobody.
+                let theirs = self
+                    .pool()
+                    .store()
+                    .get(path)
+                    .is_some_and(|file| file.refs.iter().any(|r| eq_ignore_case(r, &request.username)));
+                if theirs {
+                    shown.push(link);
+                } else {
+                    self.pool().let_go(path, &request.username).await;
+                }
                 continue;
             }
             match self.outside_pool_place(&request.username, path, None, None).await {

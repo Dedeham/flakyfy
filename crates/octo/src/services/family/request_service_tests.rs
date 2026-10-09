@@ -571,7 +571,7 @@ async fn a_member_who_leaves_while_their_download_is_on_its_way_leaves_nothing_b
     tokio::time::sleep(Duration::from_millis(50)).await;
     // Alex leaves the family as removing a member does it: gone, then their requests closed.
     setup.world.family.remove_member("alex");
-    assert_eq!(setup.service.close_member("alex"), 1);
+    assert_eq!(setup.service.close_member("alex").await, 1);
     assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
     let pooled = format!("{}/Artist/Album/60.flac", setup.world.pool.pool_root_path());
     let trash = format!("{}/.octo-trash", setup.world.members());
@@ -581,8 +581,9 @@ async fn a_member_who_leaves_while_their_download_is_on_its_way_leaves_nothing_b
         "the download that landed went to the trash"
     );
     assert!(!std::path::Path::new(&pooled).exists());
+    let store = setup.world.pool.store().clone();
     assert!(
-        setup.world.pool.store().list().is_empty(),
+        eventually(|| store.list().is_empty()).await,
         "nothing in the pool for nobody"
     );
     assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
@@ -1298,4 +1299,253 @@ async fn eventually_long(mut check: impl FnMut() -> bool) -> bool {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     check()
+}
+
+// ---- Racing decisions, the weekly limit and members who leave, on many threads ---------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approve_decline_and_cancel_at_once_settle_on_one_decision() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[]).await;
+    world.point_at(&navidrome.uri());
+    let mut co = member("cy", Preset::CoAdmin, 7);
+    co.edits.insert("ApproveRequests".into(), json!(true));
+    world.family.upsert_member(co);
+    let mut unlimited = member("sam", Preset::Listener, 4);
+    unlimited.edits.insert("WeeklyRequestLimit".into(), json!(0));
+    world.family.upsert_member(unlimited);
+    let mut setup = setup(world);
+    let (mut approved, mut declined) = (0, 0);
+    for n in 0..30 {
+        let made = setup
+            .service
+            .create("sam", &format!("ext-test-song-5{n}0"), RequestQuality::Best, None)
+            .await
+            .expect("made");
+        assert_eq!(made.state, RequestState::Pending);
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let racers: Vec<_> = (0..3)
+            .map(|racer| {
+                let (service, barrier, id) = (setup.service.clone(), barrier.clone(), made.id.clone());
+                tokio::task::spawn_blocking(move || {
+                    barrier.wait();
+                    let won = match racer {
+                        0 => service.approve(&id, "winters", None).is_ok(),
+                        1 => service.decline(&id, "cy", Some("No")).is_ok(),
+                        _ => service.cancel(&id, "sam").is_ok(),
+                    };
+                    won.then_some(racer)
+                })
+            })
+            .collect();
+        let mut winners = Vec::new();
+        for racer in racers {
+            winners.extend(racer.await.expect("joins"));
+        }
+        assert_eq!(winners.len(), 1, "round {n}: exactly one decision: {winners:?}");
+        let state = state_of(&setup, &made.id);
+        match winners[0] {
+            0 => {
+                approved += 1;
+                assert!(
+                    matches!(
+                        state,
+                        RequestState::Approved | RequestState::Done | RequestState::Failed
+                    ),
+                    "round {n}: {state:?}"
+                );
+            }
+            1 => {
+                declined += 1;
+                assert_eq!(state, RequestState::Declined, "round {n}");
+            }
+            _ => assert_eq!(state, RequestState::Cancelled, "round {n}"),
+        }
+    }
+    let fetched = setup.fetcher.clone();
+    assert!(
+        eventually_long(|| fetched.asked.lock().len() == approved).await,
+        "each approved request is fetched once: {} fetches for {approved}",
+        fetched.asked.lock().len()
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(setup.fetcher.asked.lock().len(), approved, "and only those");
+    let mut decided = 0;
+    while let Ok(event) = setup.events.try_recv() {
+        if matches!(event, FamilyEvent::RequestDecided(_)) {
+            decided += 1;
+        }
+    }
+    assert_eq!(decided, approved + declined, "each decision is told once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asks_from_two_members_at_once_never_pass_either_weekly_limit() {
+    for round in 0..5 {
+        let world = World::new(None);
+        let mut alex = member("alex", Preset::Member, 3);
+        alex.edits.insert("WeeklyRequestLimit".into(), json!(3));
+        alex.edits.insert("AutoApprove".into(), json!(true));
+        world.family.upsert_member(alex);
+        let mut sam = member("sam", Preset::Listener, 4);
+        sam.edits.insert("WeeklyRequestLimit".into(), json!(2));
+        world.family.upsert_member(sam);
+        let setup = setup(world);
+        *setup.catalog.delay.lock() = Duration::from_millis(5);
+        let asks: Vec<_> = (0..24)
+            .map(|n| {
+                let service = setup.service.clone();
+                let user = if n % 2 == 0 { "alex" } else { "sam" };
+                // Every third ask repeats an earlier one, which answers the same request.
+                let song = if n % 3 == 0 { n / 3 } else { n };
+                tokio::spawn(async move {
+                    let made = service
+                        .create(
+                            user,
+                            &format!("ext-test-song-8{song}"),
+                            RequestQuality::Best,
+                            None,
+                        )
+                        .await;
+                    (user, made)
+                })
+            })
+            .collect();
+        let mut made: HashSet<(String, String)> = HashSet::new();
+        for ask in asks {
+            let (user, outcome) = ask.await.expect("joins");
+            match outcome {
+                Ok(request) => {
+                    made.insert((user.to_string(), request.id));
+                }
+                Err(e) => assert!(
+                    e.message.contains("of your requests"),
+                    "round {round}: {}",
+                    e.message
+                ),
+            }
+        }
+        let of = |user: &str| made.iter().filter(|(who, _)| who == user).count();
+        assert_eq!(of("alex"), 3, "round {round}: three slots a week");
+        assert_eq!(of("sam"), 2, "round {round}: two slots a week");
+        assert_eq!(setup.service.quota_used("alex"), 3, "round {round}");
+        assert_eq!(setup.service.quota_used("sam"), 2, "round {round}");
+    }
+}
+
+/// What is left of `user` in the family pool: records naming them, songs in their folder, and
+/// pool files nobody has.
+fn left_of(world: &World, user: &str) -> Vec<String> {
+    let audio = |path: &String| path.ends_with(".flac") || path.ends_with(".mp3");
+    let mut found: Vec<String> = world
+        .pool
+        .store()
+        .list()
+        .into_iter()
+        .filter(|file| file.refs.is_empty() || file.refs.iter().any(|r| r.eq_ignore_ascii_case(user)))
+        .map(|file| format!("{} is recorded for {:?}", file.path, file.refs))
+        .collect();
+    found.extend(
+        walk(&format!("{}/{user}", world.members()))
+            .into_iter()
+            .filter(audio)
+            .map(|path| format!("{path} is in their folder")),
+    );
+    found.extend(
+        walk(&world.pool.pool_root_path())
+            .into_iter()
+            .filter(audio)
+            .map(|path| format!("{path} is in the pool")),
+    );
+    found
+}
+
+/// Removes `user` from the family the way removing a member does it: their files are let go
+/// of, Navidrome is asked to delete their library and account (`navidrome` long), they are
+/// taken out of the family, and their requests are closed.
+async fn remove_as_the_family_page_does(setup: &Setup, user: &str, navidrome: Duration) {
+    setup
+        .world
+        .pool
+        .release_member(user, crate::services::family::pool::FilesChoice::Delete)
+        .await
+        .expect("released");
+    tokio::time::sleep(navidrome).await;
+    setup.world.family.remove_member(user);
+    setup.service.close_member(user).await;
+}
+
+#[tokio::test]
+async fn a_download_that_lands_while_its_member_is_being_removed_is_let_go_of() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[]).await;
+    world.point_at(&navidrome.uri());
+    let setup = setup(world);
+    *setup.fetcher.delay.lock() = Duration::from_millis(150);
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-61", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert_eq!(made.state, RequestState::Approved);
+    // The download lands while Navidrome is asked to delete their library and account.
+    remove_as_the_family_page_does(&setup, "alex", Duration::from_millis(400)).await;
+    let world = &setup.world;
+    assert!(
+        eventually_long(|| left_of(world, "alex").is_empty()).await,
+        "{:#?}",
+        left_of(world, "alex")
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(left_of(world, "alex").is_empty(), "{:#?}", left_of(world, "alex"));
+    assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_removed_members_late_downloads_are_let_go_of_whenever_they_land() {
+    for round in 0..16u64 {
+        let world = World::new(None);
+        let navidrome = navidrome_knowing(&world, &[]).await;
+        world.point_at(&navidrome.uri());
+        let setup = setup(world);
+        *setup.fetcher.delay.lock() = Duration::from_millis(round * 7 % 60);
+        let mut asked = Vec::new();
+        for n in 0..3 {
+            let made = setup
+                .service
+                .create(
+                    "alex",
+                    &format!("ext-test-song-9{round}{n}"),
+                    RequestQuality::Best,
+                    None,
+                )
+                .await
+                .expect("made");
+            asked.push(made.id);
+        }
+        tokio::time::sleep(Duration::from_millis(round * 13 % 50)).await;
+        remove_as_the_family_page_does(&setup, "alex", Duration::from_millis(round * 11 % 80)).await;
+        let world = &setup.world;
+        assert!(
+            eventually_long(|| left_of(world, "alex").is_empty()).await,
+            "round {round}: {:#?}",
+            left_of(world, "alex")
+        );
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert!(
+            left_of(world, "alex").is_empty(),
+            "round {round}: {:#?}",
+            left_of(world, "alex")
+        );
+        for id in &asked {
+            let state = state_of(&setup, id);
+            assert!(
+                matches!(
+                    state,
+                    RequestState::Cancelled | RequestState::Done | RequestState::Failed
+                ),
+                "round {round}: {state:?}"
+            );
+        }
+    }
 }

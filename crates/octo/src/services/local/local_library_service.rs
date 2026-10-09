@@ -12,8 +12,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
-use octo_core::common::SongIdentity;
 use octo_core::common::dotnet::{self, eq_ignore_case, escape_data_string};
+use octo_core::common::{PathHelper, SongIdentity};
 use octo_core::json::{self, datetime};
 use octo_core::models::domain::Song;
 use octo_core::models::subsonic::ScanStatus;
@@ -546,6 +546,25 @@ impl ILocalLibraryService for LocalLibraryService {
             return true;
         }
         self.send_scan(force).await
+    }
+
+    async fn update_local_path(&self, old_path: &str, new_path: &str) -> anyhow::Result<usize> {
+        if dotnet::is_blank(old_path) || dotnet::is_blank(new_path) {
+            return Ok(0);
+        }
+        let mut cached = self.mappings.lock();
+        let mappings = self.loaded(&mut cached)?;
+        let mut moved = 0;
+        for mapping in mappings.values_mut() {
+            if let Some(now) = PathHelper::moved_path(&mapping.local_path, old_path, new_path) {
+                mapping.local_path = now;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.save(mappings)?;
+        }
+        Ok(moved)
     }
 
     async fn start_scan(&self) -> bool {

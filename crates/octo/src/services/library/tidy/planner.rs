@@ -63,7 +63,8 @@ pub struct TidyFile {
 }
 
 /// What the planner works from besides the files.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TidyAnswers {
     /// MusicBrainz artists by an exact name, keyed by [`artist_lookup_key`]: the names those
     /// artists are spelled with, empty when there is none. A name missing here was not asked.

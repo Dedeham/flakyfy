@@ -181,6 +181,24 @@ impl DownloadHistoryService {
         }
     }
 
+    /// Follow a folder the library tidy moved, so a fetched song's row names where it is now.
+    /// Answers how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut cache = self.cache.lock();
+        let list = self.load_locked(&mut cache);
+        let mut moved = 0;
+        for entry in list.iter_mut() {
+            if let Some(now) = octo_core::common::PathHelper::moved_path(&entry.path, from, to) {
+                entry.path = now;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.save_locked(list);
+        }
+        moved
+    }
+
     /// Append a fetched-song entry (newest first) and persist.
     pub fn record(&self, entry: DownloadHistoryEntry) {
         let mut cache = self.cache.lock();

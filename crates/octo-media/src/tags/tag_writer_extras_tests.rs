@@ -448,3 +448,56 @@ fn clearing_a_txxx_field_leaves_the_rest() {
         Some("CDV 2851")
     );
 }
+
+// ---- reading artist fields back --------------------------------------------------------------
+
+#[test]
+fn artists_and_artist_ids_read_back_from_mp3_and_flac() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for path in [new_mp3(dir.path()), new_flac(dir.path())] {
+        let mut file = open(&path);
+        extras::set_multi_value(&mut file, "ARTISTS", &strings(&["Bizarrap", "Rauw Alejandro"]));
+        extras::set_multi(
+            &mut file,
+            TagFields::ARTIST_ID,
+            &strings(&["11111111-2222-3333-4444-555555555555/AAAAAAAA-2222-3333-4444-555555555555"]),
+        );
+        file.save().expect("saved");
+
+        let file = open(&path);
+        assert_eq!(
+            extras::read_values(&file, TagFields::ARTISTS),
+            ["Bizarrap", "Rauw Alejandro"]
+        );
+        assert_eq!(
+            extras::read_artist_ids(&file),
+            [
+                "11111111-2222-3333-4444-555555555555",
+                "aaaaaaaa-2222-3333-4444-555555555555"
+            ]
+        );
+
+        let mut file = open(&path);
+        extras::set_or_clear_text(&mut file, TagFields::ARTISTS, None);
+        file.save().expect("saved");
+        assert!(extras::read_values(&open(&path), TagFields::ARTISTS).is_empty());
+    }
+}
+
+#[test]
+fn an_id3v23_artist_frame_with_a_slash_is_seen() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = new_mp3(dir.path());
+    let mut file = open(&path);
+    file.set_performers(&strings(&["AC/DC"]));
+    file.save().expect("saved");
+
+    let file = open(&path);
+    assert_eq!(file.performers(), ["AC", "DC"]);
+    assert!(extras::artist_frame_splits_on_slash(&file));
+    let flac = new_flac(dir.path());
+    let mut file = open(&flac);
+    file.set_performers(&strings(&["AC/DC"]));
+    file.save().expect("saved");
+    assert!(!extras::artist_frame_splits_on_slash(&open(&flac)));
+}

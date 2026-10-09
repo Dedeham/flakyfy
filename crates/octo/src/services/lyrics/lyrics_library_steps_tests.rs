@@ -488,6 +488,7 @@ fn entry(
         id: None,
         duration: None,
         explicit_status: None,
+        missing: false,
     }
 }
 

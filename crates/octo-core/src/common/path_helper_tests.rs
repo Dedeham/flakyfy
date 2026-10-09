@@ -356,3 +356,18 @@ fn combine_follows_path_combine() {
     assert_eq!(directory_name("/a.flac"), "/");
     assert_eq!(directory_name("a.flac"), "");
 }
+
+#[test]
+fn a_path_follows_the_folder_it_was_in() {
+    let (from, to) = ("/music/Beyonce/A", "/music/Beyonc\u{e9}/A");
+    assert_eq!(
+        PathHelper::moved_path("/music/Beyonce/A/01 - S.flac", from, to).as_deref(),
+        Some("/music/Beyonc\u{e9}/A/01 - S.flac")
+    );
+    assert_eq!(PathHelper::moved_path(from, from, to).as_deref(), Some(to));
+    assert_eq!(
+        PathHelper::moved_path("/music/Beyonce/AB/01.flac", from, to),
+        None
+    );
+    assert_eq!(PathHelper::moved_path("/music/Other/01.flac", from, to), None);
+}

@@ -361,3 +361,30 @@ fn recent_is_newest_first() {
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].key, key);
 }
+
+/// The tidy moved the folder: the question follows the file, and is still never asked twice.
+#[test]
+fn a_question_follows_a_moved_folder() {
+    let queue = NoticeQueue::new();
+    queue.add_review(
+        "alice",
+        "/music/Beyonce/A/a.flac",
+        &song(),
+        &verdict(InconclusiveReason::NoEntry),
+    );
+
+    assert_eq!(queue.move_paths("/music/Beyonce/A", "/music/Beyonc\u{e9}/A"), 1);
+
+    let entry = only(&queue, "alice");
+    assert_eq!(entry.local_path, "/music/Beyonc\u{e9}/A/a.flac");
+    assert_eq!(
+        entry.key,
+        NoticeQueue::review_key("alice", "/music/Beyonc\u{e9}/A/a.flac")
+    );
+    assert!(!queue.add_review(
+        "alice",
+        "/music/Beyonc\u{e9}/A/a.flac",
+        &song(),
+        &verdict(InconclusiveReason::NoEntry)
+    ));
+}

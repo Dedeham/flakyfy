@@ -86,6 +86,13 @@ pub trait ILocalLibraryService: Send + Sync {
     /// Gets the current scan status
     async fn get_scan_status(&self) -> Option<ScanStatus>;
 
+    /// Point every mapping at or inside `old_path` at where it is now, after the library tidy
+    /// moved it. Answers how many mappings followed.
+    async fn update_local_path(&self, old_path: &str, new_path: &str) -> anyhow::Result<usize> {
+        let _ = (old_path, new_path);
+        Ok(0)
+    }
+
     /// Starts a scan now, past any hold on Octo's own triggers: the scan the holder itself needs.
     async fn start_scan(&self) -> bool {
         self.trigger_library_scan(true).await

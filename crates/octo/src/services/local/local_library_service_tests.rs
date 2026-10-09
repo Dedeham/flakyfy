@@ -611,3 +611,35 @@ async fn held_scans_wait_and_the_holder_still_scans() {
     assert!(f.service.trigger_library_scan(true).await);
     assert_eq!(starts(&f).await, 2);
 }
+
+/// The tidy moves a folder; every mapping inside it follows, on disk too, so the existing-file
+/// check still finds the song after a restart.
+#[tokio::test]
+async fn update_local_path_the_mapping_follows_a_moved_folder() {
+    let f = Fixture::new().await;
+    let song = Song {
+        title: "Session".into(),
+        artist: "Bizarrap, Rauw Alejandro".into(),
+        external_provider: Some("deezer".into()),
+        external_id: Some("4242".into()),
+        ..Song::default()
+    };
+    let from = f.path("Bizarrap, Rauw Alejandro/Album");
+    let to = f.path("Bizarrap/Album");
+    std::fs::create_dir_all(&to).expect("made");
+    std::fs::write(format!("{to}/Session.flac"), "moved").expect("written");
+    f.service
+        .register_downloaded_song(&song, &format!("{from}/Session.flac"))
+        .await
+        .expect("registered");
+
+    assert_eq!(f.service.update_local_path(&from, &to).await.expect("saved"), 1);
+    assert_eq!(f.service.update_local_path(&from, &to).await.expect("saved"), 0);
+
+    assert_eq!(
+        f.service.get_local_path_for_external_song("deezer", "4242").await,
+        Some(format!("{to}/Session.flac"))
+    );
+    let on_disk = std::fs::read_to_string(f.mappings_file()).expect("written");
+    assert!(on_disk.contains("Bizarrap/Album/Session.flac"), "{on_disk}");
+}

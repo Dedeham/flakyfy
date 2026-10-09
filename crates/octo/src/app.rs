@@ -526,6 +526,8 @@ pub struct AppInner {
     pub family: Arc<FamilyService>,
     /// Whether Family's background work has been started (see [`AppInner::start_family`]).
     family_started: AtomicBool,
+    /// Whether the library index is being read (see [`AppInner::start_library_index`]).
+    library_index_started: AtomicBool,
 }
 
 /// Library health for the dashboard (`Program.cs`, 69f577f): the app's checks over the library
@@ -684,7 +686,12 @@ impl Acquisition {
         downloads: DownloadDeps<'_>,
         download_service: Option<Arc<dyn IDownloadService>>,
     ) -> Acquisition {
-        let track_acquisition_queue = Arc::new(TrackAcquisitionQueue::new());
+        // Stars take turns per person while Family is on, and keep their order otherwise.
+        let family_on = Arc::clone(settings);
+        let track_acquisition_queue = Arc::new(
+            TrackAcquisitionQueue::new()
+                .with_fair_turns(Arc::new(move || family_on.current().family.enabled)),
+        );
         let acquisition_activity = Arc::new(AcquisitionActivity::new(track_acquisition_queue.clone()));
         let acquisition_tracker = Arc::new(AcquisitionTracker::new(
             Some(TrackerServices {
@@ -2263,11 +2270,7 @@ impl AppInner {
         {
             tracing::warn!("FAMILY family.key could not be made: {e}");
         }
-        let index = self.library_index.clone();
-        let library = self.local_library.clone();
-        self.workers.register("LibraryIndex", move |token| {
-            index.clone().run(token, library.clone())
-        });
+        self.start_library_index();
         let caps = Arc::new(PlayerCaps::new(
             self.settings.clone(),
             self.family_store.clone(),
@@ -2287,6 +2290,47 @@ impl AppInner {
         });
         true
     }
+
+    /// Starts reading the library index (once): while Family is on, and while members' own
+    /// libraries are still there after it was turned off, since library-wide work keeps to the
+    /// shared library as long as they are and tells songs apart by the index.
+    pub fn start_library_index(&self) {
+        if self.library_index_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let index = self.library_index.clone();
+        let library = self.local_library.clone();
+        self.workers.register("LibraryIndex", move |token| {
+            index.clone().run(token, library.clone())
+        });
+    }
+}
+
+/// Waits until Family is on (its setting changed by any means: the Family page, the dashboard,
+/// or `settings.json` edited by hand), then starts its work. Ends then, when the state is gone,
+/// or on shutdown.
+async fn watch_for_family(state: std::sync::Weak<AppInner>, token: CancellationToken) -> anyhow::Result<()> {
+    let Some(mut changes) = state.upgrade().map(|inner| inner.settings.subscribe()) else {
+        return Ok(());
+    };
+    loop {
+        match state.upgrade() {
+            None => return Ok(()),
+            Some(inner) if inner.settings.current().family.enabled => {
+                AppState::from_inner(inner).start_family();
+                return Ok(());
+            }
+            Some(_) => {}
+        }
+        tokio::select! {
+            () = token.cancelled() => return Ok(()),
+            changed = changes.changed() => {
+                if changed.is_err() {
+                    return Ok(());
+                }
+            }
+        }
+    }
 }
 
 impl AppState {
@@ -2301,6 +2345,22 @@ impl AppState {
         self.workers.register("FamilyWork", move |token| {
             crate::services::family::family_service::run_family_work(weak.clone(), token)
         });
+    }
+
+    /// While Family is off: reads the library index when members' own libraries are still
+    /// there from a time it was on, and watches the settings, so Family turned on in
+    /// `settings.json` by hand starts its work ([`Self::start_family`]) the moment Octo reads
+    /// the file again. The watch ends once Family is on.
+    pub fn watch_family_switch(&self) {
+        if self.settings.current().family.enabled {
+            return;
+        }
+        if self.family_store.has_personal_libraries() {
+            self.inner.start_library_index();
+        }
+        let weak = Arc::downgrade(&self.inner);
+        self.workers
+            .register("FamilySwitch", move |token| watch_for_family(weak.clone(), token));
     }
 
     /// Connects the family service to the services that do its work, once the state is built:
@@ -2661,6 +2721,7 @@ impl AppState {
             family_request_service: family_requests.service,
             family_events: family_requests.events,
             family_started: AtomicBool::new(false),
+            library_index_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
         let state = AppState {
@@ -2668,6 +2729,7 @@ impl AppState {
         };
         state.wire_family();
         state.start_family();
+        state.watch_family_switch();
         state
     }
 
@@ -3019,6 +3081,7 @@ impl AppState {
             family_request_service: family_requests.service,
             family_events: family_requests.events,
             family_started: AtomicBool::new(false),
+            library_index_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
         let state = AppState {
@@ -3413,6 +3476,70 @@ mod tests {
         );
         let sealed = state.family_vault.seal("hidden").expect("a key");
         assert_eq!(state.family_vault.open_sealed(&sealed).as_deref(), Some("hidden"));
+    }
+
+    fn worker_count(state: &AppState, name: &str) -> usize {
+        state
+            .workers
+            .status()
+            .into_iter()
+            .filter(|s| s.name == name)
+            .count()
+    }
+
+    /// Family turned on by editing `settings.json` (read again by the settings watcher) starts
+    /// its work as the Family page's switch does.
+    #[tokio::test]
+    async fn family_turned_on_in_the_settings_file_starts_its_work() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let state = AppState::for_tests_with(
+            AppSettings::default(),
+            TestServices {
+                config_dir: Some(dir.path().to_path_buf()),
+                ..Default::default()
+            },
+        );
+        let watching = tokio::spawn(watch_for_family(
+            Arc::downgrade(&state.inner),
+            CancellationToken::new(),
+        ));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(worker_count(&state, "FamilyStore"), 0);
+        let mut on = state.settings.current().as_ref().clone();
+        on.family.enabled = true;
+        state.settings.set(on);
+        tokio::time::timeout(Duration::from_secs(2), watching)
+            .await
+            .expect("the watch ends")
+            .expect("joins")
+            .expect("ok");
+        assert_eq!(worker_count(&state, "FamilyStore"), 1);
+        assert_eq!(worker_count(&state, "LibraryIndex"), 1);
+        assert_eq!(worker_count(&state, "FamilyWork"), 1);
+        assert!(state.family_vault.has_key());
+    }
+
+    /// With Family off, members' libraries kept from a time it was on keep the library index
+    /// read, and Family being turned on is watched for.
+    #[test]
+    fn family_off_with_members_libraries_reads_the_index_and_watches_the_switch() {
+        let state = AppState::for_tests(AppSettings::default());
+        state.watch_family_switch();
+        assert_eq!(worker_count(&state, "LibraryIndex"), 0, "nobody has a library");
+        assert_eq!(worker_count(&state, "FamilySwitch"), 1);
+
+        let state = AppState::for_tests(AppSettings::default());
+        state
+            .family_store
+            .upsert_member(crate::services::family::test_support::member(
+                "alex",
+                octo_core::family::abilities::Preset::Member,
+                3,
+            ));
+        state.watch_family_switch();
+        assert_eq!(worker_count(&state, "LibraryIndex"), 1);
+        state.inner.start_library_index();
+        assert_eq!(worker_count(&state, "LibraryIndex"), 1, "read once");
     }
 
     #[test]

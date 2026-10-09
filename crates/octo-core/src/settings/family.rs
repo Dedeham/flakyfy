@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::family::device::parse_networks;
 
+/// The `MembersPath` value that keeps members' music next to the music folder.
+pub const MEMBERS_NEXT_TO_MUSIC: &str = "Auto";
+
+/// The folder inside the music folder that holds members' music when `MembersPath` is `Auto`.
+pub const FAMILY_FOLDER: &str = ".octo-family";
+
 /// Octo Family's settings. Off by default, and with `Enabled` false nothing Octo answers
 /// changes.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -14,7 +20,9 @@ pub struct FamilySettings {
     /// Turns Family on. Environment variable: FAMILY__ENABLED (docker-compose maps
     /// FAMILY_ENABLED).
     pub enabled: bool,
-    /// Where members' own libraries live, at the same path inside Octo and Navidrome.
+    /// Where members' own libraries live, at the same path inside Octo and Navidrome. `Auto`
+    /// (the default) is a `.octo-family` folder in the music folder Octo shares with
+    /// Navidrome; anything else is a full folder path.
     pub members_path: String,
     /// Networks that count as home (commas or spaces between them; a bare address is one
     /// host). Everything else is away.
@@ -46,7 +54,7 @@ impl Default for FamilySettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            members_path: "/members".to_string(),
+            members_path: MEMBERS_NEXT_TO_MUSIC.to_string(),
             home_networks: "127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, ::1/128, fc00::/7"
                 .to_string(),
             trusted_proxies: "127.0.0.0/8, ::1/128".to_string(),
@@ -91,15 +99,30 @@ impl FamilySettings {
         )
     }
 
-    /// The members folder as written, without trailing slashes; `/members` when blank.
-    pub fn effective_members_path(&self) -> String {
+    /// Whether `MembersPath` asks for the folder next to the music: `Auto`, or blank.
+    pub fn members_path_is_auto(&self) -> bool {
+        let path = self.members_path.trim();
+        path.is_empty() || path.eq_ignore_ascii_case(MEMBERS_NEXT_TO_MUSIC)
+    }
+
+    /// The members folder without trailing slashes: `<music_root>/.octo-family` for `Auto`,
+    /// else the path as written.
+    pub fn members_path_in(&self, music_root: &str) -> String {
+        if self.members_path_is_auto() {
+            return next_to_music(music_root);
+        }
         let path = self.members_path.trim().trim_end_matches('/');
         if path.is_empty() {
-            "/members".to_string()
+            "/".to_string()
         } else {
             path.to_string()
         }
     }
+}
+
+/// The members folder next to the music folder `music_root`: `<music_root>/.octo-family`.
+pub fn next_to_music(music_root: &str) -> String {
+    format!("{}/{FAMILY_FOLDER}", music_root.trim().trim_end_matches('/'))
 }
 
 #[cfg(test)]
@@ -113,7 +136,9 @@ mod tests {
     fn defaults_are_off_and_safe() {
         let s = FamilySettings::default();
         assert!(!s.enabled);
-        assert_eq!(s.members_path, "/members");
+        assert_eq!(s.members_path, "Auto");
+        assert!(s.members_path_is_auto());
+        assert_eq!(s.members_path_in("/music/"), "/music/.octo-family");
         assert!(!s.owner_sees_member_libraries);
         assert!(!s.owner_sees_member_playlists);
         assert_eq!(s.unmanaged_accounts, "AsToday");
@@ -161,7 +186,8 @@ mod tests {
         let (settings, warnings) = AppSettings::bind(&tree);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(settings.family.enabled);
-        assert_eq!(settings.family.effective_members_path(), "/srv/members");
+        assert!(!settings.family.members_path_is_auto());
+        assert_eq!(settings.family.members_path_in("/music"), "/srv/members");
         assert_eq!(settings.family.trusted_proxy_list().len(), 2);
     }
 }

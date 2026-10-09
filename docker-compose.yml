@@ -301,8 +301,9 @@ services:
       Admin__Port: ${ADMIN_PORT:-0}
       # ----- Family -----
       # Accounts for the people you share your music with, each with a library of their
-      # own under /members (MEMBERS_DIR on this host, ./members by default). Off until you
-      # turn it on here or on the dashboard.
+      # own. Their music is kept next to yours, in a .octo-family folder inside the music
+      # folder, so it needs no volume of its own and stays out of your library. Off until
+      # you turn it on here or on the dashboard.
       Family__Enabled: ${FAMILY_ENABLED:-false}
       # ----- Logging -----
       # The two lines for every request and those for every call Octo makes to another
@@ -314,8 +315,10 @@ services:
       Logging__LogLevel__System.Net.Http.HttpClient: ${LOG_LEVEL_HTTPCLIENT:-Warning}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/music
-      # Family members' own libraries. Navidrome mounts the same folder at the same path.
-      - ${MEMBERS_DIR:-./members}:/members
+      # Only for keeping members' music somewhere other than next to your library: mount
+      # that folder here and on navidrome at the same path, then choose "Somewhere else"
+      # with that path when you turn Family on.
+      # - ${MEMBERS_DIR:-./members}:/members
       # Editable settings file: the admin UI writes here, Octo reloads it on
       # change. Bind-mounted to host so values survive `docker compose up`. The
       # update helper watches its update/ folder.
@@ -509,8 +512,9 @@ services:
       ND_DEVAUTOCREATEADMINPASSWORD: ${NAVIDROME_ADMIN_PASSWORD:-}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/music
-      # Family members' own libraries, at the same path Octo sees them.
-      - ${MEMBERS_DIR:-./members}:/members
+      # Only for keeping members' music somewhere other than next to your library: the
+      # same folder octo mounts, at the same path.
+      # - ${MEMBERS_DIR:-./members}:/members
       - ${NAVIDROME_DATA_DIR:-./navidrome-data}:/data
 
   # Octo and the sidecars built from this folder instead of pulled: for changes of your own,

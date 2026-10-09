@@ -17,6 +17,7 @@ use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
 use crate::services::admin::{AdminCallerKind, BrowseSessionStore};
+use crate::services::family::members_place;
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -47,13 +48,16 @@ pub async fn summary(State(state): State<AppState>, caller: Caller) -> Response 
             })
         })
         .collect();
-    let members_path = settings.family.effective_members_path();
+    let skips = members_place::navidrome_skips_dot_folders(&state).await;
+    let place = members_place::place(&state, skips);
     let links = state.family.link_status(&state);
     ok(&json!({
         "supported": true,
         "enabled": settings.family.enabled,
         "owner": state.family_store.owner(),
-        "membersPath": members_path,
+        "membersPath": place.path,
+        "membersPlace": place,
+        "navidromeSkipsDotFolders": members_place::dot_folders_json(skips),
         "links": links.as_ref().map(|status| status.links),
         "linksMessage": links.as_ref().and_then(|status| status.message.clone()),
         "linksFix": links.as_ref().and_then(|status| status.fix.clone()),
@@ -73,6 +77,9 @@ pub async fn summary(State(state): State<AppState>, caller: Caller) -> Response 
 #[serde(default)]
 pub struct EnableBody {
     pub enabled: Option<bool>,
+    /// Where members' music lives: `NextToMusic` or a full folder path. Absent keeps the setting.
+    #[serde(rename = "membersPath")]
+    pub members_path: Option<String>,
 }
 
 /// `POST /api/admin/family/enable`: the signed-in Navidrome admin turns Family on (becoming its
@@ -105,7 +112,11 @@ pub async fn enable(State(state): State<AppState>, caller: Caller, body: Bytes) 
             );
         }
     };
-    match state.family.enable(&state, &by, on).await {
+    match state
+        .family
+        .enable(&state, &by, on, request.members_path.as_deref())
+        .await
+    {
         Ok(report) => ok(&json!(report)),
         Err(e) => family_error(&e),
     }

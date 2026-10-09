@@ -37,6 +37,9 @@ use crate::services::family::navidrome_admin::{AdminError, NdLibrary, NdUser};
 use crate::services::family::request_store::new_request_id;
 use crate::services::family::{FamilyStore, Member, RequestStore, SharedLibraries, passwords};
 
+#[path = "members_place_tests.rs"]
+mod members_place_tests;
+
 const HOME: &str = "192.168.1.20";
 const AWAY: &str = "203.0.113.9";
 const ALEX_PASSWORD: &str = "correct horse";
@@ -1396,7 +1399,7 @@ async fn navidrome_cannot_see_the_members_folder_is_said_plainly_and_cleaned_up(
         )
         .await;
     assert_eq!(r.status, StatusCode::CONFLICT);
-    let members = f.state.settings.current().family.effective_members_path();
+    let members = crate::services::family::members_place::members_path(&f.state);
     assert_eq!(
         r.error(),
         format!(
@@ -1866,13 +1869,12 @@ async fn enable_is_for_the_owner_and_reports_the_probe() {
     let report = r.json();
     assert_eq!(report["enabled"], true);
     assert_eq!(report["links"], "Copy");
-    let members = f.state.settings.current().family.effective_members_path();
+    let members = crate::services::family::members_place::members_path(&f.state);
     assert_eq!(report["membersPath"], members);
     assert!(
         report["message"]
             .as_str()
-            .is_some_and(|m| m
-                .starts_with("This disk cannot link files, so a song two members want takes space twice.")),
+            .is_some_and(|m| m.contains("Family works either way.")),
         "{report}"
     );
     assert!(std::path::Path::new(&members).is_dir());

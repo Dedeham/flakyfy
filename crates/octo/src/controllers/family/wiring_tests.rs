@@ -833,8 +833,17 @@ async fn turning_family_on_probes_links_and_both_pages_show_them() {
         .json();
     assert_eq!(session["links"], "Copy", "{session}");
     let message = session["linksMessage"].as_str().expect("a message");
-    assert!(message.starts_with("This disk cannot link files"), "{message}");
-    assert!(message.contains("--vfs-links"), "{message}");
+    // The words name the storage the members folder is on (here a local disk).
+    let members = w.state.family_pool_service.members_root();
+    assert_eq!(
+        message,
+        crate::services::family::members_place::link_hint(&members).message
+    );
+    assert!(message.ends_with("Family works either way."), "{message}");
+    assert_eq!(
+        session["linksFix"],
+        crate::services::family::members_place::link_hint(&members).fix
+    );
     let summary = w
         .send(Method::GET, "/api/admin/family", Some(&admin), None)
         .await

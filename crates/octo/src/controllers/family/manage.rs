@@ -501,6 +501,9 @@ pub async fn load(State(state): State<AppState>, web: Web) -> Response {
 #[serde(default)]
 pub struct EnableBody {
     pub enabled: Option<bool>,
+    /// Where members' music lives: `NextToMusic` or a full folder path. Absent keeps the setting.
+    #[serde(rename = "membersPath")]
+    pub members_path: Option<String>,
 }
 
 /// `POST /api/family/enable`: the owner (a Navidrome admin) turns Family on or off.
@@ -516,7 +519,11 @@ pub async fn enable(State(state): State<AppState>, web: Web, body: Bytes) -> Res
     let Some(on) = request.enabled else {
         return refusal(StatusCode::BAD_REQUEST, "Say enabled true or false.");
     };
-    match state.family.enable(&state, signed.user(), on).await {
+    match state
+        .family
+        .enable(&state, signed.user(), on, request.members_path.as_deref())
+        .await
+    {
         Ok(report) => ok(&json!(report)),
         Err(e) => family_error(&e),
     }

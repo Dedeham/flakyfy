@@ -227,7 +227,10 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
     let manager = settings.family.enabled && FamilyService::may_manage(&state, &signed.actor);
     let approver = settings.family.enabled && FamilyService::may_approve(&state, &signed.actor);
     let links = state.family.link_status(&state);
-    let members_path = settings.family.effective_members_path();
+    let place = crate::services::family::members_place::place(&state, None);
+    let members_path = place.path.clone();
+    // Only the people who manage the family are told where its music lives.
+    let members_place = (manager || signed.actor.is_owner()).then_some(place);
     // Only the people who can change the server's settings are told how.
     let proxy_warning = web
         .untrusted_proxy
@@ -245,6 +248,7 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
         "place": web.place,
         "manageFromAway": settings.family.manage_from_away,
         "membersPath": members_path,
+        "membersPlace": members_place,
         "links": links.as_ref().map(|status| status.links),
         "linksMessage": links.as_ref().and_then(|status| status.message.clone()),
         "linksFix": links.as_ref().and_then(|status| status.fix.clone()),

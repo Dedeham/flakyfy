@@ -24,6 +24,7 @@ use tracing::{info, warn};
 use super::family_store::FamilyStore;
 use super::navidrome_admin::NavidromeAdmin;
 use super::vault::FamilyVault;
+use crate::services::admin::sign_in_throttle::trim_oldest;
 
 /// Every key a Subsonic sign-in can use.
 pub const SIGN_IN_KEYS: [&str; 6] = ["u", "p", "t", "s", "apiKey", "jwt"];
@@ -355,14 +356,69 @@ impl FailureThrottle {
         tries.len() >= MAX_FAILURES
     }
 
-    /// One more wrong sign-in for this key.
+    /// One more wrong sign-in for this key. Past [`MAX_KEYS`] keys, the ones with nothing recent
+    /// go, and then the ones whose last try is oldest, so a flood from many addresses cannot
+    /// grow the table without end.
     pub fn failed(&self, key: &str) {
         let now = self.clock.now();
         let mut failures = self.failures.lock();
         if failures.len() >= MAX_KEYS && !failures.contains_key(key) {
             failures.retain(|_, tries| tries.back().is_some_and(|last| now - *last < FAILURE_WINDOW));
+            trim_oldest(&mut failures, MAX_KEYS - 1, |tries| tries.back().copied());
         }
-        failures.entry(key.to_string()).or_default().push_back(now);
+        let tries = failures.entry(key.to_string()).or_default();
+        tries.push_back(now);
+        while tries.len() > MAX_FAILURES * 2 {
+            tries.pop_front();
+        }
+    }
+
+    /// Counts one try for this key now, before its sign-in is checked, and answers true; or
+    /// answers false, counting nothing, when the key has used up its tries. Checking and
+    /// counting happen under one lock, so tries sent all at once cannot all slip under the
+    /// limit. A try that turns out right is taken back with [`FailureThrottle::forgive`].
+    pub fn attempt(&self, key: &str) -> bool {
+        let now = self.clock.now();
+        let mut failures = self.failures.lock();
+        let tries = failures.entry(key.to_string()).or_default();
+        while tries.front().is_some_and(|first| now - *first >= FAILURE_WINDOW) {
+            tries.pop_front();
+        }
+        if tries.len() >= MAX_FAILURES {
+            return false;
+        }
+        tries.push_back(now);
+        if failures.len() > MAX_KEYS {
+            failures.retain(|_, tries| tries.back().is_some_and(|last| now - *last < FAILURE_WINDOW));
+            trim_oldest(&mut failures, MAX_KEYS, |tries| tries.back().copied());
+        }
+        true
+    }
+
+    /// Takes back the newest try of this key: one counted before its sign-in was checked,
+    /// which turned out right.
+    pub fn forgive(&self, key: &str) {
+        let mut failures = self.failures.lock();
+        if let Some(tries) = failures.get_mut(key) {
+            tries.pop_back();
+            if tries.is_empty() {
+                failures.remove(key);
+            }
+        }
+    }
+
+    /// How many keys the throttle holds now.
+    pub fn len(&self) -> usize {
+        self.failures.lock().len()
+    }
+
+    /// How many tries count for this key now.
+    pub fn tries(&self, key: &str) -> usize {
+        self.failures.lock().get(key).map_or(0, VecDeque::len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -402,11 +458,17 @@ impl MemberBridge {
         {
             return false;
         }
-        if logged.len() > MAX_KEYS {
+        if logged.len() >= MAX_KEYS {
             logged.retain(|_, at| now.duration_since(*at) < LOG_EVERY);
+            trim_oldest(&mut logged, MAX_KEYS - 1, |at| Some(*at));
         }
         logged.insert(key.to_string(), now);
         true
+    }
+
+    /// How many log keys are kept now.
+    pub fn logged_len(&self) -> usize {
+        self.logged.lock().len()
     }
 
     fn repair_lock(&self, user: &str) -> Arc<tokio::sync::Mutex<Option<Instant>>> {
@@ -486,6 +548,44 @@ pub async fn repair(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_try_counts_before_it_is_checked_and_a_right_one_is_taken_back() {
+        let throttle = FailureThrottle::new(Clock::system());
+        let key = FailureThrottle::key(&"203.0.113.9".parse().unwrap(), "Alex");
+        for _ in 0..MAX_FAILURES {
+            assert!(throttle.attempt(&key));
+        }
+        assert!(!throttle.attempt(&key), "the next try waits");
+        assert_eq!(throttle.tries(&key), MAX_FAILURES, "a refused try is not counted");
+        assert!(throttle.blocked(&key));
+        throttle.forgive(&key);
+        assert_eq!(throttle.tries(&key), MAX_FAILURES - 1);
+        assert!(throttle.attempt(&key));
+    }
+
+    #[test]
+    fn the_throttle_and_the_log_stay_bounded_under_a_flood() {
+        let throttle = FailureThrottle::new(Clock::system());
+        for n in 0..(MAX_KEYS + 50) {
+            throttle.failed(&format!("10.0.{}.{}|alex", n / 256, n % 256));
+        }
+        assert!(throttle.len() <= MAX_KEYS, "{}", throttle.len());
+        for n in 0..(MAX_KEYS + 50) {
+            assert!(throttle.attempt(&format!("10.1.{}.{}|alex", n / 256, n % 256)));
+        }
+        assert!(throttle.len() <= MAX_KEYS, "{}", throttle.len());
+        let key = "10.9.9.9|alex";
+        for _ in 0..(MAX_FAILURES * 5) {
+            throttle.failed(key);
+        }
+        assert!(throttle.tries(key) <= MAX_FAILURES * 2);
+        let bridge = MemberBridge::default();
+        for n in 0..(MAX_KEYS + 50) {
+            assert!(bridge.may_log(&format!("sign-in|user-{n}")));
+        }
+        assert!(bridge.logged_len() <= MAX_KEYS, "{}", bridge.logged_len());
+    }
 
     fn devices() -> Vec<DeviceSecret> {
         vec![

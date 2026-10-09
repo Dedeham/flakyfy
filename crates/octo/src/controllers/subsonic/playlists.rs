@@ -877,6 +877,14 @@ async fn family_mutate(
     let Some(playlist) = family_playlists::find(store, caller, id) else {
         return playlist_error(state, call, PlaylistError::NotFound);
     };
+    // Nothing here goes to Navidrome, so a sign-in the gate did not check is checked now,
+    // before a change is made in anyone's name.
+    if !caller.checked {
+        let ping = call.proxy.relay_safe("rest/ping", &call.parameters).await;
+        if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, &call.format)) {
+            return family_error(state, call, 40, "Wrong username or password");
+        }
+    }
     let done = || {
         state
             .subsonic_response_builder

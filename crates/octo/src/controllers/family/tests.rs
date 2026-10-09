@@ -2849,3 +2849,71 @@ async fn new_device_tells_the_owner_once() {
     assert_eq!(event.device_id, "d_sub");
     assert!(store.device("d_sub").expect("there").last_seen.is_some());
 }
+
+#[tokio::test]
+async fn the_family_page_says_plainly_when_family_is_off() {
+    let f = fam_with(|s| s.family.enabled = false, None).await;
+    for uri in [
+        "/family",
+        "/family/",
+        "/family/index.html",
+        "/family/join",
+        "/family/join.html",
+    ] {
+        let r = f.get(uri, None).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(
+            r.body.contains("Family is off on this server."),
+            "{uri}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("family.js"), "{uri}: {}", r.body);
+    }
+    // The page's own files are still served like any other.
+    assert_eq!(f.get("/family/family.css", None).await.status, StatusCode::OK);
+    // With Family on, the page is the page.
+    let on = fam().await;
+    let r = on.get("/family/", None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains("Family is off on this server."), "{}", r.body);
+}
+
+#[tokio::test]
+async fn the_family_page_names_the_setting_for_an_untrusted_proxy() {
+    let f = fam().await;
+    let through = |cookie: String| {
+        vec![
+            ("cookie", cookie),
+            ("x-forwarded-for", "198.51.100.7".to_string()),
+        ]
+    };
+    let r = raw(
+        &f.app,
+        Method::GET,
+        "/api/family/session",
+        &through(f.owner_cookie()),
+        String::new(),
+        "172.18.0.5",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let session = r.json();
+    let warning = session["proxyWarning"].as_str().expect("a warning");
+    assert!(warning.contains("Family:TrustedProxies"), "{warning}");
+    assert!(warning.contains("172.18.0.5"), "{warning}");
+    assert_eq!(session["place"], "Away");
+    // A member is not told how to change the server.
+    let r = raw(
+        &f.app,
+        Method::GET,
+        "/api/family/session",
+        &through(f.alex()),
+        String::new(),
+        "172.18.0.5",
+    )
+    .await;
+    assert!(r.json()["proxyWarning"].is_null(), "{}", r.body);
+    // Without a proxy in the way there is nothing to say.
+    let r = f.get("/api/family/session", Some(&f.owner_cookie())).await;
+    assert!(r.json()["proxyWarning"].is_null(), "{}", r.body);
+}

@@ -821,6 +821,10 @@ async fn an_outside_stream_is_named_from_the_metadata_service_and_never_waits_fo
         "stream",
         &parameters,
         &HeaderMap::new(),
+        &audio_gate::Sent {
+            query: Some(&format!("id={OUTSIDE}")),
+            ..Default::default()
+        },
     )
     .await
     .expect("alex may play it");
@@ -939,4 +943,363 @@ async fn family_playlists_follow_one_set_of_rules_everywhere() {
     assert_eq!(listed[0]["songCount"], 0);
     let deleted = w.page(Method::DELETE, &path, "winters", None).await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+}
+
+// ------------------------------------------------------------------------------------------
+// Sign-ins that are not what they claim
+// ------------------------------------------------------------------------------------------
+
+/// A token shaped like Navidrome's for `sub`, with a signature nobody made.
+fn forged_navidrome_token(sub: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    format!(
+        "{}.{}.{}",
+        URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#),
+        URL_SAFE_NO_PAD.encode(json!({ "sub": sub, "exp": 9999999999i64 }).to_string()),
+        URL_SAFE_NO_PAD.encode("not-a-signature")
+    )
+}
+
+/// A token shaped like Octo's own for `sub` and one of their devices, signed with a key that is
+/// not this server's.
+fn forged_octo_token(sub: &str, device: &str) -> String {
+    use crate::services::family::web_session::{WebClaims, mint};
+    let now = Utc::now().timestamp();
+    mint(
+        &[7u8; 32],
+        &WebClaims {
+            iss: "ND".into(),
+            sub: sub.into(),
+            uid: format!("u-{sub}"),
+            adm: false,
+            iat: now,
+            exp: now + 3600,
+            did: device.into(),
+        },
+    )
+}
+
+/// A request with extra headers and no cookie, from home.
+async fn send_with_headers(w: &Wired, method: Method, uri: &str, headers: &[(&str, String)]) -> Reply {
+    let mut req = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        req = req.header(*name, value.as_str());
+    }
+    let mut req = req.body(Body::empty()).expect("a request");
+    let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+    req.extensions_mut().insert(ConnectInfo(address));
+    let res = w.app.clone().oneshot(req).await.expect("infallible");
+    let status = res.status();
+    let bytes = res.into_body().collect().await.expect("a body").to_bytes();
+    Reply {
+        status,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_forged_token_cannot_add_a_device_for_a_member() {
+    let w = wired(true).await;
+    let devices_before = w.state.family_store.devices_of("alex").len();
+    let uri = format!(
+        "/rest/addFamilyDevice?jwt={}&v=1.16.1&c=evil&f=json&name=evil&kind=SubsonicApp",
+        forged_navidrome_token("alex")
+    );
+    let r = w.send(Method::GET, &uri, None, None).await;
+    assert_eq!(r.subsonic()["error"]["code"], 40, "{}", r.body);
+    assert_eq!(
+        w.state.family_store.devices_of("alex").len(),
+        devices_before,
+        "a forged token added a device"
+    );
+}
+
+#[tokio::test]
+async fn a_forged_token_cannot_read_the_family() {
+    let w = wired(true).await;
+    let uri = format!(
+        "/rest/getFamily?jwt={}&v=1.16.1&c=evil&f=json",
+        forged_navidrome_token("sam")
+    );
+    let r = w.send(Method::GET, &uri, None, None).await;
+    assert_ne!(r.subsonic()["status"], "ok", "a forged token read getFamily");
+    assert_eq!(r.subsonic()["error"]["code"], 40, "{}", r.body);
+}
+
+#[tokio::test]
+async fn no_unchecked_sign_in_names_a_member_or_a_manager_on_rest() {
+    let w = wired(true).await;
+    let devices = w.state.family_store.devices().len();
+    let tail = "v=1.16.1&c=evil&f=json";
+    let add_for_alex = "name=evil&kind=SubsonicApp&username=alex";
+    let mut tries: Vec<(String, Vec<(&str, String)>)> = Vec::new();
+    for endpoint in ["getFamily".to_string(), format!("addFamilyDevice?{add_for_alex}")] {
+        let join = if endpoint.contains('?') { '&' } else { '?' };
+        let base = format!("/rest/{endpoint}{join}{tail}");
+        for token in [
+            forged_navidrome_token("alex"),
+            forged_navidrome_token("winters"),
+            forged_octo_token("alex", "d_alex"),
+            forged_octo_token("winters", "x_owner"),
+        ] {
+            // A token alone, and a token next to the name it claims.
+            tries.push((format!("{base}&jwt={token}"), Vec::new()));
+            tries.push((format!("{base}&u=alex&jwt={token}"), Vec::new()));
+            tries.push((format!("{base}&u=winters&jwt={token}"), Vec::new()));
+            tries.push((base.clone(), vec![("authorization", format!("Bearer {token}"))]));
+            tries.push((
+                base.clone(),
+                vec![("x-nd-authorization", format!("Bearer {token}"))],
+            ));
+        }
+        tries.push((format!("{base}&apiKey=not-a-key"), Vec::new()));
+        tries.push((format!("{base}&u=alex&p=wrong-password"), Vec::new()));
+    }
+    for (uri, headers) in tries {
+        let r = send_with_headers(&w, Method::GET, &uri, &headers).await;
+        let answer = r.subsonic();
+        assert_ne!(answer["status"], "ok", "{uri} {headers:?}: {}", r.body);
+        assert!(answer.get("family").is_none(), "{uri}: {}", r.body);
+        assert!(answer.get("familyDeviceAdded").is_none(), "{uri}: {}", r.body);
+    }
+    assert_eq!(
+        w.state.family_store.devices().len(),
+        devices,
+        "no device was added"
+    );
+    // The real sign-ins still work.
+    let alex = w.rest("alex", "getFamily", "").await;
+    assert_eq!(alex.subsonic()["status"], "ok", "{}", alex.body);
+    assert!(alex.subsonic()["family"].get("manager").is_none());
+}
+
+#[tokio::test]
+async fn no_unchecked_sign_in_reaches_the_family_api() {
+    let w = wired(true).await;
+    let tail = "v=1.16.1&c=evil&f=json";
+    let mut tries: Vec<(String, Vec<(&str, String)>)> = Vec::new();
+    for path in ["/api/family/me", "/api/family/members", "/api/family/devices"] {
+        for token in [
+            forged_navidrome_token("alex"),
+            forged_navidrome_token("winters"),
+            forged_octo_token("alex", "d_alex"),
+            forged_octo_token("winters", "x_owner"),
+        ] {
+            tries.push((format!("{path}?jwt={token}&{tail}"), Vec::new()));
+            tries.push((format!("{path}?u=alex&jwt={token}&{tail}"), Vec::new()));
+            tries.push((format!("{path}?u=winters&jwt={token}&{tail}"), Vec::new()));
+            tries.push((
+                path.to_string(),
+                vec![("authorization", format!("Bearer {token}"))],
+            ));
+            tries.push((
+                path.to_string(),
+                vec![("x-nd-authorization", format!("Bearer {token}"))],
+            ));
+        }
+        tries.push((format!("{path}?apiKey=not-a-key&{tail}"), Vec::new()));
+        tries.push((format!("{path}?u=alex&p=wrong-password&{tail}"), Vec::new()));
+    }
+    for (uri, headers) in tries {
+        let r = send_with_headers(&w, Method::GET, &uri, &headers).await;
+        assert_eq!(
+            r.status,
+            StatusCode::UNAUTHORIZED,
+            "{uri} {headers:?}: {}",
+            r.body
+        );
+    }
+    // A device added through the API needs a real sign-in too.
+    let devices = w.state.family_store.devices().len();
+    let forged = forged_navidrome_token("winters");
+    let r = send_with_headers(
+        &w,
+        Method::POST,
+        &format!("/api/family/members/alex/devices?u=winters&jwt={forged}&{tail}"),
+        &[("x-octo-family", "1".to_string())],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    assert_eq!(w.state.family_store.devices().len(), devices);
+    // A signed call with the member's own app password works.
+    let signed = send_with_headers(
+        &w,
+        Method::GET,
+        &format!("/api/family/me?u=alex&p={}&{tail}", app_password("alex")),
+        &[],
+    )
+    .await;
+    assert_eq!(signed.status, StatusCode::OK, "{}", signed.body);
+}
+
+#[tokio::test]
+async fn signing_in_to_one_account_never_clears_wrong_tries_at_another() {
+    let w = wired(true).await;
+    for (name, pw) in [("alex", "alex-own-password"), ("sam", "sams-secret-password")] {
+        let mut m = w.state.family_store.member(name).expect("member");
+        m.account_password = crate::services::family::passwords::hash(pw);
+        w.state.family_store.upsert_member(m);
+    }
+    let mut throttled = 0;
+    let mut wrong = 0;
+    for round in 0..3 {
+        for guess in 0..9 {
+            let r = w
+                .send(
+                    Method::POST,
+                    "/api/family/auth",
+                    None,
+                    Some(json!({ "username": "sam", "password": format!("guess-{round}-{guess}") })),
+                )
+                .await;
+            if r.status == StatusCode::TOO_MANY_REQUESTS {
+                throttled += 1;
+            } else if r.status == StatusCode::UNAUTHORIZED {
+                wrong += 1;
+            }
+        }
+        let own = w
+            .send(
+                Method::POST,
+                "/api/family/auth",
+                None,
+                Some(json!({ "username": "alex", "password": "alex-own-password" })),
+            )
+            .await;
+        assert_eq!(own.status, StatusCode::OK, "{}", own.body);
+    }
+    assert_eq!(wrong, 10, "ten wrong guesses for sam are checked");
+    assert_eq!(throttled, 17, "the rest wait, whatever alex does meanwhile");
+    // Sam's own right password waits too; another account's does not.
+    let sam = w
+        .send(
+            Method::POST,
+            "/api/family/auth",
+            None,
+            Some(json!({ "username": "sam", "password": "sams-secret-password" })),
+        )
+        .await;
+    assert_eq!(sam.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn wrong_sign_ins_make_no_devices_or_notices() {
+    let w = wired(true).await;
+    w.start_family_work().await;
+    w.nd.state
+        .passwords
+        .lock()
+        .insert("winters".into(), "right-password".into());
+    let before = w.state.family_store.detected().len();
+    let ping = |password: &str, device: String| {
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/rest/ping?u=winters&p={password}&v=1.16.1&c=x&f=json"))
+            .header("x-octo-device-id", device)
+            .body(Body::empty())
+            .expect("a request");
+        let address: SocketAddr = "203.0.113.50:50000".parse().expect("an address");
+        req.extensions_mut().insert(ConnectInfo(address));
+        w.app.clone().oneshot(req)
+    };
+    for n in 0..5 {
+        let res = ping("wrong-password", format!("forged-device-{n}"))
+            .await
+            .expect("infallible");
+        let body = res.into_body().collect().await.expect("a body").to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("\"code\":40"));
+    }
+    w.until_quiet().await;
+    assert_eq!(
+        w.state.family_store.detected().len(),
+        before,
+        "wrong sign-ins recorded devices"
+    );
+    let notices = w.pushes("owner-topic").await;
+    assert!(
+        !notices
+            .iter()
+            .any(|(title, message)| title.contains("device") || message.contains("device")),
+        "{notices:?}"
+    );
+    // The owner's right sign-in from a new app is noted, once Navidrome took it.
+    let res = ping("right-password", "real-device".into())
+        .await
+        .expect("infallible");
+    let _ = res.into_body().collect().await;
+    assert_eq!(w.state.family_store.detected().len(), before + 1);
+}
+
+#[tokio::test]
+async fn sign_ins_sent_all_at_once_count_before_they_are_checked() {
+    let w = wired(true).await;
+    let mut sam = w.state.family_store.member("sam").expect("member");
+    sam.account_password = crate::services::family::passwords::hash("sams-secret-password");
+    w.state.family_store.upsert_member(sam);
+    let tries = (0..15).map(|n| {
+        w.send(
+            Method::POST,
+            "/api/family/auth",
+            None,
+            Some(json!({ "username": "sam", "password": format!("guess-{n}") })),
+        )
+    });
+    let replies = futures::future::join_all(tries).await;
+    let checked = replies
+        .iter()
+        .filter(|r| r.status == StatusCode::UNAUTHORIZED)
+        .count();
+    let waited = replies
+        .iter()
+        .filter(|r| r.status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((checked, waited), (10, 5));
+}
+
+#[tokio::test]
+async fn a_wrong_owner_password_cannot_change_a_family_playlist() {
+    let w = wired(true).await;
+    w.nd.state
+        .passwords
+        .lock()
+        .insert("winters".into(), "right-password".into());
+    let made = w
+        .page(
+            Method::POST,
+            "/api/family/playlists",
+            "dee",
+            Some(json!({ "name": "Dee's mix" })),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+    let id = made.json()["id"].as_str().expect("an id").to_string();
+    let as_owner =
+        |password: &str, call: String| format!("/rest/{call}&u=winters&p={password}&v=1.16.1&c=x&f=json");
+    for call in [
+        format!("deletePlaylist?id={id}"),
+        format!("updatePlaylist?playlistId={id}&name=Taken"),
+    ] {
+        let r = w
+            .send(Method::GET, &as_owner("wrong-password", call.clone()), None, None)
+            .await;
+        assert_eq!(r.subsonic()["error"]["code"], 40, "{call}: {}", r.body);
+    }
+    let listed = w
+        .page(Method::GET, "/api/family/playlists", "winters", None)
+        .await;
+    assert!(listed.body.contains("Dee's mix"), "{}", listed.body);
+    let r = w
+        .send(
+            Method::GET,
+            &as_owner("right-password", format!("deletePlaylist?id={id}")),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+    let listed = w
+        .page(Method::GET, "/api/family/playlists", "winters", None)
+        .await;
+    assert!(!listed.body.contains("Dee's mix"), "{}", listed.body);
 }

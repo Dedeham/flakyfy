@@ -53,7 +53,8 @@ impl SubsonicCall {
             return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
         };
         let incoming = Arc::new(IncomingRequest::from_parts(&parts, body));
-        let parameters = incoming.parameters();
+        let mut parameters = incoming.parameters();
+        crate::services::family::audio_gate::hold_quality(&parts.extensions, &mut parameters);
         let format = parameters.get("f").map_or("xml", String::as_str).to_string();
         let proxy = state.subsonic_proxy.with_request(Arc::clone(&incoming));
         Ok(SubsonicCall {

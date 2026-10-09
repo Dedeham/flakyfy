@@ -3480,6 +3480,7 @@ async function browseAuthenticate(result) {
 // The footer says who this browser is signed in as. The sign-in is remembered across restarts
 // and lapses only after 90 days without a visit (an hour for the recovery code); Sign out ends it now.
 function showSignedIn(user, recovery = false) {
+  forgetFamilySupport(user || null);
   const line = document.getElementById('signed-in');
   if (!line) return;
   line.hidden = !user;
@@ -7307,21 +7308,35 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
 // Family: shown only on a server that answers /api/admin/family
 // ────────────────────────────────────────────────────────────────
 // A server without Family (an older build serving these same files) answers that route with a
-// 404, so the entry stays hidden there. The answer is asked for once per page load.
+// 404, so the entry stays hidden there. The answer is asked for once per sign-in: only "sign in
+// first" (401) or no answer at all is asked again on the next status read. A refusal (403) or
+// a 404 stands until someone signs in again.
 let familySupport = null;
+let familySupportFor;
 
 function detectFamily() {
   if (familySupport) return familySupport;
   familySupport = fetch('/api/admin/family', { credentials: 'same-origin' })
-    .then(r => r.ok)
-    .catch(() => false)
+    .then(r => {
+      if (r.status === 401) familySupport = null;
+      return r.ok;
+    })
+    .catch(() => {
+      familySupport = null;
+      return false;
+    })
     .then(supported => {
       updateFamilyEntry(supported);
-      // A refusal before sign-in is asked again on the next status read.
-      if (!supported) familySupport = null;
       return supported;
     });
   return familySupport;
+}
+
+// A new sign-in may see what the last one could not.
+function forgetFamilySupport(user) {
+  if (familySupportFor === user) return;
+  familySupportFor = user;
+  familySupport = null;
 }
 
 function updateFamilyEntry(supported) {

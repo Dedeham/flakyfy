@@ -7,11 +7,14 @@
 //! The first time a device is seen, a [`NewDevice`] goes out to whoever listens
 //! ([`DeviceRegistry::subscribe`]), for the "new device" notice.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use octo_core::family::abilities::Role;
 use octo_core::family::device::{NetworkPlace, app_label, user_agent_family};
+use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
@@ -68,16 +71,48 @@ pub fn detected_device_id(user: &str, sighting: &Sighting) -> String {
     format!("x_{}", &hex::encode(Sha256::digest(text.as_bytes()))[..20])
 }
 
+/// New-device notices one person may cause in [`NOTICE_WINDOW`]; past that the devices are
+/// still kept, but no more notices go out until the window moves on.
+pub const NOTICES_PER_WINDOW: usize = 5;
+pub const NOTICE_WINDOW: Duration = Duration::from_secs(60 * 60);
+
 /// The device registry over `family.json`.
 pub struct DeviceRegistry {
     store: Arc<FamilyStore>,
     events: broadcast::Sender<NewDevice>,
+    /// Person to when their recent new-device notices went out.
+    notices: Mutex<HashMap<String, VecDeque<Instant>>>,
 }
 
 impl DeviceRegistry {
     pub fn new(store: Arc<FamilyStore>) -> Self {
         let (events, _) = broadcast::channel(64);
-        DeviceRegistry { store, events }
+        DeviceRegistry {
+            store,
+            events,
+            notices: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether another new-device notice about `user` may go out now, counting it if so.
+    fn may_notify(&self, user: &str) -> bool {
+        let now = Instant::now();
+        let mut notices = self.notices.lock();
+        notices.retain(|_, sent| {
+            while sent
+                .front()
+                .is_some_and(|at| now.duration_since(*at) >= NOTICE_WINDOW)
+            {
+                sent.pop_front();
+            }
+            !sent.is_empty()
+        });
+        let sent = notices.entry(user.trim().to_lowercase()).or_default();
+        if sent.len() >= NOTICES_PER_WINDOW {
+            return false;
+        }
+        sent.push_back(now);
+        true
     }
 
     /// Every device seen for the first time from now on.
@@ -113,7 +148,7 @@ impl DeviceRegistry {
             );
             new && caller.role == Role::Owner
         };
-        if first {
+        if first && self.may_notify(&caller.user) {
             // Nobody listening is fine: the notice is simply not sent.
             let _ = self.events.send(NewDevice {
                 username: caller.user.clone(),
@@ -218,5 +253,29 @@ mod tests {
         registry.seen(&bob, &seen);
         assert!(events.try_recv().is_err());
         assert_eq!(store.detected().len(), 2);
+    }
+
+    #[test]
+    fn new_device_notices_are_limited_per_person() {
+        let store = Arc::new(FamilyStore::in_memory());
+        store.set_owner("winters");
+        let registry = DeviceRegistry::new(store.clone());
+        let mut events = registry.subscribe();
+        for n in 0..(NOTICES_PER_WINDOW * 3) {
+            let seen = sighting(Some(&format!("install-{n}")), "Octo", "Octo/1.6 (Android)");
+            let mut owner = FamilyCaller::unmanaged("winters", true);
+            owner.device_id = Some(detected_device_id("winters", &seen));
+            registry.seen(&owner, &seen);
+        }
+        let mut notices = 0;
+        while events.try_recv().is_ok() {
+            notices += 1;
+        }
+        assert_eq!(notices, NOTICES_PER_WINDOW);
+        assert_eq!(
+            store.detected().len(),
+            NOTICES_PER_WINDOW * 3,
+            "the devices are still kept"
+        );
     }
 }

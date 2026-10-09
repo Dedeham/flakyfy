@@ -38,9 +38,7 @@ use http_body_util::BodyExt;
 use indexmap::IndexMap;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::codes::{constant_time_eq, device_secret, normalize_app_password, subsonic_token};
-use octo_core::family::device::{
-    Device, DeviceKind, NetworkPlace, client_address, decode_device_name, place_of,
-};
+use octo_core::family::device::{Device, DeviceKind, NetworkPlace, client_origin, decode_device_name};
 use octo_core::family::endpoints::rest_endpoint_name;
 use octo_subsonic::subsonic_request_parser::{Parameters, parse_query};
 use serde_json::{Value, json};
@@ -144,10 +142,15 @@ impl Whereabouts {
             .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
             .collect();
         let forwarded = (!forwarded.is_empty()).then(|| forwarded.join(","));
-        let address = client_address(peer, forwarded.as_deref(), &settings.family.trusted_proxy_list());
+        let origin = client_origin(
+            peer,
+            forwarded.as_deref(),
+            &settings.family.trusted_proxy_list(),
+            &settings.family.home_network_list(),
+        );
         Whereabouts {
-            address,
-            place: place_of(address, &settings.family.home_network_list()),
+            address: origin.address,
+            place: origin.place,
         }
     }
 }
@@ -160,7 +163,7 @@ fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 /// What the request says about its device.
-fn sighting(headers: &HeaderMap, parameters: &Parameters) -> Sighting {
+pub(crate) fn sighting(headers: &HeaderMap, parameters: &Parameters) -> Sighting {
     Sighting {
         client: parameters.get("c").cloned().unwrap_or_default(),
         user_agent: header_text(headers, "user-agent").unwrap_or_default(),
@@ -314,9 +317,28 @@ fn assemble(parts: &Parts, query: Option<&str>, body: Bytes, body_changed: bool)
     Request::from_parts(parts, Body::from(body))
 }
 
-/// Reads up to [`PEEK_LIMIT`] of a Subsonic answer to see whether it is error 40. Answers the
-/// response, whole again, and whether it was.
-async fn peek_refusal(response: Response) -> (Response, bool) {
+/// What an answer came to, as far as its first few kilobytes say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// Subsonic error 40: the sign-in was refused.
+    Refused,
+    /// Any other error, or an HTTP status that is not a success.
+    Failed,
+    /// Anything else: an ok answer, audio, or an answer too long to be a refusal.
+    Fine,
+}
+
+/// Endpoints that answer without a sign-in, so their answer says nothing about one.
+fn needs_no_sign_in(endpoint: &str) -> bool {
+    eq_ignore_case(endpoint, "getOpenSubsonicExtensions")
+}
+
+/// Reads up to [`PEEK_LIMIT`] of a Subsonic answer to see what it came to. Answers the
+/// response, whole again, and its [`Outcome`].
+async fn peek_outcome(response: Response) -> (Response, Outcome) {
+    if !response.status().is_success() {
+        return (response, Outcome::Failed);
+    }
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
@@ -325,7 +347,7 @@ async fn peek_refusal(response: Response) -> (Response, bool) {
         .to_ascii_lowercase();
     if !(content_type.contains("xml") || content_type.contains("json") || content_type.contains("javascript"))
     {
-        return (response, false);
+        return (response, Outcome::Fine);
     }
     let (parts, mut body) = response.into_parts();
     let mut seen = BytesMut::new();
@@ -349,18 +371,31 @@ async fn peek_refusal(response: Response) -> (Response, bool) {
     }
     let seen = seen.freeze();
     if ended {
-        let refused = is_sign_in_refusal(&seen);
-        return (Response::from_parts(parts, Body::from(seen)), refused);
+        let outcome = outcome_of(&seen);
+        return (Response::from_parts(parts, Body::from(seen)), outcome);
     }
     let first = futures::stream::once(async move { Ok::<Bytes, axum::Error>(seen) });
     let rest = first.chain(body.into_data_stream());
-    (Response::from_parts(parts, Body::from_stream(rest)), false)
+    (
+        Response::from_parts(parts, Body::from_stream(rest)),
+        Outcome::Fine,
+    )
 }
 
-/// Whether a Subsonic answer is error 40, in any format.
-fn is_sign_in_refusal(body: &[u8]) -> bool {
+/// What a whole Subsonic answer came to, in any format.
+fn outcome_of(body: &[u8]) -> Outcome {
     let text = String::from_utf8_lossy(body);
-    text.contains("failed") && (text.contains("\"code\":40") || text.contains("code=\"40\""))
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let failed = compact.contains("\"status\":\"failed\"") || compact.contains("status=\"failed\"");
+    if !failed {
+        return Outcome::Fine;
+    }
+    if compact.contains("\"code\":40,") || compact.contains("\"code\":40}") || compact.contains("code=\"40\"")
+    {
+        Outcome::Refused
+    } else {
+        Outcome::Failed
+    }
 }
 
 /// Runs the answer rules registered for `endpoint` over the plain answer.
@@ -373,13 +408,36 @@ async fn apply_answer_rules(
     parameters: &Parameters,
 ) -> Response {
     let rules = state.family_answer_rules.for_endpoint(endpoint);
-    if rules.is_empty() || response.headers().contains_key(header::CONTENT_ENCODING) {
+    if rules.is_empty() {
         return response;
     }
     let (mut parts, body) = response.into_parts();
-    let Ok(mut bytes) = axum::body::to_bytes(body, ANSWER_LIMIT).await else {
+    let Ok(bytes) = axum::body::to_bytes(body, ANSWER_LIMIT).await else {
         warn!("FAMILY an answer to {endpoint} was too large to check, so it was not sent");
         return StatusCode::BAD_GATEWAY.into_response();
+    };
+    // An answer the rules cannot read never goes out unread: a compressed one is opened first,
+    // and one in an unknown coding is not sent.
+    let coding = parts
+        .headers
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty() && v != "identity");
+    let mut bytes = match coding {
+        None => bytes,
+        Some(coding) => match decoded(&coding, &bytes) {
+            Some(plain) => {
+                parts.headers.remove(header::CONTENT_ENCODING);
+                Bytes::from(plain)
+            }
+            None => {
+                warn!(
+                    "FAMILY an answer to {endpoint} came in a coding Octo cannot read ({coding}), so it was not sent"
+                );
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+        },
     };
     let content_type = parts
         .headers
@@ -402,6 +460,39 @@ async fn apply_answer_rules(
     parts.headers.remove(header::CONTENT_LENGTH);
     parts.headers.remove(header::TRANSFER_ENCODING);
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// A compressed answer opened (`gzip`, `deflate` or `br`), at most [`ANSWER_LIMIT`] bytes of
+/// it. None for any other coding, a broken body, or one that opens larger than that.
+fn decoded(coding: &str, body: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let limit = ANSWER_LIMIT as u64 + 1;
+    let mut plain = Vec::new();
+    let read = match coding {
+        "gzip" | "x-gzip" => flate2::read::MultiGzDecoder::new(body)
+            .take(limit)
+            .read_to_end(&mut plain),
+        "deflate" => {
+            // Servers send deflate both wrapped (zlib) and raw.
+            match flate2::read::ZlibDecoder::new(body)
+                .take(limit)
+                .read_to_end(&mut plain)
+            {
+                Ok(n) => Ok(n),
+                Err(_) => {
+                    plain.clear();
+                    flate2::read::DeflateDecoder::new(body)
+                        .take(limit)
+                        .read_to_end(&mut plain)
+                }
+            }
+        }
+        "br" => brotli::Decompressor::new(body, 4096)
+            .take(limit)
+            .read_to_end(&mut plain),
+        _ => return None,
+    };
+    (read.is_ok() && plain.len() <= ANSWER_LIMIT).then_some(plain)
 }
 
 /// The parts of a `/rest` request the gate works from.
@@ -467,21 +558,36 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts) -> Res
                 if let Some(member) = state.family_store.member(&owner) {
                     return member_rest(&state, request, next, &sign_in, member, Some(None)).await;
                 }
-                caller = Some(other_caller(&state, &owner, &request.seen, &request.at));
+                // Navidrome named the key's owner, so the key is good.
+                caller = Some(other_caller(&state, &owner, &request.seen, &request.at).checked());
             }
-        } else if let Some(jwt) = sign_in.jwts.first() {
-            if let Some(claims) = web_claims(&state, jwt)
-                && let Some(member) = state.family_store.member(&claims.sub)
-                && state
+        } else if !sign_in.jwts.is_empty() {
+            let signed = sign_in.jwts.iter().find_map(|jwt| {
+                let claims = web_claims(&state, jwt)?;
+                let member = state.family_store.member(&claims.sub)?;
+                state
                     .family_store
                     .device(&claims.did)
                     .is_some_and(|d| eq_ignore_case(&d.username, &member.username))
-            {
-                return member_rest(&state, request, next, &sign_in, member, Some(Some(claims.did))).await;
+                    .then_some((member, claims.did))
+            });
+            if let Some((member, device_id)) = signed {
+                return member_rest(&state, request, next, &sign_in, member, Some(Some(device_id))).await;
             }
-            if let Some(user) = web_session::unverified_subject(jwt) {
-                // Navidrome checks its own token; the gate only notes whose it is.
-                caller = Some(caller_for(&state, &user, None, &request.seen, &request.at));
+            let subjects: Vec<String> = sign_in
+                .jwts
+                .iter()
+                .filter_map(|jwt| web_session::unverified_subject(jwt))
+                .collect();
+            // A member never holds a Navidrome token, and an Octo token that did not check out
+            // proves nothing, so a token naming a member is refused before anything reads it.
+            if let Some(member) = subjects.iter().find_map(|user| state.family_store.member(user)) {
+                log_refusal(&state, &member.username, &request.at, "a token Octo did not sign");
+                return subsonic_error(&state, &request.format, 40, WRONG_SIGN_IN);
+            }
+            if let Some(user) = subjects.first() {
+                // Navidrome checks its own token; until then the gate only notes whose it is.
+                caller = Some(other_caller(&state, user, &request.seen, &request.at));
             }
         }
     } else if users.len() == 1 {
@@ -504,12 +610,24 @@ async fn pass_rest(
         endpoint,
         path,
         seen,
+        query,
+        content_type,
         ..
     } = request;
     let Some(caller) = caller else {
         return next.run(Request::from_parts(parts, Body::from(body))).await;
     };
-    state.family_devices.seen(&caller, &seen);
+    let sent = audio_gate::Sent {
+        query: query.as_deref(),
+        content_type: content_type.as_deref(),
+        body: &body,
+    };
+    // A device is noted only for a sign-in that checks out: an unchecked one waits for the
+    // answer, so wrong sign-ins never make devices or new-device notices.
+    let noted_now = caller.checked;
+    if noted_now {
+        state.family_devices.seen(&caller, &seen);
+    }
     if let Some(refused) = request_rules(state, &caller, &parts.method, &endpoint, parameters) {
         return refused;
     }
@@ -520,6 +638,7 @@ async fn pass_rest(
         &endpoint,
         parameters,
         &parts.headers,
+        &sent,
     )
     .await
     {
@@ -531,8 +650,18 @@ async fn pass_rest(
         parts.headers.remove(header::ACCEPT_ENCODING);
     }
     parts.extensions.insert(caller.clone());
-    let req = audio.apply(Request::from_parts(parts, Body::from(body))).await;
-    let response = audio.track(state, next.run(req).await);
+    let req = audio
+        .apply(Request::from_parts(parts, Body::from(body.clone())))
+        .await;
+    let mut response = next.run(req).await;
+    if !noted_now && !needs_no_sign_in(&endpoint) {
+        let (answer, outcome) = peek_outcome(response).await;
+        if outcome == Outcome::Fine {
+            state.family_devices.seen(&caller, &seen);
+        }
+        response = answer;
+    }
+    let response = audio.track(state, response);
     if rules {
         apply_answer_rules(state, response, &caller, &endpoint, &path, parameters).await
     } else {
@@ -599,7 +728,7 @@ async fn member_rest(
         }
         return refuse(NEEDS_REPAIR);
     };
-    let caller = member_caller(state, &member, device_id, &request.at);
+    let caller = member_caller(state, &member, device_id, &request.at).checked();
     state.family_devices.seen(&caller, &request.seen);
 
     let rewrite_with = |hidden: &str| {
@@ -632,6 +761,11 @@ async fn member_rest(
     if let Some(refused) = request_rules(state, &caller, method, &request.endpoint, &parameters) {
         return refused;
     }
+    let sent = audio_gate::Sent {
+        query: request.query.as_deref(),
+        content_type: request.content_type.as_deref(),
+        body: &request.body,
+    };
     let audio = match audio_gate::admit(
         state,
         &caller,
@@ -639,6 +773,7 @@ async fn member_rest(
         &request.endpoint,
         &parameters,
         &request.parts.headers,
+        &sent,
     )
     .await
     {
@@ -654,8 +789,8 @@ async fn member_rest(
     };
 
     let first = audio.apply(strip(first)).await;
-    let (mut response, refused) = peek_refusal(next.clone().run(first).await).await;
-    if refused {
+    let (mut response, outcome) = peek_outcome(next.clone().run(first).await).await;
+    if outcome == Outcome::Refused {
         match state
             .family_bridge
             .after_refusal(
@@ -669,8 +804,8 @@ async fn member_rest(
         {
             Some(retry) => {
                 let again = audio.apply(strip(assemble_from(rewrite_with(&retry)))).await;
-                let (again, still) = peek_refusal(next.run(again).await).await;
-                if still && state.family_bridge.may_log(&format!("repair|{user}")) {
+                let (again, after) = peek_outcome(next.run(again).await).await;
+                if after == Outcome::Refused && state.family_bridge.may_log(&format!("repair|{user}")) {
                     warn!("FAMILY Navidrome still refuses {user}'s sign-in after a new hidden password");
                 }
                 response = again;
@@ -709,13 +844,14 @@ fn log_refusal(state: &AppState, user: &str, at: &Whereabouts, why: &str) {
     }
 }
 
-/// A radio stream: its session names the listener.
+/// A radio stream: its session names the listener. A session is only handed out in an answer
+/// Navidrome gave to a sign-in it accepted, so its listener counts as checked.
 async fn radio(state: &AppState, mut req: Request, next: Next, token: &str, at: &Whereabouts) -> Response {
     if let Some(session) = state.last_fm_radio_stream_sessions.get(token, None)
         && !session.username.trim().is_empty()
     {
         let seen = sighting(req.headers(), &Parameters::new());
-        let mut caller = caller_for(state, &session.username, None, &seen, at);
+        let mut caller = caller_for(state, &session.username, None, &seen, at).checked();
         state.family_devices.seen(&caller, &seen);
         let audio =
             match audio_gate::admit_radio(state, &mut caller, token, &session.station_id, req.method()) {
@@ -854,20 +990,21 @@ async fn native(state: AppState, req: Request, next: Next, at: Whereabouts) -> R
         .iter()
         .find_map(|token| web_claims(&state, token).map(|claims| (token.clone(), claims)));
     let Some((octo_token, claims)) = octo else {
+        let subjects: Vec<String> = tokens
+            .iter()
+            .filter_map(|t| web_session::unverified_subject(t))
+            .collect();
+        // A member never holds a Navidrome token, and an Octo token that did not check out
+        // proves nothing, so a token naming a member is refused before anything reads it.
+        if let Some(member) = subjects.iter().find_map(|user| state.family_store.member(user)) {
+            log_refusal(&state, &member.username, &at, "a token Octo did not sign");
+            return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
+        }
         // A Navidrome token: Navidrome checks it; the gate only notes whose it is.
-        let Some(user) = tokens.iter().find_map(|t| web_session::unverified_subject(t)) else {
+        let Some(user) = subjects.first() else {
             return next.run(req).await;
         };
-        let device = state.family_store.member(&user).and_then(|member| {
-            state
-                .family_store
-                .devices_of(&member.username)
-                .into_iter()
-                .filter(|d| d.kind == DeviceKind::NavidromeWeb)
-                .max_by_key(|d| d.last_seen.unwrap_or(d.created))
-                .map(|d| d.id)
-        });
-        let caller = caller_for(&state, &user, device, &seen, &at);
+        let caller = other_caller(&state, user, &seen, &at);
         return pass_native(&state, req, next, caller, &seen, &path).await;
     };
     let member = state.family_store.member(&claims.sub);
@@ -889,7 +1026,7 @@ async fn native(state: AppState, req: Request, next: Next, at: Whereabouts) -> R
         return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
     };
     let req = swap_token(req, &octo_token, &real);
-    let caller = member_caller(&state, &member, Some(device.id.clone()), &at);
+    let caller = member_caller(&state, &member, Some(device.id.clone()), &at).checked();
     let mut response = pass_native(&state, req, next, caller, &seen, &path).await;
     swap_answer_token(&state, &mut response, &member, &device.id);
     response
@@ -903,7 +1040,10 @@ async fn pass_native(
     seen: &Sighting,
     path: &str,
 ) -> Response {
-    state.family_devices.seen(&caller, seen);
+    // An unchecked token's device is noted only once Navidrome has taken the token.
+    if caller.checked {
+        state.family_devices.seen(&caller, seen);
+    }
     let parameters = IncomingRequest::new(
         req.method().clone(),
         HeaderMap::new(),
@@ -914,8 +1054,12 @@ async fn pass_native(
     if let Some(refused) = request_rules(state, &caller, req.method(), path, &parameters) {
         return refused;
     }
-    req.extensions_mut().insert(caller);
-    next.run(req).await
+    req.extensions_mut().insert(caller.clone());
+    let response = next.run(req).await;
+    if !caller.checked && response.status().is_success() {
+        state.family_devices.seen(&caller, seen);
+    }
+    response
 }
 
 /// Whether `password` is the member's account password or one of their device secrets.
@@ -935,11 +1079,10 @@ async fn web_password_ok(state: &AppState, member: &Member, password: &str) -> (
     if member.account_password.is_empty() {
         return (false, None);
     }
-    let (password, hash) = (password.to_string(), member.account_password.clone());
-    let ok = tokio::task::spawn_blocking(move || passwords::verify(&password, &hash))
-        .await
-        .unwrap_or(false);
-    (ok, None)
+    (
+        passwords::verify_async(password, &member.account_password).await,
+        None,
+    )
 }
 
 /// Navidrome's own sign-in for a member, with the hidden password.
@@ -997,16 +1140,18 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
     let user = member.username.clone();
     let key = FailureThrottle::key(&at.address, &user);
     let throttle = &state.family_bridge.throttle;
-    if throttle.blocked(&key) {
+    // The try counts before the password is checked, so tries sent all at once cannot each
+    // pass the throttle while the others are still being checked. A right one is forgiven.
+    if !throttle.attempt(&key) {
         log_refusal(&state, &user, &at, "too many wrong tries");
         return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
     let (ok, matched) = web_password_ok(&state, &member, &password).await;
     if !ok {
-        throttle.failed(&key);
         log_refusal(&state, &user, &at, "a wrong password");
         return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
+    throttle.forgive(&key);
     if member.suspended {
         return native_refusal(StatusCode::UNAUTHORIZED, PAUSED);
     }
@@ -1070,7 +1215,7 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
         client: "NavidromeUI".into(),
         ..sighting(&parts.headers, &Parameters::new())
     };
-    let caller = member_caller(&state, &member, Some(device.id.clone()), &at);
+    let caller = member_caller(&state, &member, Some(device.id.clone()), &at).checked();
     state.family_devices.seen(&caller, &seen);
     json_relaxed_response(StatusCode::OK, &Value::Object(fields), "application/json").into_response()
 }

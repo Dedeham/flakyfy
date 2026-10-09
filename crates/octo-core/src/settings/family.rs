@@ -75,6 +75,22 @@ impl FamilySettings {
         parse_networks(&self.trusted_proxies).0
     }
 
+    /// What to tell the owner when requests come through a proxy at `proxy` that is not trusted:
+    /// the exact setting that fixes it.
+    pub fn untrusted_proxy_fix(&self, proxy: std::net::IpAddr) -> String {
+        let listed = self.trusted_proxies.trim().trim_end_matches(',').trim();
+        let value = if listed.is_empty() {
+            proxy.to_string()
+        } else {
+            format!("{listed}, {proxy}")
+        };
+        format!(
+            "Octo is reached through a proxy at {proxy} that it does not trust, so everyone counts \
+             as away from home. Set Family:TrustedProxies (environment variable \
+             FAMILY__TRUSTEDPROXIES) to \"{value}\" and restart Octo."
+        )
+    }
+
     /// The members folder as written, without trailing slashes; `/members` when blank.
     pub fn effective_members_path(&self) -> String {
         let path = self.members_path.trim().trim_end_matches('/');
@@ -123,6 +139,17 @@ mod tests {
         let (settings, warnings) = AppSettings::bind(&ConfigTree::new());
         assert!(warnings.is_empty());
         assert_eq!(settings.family, s);
+    }
+
+    #[test]
+    fn an_untrusted_proxy_is_answered_with_the_setting_that_trusts_it() {
+        let s = FamilySettings::default();
+        let fix = s.untrusted_proxy_fix("172.18.0.5".parse().unwrap());
+        assert!(
+            fix.contains("Family:TrustedProxies") && fix.contains("FAMILY__TRUSTEDPROXIES"),
+            "{fix}"
+        );
+        assert!(fix.contains("\"127.0.0.0/8, ::1/128, 172.18.0.5\""), "{fix}");
     }
 
     #[test]

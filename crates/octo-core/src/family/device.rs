@@ -258,6 +258,53 @@ pub fn client_address(peer: IpAddr, x_forwarded_for: Option<&str>, trusted: &[Ip
     peer
 }
 
+/// Where a request comes from, as the family rules read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientOrigin {
+    /// The client address ([`client_address`]); behind a proxy Octo does not trust, the hop
+    /// that proxy named, which only keeps one person's tries apart from another's.
+    pub address: IpAddr,
+    pub place: NetworkPlace,
+    /// A peer on a home network that named a client in `X-Forwarded-For` without being a
+    /// trusted proxy: a reverse proxy beside Octo that `Family:TrustedProxies` does not list.
+    pub untrusted_proxy: Option<IpAddr>,
+}
+
+/// Where a request comes from: [`client_address`] and its place, except behind a reverse proxy
+/// on a home network that is not trusted. Every request through such a proxy would come from
+/// its home address and count as home, so instead it counts as away, and the hop the proxy
+/// named stands for the client so per-address throttles do not all fall on the proxy.
+pub fn client_origin(
+    peer: IpAddr,
+    x_forwarded_for: Option<&str>,
+    trusted: &[IpNet],
+    home: &[IpNet],
+) -> ClientOrigin {
+    let canonical_peer = canonical(peer);
+    let forwarded = x_forwarded_for.filter(|list| !list.trim().is_empty());
+    if let Some(list) = forwarded
+        && !contains(trusted, canonical_peer)
+        && contains(home, canonical_peer)
+    {
+        let named = list
+            .rsplit(',')
+            .next()
+            .and_then(|hop| hop.trim().parse::<IpAddr>().ok())
+            .map(canonical);
+        return ClientOrigin {
+            address: named.unwrap_or(canonical_peer),
+            place: NetworkPlace::Away,
+            untrusted_proxy: Some(canonical_peer),
+        };
+    }
+    let address = client_address(peer, x_forwarded_for, trusted);
+    ClientOrigin {
+        address,
+        place: place_of(address, home),
+        untrusted_proxy: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,6 +420,44 @@ mod tests {
         assert_eq!(
             client_address(ip("192.168.1.50"), Some("203.0.113.9"), &nets(TRUSTED)),
             ip("192.168.1.50")
+        );
+    }
+
+    #[test]
+    fn an_untrusted_proxy_at_home_makes_its_clients_away() {
+        let (trusted, home) = (nets(TRUSTED), nets(HOME));
+        // A reverse proxy in its own container, on a Docker bridge that counts as home, not
+        // listed as trusted: whoever it names is away, and keeps their own throttle key.
+        let origin = client_origin(ip("172.18.0.5"), Some("198.51.100.7"), &trusted, &home);
+        assert_eq!(origin.place, NetworkPlace::Away);
+        assert_eq!(origin.address, ip("198.51.100.7"));
+        assert_eq!(origin.untrusted_proxy, Some(ip("172.18.0.5")));
+        let other = client_origin(ip("172.18.0.5"), Some("198.51.100.8"), &trusted, &home);
+        assert_ne!(origin.address, other.address);
+        // A hop that is not an address leaves the proxy as the address, still away.
+        let garbled = client_origin(ip("172.18.0.5"), Some("nonsense"), &trusted, &home);
+        assert_eq!(
+            (garbled.address, garbled.place),
+            (ip("172.18.0.5"), NetworkPlace::Away)
+        );
+        // Without the header the peer is a person at home, as before.
+        let plain = client_origin(ip("192.168.1.5"), None, &trusted, &home);
+        assert_eq!(
+            (plain.address, plain.place, plain.untrusted_proxy),
+            (ip("192.168.1.5"), NetworkPlace::Home, None)
+        );
+        // An outside peer is away and names nobody, whatever it writes.
+        let outside = client_origin(ip("203.0.113.9"), Some("192.168.1.5"), &trusted, &home);
+        assert_eq!(
+            (outside.address, outside.place, outside.untrusted_proxy),
+            (ip("203.0.113.9"), NetworkPlace::Away, None)
+        );
+        // Once the proxy is trusted, the usual rule names the person and their place.
+        let listed = nets("127.0.0.0/8, ::1/128, 172.18.0.5");
+        let fixed = client_origin(ip("172.18.0.5"), Some("192.168.1.9"), &listed, &home);
+        assert_eq!(
+            (fixed.address, fixed.place, fixed.untrusted_proxy),
+            (ip("192.168.1.9"), NetworkPlace::Home, None)
         );
     }
 

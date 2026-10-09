@@ -12,8 +12,9 @@
 //!   now ([`StreamTracker::bumped_by`]) instead of taking it back.
 //! - Offline copies and downloads are tracked for the bytes they send but never count as
 //!   playing.
-//! - **Fast-pull pacing**: a stream given a rate is held to it on average, after a 50 MB start.
-//!   Chunks wait; nothing is refused.
+//! - **Fast-pull pacing**: a person whose streams are given a rate is held to it on average,
+//!   after a 50 MB start, across all their paced streams together (one after another or at
+//!   once). Chunks wait; nothing is refused.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -139,6 +140,8 @@ struct Book {
     /// Song id to the name a lookup found (None while it looks, or when it found nothing) and
     /// when that lookup began.
     names: HashMap<String, (Option<SongName>, Instant)>,
+    /// Person to the bucket every paced stream of theirs draws on.
+    pacers: HashMap<String, Pacer>,
 }
 
 impl Book {
@@ -195,7 +198,10 @@ impl StreamTracker {
         let pacer = start
             .pace_bytes_per_second
             .filter(|rate| *rate > 0)
-            .map(Pacer::new);
+            .map(|rate| Pace {
+                user_key: user_key(&start.user),
+                rate: rate as f64,
+            });
         Body::from_stream(TrackedStream {
             inner: body.into_data_stream().boxed(),
             book: Arc::clone(&self.book),
@@ -369,37 +375,67 @@ fn register(book: &Mutex<Book>, start: StreamStart, cancel: CancellationToken) -
 }
 
 /// A token bucket: `rate` bytes a second, holding [`PACING_BURST_BYTES`] at most. A chunk may
-/// take it below zero; the next chunk then waits until it is back at zero.
+/// take it below zero; the next chunk then waits until it is back at zero. Each person has one,
+/// kept in the book, which every paced stream of theirs draws on: songs one after another, or
+/// many at once, share one rate.
 struct Pacer {
-    rate: f64,
     tokens: f64,
     last: Instant,
+    /// The rate it was last filled at.
+    rate: f64,
 }
 
 impl Pacer {
-    fn new(rate: u64) -> Self {
+    fn new(now: Instant, rate: f64) -> Self {
         Pacer {
-            rate: rate as f64,
             tokens: PACING_BURST_BYTES as f64,
-            last: Instant::now(),
+            last: now,
+            rate,
         }
     }
 
-    fn refill(&mut self, now: Instant) {
+    fn refill(&mut self, rate: f64, now: Instant) {
         let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.rate).min(PACING_BURST_BYTES as f64);
+        self.tokens = (self.tokens + elapsed * rate).min(PACING_BURST_BYTES as f64);
         self.last = now;
+        self.rate = rate;
     }
 
+    /// Whether the bucket has filled back up by `now`, so forgetting it changes nothing.
+    fn full(&self, now: Instant) -> bool {
+        self.tokens + now.saturating_duration_since(self.last).as_secs_f64() * self.rate
+            >= PACING_BURST_BYTES as f64
+    }
+}
+
+/// How one stream is paced: whose bucket it draws on, and at what rate.
+struct Pace {
+    user_key: String,
+    rate: f64,
+}
+
+impl Pace {
     /// How long to wait before the next chunk, if at all.
-    fn wait(&mut self) -> Option<Duration> {
-        self.refill(Instant::now());
-        (self.tokens < 0.0).then(|| Duration::from_secs_f64(-self.tokens / self.rate))
+    fn wait(&self, book: &Mutex<Book>) -> Option<Duration> {
+        let mut book = book.lock();
+        let now = Instant::now();
+        let pacer = book
+            .pacers
+            .entry(self.user_key.clone())
+            .or_insert_with(|| Pacer::new(now, self.rate));
+        pacer.refill(self.rate, now);
+        (pacer.tokens < 0.0).then(|| Duration::from_secs_f64(-pacer.tokens / self.rate))
     }
 
-    fn spend(&mut self, bytes: usize) {
-        self.refill(Instant::now());
-        self.tokens -= bytes as f64;
+    fn spend(&self, book: &Mutex<Book>, bytes: usize) {
+        let mut book = book.lock();
+        let now = Instant::now();
+        let pacer = book
+            .pacers
+            .entry(self.user_key.clone())
+            .or_insert_with(|| Pacer::new(now, self.rate));
+        pacer.refill(self.rate, now);
+        pacer.tokens -= bytes as f64;
     }
 }
 
@@ -412,7 +448,7 @@ struct TrackedStream {
     id: Option<u64>,
     canceled: Pin<Box<WaitForCancellationFutureOwned>>,
     cancel: CancellationToken,
-    pacer: Option<Pacer>,
+    pacer: Option<Pace>,
     sleep: Option<Pin<Box<Sleep>>>,
 }
 
@@ -462,7 +498,7 @@ impl Stream for TrackedStream {
             }
             this.sleep = None;
         }
-        if let Some(wait) = this.pacer.as_mut().and_then(Pacer::wait) {
+        if let Some(wait) = this.pacer.as_ref().and_then(|pace| pace.wait(&this.book)) {
             let mut sleep = Box::pin(tokio::time::sleep(wait));
             if sleep.as_mut().poll(cx).is_pending() {
                 this.sleep = Some(sleep);
@@ -472,8 +508,8 @@ impl Stream for TrackedStream {
         match this.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
                 this.counted(chunk.len());
-                if let Some(pacer) = this.pacer.as_mut() {
-                    pacer.spend(chunk.len());
+                if let Some(pace) = this.pacer.as_ref() {
+                    pace.spend(&this.book, chunk.len());
                 }
                 Poll::Ready(Some(Ok(chunk)))
             }
@@ -502,6 +538,9 @@ impl Drop for TrackedStream {
         book.last_audio
             .retain(|_, at| now.saturating_duration_since(*at) < BUMP_HOLD * 4);
         book.forget_old_names(now);
+        // A bucket that has filled back up is the same as none, so it is forgotten.
+        let Book { live, pacers, .. } = &mut *book;
+        pacers.retain(|user, pacer| !pacer.full(now) || live.values().any(|entry| entry.user_key == *user));
     }
 }
 
@@ -675,6 +714,73 @@ mod tests {
         next(&mut second).await.expect("plays").expect("ok");
         assert_eq!(tracker.len(), 2, "the unknown slot is one device");
         assert_eq!(tracker.live()[0].device_id, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn songs_pulled_one_after_another_share_one_pace() {
+        let tracker = StreamTracker::new();
+        let began = Instant::now();
+        for _ in 0..10 {
+            let mut paced = start("alex", Some("phone"), StreamPurpose::Play, 0);
+            paced.pace_bytes_per_second = Some(1_000_000);
+            let body = tracker.track(paced, finite(40, 1_000_000));
+            let bytes = body.collect().await.expect("every byte").to_bytes();
+            assert_eq!(bytes.len(), 40_000_000);
+        }
+        let took = Instant::now() - began;
+        // 400 MB at 1 MB a second after a 50 MB start.
+        assert!(
+            took >= Duration::from_secs(300),
+            "400 MB went out in {took:?} at a 1 MB/s pace"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn songs_pulled_at_once_share_one_pace() {
+        let tracker = Arc::new(StreamTracker::new());
+        let began = Instant::now();
+        let pulls = (0..10).map(|n| {
+            let tracker = Arc::clone(&tracker);
+            async move {
+                let mut paced = start("alex", Some(&format!("phone-{n}")), StreamPurpose::Download, 0);
+                paced.pace_bytes_per_second = Some(1_000_000);
+                let body = tracker.track(paced, finite(40, 1_000_000));
+                body.collect().await.expect("every byte").to_bytes().len()
+            }
+        });
+        let sent: usize = futures::future::join_all(pulls).await.into_iter().sum();
+        assert_eq!(sent, 400_000_000);
+        let took = Instant::now() - began;
+        assert!(
+            took >= Duration::from_secs(300),
+            "400 MB went out in {took:?} at a 1 MB/s pace"
+        );
+        // Someone else is paced on their own.
+        let mut other = start("sam", Some("tablet"), StreamPurpose::Play, 0);
+        other.pace_bytes_per_second = Some(1_000_000);
+        let again = Instant::now();
+        let body = tracker.track(other, finite(10, 1_000_000));
+        assert_eq!(
+            body.collect().await.expect("every byte").to_bytes().len(),
+            10_000_000
+        );
+        assert!(
+            Instant::now() - again < Duration::from_secs(1),
+            "sam starts with a full allowance"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_bucket_that_filled_back_up_is_forgotten() {
+        let tracker = StreamTracker::new();
+        let mut paced = start("alex", Some("phone"), StreamPurpose::Play, 0);
+        paced.pace_bytes_per_second = Some(1_000_000);
+        let body = tracker.track(paced, finite(1, 1_000));
+        body.collect().await.expect("every byte");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let unpaced = tracker.track(start("sam", None, StreamPurpose::Play, 0), finite(1, 1));
+        unpaced.collect().await.expect("every byte");
+        assert!(tracker.book.lock().pacers.is_empty());
     }
 
     #[tokio::test(start_paused = true)]

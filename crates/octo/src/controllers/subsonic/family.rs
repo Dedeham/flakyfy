@@ -16,7 +16,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::RequestQuality;
-use octo_core::family::device::{DeviceKind, NetworkPlace, client_address};
+use octo_core::family::device::{DeviceKind, NetworkPlace, client_origin};
 use octo_core::family::request::RequestKind;
 use octo_subsonic::subsonic_response_builder::{
     SUBSONIC_NAMESPACE, SUBSONIC_VERSION, SubsonicReply, json_shape_to_xml,
@@ -227,13 +227,17 @@ async fn begin(state: &AppState, req: Request) -> Result<FamilyCall, Response> {
     let origin = origin_of(&req);
     let call = SubsonicCall::read(state, req).await?;
     let format = format_of(&call);
-    let Some(caller) = caller else {
+    let Some(mut caller) = caller else {
         return Err(if call.param_opt("u").is_none_or(|u| u.trim().is_empty()) {
             error(state, &format, 10, "Required parameter is missing: u")
         } else {
             error(state, &format, 40, "Wrong username or password")
         });
     };
+    if caller.managed && !caller.checked {
+        // A member's sign-in is always checked by the gate; one that was not is no sign-in.
+        return Err(error(state, &format, 40, "Wrong username or password"));
+    }
     if !caller.managed {
         // The gate passes the owner and accounts outside the family on as they came, so
         // Navidrome says whether the sign-in is right.
@@ -249,6 +253,13 @@ async fn begin(state: &AppState, req: Request) -> Result<FamilyCall, Response> {
         };
         if !is_successful_subsonic_response(&check.body, "json") {
             return Err(error(state, &format, 40, "Wrong username or password"));
+        }
+        if !caller.checked {
+            // The sign-in checks out now, so the device it came from is noted before the call
+            // reads the device list.
+            caller.checked = true;
+            let seen = crate::middleware::family_gate::sighting(call.headers(), &call.parameters);
+            state.family_devices.seen(&caller, &seen);
         }
     }
     Ok(FamilyCall {
@@ -664,11 +675,14 @@ fn address_of(state: &AppState, req: &Request) -> IpAddr {
         .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
         .collect();
     let forwarded = (!forwarded.is_empty()).then(|| forwarded.join(","));
-    client_address(
+    let settings = state.settings.current();
+    client_origin(
         peer,
         forwarded.as_deref(),
-        &state.settings.current().family.trusted_proxy_list(),
+        &settings.family.trusted_proxy_list(),
+        &settings.family.home_network_list(),
     )
+    .address
 }
 
 /// `octoFamilyPair` (open, GET or form POST): `username`, `code`, `deviceName`, `platform`.

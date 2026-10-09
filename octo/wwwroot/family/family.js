@@ -260,7 +260,7 @@
   };
 
   function navFor(s) {
-    var you = s.managed ? ['overview', 'devices', 'requests', 'saved', 'library', 'quality', 'account'] : ['devices', 'quality'];
+    var you = s.managed ? ['overview', 'devices', 'requests', 'saved', 'library', 'quality', 'account'] : ['overview', 'devices', 'quality'];
     var family = [];
     if (s.familyEnabled) {
       if (s.manager) family = ['members', 'inbox', 'all-devices', 'playlists', 'activity'];
@@ -274,7 +274,7 @@
 
   function defaultView(s) {
     if (!s.familyEnabled) return s.owner ? 'members' : 'devices';
-    return s.managed ? 'overview' : s.manager ? 'members' : 'devices';
+    return 'overview';
   }
 
   // Old addresses from before the sidebar still land somewhere sensible.
@@ -405,6 +405,7 @@
   }
 
   async function viewOverview(main) {
+    if (!session.managed) return session.manager ? viewFamilyOverview(main) : viewGuestOverview(main);
     var replies = await Promise.all([api('GET', '/me'), api('GET', '/me/devices'), api('GET', '/me/requests')]);
     if (!replies[0].ok) return failed(main, replies[0]);
     var me = replies[0].data;
@@ -467,6 +468,131 @@
           statusBadges.length ? el('div', { class: 'fam-badges fam-gap' }, statusBadges) : null),
         card('Playing now', devices.length + (devices.length === 1 ? ' device' : ' devices') + ' signed in.', null, nowPlaying)),
       card('What your plan allows', 'Set by whoever runs the family.', null, planLines(a))
+    ]);
+  }
+
+  // The owner's (and any manager outside the family's) overview: who is playing, what is
+  // waiting, what is new, everyone's space, the outside address, and one next step.
+  async function viewFamilyOverview(main) {
+    var replies = await Promise.all([api('GET', '/members'), api('GET', '/devices'), api('GET', '/requests?state=Pending'), api('GET', '/load')]);
+    if (!replies[0].ok) return failed(main, replies[0]);
+    var members = replies[0].data;
+    var devices = replies[1].ok ? replies[1].data : [];
+    var waiting = replies[2].ok ? replies[2].data : [];
+    var streams = replies[3].ok ? replies[3].data.streams : [];
+    var byUser = {};
+    members.forEach(function (m) { byUser[m.username.toLowerCase()] = m; });
+    var nameOf = function (user) {
+      var m = byUser[String(user || '').toLowerCase()];
+      return m ? m.displayName : user;
+    };
+    var weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    var fresh = devices.filter(function (d) { return byUser[d.username.toLowerCase()] && Date.parse(d.created) > weekAgo; })
+      .sort(function (a, b) { return Date.parse(b.created) - Date.parse(a.created); });
+    var notJoined = members.filter(function (m) { return !m.joined; });
+
+    var approveAll = el('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: async function () {
+      if (!confirmIn('Approve all ' + waiting.length + (waiting.length === 1 ? ' request' : ' requests') + '? Each one starts fetching its song.')) return;
+      approveAll.disabled = true;
+      var failures = 0;
+      for (var i = 0; i < waiting.length; i++) {
+        var r = await api('POST', '/requests/' + encodeURIComponent(waiting[i].id) + '/approve', { note: '' });
+        if (!r.ok) failures++;
+      }
+      session.pending = failures;
+      F.toast(failures ? failures + ' could not be approved. See Requests to approve.' : 'All approved', failures > 0);
+      route();
+    } }, F.icon('check'), 'Approve all');
+
+    var next;
+    if (!members.length) {
+      next = nextStep('users', 'Add your first member', 'They get a link to set their password, then add their own devices.',
+        el('button', { class: 'btn btn-primary', type: 'button', onclick: addMemberSheet }, F.icon('plus'), 'Add member'));
+    } else if (waiting.length) {
+      next = nextStep('checkCircle', waiting.length === 1 ? 'One request is waiting for you' : waiting.length + ' requests are waiting for you',
+        'Approve them all here, or one at a time with a note.', el('a', { class: 'btn', href: '#/inbox' }, 'Review requests'));
+    } else if (!session.publicUrl) {
+      next = nextStep('globe', 'Set your outside address', 'Then invite links and device codes work away from home too.',
+        el('a', { class: 'btn', href: STATUS_ADDRESS }, F.icon('out'), 'Set it on the Status page'));
+    } else if (notJoined.length) {
+      next = nextStep('send', notJoined[0].displayName + ' has not joined yet', 'Send their link again, or show them the QR code.',
+        el('button', { class: 'btn', type: 'button', onclick: function () { inviteDialog(notJoined[0], null); } }, 'Send their link'));
+    } else {
+      next = nextStep('heart', 'Everything is running', 'Everyone has joined and nothing is waiting for you.',
+        el('button', { class: 'btn', type: 'button', onclick: addMemberSheet }, F.icon('plus'), 'Add member'));
+    }
+
+    var playing = streams.length
+      ? el('ul', { class: 'fam-list' }, streams.map(function (s) {
+        return el('li', { class: 'fam-row' },
+          F.avatar(nameOf(s.username)),
+          el('div', { class: 'fam-row-main' },
+            el('div', { class: 'fam-row-title' }, nameOf(s.username)),
+            el('div', { class: 'fam-row-meta' }, [s.songTitle || 'A song', s.device].filter(Boolean).join(' · '))),
+          placeBadge(s.place));
+      }))
+      : empty('radio', 'Nobody is playing right now.');
+
+    var requestList = waiting.length
+      ? el('div', null,
+        el('ul', { class: 'fam-list' }, waiting.slice(0, 4).map(function (r) {
+          return el('li', { class: 'fam-row' },
+            cover(r.coverArt, r.title),
+            el('div', { class: 'fam-row-main' },
+              el('div', { class: 'fam-row-title' }, r.title || r.target),
+              el('div', { class: 'fam-row-meta' }, (r.displayName || nameOf(r.username)) + ' · ' + F.ago(r.created))));
+        })),
+        el('div', { class: 'fam-actions' }, approveAll, el('a', { class: 'btn btn-sm btn-ghost', href: '#/inbox' }, waiting.length > 4 ? 'See all ' + waiting.length : 'Review one by one')))
+      : empty('checkCircle', 'Nothing is waiting for you.');
+
+    var newDevices = fresh.length
+      ? el('ul', { class: 'fam-list' }, fresh.slice(0, 5).map(function (d) {
+        return el('li', { class: 'fam-row' },
+          el('span', { class: 'fam-row-ico', 'aria-hidden': 'true' }, F.icon('phone')),
+          el('div', { class: 'fam-row-main' },
+            el('div', { class: 'fam-row-title' }, d.name || d.app || deviceKindWords(d.kind)),
+            el('div', { class: 'fam-row-meta' }, nameOf(d.username) + ' · added ' + F.ago(d.created).toLowerCase())));
+      }))
+      : empty('phone', 'No new devices this week.');
+
+    var storage = members.length
+      ? el('div', { class: 'fam-storage' }, members.map(function (m) {
+        return meter(m.storageUsedBytes, m.storageLimitGb > 0 ? m.storageLimitGb * 1e9 : 0, m.displayName);
+      }))
+      : empty('folder', 'Each member’s own library shows here.');
+
+    var address = session.publicUrl
+      ? card('Outside address', null, null,
+        el('p', { class: 'fam-where-uses' }, F.icon('globe'), el('span', null, 'Links work anywhere at ', el('code', null, session.publicUrl))),
+        el('div', { class: 'fam-actions' }, el('a', { class: 'btn btn-sm btn-ghost', href: STATUS_ADDRESS }, F.icon('out'), 'Change it on the Status page')))
+      : addressNotice(function () { route(); });
+
+    F.clear(main);
+    F.append(main, [
+      pageHeader('pulse', 'Overview', 'Your family at a glance: who is playing, what is waiting for you, and what is new.',
+        el('button', { class: 'btn btn-primary', type: 'button', onclick: addMemberSheet }, F.icon('plus'), 'Add member')),
+      next,
+      el('div', { class: 'fam-grid two' },
+        card('Playing now', streams.length ? streams.length + (streams.length === 1 ? ' stream' : ' streams') + ' right now.' : 'By member, with their device.', null, playing),
+        card('Requests waiting', waiting.length ? 'Copies family members asked for.' : 'Copies family members ask for wait here.', null, requestList)),
+      el('div', { class: 'fam-grid two' },
+        card('New devices', 'Added in the last 7 days.', null, newDevices),
+        card('Storage', 'Each member’s own library.', null, storage)),
+      address
+    ]);
+  }
+
+  // Someone outside the family: the apps Octo has seen them use, and their audio quality.
+  async function viewGuestOverview(main) {
+    var reply = await api('GET', '/me/devices');
+    var devices = reply.ok ? reply.data : [];
+    F.clear(main);
+    F.append(main, [
+      pageHeader('pulse', 'Hi, ' + session.displayName, 'Your account is not in the family, but your audio quality is yours to choose.'),
+      nextStep('sliders', 'Choose your audio quality', 'What Octo sends your devices, at home and away.', el('a', { class: 'btn', href: '#/quality' }, 'Open audio quality')),
+      card('Your devices', devices.length + (devices.length === 1 ? ' app seen.' : ' apps seen.'), null,
+        devices.length ? el('ul', { class: 'fam-list' }, devices.slice(0, 5).map(function (d) { return deviceRow(d, {}); }))
+          : empty('phone', 'Octo has not seen a device of yours yet.'))
     ]);
   }
 
@@ -1436,10 +1562,11 @@
   // with an info icon, and asks for one.
   function linkChoice(answer, choice, onPick, forName) {
     var homeBase = (answer.servers && answer.servers.home) || (answer.links && answer.links.home) || answer.server || '';
-    var uses = el('p', { class: 'fam-where-uses' + (choice === 'home' && answer.homeOnly ? ' warn' : '') },
-      choice === 'anywhere'
+    var uses = el('p', { class: 'fam-where-uses' },
+      F.icon(choice === 'anywhere' ? 'globe' : 'house'),
+      el('span', null, choice === 'anywhere'
         ? (answer.anywhereAvailable ? 'Uses ' + answer.publicUrl : 'Needs your outside address first')
-        : 'Uses your home network (' + hostOf(homeBase) + ')');
+        : 'Uses your home network (' + hostOf(homeBase) + ')'));
     if (answer.awayAllowed === false) {
       return el('div', { class: 'fam-where-wrap' },
         el('p', { class: 'fam-choice-note' }, F.icon('house'),

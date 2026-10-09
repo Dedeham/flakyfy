@@ -94,7 +94,7 @@
         : 'Octo has no app for this device yet, so use another app below.'),
       link ? el('div', { class: 'fam-actions' }, el('a', { class: 'btn btn-primary fam-big', href: link }, 'Open in Octo')) : null,
       back ? el('p', { class: 'inline-note info' }, F.icon('info'), 'Octo did not open, so it may not be installed on this phone.') : null,
-      el('ol', { class: 'fam-steps fam-gap' },
+      el('ol', { class: 'fam-steps fam-signin-steps' },
         el('li', null, 'Octo opens and asks your other device.'),
         el('li', null, 'On your other device, press Allow.'),
         el('li', null, 'This device is signed in, with nothing to type.')));

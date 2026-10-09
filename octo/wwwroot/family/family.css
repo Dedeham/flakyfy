@@ -821,6 +821,7 @@
 .fam-progress li.now { color: var(--ink); }
 .fam-join-shell { width: min(760px, 100%); margin: 0 auto; padding: var(--s-page) var(--s-xl) 96px; }
 .fam-join-head { margin-bottom: var(--s-xl); }
+.fam-signin-steps { margin-top: var(--s-xl); }
 .fam-join .info-card + .info-card { margin-top: var(--s-xl); }
 .fam-join .fam-actions { margin-top: var(--s-xl); }
 @media (pointer: coarse) {
@@ -836,6 +837,11 @@
 .fam-login-line > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .fam-login-home { color: var(--text-secondary); font-size: var(--t-meta); }
 .fam-app .fam-actions { margin: 0 0 var(--s-l) 0; padding-left: var(--s-xl); }
+/* Phone: each login row puts its label above the value, so an address keeps a whole line. */
+@media (max-width: 600px) {
+  .fam-login .fam-trow { grid-template-columns: minmax(0, 1fr); gap: 2px; padding-top: 10px; }
+  .fam-login-line { flex-wrap: wrap; }
+}
 
 /* How strong a new password is, in words. */
 .fam-strength { transition: color var(--t-hover); }

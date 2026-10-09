@@ -513,7 +513,7 @@
       next = nextStep('users', 'Add your first member', 'They get a link to set their password, then add their own devices.',
         el('button', { class: 'btn btn-primary', type: 'button', onclick: addMemberSheet }, F.icon('plus'), 'Add member'));
     } else if (needsPassword.length) {
-      next = nextStep('key', needsPassword[0].displayName + ' needs a new password', 'Their sign-in is from before everyone had one login. Reset their password and send them the link to choose one.',
+      next = nextStep('key', needsPassword[0].displayName + ' needs a new password', 'Their password no longer works, so their apps cannot sign in. Reset it to send them a link to choose a new one.',
         el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { resetPassword(needsPassword[0]); } }, F.icon('key'), 'Reset password'));
     } else if (waiting.length) {
       next = nextStep('checkCircle', waiting.length === 1 ? 'One request is waiting for you' : waiting.length + ' requests are waiting for you',

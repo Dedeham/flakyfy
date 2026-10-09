@@ -59,7 +59,7 @@ use crate::services::family::request_service::{
 };
 use crate::services::family::{
     AnswerRules, AudioGate, DeviceRegistry, FamilyPlacement, FamilyPlaylistStore, FamilyPool,
-    FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, LibraryWriteGate, MemberBridge,
+    FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, LibraryWriteGate, MemberBridge, MemberCopies,
     MemberCredentials, NavidromeAdmin, NavidromeMemberStars, PersonalLibrary, PlayerCaps, PoolParts,
     RequestStore, SavedStore, ScopeResolver, family_service::FamilyService,
 };
@@ -2234,11 +2234,14 @@ impl FamilyEdge {
 
 impl AppInner {
     /// Hands the member sign-ins to everything that keeps a sign-in for later, so each asks
-    /// for a fresh one when it uses it.
+    /// for a fresh one when it uses it. Favorites on arrival also go on a member's own copy of
+    /// a download that landed where they cannot see it.
     fn use_member_credentials(&self) {
         let credentials = &self.family_credentials;
         self.star_on_arrival
             .use_member_credentials(Arc::clone(credentials));
+        self.star_on_arrival
+            .use_member_copies(self.family_pool_service.clone() as Arc<dyn MemberCopies>);
         self.last_fm_radio_stream_sessions
             .use_member_credentials(Arc::clone(credentials));
         self.library_action_rating_worker

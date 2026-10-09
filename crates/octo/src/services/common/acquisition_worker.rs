@@ -9,6 +9,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::acquisition_tracker::key_of;
 use super::{AcquisitionPlace, AcquisitionRequest, DownloadConcurrency, TrackAcquisitionQueue};
 use crate::services::family::FamilyPlacement;
 use crate::services::i_download_service::IDownloadService;
@@ -135,15 +136,19 @@ impl AcquisitionWorker {
         }
         .unwrap_or_else(|_| Err(anyhow::anyhow!("the acquisition panicked")));
 
-        // Members who joined while it ran get their link too, and a file the shared library
-        // came to want moves there.
+        // Members who joined while it ran get their link too, a file the shared library came to
+        // want moves there, and a member who cannot see the shared library a file landed in
+        // gets a pool copy of it.
         let attempt = match (attempt, &self.family) {
             (Ok(path), Some(family)) => {
                 let members = request.pool_members();
                 if members.is_empty() && !request.wants_shared() {
                     Ok(path)
                 } else {
-                    Ok(family.settle(&path, &members, request.wants_shared()).await)
+                    let key = key_of(&request.provider, &request.external_id);
+                    Ok(family
+                        .settle(&path, &members, request.wants_shared(), Some(&key))
+                        .await)
                 }
             }
             (attempt, _) => attempt,

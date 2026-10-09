@@ -601,7 +601,7 @@ impl BaseDownloadService {
                     && pool_members.is_none()
                     && family.is_pool_path(&existing)
                 {
-                    existing = family.settle(&existing, &[], true).await;
+                    existing = family.settle(&existing, &[], true, None).await;
                 }
                 info!("Song already downloaded: {existing}");
                 // Navidrome shows a member's song at their link, never in the pool.
@@ -777,7 +777,7 @@ impl BaseDownloadService {
         {
             let path = match &pool_members {
                 Some(_) => found.path.clone(),
-                None => family.settle(&found.path, &[], true).await,
+                None => family.settle(&found.path, &[], true, None).await,
             };
             info!(
                 "'{} - {}' is already on disk for the family at {path}; not downloading another copy",

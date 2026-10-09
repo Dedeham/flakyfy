@@ -267,8 +267,30 @@ pub trait FamilyPlacement: Send + Sync {
         members: &[String],
     ) -> Option<String>;
     /// Links a finished download for every member who asked, and moves it into the shared
-    /// library when someone wants it there. Answers where the file now is.
-    async fn settle(&self, path: &str, members: &[String], wants_shared: bool) -> String;
+    /// library when someone wants it there. A download that is in a shared library already
+    /// stays there, and each member who asked but cannot see that library gets a pool copy of
+    /// it (recorded as a copy of `outside_key`). Answers where the file now is.
+    async fn settle(
+        &self,
+        path: &str,
+        members: &[String],
+        wants_shared: bool,
+        outside_key: Option<&str>,
+    ) -> String;
+}
+
+/// What favoriting a download on arrival asks of the family pool: a member who cannot see the
+/// library a download landed in has their own copy, and the favorite goes on that copy.
+#[async_trait]
+pub trait MemberCopies: Send + Sync {
+    /// The link to `who`'s own copy of the song with outside id `key` that landed as library
+    /// song `library_id`, when `who` is a member and that library song is not theirs to see:
+    /// in another member's library, or in a shared library they cannot see. None for everyone
+    /// else, whose favorite goes on `library_id` itself.
+    async fn own_copy_of(&self, who: &str, key: &str, library_id: &str) -> Option<String>;
+    /// The library song id of `who`'s copy at `link`, once the library index finds it in their
+    /// own library. None when it never shows.
+    async fn own_song_at(&self, who: &str, link: &str) -> Option<String>;
 }
 
 /// A member's star or playlist entry to carry over to the song's new id once the index finds
@@ -1049,6 +1071,17 @@ impl FamilyPool {
         song: Option<&Song>,
     ) -> Result<String, PoolError> {
         let _changing = self.changes.lock().await;
+        self.copy_shared_held(shared_path, user, outside_key, song).await
+    }
+
+    /// [`Self::copy_shared_for`] for a change that holds the lock already.
+    async fn copy_shared_held(
+        &self,
+        shared_path: &str,
+        user: &str,
+        outside_key: Option<&str>,
+        song: Option<&Song>,
+    ) -> Result<String, PoolError> {
         let member = self.member_named(user)?;
         if !Path::new(shared_path).is_file() {
             return Err(PoolError::Io(io::Error::new(
@@ -1073,14 +1106,36 @@ impl FamilyPool {
         self.link_held(&target, &member.username).await
     }
 
-    /// Records a pool copy of a shared file as a copy of `song`, or adds the outside id to the
-    /// record it already has.
+    /// Records a pool copy of a shared file as a copy of `song`. A record it already has gains
+    /// the outside id, and whatever titles and ISRC it was missing.
     fn record_shared_copy(&self, pool_path: &str, outside_key: Option<&str>, song: Option<&Song>) {
         if let Some(mut file) = self.store.get(pool_path) {
+            let mut changed = false;
             if let Some(key) = outside_key
                 && !file.outside_ids.iter().any(|id| id == key)
             {
                 file.outside_ids.push(key.to_string());
+                changed = true;
+            }
+            if let Some(song) = song {
+                for (kept, known) in [
+                    (&mut file.title, &song.title),
+                    (&mut file.artist, &song.artist),
+                    (&mut file.album, &song.album),
+                ] {
+                    if kept.is_empty() && !known.is_empty() {
+                        kept.clone_from(known);
+                        changed = true;
+                    }
+                }
+                if file.isrc.is_none()
+                    && let Some(isrc) = song.isrc.clone().filter(|isrc| !isrc.trim().is_empty())
+                {
+                    file.isrc = Some(isrc);
+                    changed = true;
+                }
+            }
+            if changed {
                 self.store.upsert(file);
             }
             return;
@@ -1415,12 +1470,36 @@ impl FamilyPlacement for FamilyPool {
         first
     }
 
-    async fn settle(&self, path: &str, members: &[String], wants_shared: bool) -> String {
+    async fn settle(
+        &self,
+        path: &str,
+        members: &[String],
+        wants_shared: bool,
+        outside_key: Option<&str>,
+    ) -> String {
         if !self.is_pool_path(path) {
+            if self.active() && !members.is_empty() && self.is_shared_file(path) {
+                let _changing = self.changes.lock().await;
+                for member in members {
+                    if self.sees_shared_file(member, path) {
+                        continue;
+                    }
+                    if let Err(e) = self.copy_shared_held(path, member, outside_key, None).await {
+                        warn!("FAMILY could not give {member} a copy of {path}: {e}");
+                    }
+                }
+            }
             return path.to_string();
         }
         let _changing = self.changes.lock().await;
         if wants_shared {
+            // Members who joined after the file was placed are linked first, so the move keeps
+            // it in the pool for any of them who cannot see the shared library.
+            for member in members {
+                if let Err(e) = self.link_held(path, member).await {
+                    warn!("FAMILY could not give {member} {path}: {e}");
+                }
+            }
             return match self.promote_held(path, None).await {
                 Ok(moved) => moved,
                 Err(e) => {
@@ -1435,6 +1514,47 @@ impl FamilyPlacement for FamilyPool {
             }
         }
         path.to_string()
+    }
+}
+
+#[async_trait]
+impl MemberCopies for FamilyPool {
+    async fn own_copy_of(&self, who: &str, key: &str, library_id: &str) -> Option<String> {
+        if !self.active() {
+            return None;
+        }
+        let member = self.member_named(who).ok()?;
+        let mut library = self.index.library_of(library_id);
+        if library.is_none() {
+            // A song that only just landed may be newer than the index.
+            if let Err(e) = self.index.refresh().await {
+                warn!("FAMILY could not read the library index: {e}");
+            }
+            library = self.index.library_of(library_id);
+        }
+        if library.is_some() && library == member.personal_library_id {
+            return None;
+        }
+        // Their own pool file of this song, wherever the download itself landed.
+        if let Some(file) = self
+            .store
+            .find_by_outside_id(key)
+            .filter(|file| file.refs.iter().any(|r| eq_ignore_case(r, &member.username)))
+        {
+            return self.link_path(&file.path, &member.username);
+        }
+        // A shared song they cannot see: their copy goes where the pool keeps it.
+        let song = self.index.song(library_id)?;
+        if !self.is_shared_file(&song.path) || sees_shared_library(&member, library) {
+            return None;
+        }
+        let place = self.pool_place_of_shared(&song.path)?;
+        self.link_path(&place, &member.username)
+    }
+
+    async fn own_song_at(&self, who: &str, link: &str) -> Option<String> {
+        let library = self.family.member(who)?.personal_library_id?;
+        self.wait_for_path(link, Some(library)).await.map(|song| song.id)
     }
 }
 

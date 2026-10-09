@@ -20,7 +20,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::acquisition_tracker::{self, AcquisitionEnd, AcquisitionTracker, LibraryLookup};
-use crate::services::family::MemberCredentials;
+use crate::services::family::{MemberCopies, MemberCredentials};
 use crate::services::library::NavidromeSongPathResolver;
 use crate::services::subsonic::{CredentialCheck, NavidromeIdentityService, SubsonicProxyService};
 
@@ -97,6 +97,9 @@ pub struct StarOnArrival {
     /// Fresh sign-ins for members: a member's held sign-in is replaced at the moment it is
     /// used, so a repair of their hidden password while a download runs breaks nothing.
     members: OnceLock<Arc<MemberCredentials>>,
+    /// The family pool: a member who cannot see the library a download landed in has their own
+    /// copy, and their favorite goes on it.
+    copies: OnceLock<Arc<dyn MemberCopies>>,
 }
 
 impl StarOnArrival {
@@ -125,6 +128,7 @@ impl StarOnArrival {
                 seams: Mutex::new(StarSeams::default()),
                 subscription,
                 members: OnceLock::new(),
+                copies: OnceLock::new(),
             }
         })
     }
@@ -132,6 +136,11 @@ impl StarOnArrival {
     /// Signs members in from their current hidden password whenever a held sign-in is used.
     pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
         let _ = self.members.set(members);
+    }
+
+    /// Favorites a member's own copy of a download that landed where they cannot see it.
+    pub fn use_member_copies(&self, copies: Arc<dyn MemberCopies>) {
+        let _ = self.copies.set(copies);
     }
 
     /// Sets the test seams.
@@ -256,8 +265,14 @@ impl StarOnArrival {
         spawn(async move { stars.place(library_id, songs, albums).await });
     }
 
-    async fn place(&self, library_id: String, songs: Vec<Hold>, albums: Vec<Hold>) {
-        for hold in &songs {
+    async fn place(self: &Arc<Self>, library_id: String, songs: Vec<Hold>, albums: Vec<Hold>) {
+        for hold in songs {
+            if let Some(copies) = self.copies.get()
+                && let Some(link) = copies.own_copy_of(&hold.who, &hold.key, &library_id).await
+            {
+                self.star_own_copy(Arc::clone(copies), hold, link);
+                continue;
+            }
             self.star_song(&hold.credential, &hold.who, &library_id).await;
         }
         for hold in &albums {
@@ -289,6 +304,21 @@ impl StarOnArrival {
                 );
             }
         }
+    }
+
+    /// Favorites a member's own copy at `link` once the library index finds it in their own
+    /// library, off the caller, as that wait can be long.
+    fn star_own_copy(self: &Arc<Self>, copies: Arc<dyn MemberCopies>, hold: Hold, link: String) {
+        let stars = Arc::clone(self);
+        spawn(async move {
+            match copies.own_song_at(&hold.who, &link).await {
+                Some(id) => stars.star_song(&hold.credential, &hold.who, &id).await,
+                None => info!(
+                    "{link} never showed in the library of {}, so it was not favorited for them",
+                    hold.who
+                ),
+            }
+        });
     }
 
     /// A heart on a song already in the library: favorite the library's copy now for whoever

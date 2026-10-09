@@ -358,14 +358,20 @@ async fn promote_removes_links() {
 async fn settle_links_members_and_moves_a_shared_ask() {
     let world = World::new(None);
     let pooled = world.pool_file(SONG, 10);
-    let kept = world.pool.settle(&pooled, &["alex".to_string()], false).await;
+    let kept = world
+        .pool
+        .settle(&pooled, &["alex".to_string()], false, None)
+        .await;
     assert_eq!(kept, pooled);
     assert!(is_link(&format!("{}/alex/{SONG}", world.members())));
-    let moved = world.pool.settle(&pooled, &["alex".to_string()], true).await;
+    let moved = world
+        .pool
+        .settle(&pooled, &["alex".to_string()], true, None)
+        .await;
     assert_eq!(moved, format!("{}/{SONG}", world.music()));
     // A path outside the pool is left alone.
     assert_eq!(
-        world.pool.settle(&moved, &["sam".to_string()], false).await,
+        world.pool.settle(&moved, &["sam".to_string()], false, None).await,
         moved
     );
 }

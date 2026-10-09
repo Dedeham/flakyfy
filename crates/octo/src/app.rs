@@ -37,7 +37,7 @@ use crate::services::admin::{
 };
 use crate::services::common::{
     AcquisitionActivity, AcquisitionTracker, AcquisitionWorker, CacheCleanupService, CatalogBlanks,
-    DownloadConcurrency, DownloadCore, DownloadLogKeeper, DownloadPicks, DownloadServices,
+    DownloadArrivals, DownloadConcurrency, DownloadCore, DownloadLogKeeper, DownloadPicks, DownloadServices,
     ExternalSearchService, HeartAcquisitionCoordinator, HeartCoordinatorExtras, MeterPreview, SongFinder,
     SongFinderServices, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome, StarOnArrival,
     TrackAcquisitionQueue, TrackerServices,
@@ -111,7 +111,7 @@ use crate::services::radio::{
     SongRadioService, SoundsAlikeRadioSource, YouTubeMusicRadioSource,
 };
 use crate::services::sonic::{
-    ISonicClient, NavidromeSonicLibrary, SonicAnalysisWorker, SonicClient, SonicStore,
+    ISonicClient, NavidromeSonicLibrary, SonicAnalysisWorker, SonicClient, SonicStore, TransitionStore,
 };
 use crate::services::soulseek::soulseek_download_service::{SoulseekDownloadParts, SoulseekDownloadService};
 use crate::services::soulseek::soulseek_metadata_service::LastFmTrackLengths;
@@ -708,6 +708,7 @@ impl Acquisition {
                         lyrics: Some(downloads.lyrics.clone()),
                         last_fm: Some(integrations.last_fm.clone()),
                         picks: Some(stores.download_picks.clone()),
+                        arrivals: Some(stores.download_arrivals.clone()),
                     },
                     SoulseekDownloadParts {
                         slskd: downloads.soulseek_client.clone(),
@@ -973,6 +974,8 @@ impl AdminSignIn {
 
 struct Stores {
     download_history: Arc<DownloadHistoryService>,
+    /// Told of every outside song whose file lands in the music folder.
+    download_arrivals: Arc<DownloadArrivals>,
     download_concurrency: Arc<DownloadConcurrency>,
     download_picks: Arc<DownloadPicks>,
     soulseek_holds: Arc<SoulseekHoldStore>,
@@ -1013,6 +1016,7 @@ impl Stores {
             download_history: Arc::new(DownloadHistoryService::new(
                 config_dir.join("downloads-history.json"),
             )),
+            download_arrivals: Arc::new(DownloadArrivals::default()),
             download_concurrency: Arc::new(DownloadConcurrency::new(settings.clone())),
             download_picks: Arc::new(DownloadPicks::default()),
             soulseek_holds: Arc::new(SoulseekHoldStore::new(Some(
@@ -1537,8 +1541,11 @@ impl Radio {
             .sonic_client
             .clone()
             .unwrap_or_else(|| Arc::new(SonicClient::new(settings.clone())));
+        // Each song's transition profile, made in the same reading.
+        let transition_store = Arc::new(TransitionStore::new(&state_dir));
         let sonic_worker = SonicAnalysisWorker::new(
             sonic_store.clone(),
+            transition_store,
             sonic_client,
             Arc::new(NavidromeSonicLibrary::new(
                 navidrome.navidrome_playlist_api.clone(),
@@ -1549,6 +1556,7 @@ impl Radio {
             Some(&acquisition.acquisition_tracker),
             Clock::system(),
         );
+        sonic_worker.listen_to(&stores.download_arrivals);
         // Radio's suggestion sources, asked together and blended (multi-source radio).
         let listen_brainz = Arc::new(match &overrides.listen_brainz_radio_urls {
             Some((labs, api)) => ListenBrainzRadioClient::with_urls(settings.clone(), labs, api)

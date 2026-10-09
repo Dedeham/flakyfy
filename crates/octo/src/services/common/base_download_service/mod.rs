@@ -63,7 +63,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
-use crate::services::common::{AcquisitionState, AcquisitionTracker, DownloadConcurrency, DownloadPicks};
+use crate::services::common::{
+    AcquisitionState, AcquisitionTracker, DownloadArrivals, DownloadConcurrency, DownloadPicks,
+};
 use crate::services::cover_art::DownloadCoverResolver;
 use crate::services::fingerprint::MusicBrainzClient;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
@@ -262,6 +264,8 @@ pub struct DownloadServices {
     pub last_fm: Option<Arc<LastFmService>>,
     /// `DownloadPicks`: copies picked in Find songs, taken instead of a search.
     pub picks: Option<Arc<DownloadPicks>>,
+    /// Told of every song whose file lands in the music folder.
+    pub arrivals: Option<Arc<DownloadArrivals>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -955,6 +959,9 @@ impl BaseDownloadService {
             .filter(|&seconds| seconds > 0)
         {
             self.metadata.remember_file_length(external_id, seconds);
+        }
+        if !is_cache && let Some(arrivals) = &self.services.arrivals {
+            arrivals.arrived(&key_of(external_provider, external_id), &local_path);
         }
 
         if let Some(info) = self.active_downloads.lock().get_mut(song_id) {

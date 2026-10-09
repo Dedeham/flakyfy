@@ -9,6 +9,7 @@ use octo_core::settings::{AppSettings, RadioSourceSettings};
 
 use super::*;
 use crate::services::sonic::sonic_client::{SonicDropped, SonicFeatures, SonicHealth};
+use crate::services::sonic::transition_store::TransitionLookup;
 
 #[derive(Default)]
 struct Activity(AtomicBool);
@@ -23,6 +24,10 @@ impl IAcquisitionActivity for Activity {
 /// connection).
 struct Sidecar {
     version: Mutex<Option<i32>>,
+    /// The transition profile version it writes; `None` for one from before profiles.
+    transition: Mutex<Option<i32>>,
+    /// What each reading asked for.
+    parts: Mutex<Vec<SonicParts>>,
     /// Its music folder is empty or unreadable: health answers 503.
     blind: AtomicBool,
     /// Sounds alike is off in .env: health answers 503 with off.
@@ -40,6 +45,8 @@ impl Default for Sidecar {
     fn default() -> Self {
         Sidecar {
             version: Mutex::new(Some(2)),
+            transition: Mutex::new(None),
+            parts: Mutex::default(),
             blind: AtomicBool::new(false),
             off: AtomicBool::new(false),
             analysed: Mutex::default(),
@@ -61,15 +68,18 @@ impl Sidecar {
 impl ISonicClient for Sidecar {
     async fn health(&self) -> Option<SonicHealth> {
         let version = (*self.version.lock())?;
+        let transition_version = *self.transition.lock();
         if self.off.load(Ordering::SeqCst) {
             return Some(SonicHealth {
                 version,
+                transition_version,
                 problem: None,
                 off: true,
             });
         }
         Some(SonicHealth {
             version,
+            transition_version,
             problem: self
                 .blind
                 .load(Ordering::SeqCst)
@@ -78,7 +88,8 @@ impl ISonicClient for Sidecar {
         })
     }
 
-    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped> {
+        self.parts.lock().push(parts);
         let name = std::path::Path::new(path)
             .file_name()
             .expect("a file name")
@@ -89,9 +100,9 @@ impl ISonicClient for Sidecar {
             return Err(SonicDropped("connection reset".into()));
         }
         let answer = |error: &str, status: u16| SonicAnswer {
-            features: None,
             error: Some(error.to_string()),
             status,
+            ..Default::default()
         };
         if self.missing.lock().contains(&name) {
             return Ok(answer("no such file", 404));
@@ -105,11 +116,15 @@ impl ISonicClient for Sidecar {
         if let Some(error) = self.errors.lock().get(&name) {
             return Ok(answer(error, 422));
         }
+        let transition = self.transition.lock().unwrap_or(1);
         Ok(SonicAnswer {
-            features: Some(SonicFeatures {
+            features: parts.sound.then(|| SonicFeatures {
                 values: (0..23).map(|i| i as f32 / 100.0).collect(),
                 version: self.version.lock().unwrap_or(2),
             }),
+            transition: parts
+                .transition
+                .then(|| serde_json::json!({ "version": transition, "durationMs": 200_000, "file": name })),
             error: None,
             status: 200,
         })
@@ -210,6 +225,7 @@ struct T {
     _dir: tempfile::TempDir,
     worker: Arc<SonicAnalysisWorker>,
     store: Arc<SonicStore>,
+    transitions: Arc<TransitionStore>,
     sidecar: Arc<Sidecar>,
     library: Arc<Library>,
     activity: Arc<Activity>,
@@ -244,6 +260,7 @@ impl T {
 fn make(settings: Option<RadioSourceSettings>) -> T {
     let dir = tempfile::tempdir().expect("a temp dir");
     let store = Arc::new(SonicStore::new(dir.path().join("state.json")));
+    let transitions = Arc::new(TransitionStore::new(dir.path().join("profiles")));
     let sidecar = Arc::new(Sidecar::default());
     let library = Arc::new(Library {
         directory: dir.path().to_path_buf(),
@@ -267,6 +284,7 @@ fn make(settings: Option<RadioSourceSettings>) -> T {
     }));
     let worker = SonicAnalysisWorker::new(
         store.clone(),
+        transitions.clone(),
         sidecar.clone(),
         library.clone(),
         activity.clone(),
@@ -278,6 +296,7 @@ fn make(settings: Option<RadioSourceSettings>) -> T {
         _dir: dir,
         worker,
         store,
+        transitions,
         sidecar,
         library,
         activity,
@@ -648,4 +667,180 @@ async fn before_its_first_look_it_says_it_is_about_to_start() {
         serde_json::to_value(&status).unwrap()["analysed"],
         serde_json::json!(1)
     );
+}
+
+// ---- transition profiles ----------------------------------------------------------------
+
+fn sound_and_profile() -> SonicParts {
+    SonicParts {
+        sound: true,
+        transition: true,
+    }
+}
+
+fn profile_only() -> SonicParts {
+    SonicParts {
+        sound: false,
+        transition: true,
+    }
+}
+
+fn profile_of(t: &T, key: &str) -> Option<serde_json::Value> {
+    match t.transitions.lookup(key) {
+        TransitionLookup::Ready(profile) => Some(profile),
+        TransitionLookup::NotReady => None,
+    }
+}
+
+#[tokio::test]
+async fn one_reading_keeps_a_songs_sound_and_its_profile() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.tick().await;
+    assert_eq!(*t.sidecar.parts.lock(), [sound_and_profile()]);
+    assert_eq!(t.store.read(|s| s.songs["a"].f.len()), 23);
+    assert_eq!(
+        profile_of(&t, "a").map(|p| p["file"].clone()),
+        Some("a.flac".into())
+    );
+    assert_eq!(t.transitions.current_version(), Some(1));
+
+    let lookups = t.library.file_lookups.load(Ordering::SeqCst);
+    t.tick().await;
+    assert_eq!(t.worker.status().state, "Done");
+    // Both kept at this size: passed over without asking for the file.
+    assert_eq!(t.library.file_lookups.load(Ordering::SeqCst), lookups);
+    assert_eq!(t.sidecar.analysed().len(), 1);
+}
+
+#[tokio::test]
+async fn an_octo_sonic_from_before_profiles_is_asked_for_the_sound_alone() {
+    let t = make(None);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.tick().await;
+    assert_eq!(*t.sidecar.parts.lock(), [SonicParts::SOUND]);
+    assert_eq!(profile_of(&t, "a"), None);
+    assert_eq!(t.transitions.current_version(), None);
+}
+
+#[tokio::test]
+async fn a_song_read_before_profiles_is_read_again_for_its_profile_alone() {
+    let t = make(None);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.tick().await;
+    t.tick().await;
+    assert_eq!(t.worker.status().state, "Done");
+    t.advance(PASS_INTERVAL + TimeDelta::minutes(1));
+
+    // octo-sonic is updated and now makes profiles.
+    *t.sidecar.transition.lock() = Some(1);
+    t.tick().await;
+    assert_eq!(*t.sidecar.parts.lock(), [SonicParts::SOUND, profile_only()]);
+    assert!(profile_of(&t, "a").is_some());
+    // The features it had are kept as they were.
+    assert_eq!(t.store.read(|s| s.songs["a"].f.len()), 23);
+    assert!(t.store.read(|s| s.failed.is_empty()));
+}
+
+#[tokio::test]
+async fn a_new_profile_version_is_read_again_and_the_old_one_is_not_served() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.tick().await;
+    t.tick().await;
+    t.advance(PASS_INTERVAL + TimeDelta::minutes(1));
+
+    *t.sidecar.transition.lock() = Some(2);
+    t.library.listable.store(false, Ordering::SeqCst);
+    t.tick().await;
+    // Until it is read again, the old profile is not handed out.
+    assert_eq!(profile_of(&t, "a"), None);
+    t.library.listable.store(true, Ordering::SeqCst);
+    t.tick().await;
+    assert_eq!(t.sidecar.parts.lock().last(), Some(&profile_only()));
+    assert_eq!(profile_of(&t, "a").map(|p| p["version"].clone()), Some(2.into()));
+}
+
+#[tokio::test]
+async fn an_outside_song_that_lands_gets_its_profile_under_its_key_first() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    let landed = t.library.directory.join("landed.mp3");
+    std::fs::write(&landed, b"some sound").expect("writes");
+    let landed = landed.to_string_lossy().into_owned();
+    let arrivals = DownloadArrivals::default();
+    t.worker.listen_to(&arrivals);
+    arrivals.arrived("youtube:abc", &landed);
+
+    t.tick().await;
+    assert_eq!(t.sidecar.analysed(), ["landed.mp3"]);
+    assert_eq!(*t.sidecar.parts.lock(), [profile_only()]);
+    assert!(profile_of(&t, "youtube:abc").is_some());
+    assert_eq!(
+        t.transitions.entry("youtube:abc").and_then(|e| e.path),
+        Some(landed.clone())
+    );
+    // Nothing of it goes into the library's sounds.
+    assert!(t.store.read(|s| !s.songs.contains_key("youtube:abc")));
+
+    // The same file landing again is not read again.
+    arrivals.arrived("youtube:abc", &landed);
+    t.tick().await;
+    assert_eq!(t.sidecar.analysed(), ["landed.mp3", "a.flac"]);
+}
+
+#[tokio::test]
+async fn an_outside_song_between_passes_is_read_without_a_new_pass() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.ticks_until_done().await;
+    let landed = t.library.directory.join("landed.mp3");
+    std::fs::write(&landed, b"some sound").expect("writes");
+    t.worker
+        .arrived_outside("soulseek:xyz", &landed.to_string_lossy());
+    t.tick().await;
+    assert!(profile_of(&t, "soulseek:xyz").is_some());
+    assert_eq!(t.store.read(|s| s.pass), 1);
+}
+
+#[tokio::test]
+async fn an_outside_song_octo_sonic_cannot_see_blames_nothing_and_moves_on() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let landed = t.library.directory.join("cached.mp3");
+    std::fs::write(&landed, b"some sound").expect("writes");
+    t.sidecar.missing.lock().insert("cached.mp3".into());
+    t.library.add("a", "a.flac", Some(200), true);
+    t.worker.arrived_outside("youtube:abc", &landed.to_string_lossy());
+    t.tick().await;
+    assert_eq!(t.worker.status().state, "Running");
+    t.tick().await;
+    assert_eq!(t.sidecar.analysed(), ["cached.mp3", "a.flac"]);
+    assert!(t.store.read(|s| s.failed.is_empty()));
+}
+
+#[tokio::test]
+async fn an_outside_song_waits_while_octo_sonic_makes_no_profiles() {
+    let t = make(None);
+    let landed = t.library.directory.join("landed.mp3");
+    std::fs::write(&landed, b"some sound").expect("writes");
+    t.worker.arrived_outside("youtube:abc", &landed.to_string_lossy());
+    t.ticks_until_done().await;
+    assert!(t.sidecar.analysed().is_empty());
+}
+
+#[tokio::test]
+async fn at_the_pass_end_gone_songs_lose_their_profiles() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.transitions
+        .put("gone", "1:1", None, &serde_json::json!({ "version": 1 }));
+    t.library.add("a", "a.flac", Some(200), true);
+    t.ticks_until_done().await;
+    assert!(t.transitions.entry("gone").is_none());
+    assert!(profile_of(&t, "a").is_some());
 }

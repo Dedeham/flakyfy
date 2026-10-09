@@ -5,6 +5,7 @@ pub mod acquisition_tracker;
 pub mod acquisition_worker;
 pub mod base_download_service;
 pub mod cache_cleanup_service;
+pub mod download_arrivals;
 pub mod download_concurrency;
 pub mod download_log_keeper;
 pub mod download_picks;
@@ -28,6 +29,7 @@ pub use base_download_service::{
     RequestedIdentity, ReviewQueue, TrackDownload,
 };
 pub use cache_cleanup_service::CacheCleanupService;
+pub use download_arrivals::{ArrivalListener, DownloadArrivals};
 pub use download_concurrency::{DownloadConcurrency, TransferLimiter, TransferSlot};
 pub use download_log_keeper::DownloadLogKeeper;
 pub use download_picks::{DownloadPicks, PickedCopy};

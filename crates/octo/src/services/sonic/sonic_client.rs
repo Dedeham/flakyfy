@@ -1,5 +1,5 @@
 //! Port of `Services/Sonic/SonicClient.cs`: the octo-sonic sidecar, which reads a song and says
-//! how it sounds.
+//! how it sounds, and where it can blend into the next song (its transition profile).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,21 +18,50 @@ pub struct SonicFeatures {
     pub version: i32,
 }
 
-/// octo-sonic is up and writes this feature version; `problem` when it cannot see the music
-/// folder, so nothing it is sent could be read; `off` when Sounds alike is turned off in .env
-/// (RADIO_SOUNDS_ALIKE=false), so it reads nothing on purpose.
-#[derive(Debug, Clone, PartialEq)]
+/// octo-sonic is up and writes this feature version, and this transition profile version
+/// when it makes profiles; `problem` when it cannot see the music folder, so nothing it is sent
+/// could be read; `off` when Sounds alike is turned off in .env (RADIO_SOUNDS_ALIKE=false), so
+/// it reads nothing on purpose.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SonicHealth {
     pub version: i32,
+    pub transition_version: Option<i32>,
     pub problem: Option<String>,
     pub off: bool,
 }
 
-/// What octo-sonic said of one song: its features, or why not, and the HTTP status (403 and 404
-/// are octo-sonic's view of the music folder, not the song).
-#[derive(Debug, Clone, PartialEq)]
+/// What octo-sonic is asked to read of a song: how it sounds, its transition profile, or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SonicParts {
+    pub sound: bool,
+    pub transition: bool,
+}
+
+impl SonicParts {
+    pub const SOUND: SonicParts = SonicParts {
+        sound: true,
+        transition: false,
+    };
+
+    fn names(self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.sound {
+            names.push("sound");
+        }
+        if self.transition {
+            names.push("transition");
+        }
+        names
+    }
+}
+
+/// What octo-sonic said of one song: its features and its transition profile, as asked, or why
+/// not, and the HTTP status (403 and 404 are octo-sonic's view of the music folder, not the
+/// song).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SonicAnswer {
     pub features: Option<SonicFeatures>,
+    pub transition: Option<Value>,
     pub error: Option<String>,
     pub status: u16,
 }
@@ -50,9 +79,10 @@ pub trait ISonicClient: Send + Sync {
     /// not answer.
     async fn health(&self) -> Option<SonicHealth>;
 
-    /// The song's features, or an error to remember: octo-sonic could not read it. A dropped
-    /// connection is `Err`; an answer Octo cannot read is that song's error.
-    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped>;
+    /// What was asked of the song, or an error to remember: octo-sonic could not read it. A
+    /// dropped connection is `Err`; an answer Octo cannot read, or one missing a part asked for,
+    /// is that song's error.
+    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped>;
 }
 
 /// The octo-sonic sidecar over HTTP.
@@ -132,9 +162,12 @@ impl ISonicClient for SonicClient {
             }
         };
         let version = int32(doc.get("featuresVersion"))?;
+        // An octo-sonic from before profiles leaves it out.
+        let transition_version = int32(doc.get("transitionVersion")).filter(|&v| v > 0);
         if status.is_success() {
             return Some(SonicHealth {
                 version,
+                transition_version,
                 problem: None,
                 off: false,
             });
@@ -142,35 +175,43 @@ impl ISonicClient for SonicClient {
         if doc.get("off") == Some(&Value::Bool(true)) {
             return Some(SonicHealth {
                 version,
+                transition_version,
                 problem: None,
                 off: true,
             });
         }
         (status.as_u16() == 503).then(|| SonicHealth {
             version,
+            transition_version,
             problem: Some(text(&doc, "error").unwrap_or_else(|| "cannot see the music folder".to_string())),
             off: false,
         })
     }
 
-    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped> {
         let url = format!("{}/analyse", self.base_url());
+        // The sound alone goes as it always went, so an older octo-sonic reads it the same.
+        let body = if parts == SonicParts::SOUND {
+            json!({ "path": path })
+        } else {
+            json!({ "path": path, "parts": parts.names() })
+        };
         let response = self
             .http
             .post(&url)
-            .json(&json!({ "path": path }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| SonicDropped(e.to_string()))?;
         let status = response.status();
         let body = response.text().await.map_err(|e| SonicDropped(e.to_string()))?;
         let unreadable = || SonicAnswer {
-            features: None,
             error: Some(format!(
                 "octo-sonic answered something Octo could not read (HTTP {})",
                 status.as_u16()
             )),
             status: status.as_u16(),
+            ..Default::default()
         };
         let Ok(doc) = parse(&body) else {
             debug!("octo-sonic's answer for {path} could not be read");
@@ -183,9 +224,9 @@ impl ISonicClient for SonicClient {
             };
             let error = text(&doc, "error");
             return Ok(SonicAnswer {
-                features: None,
                 error: Some(error.unwrap_or_else(|| format!("HTTP {}", status.as_u16()))),
                 status: status.as_u16(),
+                ..Default::default()
             });
         }
         let features = doc.get("features").and_then(Value::as_array).and_then(|items| {
@@ -198,17 +239,23 @@ impl ISonicClient for SonicClient {
             .get("version")
             .and_then(Value::as_i64)
             .and_then(|n| i32::try_from(n).ok());
-        match (features, version) {
-            (Some(values), Some(version)) => Ok(SonicAnswer {
-                features: Some(SonicFeatures { values, version }),
-                error: None,
-                status: status.as_u16(),
-            }),
-            _ => {
-                debug!("octo-sonic's answer for {path} could not be read");
-                Ok(unreadable())
-            }
+        let features = features
+            .zip(version)
+            .map(|(values, version)| SonicFeatures { values, version });
+        let transition = doc
+            .get("transition")
+            .filter(|t| t.is_object() && t.get("version").and_then(Value::as_i64).is_some())
+            .cloned();
+        if (parts.sound && features.is_none()) || (parts.transition && !parts.sound && transition.is_none()) {
+            debug!("octo-sonic's answer for {path} could not be read");
+            return Ok(unreadable());
         }
+        Ok(SonicAnswer {
+            features: features.filter(|_| parts.sound),
+            transition: transition.filter(|_| parts.transition),
+            error: None,
+            status: status.as_u16(),
+        })
     }
 }
 
@@ -247,16 +294,23 @@ mod tests {
             health(200, r#"{"ok":true,"featuresVersion":2}"#).await,
             Some(SonicHealth {
                 version: 2,
-                problem: None,
-                off: false
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            health(200, r#"{"ok":true,"featuresVersion":2,"transitionVersion":1}"#).await,
+            Some(SonicHealth {
+                version: 2,
+                transition_version: Some(1),
+                ..Default::default()
             })
         );
         assert_eq!(
             health(503, r#"{"ok":false,"off":true,"featuresVersion":2}"#).await,
             Some(SonicHealth {
                 version: 2,
-                problem: None,
-                off: true
+                off: true,
+                ..Default::default()
             })
         );
         assert_eq!(
@@ -264,7 +318,7 @@ mod tests {
             Some(SonicHealth {
                 version: 2,
                 problem: Some("blind".into()),
-                off: false
+                ..Default::default()
             })
         );
         assert_eq!(
@@ -306,7 +360,10 @@ mod tests {
             .mount(&server)
             .await;
         let client = client(&server).await;
-        let ok = client.analyze("/music/a.flac").await.expect("an answer");
+        let ok = client
+            .analyze("/music/a.flac", SonicParts::SOUND)
+            .await
+            .expect("an answer");
         assert_eq!(
             ok.features,
             Some(SonicFeatures {
@@ -314,20 +371,71 @@ mod tests {
                 version: 2
             })
         );
-        let refused = client.analyze("/music/a.flac").await.expect("an answer");
+        let refused = client
+            .analyze("/music/a.flac", SonicParts::SOUND)
+            .await
+            .expect("an answer");
         assert_eq!(
             (refused.error.as_deref(), refused.status),
             (Some("too short"), 422)
         );
-        let bare = client.analyze("/music/a.flac").await.expect("an answer");
+        let bare = client
+            .analyze("/music/a.flac", SonicParts::SOUND)
+            .await
+            .expect("an answer");
         assert_eq!(bare.error.as_deref(), Some("HTTP 500"));
-        let odd = client.analyze("/music/a.flac").await.expect("an answer");
+        let odd = client
+            .analyze("/music/a.flac", SonicParts::SOUND)
+            .await
+            .expect("an answer");
         assert_eq!(
             odd.error.as_deref(),
             Some("octo-sonic answered something Octo could not read (HTTP 200)")
         );
         let sent = server.received_requests().await.expect("recorded");
         assert_eq!(sent[0].body, br#"{"path":"/music/a.flac"}"#);
+    }
+
+    #[tokio::test]
+    async fn a_profile_is_asked_for_by_name_and_read_with_the_features() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/analyse"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"features":[0.5],"version":2,"transition":{"version":1,"durationMs":1000}}"#,
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/analyse"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"transition":{"durationMs":1}}"#))
+            .mount(&server)
+            .await;
+        let client = client(&server).await;
+        let both = SonicParts {
+            sound: true,
+            transition: true,
+        };
+        let answer = client.analyze("/music/a.flac", both).await.expect("an answer");
+        assert_eq!(answer.features.map(|f| f.version), Some(2));
+        assert_eq!(answer.transition, Some(json!({"version": 1, "durationMs": 1000})));
+        // A profile without its version is not one.
+        let only = SonicParts {
+            sound: false,
+            transition: true,
+        };
+        let odd = client.analyze("/music/a.flac", only).await.expect("an answer");
+        assert!(odd.error.is_some() && odd.transition.is_none());
+        let sent = server.received_requests().await.expect("recorded");
+        assert_eq!(
+            sent[0].body,
+            br#"{"path":"/music/a.flac","parts":["sound","transition"]}"#
+        );
+        assert_eq!(
+            sent[1].body,
+            br#"{"path":"/music/a.flac","parts":["transition"]}"#
+        );
     }
 
     #[tokio::test]
@@ -343,7 +451,7 @@ mod tests {
             },
             ..Default::default()
         })));
-        assert!(client.analyze("/music/a.flac").await.is_err());
+        assert!(client.analyze("/music/a.flac", SonicParts::SOUND).await.is_err());
         assert_eq!(client.health().await, None);
     }
 }

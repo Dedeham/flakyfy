@@ -500,6 +500,9 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("NewReleaseWeeks", n_num(mixes.new_release_weeks)),
             ("NewReleaseArtists", n_num(mixes.new_release_artists)),
             ("RediscoverMonths", n_num(mixes.rediscover_months)),
+            ("LikedSongs", Node::Bool(mixes.liked_songs)),
+            ("LikedSongsName", n_str(&mixes.liked_songs_name)),
+            ("LikedSongsMax", n_num(mixes.liked_songs_max)),
         ]),
     );
     // Read from the raw file, for the same reason as DiscoveryStations: EffectiveMappings()

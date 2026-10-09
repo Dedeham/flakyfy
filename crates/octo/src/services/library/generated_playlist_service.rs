@@ -89,6 +89,8 @@ pub struct GeneratedPlaylistService {
     drawn: MemoryCache<Arc<Vec<Node>>>,
     /// Each listener's hearts, read from Navidrome at most once a minute.
     marks: MemoryCache<Arc<MarksById>>,
+    /// The same read's songs, as Navidrome described them, for Liked Songs.
+    starred_songs: MemoryCache<Arc<Vec<Node>>>,
     /// Ratings set through Octo, per listener: Navidrome lists ratings only on hearted songs,
     /// so these keep the rest of a list current.
     rated: Mutex<HashMap<String, IndexMap<String, i64>>>,
@@ -119,6 +121,7 @@ impl GeneratedPlaylistService {
             refreshes: SingleFlight::new(),
             drawn: MemoryCache::new(256),
             marks: MemoryCache::new(256),
+            starred_songs: MemoryCache::new(256),
             rated: Mutex::new(HashMap::new()),
             state: Mutex::new(Mixes::default()),
             for_you: None,
@@ -797,6 +800,15 @@ impl GeneratedPlaylistService {
         if let Some(cached) = self.marks.get(&key) {
             return Some(cached);
         }
+        Some(self.read_starred(username, auth).await?.0)
+    }
+
+    /// One getStarred2 read: the marks by id and the songs, both kept a minute.
+    async fn read_starred(
+        &self,
+        username: &str,
+        auth: &IndexMap<String, String>,
+    ) -> Option<(Arc<MarksById>, Arc<Vec<Node>>)> {
         let songs = self
             .fetch_songs(auth, "rest/getStarred2", "starred2", &[])
             .await?;
@@ -814,13 +826,75 @@ impl GeneratedPlaylistService {
             })
             .collect();
         let marks = Arc::new(marks);
-        self.marks.set(key, Arc::clone(&marks), 1, MARKS_FOR);
-        Some(marks)
+        let songs = Arc::new(songs);
+        self.marks
+            .set(marks_key(username), Arc::clone(&marks), 1, MARKS_FOR);
+        self.starred_songs
+            .set(marks_key(username), Arc::clone(&songs), 1, MARKS_FOR);
+        Some((marks, songs))
+    }
+
+    /// Liked Songs' id for this listener.
+    pub fn liked_id(&self, username: &str) -> String {
+        playlist_id(username, for_you_lists::LIKED_KIND)
+    }
+
+    /// Liked Songs as a playlist row, when it is on and the listener has hearted something.
+    pub async fn liked_row(
+        &self,
+        username: &str,
+        auth: &IndexMap<String, String>,
+    ) -> Option<GeneratedPlaylist> {
+        let settings = self.settings.current().generated_playlists.clone();
+        if !settings.liked_songs || dotnet::is_blank(username) {
+            return None;
+        }
+        let marks = self.marks(username, auth).await?;
+        if marks.is_empty() {
+            return None;
+        }
+        let now = Utc::now();
+        let count = marks.len().min(settings.effective_liked_songs_max() as usize);
+        Some(GeneratedPlaylist {
+            id: self.liked_id(username),
+            key: for_you_lists::LIKED_KIND.to_string(),
+            kind: for_you_lists::LIKED_KIND.to_string(),
+            label: settings.effective_liked_songs_name(),
+            name: settings.effective_liked_songs_name(),
+            owner: username.trim().to_string(),
+            pool_size: i32::try_from(count).unwrap_or(i32::MAX),
+            period_start_utc: now,
+            period_end_utc: now,
+        })
+    }
+
+    /// Liked Songs' songs: the listener's hearted songs, newest heart first (then by id), at most
+    /// the setting's number. None when Navidrome did not answer.
+    pub async fn liked_songs(&self, username: &str, auth: &IndexMap<String, String>) -> Option<Vec<Node>> {
+        let max = self
+            .settings
+            .current()
+            .generated_playlists
+            .effective_liked_songs_max() as usize;
+        let songs = match self.starred_songs.get(&marks_key(username)) {
+            Some(songs) => songs,
+            None => self.read_starred(username, auth).await?.1,
+        };
+        let mut songs: Vec<Node> = songs.as_ref().clone();
+        let text = |song: &Node, key: &str| song.get(key).and_then(Node::as_str).unwrap_or("").to_string();
+        songs.sort_by(|a, b| {
+            text(b, "starred")
+                .cmp(&text(a, "starred"))
+                .then_with(|| text(a, "id").cmp(&text(b, "id")))
+        });
+        songs.truncate(max);
+        Some(songs)
     }
 
     /// The listener hearted or unhearted something: their hearts are read again next time.
     pub fn forget_marks(&self, username: &str) {
         self.marks.forget(&marks_key(username));
+        self.starred_songs.forget(&marks_key(username));
     }
 
     /// The listener rated a song through Octo, and Navidrome took it.

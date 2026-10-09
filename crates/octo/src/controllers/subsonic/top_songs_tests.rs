@@ -299,7 +299,9 @@ async fn get_playlists_lists_the_chart_lists_read_only() {
 
     let rows = answer["playlists"]["playlist"].as_array().unwrap();
     let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
-    assert_eq!(names, vec!["Popular right now", "Best New Songs"]);
+    // Alice has hearted a song, so her Liked Songs comes first.
+    assert_eq!(names, vec!["Liked Songs", "Popular right now", "Best New Songs"]);
+    let rows = &rows[1..];
     let popular = &rows[0];
     assert_eq!(popular["id"], popular_id().as_str());
     assert_eq!(popular["readonly"], true);

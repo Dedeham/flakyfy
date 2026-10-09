@@ -197,6 +197,10 @@ services:
       GeneratedPlaylists__NewReleaseWeeks: ${NEW_RELEASE_WEEKS:-8}
       GeneratedPlaylists__NewReleaseArtists: ${NEW_RELEASE_ARTISTS:-50}
       GeneratedPlaylists__RediscoverMonths: ${REDISCOVER_MONTHS:-6}
+      # ----- Liked Songs: each listener's hearted songs, newest first, listed first -----
+      GeneratedPlaylists__LikedSongs: ${LIKED_SONGS:-true}
+      GeneratedPlaylists__LikedSongsName: ${LIKED_SONGS_NAME:-Liked Songs}
+      GeneratedPlaylists__LikedSongsMax: ${LIKED_SONGS_MAX:-500}
 
       # ----- Spotify import: lists from Spotify, a link or a file, and the trickle -----
       Imports__SpotifyClientId: ${IMPORTS_SPOTIFY_CLIENT_ID:-}

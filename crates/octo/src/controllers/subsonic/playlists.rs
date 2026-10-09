@@ -10,6 +10,7 @@ use indexmap::IndexMap;
 use octo_core::charts::chart_settings;
 use octo_core::common::dotnet;
 use octo_core::json::dom::Node;
+use octo_core::library::for_you_lists;
 use octo_core::radio::radio_provider;
 use octo_core::settings::GeneratedPlaylistSettings;
 use octo_core::settings::NoticeKind;
@@ -84,7 +85,13 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     };
     // The chart lists, on whether or not the mixes are: after the stations, before the mixes.
     let charts = state.chart_playlists.list(&username, &call.parameters).await;
-    if stations.is_empty() && charts.is_empty() && generated.is_empty() {
+    // Liked Songs, listed before every other playlist.
+    let liked = state
+        .generated_playlists
+        .liked_row(&username, &call.parameters)
+        .await
+        .map(|row| liked_playlist_fields(builder, &row, &mix_settings));
+    if stations.is_empty() && charts.is_empty() && generated.is_empty() && liked.is_none() {
         return call.file(&relay.body, relay.content_type.as_deref());
     }
 
@@ -105,6 +112,10 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
             "playlist",
             rows.into_iter().map(Value::Object),
         )
+        .and_then(|body| match &liked {
+            Some(row) => prepend_json(&body, "playlists", "playlist", Value::Object(row.clone())),
+            None => Some(body),
+        })
         .map(|body| SubsonicReply::file(body, "application/json"))
     } else {
         merge_xml(
@@ -113,6 +124,10 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
             "playlist",
             rows.iter().map(field_attributes),
         )
+        .and_then(|body| match &liked {
+            Some(row) => prepend_xml(&body, "playlists", "playlist", field_attributes(row)),
+            None => Some(body),
+        })
         .map(|body| SubsonicReply::file(body, "application/xml"))
     };
     match merged {
@@ -277,6 +292,57 @@ pub(super) fn mark_notice_rows(
     marked.then(|| root.to_xml_string().into_bytes())
 }
 
+/// Liked Songs as a playlist row: the keys a mix has, read-only, with its real song count and
+/// `octoList: "liked"` so the Octo apps put it first on Home and draw its heart cover.
+pub(crate) fn liked_playlist_fields(
+    builder: &octo_subsonic::SubsonicResponseBuilder,
+    list: &GeneratedPlaylist,
+    settings: &GeneratedPlaylistSettings,
+) -> serde_json::Map<String, Value> {
+    let mut fields = builder.generated_playlist_fields(list, settings);
+    fields.insert("songCount".into(), list.pool_size.into());
+    fields.insert("duration".into(), (i64::from(list.pool_size) * 210).into());
+    fields.insert("comment".into(), "Your hearted songs, newest first".into());
+    // Always current, so there is no time it is good until.
+    fields.remove("validUntil");
+    fields.insert("octoList".into(), for_you_lists::LIKED_KIND.into());
+    fields
+}
+
+/// [`merge_json`]'s row put first instead of last.
+fn prepend_json(body: &[u8], container: &str, row: &str, value: Value) -> Option<Vec<u8>> {
+    let mut root = Node::parse(std::str::from_utf8(body).ok()?).ok()?;
+    let holder = root
+        .as_object_mut()?
+        .get_mut("subsonic-response")?
+        .as_object_mut()?
+        .get_mut(container)?
+        .as_object_mut()?;
+    let Some(Node::Array(list)) = holder.get_mut(row) else {
+        return None;
+    };
+    list.insert(0, to_node(&value));
+    Some(root.to_json_string(false).into_bytes())
+}
+
+/// [`merge_xml`]'s row put first instead of last.
+fn prepend_xml(
+    body: &[u8],
+    container: &str,
+    row: &str,
+    attributes: Vec<(String, String)>,
+) -> Option<Vec<u8>> {
+    let mut root = XElement::parse(&String::from_utf8_lossy(body)).ok()?;
+    let ns = root.namespace.clone();
+    let holder = root.elements_mut().find(|element| element.name == container)?;
+    let mut element = XElement::in_namespace(ns.as_deref(), row);
+    for (name, value) in attributes {
+        element.set_attr(name, value);
+    }
+    holder.add_first(vec![element]);
+    Some(root.to_xml_string().into_bytes())
+}
+
 /// A row's fields as XML attributes (`XmlValue`).
 fn field_attributes(fields: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
     fields
@@ -367,6 +433,53 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
     let builder = &state.subsonic_response_builder;
     let id = call.param_or("id", "").to_string();
     let username = call.param_or("u", "").to_string();
+
+    // Liked Songs: the listener's hearts as Navidrome holds them now, newest first.
+    if !id.is_empty()
+        && id == state.generated_playlists.liked_id(&username)
+        && state.settings.current().generated_playlists.liked_songs
+    {
+        let mut auth_only = call.parameters.clone();
+        auth_only.shift_remove("id");
+        let check = call.proxy.relay_safe("rest/ping", &auth_only).await;
+        if !check.is_some_and(|check| is_successful_subsonic_response(&check.body, format)) {
+            return builder
+                .create_error(format, 40, "Wrong username or password")
+                .into_response();
+        }
+        let settings = state.settings.current().generated_playlists.clone();
+        let Some(mut entries) = state
+            .generated_playlists
+            .liked_songs(&username, &call.parameters)
+            .await
+        else {
+            return builder
+                .create_error(format, 0, "Unable to read your hearted songs")
+                .into_response();
+        };
+        if let Some(marks) = state.generated_playlists.marks(&username, &call.parameters).await {
+            state.generated_playlists.overlay(&username, &mut entries, &marks);
+        }
+        let row = state
+            .generated_playlists
+            .liked_row(&username, &call.parameters)
+            .await
+            .unwrap_or_else(|| GeneratedPlaylist {
+                id: id.clone(),
+                key: for_you_lists::LIKED_KIND.to_string(),
+                kind: for_you_lists::LIKED_KIND.to_string(),
+                label: settings.effective_liked_songs_name(),
+                name: settings.effective_liked_songs_name(),
+                owner: username.trim().to_string(),
+                pool_size: 0,
+                period_start_utc: chrono::Utc::now(),
+                period_end_utc: chrono::Utc::now(),
+            });
+        let fields = liked_playlist_fields(builder, &row, &settings);
+        return builder
+            .create_entries_playlist_response(format, fields, &entries)
+            .into_response();
+    }
 
     // A mix is the listener's own library, served as a playlist Navidrome has never heard of.
     // The ping is the auth check, as for a station: nothing about a user is revealed first.

@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Liked Songs' name unless one is set.
+pub const LIKED_SONGS_NAME: &str = "Liked Songs";
+
 /// Genre and decade mixes Octo builds from the library and serves like radio stations: per
 /// listener, read-only, drawn again on a schedule (#54). Nothing is written to Navidrome, so a
 /// rescan cannot empty them and a listener cannot edit one by accident.
@@ -76,6 +79,16 @@ pub struct GeneratedPlaylistSettings {
     /// Environment variable: REDISCOVER_MONTHS
     pub rediscover_months: i32,
 
+    /// Liked Songs: every listener's hearted songs as a read-only playlist, newest heart first,
+    /// listed before every other playlist. Environment variable: LIKED_SONGS
+    pub liked_songs: bool,
+
+    /// What Liked Songs is called. Environment variable: LIKED_SONGS_NAME
+    pub liked_songs_name: String,
+
+    /// The most songs Liked Songs holds, the newest hearts. Environment variable: LIKED_SONGS_MAX
+    pub liked_songs_max: i32,
+
     /// "Popular right now": the chart of the moment as a read-only playlist for every listener,
     /// in every app, on whether or not the mixes are. Songs a listener has are their library's
     /// own; the rest play right away and are added with a heart. Made again every few hours.
@@ -114,6 +127,9 @@ impl Default for GeneratedPlaylistSettings {
             new_release_weeks: 8,
             new_release_artists: 50,
             rediscover_months: 6,
+            liked_songs: true,
+            liked_songs_name: LIKED_SONGS_NAME.to_string(),
+            liked_songs_max: 500,
             popular_now: true,
             charts: "new,trending,18,14,6".to_string(),
             chart_country: "auto".to_string(),
@@ -128,6 +144,21 @@ impl GeneratedPlaylistSettings {
 
     pub fn effective_new_release_artists(&self) -> i32 {
         self.new_release_artists.clamp(10, 200)
+    }
+
+    /// The name, trimmed and at most 80 characters; blank is "Liked Songs".
+    pub fn effective_liked_songs_name(&self) -> String {
+        let name: String = self.liked_songs_name.trim().chars().take(80).collect();
+        let name = name.trim();
+        if name.is_empty() {
+            LIKED_SONGS_NAME.to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
+    pub fn effective_liked_songs_max(&self) -> i32 {
+        self.liked_songs_max.clamp(50, 5000)
     }
 
     pub fn effective_rediscover_months(&self) -> i32 {
@@ -399,5 +430,34 @@ mod tests {
         assert_eq!(s.effective_new_release_artists(), 200);
         assert_eq!(s.effective_rediscover_months(), 3);
         assert!(!s.any_for_you());
+    }
+
+    #[test]
+    fn liked_songs_is_on_and_named_liked_songs_unless_set() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert!(defaults.liked_songs);
+        assert_eq!(defaults.effective_liked_songs_name(), "Liked Songs");
+        assert_eq!(defaults.effective_liked_songs_max(), 500);
+
+        let set = GeneratedPlaylistSettings {
+            liked_songs_name: "  * Liked Songs  ".into(),
+            liked_songs_max: 1,
+            ..Default::default()
+        };
+        assert_eq!(set.effective_liked_songs_name(), "* Liked Songs");
+        assert_eq!(set.effective_liked_songs_max(), 50);
+
+        let blank = GeneratedPlaylistSettings {
+            liked_songs_name: "   ".into(),
+            liked_songs_max: 99_999,
+            ..Default::default()
+        };
+        assert_eq!(blank.effective_liked_songs_name(), "Liked Songs");
+        assert_eq!(blank.effective_liked_songs_max(), 5000);
+        let long = GeneratedPlaylistSettings {
+            liked_songs_name: "x".repeat(200),
+            ..Default::default()
+        };
+        assert_eq!(long.effective_liked_songs_name().chars().count(), 80);
     }
 }

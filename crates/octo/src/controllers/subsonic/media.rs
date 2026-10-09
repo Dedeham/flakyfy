@@ -452,9 +452,29 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(file(bytes, "image/jpeg"));
     }
 
+    // Liked Songs: Octo's painted cover with a heart, picked by its name.
+    let cover_user = call.param("u").to_string();
+    if !cover_user.is_empty() && id == state.generated_playlists.liked_id(&cover_user) {
+        let name = state
+            .settings
+            .current()
+            .generated_playlists
+            .effective_liked_songs_name();
+        let service = Arc::clone(&state.cover_art_service);
+        let size = requested_cover_size(&call);
+        let bytes = tokio::task::spawn_blocking(move || {
+            service.get_glyph_cover(&name, list_kinds::LIKED, CoverGlyph::Heart, size)
+        })
+        .await
+        .unwrap_or_default();
+        if bytes.is_empty() {
+            return Ok(serve_placeholder(&state, false).await);
+        }
+        return Ok(file(bytes, "image/jpeg"));
+    }
+
     // A mix is the listener's own library, so its cover carries no Octo mark: the logo says
     // where a result came from, and this came from them.
-    let cover_user = call.param("u").to_string();
     if let Some(mix) = state.generated_playlists.find(&cover_user, &id) {
         let song_count = state
             .generated_playlists

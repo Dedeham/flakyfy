@@ -24,6 +24,10 @@ pub const NEW_RELEASES_KIND: &str = "newReleases";
 pub const REDISCOVER_KIND: &str = "rediscover";
 pub const DEEP_CUTS_KIND: &str = "deepCuts";
 
+/// Liked Songs: every song the listener hearted, newest first. Read from Navidrome whenever it
+/// is opened, never drawn, so it is not one of [`KINDS`].
+pub const LIKED_KIND: &str = "liked";
+
 /// The three, in the order they are listed: newest first, then what is old to you.
 pub const KINDS: [&str; 3] = [NEW_RELEASES_KIND, REDISCOVER_KIND, DEEP_CUTS_KIND];
 

@@ -136,6 +136,7 @@ body { font-size: var(--t-body); }
   overflow-wrap: anywhere;
 }
 @media (min-width: 720px) { .fam-title { font-size: var(--t-title); } }
+.fam-title:focus { outline: none; }
 .fam-lede { margin: 0 0 var(--s-2xl); color: var(--text-secondary); max-width: 64ch; }
 .fam-h { margin: 0 0 var(--s-m); font-size: var(--t-section); font-weight: 650; overflow-wrap: anywhere; }
 .fam-sub { margin: 0; color: var(--text-muted); font-size: var(--t-meta); }
@@ -277,6 +278,7 @@ body { font-size: var(--t-body); }
 .fam-btn.block { width: 100%; }
 .fam-btn[disabled] { opacity: 0.5; cursor: default; transform: none; }
 .fam-actions { display: flex; gap: var(--s-m); flex-wrap: wrap; margin-top: var(--s-xl); }
+.fam-help a, .fam-sub a, .fam-lede a, .fam-row-meta a { text-decoration: underline; text-underline-offset: 2px; }
 .fam-link {
   border: 0;
   background: none;
@@ -359,7 +361,11 @@ select.fam-field { appearance: none; background-image: linear-gradient(45deg, tr
 .fam-switch input[type="checkbox"]:checked::after { transform: translateX(18px); }
 .fam-switch input[type="checkbox"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .fam-switch .fam-field { width: 120px; flex: 0 0 auto; }
-.fam-switch select.fam-field { width: auto; max-width: 60%; }
+.fam-switch select.fam-field { width: 14em; max-width: 55vw; min-width: 0; }
+@media (max-width: 560px) {
+  .fam-switch:has(select) { flex-direction: column; align-items: stretch; }
+  .fam-switch:has(select) select.fam-field { width: 100%; max-width: 100%; }
+}
 
 /* ── Meters ─────────────────────────────────────────────────────────────────────────────── */
 .fam-meter { margin-top: var(--s-m); }
@@ -416,9 +422,10 @@ select.fam-field { appearance: none; background-image: linear-gradient(45deg, tr
   color: var(--ink);
   box-shadow: var(--shadow-raised);
   overflow: auto;
+  overflow-x: hidden;
 }
 .fam-sheet::backdrop { background: rgba(8, 6, 14, 0.5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
-.fam-sheet-body { padding: var(--s-2xl); }
+.fam-sheet-body { padding: var(--s-2xl); min-width: 0; }
 .fam-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-l); margin-bottom: var(--s-l); }
 .fam-sheet-head h2 { margin: 0; font-size: 22px; line-height: 1.2; overflow-wrap: anywhere; }
 @media (max-width: 560px) {

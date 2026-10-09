@@ -80,10 +80,10 @@
     ['DataSaver', 'Data saver']
   ];
   var QUALITY_HELP = {
-    Original: 'The file as it is.',
-    High: 'About 256 kbps.',
-    Standard: 'About 160 kbps.',
-    DataSaver: 'About 96 kbps, for slow or metered connections.'
+    Original: 'the file as it is.',
+    High: 'about 256 kbps.',
+    Standard: 'about 160 kbps.',
+    DataSaver: 'about 96 kbps, for slow or metered connections.'
   };
 
   var STATE_WORDS = {
@@ -1118,7 +1118,7 @@
     F.append(main, title('Load', 'How busy the server is right now.'));
     F.append(main, card(el('div', { class: 'fam-stats' },
       el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, String(load.streams.length)), el('span', { class: 'fam-sub' }, 'Streams playing')),
-      el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, load.shim.active + ' of ' + (load.shim.limit || '?')), el('span', { class: 'fam-sub' }, 'Outside songs streaming')),
+      el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, load.shim.limit ? load.shim.active + ' of ' + load.shim.limit : String(load.shim.active)), el('span', { class: 'fam-sub' }, 'Outside songs streaming')),
       el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, String(load.shim.ytdlpRunning)), el('span', { class: 'fam-sub' }, 'Lookups running')),
       el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, load.uploadKbps + ' kbps'), el('span', { class: 'fam-sub' }, 'Sent out now')))));
     F.append(main, el('div', { class: 'fam-grid two', style: 'margin-top:16px' },

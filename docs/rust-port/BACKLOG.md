@@ -1353,10 +1353,10 @@ observable changes.
 - [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library
 - [ ] G5-8 Family playlists
 - [ ] G5-9 Kid profiles (explicit status from the index)
-- [ ] G5-10 Member sign-in on `/family/`, pairing, invites
-- [ ] G5-11 `octoFamily` extension for the apps
-- [ ] G5-12 Notifications, ListenBrainz fallback rule
-- [ ] G5-13 Dashboards (`/family/` page, admin entry)
+- [x] G5-10 Member sign-in on `/family/`, pairing, invites: Family page sessions (cookie `octo_family`, never valid on `/api/admin`), every `/api/family` route with the cookie or a Subsonic sign-in, member lifecycle (add, adopt, edit, pause, remove with the typed name and a files choice, a new sign-in link, repair), pairing by username and code with a cap of 30 wrong codes in 10 minutes while a code is live, no CORS on `/api/family`. Other lanes' work is reached through `FamilyHooks` (wiring list in the web lane's report)
+- [x] G5-11 `octoFamily` extension for the apps: every call, listed only while Family is on, JSON and XML; `addFamilyDevice` takes `username` for managers; `octoFamilyPair` by GET or form post
+- [ ] G5-12 Notifications, ListenBrainz fallback rule. Notifications done: new request, new device and failed request through the owner's channels (switches `NotifyFamilyRequests` and `NotifyFamilyDevices`, on by default), member pushes on approved, declined, added and failed to their own ntfy topic without the owner's token. Left: the ListenBrainz fallback rule (not in the web lane)
+- [x] G5-13 Dashboards (`/family/` page, admin entry): the Family page and the join page (QR drawn locally, Android intent link, Open in Octo, Get Octo, other apps' steps), the dashboard's Family entry shown only when status reports `family.supported`; checked at 375 px and desktop, light and dark
 - [ ] G5-14 Owner privacy (index answer filter)
 - [ ] G5-15 Scale (shim threads and single flight, radio cap, fair star queue, load)
 - [ ] G5-16 Apps (`C:\OctoPlayer`, `feat/family`)

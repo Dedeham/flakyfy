@@ -34,7 +34,8 @@ use super::{admin_root, catch_all};
 use crate::app::AppState;
 use crate::middleware::admin_sign_in_gate::GateState;
 use crate::middleware::{
-    admin_guard, admin_headers, admin_port_split, admin_sign_in_gate, cors, exception, forwarded, request_log,
+    admin_guard, admin_headers, admin_port_split, admin_sign_in_gate, cors, exception, family_gate,
+    forwarded, request_log,
 };
 
 /// The whole application as one service, for `axum::serve` and for tests (`oneshot`).
@@ -68,6 +69,8 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
         app: state.clone(),
         canon: Arc::new(canon.clone()),
     };
+    // The family gate reads the path after it is spelled as the routes spell it.
+    let family_state = state.clone();
     let router = router.with_state(state);
     let service = ServiceBuilder::new()
         .layer(from_fn(request_log::request_log))
@@ -87,6 +90,7 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
             canon.rewrite(&mut req);
             req
         })
+        .layer(from_fn_with_state(family_state, family_gate::family_gate))
         // axum adds `Allow` to whatever a route's method fallback answers; that fallback is
         // the catch-all, which Kestrel reached with no such header (no Octo answer has one).
         .map_response(|mut res: Response| {

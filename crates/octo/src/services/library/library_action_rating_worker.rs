@@ -1,7 +1,7 @@
 //! Port of `Services/Library/LibraryActionRatingWorker.cs`: `RatingActionRequest` and the worker
 //! (singleton AND hosted: the controller enqueues into the loop the host is running).
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use octo_core::settings::{LibraryAction, SettingsStore};
 use octo_subsonic::SubsonicCredential;
@@ -11,6 +11,7 @@ use tracing::{error, info};
 
 use super::library_action_executor::{LibraryActionExecutor, LibraryActionRequest};
 use super::library_action_journal::action_name;
+use crate::services::family::MemberCredentials;
 use crate::services::subsonic::SubsonicProxyService;
 
 /// A rating that asked for an action, with the credentials needed to clear it again.
@@ -42,6 +43,9 @@ pub struct LibraryActionRatingWorker {
     proxy: SubsonicProxyService,
     /// `IOptionsMonitor<LibraryActionSettings>`: read at every enqueue.
     settings: Arc<SettingsStore>,
+    /// Fresh sign-ins for members: a member's rating is applied and cleared with a sign-in
+    /// made from their current hidden password, not the one the rating arrived with.
+    members: OnceLock<Arc<MemberCredentials>>,
 }
 
 impl LibraryActionRatingWorker {
@@ -59,7 +63,27 @@ impl LibraryActionRatingWorker {
             executor,
             proxy,
             settings,
+            members: OnceLock::new(),
         }
+    }
+
+    /// Signs members in from their current hidden password whenever a queued rating is used.
+    pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
+        let _ = self.members.set(members);
+    }
+
+    /// The request with a fresh sign-in when it was made by a member.
+    fn refreshed(&self, mut request: RatingActionRequest) -> RatingActionRequest {
+        let Some(members) = self.members.get() else {
+            return request;
+        };
+        if let Some(fresh) = members.fresh(&request.auth_user) {
+            let parameters = fresh.parameters(&[]);
+            request.auth_user = parameters["u"].clone();
+            request.auth_token = parameters["t"].clone();
+            request.auth_salt = parameters["s"].clone();
+        }
+        request
     }
 
     /// Queue a rating for action. The cheap gates run inline so a disabled feature costs one
@@ -98,6 +122,7 @@ impl LibraryActionRatingWorker {
                 },
                 _ = stopping.cancelled() => break,
             };
+            let request = self.refreshed(request);
             // Per-item handling is mandatory: one failed action must not stop the worker.
             match self.executor.apply(Self::to_action_request(&request)).await {
                 Ok(outcome) => {

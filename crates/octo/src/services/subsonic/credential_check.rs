@@ -1,7 +1,7 @@
 //! Port of `Services/Subsonic/CredentialCheck.cs`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use octo_core::common::SingleFlight;
@@ -10,6 +10,7 @@ use tracing::warn;
 
 use super::expiring_cache::ExpiringCache;
 use super::subsonic_proxy_service::{RelayError, SubsonicProxyService};
+use crate::services::family::MemberCredentials;
 
 /// What Navidrome said of a sign-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,11 @@ const WARN_EVERY: Duration = Duration::from_secs(60);
 pub struct CredentialCheck {
     inner: Arc<Inner>,
     asking: SingleFlight<String, CredentialVerdict>,
+    /// Members' sign-ins. The family gate signs a member's request with their hidden password
+    /// and a new salt each time; a sign-in made from the current hidden password is filed
+    /// under a key that stays the same until that password changes, so one ping answers for
+    /// all of them.
+    members: OnceLock<Arc<MemberCredentials>>,
 }
 
 struct Inner {
@@ -70,7 +76,13 @@ impl CredentialCheck {
                 epoch: Instant::now(),
             }),
             asking: SingleFlight::new(),
+            members: OnceLock::new(),
         }
+    }
+
+    /// Files members' sign-ins by their current hidden password.
+    pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
+        let _ = self.members.set(members);
     }
 
     pub fn check_timeout(&self) -> Duration {
@@ -91,7 +103,11 @@ impl CredentialCheck {
         let Some(credential) = credential else {
             return Ok(CredentialVerdict::Refused);
         };
-        let slot = credential.fingerprint().to_string();
+        let slot = self
+            .members
+            .get()
+            .and_then(|members| members.key_if_current(credential))
+            .unwrap_or_else(|| credential.fingerprint().to_string());
         if let Some(known) = self.inner.verdicts.get(&slot) {
             return Ok(known);
         }

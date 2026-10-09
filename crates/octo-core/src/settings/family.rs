@@ -19,8 +19,8 @@ pub struct FamilySettings {
     /// Networks that count as home (commas or spaces between them; a bare address is one
     /// host). Everything else is away.
     pub home_networks: String,
-    /// Proxies listed here may set the client address through `Cf-Connecting-Ip` or
-    /// `X-Forwarded-For` (the tunnel and any reverse proxy beside Octo).
+    /// Proxies listed here may name the client address through `X-Forwarded-For` (the tunnel
+    /// and any reverse proxy beside Octo). No other header is read for it.
     pub trusted_proxies: String,
     /// Days an invite link works.
     pub invite_days: u32,

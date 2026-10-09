@@ -55,8 +55,8 @@ use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::family::{
-    FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, NavidromeAdmin,
-    RequestStore, SavedStore, ScopeResolver,
+    AnswerRules, DeviceRegistry, FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault,
+    LibraryIndex, MemberBridge, MemberCredentials, NavidromeAdmin, RequestStore, SavedStore, ScopeResolver,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -495,6 +495,14 @@ pub struct AppInner {
     pub library_index: Arc<LibraryIndex>,
     /// Whether a song is shared or a member's own, for work that must keep to one or the other.
     pub library_scope: ScopeResolver,
+    /// Sign-ins made from members' current hidden passwords, for work done later as a member.
+    pub family_credentials: Arc<MemberCredentials>,
+    /// Members' devices and the devices seen for everyone else.
+    pub family_devices: Arc<DeviceRegistry>,
+    /// The family gate's failure throttle and password repairs.
+    pub family_bridge: Arc<MemberBridge>,
+    /// The rules that rewrite answers for the family, by endpoint.
+    pub family_answer_rules: Arc<AnswerRules>,
     /// Whether Family's background work has been started (see [`AppInner::start_family`]).
     family_started: AtomicBool,
 }
@@ -2041,7 +2049,44 @@ impl LibraryJobs {
     }
 }
 
+/// What the family gate works with, built from the family stores.
+struct FamilyEdge {
+    credentials: Arc<MemberCredentials>,
+    devices: Arc<DeviceRegistry>,
+    bridge: Arc<MemberBridge>,
+    answer_rules: Arc<AnswerRules>,
+}
+
+impl FamilyEdge {
+    fn build(settings: &Arc<SettingsStore>, store: &Arc<FamilyStore>, vault: &Arc<FamilyVault>) -> Self {
+        FamilyEdge {
+            credentials: Arc::new(MemberCredentials::new(
+                Arc::clone(store),
+                Arc::clone(vault),
+                Arc::clone(settings),
+            )),
+            devices: Arc::new(DeviceRegistry::new(Arc::clone(store))),
+            bridge: Arc::new(MemberBridge::default()),
+            answer_rules: Arc::new(AnswerRules::standard()),
+        }
+    }
+}
+
 impl AppInner {
+    /// Hands the member sign-ins to everything that keeps a sign-in for later, so each asks
+    /// for a fresh one when it uses it.
+    fn use_member_credentials(&self) {
+        let credentials = &self.family_credentials;
+        self.star_on_arrival
+            .use_member_credentials(Arc::clone(credentials));
+        self.last_fm_radio_stream_sessions
+            .use_member_credentials(Arc::clone(credentials));
+        self.library_action_rating_worker
+            .use_member_credentials(Arc::clone(credentials));
+        self.credential_check
+            .use_member_credentials(Arc::clone(credentials));
+    }
+
     /// `IHostApplicationLifetime.StopApplication()`: begins a graceful shutdown.
     pub fn stop_application(&self) {
         self.lifetime.cancel();
@@ -2251,6 +2296,7 @@ impl AppState {
             soulseek.link.clone(),
         );
         imports.register_workers(&workers);
+        let family_edge = FamilyEdge::build(&settings, &stores.family_store, &stores.family_vault);
         let inner = AppInner {
             settings_writer,
             restart_tracker: Arc::new(restart_tracker),
@@ -2392,8 +2438,13 @@ impl AppState {
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,
             library_scope: family_navidrome.2,
+            family_credentials: family_edge.credentials,
+            family_devices: family_edge.devices,
+            family_bridge: family_edge.bridge,
+            family_answer_rules: family_edge.answer_rules,
             family_started: AtomicBool::new(false),
         };
+        inner.use_member_credentials();
         inner.start_family();
         AppState {
             inner: Arc::new(inner),
@@ -2578,6 +2629,7 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
         );
+        let family_edge = FamilyEdge::build(&settings, &stores.family_store, &stores.family_vault);
         let inner = AppInner {
             restart_tracker,
             settings,
@@ -2719,8 +2771,13 @@ impl AppState {
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,
             library_scope: family_navidrome.2,
+            family_credentials: family_edge.credentials,
+            family_devices: family_edge.devices,
+            family_bridge: family_edge.bridge,
+            family_answer_rules: family_edge.answer_rules,
             family_started: AtomicBool::new(false),
         };
+        inner.use_member_credentials();
         AppState {
             inner: Arc::new(inner),
         }

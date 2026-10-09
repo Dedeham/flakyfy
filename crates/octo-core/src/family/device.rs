@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
+use super::quality::DeviceQualityMode;
 use crate::json::datetime;
 
 /// How a device signs in.
@@ -56,6 +57,9 @@ pub struct Device {
     /// browser holds a token Octo signs, swapped for this one on the way to Navidrome.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub navidrome_jwt: Option<String>,
+    /// Whether the device follows the account's audio quality or lets its app decide.
+    #[serde(default, skip_serializing_if = "DeviceQualityMode::is_account")]
+    pub quality: DeviceQualityMode,
 }
 
 /// Subsonic clients Octo names by their `c` parameter, matched ignoring case at the start.
@@ -170,25 +174,74 @@ pub fn place_of(ip: IpAddr, home: &[IpNet]) -> NetworkPlace {
     }
 }
 
+/// The most characters a device name keeps.
+pub const DEVICE_NAME_LIMIT: usize = 64;
+
+/// A device name as the `X-Octo-Device-Name` header carries it (UTF-8, percent-encoded),
+/// decoded: escapes that are not UTF-8 become the replacement character, control characters
+/// are dropped, runs of spaces are one space, and anything past [`DEVICE_NAME_LIMIT`]
+/// characters is cut. Never fails: a name that cannot be read is simply shorter.
+pub fn decode_device_name(header: &str) -> String {
+    let bytes = header.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            decoded.push(high * 16 + low);
+            i += 3;
+            continue;
+        }
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+    let text = String::from_utf8_lossy(&decoded);
+    let mut name = String::new();
+    for word in text.split(|c: char| c.is_whitespace() || c.is_control()) {
+        if word.is_empty() {
+            continue;
+        }
+        if !name.is_empty() {
+            name.push(' ');
+        }
+        name.push_str(word);
+    }
+    name.chars()
+        .take(DEVICE_NAME_LIMIT)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+/// The product a User-Agent starts with (`Symfonium` for `Symfonium/12.3.0 (Android 15)`),
+/// without its version, so an app update does not look like a new device.
+pub fn user_agent_family(user_agent: &str) -> &str {
+    let first = user_agent.split_whitespace().next().unwrap_or("");
+    first.split('/').next().unwrap_or("")
+}
+
 /// The address of the person making the request (the rule Navidrome 0.64.0 uses).
 ///
-/// Headers are believed only when the TCP peer is a trusted proxy (the tunnel or a reverse
-/// proxy running beside Octo). Then `Cf-Connecting-Ip` wins; else the rightmost
-/// `X-Forwarded-For` hop that is not itself a trusted proxy (hops to its left are written by
-/// the client and could say anything); else the peer. A peer that is not trusted is the
-/// client, whatever its headers say.
-pub fn client_address(
-    peer: IpAddr,
-    cf_connecting_ip: Option<&str>,
-    x_forwarded_for: Option<&str>,
-    trusted: &[IpNet],
-) -> IpAddr {
+/// Only `X-Forwarded-For` is read, and only when the TCP peer is a trusted proxy (the tunnel
+/// or a reverse proxy running beside Octo). It is walked from the right: each trusted proxy
+/// appends the address it took the request from, so the first hop from the right that is not
+/// itself a trusted proxy is the person. Hops further left are written by the client and
+/// could say anything. With no such hop, the peer is the client. A peer that is not trusted
+/// is the client, whatever its headers say.
+///
+/// No other header names the client. A tunnel such as cloudflared appends the visitor to
+/// `X-Forwarded-For` as every proxy does, and a header like `Cf-Connecting-Ip` would let
+/// anyone who reaches a trusted proxy without passing the tunnel name any address they like.
+///
+/// `x_forwarded_for` is every `X-Forwarded-For` value the request carries, joined with commas
+/// in the order they arrived.
+pub fn client_address(peer: IpAddr, x_forwarded_for: Option<&str>, trusted: &[IpNet]) -> IpAddr {
     let peer = canonical(peer);
     if !contains(trusted, peer) {
         return peer;
-    }
-    if let Some(ip) = cf_connecting_ip.and_then(|v| v.trim().parse::<IpAddr>().ok()) {
-        return canonical(ip);
     }
     if let Some(list) = x_forwarded_for {
         for hop in list.rsplit(',') {
@@ -291,35 +344,36 @@ mod tests {
         let home = nets(HOME);
         // The client wrote a home address into X-Forwarded-For; the local proxy appended the
         // real one. The rightmost untrusted hop is the real one.
-        let address = client_address(ip("127.0.0.1"), None, Some("192.168.1.5, 203.0.113.9"), &trusted);
+        let address = client_address(ip("127.0.0.1"), Some("192.168.1.5, 203.0.113.9"), &trusted);
         assert_eq!(address, ip("203.0.113.9"));
         assert_eq!(place_of(address, &home), NetworkPlace::Away);
         // A client connecting straight to Octo cannot claim anything with headers.
-        let direct = client_address(
-            ip("203.0.113.9"),
-            Some("192.168.1.5"),
-            Some("192.168.1.5"),
-            &trusted,
-        );
+        let direct = client_address(ip("203.0.113.9"), Some("192.168.1.5"), &trusted);
         assert_eq!(direct, ip("203.0.113.9"));
         assert_eq!(place_of(direct, &home), NetworkPlace::Away);
     }
 
     #[test]
     fn tunnel_client_address_used() {
-        let trusted = nets(TRUSTED);
+        // cloudflared on another machine at home, listed as a trusted proxy. The visitor wrote
+        // a home address of their own; the tunnel appended the address it saw.
+        let trusted = nets("127.0.0.0/8, ::1/128, 192.168.1.50");
         let home = nets(HOME);
-        // cloudflared on the same host: the peer is loopback, the person is in the header.
-        let address = client_address(
-            ip("127.0.0.1"),
-            Some("203.0.113.9"),
-            Some("203.0.113.9"),
-            &trusted,
-        );
+        let address = client_address(ip("192.168.1.50"), Some("192.168.1.5, 203.0.113.9"), &trusted);
         assert_eq!(address, ip("203.0.113.9"));
         assert_eq!(place_of(address, &home), NetworkPlace::Away);
+        // cloudflared on the same host: the peer is loopback, the person is in the header.
+        assert_eq!(
+            client_address(ip("127.0.0.1"), Some("203.0.113.9"), &nets(TRUSTED)),
+            ip("203.0.113.9")
+        );
         // Without headers the loopback peer is the client (someone on the box itself).
-        assert_eq!(client_address(ip("::1"), None, None, &trusted), ip("::1"));
+        assert_eq!(client_address(ip("::1"), None, &trusted), ip("::1"));
+        // The tunnel's machine not listed: it is the client, and its headers are not read.
+        assert_eq!(
+            client_address(ip("192.168.1.50"), Some("203.0.113.9"), &nets(TRUSTED)),
+            ip("192.168.1.50")
+        );
     }
 
     #[test]
@@ -327,20 +381,45 @@ mod tests {
         let trusted = nets("127.0.0.0/8, 10.9.0.0/16");
         let address = client_address(
             ip("127.0.0.1"),
-            None,
             Some("198.51.100.2, 192.168.1.20, 10.9.0.5"),
             &trusted,
         );
         assert_eq!(address, ip("192.168.1.20"));
         // Every hop trusted, or a hop that is not an address: the peer.
         assert_eq!(
-            client_address(ip("127.0.0.1"), None, Some("10.9.0.5"), &trusted),
+            client_address(ip("127.0.0.1"), Some("10.9.0.5"), &trusted),
             ip("127.0.0.1")
         );
         assert_eq!(
-            client_address(ip("127.0.0.1"), None, Some("unknown, 10.9.0.5"), &trusted),
+            client_address(ip("127.0.0.1"), Some("unknown, 10.9.0.5"), &trusted),
             ip("127.0.0.1")
         );
+    }
+
+    #[test]
+    fn utf8_device_name_is_decoded() {
+        assert_eq!(
+            decode_device_name("Sam%E2%80%99s%20Caf%C3%A9"),
+            "Sam\u{2019}s Caf\u{e9}"
+        );
+        assert_eq!(decode_device_name("Pixel 9"), "Pixel 9");
+        // Raw UTF-8, lower-case escapes and a stray percent all read.
+        assert_eq!(decode_device_name("Caf\u{e9} 100%"), "Caf\u{e9} 100%");
+        assert_eq!(decode_device_name("a%2fb"), "a/b");
+        // Escapes that are not UTF-8, control characters and long runs of spaces.
+        assert_eq!(decode_device_name("bad%FFname"), "bad\u{fffd}name");
+        assert_eq!(decode_device_name("  one%0Atwo%09  three  "), "one two three");
+        // Cut at 64 characters, counted as characters, not bytes.
+        let long = "%C3%A9".repeat(80);
+        assert_eq!(decode_device_name(&long).chars().count(), DEVICE_NAME_LIMIT);
+        assert_eq!(decode_device_name(""), "");
+    }
+
+    #[test]
+    fn user_agent_family_drops_the_version() {
+        assert_eq!(user_agent_family("Symfonium/12.3.0 (Android 15)"), "Symfonium");
+        assert_eq!(user_agent_family("Mozilla/5.0 (X11) Chrome/1"), "Mozilla");
+        assert_eq!(user_agent_family(""), "");
     }
 
     #[test]
@@ -357,9 +436,11 @@ mod tests {
             place: NetworkPlace::Away,
             seen_apps: vec!["Octo 1.6 (Android)".into()],
             navidrome_jwt: None,
+            quality: DeviceQualityMode::Account,
         };
         let text = serde_json::to_string(&device).expect("serializes");
         assert!(!text.contains("NavidromeJwt"));
+        assert!(!text.contains("Quality"));
         assert!(text.contains("\"Kind\":\"OctoApp\""));
         let back: Device = serde_json::from_str(&text).expect("reads back");
         assert_eq!(back, device);

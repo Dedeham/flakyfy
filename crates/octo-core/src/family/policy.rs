@@ -3,6 +3,7 @@
 
 use super::abilities::{Abilities, AddToLibrary, RequestQuality};
 use super::device::NetworkPlace;
+use super::quality::{DeviceQualityMode, QualityPreference};
 
 /// What a heart on a song does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,14 +28,15 @@ pub fn heart_action(abilities: Option<&Abilities>, is_outside: bool) -> HeartAct
     }
 }
 
-/// How a library `stream` (or `download`) request is rewritten for a capped member.
+/// How a library `stream` (or `download`) request is rewritten.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct StreamRewrite {
-    /// The format to ask Navidrome for (`opus` when capped).
+    /// The format to ask Navidrome for: `opus` when a ceiling applies and the client named no
+    /// format of its own; None leaves the client's format as it is.
     pub format: Option<&'static str>,
     /// The `maxBitRate` to ask for.
     pub max_bit_rate: Option<u32>,
-    /// Remove `format=raw`, which skips every cap.
+    /// Remove `format=raw`, which skips every ceiling.
     pub drop_raw: bool,
 }
 
@@ -53,8 +55,8 @@ impl Refusal {
     }
 }
 
-/// The cap a member streams at from `place`: the away cap when away and set, else the stream
-/// cap. None means the original.
+/// The family limit for `place`: the away cap when away and set, else the stream cap. None
+/// means no limit.
 pub fn cap_for(a: &Abilities, place: NetworkPlace) -> Option<u32> {
     if place == NetworkPlace::Away && a.away_cap > 0 {
         return Some(a.away_cap);
@@ -62,25 +64,47 @@ pub fn cap_for(a: &Abilities, place: NetworkPlace) -> Option<u32> {
     a.stream_cap.kbps()
 }
 
-/// The rewrite for one library stream. `client_max` is the `maxBitRate` the client sent
-/// (0 or absent means none); a lower one than the cap wins.
+/// What the client itself asked for on a stream: its `format` and `maxBitRate` (0 or absent
+/// means none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ClientAsk<'a> {
+    pub format: Option<&'a str>,
+    pub max_bit_rate: Option<u32>,
+}
+
+/// The rewrite for one library stream. The client's own request comes first. A device in
+/// [`DeviceQualityMode::Account`] then takes the account's quality for `place` as a ceiling
+/// (Original adds none). The family limit is a ceiling after that. The lowest bitrate of the
+/// client's request and the ceilings wins, so a ceiling never raises what the client asked
+/// for, and any ceiling drops `format=raw`. With no ceiling nothing changes.
 pub fn stream_rewrite(
     a: &Abilities,
     place: NetworkPlace,
-    client_max: Option<u32>,
+    preference: QualityPreference,
+    mode: DeviceQualityMode,
+    client: ClientAsk<'_>,
 ) -> Result<StreamRewrite, Refusal> {
     if place == NetworkPlace::Away && !a.away {
         return Err(Refusal::Away);
     }
-    let Some(cap) = cap_for(a, place) else {
+    let account = match mode {
+        DeviceQualityMode::Account => preference.for_place(place).kbps(),
+        DeviceQualityMode::App => None,
+    };
+    let ceiling = [account, cap_for(a, place)].into_iter().flatten().min();
+    let Some(ceiling) = ceiling else {
         return Ok(StreamRewrite::default());
     };
-    let rate = match client_max.filter(|m| *m > 0) {
-        Some(client) => client.min(cap),
-        None => cap,
+    let rate = match client.max_bit_rate.filter(|m| *m > 0) {
+        Some(asked) => asked.min(ceiling),
+        None => ceiling,
     };
+    let own_format = client
+        .format
+        .map(str::trim)
+        .is_some_and(|f| !f.is_empty() && !f.eq_ignore_ascii_case("raw"));
     Ok(StreamRewrite {
-        format: Some("opus"),
+        format: (!own_format).then_some("opus"),
         max_bit_rate: Some(rate),
         drop_raw: true,
     })
@@ -175,6 +199,36 @@ mod tests {
         assert_eq!(heart_action(Some(&member), false), HeartAction::Relay);
     }
 
+    use crate::family::quality::StreamQuality;
+
+    /// A listener the owner limited to 192 kbps at home and 128 away.
+    fn capped() -> Abilities {
+        Abilities {
+            stream_cap: StreamCap::Kbps(192),
+            away_cap: 128,
+            ..listener()
+        }
+    }
+
+    fn no_preference() -> QualityPreference {
+        QualityPreference::default()
+    }
+
+    fn ask(format: Option<&str>, max_bit_rate: Option<u32>) -> ClientAsk<'_> {
+        ClientAsk { format, max_bit_rate }
+    }
+
+    /// The rewrite in Account mode with no preference and nothing asked.
+    fn plain(a: &Abilities, place: NetworkPlace) -> Result<StreamRewrite, Refusal> {
+        stream_rewrite(
+            a,
+            place,
+            no_preference(),
+            DeviceQualityMode::Account,
+            ClientAsk::default(),
+        )
+    }
+
     #[test]
     fn owner_is_unchanged() {
         assert_eq!(heart_action(None, true), HeartAction::Download);
@@ -182,35 +236,58 @@ mod tests {
         let owner = Abilities::preset(Preset::Owner);
         for place in [NetworkPlace::Home, NetworkPlace::Away] {
             assert_eq!(
-                stream_rewrite(&owner, place, Some(320)),
+                stream_rewrite(
+                    &owner,
+                    place,
+                    no_preference(),
+                    DeviceQualityMode::Account,
+                    ask(Some("raw"), Some(320))
+                ),
                 Ok(StreamRewrite::default())
             );
         }
     }
 
     #[test]
+    fn every_preset_streams_the_original_until_someone_chooses() {
+        for preset in [
+            Preset::Owner,
+            Preset::CoAdmin,
+            Preset::Member,
+            Preset::Listener,
+            Preset::Kid,
+        ] {
+            let a = Abilities::preset(preset);
+            for place in [NetworkPlace::Home, NetworkPlace::Away] {
+                assert_eq!(plain(&a, place), Ok(StreamRewrite::default()), "{preset:?}");
+            }
+        }
+    }
+
+    #[test]
     fn away_off_refuses() {
-        let kid = Abilities::preset(Preset::Kid);
-        assert_eq!(stream_rewrite(&kid, NetworkPlace::Away, None), Err(Refusal::Away));
-        assert!(stream_rewrite(&kid, NetworkPlace::Home, None).is_ok());
+        let kept_home = Abilities {
+            away: false,
+            ..Abilities::preset(Preset::Kid)
+        };
+        assert_eq!(plain(&kept_home, NetworkPlace::Away), Err(Refusal::Away));
+        assert!(plain(&kept_home, NetworkPlace::Home).is_ok());
     }
 
     #[test]
     fn away_cap_applies_only_away() {
-        let home = stream_rewrite(&listener(), NetworkPlace::Home, None).expect("allowed");
+        let home = plain(&capped(), NetworkPlace::Home).expect("allowed");
         assert_eq!(home.max_bit_rate, Some(192));
-        let away = stream_rewrite(&listener(), NetworkPlace::Away, None).expect("allowed");
+        let away = plain(&capped(), NetworkPlace::Away).expect("allowed");
         assert_eq!(away.max_bit_rate, Some(128));
         assert_eq!(away.format, Some("opus"));
         // An away cap of 0 means the stream cap away too.
         let same = Abilities {
             away_cap: 0,
-            ..listener()
+            ..capped()
         };
         assert_eq!(
-            stream_rewrite(&same, NetworkPlace::Away, None)
-                .expect("allowed")
-                .max_bit_rate,
+            plain(&same, NetworkPlace::Away).expect("allowed").max_bit_rate,
             Some(192)
         );
         // An away cap alone caps only away.
@@ -220,11 +297,11 @@ mod tests {
             ..listener()
         };
         assert_eq!(
-            stream_rewrite(&away_only, NetworkPlace::Home, None),
+            plain(&away_only, NetworkPlace::Home),
             Ok(StreamRewrite::default())
         );
         assert_eq!(
-            stream_rewrite(&away_only, NetworkPlace::Away, None)
+            plain(&away_only, NetworkPlace::Away)
                 .expect("allowed")
                 .max_bit_rate,
             Some(96)
@@ -232,24 +309,141 @@ mod tests {
     }
 
     #[test]
-    fn client_lower_bitrate_wins() {
-        let lower = stream_rewrite(&listener(), NetworkPlace::Home, Some(96)).expect("allowed");
+    fn client_lower_request_wins() {
+        let rewrite = |max| {
+            stream_rewrite(
+                &capped(),
+                NetworkPlace::Home,
+                QualityPreference {
+                    home: StreamQuality::High,
+                    away: StreamQuality::High,
+                },
+                DeviceQualityMode::Account,
+                ask(Some("mp3"), max),
+            )
+            .expect("allowed")
+        };
+        let lower = rewrite(Some(96));
         assert_eq!(lower.max_bit_rate, Some(96));
-        let higher = stream_rewrite(&listener(), NetworkPlace::Home, Some(320)).expect("allowed");
-        assert_eq!(higher.max_bit_rate, Some(192));
-        // maxBitRate=0 is "no limit" in Subsonic: the cap stands.
-        let zero = stream_rewrite(&listener(), NetworkPlace::Home, Some(0)).expect("allowed");
-        assert_eq!(zero.max_bit_rate, Some(192));
+        // The client's own format stays.
+        assert_eq!(lower.format, None);
+        assert_eq!(rewrite(Some(320)).max_bit_rate, Some(192));
+        // maxBitRate=0 is "no limit" in Subsonic: the ceiling stands.
+        assert_eq!(rewrite(Some(0)).max_bit_rate, Some(192));
     }
 
     #[test]
     fn original_cap_rewrites_nothing() {
         let member = Abilities::preset(Preset::Member);
-        let rewrite = stream_rewrite(&member, NetworkPlace::Away, Some(128)).expect("allowed");
+        let rewrite = stream_rewrite(
+            &member,
+            NetworkPlace::Away,
+            no_preference(),
+            DeviceQualityMode::Account,
+            ask(Some("raw"), Some(128)),
+        )
+        .expect("allowed");
         assert_eq!(rewrite, StreamRewrite::default());
         assert!(!rewrite.drop_raw);
-        let capped = stream_rewrite(&listener(), NetworkPlace::Home, None).expect("allowed");
+        let capped = plain(&capped(), NetworkPlace::Home).expect("allowed");
         assert!(capped.drop_raw);
+    }
+
+    #[test]
+    fn account_away_preference_caps_raw() {
+        let member = Abilities::preset(Preset::Member);
+        let preference = QualityPreference {
+            home: StreamQuality::Original,
+            away: StreamQuality::Standard,
+        };
+        let away = stream_rewrite(
+            &member,
+            NetworkPlace::Away,
+            preference,
+            DeviceQualityMode::Account,
+            ask(Some("raw"), None),
+        )
+        .expect("allowed");
+        assert_eq!(
+            away,
+            StreamRewrite {
+                format: Some("opus"),
+                max_bit_rate: Some(160),
+                drop_raw: true,
+            }
+        );
+        // At home the account chose the original: raw stays raw.
+        let home = stream_rewrite(
+            &member,
+            NetworkPlace::Home,
+            preference,
+            DeviceQualityMode::Account,
+            ask(Some("raw"), None),
+        )
+        .expect("allowed");
+        assert_eq!(home, StreamRewrite::default());
+    }
+
+    #[test]
+    fn app_mode_ignores_account_preference() {
+        let saver = QualityPreference {
+            home: StreamQuality::DataSaver,
+            away: StreamQuality::DataSaver,
+        };
+        let member = Abilities::preset(Preset::Member);
+        assert_eq!(
+            stream_rewrite(
+                &member,
+                NetworkPlace::Away,
+                saver,
+                DeviceQualityMode::App,
+                ask(Some("raw"), None)
+            ),
+            Ok(StreamRewrite::default())
+        );
+        // The family limit still holds in App mode.
+        let limited = stream_rewrite(
+            &capped(),
+            NetworkPlace::Away,
+            saver,
+            DeviceQualityMode::App,
+            ClientAsk::default(),
+        )
+        .expect("allowed");
+        assert_eq!(limited.max_bit_rate, Some(128));
+    }
+
+    #[test]
+    fn family_limit_wins_over_original_preference() {
+        let original = QualityPreference::default();
+        let home = stream_rewrite(
+            &capped(),
+            NetworkPlace::Home,
+            original,
+            DeviceQualityMode::Account,
+            ask(Some("raw"), None),
+        )
+        .expect("allowed");
+        assert_eq!(home.max_bit_rate, Some(192));
+        assert!(home.drop_raw);
+        // A preference above the limit cannot lift it; one below it wins.
+        let high = QualityPreference {
+            home: StreamQuality::High,
+            away: StreamQuality::DataSaver,
+        };
+        let rate = |place| {
+            stream_rewrite(
+                &capped(),
+                place,
+                high,
+                DeviceQualityMode::Account,
+                ClientAsk::default(),
+            )
+            .expect("allowed")
+            .max_bit_rate
+        };
+        assert_eq!(rate(NetworkPlace::Home), Some(192));
+        assert_eq!(rate(NetworkPlace::Away), Some(96));
     }
 
     #[test]

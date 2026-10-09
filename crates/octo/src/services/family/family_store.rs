@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::{Abilities, Preset};
 use octo_core::family::codes::constant_time_eq;
 use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::quality::{DeviceQualityMode, QualityPreference};
 use octo_core::json::datetime;
 use parking_lot::Mutex;
 use serde::de::{self, Deserializer};
@@ -146,6 +148,10 @@ pub struct FamilyFile {
     pub devices: Vec<Device>,
     /// Devices seen for the owner and accounts outside the family (no secret).
     pub detected: Vec<Device>,
+    /// The audio quality each account chose, by username; only accounts that chose
+    /// something other than Original are listed.
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    pub preferences: IndexMap<String, QualityPreference>,
     pub invites: Vec<Invite>,
     pub pair_codes: Vec<PairCode>,
 }
@@ -158,6 +164,7 @@ impl Default for FamilyFile {
             members: Vec::new(),
             devices: Vec::new(),
             detected: Vec::new(),
+            preferences: IndexMap::new(),
             invites: Vec::new(),
             pair_codes: Vec::new(),
         }
@@ -352,6 +359,110 @@ impl FamilyStore {
         true
     }
 
+    /// A member's device was just used: like [`FamilyStore::touch_device`], and the name the
+    /// device gave is kept when it has none yet (a name given at pairing or by a manager
+    /// stays). Answers None when the device is unknown, else whether this is the first time it
+    /// has been seen.
+    pub fn seen_device(
+        &self,
+        id: &str,
+        app: &str,
+        place: NetworkPlace,
+        name: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Option<bool> {
+        let mut state = self.state.lock();
+        let device = state.devices.iter_mut().find(|d| d.id == id)?;
+        let first = device.last_seen.is_none();
+        touch(device, app, place, now);
+        if let Some(name) = name.filter(|n| !n.trim().is_empty())
+            && device.name.trim().is_empty()
+        {
+            device.name = name.to_string();
+        }
+        self.dirty.store(true, Ordering::Release);
+        Some(first)
+    }
+
+    /// Keeps a web device's real Navidrome sign-in (sealed), in memory until the next flush:
+    /// Navidrome hands out a fresh one on every call, so writing each would write the file on
+    /// every page a member opens. Answers whether the device is known.
+    pub fn set_device_jwt(&self, id: &str, sealed: Option<String>) -> bool {
+        let mut state = self.state.lock();
+        let Some(device) = state.devices.iter_mut().find(|d| d.id == id) else {
+            return false;
+        };
+        device.navidrome_jwt = sealed;
+        self.dirty.store(true, Ordering::Release);
+        true
+    }
+
+    /// How a device picks its audio quality: a member's device or a detected one, by id.
+    /// [`DeviceQualityMode::Account`] for a device Octo does not know.
+    pub fn device_quality(&self, id: &str) -> DeviceQualityMode {
+        let state = self.state.lock();
+        state
+            .devices
+            .iter()
+            .chain(state.detected.iter())
+            .find(|d| d.id == id)
+            .map(|d| d.quality)
+            .unwrap_or_default()
+    }
+
+    /// Sets how a device picks its audio quality (a member's device or a detected one).
+    /// Answers whether the device is known.
+    pub fn set_device_quality(&self, id: &str, mode: DeviceQualityMode) -> bool {
+        let found = {
+            let mut state = self.state.lock();
+            let state = &mut *state;
+            match state
+                .devices
+                .iter_mut()
+                .chain(state.detected.iter_mut())
+                .find(|d| d.id == id)
+            {
+                Some(device) => {
+                    device.quality = mode;
+                    true
+                }
+                None => false,
+            }
+        };
+        if found {
+            self.save();
+        }
+        found
+    }
+
+    /// The audio quality an account chose, by username (ignoring case). Any account has one:
+    /// a member, the owner or an account outside the family. Original at home and away until
+    /// they choose.
+    pub fn preference(&self, username: &str) -> QualityPreference {
+        self.state
+            .lock()
+            .preferences
+            .iter()
+            .find(|(name, _)| eq_ignore_case(name, username))
+            .map(|(_, preference)| *preference)
+            .unwrap_or_default()
+    }
+
+    /// Sets an account's audio quality. Choosing Original for both places removes the entry,
+    /// so the file only lists accounts that chose something else.
+    pub fn set_preference(&self, username: &str, preference: QualityPreference) {
+        {
+            let mut state = self.state.lock();
+            state
+                .preferences
+                .retain(|name, _| !eq_ignore_case(name, username));
+            if preference != QualityPreference::default() {
+                state.preferences.insert(username.trim().to_string(), preference);
+            }
+        }
+        self.save();
+    }
+
     /// Devices seen for the owner and accounts outside the family.
     pub fn detected(&self) -> Vec<Device> {
         self.state.lock().detected.clone()
@@ -366,19 +477,24 @@ impl FamilyStore {
         username: &str,
         app: &str,
         place: NetworkPlace,
+        name: Option<&str>,
         now: DateTime<Utc>,
     ) -> bool {
+        let name = name.map(str::trim).filter(|n| !n.is_empty());
         let mut state = self.state.lock();
         let new = match state.detected.iter_mut().find(|d| d.id == id) {
             Some(device) => {
                 touch(device, app, place, now);
+                if let Some(name) = name {
+                    device.name = name.to_string();
+                }
                 false
             }
             None => {
                 state.detected.push(Device {
                     id: id.to_string(),
                     username: username.to_string(),
-                    name: String::new(),
+                    name: name.unwrap_or_default().to_string(),
                     kind: DeviceKind::Detected,
                     secret: String::new(),
                     created: now,
@@ -387,6 +503,7 @@ impl FamilyStore {
                     place,
                     seen_apps: vec![app.to_string()],
                     navidrome_jwt: None,
+                    quality: DeviceQualityMode::Account,
                 });
                 if state.detected.len() > DETECTED_LIMIT {
                     state.detected.sort_by_key(|d| std::cmp::Reverse(d.last_seen));
@@ -537,6 +654,7 @@ fn touch(device: &mut Device, app: &str, place: NetworkPlace, now: DateTime<Utc>
 mod tests {
     use super::*;
     use chrono::{TimeDelta, TimeZone};
+    use octo_core::family::quality::StreamQuality;
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 20, 18, 0, 0).unwrap()
@@ -572,6 +690,7 @@ mod tests {
             place: NetworkPlace::Home,
             seen_apps: Vec::new(),
             navidrome_jwt: None,
+            quality: DeviceQualityMode::Account,
         }
     }
 
@@ -750,11 +869,88 @@ mod tests {
     }
 
     #[test]
+    fn seen_device_reports_the_first_sight_and_keeps_a_given_name() {
+        let store = FamilyStore::in_memory();
+        let mut unnamed = device("d_1", "alex");
+        unnamed.name = String::new();
+        store.add_device(unnamed);
+        store.add_device(device("d_2", "alex"));
+        let seen = |id: &str, name: Option<&str>| {
+            store.seen_device(id, "Octo 1.6 (Android)", NetworkPlace::Away, name, now())
+        };
+        assert_eq!(seen("d_1", Some("Sam\u{2019}s phone")), Some(true));
+        assert_eq!(seen("d_1", Some("Other")), Some(false));
+        assert_eq!(store.device("d_1").expect("there").name, "Sam\u{2019}s phone");
+        // A device named at pairing keeps its name.
+        assert_eq!(seen("d_2", Some("Other")), Some(true));
+        assert_eq!(store.device("d_2").expect("there").name, "Pixel 9");
+        assert_eq!(seen("d_9", None), None);
+        assert!(store.set_device_jwt("d_1", Some("sealed:J".into())));
+        assert_eq!(
+            store.device("d_1").expect("there").navidrome_jwt.as_deref(),
+            Some("sealed:J")
+        );
+        assert!(!store.set_device_jwt("d_9", None));
+    }
+
+    #[test]
+    fn preferences_and_device_quality_round_trip_and_stay_out_of_the_file_while_unused() {
+        let (_dir, path) = temp();
+        let store = FamilyStore::new(Some(&path));
+        store.add_device(device("d_1", "alex"));
+        store.note_detected("x1", "winters", "Feishin", NetworkPlace::Home, None, now());
+        store.flush_if_dirty();
+        let written = std::fs::read_to_string(&path).expect("reads");
+        assert!(!written.contains("Preferences"), "{written}");
+        assert!(!written.contains("Quality"), "{written}");
+
+        assert_eq!(store.preference("WINTERS"), QualityPreference::default());
+        let chosen = QualityPreference {
+            home: StreamQuality::Original,
+            away: StreamQuality::Standard,
+        };
+        store.set_preference("winters", chosen);
+        store.set_preference(
+            "Alex",
+            QualityPreference {
+                home: StreamQuality::High,
+                away: StreamQuality::DataSaver,
+            },
+        );
+        assert!(store.set_device_quality("d_1", DeviceQualityMode::App));
+        assert!(store.set_device_quality("x1", DeviceQualityMode::App));
+        assert!(!store.set_device_quality("d_9", DeviceQualityMode::App));
+
+        let reloaded = FamilyStore::new(Some(&path));
+        assert_eq!(reloaded.preference("Winters"), chosen);
+        assert_eq!(reloaded.preference("alex").away, StreamQuality::DataSaver);
+        assert_eq!(reloaded.device_quality("d_1"), DeviceQualityMode::App);
+        assert_eq!(reloaded.device_quality("x1"), DeviceQualityMode::App);
+        assert_eq!(reloaded.device_quality("d_9"), DeviceQualityMode::Account);
+        let written = std::fs::read_to_string(&path).expect("reads");
+        assert!(
+            written.contains("\"Preferences\":{\"winters\":{\"Home\":\"Original\",\"Away\":\"Standard\"}"),
+            "{written}"
+        );
+
+        // Back to Original everywhere: the entry goes.
+        reloaded.set_preference("ALEX", QualityPreference::default());
+        assert_eq!(reloaded.snapshot().preferences.len(), 1);
+    }
+
+    #[test]
     fn detected_devices_are_capped_and_flushed() {
         let (_dir, path) = temp();
         let store = FamilyStore::new(Some(&path));
-        assert!(store.note_detected("x1", "winters", "Feishin", NetworkPlace::Home, now()));
-        assert!(!store.note_detected("x1", "winters", "Feishin 0.12", NetworkPlace::Away, now()));
+        assert!(store.note_detected("x1", "winters", "Feishin", NetworkPlace::Home, None, now()));
+        assert!(!store.note_detected(
+            "x1",
+            "winters",
+            "Feishin 0.12",
+            NetworkPlace::Away,
+            Some("Desk"),
+            now()
+        ));
         assert!(!path.exists());
         store.flush_if_dirty();
         let reloaded = FamilyStore::new(Some(&path));
@@ -762,12 +958,14 @@ mod tests {
         assert_eq!(detected.len(), 1);
         assert_eq!(detected[0].seen_apps, ["Feishin", "Feishin 0.12"]);
         assert_eq!(detected[0].kind, DeviceKind::Detected);
+        assert_eq!(detected[0].name, "Desk");
         for n in 0..DETECTED_LIMIT + 5 {
             store.note_detected(
                 &format!("y{n}"),
                 "bob",
                 "DSub",
                 NetworkPlace::Home,
+                None,
                 now() + TimeDelta::seconds(n as i64),
             );
         }

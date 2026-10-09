@@ -4,7 +4,7 @@
 //! `Dispose`. The tracker holds the listener and this holds the tracker, so the listener holds
 //! this only weakly ([`Weak`]); dropping the last `Arc` unsubscribes, as `Dispose` did.
 
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -20,6 +20,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::acquisition_tracker::{self, AcquisitionEnd, AcquisitionTracker, LibraryLookup};
+use crate::services::family::MemberCredentials;
 use crate::services::library::NavidromeSongPathResolver;
 use crate::services::subsonic::{CredentialCheck, NavidromeIdentityService, SubsonicProxyService};
 
@@ -93,6 +94,9 @@ pub struct StarOnArrival {
     clock: Clock,
     seams: Mutex<StarSeams>,
     subscription: u64,
+    /// Fresh sign-ins for members: a member's held sign-in is replaced at the moment it is
+    /// used, so a repair of their hidden password while a download runs breaks nothing.
+    members: OnceLock<Arc<MemberCredentials>>,
 }
 
 impl StarOnArrival {
@@ -120,8 +124,14 @@ impl StarOnArrival {
                 clock,
                 seams: Mutex::new(StarSeams::default()),
                 subscription,
+                members: OnceLock::new(),
             }
         })
+    }
+
+    /// Signs members in from their current hidden password whenever a held sign-in is used.
+    pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
+        let _ = self.members.set(members);
     }
 
     /// Sets the test seams.
@@ -412,7 +422,14 @@ impl StarOnArrival {
         }
     }
 
-    async fn call(&self, endpoint: &str, parameters: IndexMap<String, String>) -> anyhow::Result<Vec<u8>> {
+    async fn call(
+        &self,
+        endpoint: &str,
+        mut parameters: IndexMap<String, String>,
+    ) -> anyhow::Result<Vec<u8>> {
+        if let Some(members) = self.members.get() {
+            members.refresh_parameters(&mut parameters);
+        }
         let call = self.seams.lock().call.clone();
         if let Some(call) = call {
             return call(endpoint.to_string(), parameters).await;

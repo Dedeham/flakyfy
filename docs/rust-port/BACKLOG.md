@@ -1348,7 +1348,7 @@ observable changes.
 - [x] G5-2 Settings: the `Family` section, appsettings.json, the dashboard document, compose `/members`, install.sh
 - [x] G5-3 Vault, passwords and stores: `family.key` (AEAD half and web JWT half), `family.json`, requests, saved songs and albums, family playlists, the family pool
 - [x] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`. The shared scope is wired into Library health, the weekly quality upgrade, explicit marks and the duplicate scan; album ownership, heart ownership, outside dedupe, the review sweep and the sync catalog take it in G5-7 and G5-14
-- [ ] G5-5 Member bridge, family gate, web session (Octo JWT), device registry
+- [x] G5-5 Member bridge, family gate (every sign-in form, X-Forwarded-For only for the client address), web session (Octo JWT swapped both ways), device registry with a new-device event, fresh member sign-ins for held work, repair on refusal, rule hooks, log masks; freed preset defaults, personal audio quality and device quality mode in the model and store
 - [ ] G5-6 Request and answer rules, audio gate, library write gate, player cap sync, bypass suite, stream tracker
 - [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library
 - [ ] G5-8 Family playlists

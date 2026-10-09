@@ -1,0 +1,1286 @@
+//! The family gate through the whole pipeline, against a Navidrome stood in for by wiremock
+//! that signs `alex` in only with the hidden password.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::extract::ConnectInfo;
+use axum::routing::get;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use http_body_util::BodyExt;
+use octo_core::family::abilities::{Preset, Role};
+use octo_core::family::codes::subsonic_token;
+use octo_core::family::quality::{QualityPreference, StreamQuality};
+use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
+use octo_subsonic::SubsonicCredential;
+use parking_lot::Mutex;
+use serde_json::{Value, json};
+use tower::ServiceExt;
+use wiremock::matchers::{body_partial_json, header, method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use super::*;
+use crate::app::TestServices;
+use crate::http::pipeline::{App, build_with};
+use crate::http::routes::RouteSet;
+use crate::services::family::family_caller;
+use crate::services::family::family_store::SharedLibraries;
+
+const APP_SECRET: &str = "app-secret-1";
+const APP_PASSWORD: &str = "ABCD-EFGH-JKMN-PQRS";
+const ACCOUNT_PASSWORD: &str = "correct horse";
+const HIDDEN: &str = "hidden-1";
+
+/// A Navidrome sign-in Navidrome would hand out: a JWT shape with `sub` and `exp`.
+fn navidrome_jwt(marker: &str) -> String {
+    navidrome_jwt_for("alex", marker)
+}
+
+fn navidrome_jwt_for(sub: &str, marker: &str) -> String {
+    let payload = json!({ "iss": "ND", "sub": sub, "uid": "u-alex", "exp": Utc::now().timestamp() + 3600, "n": marker });
+    format!(
+        "{}.{}.{}",
+        URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#),
+        URL_SAFE_NO_PAD.encode(payload.to_string()),
+        URL_SAFE_NO_PAD.encode(format!("navidrome-signature-{marker}"))
+    )
+}
+
+/// Matches a request signed in as `alex` with whatever hidden password `accepts` takes.
+struct SignedAsAlex {
+    accepts: Arc<dyn Fn(&str, &str) -> bool + Send + Sync>,
+}
+
+impl wiremock::Match for SignedAsAlex {
+    fn matches(&self, request: &wiremock::Request) -> bool {
+        let mut pairs: Vec<(String, String)> = request
+            .url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        if request
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/x-www-form-urlencoded"))
+        {
+            pairs.extend(
+                url::form_urlencoded::parse(&request.body).map(|(k, v)| (k.into_owned(), v.into_owned())),
+            );
+        }
+        let get = |key: &str| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        let (Some(u), Some(t), Some(s)) = (get("u"), get("t"), get("s")) else {
+            return false;
+        };
+        u == "alex" && get("p").is_none() && (self.accepts)(&t, &s)
+    }
+}
+
+struct Family {
+    server: MockServer,
+    state: AppState,
+    app: App,
+    _dir: tempfile::TempDir,
+}
+
+/// What the echo route saw.
+async fn echo(req: Request) -> Response {
+    let caller = family_caller(req.extensions()).cloned();
+    let length = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let query = req.uri().query().map(str::to_string);
+    let path = req.uri().path().to_string();
+    let body = axum::body::to_bytes(req.into_body(), 1 << 20)
+        .await
+        .expect("a body");
+    axum::Json(json!({
+        "user": caller.as_ref().map(|c| c.user.clone()),
+        "managed": caller.as_ref().map(|c| c.managed),
+        "role": caller.as_ref().map(|c| format!("{:?}", c.role)),
+        "place": caller.as_ref().map(|c| format!("{:?}", c.place)),
+        "device": caller.as_ref().and_then(|c| c.device_id.clone()),
+        "away": caller.as_ref().map(|c| format!("{:?}", c.quality.away)),
+        "deviceQuality": caller.as_ref().map(|c| format!("{:?}", c.device_quality)),
+        "length": length,
+        "query": query,
+        "path": path,
+        "body": String::from_utf8_lossy(&body),
+    }))
+    .into_response()
+}
+
+fn routes() -> RouteSet {
+    RouteSet::new()
+        .subsonic("testEcho", get(echo).post(echo))
+        .route("/test/echo", get(echo))
+}
+
+/// A family of the owner `winters` and the listener `alex` (an Octo app, an app password and an
+/// account password), over a Navidrome that takes `alex` only with the hidden password.
+async fn family(enabled: bool) -> Family {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let state = AppState::for_tests_with(
+        AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(server.uri()),
+                admin_username: Some("admin".into()),
+                admin_password: Some("pw".into()),
+                auto_detect_download_path: false,
+                ..Default::default()
+            },
+            family: FamilySettings {
+                enabled,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        TestServices {
+            config_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        },
+    );
+    assert!(state.family_vault.create_key_if_missing().expect("a key"));
+    let store = &state.family_store;
+    store.set_owner("winters");
+    let mut alex = crate::services::family::member_credentials::tests::member(
+        "alex",
+        state.family_vault.seal(HIDDEN).expect("sealed"),
+    );
+    alex.display_name = "Alex".into();
+    alex.shared_libraries = SharedLibraries::All;
+    alex.account_password = passwords::hash(ACCOUNT_PASSWORD);
+    store.upsert_member(alex);
+    for (id, kind, secret) in [
+        ("d_app", DeviceKind::OctoApp, APP_SECRET),
+        ("d_sub", DeviceKind::SubsonicApp, APP_PASSWORD),
+    ] {
+        store.add_device(Device {
+            id: id.into(),
+            username: "alex".into(),
+            name: String::new(),
+            kind,
+            secret: state.family_vault.seal(secret).expect("sealed"),
+            created: Utc::now(),
+            last_seen: None,
+            app: String::new(),
+            place: NetworkPlace::Home,
+            seen_apps: Vec::new(),
+            navidrome_jwt: None,
+            quality: Default::default(),
+        });
+    }
+    let app = build_with(state.clone(), routes());
+    Family {
+        server,
+        state,
+        app,
+        _dir: dir,
+    }
+}
+
+impl Family {
+    /// Navidrome answers `alex` signed in with the password `accepts` takes.
+    async fn navidrome_takes(&self, accepts: impl Fn(&str) -> bool + Send + Sync + 'static) {
+        Mock::given(SignedAsAlex {
+            accepts: Arc::new(move |t, s| {
+                // The hidden password is not known here; `accepts` names the candidates.
+                ["hidden-1", "hidden-2"]
+                    .iter()
+                    .any(|candidate| accepts(candidate) && subsonic_token(candidate, s) == t)
+                    || accepts(&format!("token:{t}:{s}"))
+            }),
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#,
+            "application/json",
+        ))
+        .with_priority(1)
+        .mount(&self.server)
+        .await;
+    }
+
+    /// Everything else signed in to `/rest` gets error 40, as Navidrome answers it.
+    async fn navidrome_refuses_the_rest(&self) {
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"#,
+                "application/json",
+            ))
+            .with_priority(10)
+            .mount(&self.server)
+            .await;
+    }
+
+    async fn rest_requests(&self) -> Vec<wiremock::Request> {
+        self.server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.url.path().starts_with("/rest/"))
+            .collect()
+    }
+}
+
+struct Reply {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: String,
+}
+
+impl Reply {
+    fn json(&self) -> Value {
+        serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("{e}: {}", self.body))
+    }
+}
+
+async fn send(app: &App, method: Method, uri: &str, headers: &[(&str, &str)], body: &str) -> Reply {
+    send_from(app, method, uri, headers, body, None).await
+}
+
+async fn send_from(
+    app: &App,
+    method: Method,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+    peer: Option<&str>,
+) -> Reply {
+    let mut req = Request::builder().method(method).uri(uri);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let mut req = req.body(Body::from(body.to_string())).expect("request");
+    if let Some(peer) = peer {
+        let address: SocketAddr = format!("{peer}:50000").parse().expect("an address");
+        req.extensions_mut().insert(ConnectInfo(address));
+    }
+    let res = app.clone().oneshot(req).await.expect("infallible");
+    let (parts, body) = res.into_parts();
+    let body = body.collect().await.expect("body").to_bytes();
+    Reply {
+        status: parts.status,
+        headers: parts.headers,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+fn pairs(query: &str) -> Vec<(String, String)> {
+    url::form_urlencoded::parse(query.as_bytes())
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect()
+}
+
+fn value<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+/// The signed-in pairs prove the hidden password.
+fn signed_with(pairs: &[(String, String)], hidden: &str) -> bool {
+    match (value(pairs, "u"), value(pairs, "t"), value(pairs, "s")) {
+        (Some("alex"), Some(t), Some(s)) => subsonic_token(hidden, s) == t && s.len() == 12,
+        _ => false,
+    }
+}
+
+async fn ok_relay(f: &Family) {
+    Mock::given(method("GET"))
+        .and(path("/rest/getThing"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
+        .with_priority(20)
+        .mount(&f.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/rest/getThing"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
+        .with_priority(20)
+        .mount(&f.server)
+        .await;
+}
+
+#[tokio::test]
+async fn family_off_changes_nothing() {
+    let f = family(false).await;
+    ok_relay(&f).await;
+    let query = "u=alex&p=app-secret-1&id=A&id=B&c=My%20App&v=1.16.1";
+    let r = send(&f.app, Method::GET, &format!("/rest/getThing?{query}"), &[], "").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let body = "u=alex&p=app-secret-1&id=1&id=2";
+    let r = send(
+        &f.app,
+        Method::POST,
+        "/rest/getThing?f=json",
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        body,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let sent = f.rest_requests().await;
+    assert_eq!(sent.len(), 2);
+    // Exactly what the client sent, the member's own secret included: with Family off Octo
+    // does not know there is a family.
+    assert_eq!(sent[0].url.query(), Some(query));
+    assert_eq!(sent[1].body, body.as_bytes());
+    assert!(String::from_utf8_lossy(&sent[1].body).contains("p=app-secret-1"));
+    // And nobody was named on the request.
+    let r = send(&f.app, Method::GET, &format!("/rest/testEcho?{query}"), &[], "").await;
+    assert_eq!(r.json()["user"], Value::Null);
+    assert_eq!(r.json()["query"], json!(query));
+    assert!(f.state.family_store.detected().is_empty());
+}
+
+#[tokio::test]
+async fn member_token_is_rewritten() {
+    let f = family(true).await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    f.navidrome_refuses_the_rest().await;
+    let t = subsonic_token(APP_SECRET, "c19b2d");
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!("/rest/getThing?u=alex&t={t}&s=c19b2d&v=1.16.1&c=Octo&f=json&id=A&id=B"),
+        &[("User-Agent", "Octo/1.6 (Android)")],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let sent = f.rest_requests().await;
+    assert_eq!(sent.len(), 1);
+    let query = sent[0].url.query().expect("a query");
+    // Everything else as the client wrote it, in its order, then the hidden sign-in.
+    assert!(
+        query.starts_with("v=1.16.1&c=Octo&f=json&id=A&id=B&u=alex&t="),
+        "{query}"
+    );
+    assert!(signed_with(&pairs(query), HIDDEN), "{query}");
+    assert!(!query.contains(&t));
+    // The app password works too, typed in lower case, and as `enc:` hex.
+    for p in [
+        "abcd-efgh-jkmn-pqrs".to_string(),
+        format!("enc:{}", hex::encode(APP_SECRET)),
+    ] {
+        let r = send(
+            &f.app,
+            Method::GET,
+            &format!("/rest/getThing?u=ALEX&p={p}&f=json"),
+            &[],
+            "",
+        )
+        .await;
+        assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{p}: {}", r.body);
+    }
+    // The device was seen, with its app.
+    let device = f.state.family_store.device("d_app").expect("there");
+    assert!(
+        device.seen_apps.iter().any(|a| a == "Octo 1.6 (Android)"),
+        "{:?}",
+        device.seen_apps
+    );
+    assert!(device.last_seen.is_some());
+}
+
+#[tokio::test]
+async fn member_form_body_is_rewritten_and_length_fixed() {
+    let f = family(true).await;
+    let body = "u=alex&p=app-secret-1&id=1&id=2";
+    let r = send(
+        &f.app,
+        Method::POST,
+        "/rest/testEcho?f=json",
+        &[
+            ("Content-Type", "application/x-www-form-urlencoded"),
+            ("Content-Length", &body.len().to_string()),
+        ],
+        body,
+    )
+    .await;
+    let seen = r.json();
+    assert_eq!(seen["user"], "alex");
+    assert_eq!(seen["managed"], true);
+    assert_eq!(seen["device"], "d_app");
+    let sent_body = seen["body"].as_str().expect("a body");
+    assert!(sent_body.starts_with("id=1&id=2&u=alex&t="), "{sent_body}");
+    assert!(signed_with(&pairs(sent_body), HIDDEN));
+    assert!(!sent_body.contains("app-secret"));
+    assert_eq!(seen["length"], json!(sent_body.len().to_string()));
+    // The query had no sign-in and keeps none.
+    assert_eq!(seen["query"], "f=json");
+    // Relayed, Navidrome gets the same body.
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    let r = send(
+        &f.app,
+        Method::POST,
+        "/rest/getThing?f=json",
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        body,
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let sent = f.rest_requests().await;
+    let upstream = String::from_utf8_lossy(&sent[0].body).into_owned();
+    assert!(upstream.starts_with("id=1&id=2&u=alex&t="), "{upstream}");
+    assert_eq!(
+        sent[0]
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok()),
+        Some(upstream.len().to_string().as_str())
+    );
+}
+
+#[tokio::test]
+async fn wrong_secret_gets_error_40_without_reaching_navidrome() {
+    let f = family(true).await;
+    ok_relay(&f).await;
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=wrong&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    let r = send(&f.app, Method::GET, "/rest/getThing?u=alex&p=wrong", &[], "").await;
+    assert!(r.body.contains(r#"code="40""#), "{}", r.body);
+    assert_eq!(r.headers["content-type"], "application/xml");
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&t=00&s=11&f=jsonp&callback=cb",
+        &[],
+        "",
+    )
+    .await;
+    assert!(r.body.starts_with("cb({\"subsonic-response\""), "{}", r.body);
+    assert_eq!(r.headers["content-type"], "application/javascript");
+    // Another member's name with a sign-in that is not theirs, two names at once.
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&u=winters&p=app-secret-1&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    assert!(f.rest_requests().await.is_empty());
+    // A paused member is told so, even with the right secret.
+    let mut alex = f.state.family_store.member("alex").expect("there");
+    alex.suspended = true;
+    f.state.family_store.upsert_member(alex);
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=app-secret-1&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(
+        r.json()["subsonic-response"]["error"]["message"],
+        "This account is paused by the family owner."
+    );
+    assert!(f.rest_requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn owner_passes_untouched() {
+    let f = family(true).await;
+    ok_relay(&f).await;
+    let query = "u=winters&t=abc&s=def&id=A&id=B&c=Feishin";
+    send(&f.app, Method::GET, &format!("/rest/getThing?{query}"), &[], "").await;
+    assert_eq!(f.rest_requests().await[0].url.query(), Some(query));
+    // The owner is named, unmanaged, with a detected device.
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!("/rest/testEcho?{query}"),
+        &[("X-Octo-Device-Id", "install-1")],
+        "",
+    )
+    .await;
+    let seen = r.json();
+    assert_eq!(seen["user"], "winters");
+    assert_eq!(seen["managed"], false);
+    assert_eq!(seen["role"], "Owner");
+    assert_eq!(seen["query"], json!(query));
+    assert!(seen["device"].as_str().expect("a device").starts_with("x_"));
+    // Someone outside the family is named too.
+    let r = send(&f.app, Method::GET, "/rest/testEcho?u=bob&p=x", &[], "").await;
+    assert_eq!(r.json()["role"], "Unmanaged");
+}
+
+#[tokio::test]
+async fn failures_are_throttled() {
+    let f = family(true).await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    for _ in 0..member_bridge::MAX_FAILURES {
+        let r = send_from(
+            &f.app,
+            Method::GET,
+            "/rest/getThing?u=alex&p=nope&f=json",
+            &[],
+            "",
+            Some("203.0.113.9"),
+        )
+        .await;
+        assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    }
+    // The right secret from the same address is now refused without a check.
+    let right = "/rest/getThing?u=alex&p=app-secret-1&f=json";
+    let r = send_from(&f.app, Method::GET, right, &[], "", Some("203.0.113.9")).await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    assert!(f.rest_requests().await.is_empty());
+    // Another address is not held up.
+    let r = send_from(&f.app, Method::GET, right, &[], "", Some("203.0.113.10")).await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+}
+
+#[tokio::test]
+async fn api_key_member_is_identified() {
+    let f = family(true).await;
+    Mock::given(method("GET"))
+        .and(path("/rest/tokenInfo"))
+        .and(query_param("apiKey", "alex-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1","tokenInfo":{"username":"alex"}}}"#,
+            "application/json",
+        ))
+        .mount(&f.server)
+        .await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?apiKey=alex-key&f=json&id=7",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let sent: Vec<_> = f
+        .rest_requests()
+        .await
+        .into_iter()
+        .filter(|r| r.url.path() == "/rest/getThing")
+        .collect();
+    let query = sent[0].url.query().expect("a query");
+    assert!(!query.contains("apiKey"), "{query}");
+    assert!(query.starts_with("f=json&id=7&u=alex"), "{query}");
+    let r = send(&f.app, Method::GET, "/rest/testEcho?apiKey=alex-key", &[], "").await;
+    assert_eq!(r.json()["user"], "alex");
+    assert_eq!(r.json()["managed"], true);
+}
+
+/// A web device for alex holding the real token `real`, and an Octo token for it.
+fn web_device_with(f: &Family, real: &str) -> String {
+    f.state.family_store.add_device(Device {
+        id: "d_web".into(),
+        username: "alex".into(),
+        name: "Navidrome in a browser".into(),
+        kind: DeviceKind::NavidromeWeb,
+        secret: f.state.family_vault.seal("web-secret").expect("sealed"),
+        created: Utc::now(),
+        last_seen: None,
+        app: String::new(),
+        place: NetworkPlace::Home,
+        seen_apps: Vec::new(),
+        navidrome_jwt: f.state.family_vault.seal(real),
+        quality: Default::default(),
+    });
+    let member = f.state.family_store.member("alex").expect("there");
+    mint_for(&f.state, &member, "d_web", real, None).expect("a token")
+}
+
+#[tokio::test]
+async fn jwt_query_member_is_identified() {
+    let f = family(true).await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    let octo = web_device_with(&f, &navidrome_jwt("real"));
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!("/rest/getThing?jwt={octo}&f=json"),
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let query = f.rest_requests().await[0]
+        .url
+        .query()
+        .expect("a query")
+        .to_string();
+    assert!(!query.contains("jwt"), "{query}");
+    assert!(signed_with(&pairs(&query), HIDDEN));
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!("/rest/testEcho?jwt={octo}"),
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["device"], "d_web");
+    // A token Octo did not sign names nobody as a member.
+    let forged = navidrome_jwt("forged");
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!("/rest/testEcho?u=alex&jwt={forged}&f=json"),
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+}
+
+async fn login_mock(f: &Family, hidden: &str, real: &str) {
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .and(body_partial_json(
+            json!({ "username": "alex", "password": hidden }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "u-alex", "name": "Alex", "username": "alex", "isAdmin": false,
+            "token": real, "subsonicSalt": "ndsalt", "subsonicToken": "ndtoken"
+        })))
+        .mount(&f.server)
+        .await;
+}
+
+async fn web_login(f: &Family, password: &str) -> Reply {
+    send(
+        &f.app,
+        Method::POST,
+        "/auth/login",
+        &[("Content-Type", "application/json")],
+        &json!({ "username": "alex", "password": password }).to_string(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn member_web_sign_in_returns_device_token() {
+    let f = family(true).await;
+    let real = navidrome_jwt("real");
+    login_mock(&f, HIDDEN, &real).await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    let r = web_login(&f, ACCOUNT_PASSWORD).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let answer = r.json();
+    let token = answer["token"].as_str().expect("a token");
+    let key = f.state.family_vault.jwt_key().expect("a key");
+    let claims = web_session::verify(&key, token, Utc::now().timestamp()).expect("Octo's");
+    assert_eq!(
+        (claims.sub.as_str(), claims.uid.as_str(), claims.adm),
+        ("alex", "u-alex", false)
+    );
+    assert_eq!(Some(claims.exp), web_session::unverified_expiry(&real));
+    // The Subsonic pair is the web device's, and signs in through the gate.
+    let device = f.state.family_store.device(&claims.did).expect("a web device");
+    assert_eq!(device.kind, DeviceKind::NavidromeWeb);
+    let secret = f.state.family_vault.open_sealed(&device.secret).expect("opens");
+    let salt = answer["subsonicSalt"].as_str().expect("a salt");
+    assert_eq!(answer["subsonicToken"], json!(subsonic_token(&secret, salt)));
+    let r = send(
+        &f.app,
+        Method::GET,
+        &format!(
+            "/rest/getThing?u=alex&t={}&s={salt}&f=json",
+            answer["subsonicToken"].as_str().expect("t")
+        ),
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    // Any device secret signs in too, and the web device is reused.
+    let again = web_login(&f, "abcd-efgh-jkmn-pqrs").await;
+    assert_eq!(again.status, StatusCode::OK);
+    let webs: Vec<_> = f
+        .state
+        .family_store
+        .devices_of("alex")
+        .into_iter()
+        .filter(|d| d.kind == DeviceKind::NavidromeWeb)
+        .collect();
+    assert_eq!(webs.len(), 1);
+    // A wrong password is a 401, and Navidrome is never asked.
+    let wrong = web_login(&f, "not it").await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let logins = f
+        .server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path() == "/auth/login")
+        .count();
+    assert_eq!(logins, 2);
+}
+
+/// Every header value and the body of a reply, as text.
+fn everything(reply: &Reply) -> String {
+    let mut text = reply.body.clone();
+    for (name, value) in &reply.headers {
+        text.push_str(&format!(
+            "\n{name}: {}",
+            String::from_utf8_lossy(value.as_bytes())
+        ));
+    }
+    text
+}
+
+/// Signs alex in on the web player and makes two native calls: the first answers with a
+/// refreshed Navidrome token, the second must carry it. Answers every reply.
+async fn web_session_round(f: &Family, real: &str, refreshed: &str) -> Vec<Reply> {
+    login_mock(f, HIDDEN, real).await;
+    Mock::given(method("GET"))
+        .and(path("/api/queue"))
+        .and(header("X-Nd-Authorization", format!("Bearer {real}").as_str()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("X-Nd-Authorization", refreshed)
+                .set_body_json(json!({ "items": [], "token": "none" })),
+        )
+        .expect(1)
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/queue"))
+        .and(header(
+            "X-Nd-Authorization",
+            format!("Bearer {refreshed}").as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+        .expect(1)
+        .mount(&f.server)
+        .await;
+    let login = web_login(f, ACCOUNT_PASSWORD).await;
+    let token = login.json()["token"].as_str().expect("a token").to_string();
+    let first = send(
+        &f.app,
+        Method::GET,
+        "/api/queue",
+        &[("X-Nd-Authorization", &format!("Bearer {token}"))],
+        "",
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    let next = first
+        .headers
+        .get("x-nd-authorization")
+        .and_then(|v| v.to_str().ok())
+        .expect("a fresh token")
+        .to_string();
+    let second = send(
+        &f.app,
+        Method::GET,
+        "/api/queue",
+        &[("X-Nd-Authorization", &format!("Bearer {next}"))],
+        "",
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.body);
+    vec![login, first, second]
+}
+
+#[tokio::test]
+async fn real_navidrome_jwt_never_reaches_a_member() {
+    let f = family(true).await;
+    let (real, refreshed) = (navidrome_jwt("real"), navidrome_jwt("refreshed"));
+    let replies = web_session_round(&f, &real, &refreshed).await;
+    for reply in &replies {
+        let text = everything(reply);
+        assert!(!text.contains(&real), "{text}");
+        assert!(!text.contains(&refreshed), "{text}");
+        // Nor the claims or signature of either (the header is the same for every token).
+        for token in [&real, &refreshed] {
+            for part in token.split('.').skip(1) {
+                assert!(!text.contains(part), "{text}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn refreshed_token_is_swapped() {
+    let f = family(true).await;
+    let (real, refreshed) = (navidrome_jwt("real"), navidrome_jwt("refreshed"));
+    let replies = web_session_round(&f, &real, &refreshed).await;
+    let key = f.state.family_vault.jwt_key().expect("a key");
+    let fresh = replies[1].headers["x-nd-authorization"].to_str().expect("text");
+    assert!(web_session::verify(&key, fresh, Utc::now().timestamp()).is_some());
+    // The refreshed one is what the device keeps now (the mocks' expectations check the
+    // second call carried it).
+    let device = f
+        .state
+        .family_store
+        .devices_of("alex")
+        .into_iter()
+        .find(|d| d.kind == DeviceKind::NavidromeWeb)
+        .expect("a web device");
+    let kept = f
+        .state
+        .family_vault
+        .open_sealed(device.navidrome_jwt.as_deref().expect("kept"))
+        .expect("opens");
+    assert_eq!(kept, refreshed);
+    f.server.verify().await;
+}
+
+#[tokio::test]
+async fn spoofed_forwarded_for_stays_away() {
+    let f = family(true).await;
+    let at = |peer: &'static str, forwarded: &'static str| {
+        let app = f.app.clone();
+        async move {
+            send_from(
+                &app,
+                Method::GET,
+                "/rest/testEcho?u=alex&p=app-secret-1",
+                &[
+                    ("X-Forwarded-For", forwarded),
+                    ("Cf-Connecting-Ip", "192.168.1.5"),
+                ],
+                "",
+                Some(peer),
+            )
+            .await
+            .json()["place"]
+                .clone()
+        }
+    };
+    // Through the local proxy: the client's own home address on the left does not count.
+    assert_eq!(at("127.0.0.1", "192.168.1.5, 203.0.113.9").await, "Away");
+    // Straight in from outside: headers are not read at all.
+    assert_eq!(at("203.0.113.9", "192.168.1.5").await, "Away");
+    // At home, through the local proxy.
+    assert_eq!(at("127.0.0.1", "192.168.1.20").await, "Home");
+}
+
+#[tokio::test]
+async fn tunnel_address_counts_as_away() {
+    let f = family(true).await;
+    let r = send_from(
+        &f.app,
+        Method::GET,
+        "/rest/testEcho?u=winters&t=a&s=b",
+        &[("X-Forwarded-For", "203.0.113.9")],
+        "",
+        Some("127.0.0.1"),
+    )
+    .await;
+    assert_eq!(r.json()["place"], "Away");
+}
+
+#[tokio::test]
+async fn family_gate_sees_canonical_paths() {
+    let f = family(true).await;
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let saw = seen.clone();
+    f.state.family_answer_rules.register(
+        "testEcho",
+        Arc::new(move |context: &AnswerContext<'_>, body: Bytes| {
+            saw.lock().push(format!("{} {}", context.endpoint, context.path));
+            body
+        }),
+    );
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/REST/TestEcho.VIEW?u=alex&p=app-secret-1",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["user"], "alex");
+    assert_eq!(r.json()["path"], "/rest/testEcho.view");
+    assert_eq!(*seen.lock(), ["testEcho /rest/testEcho.view"]);
+}
+
+#[tokio::test]
+async fn answer_rules_see_plain_bodies() {
+    let f = family(true).await;
+    f.navidrome_takes(|hidden| hidden == HIDDEN).await;
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let saw = seen.clone();
+    f.state.family_answer_rules.register(
+        "getThing",
+        Arc::new(move |context: &AnswerContext<'_>, body: Bytes| {
+            let mut answer: Value = serde_json::from_slice(&body).expect("plain JSON");
+            saw.lock().push(answer.clone());
+            answer["subsonic-response"]["seenBy"] = json!(context.caller.user);
+            Bytes::from(answer.to_string())
+        }),
+    );
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=app-secret-1&f=json",
+        &[("Accept-Encoding", "gzip, br")],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["seenBy"], "alex", "{}", r.body);
+    assert_eq!(seen.lock()[0]["subsonic-response"]["status"], "ok");
+    assert!(r.headers.get("content-encoding").is_none());
+    // Navidrome was not asked for a compressed answer.
+    let sent = f.rest_requests().await;
+    assert!(sent[0].headers.get("accept-encoding").is_none());
+}
+
+#[tokio::test]
+async fn utf8_device_name_is_decoded() {
+    let f = family(true).await;
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/testEcho?u=alex&p=app-secret-1",
+        &[("X-Octo-Device-Name", "Sam%E2%80%99s%20Caf%C3%A9")],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["user"], "alex");
+    assert_eq!(
+        f.state.family_store.device("d_app").expect("there").name,
+        "Sam\u{2019}s Caf\u{e9}"
+    );
+    // A name far too long, or not even UTF-8, is cut or patched, never refused.
+    let long = "%C3%A9".repeat(200);
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/testEcho?u=winters&t=a&s=b",
+        &[
+            ("X-Octo-Device-Name", long.as_str()),
+            ("X-Octo-Device-Id", "install-9"),
+        ],
+        "",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let detected = f.state.family_store.detected();
+    assert_eq!(detected[0].name.chars().count(), 64);
+}
+
+/// Octo's admin sign-in and the user record a repair reads and writes.
+async fn admin_mocks(f: &Family) {
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .and(body_partial_json(json!({ "username": "admin" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "token": "admin-jwt", "isAdmin": true, "username": "admin",
+            "subsonicToken": "tok", "subsonicSalt": "salt"
+        })))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/user/u-alex"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "u-alex", "userName": "alex", "name": "Alex", "isAdmin": false
+        })))
+        .mount(&f.server)
+        .await;
+}
+
+fn puts(requests: &[wiremock::Request]) -> usize {
+    requests
+        .iter()
+        .filter(|r| r.method.as_str() == "PUT" && r.url.path() == "/api/user/u-alex")
+        .count()
+}
+
+#[tokio::test]
+async fn repair_runs_once_then_refuses() {
+    let f = family(true).await;
+    admin_mocks(&f).await;
+    Mock::given(method("PUT"))
+        .and(path("/api/user/u-alex"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "u-alex" })))
+        .mount(&f.server)
+        .await;
+    f.navidrome_refuses_the_rest().await;
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=app-secret-1&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    let all = f.server.received_requests().await.unwrap_or_default();
+    assert_eq!(puts(&all), 1);
+    // Tried with the old password, then once with the new one.
+    assert_eq!(f.rest_requests().await.len(), 2);
+    let hidden = f
+        .state
+        .family_vault
+        .open_sealed(
+            &f.state
+                .family_store
+                .member("alex")
+                .expect("there")
+                .navidrome_password,
+        )
+        .expect("opens");
+    assert_ne!(hidden, HIDDEN);
+    // Right after, another refusal does not set a password again.
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=app-secret-1&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 40);
+    assert_eq!(puts(&f.server.received_requests().await.unwrap_or_default()), 1);
+}
+
+#[tokio::test]
+async fn repair_sets_a_new_password_and_retries() {
+    let f = family(true).await;
+    admin_mocks(&f).await;
+    // Navidrome takes whatever password the PUT set, and nothing before it.
+    let set = Arc::new(Mutex::new(None::<String>));
+    let setting = set.clone();
+    Mock::given(method("PUT"))
+        .and(path("/api/user/u-alex"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).expect("json");
+            *setting.lock() = body["password"].as_str().map(str::to_string);
+            ResponseTemplate::new(200).set_body_json(json!({ "id": "u-alex" }))
+        })
+        .mount(&f.server)
+        .await;
+    let current = set.clone();
+    Mock::given(SignedAsAlex {
+        accepts: Arc::new(move |t, s| {
+            current
+                .lock()
+                .as_deref()
+                .is_some_and(|hidden| subsonic_token(hidden, s) == t)
+        }),
+    })
+    .respond_with(ResponseTemplate::new(200).set_body_raw(
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#,
+        "application/json",
+    ))
+    .with_priority(1)
+    .mount(&f.server)
+    .await;
+    f.navidrome_refuses_the_rest().await;
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/getThing?u=alex&p=app-secret-1&f=json",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let kept = f
+        .state
+        .family_vault
+        .open_sealed(
+            &f.state
+                .family_store
+                .member("alex")
+                .expect("there")
+                .navidrome_password,
+        )
+        .expect("opens");
+    assert_eq!(Some(kept), set.lock().clone());
+}
+
+#[tokio::test]
+async fn star_on_arrival_survives_repair() {
+    let f = family(true).await;
+    let calls = Arc::new(Mutex::new(
+        Vec::<(String, indexmap::IndexMap<String, String>)>::new(),
+    ));
+    let calling = calls.clone();
+    f.state.star_on_arrival.configure(move |seams| {
+        seams.call = Some(Arc::new(move |endpoint, parameters| {
+            calling.lock().push((endpoint, parameters));
+            Box::pin(async { Ok(br#"{"subsonic-response":{"status":"ok","song":{"id":"nd-1"}}}"#.to_vec()) })
+        }));
+    });
+    // A member's heart arrives signed with the hidden password of the moment.
+    let salt = "0123456789ab";
+    let held = SubsonicCredential::from(
+        [
+            ("u".to_string(), "alex".to_string()),
+            ("t".to_string(), subsonic_token(HIDDEN, salt)),
+            ("s".to_string(), salt.to_string()),
+        ]
+        .iter()
+        .map(|(k, v)| (k, v)),
+    )
+    .expect("a sign-in");
+    f.state
+        .star_on_arrival
+        .hold_song("deezer", "123", &held, Some("alex"));
+    // A repair sets a new hidden password while the download runs.
+    let mut alex = f.state.family_store.member("alex").expect("there");
+    alex.navidrome_password = f.state.family_vault.seal("hidden-2").expect("sealed");
+    f.state.family_store.upsert_member(alex);
+    assert!(
+        f.state
+            .star_on_arrival
+            .favorite_owned("deezer", "123", Some("nd-1"), "A", "T", "/x")
+    );
+    for _ in 0..100 {
+        if calls.lock().iter().any(|(endpoint, _)| endpoint == "rest/star") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let calls = calls.lock();
+    assert!(
+        calls.iter().any(|(endpoint, _)| endpoint == "rest/star"),
+        "{calls:?}"
+    );
+    for (endpoint, parameters) in calls.iter() {
+        assert_eq!(parameters["u"], "alex", "{endpoint}");
+        assert_eq!(
+            parameters["t"],
+            subsonic_token("hidden-2", &parameters["s"]),
+            "{endpoint}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn caller_carries_the_account_quality() {
+    let f = family(true).await;
+    f.state.family_store.set_preference(
+        "winters",
+        QualityPreference {
+            home: StreamQuality::Original,
+            away: StreamQuality::DataSaver,
+        },
+    );
+    let r = send(&f.app, Method::GET, "/rest/testEcho?u=winters&t=a&s=b", &[], "").await;
+    assert_eq!(r.json()["away"], "DataSaver");
+    assert_eq!(r.json()["deviceQuality"], "Account");
+    f.state
+        .family_store
+        .set_device_quality("d_app", octo_core::family::quality::DeviceQualityMode::App);
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/rest/testEcho?u=alex&p=app-secret-1",
+        &[],
+        "",
+    )
+    .await;
+    assert_eq!(r.json()["deviceQuality"], "App");
+    assert_eq!(r.json()["role"], format!("{:?}", Role::from(Preset::Listener)));
+}
+
+#[tokio::test]
+async fn native_paths_skip_the_family_pages_and_name_the_owner() {
+    let f = family(true).await;
+    // The family page's own API is never touched by the gate.
+    let r = send(&f.app, Method::GET, "/test/echo?u=alex&p=app-secret-1", &[], "").await;
+    assert_eq!(r.json()["user"], Value::Null);
+    assert!(skipped("/api/family/me"));
+    assert!(skipped("/family/join"));
+    assert!(skipped("/rest/octoFamilyPair.view"));
+    assert!(!skipped("/radio/stream/abc"));
+    // A Navidrome token of the owner names the owner and goes on untouched.
+    Mock::given(method("GET"))
+        .and(path("/api/queue"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+        .mount(&f.server)
+        .await;
+    let owner = navidrome_jwt_for("winters", "owner");
+    let r = send(
+        &f.app,
+        Method::GET,
+        "/api/queue",
+        &[("X-Nd-Authorization", &format!("Bearer {owner}"))],
+        "",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let sent = f.server.received_requests().await.unwrap_or_default();
+    assert_eq!(
+        sent[0]
+            .headers
+            .get("x-nd-authorization")
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("Bearer {owner}").as_str())
+    );
+}
+
+#[tokio::test]
+async fn wrong_account_password_is_401() {
+    let f = family(true).await;
+    login_mock(&f, HIDDEN, &navidrome_jwt("real")).await;
+    let r = web_login(&f, "not the password").await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.json()["error"], "Invalid username or password");
+    let asked = f.server.received_requests().await.unwrap_or_default();
+    assert!(asked.iter().all(|r| r.url.path() != "/auth/login"));
+    // Someone outside the family goes on to Navidrome as before.
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .and(body_partial_json(json!({ "username": "bob" })))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(json!({ "error": "Invalid username or password" })),
+        )
+        .mount(&f.server)
+        .await;
+    let r = send(
+        &f.app,
+        Method::POST,
+        "/auth/login",
+        &[("Content-Type", "application/json")],
+        r#"{"username":"bob","password":"x"}"#,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let sent = f.server.received_requests().await.unwrap_or_default();
+    assert_eq!(
+        sent.last().expect("relayed").body,
+        br#"{"username":"bob","password":"x"}"#
+    );
+}
+
+#[tokio::test]
+async fn navidrome_web_device_is_reused() {
+    let f = family(true).await;
+    login_mock(&f, HIDDEN, &navidrome_jwt("real")).await;
+    let first = web_login(&f, ACCOUNT_PASSWORD).await.json();
+    let second = web_login(&f, APP_SECRET).await.json();
+    let key = f.state.family_vault.jwt_key().expect("a key");
+    let now = Utc::now().timestamp();
+    let did = |answer: &Value| {
+        web_session::verify(&key, answer["token"].as_str().expect("a token"), now)
+            .expect("signed by Octo")
+            .did
+    };
+    assert_eq!(did(&first), did(&second));
+    let webs = f
+        .state
+        .family_store
+        .devices_of("alex")
+        .into_iter()
+        .filter(|d| d.kind == DeviceKind::NavidromeWeb)
+        .count();
+    assert_eq!(webs, 1);
+    let device = f.state.family_store.device(&did(&first)).expect("there");
+    assert_eq!(device.name, "Navidrome in a browser");
+}

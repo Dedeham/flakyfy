@@ -240,7 +240,6 @@ impl Abilities {
                 ..Abilities::preset(Preset::Owner)
             },
             Preset::Member => Abilities {
-                devices_at_once: 3,
                 manage_family: false,
                 approve_requests: false,
                 library_actions: false,
@@ -252,12 +251,12 @@ impl Abilities {
                 request_quality: RequestQuality::Best,
                 auto_approve: false,
                 weekly_request_limit: 10,
-                stream_cap: StreamCap::Kbps(192),
-                away_cap: 128,
+                stream_cap: StreamCap::Original,
+                away_cap: 0,
                 away: true,
-                devices_at_once: 2,
+                devices_at_once: 0,
                 download_files: false,
-                offline_copies: false,
+                offline_copies: true,
                 share: false,
                 import_playlists: true,
                 clean_only: false,
@@ -271,9 +270,6 @@ impl Abilities {
             Preset::Kid => Abilities {
                 request_quality: RequestQuality::Mp3,
                 weekly_request_limit: 5,
-                away: false,
-                devices_at_once: 1,
-                import_playlists: false,
                 clean_only: true,
                 family_playlists_edit: false,
                 storage_limit_gb: 5,
@@ -414,39 +410,23 @@ mod tests {
         assert_eq!(m.weekly_request_limit, 0);
         assert_eq!(l.weekly_request_limit, 10);
         assert_eq!(k.weekly_request_limit, 5);
-        // StreamCap
-        assert_eq!(o.stream_cap, StreamCap::Original);
-        assert_eq!(c.stream_cap, StreamCap::Original);
-        assert_eq!(m.stream_cap, StreamCap::Original);
-        assert_eq!(l.stream_cap, StreamCap::Kbps(192));
-        assert_eq!(k.stream_cap, StreamCap::Kbps(192));
-        // AwayCap
-        assert_eq!(o.away_cap, 0);
-        assert_eq!(c.away_cap, 0);
-        assert_eq!(m.away_cap, 0);
-        assert_eq!(l.away_cap, 128);
-        assert_eq!(k.away_cap, 128);
-        // Away
-        assert!(o.away);
-        assert!(c.away);
-        assert!(m.away);
-        assert!(l.away);
-        assert!(!k.away);
-        // DevicesAtOnce
-        assert_eq!(o.devices_at_once, 0);
-        assert_eq!(c.devices_at_once, 0);
-        assert_eq!(m.devices_at_once, 3);
-        assert_eq!(l.devices_at_once, 2);
-        assert_eq!(k.devices_at_once, 1);
-        // DownloadFiles, OfflineCopies, Share
+        // StreamCap, AwayCap, Away, DevicesAtOnce, OfflineCopies, ImportPlaylists: no limit
+        // and allowed for everyone until the owner sets one for a person.
+        for a in [&o, &c, &m, &l, &k] {
+            assert_eq!(a.stream_cap, StreamCap::Original);
+            assert_eq!(a.away_cap, 0);
+            assert!(a.away);
+            assert_eq!(a.devices_at_once, 0);
+            assert!(a.offline_copies);
+            assert!(a.import_playlists);
+        }
+        // DownloadFiles, Share
         for (a, on) in [(&o, true), (&c, true), (&m, true), (&l, false), (&k, false)] {
             assert_eq!(a.download_files, on);
-            assert_eq!(a.offline_copies, on);
             assert_eq!(a.share, on);
         }
-        // ImportPlaylists, FamilyPlaylistsEdit
+        // FamilyPlaylistsEdit
         for (a, on) in [(&o, true), (&c, true), (&m, true), (&l, true), (&k, false)] {
-            assert_eq!(a.import_playlists, on);
             assert_eq!(a.family_playlists_edit, on);
         }
         // CleanOnly
@@ -475,15 +455,15 @@ mod tests {
     #[test]
     fn edits_override_only_named_fields() {
         let (a, warnings) = Abilities::preset(Preset::Listener).with_edits(&edits(json!({
-            "OfflineCopies": true,
-            "streamCap": "Original",
+            "OfflineCopies": false,
+            "streamCap": 192,
             "WeeklyRequestLimit": 3,
             "addToLibrary": "SaveOnly",
         })));
         assert!(warnings.is_empty(), "{warnings:?}");
         let expected = Abilities {
-            offline_copies: true,
-            stream_cap: StreamCap::Original,
+            offline_copies: false,
+            stream_cap: StreamCap::Kbps(192),
             weekly_request_limit: 3,
             add_to_library: AddToLibrary::SaveOnly,
             ..Abilities::preset(Preset::Listener)
@@ -526,12 +506,12 @@ mod tests {
                 "requestQuality": "Best",
                 "autoApprove": false,
                 "weeklyRequestLimit": 10,
-                "streamCap": 192,
-                "awayCap": 128,
+                "streamCap": 0,
+                "awayCap": 0,
                 "away": true,
-                "devicesAtOnce": 2,
+                "devicesAtOnce": 0,
                 "downloadFiles": false,
-                "offlineCopies": false,
+                "offlineCopies": true,
                 "share": false,
                 "importPlaylists": true,
                 "cleanOnly": false,

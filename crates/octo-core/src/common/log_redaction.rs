@@ -22,7 +22,8 @@ pub const MASK: &str = "***";
 // Subsonic reads names case-insensitively, so this does. sk is a Last.fm session key,
 // which scrobbles as that listener, and api_sig is signed with the Last.fm shared secret.
 // user is the AcoustID user's own API key, sent with every submission. Subsonic's u is
-// not it, and stays readable.
+// not it, and stays readable. code, secret, password and invite are Octo Family's pairing
+// codes, device secrets, account passwords and invite tokens, and jwt a browser's sign-in.
 //
 // The C# matched the value behind a lookbehind, `(?<=[?&;](?:...)=)[^&#\s"'<>]+`. Here the
 // name is group 1 and is written back. The two find the same values: a value never holds an
@@ -33,7 +34,7 @@ pub const MASK: &str = "***";
 static SECRET_PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
     let s = "(?-i:[sS])";
     Regex::new(&format!(
-        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig)=)[^&#\s"'<>]+"#
+        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig|code|{s}ecret|pa{s}{s}word|invite|jwt)=)[^&#\s"'<>]+"#
     ))
     .expect("a fixed pattern compiles")
 });
@@ -157,5 +158,17 @@ mod tests {
         for secret in [t, s, p, api_key, token] {
             assert!(!redacted.contains(&secret));
         }
+    }
+
+    #[test]
+    fn family_codes_are_masked() {
+        let line = "/rest/octoFamilyPair?username=alex&code=123456&deviceName=Pixel&secret=S1&password=P1&invite=I1&jwt=J1&Code=2";
+        assert_eq!(
+            redact(line),
+            "/rest/octoFamilyPair?username=alex&code=***&deviceName=Pixel&secret=***&password=***&invite=***&jwt=***&Code=***"
+        );
+        // Names that only start like one of them stay readable.
+        let other = "?codec=mp3&secrets=1&passwords=2&invited=3&jwtx=4";
+        assert_eq!(redact(other), other);
     }
 }

@@ -361,8 +361,8 @@ fn set_multi_value_writes_one_value_per_artist() {
 // ---- Clearing a field takes it off the file -------------------------------------------------
 
 /// Clearing an ISRC, and undoing an ISRC retag, takes the code off the file: `set_or_clear_text`
-/// takes it off under every container's name for it, and an empty
-/// value given to `set_text` still leaves a peer's value alone.
+/// takes it off under every container's name for it, and an empty value given to `set_text` still
+/// leaves a peer's value alone.
 #[test]
 fn clearing_an_isrc_takes_it_off_the_file() {
     let dir = tempfile::tempdir().expect("a temp dir");

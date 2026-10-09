@@ -19,8 +19,7 @@ pub(crate) fn mp3() -> Vec<u8> {
     bytes
 }
 
-/// A FLAC with a STREAMINFO block describing two seconds of 16-bit stereo
-/// and no frames.
+/// A FLAC with a STREAMINFO block describing two seconds of 16-bit stereo and no frames.
 pub(crate) fn flac() -> Vec<u8> {
     let mut bytes = b"fLaC".to_vec();
     bytes.extend_from_slice(&[0x80, 0x00, 0x00, 0x22]);

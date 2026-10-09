@@ -7,8 +7,8 @@ pub(crate) fn round(value: f64) -> f64 {
     value.round_ties_even()
 }
 
-/// Rounds to `digits` places: scale by a power of ten, round half
-/// to even, scale back. Values too big to carry a fraction come back unchanged.
+/// Rounds to `digits` places: scale by a power of ten, round half to even, scale back. Values too
+/// big to carry a fraction come back unchanged.
 pub(crate) fn round_digits(value: f64, digits: i32) -> f64 {
     if value.abs() < 1e16 {
         let power10 = 10f64.powi(digits);

@@ -4,8 +4,8 @@
 //! CJK and Symbola for that; DejaVu was already there.
 //!
 //! Text is shaped with cosmic-text (harfrust), and the glyph outlines (skrifa) are drawn with
-//! tiny-skia. Fonts are named by the name table's family name (name ID 1), so
-//! "Inter Display SemiBold", "Noto Sans CJK SC".
+//! tiny-skia. Fonts are named by the name table's family name (name ID 1), so "Inter Display
+//! SemiBold", "Noto Sans CJK SC".
 
 use std::collections::HashMap;
 use std::path::PathBuf;

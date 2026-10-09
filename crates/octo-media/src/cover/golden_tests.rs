@@ -92,8 +92,8 @@ fn max_channel_difference(a: &Rgb<u8>, b: [i64; 3]) -> i64 {
 
 // ------------------------------------------------------------ the design's goldens
 
-/// The text metrics tolerance, in pixels, for a right edge against the reference:
-/// max(2, 2% of the line), because Pillow sets Inter without kerning and this renderer with it.
+/// The text metrics tolerance, in pixels, for a right edge against the reference: max(2, 2% of
+/// the line), because Pillow sets Inter without kerning and this renderer with it.
 fn right_slack(x: f64, right: f64) -> f64 {
     2f64.max(0.02 * (right - x))
 }
@@ -281,8 +281,7 @@ const METRIC_TOLERANCE: f64 = 0.01;
 const MIN_SSIM: f64 = 0.98;
 
 /// How far apart a veiled background (no words) may be from the reference one, in levels a
-/// channel.
-/// The background's decode, resampling and veil are the same maths in the same order.
+/// channel. The background's decode, resampling and veil are the same maths in the same order.
 const VEIL_TOLERANCE: i64 = 1;
 
 fn reference_music(layout: &Value) -> Option<cover_colors::CoverMusic> {
@@ -304,8 +303,8 @@ fn reference_spec(layout: &Value) -> CoverSpec {
     }
 }
 
-/// A reference layout's cover as this renderer composes it: its own background pick, except for the
-/// goldens, which name theirs.
+/// A reference layout's cover as this renderer composes it: its own background pick, except for
+/// the goldens, which name theirs.
 fn reference_art(layout: &Value) -> CoverArt {
     let side = num(layout, "side") as i32;
     let spec = reference_spec(layout);
@@ -372,9 +371,9 @@ fn report_skipped(skipped: usize) {
     }
 }
 
-/// Every layout the reference renderer made (the goldens, long, cut, right-to-left and foreign names, the
-/// contact sheet's lists, at 600 and 1200): the same background and turn, the same blocks,
-/// sizes, lines, cuts, boxes and baselines, and each line set in the same font.
+/// Every layout the reference renderer made (the goldens, long, cut, right-to-left and foreign
+/// names, the contact sheet's lists, at 600 and 1200): the same background and turn, the same
+/// blocks, sizes, lines, cuts, boxes and baselines, and each line set in the same font.
 #[test]
 fn layouts_match_the_reference_renderer() {
     let mut worst = 0f64;
@@ -568,8 +567,8 @@ fn diff_dir() -> PathBuf {
     target.join("cover-golden-diffs")
 }
 
-/// Writes this renderer's picture, the reference, and their difference (four times as strong) side
-/// by side, for looking at a failure.
+/// Writes this renderer's picture, the reference, and their difference (four times as strong)
+/// side by side, for looking at a failure.
 fn write_diff(name: &str, got: &RgbImage, want: &RgbImage) -> PathBuf {
     let (w, h) = got.dimensions();
     let mut sheet = RgbImage::new(w * 3, h);

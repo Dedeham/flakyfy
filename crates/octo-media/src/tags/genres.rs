@@ -174,8 +174,7 @@ pub(crate) fn text_to_audio(text: &str) -> Option<&'static str> {
     index_to_audio(string_to_byte(text))
 }
 
-/// A genre's number: "(n)..." or a plain number, as [`parse_byte`] reads them; 255
-/// otherwise.
+/// A genre's number: "(n)..." or a plain number, as [`parse_byte`] reads them; 255 otherwise.
 fn string_to_byte(text: &str) -> u8 {
     if text.chars().count() > 2
         && text.starts_with('(')

@@ -1,9 +1,9 @@
 //! The tag writing of a download (the tag body and the album gain rewrite), and the lyrics in a
 //! song's own tags that `SongLyrics` and `LyricsSidecarWriter` read and write.
 //!
-//! The rest of a download's tagging stays with the download service: it opens the
-//! file, decides the genres (the genre plan and its Last.fm fallback) and the cover (the
-//! cover chain, from the picture the file already holds), then calls [`write_song`] and
+//! The rest of a download's tagging stays with the download service: it opens the file, decides
+//! the genres (the genre plan and its Last.fm fallback) and the cover (the cover chain, from the
+//! picture the file already holds), then calls [`write_song`] and
 //! [`embed_cover`] and saves:
 //!
 //! ```ignore
@@ -220,8 +220,7 @@ pub fn write_album_gain(path: &Path, gain_db: f64, peak: f64) -> Result<(), TagE
     file.save()
 }
 
-/// The lyrics in the song's own tags, or an error when
-/// the file cannot be read as audio.
+/// The lyrics in the song's own tags, or an error when the file cannot be read as audio.
 pub fn read_lyrics(path: &Path) -> Result<Option<String>, TagError> {
     Ok(TagFile::open(path)?.lyrics())
 }

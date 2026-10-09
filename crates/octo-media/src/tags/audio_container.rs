@@ -278,8 +278,8 @@ fn read(file: &mut File, length: u64, offset: u64, count: usize) -> Option<Vec<u
 
 #[cfg(test)]
 mod tests {
-    //! A file's real format from its first bytes, and the rename that fixes
-    //! a name that says another one. Real headers, written to files in a temp folder.
+    //! A file's real format from its first bytes, and the rename that fixes a name that says
+    //! another one. Real headers, written to files in a temp folder.
 
     use super::*;
     use crate::tags::test_support::{flac, mp3};

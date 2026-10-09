@@ -1315,9 +1315,8 @@ mod padding_tests {
     }
 
     /// TagLib#'s rule for FLAC (`Flac.File.Save`): rewritten metadata keeps its size on disk
-    /// while its blocks fit, the padding taking up the rest, so an edit in place leaves a FLAC the
-    /// size the library server saw; blocks that outgrow it get
-    /// 4096 bytes of padding.
+    /// while its blocks fit, the padding taking up the rest, so an edit in place leaves a FLAC
+    /// the size the library server saw; blocks that outgrow it get 4096 bytes of padding.
     #[test]
     fn rewritten_flac_metadata_keeps_its_size_while_the_blocks_fit() {
         let dir = tempfile::tempdir().expect("a temp dir");

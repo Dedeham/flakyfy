@@ -65,8 +65,8 @@ pub(crate) fn parse_int(text: &str) -> Option<i32> {
     i32::try_from(value).ok()
 }
 
-/// A double, the same in every locale: white space, a sign, digits with group commas before the point, a
-/// fraction, an exponent. "NaN" and "Infinity" are numbers too.
+/// A double, the same in every locale: white space, a sign, digits with group commas before the
+/// point, a fraction, an exponent. "NaN" and "Infinity" are numbers too.
 pub(crate) fn parse_double(text: &str) -> Option<f64> {
     let text = text.trim_matches(is_number_white_space);
     match text {

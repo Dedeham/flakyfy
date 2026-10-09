@@ -1,5 +1,5 @@
-//! The loudness of a file by ffmpeg's EBU R128
-//! filter, and the ReplayGain values that follow from it.
+//! The loudness of a file by ffmpeg's EBU R128 filter, and the ReplayGain values that follow from
+//! it.
 
 use std::path::Path;
 use std::sync::LazyLock;

@@ -1,8 +1,7 @@
 //! The tag frames the generic tag fields do not cover, written in the frame each container's
-//! readers look for. Navidrome's mappings.yaml
-//! maps TXXX:ARTISTS (ID3v2), ARTISTS (Vorbis) and ----:com.apple.iTunes:ARTISTS (MP4) to its
-//! artists tag, and reads the recording id from UFID:http://musicbrainz.org,
-//! MUSICBRAINZ_TRACKID and "MusicBrainz Track Id".
+//! readers look for. Navidrome's mappings.yaml maps TXXX:ARTISTS (ID3v2), ARTISTS (Vorbis) and
+//! ----:com.apple.iTunes:ARTISTS (MP4) to its artists tag, and reads the recording id from
+//! UFID:http://musicbrainz.org, MUSICBRAINZ_TRACKID and "MusicBrainz Track Id".
 
 use std::path::Path;
 

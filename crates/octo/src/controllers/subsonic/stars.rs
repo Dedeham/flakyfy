@@ -522,7 +522,7 @@ async fn learn_from_scrobbles(
         }
         // A client that sends the same completed play again is not playing it again.
         let time = times.get(index).map(String::as_str);
-        let reported_at = Utc::now();
+        let reported_at = state.recent_scrobbles.now();
         if completed
             && !state
                 .recent_scrobbles

@@ -29,7 +29,7 @@ use super::library_index::{LibraryIndex, ScopeResolver};
 use super::personal_library::{LibraryError, PersonalLibrary};
 use super::pool::{FamilyPool, FilesChoice, LinkMode};
 use super::request_service::{RequestError, RequestService as Requests, facts_from_path};
-use super::stream_tracker::{LiveStreamView, StreamTracker};
+use super::stream_tracker::{LiveStreamView, SongName, StreamTracker};
 use crate::services::common::AcquisitionTracker;
 use crate::services::common::acquisition_tracker::AcquisitionState;
 use crate::services::library::explicit_backfill::{
@@ -257,8 +257,43 @@ impl RemoveFromMyLibrary for PersonalSongs {
 // Live streams
 // ------------------------------------------------------------------------------------------
 
-/// What is playing, from the stream tracker. Song names come from the library index (the file's
-/// place in the library), else from what Octo knows of an outside song.
+/// A song's title and artist as Octo holds them in memory, without asking anyone: the library
+/// index (the file's place in the library), the outside id registry, or a download of it.
+pub fn known_names(
+    index: &LibraryIndex,
+    registry: &ExternalIdRegistry,
+    acquisitions: &AcquisitionTracker,
+    song_id: &str,
+) -> Option<SongName> {
+    if let Some(song) = index.song(song_id) {
+        let names = facts_from_path(&song.path);
+        return Some(SongName {
+            title: names.title,
+            artist: names.artist,
+        });
+    }
+    if let Some(routing) = registry.lookup(song_id) {
+        let routing = routing.snapshot();
+        if let Some(title) = routing.title.filter(|t| !t.trim().is_empty()) {
+            return Some(SongName {
+                title,
+                artist: routing.artist.unwrap_or_default(),
+            });
+        }
+    }
+    let fetched = acquisitions.all().into_iter().find(|a| {
+        !a.external_id.is_empty()
+            && (song_id.ends_with(&format!("-{}", a.external_id)) || song_id == a.external_id)
+    })?;
+    let title = fetched.title.filter(|t| !t.trim().is_empty())?;
+    Some(SongName {
+        title,
+        artist: fetched.artist.unwrap_or_default(),
+    })
+}
+
+/// What is playing, from the stream tracker. Song names come from what Octo holds in memory
+/// ([`known_names`]), else from the lookup that began when an outside song's stream started.
 pub struct TrackerStreams {
     pub tracker: Arc<StreamTracker>,
     pub index: Arc<LibraryIndex>,
@@ -267,28 +302,14 @@ pub struct TrackerStreams {
 }
 
 impl TrackerStreams {
-    /// A song's title and artist, as far as Octo knows them without asking anyone.
-    fn names(&self, song_id: &str) -> (String, String) {
-        if let Some(song) = self.index.song(song_id) {
-            let names = facts_from_path(&song.path);
-            return (names.title, names.artist);
-        }
-        if let Some(routing) = self.registry.lookup(song_id) {
-            let routing = routing.snapshot();
-            if let Some(title) = routing.title.filter(|t| !t.trim().is_empty()) {
-                return (title, routing.artist.unwrap_or_default());
-            }
-        }
-        let fetched = self.acquisitions.all().into_iter().find(|a| {
-            !a.external_id.is_empty()
-                && (song_id.ends_with(&format!("-{}", a.external_id)) || song_id == a.external_id)
-        });
-        if let Some(fetched) = fetched
-            && let Some(title) = fetched.title.filter(|t| !t.trim().is_empty())
-        {
-            return (title, fetched.artist.unwrap_or_default());
-        }
-        (song_id.to_string(), String::new())
+    /// A stream's title and artist; the song id stands in while neither is known.
+    fn names(&self, stream: &LiveStreamView) -> (String, String) {
+        known_names(&self.index, &self.registry, &self.acquisitions, &stream.song_id)
+            .or_else(|| stream.name.clone())
+            .map_or_else(
+                || (stream.song_id.clone(), String::new()),
+                |name| (name.title, name.artist),
+            )
     }
 
     fn playing_now(&self) -> Vec<LiveStreamView> {
@@ -307,7 +328,7 @@ impl LiveStreams for TrackerStreams {
             .into_iter()
             .rev()
             .find(|stream| stream.device_id.as_deref() == Some(device_id))?;
-        let (title, artist) = self.names(&stream.song_id);
+        let (title, artist) = self.names(&stream);
         Some(Playing {
             song_id: stream.song_id,
             title,
@@ -331,7 +352,7 @@ impl LiveStreams for TrackerStreams {
             .live()
             .into_iter()
             .map(|stream| LoadStream {
-                song_title: self.names(&stream.song_id).0,
+                song_title: self.names(&stream).0,
                 username: stream.username,
                 device: stream.device_name,
                 kbps: stream.kbps,

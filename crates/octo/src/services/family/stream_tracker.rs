@@ -97,7 +97,19 @@ pub struct LiveStreamView {
     pub bytes: u64,
     /// The rate the stream has been sending at lately.
     pub kbps: u32,
+    /// The song's title and artist, once a lookup that began when it started has found them.
+    pub name: Option<SongName>,
 }
+
+/// A song's title and artist, as a lookup found them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SongName {
+    pub title: String,
+    pub artist: String,
+}
+
+/// How long a looked-up name is kept for streams of the song that start later.
+const NAME_HOLD: Duration = Duration::from_secs(3 * 60);
 
 struct LiveEntry {
     user_key: String,
@@ -124,9 +136,21 @@ struct Book {
     last_audio: HashMap<(String, String), Instant>,
     /// (person, ended device) to the device that ended it.
     bumps: HashMap<(String, String), Bump>,
+    /// Song id to the name a lookup found (None while it looks, or when it found nothing) and
+    /// when that lookup began.
+    names: HashMap<String, (Option<SongName>, Instant)>,
 }
 
 impl Book {
+    /// Forgets names no live stream uses that were looked up longer than [`NAME_HOLD`] ago.
+    fn forget_old_names(&mut self, now: Instant) {
+        let live = &self.live;
+        self.names.retain(|song_id, (_, at)| {
+            now.saturating_duration_since(*at) < NAME_HOLD
+                || live.values().any(|entry| entry.view.song_id == *song_id)
+        });
+    }
+
     fn playing_entries<'a>(&'a self, user_key: &'a str) -> impl Iterator<Item = &'a LiveEntry> + 'a {
         self.live.values().filter(move |entry| {
             entry.user_key == user_key && entry.view.purpose.is_playing() && !entry.cancel.is_cancelled()
@@ -228,6 +252,34 @@ impl StreamTracker {
         self.len() == 0
     }
 
+    /// Claims the name lookup for `song_id`: true when none has begun for it lately, and the
+    /// caller then looks the song up and reports with [`StreamTracker::name_song`].
+    pub fn start_naming(&self, song_id: &str) -> bool {
+        let mut book = self.book.lock();
+        book.forget_old_names(Instant::now());
+        if book.names.contains_key(song_id) {
+            return false;
+        }
+        book.names.insert(song_id.to_string(), (None, Instant::now()));
+        true
+    }
+
+    /// Gives every live stream of `song_id` the name a lookup found, and keeps it for streams of
+    /// the song that start soon after. None (nothing found) leaves them as they are.
+    pub fn name_song(&self, song_id: &str, name: Option<SongName>) {
+        let Some(name) = name else {
+            return;
+        };
+        let mut book = self.book.lock();
+        for entry in book.live.values_mut() {
+            if entry.view.song_id == song_id {
+                entry.view.name = Some(name.clone());
+            }
+        }
+        let at = book.names.get(song_id).map_or_else(Instant::now, |(_, at)| *at);
+        book.names.insert(song_id.to_string(), (Some(name), at));
+    }
+
     /// Ends every live stream of one person's device.
     pub fn end_device(&self, user: &str, device_id: Option<&str>) {
         let book = self.book.lock();
@@ -289,6 +341,7 @@ fn register(book: &Mutex<Book>, start: StreamStart, cancel: CancellationToken) -
     }
     book.next += 1;
     let id = book.next;
+    let name = book.names.get(&start.song_id).and_then(|(name, _)| name.clone());
     book.live.insert(
         id,
         LiveEntry {
@@ -304,6 +357,7 @@ fn register(book: &Mutex<Book>, start: StreamStart, cancel: CancellationToken) -
                 started: Utc::now(),
                 bytes: 0,
                 kbps: 0,
+                name,
             },
             started: now,
             window_start: now,
@@ -447,6 +501,7 @@ impl Drop for TrackedStream {
         let now = Instant::now();
         book.last_audio
             .retain(|_, at| now.saturating_duration_since(*at) < BUMP_HOLD * 4);
+        book.forget_old_names(now);
     }
 }
 
@@ -661,5 +716,78 @@ mod tests {
         tracker.end_device("ALEX", Some("phone"));
         assert!(next(&mut phone).await.expect("an end").is_err());
         assert!(tracker.is_empty());
+    }
+
+    fn named(title: &str) -> Option<SongName> {
+        Some(SongName {
+            title: title.to_string(),
+            artist: "Somebody".to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_found_name_reaches_live_streams_of_the_song_and_ones_that_start_after() {
+        let tracker = StreamTracker::new();
+        let mut first = tracker.track(
+            start("alex", Some("phone"), StreamPurpose::Play, 0),
+            endless(1, 10),
+        );
+        next(&mut first).await.expect("plays").expect("ok");
+        assert_eq!(tracker.live()[0].name, None);
+
+        assert!(tracker.start_naming("s1"));
+        assert!(!tracker.start_naming("s1"), "one lookup per song at a time");
+        tracker.name_song("s1", named("Outside"));
+        assert_eq!(tracker.live()[0].name, named("Outside"));
+
+        let mut second = tracker.track(start("sam", Some("tv"), StreamPurpose::Play, 0), endless(1, 10));
+        next(&mut second).await.expect("plays").expect("ok");
+        let live = tracker.live();
+        assert_eq!(live.len(), 2);
+        assert!(live.iter().all(|stream| stream.name == named("Outside")));
+    }
+
+    #[tokio::test]
+    async fn a_name_found_before_the_stream_is_first_read_is_kept_for_it() {
+        let tracker = StreamTracker::new();
+        let mut body = tracker.track(
+            start("alex", Some("phone"), StreamPurpose::Play, 0),
+            endless(1, 10),
+        );
+        assert!(tracker.start_naming("s1"));
+        tracker.name_song("s1", named("Early"));
+        next(&mut body).await.expect("plays").expect("ok");
+        assert_eq!(tracker.live()[0].name, named("Early"));
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_found_nothing_leaves_the_stream_unnamed() {
+        let tracker = StreamTracker::new();
+        let mut body = tracker.track(
+            start("alex", Some("phone"), StreamPurpose::Play, 0),
+            endless(1, 10),
+        );
+        next(&mut body).await.expect("plays").expect("ok");
+        assert!(tracker.start_naming("s1"));
+        tracker.name_song("s1", None);
+        assert_eq!(tracker.live()[0].name, None);
+        assert!(!tracker.start_naming("s1"), "not asked again at once");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn names_no_stream_uses_are_forgotten_after_a_while() {
+        let tracker = StreamTracker::new();
+        assert!(tracker.start_naming("gone"));
+        tracker.name_song("gone", named("Gone"));
+        let mut body = tracker.track(
+            start("alex", Some("phone"), StreamPurpose::Play, 0),
+            endless(1, 10),
+        );
+        next(&mut body).await.expect("plays").expect("ok");
+        assert!(tracker.start_naming("s1"));
+        tokio::time::advance(NAME_HOLD + Duration::from_secs(1)).await;
+        // The playing song keeps its claim; the other may be looked up again.
+        assert!(!tracker.start_naming("s1"));
+        assert!(tracker.start_naming("gone"));
     }
 }

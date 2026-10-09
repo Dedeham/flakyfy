@@ -38,8 +38,9 @@ use tracing::info;
 
 use super::caller::FamilyCaller;
 use super::family_store::FamilyStore;
+use super::hooks;
 use super::library_index::LibraryIndex;
-use super::stream_tracker::{StreamPurpose, StreamStart, StreamTracker};
+use super::stream_tracker::{SongName, StreamPurpose, StreamStart, StreamTracker};
 use crate::app::AppState;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::local::ILocalLibraryService;
@@ -685,9 +686,50 @@ impl AudioPlan {
         {
             return response;
         }
+        name_outside_song(state, &start.song_id);
         let (parts, body) = response.into_parts();
         Response::from_parts(parts, state.family_audio.tracker().track(start, body))
     }
+}
+
+/// Starts looking up an outside song's title and artist for its live streams: what Octo holds in
+/// memory first, else the metadata service, the way outside song entries are built. The lookup
+/// runs on its own task and the stream never waits for it; a song Octo already knows, or one a
+/// lookup has begun for, is not looked up again.
+fn name_outside_song(state: &AppState, song_id: &str) {
+    let (outside, provider, external_id) = state.local_library.parse_song_id(song_id);
+    if !outside
+        || hooks::known_names(
+            &state.library_index,
+            &state.external_id_registry,
+            &state.acquisition_tracker,
+            song_id,
+        )
+        .is_some()
+    {
+        return;
+    }
+    let tracker = Arc::clone(state.family_audio.tracker());
+    if !tracker.start_naming(song_id) {
+        return;
+    }
+    let metadata = Arc::clone(&state.metadata_service);
+    let song_id = song_id.to_string();
+    tokio::spawn(async move {
+        let song = metadata
+            .get_song(
+                provider.as_deref().unwrap_or_default(),
+                external_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        let name = song
+            .filter(|song| !song.title.trim().is_empty())
+            .map(|song| SongName {
+                title: song.title,
+                artist: song.artist,
+            });
+        tracker.name_song(&song_id, name);
+    });
 }
 
 /// Checks one `/rest` request from `caller` and answers its [`AudioPlan`]. A request that

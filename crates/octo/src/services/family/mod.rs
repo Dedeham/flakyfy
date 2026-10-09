@@ -60,5 +60,5 @@ pub use request_service::{FamilyEvent, FamilyEvents, RequestError, RequestServic
 pub use request_store::RequestStore;
 pub use rules::{AnswerContext, AnswerRule, AnswerRules, request_rules};
 pub use saved_store::{SavedAlbum, SavedSong, SavedStore};
-pub use stream_tracker::{LiveStreamView, StreamPurpose, StreamStart, StreamTracker};
+pub use stream_tracker::{LiveStreamView, SongName, StreamPurpose, StreamStart, StreamTracker};
 pub use vault::FamilyVault;

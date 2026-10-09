@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
-use axum::http::{Method, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
+use axum::response::Response;
 use chrono::Utc;
 use http_body_util::BodyExt;
 use octo_core::family::abilities::Preset;
@@ -21,6 +22,7 @@ use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
 use octo_core::family::request::{RequestKind, RequestState};
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, FamilySettings, NotificationSettings, SubsonicSettings};
+use octo_subsonic::subsonic_request_parser::Parameters;
 use serde_json::{Map, Value, json};
 use tower::ServiceExt;
 use wiremock::matchers::method;
@@ -31,7 +33,9 @@ use crate::controllers::subsonic::route_tests::TestMetadata;
 use crate::http::pipeline::{App, app_routes, build_with};
 use crate::http::static_files::{StaticAssets, StaticRoots};
 use crate::services::admin::SessionKind;
+use crate::services::family::audio_gate;
 use crate::services::family::fake_navidrome::{FakeNavidrome, FakeNavidromeState};
+use crate::services::family::hooks::caller_for;
 use crate::services::family::stream_tracker::{StreamPurpose, StreamStart};
 use crate::services::family::test_support::{eventually, write_file};
 use crate::services::family::{Member, SharedLibraries};
@@ -51,6 +55,8 @@ struct Wired {
     nd: FakeNavidrome,
     ntfy: MockServer,
     dir: tempfile::TempDir,
+    /// The metadata service outside songs are looked up in.
+    metadata: Arc<TestMetadata>,
 }
 
 struct Reply {
@@ -183,7 +189,7 @@ async fn wired(family_on: bool) -> Wired {
         },
         ..Default::default()
     };
-    let metadata = TestMetadata::default();
+    let metadata = Arc::new(TestMetadata::default());
     metadata
         .songs
         .lock()
@@ -197,7 +203,7 @@ async fn wired(family_on: bool) -> Wired {
         TestServices {
             config_dir: Some(dir.path().to_path_buf()),
             sign_in: Some("required".into()),
-            metadata: Some(Arc::new(metadata)),
+            metadata: Some(metadata.clone()),
             deezer_base_url: Some(closed.clone()),
             raw_settings: vec![
                 ("YouTube:ShimUrl".into(), closed.clone()),
@@ -245,6 +251,7 @@ async fn wired(family_on: bool) -> Wired {
         nd,
         ntfy,
         dir,
+        metadata,
     }
 }
 
@@ -795,6 +802,67 @@ async fn live_streams_come_from_the_stream_tracker() {
         .await
         .json();
     assert_eq!(load["streams"], json!([]), "{load}");
+}
+
+#[tokio::test]
+async fn an_outside_stream_is_named_from_the_metadata_service_and_never_waits_for_it() {
+    let w = wired(true).await;
+    // The metadata service holds every lookup until the test lets it answer.
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *w.metadata.song_gate.lock() = Some(gate.clone());
+    let mut caller = caller_for(&w.state.family_store, "alex");
+    caller.device_id = Some("d_alex".into());
+    let mut parameters = Parameters::new();
+    parameters.insert("id".into(), OUTSIDE.into());
+    let admitted = audio_gate::admit(
+        &w.state,
+        &caller,
+        &Method::GET,
+        "stream",
+        &parameters,
+        &HeaderMap::new(),
+    )
+    .await
+    .expect("alex may play it");
+    let mut audio = Response::new(Body::from(vec![1u8; 2048]));
+    audio
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/mpeg"));
+    let mut body = admitted.track(&w.state, audio).into_body();
+
+    // The audio flows while the lookup is still held.
+    let first = tokio::time::timeout(Duration::from_secs(2), body.frame())
+        .await
+        .expect("the stream does not wait for the lookup")
+        .expect("a frame")
+        .expect("bytes");
+    assert!(first.is_data());
+    let tracker = w.state.family_audio.tracker().clone();
+    assert!(!tracker.start_naming(OUTSIDE), "a lookup is under way");
+    let load = w
+        .page(Method::GET, "/api/family/load", "winters", None)
+        .await
+        .json();
+    assert_eq!(load["streams"][0]["songTitle"], OUTSIDE, "{load}");
+
+    // Once the metadata service answers, the stream carries the title and artist.
+    gate.add_permits(1);
+    assert!(eventually(|| tracker.live().first().is_some_and(|stream| stream.name.is_some())).await);
+    let load = w
+        .page(Method::GET, "/api/family/load", "winters", None)
+        .await
+        .json();
+    assert_eq!(load["streams"][0]["songTitle"], "Outside", "{load}");
+    let devices = w.rest("alex", "getFamilyDevices", "").await.subsonic();
+    let phone = devices["familyDevices"]["device"]
+        .as_array()
+        .and_then(|list| list.iter().find(|d| d["id"] == "d_alex"))
+        .expect("the phone")
+        .clone();
+    assert_eq!(phone["playing"]["songId"], OUTSIDE, "{phone}");
+    assert_eq!(phone["playing"]["title"], "Outside");
+    assert_eq!(phone["playing"]["artist"], "Somebody");
+    drop(body);
 }
 
 #[tokio::test]

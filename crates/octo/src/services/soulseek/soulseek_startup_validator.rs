@@ -46,12 +46,13 @@ impl IStartupValidator for SoulseekStartupValidator {
     async fn validate(&self, _cancellation_token: &CancellationToken) -> ValidationResult {
         println!();
 
-        let Some(base_url) = self.base_url.as_deref().filter(|u| !u.trim().is_empty()) else {
-            BaseStartupValidator::write_status("Soulseek (slskd)", "NOT CONFIGURED", ConsoleColor::Red);
+        let base_url = self.base_url.as_deref().filter(|u| !u.trim().is_empty());
+        let (Some(base_url), true) = (base_url, self.client.is_on()) else {
+            BaseStartupValidator::write_status("Soulseek (slskd)", "OFF (optional)", ConsoleColor::Cyan);
             BaseStartupValidator::write_detail(
-                "Set the Soulseek__BaseUrl environment variable (e.g. http://slskd:5030)",
+                "Downloads use the other sources. Set Soulseek__BaseUrl (e.g. http://slskd:5030) to use it.",
             );
-            return ValidationResult::failure("-1", "Soulseek BaseUrl not set", ConsoleColor::Red);
+            return ValidationResult::success("Soulseek is off", None);
         };
 
         BaseStartupValidator::write_status("Soulseek BaseUrl", base_url, ConsoleColor::Cyan);
@@ -150,13 +151,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_base_url_soulseek_is_not_configured() {
+    async fn without_a_base_url_soulseek_is_off_and_optional() {
         let result = validator(&store(Some(" ".into())))
             .validate(&CancellationToken::new())
             .await;
-        assert!(!result.is_valid);
-        assert_eq!(result.status, "-1");
-        assert_eq!(result.details.as_deref(), Some("Soulseek BaseUrl not set"));
+        assert!(result.is_valid);
+        assert_eq!(result.details.as_deref(), Some("Soulseek is off"));
+
+        let switched_off = SettingsStore::for_tests(AppSettings {
+            soulseek: SoulseekSettings {
+                enabled: false,
+                base_url: Some("http://127.0.0.1:1".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let result = validator(&switched_off).validate(&CancellationToken::new()).await;
+        assert!(result.is_valid);
+        assert_eq!(result.details.as_deref(), Some("Soulseek is off"));
     }
 
     #[tokio::test]

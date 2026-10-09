@@ -31,14 +31,19 @@ pub trait IMusicMetadataService: Send + Sync {
     ) -> Vec<Song>;
 
     /// Fills in real duration/album/year on external placeholder songs (which
-    /// otherwise show a 3:00 fallback) from a metadata provider. Bounded, cached,
+    /// otherwise go out with no length) from a metadata provider. Bounded, cached,
     /// best-effort; does not block or fail the search if the provider is down.
     async fn enrich_external_songs(&self, _songs: &mut [Song]) {}
 
-    /// Gives external songs outside a search (station playlists) the lengths already known
-    /// for them, and looks the rest up in the background so the next response has them.
-    /// Never waits on the network: whatever is not known yet keeps the fallback for now.
+    /// Gives external songs outside a search (stations, radio, a song read by its id) the
+    /// lengths already known for them, and looks the rest up in the background so the next
+    /// response has them. Never waits on the network: whatever is not known yet goes out
+    /// with no length for now.
     fn complete_song_lengths(&self, _songs: &mut [Song]) {}
+
+    /// Remembers the length of a file downloaded for the outside song `external_id`, so rows
+    /// that still name the song by that id carry the length it really runs.
+    fn remember_file_length(&self, _external_id: &str, _seconds: i32) {}
 
     /// Resolves the real YouTube video (and its duration) for the top of a search
     /// result so the shown length matches the audio that plays. Bounded + cached;
@@ -46,6 +51,12 @@ pub trait IMusicMetadataService: Send + Sync {
     /// is true the songs are already sent: only the routing is written, a video a play already
     /// pinned is kept, and the shim's background lane is used.
     async fn resolve_top_durations(&self, _songs: &mut [Song], _background: bool) {}
+
+    /// Looks up the length of one outside song that has none known yet, right away and on the
+    /// interactive lane, for a caller that answers with this one song (getSong). The video
+    /// found is pinned for playback, so the length shown is the length that plays. A song
+    /// whose video is already pinned is left as it is.
+    async fn resolve_song_length(&self, _song: &mut Song) {}
 
     /// Best-effort pre-resolve of upstream identifiers (e.g. YouTube videoIds) for
     /// the first N songs of a freshly-built search result. Called fire-and-forget
@@ -68,6 +79,16 @@ pub trait IMusicMetadataService: Send + Sync {
     /// search or cover request. Default no-op preserves source compatibility for
     /// any provider that doesn't need it.
     async fn prewarm_cover_art(&self, _songs: &[Song], _top_n: usize) {}
+
+    /// Artists the catalog relates to an outside artist, as outside artists, at most `limit`.
+    async fn get_related_artists(
+        &self,
+        _external_provider: &str,
+        _external_id: &str,
+        _limit: i32,
+    ) -> Vec<Artist> {
+        Vec::new()
+    }
 
     /// Searches for albums on external providers. `limit` was 20 by default.
     async fn search_albums(&self, query: &str, limit: i32) -> Vec<Album>;

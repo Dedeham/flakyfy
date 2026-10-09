@@ -71,6 +71,62 @@ fn returns_null_when_only_singles_and_compilations() {
     assert_eq!(studio(search, "Zukunft Pink"), None);
 }
 
+#[test]
+fn a_bootleg_or_promotion_release_never_becomes_the_heart_album() {
+    let search = r#"
+    {"recordings":[{"title":"Empire State of Mind","releases":[
+      {"date":"2009-01-01","status":"Bootleg","release-group":{"id":"bootleg-tape","primary-type":"Album"}},
+      {"date":"2009-02-01","status":"Promotion","release-group":{"id":"promo","primary-type":"Album"}},
+      {"date":"2009-09-08","status":"Official","release-group":{"id":"blueprint-3","primary-type":"Album"}}]}]}
+    "#;
+
+    assert_eq!(
+        studio(search, "Empire State of Mind").as_deref(),
+        Some("blueprint-3")
+    );
+}
+
+#[test]
+fn a_year_only_date_never_beats_a_full_date_of_the_same_year() {
+    let year_first = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"2009","status":"Official","release-group":{"id":"year-only","primary-type":"Album"}},
+      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}}]}]}
+    "#;
+    let full_first = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}},
+      {"date":"2009","status":"Official","release-group":{"id":"year-only","primary-type":"Album"}}]}]}
+    "#;
+    let earlier_year = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"2009-09-08","status":"Official","release-group":{"id":"full-date","primary-type":"Album"}},
+      {"date":"2008","status":"Official","release-group":{"id":"year-before","primary-type":"Album"}}]}]}
+    "#;
+
+    assert_eq!(studio(year_first, "Song").as_deref(), Some("full-date"));
+    assert_eq!(studio(full_first, "Song").as_deref(), Some("full-date"));
+    assert_eq!(studio(earlier_year, "Song").as_deref(), Some("year-before"));
+}
+
+#[test]
+fn a_mixtape_ranks_after_a_studio_album_and_before_a_soundtrack() {
+    let all_three = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}},
+      {"date":"1995-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
+    "#;
+    let mixtape_and_soundtrack = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}}]}]}
+    "#;
+
+    assert_eq!(studio(all_three, "Song").as_deref(), Some("studio"));
+    assert_eq!(studio(mixtape_and_soundtrack, "Song").as_deref(), Some("tape"));
+}
+
 // ---- MusicBrainzQueryTests ---------------------------------------------------------------
 // Titles and names with quotes, colons, slashes or brackets must reach the music database as
 // the words they are, not as operators, or the failure reads as "no candidate".

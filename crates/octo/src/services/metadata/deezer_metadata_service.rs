@@ -627,27 +627,7 @@ impl DeezerMetadataService {
             if r.transient {
                 return anyhow::Ok(Flow::Return(()));
             }
-            if let Some(data) = data_array(r.doc.as_ref())? {
-                for a in enumerate_array(data)? {
-                    let id = match try_get_property(a, "id")? {
-                        Some(aid @ Value::Number(_)) => Some(get_int64(aid)?.to_string()),
-                        _ => None,
-                    };
-                    let name = str_prop(a, "name")?;
-                    let (Some(id), Some(name)) = (id, name.filter(|n| !is_blank(n))) else {
-                        continue;
-                    };
-                    hits.push(ArtistHit {
-                        deezer_id: id,
-                        name: name.to_string(),
-                        picture_url: str_prop(a, "picture_xl")?
-                            .or(str_prop(a, "picture_medium")?)
-                            .map(str::to_string),
-                        album_count: int(a, "nb_album")?.unwrap_or(0),
-                        fans: int(a, "nb_fan")?.unwrap_or(0),
-                    });
-                }
-            }
+            hits = artist_hits(r.doc.as_ref())?;
             Ok(Flow::Done)
         };
         match attempt.await {
@@ -656,6 +636,43 @@ impl DeezerMetadataService {
             Err(e) => debug!("deezer artist search '{query}' failed: {e}"),
         }
 
+        let ttl = if hits.is_empty() {
+            NEGATIVE_TTL
+        } else {
+            POSITIVE_TTL
+        };
+        self.put(key, Cached::ArtistHits(hits.clone()), ttl);
+        hits
+    }
+
+    /// The artists the catalog lists as related to one, most related first. Empty when it lists
+    /// none or cannot be asked.
+    pub async fn related_artists(&self, deezer_artist_id: &str, limit: i32) -> Vec<ArtistHit> {
+        if is_blank(deezer_artist_id) || limit <= 0 {
+            return Vec::new();
+        }
+        let key = dotnet::to_lower_invariant(&format!("rel|{deezer_artist_id}|{limit}"));
+        if let Some(Cached::ArtistHits(cached)) = self.get_cached(&key) {
+            return cached;
+        }
+        let r = self
+            .get_json(
+                &format!(
+                    "{}/artist/{}/related?limit={limit}",
+                    self.base(),
+                    escape_data_string(deezer_artist_id)
+                ),
+                false,
+            )
+            .await;
+        if r.transient {
+            return Vec::new();
+        }
+        let mut hits = artist_hits(r.doc.as_ref()).unwrap_or_else(|e| {
+            debug!("deezer related artists of {deezer_artist_id} failed: {e}");
+            Vec::new()
+        });
+        hits.truncate(usize::try_from(limit).unwrap_or(0));
         let ttl = if hits.is_empty() {
             NEGATIVE_TTL
         } else {
@@ -1859,6 +1876,33 @@ fn named_artist_id(doc: Option<&Value>, artist: &str) -> ElementResult<Option<St
 
 /// `root.data` when it is an array. Reading a property of a root that is not an object
 /// throws, as `TryGetProperty` did.
+/// The artists of a catalog list (`data`), each with an id and a name.
+fn artist_hits(doc: Option<&Value>) -> ElementResult<Vec<ArtistHit>> {
+    let mut hits = Vec::new();
+    if let Some(data) = data_array(doc)? {
+        for a in enumerate_array(data)? {
+            let id = match try_get_property(a, "id")? {
+                Some(aid @ Value::Number(_)) => Some(get_int64(aid)?.to_string()),
+                _ => None,
+            };
+            let name = str_prop(a, "name")?;
+            let (Some(id), Some(name)) = (id, name.filter(|n| !is_blank(n))) else {
+                continue;
+            };
+            hits.push(ArtistHit {
+                deezer_id: id,
+                name: name.to_string(),
+                picture_url: str_prop(a, "picture_xl")?
+                    .or(str_prop(a, "picture_medium")?)
+                    .map(str::to_string),
+                album_count: int(a, "nb_album")?.unwrap_or(0),
+                fans: int(a, "nb_fan")?.unwrap_or(0),
+            });
+        }
+    }
+    Ok(hits)
+}
+
 fn data_array(doc: Option<&Value>) -> ElementResult<Option<&Value>> {
     let Some(root) = doc else {
         return Ok(None);

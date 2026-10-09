@@ -899,8 +899,40 @@ async fn without_a_login_no_session_is_asked_for_and_an_unreachable_slskd_is_sai
         nowhere.enqueue_download("p", "f", 1).await,
         Err(SoulseekClientError::Failed(_))
     ));
-    assert_eq!(
-        SoulseekClient::new(&SoulseekSettings::default()).base_url(),
-        "http://localhost:5030"
-    );
+    // No address is Soulseek off, never a guess at one.
+    assert_eq!(SoulseekClient::new(&SoulseekSettings::default()).base_url(), "");
+}
+
+#[tokio::test]
+async fn soulseek_switched_off_never_calls_slskd() {
+    let server = serve(json("{}")).await;
+    let client = SoulseekClient::new(&SoulseekSettings {
+        enabled: false,
+        ..settings(&server)
+    });
+
+    assert!(!client.is_on());
+    assert!(!client.is_reachable().await);
+    assert!(client.read_server().await.is_none());
+    assert!(client.get_downloads_directory().await.is_none());
+    let found = client
+        .search("Artist Song", &interactive(), &CancellationToken::new())
+        .await
+        .unwrap_or_default();
+    assert!(found.is_empty());
+
+    assert!(server.received_requests().await.expect("recording").is_empty());
+}
+
+#[tokio::test]
+async fn a_blank_address_is_soulseek_off_and_no_default_address_is_called() {
+    let client = SoulseekClient::new(&SoulseekSettings::default());
+
+    assert!(!client.is_on());
+    assert_eq!(client.base_url(), "");
+    let error = client
+        .send(Method::GET, "http://localhost:5030/api/v0/application", None)
+        .await
+        .expect_err("nothing is sent");
+    assert_eq!(error.to_string(), SOULSEEK_OFF);
 }

@@ -13,6 +13,7 @@ use octo_core::last_fm::last_fm_radio_state_store::station_id;
 use octo_core::models::domain::Album;
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use octo_core::settings::{AppSettings, GeneratedPlaylistSettings, LastFmSettings, SubsonicSettings};
+use octo_core::soulseek::{RoutingKind, SoulseekRouting};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -327,6 +328,13 @@ struct LengthUpstream {
     deezer: Arc<Mutex<HashMap<String, i32>>>,
     last_fm: Arc<Mutex<HashMap<String, i32>>>,
     video: Arc<Mutex<HashMap<String, i32>>>,
+    /// Videos the shim's full search (the one a play makes) finds; its quick lookup does not.
+    played_video: Arc<Mutex<HashMap<String, i32>>>,
+    /// Last.fm's artist.getInfo by the name asked: (the name Last.fm answers for, the summary).
+    artist_bio: Arc<Mutex<HashMap<String, (String, String)>>>,
+    /// Deezer's artists by name (their catalog id), and the artists related to each id.
+    deezer_artists: Arc<Mutex<HashMap<String, i64>>>,
+    deezer_related: Arc<Mutex<HashMap<i64, Vec<(i64, String)>>>>,
     search_tracks: Arc<Mutex<Vec<(String, String)>>>,
 }
 
@@ -359,6 +367,18 @@ impl Respond for LengthUpstream {
                     return json_reply(json!({"results": {"trackmatches": {"track": tracks}}}).to_string());
                 }
                 Some("artist.gettoptracks") => return json_reply(r#"{"toptracks":{"track":[]}}"#.into()),
+                Some("artist.getInfo") => {
+                    let artist = query_value(request, "artist").unwrap_or_default();
+                    if let Some((name, summary)) = self.artist_bio.lock().get(&artist) {
+                        return json_reply(
+                            json!({"artist": {"name": name, "bio": {"summary": summary, "content": summary}}})
+                                .to_string(),
+                        );
+                    }
+                    return json_reply(
+                        r#"{"error":6,"message":"The artist you supplied could not be found"}"#.into(),
+                    );
+                }
                 Some("track.getInfo") => {
                     let artist = query_value(request, "artist").unwrap_or_default();
                     let track = query_value(request, "track").unwrap_or_default();
@@ -374,6 +394,32 @@ impl Respond for LengthUpstream {
             }
         }
         let q = query_value(request, "q").unwrap_or_default();
+        if path == "/deezer/search/artist" {
+            let found: Vec<Value> = self
+                .deezer_artists
+                .lock()
+                .iter()
+                .filter(|(name, _)| name.to_lowercase() == q.to_lowercase())
+                .map(|(name, id)| json!({"id": id, "name": name, "nb_fan": 1000, "nb_album": 4}))
+                .collect();
+            return json_reply(json!({ "data": found }).to_string());
+        }
+        if let Some(id) = path
+            .strip_prefix("/deezer/artist/")
+            .and_then(|rest| rest.strip_suffix("/related"))
+            .and_then(|id| id.parse::<i64>().ok())
+        {
+            let related: Vec<Value> = self
+                .deezer_related
+                .lock()
+                .get(&id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, name)| json!({"id": id, "name": name, "nb_fan": 10, "nb_album": 2}))
+                .collect();
+            return json_reply(json!({ "data": related }).to_string());
+        }
         if let Some(path) = path.strip_prefix("/deezer") {
             return match find_ignore_case(&self.deezer.lock(), &q) {
                 Some((key, duration)) if path == "/search" => {
@@ -390,6 +436,14 @@ impl Respond for LengthUpstream {
             && let Some(length) = self.video.lock().get(&q)
         {
             return json_reply(format!(r#"{{"video_id":"vid-{q}","duration":{length}}}"#));
+        }
+        if path == "/shim/search"
+            && let Some(length) = self.played_video.lock().get(&q)
+        {
+            return json_reply(format!(r#"{{"video_id":"vid-{q}","duration":{length}}}"#));
+        }
+        if path == "/shim/stream" {
+            return ResponseTemplate::new(200).set_body_raw(vec![0u8; 64], "audio/mp4");
         }
         ResponseTemplate::new(404)
     }
@@ -440,7 +494,8 @@ async fn length_fixture() -> LengthFixture {
     }
 }
 
-fn lengths(songs: &Value) -> HashMap<String, i64> {
+/// Each row's length by "artist|title"; None where the row carries no `duration` at all.
+fn lengths(songs: &Value) -> HashMap<String, Option<i64>> {
     songs
         .as_array()
         .unwrap()
@@ -452,13 +507,13 @@ fn lengths(songs: &Value) -> HashMap<String, i64> {
                     song["artist"].as_str().unwrap(),
                     song["title"].as_str().unwrap()
                 ),
-                song["duration"].as_i64().unwrap(),
+                song.get("duration").map(|d| d.as_i64().unwrap()),
             )
         })
         .collect()
 }
 
-async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
+async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, Option<i64>> {
     let body = get(
         &fixture.app,
         "/rest/search3?query=genesis&songCount=50&albumCount=0&artistCount=0&u=alice&t=token&s=salt&f=json",
@@ -468,7 +523,7 @@ async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
     lengths(&body["subsonic-response"]["searchResult3"]["song"])
 }
 
-async fn playlist_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
+async fn playlist_lengths(fixture: &LengthFixture) -> HashMap<String, Option<i64>> {
     let body = get(
         &fixture.app,
         &format!(
@@ -532,16 +587,16 @@ async fn search3_rows_without_a_metadata_length_carry_one_in_the_next_response()
         .insert("Justice Genesis".into(), 234);
 
     let first = search3_lengths(&fixture).await;
-    assert_eq!(first["Filler|Song1"], 201);
-    assert_eq!(first["Daft Punk|Emotion"], 180);
+    assert_eq!(first["Filler|Song1"], Some(201));
+    assert_eq!(first["Daft Punk|Emotion"], None);
     fixture.state.music_metadata.last_length_warm().await;
 
     let next = search3_lengths(&fixture).await;
-    assert_eq!(next["Filler|Song1"], 201);
-    assert_eq!(next["Daft Punk|Emotion"], 417);
-    assert_eq!(next["Kavinsky|Prelude"], 95);
-    assert_eq!(next["Justice|Genesis"], 234);
-    assert_eq!(next["Nobody|Nothing"], 180); // still the placeholder: nothing plausible
+    assert_eq!(next["Filler|Song1"], Some(201));
+    assert_eq!(next["Daft Punk|Emotion"], Some(417));
+    assert_eq!(next["Kavinsky|Prelude"], Some(95));
+    assert_eq!(next["Justice|Genesis"], Some(234));
+    assert_eq!(next["Nobody|Nothing"], None); // still unknown: nothing plausible
 }
 
 #[tokio::test]
@@ -592,16 +647,79 @@ async fn get_playlist_station_rows_without_a_length_carry_one_in_the_next_respon
     );
 
     let first = playlist_lengths(&fixture).await;
-    assert_eq!(first["Mr. Oizo|Positif"], 207);
-    assert_eq!(first["Justice|Genesis"], 180);
+    assert_eq!(first["Mr. Oizo|Positif"], Some(207));
+    assert_eq!(first["Justice|Genesis"], None);
     fixture.state.music_metadata.last_length_warm().await;
 
     let next = playlist_lengths(&fixture).await;
-    assert_eq!(next["Justice|Genesis"], 234);
-    assert_eq!(next["Kavinsky|Prelude"], 95);
-    assert_eq!(next["Daft Punk|Emotion"], 417);
-    assert_eq!(next["Mr. Oizo|Positif"], 207);
-    assert_eq!(next["Nobody|Nothing"], 180);
+    assert_eq!(next["Justice|Genesis"], Some(234));
+    assert_eq!(next["Kavinsky|Prelude"], Some(95));
+    assert_eq!(next["Daft Punk|Emotion"], Some(417));
+    assert_eq!(next["Mr. Oizo|Positif"], Some(207));
+    assert_eq!(next["Nobody|Nothing"], None);
+}
+
+#[tokio::test]
+async fn get_song_an_outside_song_carries_its_remembered_length_or_none() {
+    let fixture = length_fixture().await;
+    fixture
+        .upstream
+        .deezer
+        .lock()
+        .insert("Justice Genesis".into(), 234);
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    };
+    fixture.state.last_fm_radio_state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: station_id("alice", "your-mix"),
+            key: "your-mix".into(),
+            name: "Your Mix".into(),
+            owner: "alice".into(),
+            kind: LastFmRadioStationKind::YourMix,
+            personalized: true,
+            created_utc: Utc::now() - TimeDelta::hours(1),
+            changed_utc: Utc::now() - TimeDelta::hours(1),
+            valid_until_utc: Utc::now() + TimeDelta::days(1),
+            tracks: vec![track("Justice", "Genesis"), track("Nobody", "Nothing")],
+            ..Default::default()
+        }],
+    );
+    let body = get(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            station_id("alice", "your-mix")
+        ),
+    )
+    .await
+    .json();
+    fixture.state.music_metadata.last_length_warm().await;
+    let ids: HashMap<String, String> = body["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|song| {
+            (
+                song["title"].as_str().unwrap().to_string(),
+                song["id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+
+    let song = |id: &str| {
+        let url = format!("/rest/getSong?id={id}&u=alice&t=token&s=salt&f=json");
+        let app = &fixture.app;
+        async move { get(app, &url).await.json()["subsonic-response"]["song"].clone() }
+    };
+    let known = song(&ids["Genesis"]).await;
+    assert_eq!(known["duration"], 234);
+    let unknown = song(&ids["Nothing"]).await;
+    assert_eq!(unknown["title"], "Nothing");
+    assert!(unknown.get("duration").is_none(), "{unknown}");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -811,4 +929,174 @@ async fn radio_stream_tokens_of_another_length_are_relayed_and_unknown_ones_are_
     assert_eq!(short.body, "relayed");
     let asked = server.received_requests().await.unwrap();
     assert_eq!(asked[0].url.path(), "/Radio/Stream/tooshort");
+}
+
+/// One outside song from a station, by title: its id.
+async fn station_song_ids(fixture: &LengthFixture, songs: &[(&str, &str)]) -> HashMap<String, String> {
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    };
+    fixture.state.last_fm_radio_state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: station_id("alice", "your-mix"),
+            key: "your-mix".into(),
+            name: "Your Mix".into(),
+            owner: "alice".into(),
+            kind: LastFmRadioStationKind::YourMix,
+            personalized: true,
+            created_utc: Utc::now() - TimeDelta::hours(1),
+            changed_utc: Utc::now() - TimeDelta::hours(1),
+            valid_until_utc: Utc::now() + TimeDelta::days(1),
+            tracks: songs.iter().map(|(artist, title)| track(artist, title)).collect(),
+            ..Default::default()
+        }],
+    );
+    let body = get(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            station_id("alice", "your-mix")
+        ),
+    )
+    .await
+    .json();
+    fixture.state.music_metadata.last_length_warm().await;
+    body["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|song| {
+            (
+                song["title"].as_str().unwrap().to_string(),
+                song["id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+async fn song_by_id(fixture: &LengthFixture, id: &str) -> Value {
+    let url = format!("/rest/getSong?id={id}&u=alice&t=token&s=salt&f=json");
+    get(&fixture.app, &url).await.json()["subsonic-response"]["song"].clone()
+}
+
+#[tokio::test]
+async fn get_song_an_outside_song_with_no_known_length_takes_its_videos_length() {
+    let fixture = length_fixture().await;
+    let ids = station_song_ids(&fixture, &[("Nobody", "Nothing")]).await;
+    // Only the quick video lookup knows it, and nothing has looked yet.
+    fixture.upstream.video.lock().insert("Nobody Nothing".into(), 211);
+
+    let song = song_by_id(&fixture, &ids["Nothing"]).await;
+
+    assert_eq!(song["duration"], 211, "{song}");
+}
+
+#[tokio::test]
+async fn a_played_outside_song_remembers_the_length_of_the_video_that_played() {
+    let fixture = length_fixture().await;
+    let ids = station_song_ids(&fixture, &[("Nobody", "Nothing")]).await;
+    fixture
+        .upstream
+        .played_video
+        .lock()
+        .insert("Nobody Nothing".into(), 199);
+    let before = song_by_id(&fixture, &ids["Nothing"]).await;
+    assert!(before.get("duration").is_none(), "{before}");
+
+    let stream = get(
+        &fixture.app,
+        &format!("/rest/stream?id={}&u=alice&t=token&s=salt", ids["Nothing"]),
+    )
+    .await;
+    assert_eq!(stream.status, StatusCode::OK);
+
+    let after = song_by_id(&fixture, &ids["Nothing"]).await;
+    assert_eq!(after["duration"], 199, "{after}");
+}
+
+/// An outside artist, as search registers one: its id.
+fn outside_artist(fixture: &LengthFixture, name: &str) -> String {
+    fixture.state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Artist,
+        artist: Some(name.into()),
+        ..Default::default()
+    })
+}
+
+fn justice_upstream(fixture: &LengthFixture, answered_as: &str) {
+    fixture.upstream.artist_bio.lock().insert(
+        "Justice".into(),
+        (answered_as.into(), "French electronic duo.".into()),
+    );
+    fixture
+        .upstream
+        .deezer_artists
+        .lock()
+        .insert("Justice".into(), 27);
+    fixture
+        .upstream
+        .deezer_related
+        .lock()
+        .insert(27, vec![(1, "Daft Punk".into()), (2, "Kavinsky".into())]);
+}
+
+#[tokio::test]
+async fn get_artist_info2_an_outside_artist_has_last_fms_biography_and_related_artists() {
+    let fixture = length_fixture().await;
+    justice_upstream(&fixture, "Justice");
+    let id = outside_artist(&fixture, "Justice");
+
+    let body = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&u=alice&t=token&s=salt&f=json"),
+    )
+    .await
+    .json();
+
+    let info = &body["subsonic-response"]["artistInfo2"];
+    assert_eq!(info["biography"], "French electronic duo.", "{body}");
+    let similar = info["similarArtist"].as_array().expect("related artists");
+    let names: Vec<&str> = similar.iter().map(|a| a["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Daft Punk", "Kavinsky"]);
+    assert_eq!(similar[0]["isExternal"], true);
+    // Each opens that artist's own outside page.
+    let daft_punk = similar[0]["id"].as_str().unwrap();
+    let routing = fixture
+        .state
+        .external_id_registry
+        .lookup(daft_punk)
+        .expect("registered")
+        .snapshot();
+    assert_eq!(routing.artist.as_deref(), Some("Daft Punk"));
+    assert_eq!(routing.external_artist_id.as_deref(), Some("1"));
+
+    let xml = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&count=1&u=alice&t=token&s=salt"),
+    )
+    .await
+    .body;
+    assert_eq!(xml.matches("<similarArtist ").count(), 1, "{xml}");
+    assert!(xml.contains("name=\"Daft Punk\""), "{xml}");
+}
+
+#[tokio::test]
+async fn get_artist_info2_a_biography_last_fm_gives_for_another_name_is_left_out() {
+    let fixture = length_fixture().await;
+    justice_upstream(&fixture, "Justice Crew");
+    let id = outside_artist(&fixture, "Justice");
+
+    let body = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&u=alice&t=token&s=salt&f=json"),
+    )
+    .await
+    .json();
+
+    let info = &body["subsonic-response"]["artistInfo2"];
+    assert_eq!(info["biography"], "", "{body}");
+    assert_eq!(info["similarArtist"].as_array().map(Vec::len), Some(2));
 }

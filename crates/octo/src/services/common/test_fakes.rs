@@ -367,3 +367,29 @@ impl ISoulseekLink for OfflineLink {
         false
     }
 }
+
+/// Soulseek is switched off: no step uses it.
+pub(crate) struct OffLink;
+
+#[async_trait]
+impl ISoulseekLink for OffLink {
+    async fn read(&self, _fresh: bool) -> Option<SoulseekServerReading> {
+        None
+    }
+
+    fn hold_limit(&self) -> TimeDelta {
+        TimeDelta::hours(6)
+    }
+
+    fn utc_now(&self) -> DateTime<Utc> {
+        Utc::now()
+    }
+
+    async fn wait_for_login(&self, _deadline_utc: DateTime<Utc>) -> bool {
+        false
+    }
+
+    fn is_off(&self) -> bool {
+        true
+    }
+}

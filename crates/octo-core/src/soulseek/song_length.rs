@@ -12,8 +12,7 @@ use crate::soulseek::soulseek_metadata_service::SoulseekRouting;
 )]
 #[repr(i32)]
 pub enum LengthSource {
-    /// Nothing is known. The song goes out with the 180s placeholder, which the
-    /// Octo app reads as "no length".
+    /// Nothing is known. The song goes out with no length.
     #[default]
     None = 0,
 
@@ -27,6 +26,9 @@ pub enum LengthSource {
 
     /// Deezer's catalog length for the matched track.
     Deezer = 3,
+
+    /// The length of the audio in a file downloaded for the song: what it really runs.
+    File = 4,
 }
 
 /// The rules for the length a client is shown for a song Octo found outside the library.
@@ -127,6 +129,10 @@ mod tests {
         assert!(!SongLength::remember(&mut r, Some(418), LengthSource::LastFm));
         assert!(!SongLength::remember(&mut r, Some(430), LengthSource::Video));
         assert_eq!(SongLength::shown(&r), (Some(417), LengthSource::Deezer));
+
+        assert!(SongLength::remember(&mut r, Some(419), LengthSource::File));
+        assert!(!SongLength::remember(&mut r, Some(417), LengthSource::Deezer));
+        assert_eq!(SongLength::shown(&r), (Some(419), LengthSource::File));
     }
 
     #[test]

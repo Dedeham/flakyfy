@@ -649,11 +649,12 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, and Liked Songs'
-    // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, and the
+    assert_eq!(row("Lidarr:WebhookSecret")["IsSecret"], true);
+    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, Liked Songs'
+    // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, the
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
-    // :CountryLookupsPerRefresh.
-    assert_eq!(rows.len(), 186);
+    // :CountryLookupsPerRefresh, and Lidarr:WebhookSecret and Soulseek:Enabled.
+    assert_eq!(rows.len(), 188);
     assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
@@ -782,6 +783,20 @@ async fn the_side_effect_posts_answer_as_recorded() {
     let reply = admin_write(&app, Method::POST, "/api/admin/restart", None).await;
     assert_eq!(reply.status, StatusCode::ACCEPTED);
     assert_eq!(reply.text(), r#"{"ok":true,"message":"restarting"}"#);
+}
+
+#[tokio::test]
+async fn status_says_a_switched_off_soulseek_is_off_and_optional() {
+    let mut settings = factory_settings();
+    settings.soulseek.enabled = false;
+    let app = app(AppState::for_tests(settings));
+
+    let body = get(&app, "/api/admin/status").await.json();
+
+    assert_eq!(body["services"]["slskd"]["detail"], "Off. Optional.");
+    assert_eq!(body["services"]["slskd"]["ok"], true);
+    assert_eq!(body["services"]["slskd"]["configured"], false);
+    assert_eq!(body["services"]["slskd"]["warning"], false);
 }
 
 #[tokio::test]

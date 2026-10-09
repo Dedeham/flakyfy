@@ -203,6 +203,50 @@ impl SubsonicResponseBuilder {
         SubsonicReply::xml(&envelope("ok").child(element))
     }
 
+    /// [`Self::create_info_response`] for an artist, with the related artists as
+    /// `similarArtist` entries after the fields (none written when there are none).
+    pub fn create_artist_info_response(
+        &self,
+        format: &str,
+        element_name: &str,
+        fields: &[(&str, &str)],
+        similar: &[Artist],
+    ) -> SubsonicReply {
+        if format == "json" {
+            let mut body = Fields::new();
+            body.insert("status".into(), "ok".into());
+            body.insert("version".into(), SUBSONIC_VERSION.into());
+            let mut element: Fields = fields
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), Value::from(*v)))
+                .collect();
+            if !similar.is_empty() {
+                element.insert(
+                    "similarArtist".into(),
+                    Value::Array(
+                        similar
+                            .iter()
+                            .map(|artist| Value::Object(build_artist_fields(artist)))
+                            .collect(),
+                    ),
+                );
+            }
+            body.insert(element_name.into(), Value::Object(element));
+            return self.create_json_response(Value::Object(body));
+        }
+
+        let mut element = subsonic_element(element_name);
+        for (key, value) in fields {
+            element.push(subsonic_element(*key).text(*value));
+        }
+        for artist in similar {
+            let mut entry = subsonic_element("similarArtist");
+            attributes(&mut entry, &build_artist_fields(artist));
+            element.push(entry);
+        }
+        SubsonicReply::xml(&envelope("ok").child(element))
+    }
+
     /// Creates a Subsonic error response.
     pub fn create_error(&self, format: &str, code: i32, message: &str) -> SubsonicReply {
         if format == "json" {
@@ -237,7 +281,7 @@ impl SubsonicResponseBuilder {
         let duration: i64 = station
             .tracks
             .iter()
-            .map(|track| i64::from(track.duration.unwrap_or(180)))
+            .map(|track| i64::from(known_seconds(track.duration)))
             .sum();
         let mut fields = Fields::new();
         fields.insert("id".into(), station.id.clone().into());
@@ -265,7 +309,7 @@ impl SubsonicResponseBuilder {
         fields.insert("songCount".into(), songs.len().into());
         let duration: i64 = songs
             .iter()
-            .map(|song| i64::from(song.duration.unwrap_or(180)))
+            .map(|song| i64::from(known_seconds(song.duration)))
             .sum();
         fields.insert("duration".into(), duration.into());
         if format.eq_ignore_ascii_case("json") {
@@ -698,8 +742,11 @@ impl SubsonicResponseBuilder {
         } else {
             "audio/mp4"
         };
-        let duration = song.duration.unwrap_or(180);
-        let est_size = i64::from(duration) * i64::from(bit_rate) * 125;
+        // A song whose length is not known goes out without one, never with a guess: a
+        // player that plans a crossfade from a made-up length cuts the song short or leaves
+        // a gap, while a missing length only waits for the stream to report the real one.
+        let duration = song.duration.filter(|&d| d > 0);
+        let est_size = i64::from(duration.unwrap_or(0)) * i64::from(bit_rate) * 125;
 
         // Resolve a real-looking album for placeholder songs. Last.fm's
         // track.search/getsimilar don't include album names, so song.Album is
@@ -763,7 +810,9 @@ impl SubsonicResponseBuilder {
         fields.insert("size".into(), est_size.into());
         fields.insert("contentType".into(), content_type.into());
         fields.insert("suffix".into(), suffix.into());
-        fields.insert("duration".into(), duration.into());
+        if let Some(duration) = duration {
+            fields.insert("duration".into(), duration.into());
+        }
         fields.insert("bitRate".into(), bit_rate.into());
         fields.insert("path".into(), path.into());
         fields.insert("created".into(), millis(&self.clock.now()).into());
@@ -999,6 +1048,11 @@ fn build_artist_fields(artist: &Artist) -> Fields {
 }
 
 /// `new XElement(ns + "subsonic-response", status, version)`.
+/// A song's length for a list's total: an unknown length counts as nothing.
+fn known_seconds(duration: Option<i32>) -> i32 {
+    duration.unwrap_or(0).max(0)
+}
+
 fn envelope(status: &str) -> XElement {
     XElement::ns(SUBSONIC_NAMESPACE, "subsonic-response")
         .attr("status", status)

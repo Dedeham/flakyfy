@@ -136,6 +136,42 @@ fn create_song_response_xml_format_returns_song_data() {
     assert_eq!(element.attribute("title"), Some("Test Song"));
 }
 
+#[test]
+fn an_outside_song_with_no_known_length_goes_out_without_one() {
+    for duration in [None, Some(0), Some(-1)] {
+        let song = Song {
+            id: "ext-1".into(),
+            title: "Genesis".into(),
+            artist: "Justice".into(),
+            duration,
+            is_local: false,
+            ..Default::default()
+        };
+        let json = json_of(&builder().create_song_response("json", &song));
+        let data = &json["subsonic-response"]["song"];
+        assert!(data.get("duration").is_none(), "{duration:?}: {data}");
+        assert_eq!(data["id"], "ext-1");
+        let root = xml_of(&builder().create_song_response("xml", &song));
+        assert_eq!(child(&root, "song").attribute("duration"), None, "{duration:?}");
+    }
+}
+
+#[test]
+fn an_outside_song_with_a_known_length_carries_it() {
+    let song = Song {
+        id: "ext-1".into(),
+        title: "Genesis".into(),
+        artist: "Justice".into(),
+        duration: Some(234),
+        is_local: false,
+        ..Default::default()
+    };
+    let json = json_of(&builder().create_song_response("json", &song));
+    assert_eq!(json["subsonic-response"]["song"]["duration"], 234);
+    let root = xml_of(&builder().create_song_response("xml", &song));
+    assert_eq!(child(&root, "song").attribute("duration"), Some("234"));
+}
+
 fn song(id: &str, title: &str, duration: Option<i32>) -> Song {
     Song {
         id: id.into(),
@@ -985,6 +1021,7 @@ fn song_rows_keep_the_csharp_field_order_and_values() {
         album: "  ".into(),
         suffix: Some(" MP3 ".into()),
         bit_rate: Some(320),
+        duration: Some(180),
         is_local: true,
         year: Some(1995),
         ..Default::default()
@@ -1161,12 +1198,12 @@ fn a_radio_station_is_a_read_only_playlist() {
     };
     assert_eq!(
         octo_core::json::to_string(&builder().radio_playlist_fields(&station)),
-        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":280,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z"}"#
+        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":100,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z"}"#
     );
     let songs = [song("s1", "One", None)];
     let json = json_of(&builder().create_radio_playlist_response("Json", &station, &songs));
     assert_eq!(json["subsonic-response"]["playlist"]["songCount"], 1);
-    assert_eq!(json["subsonic-response"]["playlist"]["duration"], 180);
+    assert_eq!(json["subsonic-response"]["playlist"]["duration"], 0);
     assert_eq!(json["subsonic-response"]["playlist"]["entry"][0]["id"], "s1");
     let root = xml_of(&builder().create_radio_playlist_response("xml", &station, &songs));
     let playlist = child(&root, "playlist");

@@ -34,8 +34,9 @@ use octo_core::soulseek::soulseek_download_service::{
     planned_queries, rank,
 };
 use octo_core::soulseek::{
-    AlbumFolderPicker, AlbumTrack, RoutingKind, SearchProfile, SoulseekFileHit, SoulseekLinkState,
-    SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState, StreamFacts,
+    AlbumFolderPicker, AlbumTrack, LengthSource, RoutingKind, SearchProfile, SoulseekFileHit,
+    SoulseekLinkState, SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState,
+    StreamFacts,
 };
 use octo_media::audio::SpectrumReport;
 use octo_media::tags::TagFile;
@@ -1994,6 +1995,13 @@ impl DownloadBackend for SoulseekDownloadService {
                 self.id_registry.set_you_tube_id(external_id, &hit.video_id);
                 self.id_registry
                     .remember_stream(external_id, &hit.video_id, &hit.stream);
+                // The video that plays says how long the song runs, for every later row.
+                if !self
+                    .id_registry
+                    .remember_length(external_id, hit.duration, LengthSource::Video)
+                {
+                    routing.remember_length(hit.duration, LengthSource::Video);
+                }
             }
             video_id = hit.map(|h| h.video_id);
         }
@@ -2087,6 +2095,18 @@ impl DownloadBackend for SoulseekDownloadService {
         let source = download
             .source_override
             .unwrap_or(base.subsonic_settings().download_source);
+        // Soulseek switched off: the combined source is YouTube alone, and Soulseek alone has
+        // nothing to try.
+        let source = match source {
+            DownloadSource::SoulseekThenYouTube if !self.slskd.is_on() => DownloadSource::YouTube,
+            DownloadSource::YouTube => DownloadSource::YouTube,
+            _ if !self.slskd.is_on() => {
+                return Err(
+                    InvalidOperationException(super::soulseek_client::SOULSEEK_OFF.to_string()).into(),
+                );
+            }
+            source => source,
+        };
         match source {
             DownloadSource::YouTube => {
                 self.download_via_you_tube(base, &routing, download, true, cancellation_token)
@@ -2146,7 +2166,7 @@ impl DownloadBackend for SoulseekDownloadService {
     ) -> Vec<String> {
         let none = Vec::new();
         let settings = base.current_soulseek_settings();
-        if !settings.album_folders || tracks.len() < 3 {
+        if !settings.album_folders || tracks.len() < 3 || !self.slskd.is_on() {
             return none;
         }
         if !matches!(

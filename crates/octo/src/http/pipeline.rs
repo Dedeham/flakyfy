@@ -47,6 +47,7 @@ pub fn app_routes(assets: &StaticAssets) -> RouteSet {
         .merge(admin_root::routes())
         .merge(crate::controllers::subsonic::routes())
         .merge(crate::controllers::admin::routes())
+        .merge(crate::controllers::lidarr_webhook::routes())
 }
 
 /// The whole application. `admin_port`: the dashboard's own port (`Admin:Port`, 0 when it

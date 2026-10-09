@@ -216,6 +216,9 @@ async fn probe_navidrome(state: &AppState) -> ServiceProbe {
 }
 
 async fn probe_slskd(state: &AppState) -> ServiceProbe {
+    if state.soulseek_link.is_off() {
+        return ServiceProbe::new(true, "Off. Optional.").unconfigured();
+    }
     // slskd answering is not slskd able to search: it can be up and out of Soulseek.
     let reading = state.soulseek_link.read(true).await;
     let hold = state.settings.current().soulseek.effective_outage_hold_hours();

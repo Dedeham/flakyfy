@@ -21,6 +21,7 @@ pub const SECRET_FIELDS: &[(&str, &str, &str)] = &[
     ("Soulseek", "AcoustIdApiKey", "AcoustID application key"),
     ("Soulseek", "AcoustIdUserApiKey", "AcoustID user key"),
     ("Lidarr", "ApiKey", "Lidarr API key"),
+    ("Lidarr", "WebhookSecret", "Lidarr webhook password"),
     ("LastFm", "ApiKey", "Last.fm API key"),
     ("LastFm", "ApiSecret", "Last.fm shared secret"),
     ("Notifications", "NtfyToken", "ntfy token"),
@@ -244,7 +245,10 @@ pub fn running_secrets(state: &AppState) -> JsonObject {
     );
     secrets.insert(
         "Lidarr".into(),
-        n_obj([("ApiKey", optional(&current.lidarr.api_key))]),
+        n_obj([
+            ("ApiKey", optional(&current.lidarr.api_key)),
+            ("WebhookSecret", optional(&current.lidarr.webhook_secret)),
+        ]),
     );
     secrets.insert(
         "LastFm".into(),

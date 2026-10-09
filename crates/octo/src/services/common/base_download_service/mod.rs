@@ -949,6 +949,14 @@ impl BaseDownloadService {
             }
         }
 
+        if let Some(seconds) = octo_media::tags::TagFile::open(&local_path)
+            .ok()
+            .map(|file| file.duration_seconds())
+            .filter(|&seconds| seconds > 0)
+        {
+            self.metadata.remember_file_length(external_id, seconds);
+        }
+
         if let Some(info) = self.active_downloads.lock().get_mut(song_id) {
             info.status = DownloadStatus::Completed;
             info.local_path = Some(local_path.clone());

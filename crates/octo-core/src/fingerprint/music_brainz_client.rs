@@ -102,8 +102,8 @@ pub fn studio_album_search(artist: &str, title: &str) -> Option<(String, String)
     ))
 }
 
-/// The release group of the oldest official studio album a song appears on, or of a
-/// soundtrack when no studio album has it. None when the answer names neither.
+/// The release group of the oldest official studio album a song appears on, else of a mixtape,
+/// else of a soundtrack. None when the answer names none of them.
 pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<String>> {
     let Some(recordings @ Value::Array(_)) = try_get_property(root, "recordings")? else {
         return Ok(None);
@@ -123,6 +123,12 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
             continue;
         };
         for release in enumerate_array(releases)? {
+            // A bootleg, promotion or pseudo-release is never the album a song belongs to.
+            if let Some(status) = try_get_property(release, "status")?
+                && get_string(status)?.is_some_and(|s| s != "Official")
+            {
+                continue;
+            }
             let Some(group) = try_get_property(release, "release-group")? else {
                 continue;
             };
@@ -140,7 +146,8 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
             }
             let rank = match secondary.as_slice() {
                 [] => 0,
-                [Some("Soundtrack")] => 1,
+                [Some("Mixtape/Street")] => 1,
+                [Some("Soundtrack")] => 2,
                 _ => -1,
             };
             if rank < 0 || rank > group_rank {
@@ -152,7 +159,7 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
                 None => None,
             };
             let earlier = match (&date, &group_date) {
-                (Some(date), Some(known)) => date.as_str() < known.as_str(),
+                (Some(date), Some(known)) => is_earlier_date(date, known),
                 (Some(_), None) => true,
                 (None, _) => false,
             };
@@ -236,6 +243,19 @@ pub fn searched_artist_country(root: &Value, name: &str) -> String {
         }
     }
     String::new()
+}
+
+/// Whether a release date ("2009", "2009-09" or "2009-09-08") is earlier than a known one.
+/// Only the part both dates have is compared, so "2009" is not earlier than "2009-09-08";
+/// when that part is the same, the more precise date wins.
+fn is_earlier_date(date: &str, known: &str) -> bool {
+    let (date, known) = (date.as_bytes(), known.as_bytes());
+    let shared = date.len().min(known.len());
+    match date[..shared].cmp(&known[..shared]) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => date.len() > known.len(),
+    }
 }
 
 /// The "isrcs" list of a recording lookup, each one normalized; invalid ones dropped.

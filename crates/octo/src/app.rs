@@ -94,7 +94,8 @@ use crate::services::library::{
 };
 use crate::services::lidarr::{
     ILidarrHeartAcquisitionService, ILidarrTrackFetcher, LidarrAlbumClaims, LidarrClient,
-    LidarrHeartAcquisitionService, LidarrHeartExtras, LidarrImportHandoff, LidarrTrackFetcher,
+    LidarrHeartAcquisitionService, LidarrHeartExtras, LidarrImportHandoff, LidarrPendingAlbums,
+    LidarrTrackFetcher,
 };
 use crate::services::listen_brainz::{ListenBrainzRadioClient, ListenBrainzService};
 use crate::services::local::DownloadHistoryService;
@@ -762,6 +763,7 @@ impl Acquisition {
                     journal: Some(stores.library_action_journal.clone()),
                     ownership: Some(library_ownership.clone()),
                     upgrades: Some(upgrade_queue.clone()),
+                    pending: Some(stores.lidarr_pending.clone()),
                 },
             ));
         let heart_ownership = Arc::new(HeartOwnership::new(
@@ -1010,6 +1012,7 @@ struct Stores {
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
+    lidarr_pending: Arc<LidarrPendingAlbums>,
 }
 
 impl Stores {
@@ -1077,6 +1080,9 @@ impl Stores {
             ))),
             notice_queue: Arc::new(NoticeQueue::with_path(Some(config_dir.join("notice-queue.json")))),
             review_sweep_store: Arc::new(ReviewSweepStore::new(Some(config_dir.join("review-sweep.json")))),
+            lidarr_pending: Arc::new(LidarrPendingAlbums::new(Some(
+                config_dir.join("lidarr-pending.json"),
+            ))),
         }
     }
 

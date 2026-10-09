@@ -155,6 +155,7 @@ struct Fixture {
     refused: Arc<Mutex<HashSet<String>>>,
     taken: Taken,
     owned: Arc<Mutex<Vec<Candidate>>>,
+    pending: Arc<LidarrPendingAlbums>,
 }
 
 fn upgrades_on() -> LibraryActionSettings {
@@ -199,6 +200,7 @@ impl Fixture {
             refused: Arc::default(),
             taken: Arc::default(),
             owned: Arc::default(),
+            pending: Arc::new(LidarrPendingAlbums::new(None)),
         }
     }
 
@@ -314,6 +316,7 @@ impl Fixture {
                 journal: Some(self.journal.clone()),
                 ownership: Some(ownership),
                 upgrades: Some(self.upgrades.clone()),
+                pending: Some(self.pending.clone()),
                 ..Default::default()
             },
         );
@@ -577,4 +580,118 @@ fn relative_paths_follow_dotnet() {
             "Lidarr root folder is not configured.".into()
         ))
     );
+}
+
+// ---- Lidarr's webhook ------------------------------------------------------------------------
+
+fn imported(paths: &[&str]) -> LidarrImportEvent {
+    LidarrImportEvent {
+        foreign_album_id: ALBUM_ID.into(),
+        artist: Some("Massive Attack".into()),
+        album: Some("Mezzanine".into()),
+        paths: paths.iter().map(|p| p.to_string()).collect(),
+        is_upgrade: false,
+    }
+}
+
+const ANGEL: &str = "/data/music/Massive Attack/Mezzanine/01 - Angel.flac";
+const TEARDROP: &str = "/data/music/Massive Attack/Mezzanine/03 - Teardrop.flac";
+
+#[tokio::test]
+async fn lidarrs_webhook_wakes_the_waiting_heart_at_once() {
+    let f = Fixture::new().await;
+    f.lidarr
+        .on_search(&[(1, "Angel", "FLAC"), (3, "Teardrop", "FLAC")]);
+    f.lidarr.hold_imports();
+    let service = f.service(None, 600);
+    // Without the webhook the heart would look again only in an hour.
+    service.set_poll_override(Some(Duration::from_secs(3600)));
+
+    let heart = {
+        let service = service.clone();
+        tokio::spawn(async move {
+            within(service.try_acquire_album("soulseek", "mezzanine", true, Some("alice"))).await
+        })
+    };
+    until(|| f.lidarr.searches() == 1).await;
+    // Let the job take its first look, find nothing, and settle into its wait.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    f.lidarr.release_imports();
+
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL, TEARDROP])).await,
+        LidarrImportOutcome::Woke
+    );
+    assert!(heart.await.expect("the task"));
+    assert_eq!(f.taken(), ["Angel", "Teardrop"]);
+}
+
+#[tokio::test]
+async fn an_import_after_the_heart_stopped_waiting_is_still_taken() {
+    let f = Fixture::new().await;
+    f.lidarr
+        .on_search(&[(1, "Angel", "FLAC"), (3, "Teardrop", "FLAC")]);
+    f.lidarr.hold_imports();
+    let service = f.service(None, 1);
+    assert!(!within(service.try_acquire_album("soulseek", "mezzanine", true, Some("alice"))).await);
+    f.job_wound_up(true).await;
+    assert!(f.pending.get(ALBUM_ID).is_some());
+
+    // Lidarr finishes later, after a restart for all Octo knows: a new service over the same
+    // pending list.
+    f.lidarr.release_imports();
+    let restarted = f.service(None, 1);
+    assert_eq!(
+        restarted.lidarr_imported(imported(&[ANGEL, TEARDROP])).await,
+        LidarrImportOutcome::Late
+    );
+
+    until(|| f.taken.lock().len() == 2).await;
+    assert_eq!(f.taken(), ["Angel", "Teardrop"]);
+    // Nobody waits on these any more, so they land quietly.
+    assert!(f.taken.lock().iter().all(|t| t.2));
+    until(|| !f.claims.heart_busy(ALBUM_ID)).await;
+    assert!(f.pending.get(ALBUM_ID).is_none());
+}
+
+#[tokio::test]
+async fn a_late_import_takes_only_the_files_lidarr_names() {
+    let f = Fixture::new().await;
+    f.lidarr
+        .on_search(&[(1, "Angel", "FLAC"), (3, "Teardrop", "FLAC")]);
+    f.lidarr.hold_imports();
+    let service = f.service(None, 1);
+    assert!(!within(service.try_acquire_album("soulseek", "mezzanine", true, Some("alice"))).await);
+    f.job_wound_up(true).await;
+    f.lidarr.release_imports();
+
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL])).await,
+        LidarrImportOutcome::Late
+    );
+
+    until(|| !f.claims.heart_busy(ALBUM_ID)).await;
+    assert_eq!(f.taken(), ["Angel"]);
+}
+
+#[tokio::test]
+async fn an_album_octo_is_not_waiting_for_is_left_alone() {
+    let f = Fixture::new().await;
+    let service = f.service(None, 30);
+
+    // Never asked for.
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL])).await,
+        LidarrImportOutcome::NotOurs
+    );
+
+    // Asked for, and every track came in: nothing is left to come late.
+    assert!(f.heart_the_album(None).await);
+    f.job_wound_up(true).await;
+    assert!(f.pending.get(ALBUM_ID).is_none());
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL])).await,
+        LidarrImportOutcome::NotOurs
+    );
+    assert_eq!(f.taken(), ["Angel", "Teardrop"]);
 }

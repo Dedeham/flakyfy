@@ -228,6 +228,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "Soulseek".into(),
         n_obj([
+            ("Enabled", Node::Bool(soulseek.enabled)),
             ("BaseUrl", opt(&soulseek.base_url)),
             ("Username", opt(&soulseek.username)),
             // slskd's web login opens slskd entirely, so it goes out as the placeholder too.
@@ -290,6 +291,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("MetadataProfileId", n_num(lidarr.metadata_profile_id)),
             ("CompletionMode", name(lidarr.completion_mode)),
             ("ImportTimeoutSeconds", n_num(lidarr.import_timeout_seconds)),
+            (
+                "WebhookSecret",
+                n_str(&mask_secret(lidarr.webhook_secret.as_deref())),
+            ),
         ]),
     );
     doc.insert(

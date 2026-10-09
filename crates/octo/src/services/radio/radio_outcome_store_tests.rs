@@ -1,6 +1,6 @@
-//! What radio learns from listening: a started radio song finished
-//! within a day is kept, one never finished is skipped, and each listener's counts give each
-//! source a multiplier around 1. Plus the file's own round trip.
+//! What radio learns from listening: a started radio song finished within a day is kept, one
+//! never finished is skipped, and each listener's counts give each source a multiplier around 1.
+//! Plus the file's own round trip.
 
 use chrono::TimeZone;
 use octo_core::radio::radio_provider::{HISTORY, LAST_FM, LIBRARY, LISTEN_BRAINZ, YOU_TUBE_MUSIC};
@@ -460,8 +460,8 @@ fn nulls_in_the_file_are_dropped() {
     assert_eq!(load(&path), OutcomeState::default());
 }
 
-/// The dashboard's row names the source and spans its multipliers, a station's
-/// refetch sends nothing new, and an empty or blank listener teaches nothing.
+/// The dashboard's row names the source and spans its multipliers, a station's refetch sends
+/// nothing new, and an empty or blank listener teaches nothing.
 #[test]
 fn stats_name_the_source_and_blank_listeners_teach_nothing() {
     let f = Fixture::new();

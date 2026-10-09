@@ -41,8 +41,7 @@ pub struct LibrarySongRow {
     pub artist: String,
     pub duration: Option<i32>,
     pub album: Option<String>,
-    /// The album the song is filed under, its album artist and its ISRCs, for album
-    /// ownership.
+    /// The album the song is filed under, its album artist and its ISRCs, for album ownership.
     pub album_id: Option<String>,
     pub album_artist: Option<String>,
     pub isrcs: Vec<String>,

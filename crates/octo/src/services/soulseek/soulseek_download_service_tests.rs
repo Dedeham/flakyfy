@@ -1,6 +1,6 @@
 //! Tests of the Soulseek download service: the deny-list, the resolve retry, the incomplete
-//! folder, `resolve_in_job` and the job folders, `weigh_transcode`, and the album walk through the
-//! real service against a fake slskd (a wiremock responder that keeps the fake's state).
+//! folder, `resolve_in_job` and the job folders, `weigh_transcode`, and the album walk through
+//! the real service against a fake slskd (a wiremock responder that keeps the fake's state).
 
 use std::sync::Arc;
 use std::time::Duration;

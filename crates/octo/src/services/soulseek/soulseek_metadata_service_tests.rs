@@ -1270,12 +1270,11 @@ async fn the_prewarm_pins_a_video_once_and_skips_warm_songs() {
 
 // ---- Outside songs' explicit word ---------------------------------------------------------
 //
-// Outside songs and albums carry the catalog's explicit word
-// (OpenSubsonic's explicitStatus), so the apps can mark the explicit version before it is
-// added, and a clean copy gets an id of its own so it can be listed beside the explicit
-// original. The word and id tests are in `explicit_status` and `external_id_registry_tests`,
-// the artist page's pick in `deezer_metadata_service_tests`, the client answers in the
-// response builder's tests.
+// Outside songs and albums carry the catalog's explicit word (OpenSubsonic's explicitStatus), so
+// the apps can mark the explicit version before it is added, and a clean copy gets an id of its
+// own so it can be listed beside the explicit original. The word and id tests are in
+// `explicit_status` and `external_id_registry_tests`, the artist page's pick in
+// `deezer_metadata_service_tests`, the client answers in the response builder's tests.
 
 mod outside_explicit {
     use octo_core::models::domain::explicit_status;

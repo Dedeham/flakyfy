@@ -84,9 +84,9 @@ impl LastFmRadioRefreshWorker {
         self.single_flight.in_flight_count()
     }
 
-    /// The settings-change handler: a removed pinned definition, radio switched on, or a different set
-    /// of personalized station kinds rebuilds every known listener; an added or edited pinned
-    /// definition refreshes only that station.
+    /// The settings-change handler: a removed pinned definition, radio switched on, or a
+    /// different set of personalized station kinds rebuilds every known listener; an added or
+    /// edited pinned definition refreshes only that station.
     pub fn on_settings_changed(&self, changed: &LastFmSettings) {
         let mut watched = self.watched.lock();
         let next = fingerprints(changed);
@@ -559,8 +559,8 @@ mod tests {
         );
     }
 
-    /// A refresh with radio off does nothing, and a pinned refresh keeps the other
-    /// stations and replaces only its own.
+    /// A refresh with radio off does nothing, and a pinned refresh keeps the other stations and
+    /// replaces only its own.
     #[tokio::test]
     async fn a_pinned_refresh_replaces_only_its_station() {
         let fixture = fixture(

@@ -457,9 +457,9 @@ async fn similar_tracks_a_small_cached_answer_does_not_short_change_a_bigger_ask
     assert_eq!(received(&server).await.len(), 2);
 }
 
-/// How a list of songs like a seed was found. A nightcore title found only
-/// as its original is the original's, an upload's own "Artist - Title" is asked under the artist
-/// it names, and similar artists to a name Last.fm barely knows are a guess.
+/// How a list of songs like a seed was found. A nightcore title found only as its original is the
+/// original's, an upload's own "Artist - Title" is asked under the artist it names, and similar
+/// artists to a name Last.fm barely knows are a guess.
 #[tokio::test]
 async fn find_similar_tracks_says_how_the_list_was_found() {
     let server = serve(answer(|request| {

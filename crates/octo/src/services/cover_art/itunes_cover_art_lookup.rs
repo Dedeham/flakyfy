@@ -1,5 +1,5 @@
-//! Cover art from Apple's iTunes catalog. The barcode forms, which tagging reads
-//! too, are `octo_core::tagging::release_distance::barcode_forms`.
+//! Cover art from Apple's iTunes catalog. The barcode forms, which tagging reads too, are
+//! `octo_core::tagging::release_distance::barcode_forms`.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;

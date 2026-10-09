@@ -702,8 +702,8 @@ async fn albums_done_never_passes_albums_total() {
     assert_eq!(run.batch.expect("a batch").counted, ["a", "b"]);
 }
 
-/// The cover scan used to walk into the trash folder and list a trashed song as an
-/// album of its own, with an id that depended on the dated folder it sat in.
+/// The cover scan used to walk into the trash folder and list a trashed song as an album of its
+/// own, with an id that depended on the dated folder it sat in.
 #[tokio::test]
 async fn a_scan_of_the_whole_library_leaves_the_trash_out() {
     let library = Library::new(audio_or_skip!("mp3"));

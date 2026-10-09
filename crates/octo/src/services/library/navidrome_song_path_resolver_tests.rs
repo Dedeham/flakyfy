@@ -1,5 +1,5 @@
-//! The resolver is the last thing standing between a
-//! Navidrome song id and anything that acts on a file.
+//! The resolver is the last thing standing between a Navidrome song id and anything that acts on
+//! a file.
 //!
 //! Navidrome's Subsonic `path` is SYNTHESISED FROM TAGS unless the calling player has
 //! ReportRealPath set, which defaults off. Verified against the production library on

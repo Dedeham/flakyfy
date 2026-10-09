@@ -172,8 +172,8 @@ async fn a_songs_cover_comes_from_a_plain_track_search() {
     assert!(!q(searches[0]).contains("track:"));
 }
 
-/// The Accept-Language the lookup was built with goes on every request, and an
-/// artist's picture is taken from the best-named hit.
+/// The Accept-Language the lookup was built with goes on every request, and an artist's picture
+/// is taken from the best-named hit.
 #[tokio::test]
 async fn an_artists_picture_is_the_best_named_hit_and_the_language_is_sent() {
     let server = MockServer::start().await;

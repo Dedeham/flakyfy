@@ -1,6 +1,6 @@
-//! Sounds alike's pass over the library: when it holds, what it
-//! sends to octo-sonic, what it skips without touching the disk, how failures and crashes are
-//! remembered, and new arrivals first.
+//! Sounds alike's pass over the library: when it holds, what it sends to octo-sonic, what it
+//! skips without touching the disk, how failures and crashes are remembered, and new arrivals
+//! first.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 

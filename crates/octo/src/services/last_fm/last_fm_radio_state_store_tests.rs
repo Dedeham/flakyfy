@@ -292,8 +292,7 @@ fn keys_that_differ_only_in_case_start_clean() {
     assert!(fixture.store.known_users().is_empty());
 }
 
-/// A failed refresh keeps its first 500 characters, and the summaries come newest
-/// first.
+/// A failed refresh keeps its first 500 characters, and the summaries come newest first.
 #[test]
 fn failures_are_bounded_and_summaries_are_newest_first() {
     let fixture = StateFixture::new(None, None);

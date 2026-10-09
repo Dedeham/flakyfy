@@ -531,8 +531,8 @@ pub(crate) fn is_inside(full: &str, root: &str) -> bool {
     full.starts_with(&normalized)
 }
 
-/// The extension without its dot: the text after the file name's last dot, empty
-/// when there is none or the name ends with it.
+/// The extension without its dot: the text after the file name's last dot, empty when there is
+/// none or the name ends with it.
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

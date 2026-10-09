@@ -42,8 +42,8 @@ pub trait IReviewSweepVerifier: Send + Sync {
 }
 
 /// What the sweep needs of `DownloadVerificationService`: whether a lookup can happen
-/// (`is_fingerprinting_enabled`) and `verify(path, artist, title)` with no ISRC and
-/// `refuse_live` off.
+/// (`is_fingerprinting_enabled`) and `verify(path, artist, title)` with no ISRC and `refuse_live`
+/// off.
 ///
 /// `DownloadVerificationService` implements it; `AppState::build` hands it to the
 /// [`FingerprintSweepVerifier`] with `set_service`.
@@ -172,8 +172,8 @@ impl ReviewSweepStore {
         Self::with_clock(path, Clock::system())
     }
 
-    /// A store kept in `path` on the given clock. A file that cannot
-    /// be read is set aside as `<file>.corrupt-<ticks>` and the sweep starts over.
+    /// A store kept in `path` on the given clock. A file that cannot be read is set aside as
+    /// `<file>.corrupt-<ticks>` and the sweep starts over.
     pub fn with_clock(path: Option<PathBuf>, clock: Clock) -> Self {
         let path = path.filter(|p| !dotnet::is_blank(&p.to_string_lossy()));
         let mut state = ReviewSweepState::default();

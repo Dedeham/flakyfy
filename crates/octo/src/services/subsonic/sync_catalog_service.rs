@@ -1,6 +1,6 @@
 //! The discovery catalog a syncing client is handed after the last library row ([`SyncCatalog`]),
-//! and the service that builds, caches and pages it ([`SyncCatalogService`]). The page writer that
-//! puts the rows on the wire is `octo_subsonic::sync_catalog_response`, whose `append` takes
+//! and the service that builds, caches and pages it ([`SyncCatalogService`]). The page writer
+//! that puts the rows on the wire is `octo_subsonic::sync_catalog_response`, whose `append` takes
 //! [`SyncCatalog::added`].
 
 use std::collections::{HashMap, HashSet};
@@ -425,10 +425,10 @@ impl SyncCatalogService {
         drop(self.get(username, stations, authenticated_parameters));
     }
 
-    /// The user's catalog for these stations: the cached one while the stations are
-    /// unchanged and it is younger than [`CATALOG_TTL`], else a build. One build per
-    /// user at a time, shared by every caller, and never canceled by the request that
-    /// started it, because the next page of the same walk is about to want it.
+    /// The user's catalog for these stations: the cached one while the stations are unchanged and
+    /// it is younger than [`CATALOG_TTL`], else a build. One build per user at a time, shared by
+    /// every caller, and never canceled by the request that started it, because the next page of
+    /// the same walk is about to want it.
     ///
     /// The decision and the start of a build happen before this returns; only waiting for the
     /// catalog is left to the returned future.

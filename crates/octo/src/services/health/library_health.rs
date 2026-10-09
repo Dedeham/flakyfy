@@ -2,8 +2,9 @@
 //! guessed from outside the library; the same songs always give the same report.
 //!
 //! Mirrors the Octo app's shared core (shared/core/.../health/LibraryHealth.kt), rule for rule,
-//! so the dashboard and the apps find the same things in one library. docs/library-health-cases.json
-//! holds the cases both sides are checked against; change a rule here and there together.
+//! so the dashboard and the apps find the same things in one library.
+//! docs/library-health-cases.json holds the cases both sides are checked against; change a rule
+//! here and there together.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

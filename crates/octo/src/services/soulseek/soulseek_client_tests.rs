@@ -340,10 +340,9 @@ async fn a_dropped_search_is_cleaned_up_too() {
 
 // ---- Slow transfers --------------------------------------------------------------------------
 //
-// A slow peer with the right file is waited for as long as it keeps sending. A peer
-// that sends nothing for the whole window is given up on, and its transfer is
-// canceled in slskd: left running, it finished minutes later and put a second copy
-// of the song in the library.
+// A slow peer with the right file is waited for as long as it keeps sending. A peer that sends
+// nothing for the whole window is given up on, and its transfer is canceled in slskd: left
+// running, it finished minutes later and put a second copy of the song in the library.
 
 const PEER: &str = "peer";
 const REMOTE_FILE: &str = r"Music\Artist\Album\13 - Song.flac";

@@ -10,8 +10,8 @@
 //!
 //! The window moves lazily: every acquire first replays the segment boundaries that have passed
 //! since the limiter was built (on the tokio clock, so `tokio::time::pause` drives it in tests),
-//! and a queued request sleeps until the next boundary and replays it. The boundaries fall where a
-//! periodic timer would have fired them.
+//! and a queued request sleeps until the next boundary and replays it. The boundaries fall where
+//! a periodic timer would have fired them.
 
 use std::collections::VecDeque;
 use std::time::Duration;

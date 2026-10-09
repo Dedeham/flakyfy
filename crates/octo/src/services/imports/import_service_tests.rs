@@ -1,7 +1,7 @@
-//! Importing end to end, with Spotify, its embed pages and Navidrome all
-//! stood in for: the sign-in and its pasted address, reading liked songs and playlists (someone
-//! else's through its public page), have and missing, the trickle queue, the playlist, and a
-//! fetched song finding its place.
+//! Importing end to end, with Spotify, its embed pages and Navidrome all stood in for: the
+//! sign-in and its pasted address, reading liked songs and playlists (someone else's through its
+//! public page), have and missing, the trickle queue, the playlist, and a fetched song finding
+//! its place.
 
 use std::sync::Arc;
 

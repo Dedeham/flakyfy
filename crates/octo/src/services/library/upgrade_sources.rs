@@ -123,10 +123,10 @@ impl UpgradeSources {
 
 #[cfg(test)]
 mod tests {
-    //! Where Better quality looks for a lossless copy: Soulseek,
-    //! Lidarr, or both in that order. One place decides it, so the dashboard, the apps and the
-    //! workers never disagree. Only sources that are set up count, and a Soulseek outage leaves
-    //! Lidarr rather than stopping everything.
+    //! Where Better quality looks for a lossless copy: Soulseek, Lidarr, or both in that order.
+    //! One place decides it, so the dashboard, the apps and the workers never disagree. Only
+    //! sources that are set up count, and a Soulseek outage leaves Lidarr rather than stopping
+    //! everything.
 
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};

@@ -1,7 +1,6 @@
-//! The MusicBrainz client, its HTTP half: the one-a-second gate, the cache and the
-//! "musicbrainz" client (base address https://musicbrainz.org/ws/2/, a 10 s timeout, Octo's
-//! User-Agent). The query builders and
-//! the readers are in `octo_core::fingerprint::music_brainz_client`.
+//! The MusicBrainz client, its HTTP half: the one-a-second gate, the cache and the "musicbrainz"
+//! client (base address https://musicbrainz.org/ws/2/, a 10 s timeout, Octo's User-Agent). The
+//! query builders and the readers are in `octo_core::fingerprint::music_brainz_client`.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -371,8 +371,7 @@ fn parse_page_a_refusal_is_not_the_end() {
     }
 }
 
-/// A stand-in Navidrome: a login, and pages of `tracks` songs, the second failing
-/// when asked.
+/// A stand-in Navidrome: a login, and pages of `tracks` songs, the second failing when asked.
 struct LibraryNavidrome {
     tracks: usize,
     fail_second_page: bool,

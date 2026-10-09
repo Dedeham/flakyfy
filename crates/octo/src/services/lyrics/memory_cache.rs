@@ -1,9 +1,9 @@
 //! The lyrics services' in-memory cache: a size limit with every entry of size 1, and an
 //! absolute expiry per entry.
 //!
-//! An entry that would take the cache over its limit is not added, and the cache
-//! is compacted instead: expired entries first, then the least recently used, down to 95% of
-//! the limit. Times are tokio's, so a test with a paused clock can move them.
+//! An entry that would take the cache over its limit is not added, and the cache is compacted
+//! instead: expired entries first, then the least recently used, down to 95% of the limit. Times
+//! are tokio's, so a test with a paused clock can move them.
 
 use std::collections::HashMap;
 use std::time::Duration;

@@ -137,8 +137,8 @@ mod tests {
         })
     }
 
-    /// The chain stops at the first source with bytes (an empty answer is a miss),
-    /// and both a hit and an all-miss are remembered.
+    /// The chain stops at the first source with bytes (an empty answer is a miss), and both a hit
+    /// and an all-miss are remembered.
     #[tokio::test]
     async fn the_first_hit_wins_and_is_remembered() {
         let empty = fake("deezer", Some(b""));

@@ -59,9 +59,9 @@ pub struct LocalSongMapping {
     /// rather than sit beside it.
     pub music_brainz_recording_id: Option<String>,
 
-    /// What the file was likely made from when its spectrum said it is a lossy file
-    /// converted to lossless ("about 128 kbps MP3"). Optional, like `source_peer`; None for a
-    /// genuine file and for every mapping written before the check existed.
+    /// What the file was likely made from when its spectrum said it is a lossy file converted to
+    /// lossless ("about 128 kbps MP3"). Optional, like `source_peer`; None for a genuine file and
+    /// for every mapping written before the check existed.
     pub transcoded_from: Option<String>,
 }
 
@@ -295,8 +295,8 @@ impl ILocalLibraryService for LocalLibraryService {
         _external_provider: &str,
         _external_id: &str,
     ) -> Option<String> {
-        // For now, return None as we don't yet have integration
-        // with the Subsonic server to retrieve local ID after scan
+        // For now, return None as we don't yet have integration with the Subsonic server to
+        // retrieve local ID after scan
         None
     }
 
@@ -401,9 +401,9 @@ impl ILocalLibraryService for LocalLibraryService {
 
     /// Drop the mapping for a path Octo no longer owns.
     ///
-    /// Without this, the download's existing-file short-circuit keeps pointing a
-    /// re-acquire at the file that was just quarantined, and the replacement never happens.
-    /// Answers the mappings it dropped, so a song put back can have them again.
+    /// Without this, the download's existing-file short-circuit keeps pointing a re-acquire at
+    /// the file that was just quarantined, and the replacement never happens. Answers the
+    /// mappings it dropped, so a song put back can have them again.
     async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>> {
         if dotnet::is_blank(local_path) {
             return Ok(Vec::new());

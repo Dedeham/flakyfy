@@ -872,7 +872,8 @@ impl SongFinder {
 
         let mut kept: HashSet<usize> = HashSet::new();
         if rows.len() > Self::MAX_COPIES {
-            // Grouped by note in order of first appearance, each group's first few, then the room.
+            // Grouped by note in order of first appearance, each group's first few, then the
+            // room.
             let mut reasons: Vec<(Option<String>, Vec<usize>)> = Vec::new();
             for (at, row) in rows.iter().enumerate().filter(|(_, row)| row.tier > 0) {
                 match reasons.iter_mut().find(|(note, _)| *note == row.note) {

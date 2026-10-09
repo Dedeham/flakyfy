@@ -1,5 +1,5 @@
-//! The walk for recordings the library holds
-//! more than once (#53), handed to the Duplicates playlists.
+//! The walk for recordings the library holds more than once (#53), handed to the Duplicates
+//! playlists.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -372,9 +372,9 @@ impl DuplicateScanWorker {
         Ok(())
     }
 
-    /// Every track, by paging search3 with the empty query, the same walk
-    /// Symfonium makes to copy a library. Complete only when a short page ends it. `Err` when
-    /// the request failed, or the answer was not JSON of the expected shape.
+    /// Every track, by paging search3 with the empty query, the same walk Symfonium makes to copy
+    /// a library. Complete only when a short page ends it. `Err` when the request failed, or the
+    /// answer was not JSON of the expected shape.
     pub async fn walk(&self) -> anyhow::Result<(Vec<LibraryTrack>, bool)> {
         let base_url = self
             .settings
@@ -423,9 +423,8 @@ impl DuplicateScanWorker {
     }
 
     /// Adds the page's tracks, and returns how many rows the page held, or None when it is not a
-    /// successful answer at all (a refusal must not read as the end).
-    /// `Err` for a member read on something that is not an object, or a status that is not a
-    /// string.
+    /// successful answer at all (a refusal must not read as the end). `Err` for a member read on
+    /// something that is not an object, or a status that is not a string.
     pub fn parse_page(root: &Value, into: &mut Vec<LibraryTrack>) -> Result<Option<usize>, String> {
         let Some(envelope) = property(root, "subsonic-response")? else {
             return Ok(None);

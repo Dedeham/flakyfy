@@ -78,8 +78,8 @@ mod tests {
 
     use super::*;
 
-    /// The release's 1200 first, then its 500, then the group's; a redirect to
-    /// another host is followed.
+    /// The release's 1200 first, then its 500, then the group's; a redirect to another host is
+    /// followed.
     #[tokio::test]
     async fn the_release_comes_before_its_group_and_redirects_are_followed() {
         let server = MockServer::start().await;

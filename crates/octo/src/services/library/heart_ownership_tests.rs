@@ -1,8 +1,7 @@
-//! A heart on a song Octo found outside the library downloads it,
-//! then favorites it for whoever hearted it. A heart on a song that is already in the library is
-//! a favorite and nothing else: it never downloads, never waits behind other downloads or a
-//! Soulseek outage, and never sends Lidarr for a whole album. An owned MP3 is also queued for
-//! Better quality.
+//! A heart on a song Octo found outside the library downloads it, then favorites it for whoever
+//! hearted it. A heart on a song that is already in the library is a favorite and nothing else:
+//! it never downloads, never waits behind other downloads or a Soulseek outage, and never sends
+//! Lidarr for a whole album. An owned MP3 is also queued for Better quality.
 
 use std::sync::Arc;
 use std::time::Duration;

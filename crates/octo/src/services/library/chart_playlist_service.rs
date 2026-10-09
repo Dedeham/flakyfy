@@ -10,11 +10,11 @@
 //! time that listener's app lists playlists. A source or library that does not answer never
 //! empties a list that was made. Nothing is written to Navidrome, and nothing to disk.
 //!
-//! A listener's lists are made one after another (six lists searched at once would ask
-//! Navidrome two dozen searches at a time), a song on two lists is searched once,
-//! a list is listed as soon as its chart is known while search discovery is on (the warm worker
-//! fetches the charts at start, so an app's first look after a restart has them), and a list's
-//! change time moves only when its songs do.
+//! A listener's lists are made one after another (six lists searched at once would ask Navidrome
+//! two dozen searches at a time), a song on two lists is searched once, a list is listed as soon
+//! as its chart is known while search discovery is on (the warm worker fetches the charts at
+//! start, so an app's first look after a restart has them), and a list's change time moves only
+//! when its songs do.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;

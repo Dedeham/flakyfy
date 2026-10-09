@@ -1,6 +1,5 @@
-//! The Sharing card, read from slskd, and
-//! Soulseek's port test. The card's records and the readers of slskd's answers are
-//! `octo_core::soulseek::soulseek_sharing`.
+//! The Sharing card, read from slskd, and Soulseek's port test. The card's records and the
+//! readers of slskd's answers are `octo_core::soulseek::soulseek_sharing`.
 
 use std::sync::Arc;
 use std::time::Duration;

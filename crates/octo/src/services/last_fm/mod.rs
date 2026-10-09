@@ -1,8 +1,8 @@
-//! Last.fm with I/O: the web-service client the radio and search read, the
-//! scrobbler with the dashboard's Connect flow, and Last.fm radio (the state store, the
-//! recommendation build, the refresh queue and worker, the stream and its cache, sessions and
-//! transcoder, and the warmup). The records, the search cleanup, the request signature and the
-//! radio's pure rules are `octo_core::last_fm`.
+//! Last.fm with I/O: the web-service client the radio and search read, the scrobbler with the
+//! dashboard's Connect flow, and Last.fm radio (the state store, the recommendation build, the
+//! refresh queue and worker, the stream and its cache, sessions and transcoder, and the warmup).
+//! The records, the search cleanup, the request signature and the radio's pure rules are
+//! `octo_core::last_fm`.
 
 pub mod icy_metadata_stream;
 pub mod last_fm_radio_audio_transcoder;

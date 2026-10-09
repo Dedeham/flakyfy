@@ -636,8 +636,8 @@ async fn artist_station_count_decides_how_many_artist_radios_are_built() {
     );
 }
 
-/// Switching radio off builds nothing, and a canceled caller sees the cancellation
-/// rather than a partial build.
+/// Switching radio off builds nothing, and a canceled caller sees the cancellation rather than a
+/// partial build.
 #[tokio::test]
 async fn radio_off_builds_nothing_and_a_canceled_caller_is_told() {
     let fixture = fixture(

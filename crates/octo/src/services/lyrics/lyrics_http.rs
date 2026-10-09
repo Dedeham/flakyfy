@@ -1,6 +1,6 @@
-//! What the lyrics sources share: their two named HTTP clients, URL escaping, the
-//! `Retry-After` delta, and the rules for reading an answer (a property of something that is
-//! not an object is a [`ShapeError`], which the sources turn into a failed lookup).
+//! What the lyrics sources share: their two named HTTP clients, URL escaping, the `Retry-After`
+//! delta, and the rules for reading an answer (a property of something that is not an object is a
+//! `ShapeError`, which the sources turn into a failed lookup).
 
 use std::time::Duration;
 
@@ -52,8 +52,8 @@ pub(crate) fn escape_data_string(text: &str) -> String {
     utf8_percent_encode(text, DATA_STRING).to_string()
 }
 
-/// A `Retry-After` given in seconds. A date, or nothing
-/// readable, is None, and the caller's default cool-down applies.
+/// A `Retry-After` given in seconds. A date, or nothing readable, is None, and the caller's
+/// default cool-down applies.
 pub(crate) fn retry_after_delta(headers: &HeaderMap) -> Option<Duration> {
     let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
@@ -72,8 +72,8 @@ pub(crate) fn try_parse_long(text: &str) -> Option<i64> {
         .ok()
 }
 
-/// Base64: standard alphabet, padding required, white space ignored, and
-/// unused trailing bits not checked.
+/// Base64: standard alphabet, padding required, white space ignored, and unused trailing bits not
+/// checked.
 pub(crate) fn from_base64(text: &str) -> Option<Vec<u8>> {
     const LENIENT: GeneralPurpose = GeneralPurpose::new(
         &alphabet::STANDARD,
@@ -88,9 +88,8 @@ pub(crate) fn from_base64(text: &str) -> Option<Vec<u8>> {
     LENIENT.decode(compact).ok()
 }
 
-/// An answer of a shape the source did not expect: a property
-/// asked of something that is not an object, a string of something that is not one, or a
-/// whole number of a fraction.
+/// An answer of a shape the source did not expect: a property asked of something that is not an
+/// object, a string of something that is not one, or a whole number of a fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ShapeError;
 

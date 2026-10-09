@@ -185,8 +185,8 @@ fn get_full_path(path: &str) -> Option<String> {
     Some(full)
 }
 
-/// The parent of a full path: the path without its last segment (a trailing separator counts as an
-/// empty last segment), None at the root.
+/// The parent of a full path: the path without its last segment (a trailing separator counts as
+/// an empty last segment), None at the root.
 fn parent_of(full: &str) -> Option<String> {
     if full == "/" {
         return None;

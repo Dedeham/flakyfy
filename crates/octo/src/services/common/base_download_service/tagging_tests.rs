@@ -1,7 +1,7 @@
-//! A download tagged end to end, from the landed file to the tags on
-//! disk and the report in the fetched-songs log. The catalog and the music database are the real
-//! clients against one mock server, the loudness meter is a fake, the fingerprint service's
-//! answer is a parsed lookup, and the files are real files in a temp folder.
+//! A download tagged end to end, from the landed file to the tags on disk and the report in the
+//! fetched-songs log. The catalog and the music database are the real clients against one mock
+//! server, the loudness meter is a fake, the fingerprint service's answer is a parsed lookup, and
+//! the files are real files in a temp folder.
 
 use std::path::Path;
 use std::sync::Arc;

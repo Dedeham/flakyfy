@@ -1,6 +1,6 @@
 //! `LyricsChoiceStore` and `LyricsChoiceService`: the pins on disk (`lyrics-choices.json`), and
-//! choosing lyrics by hand. The pin and the entry
-//! offered are `octo_core::lyrics::{LyricsPin, LyricsChoiceCandidate}`.
+//! choosing lyrics by hand. The pin and the entry offered are
+//! `octo_core::lyrics::{LyricsPin, LyricsChoiceCandidate}`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -439,8 +439,8 @@ impl LyricsChoiceService {
         self.store.remove(song_id)
     }
 
-    /// Back to automatic: removes the song's pin by id, and any it has
-    /// by its artist and title, so a pin made under an older id does not come back.
+    /// Back to automatic: removes the song's pin by id, and any it has by its artist and title,
+    /// so a pin made under an older id does not come back.
     pub fn clear_song(&self, song_id: &str, artist: Option<&str>, title: Option<&str>) -> bool {
         // Both run: `|` does not short-circuit.
         let by_id = self.store.remove(song_id);

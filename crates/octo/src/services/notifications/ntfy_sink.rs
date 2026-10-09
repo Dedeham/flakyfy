@@ -1,5 +1,4 @@
-//! The ntfy sink. The topic URL, body and tag are
-//! `octo_core::notifications::ntfy_sink`.
+//! The ntfy sink. The topic URL, body and tag are `octo_core::notifications::ntfy_sink`.
 
 use std::sync::Arc;
 
@@ -17,11 +16,10 @@ use super::i_notification_sink::{INotificationSink, NotificationMessage};
 /// ntfy transport, using JSON publishing mode: POST to the server root with the
 /// topic in the body, not PUT-to-topic with metadata headers.
 ///
-/// Deliberate: ntfy's header mode carries the title in an HTTP header, and HTTP clients
-/// reject non-ASCII header values: for a music app, "Sigur Rós" and
-/// "坂本龍一" are the normal case, not the edge case. ntfy documents RFC-2047-encoding
-/// each header as the workaround; a UTF-8 JSON body needs none of that. The only
-/// header left is the ASCII Bearer token.
+/// Deliberate: ntfy's header mode carries the title in an HTTP header, and HTTP clients reject
+/// non-ASCII header values: for a music app, "Sigur Rós" and "坂本龍一" are the normal case, not the
+/// edge case. ntfy documents RFC-2047-encoding each header as the workaround; a UTF-8 JSON body
+/// needs none of that. The only header left is the ASCII Bearer token.
 pub struct NtfySink {
     /// The "notifications" named client.
     http: reqwest::Client,

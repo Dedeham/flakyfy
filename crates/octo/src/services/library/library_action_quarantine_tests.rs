@@ -1,7 +1,7 @@
 //! The library action trash. Nothing in library actions deletes a file except the retention
-//! sweep. These actions remove files Octo did NOT create, on one tap in a
-//! music client with no confirmation dialog, and the whole point of the feature is that the user
-//! is correcting a mistake, which means they can make one.
+//! sweep. These actions remove files Octo did NOT create, on one tap in a music client with no
+//! confirmation dialog, and the whole point of the feature is that the user is correcting a
+//! mistake, which means they can make one.
 
 use octo_core::settings::{AppSettings, LibraryActionSettings};
 
@@ -383,8 +383,8 @@ fn a_link_is_not_moved() {
     assert!(Path::new(&link).exists());
 }
 
-/// The sidecars go with the song into the trash and come back with it, and a song
-/// with another copy beside it keeps the lyrics they share.
+/// The sidecars go with the song into the trash and come back with it, and a song with another
+/// copy beside it keeps the lyrics they share.
 #[test]
 fn sidecars_go_to_the_trash_with_the_song_and_come_back() {
     let f = Fixture::new();

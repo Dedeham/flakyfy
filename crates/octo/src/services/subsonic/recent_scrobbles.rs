@@ -192,8 +192,8 @@ mod tests {
         recent.withdraw("bob", "never", None, at(0));
     }
 
-    /// Both bounds. A listener's 257th play pushes out their oldest, and the 1025th listener pushes
-    /// out the one heard from longest ago.
+    /// Both bounds. A listener's 257th play pushes out their oldest, and the 1025th listener
+    /// pushes out the one heard from longest ago.
     #[test]
     fn plays_and_listeners_are_bounded() {
         let recent = RecentScrobbles::new();

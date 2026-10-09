@@ -215,9 +215,8 @@ impl RadioSourceSet {
 
 #[cfg(test)]
 mod tests {
-    //! The radio sources asked together: base weights, the seed-aware
-    //! Sounds alike weight, and a source that keeps failing is rested instead of costing every
-    //! radio its timeout.
+    //! The radio sources asked together: base weights, the seed-aware Sounds alike weight, and a
+    //! source that keeps failing is rested instead of costing every radio its timeout.
 
     use std::sync::atomic::{AtomicBool, AtomicUsize};
 

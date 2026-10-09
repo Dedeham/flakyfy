@@ -1,8 +1,7 @@
-//! The trickle queue and its file, `imports-trickle.json`: the missing
-//! songs the trickle is working through, one job per song per person however many lists hold it,
-//! with who has paused theirs, on disk so a restart carries on where it was. A job running when
-//! Octo stopped is queued again; the library check it starts with catches one that arrived
-//! meanwhile.
+//! The trickle queue and its file, `imports-trickle.json`: the missing songs the trickle is
+//! working through, one job per song per person however many lists hold it, with who has paused
+//! theirs, on disk so a restart carries on where it was. A job running when Octo stopped is
+//! queued again; the library check it starts with catches one that arrived meanwhile.
 //!
 //! A song that could not be found is tried again after two weeks, since what Soulseek has
 //! changes; one someone skipped stays skipped until they ask for it again.

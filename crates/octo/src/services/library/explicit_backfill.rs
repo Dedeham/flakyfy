@@ -208,8 +208,8 @@ impl ExplicitBackfill {
         settings: Arc<SettingsStore>,
         services: ExplicitBackfillServices,
     ) -> Self {
-        // Capacity 1, and a request past it is dropped: `pending` keeps a second
-        // one from ever being written while one waits.
+        // Capacity 1, and a request past it is dropped: `pending` keeps a second one from ever
+        // being written while one waits.
         let (sender, receiver) = mpsc::channel(1);
         Self {
             store,
@@ -528,8 +528,8 @@ impl ExplicitBackfill {
             ) => listed,
             () = stopping.cancelled() => return Err(Failure::Stopped),
         };
-        // The trash is not part of the library: a trash folder with no leading dot
-        // is one Navidrome lists.
+        // The trash is not part of the library: a trash folder with no leading dot is one
+        // Navidrome lists.
         let trash = library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
         if !listed.is_empty() {
             return Ok(from_navidrome(listed, &trash));

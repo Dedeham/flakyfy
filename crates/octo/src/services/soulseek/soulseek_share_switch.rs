@@ -1,6 +1,5 @@
-//! The Share my library switch. The block it
-//! keeps in slskd.yml and the readers of slskd's answers are
-//! `octo_core::soulseek::soulseek_share_switch`.
+//! The Share my library switch. The block it keeps in slskd.yml and the readers of slskd's
+//! answers are `octo_core::soulseek::soulseek_share_switch`.
 
 use std::sync::Arc;
 use std::time::Duration;

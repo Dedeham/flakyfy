@@ -144,8 +144,8 @@ mod tests {
 
     use super::*;
 
-    /// The missing titles are created once, with the
-    /// user's own sign-in and never an id that would make it an edit.
+    /// The missing titles are created once, with the user's own sign-in and never an id that
+    /// would make it an edit.
     #[tokio::test]
     async fn the_missing_playlists_are_created_once_as_the_user() {
         let navidrome = MockServer::start().await;

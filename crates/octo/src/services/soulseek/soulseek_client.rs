@@ -811,9 +811,9 @@ impl SoulseekClient {
 
     /// The files in one folder of a peer's share (slskd asks the peer for that folder alone, not
     /// its whole share). Each comes back with its full remote path, ready to enqueue, and the
-    /// queue and speed of `from`, the search hit that pointed at the folder.
-    /// Empty when the peer does not answer in time or will not list it. An answer with a field
-    /// of the wrong kind is an error.
+    /// queue and speed of `from`, the search hit that pointed at the folder. Empty when the peer
+    /// does not answer in time or will not list it. An answer with a field of the wrong kind is
+    /// an error.
     pub async fn browse_folder(
         &self,
         from: &SoulseekFileHit,
@@ -956,11 +956,10 @@ impl SoulseekClient {
         )))
     }
 
-    /// Polls a download to completion. Returns Succeeded on success or Errored
-    /// on any kind of slskd-side failure (peer rejected, timed out, canceled,
-    /// or the transfer silently disappeared from slskd's active list: which
-    /// happens after rejection on some slskd versions and would otherwise hang
-    /// us forever). Caller decides whether to retry or escalate.
+    /// Polls a download to completion. Returns Succeeded on success or Errored on any kind of
+    /// slskd-side failure (peer rejected, timed out, canceled, or the transfer silently
+    /// disappeared from slskd's active list: which happens after rejection on some slskd versions
+    /// and would otherwise hang us forever). Caller decides whether to retry or escalate.
     ///
     /// `on_progress` hears the transfer's byte counts on every poll that finds
     /// it. It only listens: the cadence, the deadline and the outcome are the same without it.

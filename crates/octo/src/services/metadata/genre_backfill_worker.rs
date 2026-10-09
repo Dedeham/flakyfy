@@ -713,8 +713,8 @@ fn count(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
 }
 
-/// Ordinal order: UTF-16 code unit order, which differs from Rust's (code point)
-/// order above U+FFFF.
+/// Ordinal order: UTF-16 code unit order, which differs from Rust's (code point) order above
+/// U+FFFF.
 fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
     a.encode_utf16().cmp(b.encode_utf16())
 }

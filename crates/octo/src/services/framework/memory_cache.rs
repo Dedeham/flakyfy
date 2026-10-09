@@ -1,8 +1,8 @@
 //! A size-limited memory cache, as the metadata clients and the cover-art aggregator use it:
 //! every entry has a size and an absolute expiry relative to when it was set.
 //!
-//! An entry that would take the cache over its limit is not stored, and the cache is compacted down
-//! to 95% of the limit: expired entries first, then the ones read least recently, in place.
+//! An entry that would take the cache over its limit is not stored, and the cache is compacted
+//! down to 95% of the limit: expired entries first, then the ones read least recently, in place.
 
 use std::collections::HashMap;
 use std::time::Duration;

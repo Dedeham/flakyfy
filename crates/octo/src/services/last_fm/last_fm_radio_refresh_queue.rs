@@ -1,5 +1,4 @@
-//! The bounded in-process refresh queue.
-//! Duplicate user jobs collapse while queued.
+//! The bounded in-process refresh queue. Duplicate user jobs collapse while queued.
 
 use std::collections::HashSet;
 

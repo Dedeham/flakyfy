@@ -1,6 +1,6 @@
-//! ListenBrainz as a radio source, against answers captured from
-//! the live labs service (`octo.Tests/Fixtures/listenbrainz`, 2026-10-04): a recording found by
-//! name or by its tag, its similar recordings scaled to 0 to 1, and LB Radio only with a token.
+//! ListenBrainz as a radio source, against answers captured from the live labs service
+//! (`octo.Tests/Fixtures/listenbrainz`, 2026-10-04): a recording found by name or by its tag, its
+//! similar recordings scaled to 0 to 1, and LB Radio only with a token.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

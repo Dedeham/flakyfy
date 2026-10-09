@@ -39,9 +39,9 @@ const INVALID_REQUEST_URI: &str = "An invalid request URI was provided. Either t
 /// connecting to Subsonic server: ...").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RelayError {
-    /// Octo's upstream Navidrome URL is missing or not an absolute URL. The global handler surfaces
-    /// its message to the client as an actionable Subsonic error instead of an opaque "Invalid
-    /// request".
+    /// Octo's upstream Navidrome URL is missing or not an absolute URL. The global handler
+    /// surfaces its message to the client as an actionable Subsonic error instead of an opaque
+    /// "Invalid request".
     #[error("{0}")]
     NotConfigured(String),
     /// No connection, or a non-success status from the relay.
@@ -53,8 +53,8 @@ pub enum RelayError {
     /// A URL whose scheme is not http or https (`localhost:4533` is the scheme `localhost`).
     #[error("{0}")]
     NotSupported(String),
-    /// A request URI that is not absolute (a URL such as `/music` passes the absolute-URL check, as
-    /// an implicit file path, and fails here).
+    /// A request URI that is not absolute (a URL such as `/music` passes the absolute-URL check,
+    /// as an implicit file path, and fails here).
     #[error("{0}")]
     InvalidOperation(String),
 }
@@ -175,8 +175,9 @@ impl IncomingRequest {
         (captured && !self.body.is_empty()).then_some(&self.body)
     }
 
-    /// The client's form fields, or `None` when the request carries none: the form as read, or when
-    /// that fails the captured body read as a query string, as the request parser falls back.
+    /// The client's form fields, or `None` when the request carries none: the form as read, or
+    /// when that fails the captured body read as a query string, as the request parser falls
+    /// back.
     fn form(&self) -> Option<StringValuesCollection> {
         let content_type = self.content_type();
         if !parser::has_form_content_type(content_type) {
@@ -256,9 +257,9 @@ const STREAMING_REQUIRED_HEADERS: [&str; 5] = [
 struct ProxyShared {
     client: reqwest::Client,
     stream_client: reqwest::Client,
-    // The admin UI writes settings.json and the config provider reloads it, so the URL is read
-    // at the point of use. A captured copy would serve startup
-    // values until a restart while the admin UI SHOWED the new value.
+    // The admin UI writes settings.json and the config provider reloads it, so the URL is read at
+    // the point of use. A captured copy would serve startup values until a restart while the
+    // admin UI SHOWED the new value.
     settings: Arc<SettingsStore>,
 }
 
@@ -718,9 +719,9 @@ fn tolerate_early_end(
     .fuse()
 }
 
-/// Whether a body failed only because the connection closed before the announced
-/// Content-Length was reached: hyper reports that as an I/O error of kind `UnexpectedEof`
-/// somewhere down the error's sources.
+/// Whether a body failed only because the connection closed before the announced Content-Length
+/// was reached: hyper reports that as an I/O error of kind `UnexpectedEof` somewhere down the
+/// error's sources.
 fn ended_early(error: &reqwest::Error) -> bool {
     let mut source = std::error::Error::source(error);
     while let Some(cause) = source {

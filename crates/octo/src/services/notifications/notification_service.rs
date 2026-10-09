@@ -1,5 +1,5 @@
-//! The notification fan-out. Rendering and the
-//! per-event switches are `octo_core::notifications::notification_service`.
+//! The notification fan-out. Rendering and the per-event switches are
+//! `octo_core::notifications::notification_service`.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -30,8 +30,8 @@ pub struct NotificationService {
 }
 
 impl NotificationService {
-    /// The sinks' shared client, with a short timeout: a slow notification server
-    /// must never be felt anywhere near the download path.
+    /// The sinks' shared client, with a short timeout: a slow notification server must never be
+    /// felt anywhere near the download path.
     pub const CLIENT_NAME: &'static str = "notifications";
     pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 

@@ -122,17 +122,16 @@ struct Inner {
 /// quota and poisoned the metadata caches (issue #8). DeezerRateLimiter now holds that
 /// budget centrally, so this figure is about how long a user waits, not about safety.
 ///
-/// 12 is the same "first page" figure `prewarm_you_tube_ids` already uses. It must
-/// stay above `TOP_DURATION_RESOLVE_LIMIT`, or the rows that get a YouTube length hint
-/// would be reading a duration nobody resolved.
+/// 12 is the same "first page" figure `prewarm_you_tube_ids` already uses. It must stay above
+/// `TOP_DURATION_RESOLVE_LIMIT`, or the rows that get a YouTube length hint would be reading a
+/// duration nobody resolved.
 const SEARCH_ENRICH_LIMIT: usize = 12;
 
-/// The whole slice a search can return. Everything between the first page and this is
-/// filled from cache and warmed for next time, because a row with no enrichment falls
-/// back to a flat 180 and a page of identical 3:00 rows is worse than a page of
-/// approximate ones. Deezer's length is the approximation (it is not always the
-/// recording that plays), and the exact value is resolved when a row is opened or
-/// played, where getSong and the native detail endpoint both call
+/// The whole slice a search can return. Everything between the first page and this is filled from
+/// cache and warmed for next time, because a row with no enrichment falls back to a flat 180 and
+/// a page of identical 3:00 rows is worse than a page of approximate ones. Deezer's length is the
+/// approximation (it is not always the recording that plays), and the exact value is resolved
+/// when a row is opened or played, where getSong and the native detail endpoint both call
 /// `resolve_top_durations`.
 const BACKGROUND_ENRICH_LIMIT: usize = 60;
 
@@ -1426,10 +1425,10 @@ impl IMusicMetadataService for SoulseekMetadataService {
         }
 
         for track in &detail.tracks {
-            // Album is carried on the ROUTING as well as the Song. The download path
-            // re-resolves each track by id through `get_song`, and without this the
-            // tagger re-derives the album from artist+title alone, which for a well
-            // known single often lands on a greatest-hits record instead of this one.
+            // Album is carried on the ROUTING as well as the Song. The download path re-resolves
+            // each track by id through `get_song`, and without this the tagger re-derives the
+            // album from artist+title alone, which for a well known single often lands on a
+            // greatest-hits record instead of this one.
             let track_id = inner.id_registry.register(SoulseekRouting {
                 kind: RoutingKind::Song,
                 artist: Some(track.artist.clone()),

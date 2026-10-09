@@ -358,8 +358,8 @@ impl AcquisitionTracker {
         change(&mut self.watch.lock());
     }
 
-    /// Subscribes to rows ending. Told outside the lock. A listener that
-    /// panics is logged and skipped, so it can never cost anyone a song.
+    /// Subscribes to rows ending. Told outside the lock. A listener that panics is logged and
+    /// skipped, so it can never cost anyone a song.
     pub fn subscribe_ended(&self, listener: EndedListener) -> u64 {
         let id = self.next_listener.fetch_add(1, Ordering::SeqCst);
         self.listeners.lock().push((id, listener));

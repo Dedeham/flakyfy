@@ -188,8 +188,8 @@ fn lyrics_a_clean_edits_words_fit_the_song() {
     }
 }
 
-/// A fake KuGou: the lyric search, the catalog, the search by hash and the
-/// downloads, each answered from what the test set, on one local server.
+/// A fake KuGou: the lyric search, the catalog, the search by hash and the downloads, each
+/// answered from what the test set, on one local server.
 #[derive(Clone, Default)]
 struct FakeKugou {
     search_body: Option<String>,
@@ -498,8 +498,8 @@ async fn kugou_rate_limited_cools_down_without_another_request() {
     assert!(source.cool_down_until().is_some());
 }
 
-/// A fake server: answers by the first route whose needle the unescaped URL
-/// contains (or ends with, for a needle ending in $); anything else is a 404.
+/// A fake server: answers by the first route whose needle the unescaped URL contains (or ends
+/// with, for a needle ending in $); anything else is a 404.
 pub(crate) async fn routes(routes: &[(&str, String)]) -> FakeHttp {
     let routes: Vec<(String, String)> = routes.iter().map(|(n, b)| (n.to_string(), b.clone())).collect();
     FakeHttp::start(move |url| {

@@ -1,6 +1,6 @@
-//! The words for library health, the same as
-//! the Octo app's (HealthWords.kt and FixWords.kt), so a finding reads the same on the phone, the
-//! desktop and the dashboard: what each check is called, what it means, and what to do about it.
+//! The words for library health, the same as the Octo app's (HealthWords.kt and FixWords.kt), so
+//! a finding reads the same on the phone, the desktop and the dashboard: what each check is
+//! called, what it means, and what to do about it.
 
 use octo_core::common::dotnet::{is_blank, to_upper_invariant};
 

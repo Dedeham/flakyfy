@@ -74,8 +74,8 @@ pub fn read_all_text(path: &Path) -> io::Result<String> {
     Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
-/// The file's lines: lines end at "\r\n", "\n" or "\r", and a final line
-/// ending does not start another line.
+/// The file's lines: lines end at "\r\n", "\n" or "\r", and a final line ending does not start
+/// another line.
 pub fn lines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut rest = text;

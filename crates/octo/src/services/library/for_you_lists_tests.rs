@@ -34,9 +34,8 @@ use crate::services::metadata::{DeezerMetadataService, DeezerRateLimitHandler, D
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::subsonic::{SubsonicProxyService, SubsonicResponseBuilderExt};
 
-/// A stand-in Deezer (under `/dz`) and Navidrome (under `/nd`) in one: an
-/// artist with releases old, new and still to come, and a library whose listener plays that
-/// artist most.
+/// A stand-in Deezer (under `/dz`) and Navidrome (under `/nd`) in one: an artist with releases
+/// old, new and still to come, and a library whose listener plays that artist most.
 pub(crate) struct ForYouUpstream {
     pub calls: Mutex<Vec<String>>,
     pub catalog_down: AtomicBool,

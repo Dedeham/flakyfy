@@ -586,8 +586,8 @@ async fn judge_without_the_library_counts_nothing() {
     );
 }
 
-/// A library album passes through unjudged, and a library that is not read in time
-/// counts nothing.
+/// A library album passes through unjudged, and a library that is not read in time counts
+/// nothing.
 #[tokio::test]
 async fn judge_leaves_library_albums_alone_and_gives_up_on_a_slow_library() {
     let asked: Asked = Arc::default();

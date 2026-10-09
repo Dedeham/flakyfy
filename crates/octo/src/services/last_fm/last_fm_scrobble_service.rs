@@ -32,8 +32,8 @@ use crate::services::framework::HttpAnswer;
 use crate::services::framework::http::client_builder;
 use crate::services::http_client_factory::{connect_failure_message, timeout_message};
 
-/// Why finishing the Connect flow failed, told apart for its caller: a refusal to show as it is, or
-/// settings.json that could not be written (corrupt, locked, read-only, or a full disk).
+/// Why finishing the Connect flow failed, told apart for its caller: a refusal to show as it is,
+/// or settings.json that could not be written (corrupt, locked, read-only, or a full disk).
 #[derive(Debug, thiserror::Error)]
 pub enum LastFmConnectError {
     #[error(transparent)]

@@ -43,9 +43,9 @@ impl AcoustIdRateLimitHandler {
     /// A client for another base address (a test's mock server). Its host is the one metered.
     pub fn with_base_url(limiter: Arc<AcoustIdRateLimiter>, base: Url) -> Self {
         // meta=...+compress asks AcoustID to gzip the body. Without decompression it arrives
-        // compressed, fails to parse, and reads as "no match", silently accepting
-        // everything, which is the worst outcome this feature can have. (The workspace
-        // reqwest has gzip and deflate, and they are on unless turned off.)
+        // compressed, fails to parse, and reads as "no match", silently accepting everything,
+        // which is the worst outcome this feature can have. (The workspace reqwest has gzip and
+        // deflate, and they are on unless turned off.)
         let client = reqwest::Client::builder()
             .gzip(true)
             .deflate(true)

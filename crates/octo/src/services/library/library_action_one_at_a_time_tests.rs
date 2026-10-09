@@ -1,8 +1,7 @@
-//! A library replacement runs end to end here: a
-//! stand-in Navidrome (wiremock) resolves the song, the real queue carries the request, and the
-//! test plays the download, so the swap's edges can be timed. One action per song at a time, a
-//! joined download is never judged, the original must be the file the action started with, and a
-//! replacement already in place is never undone.
+//! A library replacement runs end to end here: a stand-in Navidrome (wiremock) resolves the song,
+//! the real queue carries the request, and the test plays the download, so the swap's edges can
+//! be timed. One action per song at a time, a joined download is never judged, the original must
+//! be the file the action started with, and a replacement already in place is never undone.
 
 use std::path::PathBuf;
 

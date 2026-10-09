@@ -1,5 +1,5 @@
-//! The weekly upgrade trickles lossy songs through Better quality while
-//! nothing else is downloading (#70), and the download pipeline hands the upgrade search on.
+//! The weekly upgrade trickles lossy songs through Better quality while nothing else is
+//! downloading (#70), and the download pipeline hands the upgrade search on.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! A fake Lidarr: enough of Lidarr's v1 API for one album (lookup, add, monitor, search, tracks
-//! and files), served by a mock server. A search imports the files
-//! `on_search` names, the way Lidarr would, onto the disk Octo sees.
+//! and files), served by a mock server. A search imports the files `on_search` names, the way
+//! Lidarr would, onto the disk Octo sees.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

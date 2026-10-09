@@ -1,5 +1,4 @@
-//! The GitHub release check behind
-//! `update/release.json`.
+//! The GitHub release check behind `update/release.json`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};

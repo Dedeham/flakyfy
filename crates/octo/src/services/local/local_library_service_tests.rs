@@ -482,8 +482,8 @@ async fn a_refused_scan_and_an_odd_status() {
     assert!(bare.service.get_scan_status().await.is_none());
 }
 
-/// Navidrome answers getScanStatus only with a sign-in, so it carries the admin identity startScan
-/// uses; without one it is the bare call.
+/// Navidrome answers getScanStatus only with a sign-in, so it carries the admin identity
+/// startScan uses; without one it is the bare call.
 #[tokio::test]
 async fn get_scan_status_signs_in_as_the_admin_identity() {
     let f = Fixture::new().await;

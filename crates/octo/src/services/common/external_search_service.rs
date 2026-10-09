@@ -222,11 +222,10 @@ async fn build(
     // this, external playback is unreachable from that client. 12 is about what fits on
     // the first page of search results.
     //
-    // It runs LAST on purpose. It used to run before enrichment, where it wrote a
-    // videoId chosen with no duration hint while the top durations pass was choosing
-    // a different one using the Deezer duration: so for the top rows the two raced and
-    // the loser could leave a song advertising the length of a video that would not be
-    // the one played.
+    // It runs LAST on purpose. It used to run before enrichment, where it wrote a videoId chosen
+    // with no duration hint while the top durations pass was choosing a different one using the
+    // Deezer duration: so for the top rows the two raced and the loser could leave a song
+    // advertising the length of a video that would not be the one played.
     //
     // The background work gets its own copy of the list: the songs this build returns stay
     // frozen, and in background mode the durations pass writes only the routing.

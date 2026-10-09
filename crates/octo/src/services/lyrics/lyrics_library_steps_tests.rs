@@ -1,8 +1,7 @@
-//! The lyrics page's steps on real files: a scan lists songs with no
-//! lyrics or weaker ones and changes nothing, a preview looks up only the picked songs, Save
-//! writes only those, and Undo puts back what Save wrote. The songs' tags are held in memory
-//! ([`FakeTags`]), the seam the writer and the job read them through, and the lyrics files are
-//! real.
+//! The lyrics page's steps on real files: a scan lists songs with no lyrics or weaker ones and
+//! changes nothing, a preview looks up only the picked songs, Save writes only those, and Undo
+//! puts back what Save wrote. The songs' tags are held in memory ([`FakeTags`]), the seam the
+//! writer and the job read them through, and the lyrics files are real.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

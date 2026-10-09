@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::services::state_file::{self, null_as_default};
 
-/// One write a Save made. `Kind` is [`LyricsUndoJournal::BESIDE`]
-/// (`Path` is the lyrics file, `Before` its earlier text or None when there was none) or
+/// One write a Save made. `Kind` is [`LyricsUndoJournal::BESIDE`] (`Path` is the lyrics file,
+/// `Before` its earlier text or None when there was none) or
 /// [`LyricsUndoJournal::INSIDE`] (`Path` is the song, `Before` its earlier lyrics tag). Written
 /// with full property names, unlike the other journals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

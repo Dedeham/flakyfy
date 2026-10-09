@@ -197,9 +197,8 @@ impl IRadioSource for YouTubeMusicRadioSource {
 
 #[cfg(test)]
 mod tests {
-    //! YouTube Music as a radio source: finding the seed's video,
-    //! its radio, which rows count as music, artist radio only for the very artist, and the seed
-    //! search cached.
+    //! YouTube Music as a radio source: finding the seed's video, its radio, which rows count as
+    //! music, artist radio only for the very artist, and the seed search cached.
 
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};

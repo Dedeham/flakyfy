@@ -1,5 +1,5 @@
-//! The colors the dashboard's Afterglow look takes from a cover: three lights
-//! behind the glass and an accent for the controls.
+//! The colors the dashboard's Afterglow look takes from a cover: three lights behind the glass
+//! and an accent for the controls.
 //!
 //! The color logic is the station covers' own. A cover's main colors come from
 //! [`cover_colors::swatches`], grey ones are left out by the same rule, and the first light and
@@ -37,7 +37,8 @@ const ACCENT_L: f64 = 0.80;
 const ACCENT_C_MIN: f64 = 0.08;
 const ACCENT_C_MAX: f64 = 0.16;
 
-/// The palette of a cover's swatches: None for no swatches, or for a cover with no color and no lean.
+/// The palette of a cover's swatches: None for no swatches, or for a cover with no color and no
+/// lean.
 pub fn from_swatches(swatches: Option<&[Swatch]>) -> Option<Palette> {
     let swatches = swatches.filter(|s| !s.is_empty())?;
     let seen: Vec<(Lch, f32)> = swatches

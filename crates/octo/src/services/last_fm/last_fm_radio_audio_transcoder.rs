@@ -401,8 +401,8 @@ mod tests {
         assert_eq!(again.gain_db, 0.0);
     }
 
-    /// Input that is not audio fails the encode with ffmpeg's own words, and leaves
-    /// no spool behind.
+    /// Input that is not audio fails the encode with ffmpeg's own words, and leaves no spool
+    /// behind.
     #[tokio::test]
     async fn input_that_is_not_audio_fails_with_ffmpegs_words() {
         require_ffmpeg!();

@@ -1,5 +1,5 @@
-//! The library action trash, and the `<file>.octo-action.json` manifest beside each
-//! quarantined file.
+//! The library action trash, and the `<file>.octo-action.json` manifest beside each quarantined
+//! file.
 
 use std::io;
 use std::path::Path;
@@ -84,10 +84,10 @@ pub struct QuarantinedSidecar {
 
 /// Moves a verified file out of the library instead of deleting it.
 ///
-/// Nothing in library actions deletes a file except the retention sweep. These
-/// actions delete files Octo did NOT create, on one tap in a music client with no confirmation
-/// dialog, and the whole point of the feature is that the user is correcting a mistake, which
-/// means they can make one.
+/// Nothing in library actions deletes a file except the retention sweep. These actions delete
+/// files Octo did NOT create, on one tap in a music client with no confirmation dialog, and the
+/// whole point of the feature is that the user is correcting a mistake, which means they can make
+/// one.
 ///
 /// This is where DiscardRejectedDownload's philosophy is reconciled rather than contradicted.
 /// That guard refuses to delete anything created before the attempt started, because its input
@@ -631,8 +631,8 @@ pub(crate) fn combine(a: &str, b: &str) -> String {
     }
 }
 
-/// The relative path between two full paths (case-sensitive): "."
-/// for the same path, the rest of `path` under `relative_to`, otherwise a climb out with `..`.
+/// The relative path between two full paths (case-sensitive): "." for the same path, the rest of
+/// `path` under `relative_to`, otherwise a climb out with `..`.
 pub(crate) fn get_relative_path(relative_to: &str, path: &str) -> String {
     let from: Vec<&str> = relative_to.split('/').filter(|s| !s.is_empty()).collect();
     let to: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();

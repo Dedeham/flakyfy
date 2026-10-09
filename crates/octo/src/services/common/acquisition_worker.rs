@@ -145,10 +145,9 @@ impl AcquisitionWorker {
         self.queue.release(&request);
     }
 
-    /// Kept apart on purpose: a notification error must never disturb the bookkeeping around
-    /// it (`notify` cannot fail). Metadata comes from
-    /// the same routing pair the download path itself uses, so the names match what the user
-    /// starred.
+    /// Kept apart on purpose: a notification error must never disturb the bookkeeping around it
+    /// (`notify` cannot fail). Metadata comes from the same routing pair the download path itself
+    /// uses, so the names match what the user starred.
     fn notify_failed(&self, request: &AcquisitionRequest, error: &anyhow::Error) {
         let routing = self
             .id_registry

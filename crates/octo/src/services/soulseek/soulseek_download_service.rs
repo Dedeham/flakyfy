@@ -64,9 +64,9 @@ use crate::services::you_tube::YouTubeResolver;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::lidarr::lidarr_track_fetcher::LidarrStep;
 
-/// Where the shim writes a download before Octo has decided its name. A dot
-/// folder, which Navidrome's scanner skips (Scanner.IgnoreDotFolders, on by default), the same way
-/// it skips the library-action quarantine.
+/// Where the shim writes a download before Octo has decided its name. A dot folder, which
+/// Navidrome's scanner skips (Scanner.IgnoreDotFolders, on by default), the same way it skips the
+/// library-action quarantine.
 pub const INCOMING_FOLDER_NAME: &str = ".octo-incoming";
 
 /// slskd's default name for the folder a transfer is written into before it is moved.
@@ -77,8 +77,8 @@ pub const DEFAULT_INCOMPLETE_FOLDER_NAME: &str = "incomplete";
 /// just the top hit fails too often.
 ///
 /// Each attempt is bounded by Soulseek:DownloadTimeoutSeconds, so that setting is per peer and a
-/// full walk can spend it `MAX_PEER_ATTEMPTS` times over. (The ranking lives in octo-core with the
-/// rest of the matching.)
+/// full walk can spend it `MAX_PEER_ATTEMPTS` times over. (The ranking lives in octo-core with
+/// the rest of the matching.)
 pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 
 /// A download that cannot be made as asked (no artist or title, no download path, no Lidarr,
@@ -87,8 +87,8 @@ pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 #[error("{0}")]
 pub struct InvalidOperationException(pub String);
 
-/// No copy found, or the copy found is gone. Reported as an `io::Error`
-/// of kind `NotFound`, which is how the library-action executor recognizes "no copy here".
+/// No copy found, or the copy found is gone. Reported as an `io::Error` of kind `NotFound`, which
+/// is how the library-action executor recognizes "no copy here".
 fn file_not_found(message: String) -> anyhow::Error {
     std::io::Error::new(std::io::ErrorKind::NotFound, message).into()
 }
@@ -1267,11 +1267,11 @@ impl SoulseekDownloadService {
                     });
                 }
 
-                // Canceling the WAIT must never cancel the TRANSFER. slskd already
-                // accepted the enqueue and keeps going on its own, so letting this
-                // throw straight out of the loop is what used to lose a finished
-                // download: the disk check, the move, the registration and the
-                // rescan were all skipped while the file quietly landed anyway.
+                // Canceling the WAIT must never cancel the TRANSFER. slskd already accepted the
+                // enqueue and keeps going on its own, so letting this throw straight out of the
+                // loop is what used to lose a finished download: the disk check, the move, the
+                // registration and the rescan were all skipped while the file quietly landed
+                // anyway.
                 //
                 // slskd's size is the real one once the peer answers; the search's is
                 // what the peer advertised, kept for polls that leave it out.
@@ -2050,9 +2050,9 @@ impl DownloadBackend for SoulseekDownloadService {
                     .await
             }
             DownloadSource::SoulseekThenYouTube => {
-                // The filter matters: a canceled token means nobody is waiting for
-                // this any more, so falling back would start a second download only
-                // to have it throw on the same token.
+                // The filter matters: a canceled token means nobody is waiting for this any more,
+                // so falling back would start a second download only to have it throw on the same
+                // token.
                 let snapshot = routing.snapshot();
                 match self
                     .download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
@@ -2290,12 +2290,11 @@ pub fn waiting_words(peer: &str, state: &str) -> String {
     }
 }
 
-/// slskd marks a transfer Succeeded before moving the file out of its incomplete
-/// directory, and on bind mounts that move is a copy that can take seconds for a FLAC.
-/// Without this window the attempt fails on "no file on disk" and the next peer
-/// re-downloads the same track. The incomplete folder is never searched (#69), so a full-size
-/// copy that slskd has not moved yet cannot end the wait early. A canceled caller gets one
-/// final check instead of a wait.
+/// slskd marks a transfer Succeeded before moving the file out of its incomplete directory, and
+/// on bind mounts that move is a copy that can take seconds for a FLAC. Without this window the
+/// attempt fails on "no file on disk" and the next peer re-downloads the same track. The
+/// incomplete folder is never searched (#69), so a full-size copy that slskd has not moved yet
+/// cannot end the wait early. A canceled caller gets one final check instead of a wait.
 pub async fn retry_resolve(
     mut resolve: impl FnMut() -> Option<String>,
     max_wait: Duration,

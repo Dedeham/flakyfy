@@ -14,9 +14,9 @@ use tracing::{debug, error, info, warn};
 /// Background service that periodically cleans up old cached files
 /// Only runs when StorageMode is set to Cache
 pub struct CacheCleanupService {
-    // Read at use, never captured: the admin UI writes settings.json and the store
-    // reloads it, but this is a singleton, so a captured copy would serve startup values
-    // until a restart while the admin UI SHOWED the new value and nothing acted on it.
+    // Read at use, never captured: the admin UI writes settings.json and the store reloads it,
+    // but this is a singleton, so a captured copy would serve startup values until a restart
+    // while the admin UI SHOWED the new value and nothing acted on it.
     settings: Arc<SettingsStore>,
     cleanup_interval: Duration,
     /// `PathHelper.GetCachePath()`; another folder in tests.
@@ -241,8 +241,8 @@ mod tests {
             .expect("set the access time");
     }
 
-    /// A file not read for the retention goes, a fresh one and the
-    /// radio sub-cache stay, and folders left empty go.
+    /// A file not read for the retention goes, a fresh one and the radio sub-cache stay, and
+    /// folders left empty go.
     #[test]
     fn old_files_go_and_radio_stays() {
         let dir = tempfile::tempdir().expect("temp dir");

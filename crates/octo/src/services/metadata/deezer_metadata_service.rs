@@ -119,9 +119,9 @@ struct Inner {
     // be right for both. Every entry counts as 1, so the limit is an entry count.
     cache: MemoryCache<Cached>,
 
-    // Single-flight the album-year fetch: many tracks in one search share an album
-    // (a whole album's tracks), so concurrent lookups collapse onto one HTTP call.
-    // None is a fetch that failed.
+    // Single-flight the album-year fetch: many tracks in one search share an album (a whole
+    // album's tracks), so concurrent lookups collapse onto one HTTP call. None is a fetch that
+    // failed.
     album_year_tasks: InFlight<Option<(Option<i32>, bool)>>,
 
     /// Requests on their way to the catalog, by cache key. The cache only answers

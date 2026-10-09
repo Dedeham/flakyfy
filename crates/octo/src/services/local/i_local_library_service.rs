@@ -58,10 +58,9 @@ pub trait ILocalLibraryService: Send + Sync {
         album: Option<&str>,
     ) -> Option<LocalSongMapping>;
 
-    /// Drop the mapping for a path Octo no longer owns, so a re-acquire is not
-    /// short-circuited by a file that has just been moved out of the library. Answers the
-    /// mappings it dropped, so a song put back can have them again. `Err` when the mappings file
-    /// could not be written.
+    /// Drop the mapping for a path Octo no longer owns, so a re-acquire is not short-circuited by
+    /// a file that has just been moved out of the library. Answers the mappings it dropped, so a
+    /// song put back can have them again. `Err` when the mappings file could not be written.
     async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>>;
 
     /// Puts back mappings a removal dropped, pointing at the song's path again. A song mapped

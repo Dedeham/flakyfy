@@ -1,7 +1,7 @@
-//! "Upgrade cover art". The run and its store
-//! (`cover-upgrade.json`, and the found covers' thumbnails in `cover-upgrade-found/`), the undo
-//! journal (`cover-upgrade-journal.jsonl` and the old pictures in `cover-backups/`), and the
-//! worker, a singleton that is also a hosted queue worker.
+//! "Upgrade cover art". The run and its store (`cover-upgrade.json`, and the found covers'
+//! thumbnails in `cover-upgrade-found/`), the undo journal (`cover-upgrade-journal.jsonl` and the
+//! old pictures in `cover-backups/`), and the worker, a singleton that is also a hosted queue
+//! worker.
 
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet};
@@ -715,13 +715,13 @@ const NO_LIBRARY_SERVICE: &str =
 /// it, to embed in all of its songs.
 ///
 /// Three steps: a scan reads the songs only and lists every album whose cover is smaller than
-/// asked; the owner picks all of them or some; a preview of the
-/// picked ones looks them up, and an upgrade writes. One folder at a time, its songs grouped by
-/// album. An album is changed only when the cover found is clearly larger than the one its
-/// songs carry, and only the front cover is replaced; other pictures stay. A real run keeps
-/// every replaced picture first, so Undo can put it all back. cover.jpg and folder.jpg beside
-/// an album are what Navidrome shows before the art inside the files, so they are upgraded too
-/// when asked (JPEG only; a PNG or WebP one is left and reported).
+/// asked; the owner picks all of them or some; a preview of the picked ones looks them up, and an
+/// upgrade writes. One folder at a time, its songs grouped by album. An album is changed only
+/// when the cover found is clearly larger than the one its songs carry, and only the front cover
+/// is replaced; other pictures stay. A real run keeps every replaced picture first, so Undo can
+/// put it all back. cover.jpg and folder.jpg beside an album are what Navidrome shows before the
+/// art inside the files, so they are upgraded too when asked (JPEG only; a PNG or WebP one is
+/// left and reported).
 pub struct CoverUpgradeWorker {
     store: Arc<CoverUpgradeStore>,
     journal: Arc<CoverUpgradeJournal>,

@@ -1085,9 +1085,9 @@ impl ImportService {
         let result = self.playlists.sync(&list).await;
         let entry = format!("{user}\n{id}");
         if !result.ok {
-            // Keep the id of a playlist the sync left in Navidrome (one it could neither fill
-            // nor delete), so the next try fills it rather than making another, and
-            // wait longer each time rather than every 30 seconds.
+            // Keep the id of a playlist the sync left in Navidrome (one it could neither fill nor
+            // delete), so the next try fills it rather than making another, and wait longer each
+            // time rather than every 30 seconds.
             if result.playlist_id != list.playlist_id {
                 self.store.update(user, id, |l| {
                     l.playlist_id = result.playlist_id.clone();

@@ -128,12 +128,11 @@ pub struct TrackDownload {
     /// with the transfer, so a backend that can use it (Lidarr reads the album from its tags)
     /// sees it without a new parameter.
     pub replacing_path: Option<String>,
-    /// The source a backend fetched the song from, when the format alone does not
-    /// say: a FLAC can be Lidarr's as well as Soulseek's.
+    /// The source a backend fetched the song from, when the format alone does not say: a FLAC can
+    /// be Lidarr's as well as Soulseek's.
     pub fetched_from: Option<String>,
-    /// The backend asked for the song to land without a notice of its own (a Lidarr
-    /// album's songs that nobody hearted, and the songs of an album heart, which gets one for the
-    /// album).
+    /// The backend asked for the song to land without a notice of its own (a Lidarr album's songs
+    /// that nobody hearted, and the songs of an album heart, which gets one for the album).
     pub muted: bool,
 }
 
@@ -147,8 +146,8 @@ pub trait DownloadBackend: Send + Sync + 'static {
     /// Checks if the service is properly configured and functional.
     async fn is_available(&self, base: &BaseDownloadService) -> bool;
 
-    /// A direct stream from the provider CDN (true streaming, no disk).
-    /// The default is not supported.
+    /// A direct stream from the provider CDN (true streaming, no disk). The default is not
+    /// supported.
     async fn get_direct_stream(
         &self,
         _base: &BaseDownloadService,
@@ -160,9 +159,9 @@ pub trait DownloadBackend: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Downloads a track and saves it to disk. Backends implement
-    /// provider-specific logic (encryption, authentication, etc.). Returns the local file path
-    /// where the track landed; the base places, tags and registers it from there.
+    /// Downloads a track and saves it to disk. Backends implement provider-specific logic
+    /// (encryption, authentication, etc.). Returns the local file path where the track landed;
+    /// the base places, tags and registers it from there.
     async fn download_track(
         &self,
         base: &BaseDownloadService,
@@ -174,16 +173,15 @@ pub trait DownloadBackend: Send + Sync + 'static {
     /// Example: "ext-deezer-album-123456" -> "123456".
     fn extract_external_id_from_album_id(&self, album_id: &str) -> Option<String>;
 
-    /// Re-assert any routing state a long-running batch depends on.
-    /// An album download can run for hours while searches keep filling the id registry, so a
-    /// track's routing can be evicted before its turn comes. Ids are a pure hash of the routing
-    /// fields, so re-registering the SAME fields restores the SAME id and is idempotent.
+    /// Re-assert any routing state a long-running batch depends on. An album download can run for
+    /// hours while searches keep filling the id registry, so a track's routing can be evicted
+    /// before its turn comes. Ids are a pure hash of the routing fields, so re-registering the
+    /// SAME fields restores the SAME id and is idempotent.
     fn ensure_routing_registered(&self, _track: &Song) {}
 
     /// Queue what an album walk can take from one place in one go, before the walk starts, and
     /// say which tracks that covers. Each of those tracks still goes through its own download,
-    /// which takes the queued file first. The default takes nothing, so the
-    /// walk is song by song.
+    /// which takes the queued file first. The default takes nothing, so the walk is song by song.
     async fn prepare_album(
         &self,
         _base: &BaseDownloadService,
@@ -195,13 +193,12 @@ pub trait DownloadBackend: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// Called when the walk ends, however it ends: let go of whatever was
-    /// prepared and not used.
+    /// Called when the walk ends, however it ends: let go of whatever was prepared and not used.
     async fn finish_album(&self, _base: &BaseDownloadService, _prepared: &[String]) {}
 }
 
-/// The notice queue's review: ask one person about a download they can settle by
-/// listening. False when it was already asked.
+/// The notice queue's review: ask one person about a download they can settle by listening. False
+/// when it was already asked.
 pub trait ReviewQueue: Send + Sync {
     fn add_review(&self, owner: &str, local_path: &str, song: &Song, verdict: &VerificationResult) -> bool;
 }

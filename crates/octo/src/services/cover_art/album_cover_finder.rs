@@ -97,11 +97,11 @@ pub trait IAlbumCoverFinder: Send + Sync {
 /// already name, and the catalog's album by the same strict match. All three are asked at once
 /// and the largest wins.
 ///
-/// Apple answers about 20 searches a minute, which made a thousand albums an hour. So a run
-/// over many albums is primed: each album's barcode (from its own tags when they carry one,
-/// else from Deezer, which answers far more), and every 20 barcodes found go to Apple as one
-/// lookup. It is a pipeline: barcodes, Apple's answers and each album's
-/// covers all move at once, and an album waits only for its own batch, never for the whole run.
+/// Apple answers about 20 searches a minute, which made a thousand albums an hour. So a run over
+/// many albums is primed: each album's barcode (from its own tags when they carry one, else from
+/// Deezer, which answers far more), and every 20 barcodes found go to Apple as one lookup. It is
+/// a pipeline: barcodes, Apple's answers and each album's covers all move at once, and an album
+/// waits only for its own batch, never for the whole run.
 pub struct AlbumCoverFinder {
     itunes: Arc<ITunesCoverArtLookup>,
     archive: Arc<CoverArtArchiveLookup>,

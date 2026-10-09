@@ -342,8 +342,8 @@ mod tests {
         assert!(!session.authentication.contains_key("id"));
     }
 
-    /// Tokens are 48 lower-case hex characters, keys match ignoring case, and the
-    /// oldest session is the one a full store lets go.
+    /// Tokens are 48 lower-case hex characters, keys match ignoring case, and the oldest session
+    /// is the one a full store lets go.
     #[test]
     fn tokens_are_hex_and_the_oldest_session_goes_first() {
         let store = LastFmRadioStreamSessionStore::new();

@@ -873,10 +873,10 @@ fn until(expires: DateTime<Utc>) -> Duration {
     (expires - Utc::now()).to_std().unwrap_or(Duration::ZERO)
 }
 
-/// The caller's own parameters, whatever auth they carry (a token, a password or an API key),
-/// as the sync catalog does, minus anything that named the playlist being read.
-/// In insertion order with a removed key's slot reused by the next key added, which is the order
-/// the query is written in.
+/// The caller's own parameters, whatever auth they carry (a token, a password or an API key), as
+/// the sync catalog does, minus anything that named the playlist being read. In insertion order
+/// with a removed key's slot reused by the next key added, which is the order the query is
+/// written in.
 fn parameters(auth: &IndexMap<String, String>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut parameters: DotnetDictionary<String> = DotnetDictionary::new();
     for (key, value) in auth {

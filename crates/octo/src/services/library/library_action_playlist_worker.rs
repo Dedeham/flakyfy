@@ -41,8 +41,8 @@ pub struct LibraryActionPlaylistWorker {
     resolver: Arc<NavidromeSongPathResolver>,
     identity: NavidromeIdentityService,
     api: Arc<NavidromePlaylistApi>,
-    /// The library action settings. `Enabled`, `PlaylistsEnabled` and the poll
-    /// interval are decided once, when the worker starts; the sweep reads the rest live.
+    /// The library action settings. `Enabled`, `PlaylistsEnabled` and the poll interval are
+    /// decided once, when the worker starts; the sweep reads the rest live.
     settings: Arc<SettingsStore>,
 }
 

@@ -592,9 +592,9 @@ mod tests {
         assert_eq!(video(&resolver).as_deref(), Some("video-1"));
     }
 
-    /// The library is searched with the main artist and the core
-    /// title, a seed is a song, an album's first song or an artist's name, and the neighbors are
-    /// the album's other songs and the genre's, never the seed.
+    /// The library is searched with the main artist and the core title, a seed is a song, an
+    /// album's first song or an artist's name, and the neighbors are the album's other songs and
+    /// the genre's, never the seed.
     #[tokio::test]
     async fn the_library_is_searched_plainly_and_seeds_are_songs_albums_or_artists() {
         assert_eq!(
@@ -664,8 +664,8 @@ mod tests {
         assert_eq!(ids, ["s3", "g1"]);
     }
 
-    /// A hit that is another recording is passed over, an answer that is not the
-    /// shape read gives no match, and a scrobbled external id is its route.
+    /// A hit that is another recording is passed over, an answer that is not the shape read gives
+    /// no match, and a scrobbled external id is its route.
     #[tokio::test]
     async fn other_recordings_and_odd_answers_are_no_match() {
         let (matching, _server) = resolver(

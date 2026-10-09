@@ -1,7 +1,6 @@
-//! Library health's fixes: what each finding
-//! comes to when it is put right, worked out from the songs alone so it can be shown before
-//! anything changes, and then done one song at a time. The same plans the Octo app makes
-//! (HealthFixes.kt); only the drawing differs.
+//! Library health's fixes: what each finding comes to when it is put right, worked out from the
+//! songs alone so it can be shown before anything changes, and then done one song at a time. The
+//! same plans the Octo app makes (HealthFixes.kt); only the drawing differs.
 
 use std::collections::{HashMap, HashSet};
 

@@ -482,7 +482,8 @@ impl BaseDownloadService {
     }
 
     /// [`Self::write_metadata`] for a download that replaces the library file at
-    /// `replacing_path`: that copy's cover is weighed first, since it is the picture the album shows now.
+    /// `replacing_path`: that copy's cover is weighed first, since it is the picture the album
+    /// shows now.
     pub async fn write_metadata_replacing(
         &self,
         file_path: &str,

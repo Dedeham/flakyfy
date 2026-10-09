@@ -86,8 +86,8 @@ pub fn may_write_beside(stem: &Path, timed: bool) -> bool {
     !lrc.exists() && !with_suffix(stem, ".txt").exists()
 }
 
-/// Whether a .lrc's first line (spaces and byte order mark
-/// aside) is Octo's mark, so Octo wrote it and may replace it.
+/// Whether a .lrc's first line (spaces and byte order mark aside) is Octo's mark, so Octo wrote
+/// it and may replace it.
 pub fn is_octos(lrc_path: &Path) -> bool {
     let Ok(text) = state_file::read_all_text(lrc_path) else {
         return false;

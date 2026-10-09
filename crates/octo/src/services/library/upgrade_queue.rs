@@ -899,8 +899,8 @@ fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// The directory: everything before the last separator (and any separators
-/// right before it), the root kept; None for the root itself.
+/// The directory: everything before the last separator (and any separators right before it), the
+/// root kept; None for the root itself.
 fn directory_name(path: &str) -> Option<String> {
     if path.is_empty() || path == "/" {
         return None;

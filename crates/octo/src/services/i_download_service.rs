@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::services::library::ReplacementHandoff;
 
-/// An audio body being read, chunk by chunk. Dropping it closes the upstream
-/// response it reads from.
+/// An audio body being read, chunk by chunk. Dropping it closes the upstream response it reads
+/// from.
 pub type AudioStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;
 
 /// Interface for the music download service (Deezspot or other)

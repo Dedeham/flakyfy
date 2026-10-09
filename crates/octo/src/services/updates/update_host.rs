@@ -1,5 +1,4 @@
-//! The `config/update/` files shared with the host
-//! helper (`scripts/updater/octo-updater.sh`).
+//! The `config/update/` files shared with the host helper (`scripts/updater/octo-updater.sh`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -27,7 +27,7 @@ use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, set_aside};
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
-use crate::services::family::{LibraryScope, ScopeResolver};
+use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
 use crate::services::library::library_walk;
@@ -400,12 +400,19 @@ impl LibraryReviewSweepWorker {
         self
     }
 
-    /// Whether the sweep may ask about the file at `full`: always with Family off, and only
-    /// for a shared song with it on.
-    fn in_shared(&self, full: &str) -> bool {
+    /// The scopes one pass of the sweep asks: None when every file may be asked about, else
+    /// the shared library's while members have libraries of their own (Family on, or turned
+    /// off with their libraries still there).
+    fn shared_view(&self) -> Option<ScopeView> {
         self.scope
             .as_ref()
-            .is_none_or(|scope| scope.allows(&LibraryScope::Shared, None, Some(full)))
+            .filter(|scope| scope.keeps_shared())
+            .map(ScopeResolver::shared_view)
+    }
+
+    /// Whether the sweep may ask about the file at `full`, by the pass's `view`.
+    fn in_shared(view: Option<&ScopeView>, full: &str) -> bool {
+        view.is_none_or(|view| view.allows(&LibraryScope::Shared, None, Some(full)))
     }
 
     pub fn store(&self) -> &Arc<ReviewSweepStore> {
@@ -534,6 +541,7 @@ impl LibraryReviewSweepWorker {
             return Duration::ZERO;
         };
         let octo_files = self.octo_files.lock().clone();
+        let scope_view = self.shared_view();
         let reviewed = self.notices.reviewed_paths();
         let cursor = self.store.read(|s| s.cursor.clone());
         let (mut target, mut stamp, mut passed): (Option<String>, Option<String>, String) =
@@ -551,7 +559,7 @@ impl LibraryReviewSweepWorker {
             let skip = match &file_stamp {
                 None => true,
                 Some(file_stamp) => {
-                    !self.in_shared(&full)
+                    !Self::in_shared(scope_view.as_ref(), &full)
                         || octo_files.contains(&full)
                         || reviewed.contains(&full)
                         || self

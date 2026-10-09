@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 use indexmap::IndexMap;
 use octo_core::common::dotnet::{self, compare_ordinal_ignore_case, eq_ignore_case};
@@ -291,12 +291,18 @@ impl AcquisitionRequest {
 #[cfg(test)]
 pub(crate) type OnSkippedPlay = Arc<dyn Fn() + Send + Sync>;
 
+/// Whether stars take turns per person now.
+pub type FairTurns = Arc<dyn Fn() -> bool + Send + Sync>;
+
 struct Receivers {
     stars: mpsc::Receiver<Arc<AcquisitionRequest>>,
     plays: mpsc::Receiver<Arc<AcquisitionRequest>>,
     /// Stars taken off the channel and not yet handed out, by whose turn they take (the first
     /// requester, ignoring case; nobody is ""), in the order each person's turn comes round.
-    waiting_stars: IndexMap<String, VecDeque<Arc<AcquisitionRequest>>>,
+    /// Each star carries the order it arrived in.
+    waiting_stars: IndexMap<String, VecDeque<(u64, Arc<AcquisitionRequest>)>>,
+    /// The arrival number the next star lined up gets.
+    arrivals: u64,
 }
 
 impl Receivers {
@@ -312,18 +318,39 @@ impl Receivers {
             .first_requester()
             .map(|name| dotnet::to_lower_invariant(name.trim()))
             .unwrap_or_default();
-        self.waiting_stars.entry(turn).or_default().push_back(star);
+        let arrival = self.arrivals;
+        self.arrivals += 1;
+        self.waiting_stars
+            .entry(turn)
+            .or_default()
+            .push_back((arrival, star));
     }
 
-    /// The next star, one person at a time: the person at the front gives up one request and
-    /// goes to the back of the line while they still have more.
-    fn next_star(&mut self) -> Option<Arc<AcquisitionRequest>> {
-        let (turn, mut line) = self.waiting_stars.shift_remove_index(0)?;
-        let star = line.pop_front();
-        if !line.is_empty() {
-            self.waiting_stars.insert(turn, line);
+    /// The next star. Taking turns, one person at a time: the person at the front gives up one
+    /// request and goes to the back of the line while they still have more. Otherwise the
+    /// star that arrived first, whoever asked.
+    fn next_star(&mut self, fair: bool) -> Option<Arc<AcquisitionRequest>> {
+        if fair {
+            let (turn, mut line) = self.waiting_stars.shift_remove_index(0)?;
+            let star = line.pop_front();
+            if !line.is_empty() {
+                self.waiting_stars.insert(turn, line);
+            }
+            return star.map(|(_, star)| star);
         }
-        star
+        let first = self
+            .waiting_stars
+            .values()
+            .enumerate()
+            .filter_map(|(at, line)| line.front().map(|(arrival, _)| (*arrival, at)))
+            .min()?
+            .1;
+        let line = self.waiting_stars.get_index_mut(first)?.1;
+        let star = line.pop_front();
+        if line.is_empty() {
+            self.waiting_stars.shift_remove_index(first);
+        }
+        star.map(|(_, star)| star)
     }
 }
 
@@ -348,6 +375,13 @@ pub struct TrackAcquisitionQueue {
 
     // Requests in the plays channel that the worker has not taken yet.
     waiting_plays: AtomicI32,
+
+    // Stars queued and not yet handed out, in the channel or lined up per person: the bound
+    // counts both, so lining stars up never lets more than STAR_CAPACITY wait.
+    waiting_stars: AtomicUsize,
+
+    /// Whether stars take turns per person (while Family is on); otherwise first in, first out.
+    fair_turns: FairTurns,
 
     #[cfg(test)]
     on_skipped_play: Mutex<Option<OnSkippedPlay>>,
@@ -375,12 +409,22 @@ impl TrackAcquisitionQueue {
                 stars: stars_rx,
                 plays: plays_rx,
                 waiting_stars: IndexMap::new(),
+                arrivals: 0,
             }),
             in_flight: Mutex::new(HashMap::new()),
             waiting_plays: AtomicI32::new(0),
+            waiting_stars: AtomicUsize::new(0),
+            fair_turns: Arc::new(|| false),
             #[cfg(test)]
             on_skipped_play: Mutex::new(None),
         }
+    }
+
+    /// Stars take turns per person while `fair` says so (Family on); otherwise they keep the
+    /// order they arrived in, as they always have.
+    pub fn with_fair_turns(mut self, fair: FairTurns) -> Self {
+        self.fair_turns = fair;
+        self
     }
 
     #[cfg(test)]
@@ -503,12 +547,17 @@ impl TrackAcquisitionQueue {
             return existing.completion.clone();
         }
 
-        if !is_star {
+        if is_star {
+            self.waiting_stars.fetch_add(1, Ordering::SeqCst);
+        } else {
             self.waiting_plays.fetch_add(1, Ordering::SeqCst);
         }
         let channel = if is_star { &self.stars } else { &self.plays };
-        if channel.try_send(request.clone()).is_err() {
-            if !is_star {
+        let room = !is_star || self.waiting_stars.load(Ordering::SeqCst) <= Self::STAR_CAPACITY;
+        if !room || channel.try_send(request.clone()).is_err() {
+            if is_star {
+                self.waiting_stars.fetch_sub(1, Ordering::SeqCst);
+            } else {
                 self.waiting_plays.fetch_sub(1, Ordering::SeqCst);
             }
             // Full. Say so out loud: silently shedding work is how "why didn't that
@@ -644,7 +693,8 @@ impl TrackAcquisitionQueue {
         let mut receivers = self.receivers.lock().await;
         while !cancellation_token.is_cancelled() {
             receivers.take_waiting_stars();
-            if let Some(star) = receivers.next_star() {
+            if let Some(star) = receivers.next_star((self.fair_turns)()) {
+                self.waiting_stars.fetch_sub(1, Ordering::SeqCst);
                 return Some(star);
             }
             if let Ok(play) = receivers.plays.try_recv() {

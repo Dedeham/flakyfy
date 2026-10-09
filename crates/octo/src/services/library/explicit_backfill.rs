@@ -237,23 +237,27 @@ impl ExplicitBackfill {
         self
     }
 
-    /// The songs the marking may touch: all of them, or with Family on the shared library's.
+    /// The songs the marking may touch: all of them, or the shared library's while members
+    /// have libraries of their own (Family on, or turned off with their libraries still there).
     fn shared_only(
         &self,
         listed: Vec<(ExplicitBackfillSong, Option<String>)>,
     ) -> Vec<(ExplicitBackfillSong, Option<String>)> {
-        match &self.scope {
-            Some(scope) if scope.active() => listed
-                .into_iter()
-                .filter(|(song, _)| {
-                    scope.allows(
-                        &crate::services::family::LibraryScope::Shared,
-                        song.navidrome_id.as_deref(),
-                        Some(&song.path),
-                    )
-                })
-                .collect(),
-            _ => listed,
+        match self.scope.as_ref().filter(|scope| scope.keeps_shared()) {
+            Some(scope) => {
+                let view = scope.shared_view();
+                listed
+                    .into_iter()
+                    .filter(|(song, _)| {
+                        view.allows(
+                            &crate::services::family::LibraryScope::Shared,
+                            song.navidrome_id.as_deref(),
+                            Some(&song.path),
+                        )
+                    })
+                    .collect()
+            }
+            None => listed,
         }
     }
 

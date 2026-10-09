@@ -128,11 +128,12 @@ pub fn caller_explicit_filter(caller: Option<&FamilyCaller>, global: ExplicitFil
 /// How many shared-library songs have no explicit mark, for the Family page's "Mark them now".
 /// Members' own libraries are not counted. Zero until the index has been read.
 pub fn unrated_count(index: &LibraryIndex, scope: &ScopeResolver) -> usize {
+    let view = scope.shared_view();
     let mut count = 0;
     index.each_song(|song| {
         let shared = song
             .library_id
-            .is_none_or(|library| scope.allows_library(&LibraryScope::Shared, library));
+            .is_none_or(|library| view.allows_library(&LibraryScope::Shared, library));
         if shared && song.explicit_status.trim().is_empty() {
             count += 1;
         }

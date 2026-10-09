@@ -267,6 +267,25 @@ impl FamilyStore {
         self.state.lock().members.clone()
     }
 
+    /// Each member's own library id with their name, without copying anything else.
+    pub fn personal_libraries(&self) -> Vec<(i64, String)> {
+        self.state
+            .lock()
+            .members
+            .iter()
+            .filter_map(|m| m.personal_library_id.map(|id| (id, m.username.clone())))
+            .collect()
+    }
+
+    /// Whether any member has a library of their own.
+    pub fn has_personal_libraries(&self) -> bool {
+        self.state
+            .lock()
+            .members
+            .iter()
+            .any(|m| m.personal_library_id.is_some())
+    }
+
     /// Adds the member, or replaces the one with the same name.
     pub fn upsert_member(&self, member: Member) {
         {

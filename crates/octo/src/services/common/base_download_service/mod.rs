@@ -592,7 +592,9 @@ impl BaseDownloadService {
                 .get_local_path_for_external_song(external_provider, external_id)
                 .await
                 .filter(|path| file_exists(path))
-                .filter(|path| !flac_only || is_flac_path(path))
+                .filter(|path| {
+                    !flac_only || (is_flac_path(path) && !family.is_some_and(|f| f.made_from_lossy(path)))
+                })
             {
                 // A member's copy the shared library now wants moves there, still one file.
                 if let Some(family) = family
@@ -771,7 +773,7 @@ impl BaseDownloadService {
             && let Some(family) = family
             && let Some(found) = family
                 .find_song(external_provider, external_id, &song)
-                .filter(|found| !flac_only || found.format == "flac")
+                .filter(|found| !flac_only || found.is_real_flac())
         {
             let path = match &pool_members {
                 Some(_) => found.path.clone(),

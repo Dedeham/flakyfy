@@ -99,6 +99,30 @@ impl RequestStore {
         self.requests.lock().clone()
     }
 
+    /// Keeps a new request unless one `same` answers true for is kept already, in one step, so
+    /// two identical asks at the same moment make one request. Answers the request kept and
+    /// whether it is the new one.
+    pub fn create_unless(
+        &self,
+        mut request: FamilyRequest,
+        now: DateTime<Utc>,
+        same: impl Fn(&FamilyRequest) -> bool,
+    ) -> (FamilyRequest, bool) {
+        if request.id.trim().is_empty() {
+            request.id = new_request_id();
+        }
+        {
+            let mut requests = self.requests.lock();
+            if let Some(existing) = requests.iter().find(|r| same(r)) {
+                return (existing.clone(), false);
+            }
+            requests.push(request.clone());
+            prune(&mut requests, now);
+        }
+        self.save();
+        (request, true)
+    }
+
     /// Changes one request and answers it as changed; None when there is no such request.
     pub fn update(&self, id: &str, change: impl FnOnce(&mut FamilyRequest)) -> Option<FamilyRequest> {
         let changed = {
@@ -109,6 +133,47 @@ impl RequestStore {
         };
         self.save();
         Some(changed)
+    }
+
+    /// Changes one request only while `allowed` holds for it, checked and changed in one step,
+    /// so two callers never both see a waiting request and both change it. Err(None) when there
+    /// is no such request, Err(Some(it)) when `allowed` refused it as it is.
+    pub fn update_if(
+        &self,
+        id: &str,
+        allowed: impl FnOnce(&FamilyRequest) -> bool,
+        change: impl FnOnce(&mut FamilyRequest),
+    ) -> Result<FamilyRequest, Option<Box<FamilyRequest>>> {
+        let changed = {
+            let mut requests = self.requests.lock();
+            let request = requests.iter_mut().find(|r| r.id == id).ok_or(None)?;
+            if !allowed(request) {
+                return Err(Some(Box::new(request.clone())));
+            }
+            change(request);
+            request.clone()
+        };
+        self.save();
+        Ok(changed)
+    }
+
+    /// Cancels every waiting request of `name` (names compared ignoring case) and answers them.
+    pub fn cancel_pending_of(&self, name: &str) -> Vec<FamilyRequest> {
+        let canceled: Vec<FamilyRequest> = {
+            let mut requests = self.requests.lock();
+            requests
+                .iter_mut()
+                .filter(|r| r.state == RequestState::Pending && eq_ignore_case(&r.username, name))
+                .map(|r| {
+                    r.state = RequestState::Cancelled;
+                    r.clone()
+                })
+                .collect()
+        };
+        if !canceled.is_empty() {
+            self.save();
+        }
+        canceled
     }
 
     /// The member's weekly slots in use at `now`.
@@ -231,6 +296,89 @@ mod tests {
         let all = store.all();
         assert_eq!(all.len(), KEEP_COUNT);
         assert_eq!(all[0].id, live.id, "a live request is never dropped");
+    }
+
+    #[test]
+    fn two_callers_racing_change_a_waiting_request_once() {
+        let store = std::sync::Arc::new(RequestStore::in_memory());
+        for _ in 0..50 {
+            let made = store.create(request("alex", RequestState::Pending, now()), now());
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let racers: Vec<_> = (0..2)
+                .map(|n| {
+                    let (store, barrier, id) = (store.clone(), barrier.clone(), made.id.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        store
+                            .update_if(
+                                &id,
+                                |r| r.state == RequestState::Pending,
+                                |r| {
+                                    r.state = RequestState::Approved;
+                                    r.decided_by = Some(format!("approver-{n}"));
+                                },
+                            )
+                            .is_ok()
+                    })
+                })
+                .collect();
+            let won: usize = racers
+                .into_iter()
+                .map(|racer| usize::from(racer.join().expect("joins")))
+                .sum();
+            assert_eq!(won, 1, "exactly one approver decides");
+        }
+        assert!(matches!(
+            store.update_if("r_missing", |_| true, |_| {}),
+            Err(None)
+        ));
+    }
+
+    #[test]
+    fn the_same_ask_twice_at_once_is_one_request() {
+        let store = std::sync::Arc::new(RequestStore::in_memory());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let askers: Vec<_> = (0..4)
+            .map(|_| {
+                let (store, barrier) = (store.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store
+                        .create_unless(request("alex", RequestState::Pending, now()), now(), |r| {
+                            eq_ignore_case(&r.username, "alex") && is_live(r)
+                        })
+                        .1
+                })
+            })
+            .collect();
+        let made = askers
+            .into_iter()
+            .map(|asker| asker.join().expect("joins"))
+            .filter(|new| *new)
+            .count();
+        assert_eq!(made, 1);
+        assert_eq!(store.all().len(), 1);
+    }
+
+    #[test]
+    fn a_removed_members_waiting_requests_are_canceled() {
+        let store = RequestStore::in_memory();
+        store.create(request("alex", RequestState::Pending, now()), now());
+        store.create(request("ALEX", RequestState::Pending, now()), now());
+        store.create(request("alex", RequestState::Done, now()), now());
+        store.create(request("sam", RequestState::Pending, now()), now());
+        assert_eq!(store.cancel_pending_of("alex").len(), 2);
+        let states: Vec<(String, RequestState)> =
+            store.all().into_iter().map(|r| (r.username, r.state)).collect();
+        assert_eq!(
+            states,
+            [
+                ("alex".to_string(), RequestState::Cancelled),
+                ("ALEX".to_string(), RequestState::Cancelled),
+                ("alex".to_string(), RequestState::Done),
+                ("sam".to_string(), RequestState::Pending),
+            ]
+        );
     }
 
     #[test]

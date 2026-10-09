@@ -1108,7 +1108,21 @@ async fn published_stream_consumes_and_replenishes_three_track_session_pool() {
     let path = fixture.your_mix_stream_path().await;
     let token = RadioFixture::token_of(&path);
     fixture.wait_for_calls(READY_POOL_SIZE).await;
+    // A transcode counts as a call when it starts, so the runway's last song may still be on
+    // its way into the cache. The stream takes what is cached when it opens; wait for all of it.
+    let session = fixture
+        .state
+        .last_fm_radio_stream_sessions
+        .get(&token, None)
+        .expect("a session");
+    for _ in 0..1000 {
+        if fixture.state.last_fm_radio_streams.get_ready_pool(&session).len() >= READY_POOL_SIZE {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let original = fixture.pool_keys(&token);
+    let calls_before = fixture.transcoder.calls();
     assert_eq!(original.len(), 1, "{original:?}");
 
     fixture.transcoder.reset_started();
@@ -1133,7 +1147,12 @@ async fn published_stream_consumes_and_replenishes_three_track_session_pool() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let consumed = fixture.pool_keys(&token);
-    assert_eq!(consumed.len(), READY_POOL_SIZE - 1, "{consumed:?}");
+    assert_eq!(
+        consumed.len(),
+        READY_POOL_SIZE - 1,
+        "{consumed:?} after {} transcodes ({calls_before} before the stream)",
+        fixture.transcoder.calls()
+    );
     assert!(!consumed.contains(&original[0]));
 
     gate.set();

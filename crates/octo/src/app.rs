@@ -79,6 +79,9 @@ use crate::services::library::library_edit_service::{
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::library_write_gate::LibraryWriteGate;
+use crate::services::library::navidrome_song_list;
+use crate::services::library::tidy::worker::ListSongs;
+use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
@@ -182,6 +185,9 @@ pub struct AppInner {
     pub genre_backfill_journal: Arc<GenreBackfillJournal>,
     /// `GenreBackfillWorker`, singleton and hosted: its queue is the "GenreBackfillWorker" worker.
     pub genre_backfill_worker: Arc<GenreBackfillWorker>,
+    /// "Tidy artists": its run and plan beside the settings (`tidy-run.json`, `tidy-plan.json`)
+    /// and its undo journal (`tidy-journal.jsonl`); singleton and hosted.
+    pub tidy_worker: Arc<TidyWorker>,
     /// `AddSingleton<IAlbumCoverFinder, AlbumCoverFinder>()`: the largest cover of an album.
     pub album_cover_finder: Arc<dyn IAlbumCoverFinder>,
     /// `CoverUpgradeStore`: the cover upgrade run, `<config>/cover-upgrade.json`, and the found
@@ -1249,6 +1255,57 @@ impl LyricsLibraryJob {
     }
 }
 
+/// "Tidy artists", over the same services the downloads and the other library jobs use, so the
+/// records of a moved file follow it. `config_dir` None keeps its run, plan and journal in
+/// memory (handler tests).
+fn build_tidy(
+    settings: &Arc<SettingsStore>,
+    config_dir: Option<&Path>,
+    navidrome: &NavidromeServices,
+    clients: &MetadataClients,
+    stores: &Stores,
+    genre_journal: &Arc<GenreBackfillJournal>,
+) -> Arc<TidyWorker> {
+    let (identity, http, list_settings) = (
+        navidrome.navidrome_identity.clone(),
+        navidrome.http.clone(),
+        settings.clone(),
+    );
+    let list_songs: ListSongs = Arc::new(move || {
+        let (identity, http, settings) = (identity.clone(), http.clone(), list_settings.clone());
+        Box::pin(async move {
+            let base = settings.current().subsonic.url.clone();
+            let root = settings
+                .raw("Library:DownloadPath")
+                .unwrap_or_else(|| "./downloads".to_string());
+            navidrome_song_list::list(Some(&identity), Some(&http), base.as_deref(), &root).await
+        })
+    });
+    Arc::new(
+        TidyWorker::new(
+            Arc::new(TidyStore::new(
+                config_dir.map(|dir| dir.join("tidy-run.json")),
+                config_dir.map(|dir| dir.join("tidy-plan.json")),
+            )),
+            Arc::new(TidyJournal::new(
+                config_dir.map(|dir| dir.join("tidy-journal.jsonl")),
+            )),
+            settings.clone(),
+            TidyServices {
+                library: Some(navidrome.local_library.clone()),
+                music_brainz: Some(clients.music_brainz.clone()),
+                notices: Some(stores.notice_queue.clone()),
+                genre_journal: Some(genre_journal.clone()),
+                tag_edits: Some(stores.tag_edit_journal.clone()),
+                actions: Some(stores.library_action_journal.clone()),
+                history: Some(stores.download_history.clone()),
+                list_songs: Some(list_songs),
+            },
+        )
+        .with_write_gate(stores.library_write_gate.clone()),
+    )
+}
+
 /// The genre backfill and the cover upgrade of task 5-D. `config_dir` None keeps their runs and
 /// journals in memory (handler tests).
 struct GenreAndCoverJobs {
@@ -2053,6 +2110,18 @@ impl AppState {
             &stores.library_write_gate,
         );
         genre_cover_jobs.register_workers(&workers);
+        let tidy_worker = build_tidy(
+            &settings,
+            Some(&config_dir),
+            &navidrome,
+            &clients,
+            &stores,
+            &genre_cover_jobs.genre_backfill_journal,
+        );
+        {
+            let worker = tidy_worker.clone();
+            workers.register("TidyWorker", move |stopping| worker.clone().run(stopping));
+        }
         let acquisition = Acquisition::build(
             &settings,
             &stores,
@@ -2172,6 +2241,7 @@ impl AppState {
             genre_backfill_store: genre_cover_jobs.genre_backfill_store,
             genre_backfill_journal: genre_cover_jobs.genre_backfill_journal,
             genre_backfill_worker: genre_cover_jobs.genre_backfill_worker,
+            tidy_worker,
             album_cover_finder: genre_cover_jobs.album_cover_finder,
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,
@@ -2361,6 +2431,14 @@ impl AppState {
             &stores.tag_edit_journal,
             &stores.library_write_gate,
         );
+        let tidy_worker = build_tidy(
+            &settings,
+            None,
+            &navidrome,
+            &clients,
+            &stores,
+            &genre_cover_jobs.genre_backfill_journal,
+        );
         // No workers: the acquisition worker, the resumer and the cache cleanup are not run.
         let acquisition = Acquisition::build(
             &settings,
@@ -2492,6 +2570,7 @@ impl AppState {
             genre_backfill_store: genre_cover_jobs.genre_backfill_store,
             genre_backfill_journal: genre_cover_jobs.genre_backfill_journal,
             genre_backfill_worker: genre_cover_jobs.genre_backfill_worker,
+            tidy_worker,
             album_cover_finder: genre_cover_jobs.album_cover_finder,
             cover_upgrade_store: genre_cover_jobs.cover_upgrade_store,
             cover_upgrade_journal: genre_cover_jobs.cover_upgrade_journal,

@@ -1273,6 +1273,70 @@
           </div>
         </div>
 
+        <div class="set-section" id="library-tidy">
+          <div class="set-head">
+            <h3 class="set-title">Tidy artists</h3>
+            <p class="set-desc">New downloads are filed under their first artist, with one spelling per artist and guests listed in their own tag. This brings music already in your library in line. Nothing is written until you have seen a preview.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Which files</div>
+                <div class="set-info-d">Every file is read either way, because the spelling most of your library uses is the one that wins. Only downloads Octo made are changed, or the whole library, your own rips and purchases included.</div>
+                <div class="set-info-more">The whole library asks you to type the music path to confirm.</div>
+              </div>
+              <select class="set-input" id="library-tidy-scope">
+                <option value="OctoDownloads">Downloads Octo made</option>
+                <option value="WholeLibrary">The whole library</option>
+              </select>
+              <div class="set-info-d scope-hint" id="library-tidy-scope-hint" role="status" hidden>You changed which files. Preview again before applying.</div>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Leave out</div>
+                <div class="set-info-d">Folders the tidy never changes, one per line, as they sit under the music folder (for example <code>Various Artists</code>).</div>
+              </div>
+              <textarea class="set-input" id="library-tidy-excluded" rows="3" spellcheck="false"></textarea>
+            </div>
+            <div class="notice notice-warn">
+              <strong>Back up your music folder first.</strong> Apply rewrites artist tags, waits for Navidrome to finish a scan that saw them, and only then moves whole album folders, so each song keeps its stars, plays and playlist entries. That needs Navidrome 0.55 or newer. A rename marked with a warning changes which artist Navidrome files the songs under, and stars and ratings on the old artist are lost for every user, so those rows only run when you tick them. Undo moves folders back and restores the artist tags.
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Preview</div><div class="set-info-d">Reads every file and lists what would change and what is left alone, with the reason. Writes nothing. Folders whose songs say nothing are looked up on MusicBrainz, about one a second, so a large library may need a second preview to finish asking.</div></div>
+              <button class="btn btn-ghost" type="button" id="library-tidy-preview">Preview changes</button>
+            </div>
+            <div id="library-tidy-status" class="set-row stack"></div>
+            <div class="set-row" id="library-tidy-filter" hidden>
+              <div class="set-info"><div class="set-info-t">Show</div></div>
+              <select class="set-input" id="library-tidy-kind">
+                <option value="Changes">Every change</option>
+                <option value="Split">Folders split</option>
+                <option value="Respell">Spellings</option>
+                <option value="Rename">Renames that lose stars</option>
+                <option value="Guest">Guests</option>
+                <option value="Skip">Left alone</option>
+              </select>
+            </div>
+            <div id="library-tidy-results"></div>
+            <div class="set-row" id="library-tidy-pager" hidden>
+              <div class="set-info-d" id="library-tidy-page-label"></div>
+              <div class="genre-preset-actions">
+                <button class="btn btn-ghost" type="button" id="library-tidy-prev">Previous</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-next">Next</button>
+              </div>
+            </div>
+            <div class="set-row" id="library-tidy-actions">
+              <div class="set-info"><div class="set-info-t">Apply</div><div class="set-info-d" id="library-tidy-apply-note">Once a preview has finished, for the same files it previewed.</div></div>
+              <div class="genre-preset-actions">
+                <button class="btn" type="button" id="library-tidy-apply" hidden>Apply these changes</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-resume" hidden>Resume</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-cancel" hidden>Cancel</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-undo" hidden>Undo the last tidy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Mark explicit songs</h3>

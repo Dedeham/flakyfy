@@ -548,6 +548,39 @@ async fn settings_post_refusals_read_as_recorded() {
     );
 }
 
+/// The editor sends every action back. Wrong lyrics and Wrong cover are saved only when someone
+/// changed them, so an untouched settings file still reads in a build that does not know them.
+#[tokio::test]
+async fn settings_save_keeps_untouched_lyrics_and_cover_actions_out_of_the_file() {
+    let (state, app) = factory();
+    let body = r#"{"LibraryActions":{"Actions":[
+        {"Action":"Delete","Name":"Delete","Enabled":true,"Rating":1},
+        {"Action":"WrongLyrics","Name":"Wrong lyrics","Enabled":false,"Rating":0},
+        {"Action":"WrongCover","Name":" Wrong cover ","Enabled":false,"Rating":null}
+    ]}}"#;
+    let reply = admin_write(&app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let saved = std::fs::read_to_string(state.settings_writer.file_path()).expect("the file was written");
+    assert!(saved.contains("\"Delete\""), "{saved}");
+    assert!(
+        !saved.contains("WrongLyrics") && !saved.contains("WrongCover"),
+        "{saved}"
+    );
+
+    // Changed from the defaults, they are saved.
+    let body = r#"{"LibraryActions":{"Actions":[
+        {"Action":"WrongLyrics","Name":"Wrong lyrics","Enabled":true,"Rating":0},
+        {"Action":"WrongCover","Name":"Bad art","Enabled":false,"Rating":0}
+    ]}}"#;
+    let reply = admin_write(&app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let saved = std::fs::read_to_string(state.settings_writer.file_path()).expect("the file was written");
+    assert!(
+        saved.contains("WrongLyrics") && saved.contains("Bad art"),
+        "{saved}"
+    );
+}
+
 #[tokio::test]
 async fn settings_post_merges_the_patch_and_echoes_it_with_secrets_masked() {
     let (state, app) = factory();

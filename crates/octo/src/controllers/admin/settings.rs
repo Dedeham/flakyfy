@@ -744,6 +744,45 @@ pub fn validate_library_actions(
     Ok(None)
 }
 
+/// A Wrong lyrics or Wrong cover definition exactly as the defaults have it, which the editor
+/// sends back with every save. Such a definition is left out of the file: a build that does not
+/// know these actions refuses a settings file naming them, so they are written only once someone
+/// changes them.
+fn untouched_answer_action(definition: &JsonObject) -> bool {
+    let field = |name: &str| key_of(definition, name).and_then(|key| definition.get(&key));
+    let action = match field("Action") {
+        Some(Node::String(name)) => LibraryAction::ALL
+            .into_iter()
+            .find(|action| format!("{action:?}").eq_ignore_ascii_case(name.trim())),
+        Some(Node::Number(number)) => number.parse().ok().and_then(LibraryAction::from_index),
+        _ => None,
+    };
+    let Some(action) = action.filter(|action| action.leaves_the_audio()) else {
+        return false;
+    };
+    let name = string_value(field("Name")).map(str::trim).unwrap_or("");
+    let enabled = matches!(field("Enabled"), Some(Node::Bool(true)));
+    let rating = match field("Rating") {
+        None | Some(Node::Null) => Some(action.default_rating()),
+        Some(Node::Number(number)) => number.parse::<i32>().ok(),
+        Some(_) => None,
+    };
+    (name.is_empty() || name == action.default_name()) && !enabled && rating == Some(action.default_rating())
+}
+
+/// Takes the untouched Wrong lyrics and Wrong cover definitions out of a settings patch.
+fn drop_untouched_answer_actions(patch: &mut JsonObject) {
+    let Some(actions) = child_mut(patch, "LibraryActions") else {
+        return;
+    };
+    let Some(key) = key_of(actions, "Actions") else {
+        return;
+    };
+    if let Some(Node::Array(definitions)) = actions.get_mut(&key) {
+        definitions.retain(|node| !node.as_object().is_some_and(untouched_answer_action));
+    }
+}
+
 /// `Enum.TryParse<GenreMatchMode>(value, ignoreCase: true, out _)`: a name in any case, a
 /// number (defined or not), or a comma list of either.
 fn parses_as_match_mode(value: &str) -> bool {
@@ -928,6 +967,8 @@ pub async fn save_settings(
     {
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
+
+    drop_untouched_answer_actions(&mut patch);
 
     // A saved credential never follows a new address it was not typed again for: with the admin
     // API open to the LAN, that would hand it to whatever server the address names.

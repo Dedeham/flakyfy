@@ -43,6 +43,11 @@ pub const ACCOUNT_REDEEMS: usize = 10;
 pub const WINDOW: TimeDelta = TimeDelta::minutes(15);
 /// Live hand-overs kept at most; the oldest go first.
 const MAX_RECORDS: usize = 2_000;
+/// Live hand-overs one account keeps at most; its own oldest go first, so starting many never
+/// pushes out another account's.
+pub const MAX_PER_ACCOUNT: usize = 8;
+/// How often ended hand-overs are dropped from memory, boxes nobody fetched included.
+pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
 /// Throttle keys kept at most.
 const MAX_KEYS: usize = 10_000;
 
@@ -179,7 +184,15 @@ impl Handover {
         let expires = now + TOKEN_TTL;
         let mut records = self.records.lock();
         records.retain(|r| !r.ended(now));
-        if records.len() >= MAX_RECORDS {
+        let own: Vec<usize> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| eq_ignore_case(&r.user, user.trim()))
+            .map(|(at, _)| at)
+            .collect();
+        if own.len() >= MAX_PER_ACCOUNT {
+            records.remove(own[0]);
+        } else if records.len() >= MAX_RECORDS {
             records.remove(0);
         }
         records.push(Record {
@@ -352,6 +365,31 @@ impl Handover {
         }
     }
 
+    /// Drops every ended hand-over, with any box nobody fetched, and the throttle counts that
+    /// no longer count. Runs every [`SWEEP_EVERY`] while Family is on, so nothing outlives its
+    /// time in memory waiting for another hand-over call.
+    pub fn sweep(&self) {
+        let now = self.now();
+        self.records.lock().retain(|r| !r.ended(now));
+        for map in [&self.peer_failures, &self.account_redeems] {
+            map.lock()
+                .retain(|_, times| times.back().is_some_and(|at| now - *at < WINDOW));
+        }
+    }
+
+    /// Ends every hand-over of `user`, under way or waiting: their password changed, so what
+    /// was started with the old one stops.
+    pub fn end_user(&self, user: &str) {
+        self.records
+            .lock()
+            .retain(|r| !eq_ignore_case(&r.user, user.trim()));
+    }
+
+    /// Hand-over records held in memory, ended ones not yet dropped included.
+    pub fn held(&self) -> usize {
+        self.records.lock().len()
+    }
+
     /// Live hand-overs, for tests.
     pub fn live(&self) -> usize {
         let now = self.now();
@@ -491,6 +529,114 @@ mod tests {
         h.put_box("alex", &token, &"x".repeat(MAX_BOX))
             .expect("the largest fits");
         assert_eq!(h.fetch(&id).sealed.map(|b| b.len()), Some(MAX_BOX));
+    }
+
+    #[test]
+    fn an_unfetched_box_and_its_record_leave_memory_sixty_seconds_on() {
+        let (h, now) = handover();
+        let (token, _) = h.start("alex");
+        h.redeem("10.0.0.2", &token, "Pixel", "Android")
+            .expect("redeemed");
+        h.decide("alex", &token, true).expect("allowed");
+        h.put_box("alex", &token, "sealed-box").expect("kept");
+        *now.lock() += BOX_TTL - TimeDelta::seconds(1);
+        h.sweep();
+        assert_eq!(h.held(), 1, "the box still waits within its minute");
+        *now.lock() += TimeDelta::seconds(1);
+        h.sweep();
+        assert_eq!(h.held(), 0, "nobody fetched it, and it is gone all the same");
+        // So does a token nobody redeemed, a decision nobody made and a box never sent.
+        h.start("alex");
+        let (waiting, _) = h.start("alex");
+        h.redeem("10.0.0.2", &waiting, "Pixel", "Android")
+            .expect("redeemed");
+        let (allowed, _) = h.start("alex");
+        h.redeem("10.0.0.3", &allowed, "Pixel", "Android")
+            .expect("redeemed");
+        h.decide("alex", &allowed, true).expect("allowed");
+        assert_eq!(h.held(), 3);
+        *now.lock() += TOKEN_TTL.max(DECIDE_TTL);
+        h.sweep();
+        assert_eq!(h.held(), 0);
+    }
+
+    #[test]
+    fn deny_and_every_timeout_leave_nothing_behind() {
+        let (h, now) = handover();
+        let (token, _) = h.start("alex");
+        let id = h
+            .redeem("10.0.0.2", &token, "Pixel", "Android")
+            .expect("redeemed");
+        h.decide("alex", &token, false).expect("denied");
+        *now.lock() += BOX_TTL;
+        h.sweep();
+        assert_eq!(h.held(), 0, "a deny nobody read");
+        assert_eq!(h.fetch(&id).state, HandoverState::Expired);
+        assert!(h.pending("alex", &token).is_err());
+        assert!(h.decide("alex", &token, true).is_err());
+        assert!(h.put_box("alex", &token, "box").is_err());
+        // The throttle's counts go too once their window is over.
+        h.redeem("10.0.0.9", "made-up", "x", "y").expect_err("wrong");
+        *now.lock() += WINDOW;
+        h.sweep();
+        assert!(h.peer_failures.lock().is_empty());
+        assert!(h.account_redeems.lock().is_empty());
+    }
+
+    #[test]
+    fn many_hand_overs_from_one_account_never_push_out_another_accounts() {
+        let (h, _) = handover();
+        let (sams, _) = h.start("sam");
+        let mut last = String::new();
+        for _ in 0..(MAX_RECORDS + 10) {
+            last = h.start("alex").0;
+        }
+        assert!(h.held() <= MAX_PER_ACCOUNT + 1, "{}", h.held());
+        assert_eq!(h.pending("sam", &sams).expect("still there"), None);
+        h.redeem("10.0.0.2", &last, "Pixel", "Android")
+            .expect("the newest of alex's works");
+    }
+
+    #[test]
+    fn ending_an_accounts_hand_overs_leaves_everyone_elses() {
+        let (h, _) = handover();
+        let (alexs, _) = h.start("alex");
+        let id = h
+            .redeem("10.0.0.2", &alexs, "Pixel", "Android")
+            .expect("redeemed");
+        h.decide("alex", &alexs, true).expect("allowed");
+        h.put_box("alex", &alexs, "box").expect("kept");
+        let (sams, _) = h.start("sam");
+        h.end_user("ALEX");
+        assert_eq!(
+            h.fetch(&id),
+            Fetched {
+                state: HandoverState::Expired,
+                sealed: None
+            }
+        );
+        assert!(h.pending("alex", &alexs).is_err());
+        assert_eq!(h.pending("sam", &sams).expect("still there"), None);
+    }
+
+    #[test]
+    fn redemptions_of_one_token_from_many_threads_leave_exactly_one_waiting() {
+        let (h, _) = handover();
+        let h = Arc::new(h);
+        let (token, _) = h.start("alex");
+        let tries: Vec<_> = (0..32)
+            .map(|n| {
+                let (h, token) = (h.clone(), token.clone());
+                std::thread::spawn(move || h.redeem(&format!("10.3.0.{n}"), &token, "x", "y").is_ok())
+            })
+            .collect();
+        let won = tries
+            .into_iter()
+            .map(|t| t.join().expect("ran"))
+            .filter(|won| *won)
+            .count();
+        assert_eq!(won, 1);
+        assert!(h.pending("alex", &token).expect("own").is_some());
     }
 
     #[test]

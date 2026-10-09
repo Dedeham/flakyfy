@@ -113,6 +113,9 @@ pub async fn fetch(State(state): State<AppState>, Path(id): Path<String>) -> Res
 
 /// `GET /api/family/signin/{token}/pending`: the new device waiting for an answer, or 204.
 pub async fn pending(State(state): State<AppState>, web: Web, Path(token): Path<String>) -> Response {
+    if let Err(res) = require_on(&state) {
+        return res;
+    }
     let signed = match web.signed(&state).await {
         Ok(signed) => signed,
         Err(res) => return res,
@@ -137,6 +140,9 @@ pub async fn decide(
     Path(token): Path<String>,
     body: Bytes,
 ) -> Response {
+    if let Err(res) = require_on(&state) {
+        return res;
+    }
     let signed = match web.signed(&state).await {
         Ok(signed) => signed,
         Err(res) => return res,
@@ -168,6 +174,9 @@ pub async fn put_box(
     Path(token): Path<String>,
     body: Bytes,
 ) -> Response {
+    if let Err(res) = require_on(&state) {
+        return res;
+    }
     let signed = match web.signed(&state).await {
         Ok(signed) => signed,
         Err(res) => return res,

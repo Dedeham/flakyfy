@@ -1351,8 +1351,8 @@ impl FamilyService {
             member.account_password = RESET_MARK.to_string();
             state.family_store.upsert_member(member.clone());
         }
-        state.family_store.drop_web_sessions(&member.username);
-        state.browse_sessions.revoke_user(&member.username);
+        // Every link sent before goes too: only the one made now sets the next password.
+        self.sign_out_everywhere(state, &member.username);
         let link = self.invite(state, &member.username, base)?;
         info!("FAMILY password of {} reset by {}", member.username, actor.user);
         Ok(link)
@@ -1472,10 +1472,21 @@ impl FamilyService {
             member.display_name = name.chars().take(64).collect();
         }
         state.family_store.upsert_member(member.clone());
-        state.family_store.drop_web_sessions(&member.username);
-        state.browse_sessions.revoke_user(&member.username);
+        self.sign_out_everywhere(state, &member.username);
         info!("FAMILY {} joined", member.username);
         Ok(member.username)
+    }
+
+    /// Ends everything a member is signed in with apart from the password itself, at once:
+    /// every web player and Family page session, every radio stream they started, every
+    /// sign-in hand-over under way, and every sign-up link not used yet. A new password (chosen,
+    /// changed or reset) comes with this.
+    fn sign_out_everywhere(&self, state: &AppState, username: &str) {
+        state.family_store.drop_web_sessions(username);
+        state.browse_sessions.revoke_user(username);
+        state.last_fm_radio_stream_sessions.revoke_user(username);
+        self.handover.end_user(username);
+        state.family_store.drop_invites(username);
     }
 
     /// Whether `password` is the member's account password.
@@ -1484,27 +1495,37 @@ impl FamilyService {
     }
 
     /// Changes a member's account password after checking the current one: "sign out
-    /// everywhere". Every app needs the new password, and every web player and Family page
-    /// session of theirs ends.
+    /// everywhere". Every app needs the new password, and everything else they were signed in
+    /// with ends ([`FamilyService::sign_out_everywhere`]). The current password is a sign-in
+    /// like any other: a wrong one counts under `keys` (the address, peer and account it came
+    /// from), and once they are used up the change waits.
     pub async fn change_password(
         &self,
         state: &AppState,
         user: &str,
         current: &str,
         next: &str,
+        keys: &super::member_bridge::TryKeys,
     ) -> FamilyResult<()> {
         let mut member = state
             .family_store
             .member(user)
             .ok_or_else(|| FamilyError::NotFound("This account is not in the family.".into()))?;
+        let throttle = &state.family_bridge.throttle;
+        if !throttle.attempt_by(keys) {
+            return Err(FamilyError::Throttled(
+                "Too many wrong passwords. Try again in 15 minutes.".into(),
+                super::member_bridge::FAILURE_WINDOW,
+            ));
+        }
         if !Self::check_member_password(state, &member, current) {
             return Err(FamilyError::Refused("Your current password is not right.".into()));
         }
+        throttle.forgive_by(keys);
         passwords::acceptable(next).map_err(|e| FamilyError::Invalid(e.into()))?;
         member.account_password = sealed(state, next)?;
         state.family_store.upsert_member(member.clone());
-        state.family_store.drop_web_sessions(&member.username);
-        state.browse_sessions.revoke_user(&member.username);
+        self.sign_out_everywhere(state, &member.username);
         info!("FAMILY {} changed their password", member.username);
         Ok(())
     }

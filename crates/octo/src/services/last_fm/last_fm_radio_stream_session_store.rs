@@ -220,6 +220,21 @@ impl LastFmRadioStreamSessionStore {
         self.sessions.lock().remove(token);
     }
 
+    /// Ends every station session `username` started (ignoring case): their password changed,
+    /// so the streams begun with the old one stop. Answers how many there were.
+    pub fn revoke_user(&self, username: &str) -> usize {
+        let mut sessions = self.sessions.lock();
+        let gone: Vec<String> = sessions
+            .values()
+            .filter(|session| dotnet::eq_ignore_case(session.username.trim(), username.trim()))
+            .map(|session| session.token.clone())
+            .collect();
+        for token in &gone {
+            sessions.remove(token);
+        }
+        gone.len()
+    }
+
     pub fn count(&self) -> usize {
         self.sessions.lock().len()
     }
@@ -396,5 +411,21 @@ mod tests {
         assert!(store.get(&first, Some(now)).is_none());
         store.remove("missing");
         assert!(!store.attach_ready_pool("missing", &[], None));
+    }
+
+    #[test]
+    fn revoking_a_listener_ends_only_their_sessions() {
+        let store = LastFmRadioStreamSessionStore::new();
+        let alex = [
+            store.issue("alex", "s1", [("u", "alex")], None),
+            store.issue("Alex", "s2", [("u", "Alex")], None),
+        ];
+        let sam = store.issue("sam", "s1", [("u", "sam")], None);
+        assert_eq!(store.revoke_user("ALEX"), 2);
+        for token in &alex {
+            assert!(store.get(token, None).is_none());
+        }
+        assert!(store.get(&sam, None).is_some());
+        assert_eq!(store.revoke_user("alex"), 0);
     }
 }

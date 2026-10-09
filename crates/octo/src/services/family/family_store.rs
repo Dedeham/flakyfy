@@ -170,6 +170,8 @@ impl Default for FamilyFile {
 
 /// Detected devices kept at most; the longest unseen go first.
 pub const DETECTED_LIMIT: usize = 200;
+/// Devices kept for one member at most; the longest unseen go first.
+pub const MEMBER_DEVICE_LIMIT: usize = 100;
 
 /// The store behind `family.json`. Every change but a device's last-seen details is written at
 /// once; those are kept in memory and written by [`FamilyStore::flush_if_dirty`].
@@ -382,6 +384,24 @@ impl FamilyStore {
                 false
             }
             None => {
+                // A member's list stays bounded however many installs sign in: the device seen
+                // longest ago goes, one holding a web player session last.
+                let own = state
+                    .devices
+                    .iter()
+                    .filter(|d| eq_ignore_case(&d.username, username))
+                    .count();
+                if own >= MEMBER_DEVICE_LIMIT
+                    && let Some(stalest) = state
+                        .devices
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, d)| eq_ignore_case(&d.username, username))
+                        .min_by_key(|(_, d)| (d.navidrome_jwt.is_some(), d.last_seen.unwrap_or(d.created)))
+                        .map(|(at, _)| at)
+                {
+                    state.devices.remove(stalest);
+                }
                 let app = app_label_kept(app);
                 state.devices.push(Device {
                     id: id.to_string(),
@@ -418,6 +438,67 @@ impl FamilyStore {
                 }
             }
             dropped
+        };
+        if dropped > 0 {
+            self.save();
+        }
+        dropped
+    }
+
+    /// Starts a web player session on a member's device with its real Navidrome sign-in
+    /// (sealed), only while `account_password` (as it was when the sign-in was checked) is still
+    /// the member's and they are not paused. A password changed or reset while Navidrome was
+    /// signing them in makes no session. Answers whether it started.
+    pub fn start_web_session(
+        &self,
+        id: &str,
+        username: &str,
+        account_password: &str,
+        sealed: Option<String>,
+    ) -> bool {
+        let mut state = self.state.lock();
+        let current = state.members.iter().any(|m| {
+            eq_ignore_case(&m.username, username) && m.account_password == account_password && !m.suspended
+        });
+        if !current {
+            return false;
+        }
+        let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|d| d.id == id && eq_ignore_case(&d.username, username))
+        else {
+            return false;
+        };
+        device.navidrome_jwt = sealed;
+        self.dirty.store(true, Ordering::Release);
+        true
+    }
+
+    /// Keeps the fresh real Navidrome sign-in a web player session was handed, only while that
+    /// session is still on. One ended meanwhile (the password changed, the member was paused or
+    /// signed out everywhere) stays ended. Answers whether it was kept.
+    pub fn renew_web_session(&self, id: &str, sealed: Option<String>) -> bool {
+        let mut state = self.state.lock();
+        let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|d| d.id == id && d.navidrome_jwt.is_some())
+        else {
+            return false;
+        };
+        device.navidrome_jwt = sealed;
+        self.dirty.store(true, Ordering::Release);
+        true
+    }
+
+    /// Drops every sign-up link of `username` not used yet. Answers how many there were.
+    pub fn drop_invites(&self, username: &str) -> usize {
+        let dropped = {
+            let mut state = self.state.lock();
+            let before = state.invites.len();
+            state.invites.retain(|i| !eq_ignore_case(&i.username, username));
+            before - state.invites.len()
         };
         if dropped > 0 {
             self.save();
@@ -911,6 +992,62 @@ mod tests {
         assert!(store.device("d_1").expect("there").navidrome_jwt.is_none());
         assert!(store.device("d_3").expect("there").navidrome_jwt.is_some());
         assert_eq!(store.drop_web_sessions("alex"), 0);
+    }
+
+    #[test]
+    fn a_web_session_starts_only_with_the_password_it_was_checked_with_and_renews_only_while_on() {
+        let store = FamilyStore::in_memory();
+        store.upsert_member(member("alex"));
+        store.add_device(device("d_1", "alex"));
+        store.add_device(device("d_2", "sam"));
+        let checked = member("alex").account_password;
+        assert!(!store.start_web_session("d_1", "alex", "sealed:OTHER", Some("sealed:J".into())));
+        assert!(!store.start_web_session("d_2", "alex", &checked, Some("sealed:J".into())));
+        assert!(store.device("d_1").expect("there").navidrome_jwt.is_none());
+        assert!(store.start_web_session("d_1", "ALEX", &checked, Some("sealed:J".into())));
+        assert!(store.renew_web_session("d_1", Some("sealed:K".into())));
+        assert_eq!(
+            store.device("d_1").expect("there").navidrome_jwt.as_deref(),
+            Some("sealed:K")
+        );
+        store.drop_web_sessions("alex");
+        assert!(!store.renew_web_session("d_1", Some("sealed:L".into())));
+        assert!(store.device("d_1").expect("there").navidrome_jwt.is_none());
+        let mut paused = member("alex");
+        paused.suspended = true;
+        store.upsert_member(paused);
+        assert!(!store.start_web_session("d_1", "alex", &checked, Some("sealed:J".into())));
+    }
+
+    #[test]
+    fn a_members_device_list_stays_bounded_keeping_the_newest_and_web_sessions() {
+        let store = FamilyStore::in_memory();
+        store.add_device(device("d_sam", "sam"));
+        store.add_device(device("d_web", "alex"));
+        assert!(store.set_device_jwt("d_web", Some("sealed:J".into())));
+        for n in 0..(MEMBER_DEVICE_LIMIT + 30) {
+            let at = now() + TimeDelta::seconds(n as i64);
+            assert!(store.record_device(&format!("d_{n}"), "alex", "App", NetworkPlace::Home, None, at));
+        }
+        let alex = store.devices_of("alex");
+        assert_eq!(alex.len(), MEMBER_DEVICE_LIMIT);
+        assert!(store.device(&format!("d_{}", MEMBER_DEVICE_LIMIT + 29)).is_some());
+        assert!(store.device("d_0").is_none(), "the stalest went");
+        assert!(store.device("d_web").is_some(), "a web player session stays");
+        assert!(store.device("d_sam").is_some(), "other members keep theirs");
+    }
+
+    #[test]
+    fn dropping_invites_ends_only_that_members_links() {
+        let store = FamilyStore::in_memory();
+        let later = now() + TimeDelta::days(7);
+        store.add_invite("alex-1", "alex", later);
+        store.add_invite("alex-2", "Alex", later);
+        store.add_invite("sam-1", "sam", later);
+        assert_eq!(store.drop_invites("alex"), 2);
+        assert_eq!(store.take_invite("alex-1", now()), None);
+        assert_eq!(store.take_invite("alex-2", now()), None);
+        assert_eq!(store.take_invite("sam-1", now()).as_deref(), Some("sam"));
     }
 
     #[test]

@@ -129,9 +129,9 @@ struct Inner {
 const SEARCH_ENRICH_LIMIT: usize = 12;
 
 /// The whole slice a search can return. Everything between the first page and this is
-/// filled from cache and warmed for next time, because a row with no enrichment falls
-/// back to a flat 180 and a page of identical 3:00 rows is worse than a page of
-/// approximate ones. Deezer's length is the approximation - it is not always the
+/// filled from cache and warmed for next time, because a row with no enrichment goes out
+/// with no length at all, and a page of approximate lengths is better than a page of
+/// none. Deezer's length is the approximation - it is not always the
 /// recording that plays - and the exact value is resolved when a row is opened or
 /// played, where getSong and the native detail endpoint both call
 /// ResolveTopDurationsAsync.
@@ -139,8 +139,8 @@ const BACKGROUND_ENRICH_LIMIT: usize = 60;
 
 // ---- Lengths for rows that went out without one ---------------------------------
 //
-// About half of all outside songs reached clients with the 180s placeholder: search
-// rows past the first page, and every station row Last.fm gave no length for. The
+// About half of all outside songs would reach clients with no length: search rows past
+// the first page, and every station row Last.fm gave no length for. The
 // station path never looked a length up at all, and what the search warm fetched only
 // reached Deezer's in-memory cache, so a song got its length back on a repeat search at
 // best and lost it again on a restart.
@@ -864,11 +864,10 @@ impl IMusicMetadataService for SoulseekMetadataService {
             .lookup(&external_id)
             .and_then(|routing| SongLength::shown(&routing.lock()).0);
 
-        // 180 is the fallback when we don't know the real duration: most songs
-        // are 3-5 min so it's a less-bad guess than 0 (which would prevent
-        // clients from rendering a scrub bar at all). The Octo app knows this
-        // value and shows no length for it rather than a wrong one.
-        let effective_duration = remembered.or(duration_seconds).unwrap_or(180);
+        // No length is known: the song goes out without one rather than with a guess. A
+        // made-up length misleads a player planning a crossfade, while a missing one only
+        // waits for the stream to report the real length.
+        let effective_duration = remembered.or(duration_seconds.filter(|&d| d > 0));
         let explicit = registry
             .lookup(&external_id)
             .and_then(|routing| routing.lock().explicit_content);
@@ -878,7 +877,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
             title: title.to_string(),
             artist: artist.to_string(),
             album: String::new(),
-            duration: Some(effective_duration),
+            duration: effective_duration,
             explicit_content_lyrics: explicit,
             is_local: false,
             external_provider: Some(Self::PROVIDER_NAME.to_string()),
@@ -894,7 +893,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
         let first_keys: Vec<(String, String, String)> = external.iter().map(|s| key_of(s)).collect();
 
         // First-page rows Deezer gave no length for. They join the background lookup below
-        // rather than going out as 3:00 for good.
+        // rather than going out with no length for good.
         let missed: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
         futures::stream::iter(external)
             .for_each_concurrent(8, |song| {
@@ -927,6 +926,12 @@ impl IMusicMetadataService for SoulseekMetadataService {
         inner.warm_lengths(first_missed.chain(cold));
     }
 
+    fn remember_file_length(&self, external_id: &str, seconds: i32) {
+        self.inner
+            .id_registry
+            .remember_length(external_id, Some(seconds), LengthSource::File);
+    }
+
     fn complete_song_lengths(&self, songs: &mut [Song]) {
         let inner = &self.inner;
         let mut cold = Vec::new();
@@ -942,7 +947,11 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 if r.kind != RoutingKind::Song || !r.has_artist_title() {
                     continue;
                 }
-                // Minting the song already applied whatever the registry remembered.
+                // A song rebuilt from its id (getSong) carries only the routing's own length,
+                // so a row with none takes the length the registry remembered for display.
+                if song.duration.is_none_or(|d| d <= 0) {
+                    song.duration = SongLength::shown(&r).0.or(r.duration).filter(|&d| d > 0);
+                }
                 if SongLength::has_metadata_length(&r) {
                     continue;
                 }

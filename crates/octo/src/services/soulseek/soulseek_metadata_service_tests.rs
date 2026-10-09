@@ -788,7 +788,7 @@ async fn a_free_text_search_is_split_at_its_first_space() {
         (songs[0].artist.as_str(), songs[0].title.as_str()),
         ("Massive", "Attack Teardrop")
     );
-    assert_eq!(songs[0].duration, Some(180));
+    assert_eq!(songs[0].duration, None);
     let one_word = h.service.search_songs("Teardrop", 20).await;
     assert_eq!(
         (one_word[0].artist.as_str(), one_word[0].title.as_str()),
@@ -988,7 +988,7 @@ impl LengthFixture {
 async fn placeholder_carries_the_remembered_length_instead_of_the_placeholder() {
     let fixture = LengthFixture::new().await;
     let first = fixture.search("Justice", "Genesis").await;
-    assert_eq!(first.duration, Some(180));
+    assert_eq!(first.duration, None);
 
     fixture
         .registry
@@ -997,6 +997,37 @@ async fn placeholder_carries_the_remembered_length_instead_of_the_placeholder() 
     let next = fixture.search("Justice", "Genesis").await;
     assert_eq!(next.id, first.id);
     assert_eq!(next.duration, Some(234));
+}
+
+#[tokio::test]
+async fn placeholder_with_no_length_goes_out_without_one() {
+    let fixture = LengthFixture::new().await;
+    assert_eq!(fixture.search("Nobody", "Nothing").await.duration, None);
+    // A zero from a source that writes "unknown" as 0 is no length either.
+    assert_eq!(
+        fixture.search_with("Nobody", "Else", Some(0)).await.duration,
+        None
+    );
+}
+
+#[tokio::test]
+async fn get_song_with_no_length_of_its_own_takes_the_remembered_one() {
+    let fixture = LengthFixture::new().await;
+    fixture.deezer("Justice Genesis", 234);
+    let row = fixture.station_row("Justice", "Genesis").await;
+    assert_eq!(fixture.shown(&row), (Some(234), LengthSource::Deezer));
+
+    // The routing's own length is the download's expectation and was never set, so the
+    // song read back by its id has none until the remembered one is applied.
+    let song = fixture
+        .service
+        .get_song("SOULSEEK", &row.id)
+        .await
+        .expect("registered");
+    assert_eq!(song.duration, None);
+    let mut one = [song];
+    fixture.service.complete_song_lengths(&mut one);
+    assert_eq!(one[0].duration, Some(234));
 }
 
 #[tokio::test]
@@ -1059,7 +1090,7 @@ async fn complete_song_lengths_implausible_video_leaves_the_song_without_a_lengt
 
     assert_eq!(fixture.shown(&song), (None, LengthSource::None));
     let next = fixture.search("Someone", "Live Set").await;
-    assert_eq!(next.duration, Some(180));
+    assert_eq!(next.duration, None);
 }
 
 #[tokio::test]
@@ -1118,7 +1149,7 @@ async fn resolve_top_durations_implausible_video_keeps_the_shown_length() {
 
     fixture.service.resolve_top_durations(&mut songs, false).await;
 
-    assert_eq!(songs[0].duration, Some(180));
+    assert_eq!(songs[0].duration, None);
     assert_eq!(
         fixture
             .registry
@@ -1139,7 +1170,7 @@ async fn resolve_top_durations_in_the_background_leaves_the_song_and_writes_the_
 
     fixture.service.resolve_top_durations(&mut songs, true).await;
 
-    assert_eq!(songs[0].duration, Some(180));
+    assert_eq!(songs[0].duration, None);
     let routing = fixture
         .registry
         .lookup(&songs[0].id)
@@ -1234,7 +1265,7 @@ async fn a_search_page_is_enriched_from_the_catalog_and_its_misses_warmed() {
     fixture.service.last_length_warm().await;
 
     assert_eq!(songs[0].duration, Some(234));
-    assert_eq!(songs[1].duration, Some(180));
+    assert_eq!(songs[1].duration, None);
     assert_eq!(songs[2].duration, Some(1));
     assert_eq!(fixture.shown(&songs[0]), (Some(234), LengthSource::Deezer));
     // The miss went to the background lookup, which found the video's length.

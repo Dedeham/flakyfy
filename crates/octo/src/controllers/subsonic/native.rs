@@ -291,7 +291,7 @@ fn native_station(station: &LastFmRadioStation) -> Node {
     let duration: i64 = station
         .tracks
         .iter()
-        .map(|track| i64::from(track.duration.unwrap_or(180)))
+        .map(|track| i64::from(track.duration.unwrap_or(0).max(0)))
         .sum();
     to_node(&json!({
         "id": station.id,
@@ -342,6 +342,11 @@ async fn try_serve_native_external_song(state: &AppState, endpoint: &str) -> Opt
         .metadata_service
         .resolve_top_durations(&mut one, false)
         .await;
+    // The video's length above is what plays, so it stays; only a song still without a
+    // length takes one the registry remembered.
+    if one[0].duration.is_none_or(|d| d <= 0) {
+        state.metadata_service.complete_song_lengths(&mut one);
+    }
 
     let body = octo_core::json::to_string(&native_song_object(state, &one[0]));
     Some(written_json(
@@ -484,8 +489,8 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
     // Navidrome-mode clients take their contract from HERE and never from
     // SubsonicResponseBuilder, so this has to follow the same setting or the native
     // path keeps promising m4a while /rest/stream hands back a FLAC. Note the two
-    // serializers are not symmetric: this one emits no contentType at all, and
-    // defaults an unknown duration to 0 where the Subsonic one uses 180.
+    // serializers are not symmetric: this one emits no contentType at all, and writes
+    // an unknown duration as 0 where the Subsonic one leaves the field out.
     let lossless = state.settings.current().subsonic.wait_for_lossless_on_play;
     let suffix = if lossless { "flac" } else { "m4a" };
     let bit_rate: i64 = if lossless { 950 } else { 128 }; // format 140 AAC ~128 kbps; FLAC lands ~850-1000

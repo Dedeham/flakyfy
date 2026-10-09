@@ -69,6 +69,13 @@ pub async fn get_song(State(state): State<AppState>, req: Request) -> AppResult 
             .create_error(&format, 70, "Song not found")
             .into_response());
     };
+    // The routing's own length is the one that plays, so it stays; only a song without
+    // one takes the length the registry remembered for display.
+    let mut one = [song];
+    if one[0].duration.is_none_or(|d| d <= 0) {
+        state.music_metadata.complete_song_lengths(&mut one);
+    }
+    let [song] = one;
 
     Ok(builder.create_song_response(&format, &song).into_response())
 }

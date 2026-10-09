@@ -280,6 +280,13 @@ impl NavidromeAdmin {
         as_id(created.get("id")).ok_or_else(|| AdminError::Http(format!("no id in {created}")))
     }
 
+    /// Removes a library from Navidrome (its files stay on disk).
+    pub async fn delete_library(&self, id: i64) -> Result<(), AdminError> {
+        self.call(Method::DELETE, &format!("/api/library/{id}"), None)
+            .await?;
+        Ok(())
+    }
+
     /// Sets which libraries a user sees (Navidrome wants at least one).
     pub async fn set_user_libraries(&self, id: &str, library_ids: &[i64]) -> Result<(), AdminError> {
         let body = json!({ "libraryIds": library_ids });

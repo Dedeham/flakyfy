@@ -27,8 +27,29 @@ use axum::response::Response;
 /// The exposed headers, as ASP.NET joined them.
 pub const EXPOSED_HEADERS: &str = "X-Content-Duration,X-Total-Count,X-Nd-Authorization";
 
+/// Whether a path is `/api/family` or below it (ignoring case, at a segment boundary): the
+/// Family page's own API, which no other website may read or call.
+pub fn is_family_api_path(path: &str) -> bool {
+    let prefix = "/api/family";
+    path.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        && (path.len() == prefix.len() || path.as_bytes()[prefix.len()] == b'/')
+}
+
 pub async fn cors(req: Request, next: Next) -> Response {
     if !req.headers().contains_key(header::ORIGIN) {
+        return next.run(req).await;
+    }
+    if is_family_api_path(req.uri().path()) {
+        // No CORS here at all: a preflight is answered without approval, which the browser
+        // takes as a refusal, and an answer carries no header that lets another site read it.
+        if req.method() == Method::OPTIONS
+            && req.headers().contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+        {
+            let mut res = Response::new(Body::empty());
+            *res.status_mut() = StatusCode::NO_CONTENT;
+            return res;
+        }
         return next.run(req).await;
     }
     if req.method() == Method::OPTIONS

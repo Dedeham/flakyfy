@@ -77,6 +77,12 @@ pub fn tag_for(r#type: NotificationEventType) -> &'static str {
         NotificationEventType::DownloadFailed => "x",
         NotificationEventType::AlbumCompleted => "cd",
         NotificationEventType::Test => "bell",
+        NotificationEventType::FamilyRequestNew => "inbox_tray",
+        NotificationEventType::FamilyRequestApproved => "thumbsup",
+        NotificationEventType::FamilyRequestDeclined => "no_entry_sign",
+        NotificationEventType::FamilyRequestAdded => "white_check_mark",
+        NotificationEventType::FamilyRequestFailed => "x",
+        NotificationEventType::FamilyDeviceNew => "iphone",
     }
 }
 

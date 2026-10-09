@@ -125,6 +125,10 @@ pub fn is_octo_owned(endpoint: &str) -> bool {
         || lower.starts_with("api/admin")
         || lower.starts_with("assets/")
         || lower == "favicon.ico"
+        || lower == "family"
+        || lower.starts_with("family/")
+        || lower == "api/family"
+        || lower.starts_with("api/family/")
 }
 
 /// What the C# wrote for a faithful relay: the upstream status, the allowlisted headers (each

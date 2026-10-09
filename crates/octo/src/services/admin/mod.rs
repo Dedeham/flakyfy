@@ -13,6 +13,6 @@ pub use admin_caller::{AdminCaller, AdminCallerKind};
 pub use admin_recovery_code::AdminRecoveryCode;
 pub use admin_role_check::AdminRoleCheck;
 pub use ambient_palette_service::AmbientPaletteService;
-pub use browse_session_store::BrowseSessionStore;
+pub use browse_session_store::{BrowseSessionStore, SessionKind};
 pub use directory_browser::{BrowseEntry, BrowseResult, DirectoryBrowser};
 pub use sign_in_throttle::SignInThrottle;

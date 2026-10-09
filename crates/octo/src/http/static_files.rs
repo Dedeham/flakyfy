@@ -36,6 +36,13 @@ pub const WWWROOT_ENV: &str = "OCTO_WWWROOT";
 /// Overrides the assets directory (the one holding `octo_logo.png`).
 pub const ASSETS_ENV: &str = "OCTO_ASSETS";
 
+/// The Family pages' short addresses and the files they serve: `/family` (and `/family/`) is
+/// the Family page, `/family/join` the page a join link or QR code opens.
+pub const FAMILY_PAGES: [(&str, &str); 2] = [
+    ("/family", "/family/index.html"),
+    ("/family/join", "/family/join.html"),
+];
+
 /// Where the static files come from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StaticRoots {
@@ -295,20 +302,25 @@ impl StaticAssets {
             .map(|a| a.as_ref())
     }
 
-    /// One GET (and so HEAD) route per file.
+    /// One GET (and so HEAD) route per file, and the Family pages at their short addresses.
     pub fn routes(&self) -> RouteSet {
         let mut set = RouteSet::new();
         for asset in &self.assets {
-            let asset = asset.clone();
-            set = set.route_with_head(
-                &asset.url_path.clone(),
-                get(move |req: Request| {
-                    let asset = asset.clone();
-                    async move { serve(&asset, req.method(), req.headers()) }
-                }),
-            );
+            set = set.route_with_head(&asset.url_path.clone(), Self::serving(asset.clone()));
+        }
+        for (url, file) in FAMILY_PAGES {
+            if let Some(asset) = self.assets.iter().find(|a| a.url_path == *file) {
+                set = set.route_with_head(url, Self::serving(asset.clone()));
+            }
         }
         set
+    }
+
+    fn serving(asset: Arc<StaticAsset>) -> axum::routing::MethodRouter<crate::app::AppState> {
+        get(move |req: Request| {
+            let asset = asset.clone();
+            async move { serve(&asset, req.method(), req.headers()) }
+        })
     }
 }
 

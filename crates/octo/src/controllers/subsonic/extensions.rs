@@ -104,7 +104,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
         .relay_safe("rest/getOpenSubsonicExtensions", &call.parameters)
         .await;
     let settings = state.settings.current();
-    state
+    let reply = state
         .subsonic_response_builder
         .merge_open_subsonic_extensions_with(
             &format,
@@ -114,8 +114,12 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             settings.library_actions.enabled,
             settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
-        )
-        .into_response()
+        );
+    // octoFamily is listed only while Family is on.
+    if settings.family.enabled {
+        return super::family::with_family_extension(reply, &format).into_response();
+    }
+    reply.into_response()
 }
 
 /// Whether a source Better quality searches (Soulseek, Lidarr) is set up here at all.

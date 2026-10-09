@@ -351,6 +351,8 @@ pub async fn get_status(State(state): State<AppState>, caller: Caller) -> Respon
         "octo": ServiceProbe::new(true, "Octo is responding"),
         "services": probe_all(&state).await,
         "time": round_trip_offset(Utc::now()),
+        // This server has Octo Family; the dashboard shows its Family entry only when told so.
+        "family": { "supported": true, "enabled": state.settings.current().family.enabled },
     }))
 }
 

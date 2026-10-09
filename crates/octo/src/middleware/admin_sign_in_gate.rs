@@ -34,7 +34,7 @@ use crate::controllers::admin::plumbing::{
 use crate::http::error::json_relaxed_response;
 use crate::http::routes::PathCanon;
 use crate::services::admin::sign_in_throttle::key_of;
-use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore};
+use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore, SessionKind};
 use crate::services::subsonic::{CredentialVerdict, IncomingRequest, navidrome_admin_role};
 
 /// The admin endpoints that answer without a sign-in (`[AdminOpen]`): signing in and out, who is
@@ -57,6 +57,9 @@ pub const APP_CALL_ENDPOINTS: &[(Method, &str, bool)] = &[
     (Method::GET, "/api/admin/library-status", true),
     (Method::GET, "/api/admin/status", true),
 ];
+
+/// The words a Family page sign-in is refused with on every dashboard route.
+pub const FAMILY_SESSION_REFUSED: &str = "This page is for the server owner.";
 
 /// The words most library-file routes refuse a sign-in that is not a Navidrome admin's with.
 pub const SIGN_IN_FIRST: &str = "Sign in with your Navidrome admin account first.";
@@ -189,6 +192,32 @@ pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request,
         return next.run(req).await;
     }
     let state = &gate.app;
+    // A Family page sign-in never opens the dashboard, whoever holds it.
+    if let Some((user, kind)) = state
+        .browse_sessions
+        .family_session_of(admin_token(&req).as_deref())
+    {
+        let manager = kind == SessionKind::FamilyNavidrome && state.family_store.is_owner(&user)
+            || state
+                .family_store
+                .member(&user)
+                .is_some_and(|m| m.abilities().manage_family);
+        let caller = AdminCaller::new(
+            Some(user),
+            if manager {
+                AdminCallerKind::FamilyManager
+            } else {
+                AdminCallerKind::FamilyMember
+            },
+        );
+        req.extensions_mut().insert(caller);
+        return json_relaxed_response(
+            StatusCode::FORBIDDEN,
+            &json!({ "error": FAMILY_SESSION_REFUSED }),
+            "application/json; charset=utf-8",
+        )
+        .into_response();
+    }
     if state.settings.current().admin.sign_in_off() {
         req.extensions_mut()
             .insert(AdminCaller::new(None, AdminCallerKind::SignInOff));

@@ -144,6 +144,8 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("testPing", Read),
     // Octo Family (`octoFamily`): each checks the caller's own rights.
     ("getFamily", Read),
+    ("setFamilyQuality", Read),
+    ("setFamilyDeviceQuality", Read),
     ("getFamilyRequests", Read),
     ("requestCopy", Read),
     ("cancelFamilyRequest", Read),

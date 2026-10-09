@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
+use octo_core::last_fm::last_fm_radio_recommendation_service::seeded_randomizer;
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, LastFmSettings, RadioSourceSettings, SubsonicSettings};
 use parking_lot::Mutex;
@@ -51,6 +52,15 @@ fn library_song(id: &str) -> Option<Value> {
             "al-brand-new",
             "Hip-Hop",
         ),
+        "wide" => song("wide", "Wide", "Wide Artist", "Wides", "al-wides", "Trip-Hop"),
+        "blend" => song(
+            "blend",
+            "Blend",
+            "Blend Artist",
+            "Blends",
+            "al-blends",
+            "Trip-Hop",
+        ),
         "faded-nightcore" => song(
             "faded-nightcore",
             "Alan Walker - Faded (Nightcore)",
@@ -60,6 +70,22 @@ fn library_song(id: &str) -> Option<Value> {
             "",
         ),
         _ => return None,
+    })
+}
+
+/// The library's copy of one of Blend's thirty radio songs: every third one ("Band 3 Tune 3",
+/// "Band 6 Tune 6", ...) is in the library.
+fn blend_library_song(query: &str) -> Option<Value> {
+    let i: i32 = query.strip_prefix("Band ")?.split(' ').next()?.parse().ok()?;
+    (i % 3 == 0).then(|| {
+        song(
+            &format!("lib-band-{i}"),
+            &format!("Tune {i}"),
+            &format!("Band {i}"),
+            "Blends",
+            "al-blends",
+            "Trip-Hop",
+        )
     })
 }
 
@@ -143,6 +169,14 @@ fn last_fm(query: &HashMap<String, String>) -> Value {
                 {"name": "Angel", "artist": {"name": "Massive Attack"}, "match": 0.9},
                 {"name": "Unfinished Sympathy", "artist": {"name": "Massive Attack"}, "match": 0.8}
             ]}}),
+            // Thirty songs, every third one in the library (see `blend_library_song`).
+            ("Blend Artist", "Blend") => json!({"similartracks": {"track": (1..=30).map(|i| {
+                json!({"name": format!("Tune {i}"), "artist": {"name": format!("Band {i}")}, "match": 0.95 - f64::from(i) / 100.0})
+            }).collect::<Vec<_>>()}}),
+            // More songs than any radio asks for, none in the library.
+            ("Wide Artist", "Wide") => json!({"similartracks": {"track": (1..=WIDE_SONGS).map(|i| {
+                json!({"name": format!("Far {i}"), "artist": {"name": format!("Crowd {i}")}, "match": 0.99 - i as f64 / 200.0})
+            }).collect::<Vec<_>>()}}),
             ("Alan Walker", "Faded") => json!({"similartracks": {"track": [
                 {"name": "Wake Me Up", "artist": {"name": "Avicii"}, "match": 0.9}
             ]}}),
@@ -269,7 +303,10 @@ impl Respond for Upstream {
                 json!({"randomSongs": {"song": []}})
             })
         } else if path.ends_with("/rest/search3") {
-            Some(json!({"searchResult3": {}}))
+            Some(match query.get("query").and_then(|q| blend_library_song(q)) {
+                Some(found) => json!({"searchResult3": {"song": [found]}}),
+                None => json!({"searchResult3": {}}),
+            })
         } else if path.ends_with("/rest/getSimilarSongs2") {
             // Navidrome's own agents, for when Octo's sources have nothing.
             Some(json!({"similarSongs2": {"song": [
@@ -782,9 +819,155 @@ fn interleave_takes_one_from_each_in_turn() {
     assert_eq!(interleave(&[vec![1, 2, 3], vec![10, 20]]), [1, 10, 2, 20, 3]);
 }
 
+/// L for a library song, O for one from outside it.
+fn kinds(ids: &[String]) -> String {
+    ids.iter()
+        .map(|id| if id.starts_with("lib-") { 'L' } else { 'O' })
+        .collect()
+}
+
+// Radio placement (port/radio-placement, 2026-10-08), no C# test: Octo's own apps
+// (octoMix=client) get the order of fit; every other app gets the same songs with the outside
+// ones placed at random at the radio's own mix (here 20 of 30), each kind still in its own
+// order. The Discovery balance, set to 90 here, plays no part. The draw is seeded, so the placed
+// order repeats exactly.
+#[tokio::test]
+async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit() {
+    let f = fixture(|settings| settings.last_fm.discovery_percent = 90).await;
+    f.state.song_radio.set_randomizer(seeded_randomizer(7));
+    async fn blend(f: &Fixture, extra: &str) -> Vec<String> {
+        let body = get_string(
+            &f.app,
+            &format!("/rest/getSimilarSongs2?id=blend&u=alice&t=token&s=salt&f=json&count=30{extra}"),
+        )
+        .await;
+        songs(&body).into_iter().map(|(id, _)| id).collect()
+    }
+    let fit: Vec<String> = (1..=30)
+        .map(|i| {
+            if i % 3 == 0 {
+                format!("lib-band-{i}")
+            } else {
+                format!("ext-Band {i}-Tune {i}")
+            }
+        })
+        .collect();
+
+    // Every artist differs, so the order of fit is Last.fm's own order.
+    assert_eq!(blend(&f, "&octoMix=client").await, fit);
+
+    let mut sorted_fit = fit.clone();
+    sorted_fit.sort();
+    let of_kind = |ids: &[String], library: bool| -> Vec<String> {
+        ids.iter()
+            .filter(|id| id.starts_with("lib-") == library)
+            .cloned()
+            .collect()
+    };
+    let placed = blend(&f, "").await;
+    let mut sorted = placed.clone();
+    sorted.sort();
+    assert_eq!(sorted, sorted_fit, "the same songs: {placed:?}");
+    assert_eq!(of_kind(&placed, true), of_kind(&fit, true), "{placed:?}");
+    assert_eq!(of_kind(&placed, false), of_kind(&fit, false), "{placed:?}");
+    // Placed, not the order of fit: the kinds land elsewhere.
+    let pattern = kinds(&placed);
+    assert_ne!(pattern, kinds(&fit), "placed as the order of fit");
+    // At the radio's own mix the library is the rarer kind (10 of 30): never three library songs
+    // in a row, not even at the end, and the first ten hold some of both kinds.
+    assert!(!pattern.contains("LLL"), "{pattern}");
+    assert!(
+        pattern[..10].contains('L') && pattern[..10].contains('O'),
+        "{pattern}"
+    );
+    // The same seed, the same radio.
+    assert_eq!(blend(&f, "").await, placed);
+}
+
+/// A seed with 120 songs like it on Last.fm, none of them in the library.
+const WIDE_SONGS: usize = 120;
+
+// "Ask for more songs" (the radio tuning Check Mode, Brandon 2026-10-08), no C# test: Octo's
+// own apps (octoMix=client) may ask for up to 100 songs, whatever RadioTrackCount is (50 here,
+// the default). Every other app is still cut to RadioTrackCount.
+#[tokio::test]
+async fn octos_apps_may_ask_for_100_songs_and_other_apps_get_the_configured_count() {
+    let f = fixture(|_| {}).await;
+    async fn wide(f: &Fixture, extra: &str) -> usize {
+        let body = get_string(
+            &f.app,
+            &format!("/rest/getSimilarSongs2?id=wide&u=alice&t=token&s=salt&f=json&count=100{extra}"),
+        )
+        .await;
+        songs(&body).len()
+    }
+    assert_eq!(wide(&f, "&octoMix=client").await, 100);
+    assert_eq!(wide(&f, "").await, 50);
+}
+
 // SimilarSongsSeedTests.NothingFromOctosSources_LetsNavidromeAnswer
 #[tokio::test]
 async fn nothing_from_octos_sources_lets_navidrome_answer() {
     let f = fixture(|s| s.last_fm.api_key = String::new()).await;
     assert_eq!(radio_ids(&f, "teardrop").await, ["nd-1"]);
+}
+
+// An outside artist (an artist row of a search) is a radio of the artists like them, as a
+// library artist is, instead of an empty answer; asked again, Last.fm is not asked again.
+#[tokio::test]
+async fn an_outside_artist_is_the_top_songs_of_artists_like_them() {
+    use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+    let f = fixture(|_| {}).await;
+    let id = f.state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Artist,
+        artist: Some("Massive Attack".into()),
+        ..Default::default()
+    });
+
+    assert_eq!(radio_ids(&f, &id).await, ["ext-Portishead-Roads"]);
+    assert_eq!(radio_ids(&f, &id).await, ["ext-Portishead-Roads"]);
+
+    let asked = f
+        .calls()
+        .iter()
+        .filter(|call| call.contains("method=artist.getsimilar") && call.contains("Massive"))
+        .count();
+    assert_eq!(asked, 1, "{:?}", f.calls());
+}
+
+// A scrobble starts resolving the next songs of a radio queue only once Navidrome has accepted
+// the caller: one it refuses never makes Octo look a song up on YouTube.
+#[tokio::test]
+async fn a_scrobble_prewarms_the_queue_only_for_a_caller_navidrome_accepts() {
+    use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+    let f = fixture(|_| {}).await;
+    let outside = |title: &str| {
+        f.state.external_id_registry.register(SoulseekRouting {
+            kind: RoutingKind::Song,
+            artist: Some("Queue Band".into()),
+            title: Some(title.into()),
+            duration: Some(200),
+            ..Default::default()
+        })
+    };
+    let playing = outside("Now Playing");
+    let next = outside("Up Next");
+    f.state.radio_queues.register([playing.clone(), next]);
+    let looked_up = |f: &Fixture| {
+        f.calls()
+            .iter()
+            .filter(|call| call.starts_with("/search?") && call.contains("Up"))
+            .count()
+    };
+
+    scrobble(&f, "mallory", &playing, false).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(looked_up(&f), 0, "{:?}", f.calls());
+
+    scrobble(&f, "alice", &playing, false).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while looked_up(&f) == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(looked_up(&f), 1, "{:?}", f.calls());
 }

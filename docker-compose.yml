@@ -161,6 +161,7 @@ services:
       RadioSources__YouTubeMusic: ${RADIO_YOUTUBE_MUSIC:-true}
       RadioSources__ListenBrainz: ${RADIO_LISTENBRAINZ:-true}
       RadioSources__ListenBrainzAlgorithm: ${RADIO_LISTENBRAINZ_ALGORITHM:-session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30}
+      RadioSources__ListenBrainzRadioMode: ${RADIO_LISTENBRAINZ_RADIO_MODE:-easy}
       RadioSources__SoundsAlike: ${RADIO_SOUNDS_ALIKE:-true}
       RadioSources__SonicUrl: ${RADIO_SONIC_URL:-http://octo-sonic:8080}
       RadioSources__SonicPauseSeconds: ${RADIO_SONIC_PAUSE_SECONDS:-2}

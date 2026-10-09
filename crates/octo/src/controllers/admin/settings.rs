@@ -315,6 +315,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("SonicUrl", n_str(&radio.sonic_url)),
             ("SonicPauseSeconds", n_num(radio.sonic_pause_seconds)),
             ("ListenBrainzAlgorithm", n_str(&radio.listen_brainz_algorithm)),
+            ("ListenBrainzRadioMode", n_str(&radio.listen_brainz_radio_mode)),
             ("LastFmWeight", n_num(radio.last_fm_weight)),
             ("YouTubeMusicWeight", n_num(radio.you_tube_music_weight)),
             ("ListenBrainzWeight", n_num(radio.listen_brainz_weight)),

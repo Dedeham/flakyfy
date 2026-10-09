@@ -210,6 +210,10 @@ pub struct LastFmRadioStation {
     pub seeds: Vec<String>,
     #[serde(deserialize_with = "null_as_default")]
     pub tracks: Vec<LastFmRadioTrack>,
+    /// Further suggestions, in the walk's order, that stand in for a track the station may not
+    /// use once it is resolved (a library song past Discovery Mix's share). Never listed.
+    #[serde(deserialize_with = "null_as_default", skip_serializing_if = "Vec::is_empty")]
+    pub reserve: Vec<LastFmRadioTrack>,
 }
 
 impl Default for LastFmRadioStation {
@@ -228,6 +232,7 @@ impl Default for LastFmRadioStation {
             valid_until_utc: now,
             seeds: Vec::new(),
             tracks: Vec::new(),
+            reserve: Vec::new(),
         }
     }
 }

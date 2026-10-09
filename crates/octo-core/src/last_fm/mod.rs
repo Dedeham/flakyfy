@@ -4,6 +4,7 @@
 //! The clients and the radio services themselves are `octo::services::last_fm`.
 
 pub mod last_fm_radio_audio_transcoder;
+pub mod last_fm_radio_placement;
 pub mod last_fm_radio_recommendation_service;
 pub mod last_fm_radio_refresh_policy;
 pub mod last_fm_radio_seed_normalizer;

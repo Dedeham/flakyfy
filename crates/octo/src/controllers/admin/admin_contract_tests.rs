@@ -653,10 +653,12 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, Liked Songs'
     // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, the
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
-    // :CountryLookupsPerRefresh, and Lidarr:WebhookSecret and Soulseek:Enabled.
-    assert_eq!(rows.len(), 188);
+    // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled and
+    // RadioSources:ListenBrainzRadioMode.
+    assert_eq!(rows.len(), 189);
     assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
+    assert_eq!(row("RadioSources:ListenBrainzRadioMode")["IsSecret"], false);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 

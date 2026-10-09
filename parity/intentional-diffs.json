@@ -410,23 +410,23 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"XKiz7lqmc\\+GGZd7rAAPtJkmTeGmPVRY9OdECEPAI2zQ=\"'\\]$",
+        "^B:\\ \\['\"vPkEMrERGn7GTvN30sAHFJoqPkBWALvheWzlEjGb7vg=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ 5ca8b3ee5aa673e18665deeb0003ed26499378698f55163d39d10210f008db34\\ \\(199404\\ bytes,\\ text\\)$",
+        "^B:\\ bcf90432b1111a7ec64ef377d2c007149a2a3e405600bbe1796ce512319beef8\\ \\(204317\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
-        "^B:\\ \\['bytes\\ 0\\-9/199404'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/204317'\\]$",
         "^A:\\ \\['bytes\\ \\*/192988'\\]$",
-        "^B:\\ \\['bytes\\ \\*/199404'\\]$",
+        "^B:\\ \\['bytes\\ \\*/204317'\\]$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"Zf56LkiNLkfHPb4/qn1tcc8zRdVZfb09bZ6htSkjOr4=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ 65fe7a2e488d2e47c73dbe3faa7d6d71cf3345d5597dbd3d6d9ea1b529233abe\\ \\(118887\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"DG55yORC2qBMYUAVIOP2SUWFr\\+KDYQj9bnFzkMMraoE=\"'\\]$",
+        "^B:\\ \\['\"\\+SV5w9RO4M\\+Lag\\+BOVZvCSEUE7tMp3cXogPby09ZOK4=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ 0c6e79c8e442daa04c61401520e3f6494585afe2836108fd6e717390c32b6a81\\ \\(381599\\ bytes,\\ text\\)$"
+        "^B:\\ f92579c3d44ee0cf8b6a0f8139566f09211413bb4ca77717a203dbcb4f5938ae\\ \\(394373\\ bytes,\\ text\\)$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose since dashboard-files-2026-10-08: the Library health sections and run card (admin.js, admin.css, index.html), Liked Songs and the country mixes on the Mixes page, the Wrong lyrics and Wrong cover actions, Soulseek's on switch, the Lidarr webhook password and the ListenBrainz radio difficulty (index.html, admin.js). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Supersedes dashboard-files-2026-10-08 once reviewed.",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose since dashboard-files-2026-10-08: the Library health sections and run card (admin.js, admin.css, index.html), Liked Songs and the country mixes on the Mixes page, the Wrong lyrics and Wrong cover actions, Soulseek's on switch, the Lidarr webhook password, the ListenBrainz radio difficulty and the Tidy artists card (index.html, admin.js). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Supersedes dashboard-files-2026-10-08 once reviewed.",
       "knownDiff": "Dashboard files, 2026-10-09"
     },
     {

@@ -1,5 +1,6 @@
 //! Port of `Services/Library/LibrarySnapshot.cs` (f49fb80).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,6 +14,8 @@ use tracing::debug;
 use super::album_ownership::LibraryAlbumIndex;
 use super::navidrome_playlist_api::NavidromePlaylistApi;
 use super::quality_upgrade_worker::LibrarySongRow;
+use crate::services::family::library_index::row_full_path;
+use crate::services::family::{LibraryScope, ScopeResolver};
 
 /// One page of the library, with how many rows Navidrome's page held; None when Navidrome could
 /// not be read. Tests answer from a list.
@@ -26,12 +29,25 @@ struct State {
     current: Option<(Arc<LibraryAlbumIndex>, DateTime<Utc>)>,
     reading: Option<Reading>,
     failed_at: Option<DateTime<Utc>>,
+    /// The whole read with Family on, every library in it (`current` keeps to the shared one),
+    /// and each member's own view of it built from that, by name in lower case.
+    everything: Option<Arc<LibraryAlbumIndex>>,
+    viewers: HashMap<String, Arc<LibraryAlbumIndex>>,
 }
 
 struct Inner {
     read_page: ReadPage,
     clock: Clock,
     state: Mutex<State>,
+    /// Which library each song is in, while Family is on: what a search counts as the
+    /// library's is the shared library's, never a member's own.
+    scope: Mutex<Option<ScopeResolver>>,
+}
+
+/// Whether a row is in `scope`.
+fn row_in(resolver: &ScopeResolver, scope: &LibraryScope, row: &LibrarySongRow) -> bool {
+    let full = row_full_path(row.library_path.as_deref(), &row.path);
+    resolver.allows(scope, Some(&row.id), Some(&full))
 }
 
 /// The whole library, read through Navidrome's own song list and kept, for the questions a
@@ -75,8 +91,46 @@ impl LibrarySnapshot {
                 read_page,
                 clock,
                 state: Mutex::new(State::default()),
+                scope: Mutex::new(None),
             }),
         }
+    }
+
+    /// Keeps the library's copy to the shared library while Family is on: a song only in a
+    /// member's own library is not the library's, for anyone else.
+    pub fn with_scope(self, scope: ScopeResolver) -> Self {
+        *self.inner.scope.lock() = Some(scope);
+        self
+    }
+
+    /// The library as `scope` sees it: [`Self::current`] for the shared library, and for a
+    /// member the shared library with their own songs added (never another member's).
+    pub async fn current_for(&self, scope: &LibraryScope) -> Option<Arc<LibraryAlbumIndex>> {
+        let shared = self.current().await?;
+        let LibraryScope::Viewer(user) = scope else {
+            return Some(shared);
+        };
+        let resolver = self.inner.scope.lock().clone().filter(ScopeResolver::active)?;
+        let key = user.trim().to_lowercase();
+        let everything = {
+            let state = self.inner.state.lock();
+            if let Some(view) = state.viewers.get(&key) {
+                return Some(Arc::clone(view));
+            }
+            state.everything.clone()
+        };
+        let Some(everything) = everything else {
+            return Some(shared);
+        };
+        let view = Arc::new(LibraryAlbumIndex::new(
+            everything
+                .rows()
+                .iter()
+                .filter(|row| row_in(&resolver, scope, row))
+                .map(|row| (**row).clone()),
+        ));
+        self.inner.state.lock().viewers.insert(key, Arc::clone(&view));
+        Some(view)
     }
 
     /// The library as last read, reading it first when there is no usable copy.
@@ -177,10 +231,29 @@ async fn read(inner: &Inner) -> Option<Arc<LibraryAlbumIndex>> {
         start += LibrarySnapshot::PAGE_SIZE;
     }
     let read = rows.len();
-    let index = Arc::new(LibraryAlbumIndex::new(rows));
+    // With Family on, the library's copy is the shared library's; members' own songs are kept
+    // aside for their own view.
+    let resolver = inner.scope.lock().clone().filter(ScopeResolver::active);
+    let (index, everything) = match resolver {
+        Some(resolver) => {
+            let (shared, own): (Vec<LibrarySongRow>, Vec<LibrarySongRow>) = rows
+                .into_iter()
+                .partition(|row| row_in(&resolver, &LibraryScope::Shared, row));
+            let shared_index = Arc::new(LibraryAlbumIndex::new(shared));
+            let everything = (!own.is_empty()).then(|| {
+                Arc::new(LibraryAlbumIndex::new(
+                    shared_index.rows().iter().map(|row| (**row).clone()).chain(own),
+                ))
+            });
+            (shared_index, everything)
+        }
+        None => (Arc::new(LibraryAlbumIndex::new(rows)), None),
+    };
     {
         let mut state = inner.state.lock();
         state.current = Some((Arc::clone(&index), inner.clock.now()));
+        state.everything = everything;
+        state.viewers.clear();
         state.failed_at = None;
     }
     debug!(
@@ -188,4 +261,113 @@ async fn read(inner: &Inner) -> Option<Arc<LibraryAlbumIndex>> {
         clock.elapsed().as_millis()
     );
     Some(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::family::library_index::scope_for_tests;
+
+    fn row(id: &str, library_path: &str, artist: &str, title: &str, album: &str) -> LibrarySongRow {
+        LibrarySongRow {
+            id: id.into(),
+            path: format!("{artist}/{album}/{title}.flac"),
+            library_path: Some(library_path.into()),
+            size: 1,
+            suffix: "flac".into(),
+            bit_rate: 900,
+            title: title.into(),
+            artist: artist.into(),
+            duration: Some(200),
+            album: Some(album.into()),
+            album_id: Some(format!("al-{album}")),
+            album_artist: Some(artist.into()),
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(rows: Vec<LibrarySongRow>) -> LibrarySnapshot {
+        LibrarySnapshot::with(
+            Arc::new(move |start, _| {
+                let page = if start == 0 { rows.clone() } else { Vec::new() };
+                let count = page.len();
+                Box::pin(async move { Some((page, count)) })
+            }),
+            Clock::system(),
+        )
+    }
+
+    fn library() -> Vec<LibrarySongRow> {
+        vec![
+            row("shared-1", "/music", "Portishead", "Roads", "Dummy"),
+            row("sam-1", "/members/sam", "Massive Attack", "Teardrop", "Mezzanine"),
+            row("alex-1", "/members/alex", "Bjork", "Joga", "Homogenic"),
+        ]
+    }
+
+    #[tokio::test]
+    async fn listener_search_keeps_outside_song_owned_only_by_another_member() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+        let shared = snapshot.current().await.expect("read");
+        // Only Sam has Teardrop, so to anyone else it is still an outside song to show.
+        assert!(
+            shared
+                .find(
+                    "Teardrop",
+                    Some("Massive Attack"),
+                    Some(200),
+                    &[],
+                    Some("Mezzanine")
+                )
+                .is_none()
+        );
+        assert!(
+            shared
+                .same_album(Some("Mezzanine"), Some("Massive Attack"))
+                .is_empty()
+        );
+        assert!(
+            shared
+                .find("Roads", Some("Portishead"), Some(200), &[], None)
+                .is_some()
+        );
+
+        let alex = snapshot
+            .current_for(&LibraryScope::Viewer("alex".into()))
+            .await
+            .expect("read");
+        assert!(
+            alex.find("Joga", Some("Bjork"), Some(200), &[], None).is_some(),
+            "their own"
+        );
+        assert!(
+            alex.find("Teardrop", Some("Massive Attack"), Some(200), &[], None)
+                .is_none()
+        );
+        assert!(
+            alex.find("Roads", Some("Portishead"), Some(200), &[], None)
+                .is_some()
+        );
+        let sam = snapshot
+            .current_for(&LibraryScope::Viewer("Sam".into()))
+            .await
+            .expect("read");
+        assert!(
+            sam.find("Teardrop", Some("Massive Attack"), Some(200), &[], None)
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn with_family_off_every_song_counts() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+        let all = snapshot.current().await.expect("read");
+        assert_eq!(all.song_count(), 3);
+        let unscoped = snapshot_unscoped().current().await.expect("read");
+        assert_eq!(unscoped.song_count(), 3);
+    }
+
+    fn snapshot_unscoped() -> LibrarySnapshot {
+        snapshot(library())
+    }
 }

@@ -35,6 +35,10 @@ mod ownership_tests;
 #[path = "parallel_lock_split_tests.rs"]
 mod parallel_lock_split_tests;
 
+#[cfg(test)]
+#[path = "family_tests.rs"]
+mod family_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
@@ -63,8 +67,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
-use crate::services::common::{AcquisitionState, AcquisitionTracker, DownloadConcurrency, DownloadPicks};
+use crate::services::common::{
+    AcquisitionPlace, AcquisitionState, AcquisitionTracker, DownloadConcurrency, DownloadPicks,
+};
 use crate::services::cover_art::DownloadCoverResolver;
+use crate::services::family::FamilyPlacement;
 use crate::services::fingerprint::MusicBrainzClient;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
@@ -138,6 +145,8 @@ pub struct TrackDownload {
     /// album's songs that nobody hearted, and the songs of an album heart, which gets one for the
     /// album).
     pub muted: bool,
+    /// Only FLAC files are candidates; the base still refuses one made from lossy audio.
+    pub flac_only: bool,
 }
 
 /// The source-specific members of the C# base: its abstract and virtual methods. Every call is
@@ -262,6 +271,9 @@ pub struct DownloadServices {
     pub last_fm: Option<Arc<LastFmService>>,
     /// `DownloadPicks`: copies picked in Find songs, taken instead of a search.
     pub picks: Option<Arc<DownloadPicks>>,
+    /// The family pool, where members' downloads land. `None`, or Family off, places every
+    /// download in the shared library as always.
+    pub family: Option<Arc<dyn FamilyPlacement>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -286,6 +298,17 @@ pub struct DownloadOptions {
     pub upgrade_search: bool,
     /// A library action's replacement, revealed in the original's place (W8).
     pub replacement: Option<Arc<ReplacementHandoff>>,
+    /// Where the file goes (the family pool for members) and whether only a real FLAC will do.
+    pub place: AcquisitionPlace,
+}
+
+/// Why a download that had to be a real FLAC copy failed: no FLAC came, or the one that came
+/// was made from lossy audio.
+pub const NO_REAL_FLAC: &str = "No real FLAC copy found";
+
+/// Whether a path names a FLAC file.
+fn is_flac_path(path: &str) -> bool {
+    dotnet::eq_ignore_case(get_extension(path), ".flac")
 }
 
 /// Abstract base class for download services, as a struct: common download logic, tracking,
@@ -555,17 +578,36 @@ impl BaseDownloadService {
         permit: &mut Option<SemaphorePermit<'a>>,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<String> {
+        // The family pool, while Family is on. A member's download lands there and is linked
+        // into their library; with no members asking, the file goes to the shared library.
+        let family = self.services.family.as_ref().filter(|f| f.pool_root().is_some());
+        let pool_members = options.place.pool_members.clone().filter(|_| family.is_some());
+        let flac_only = options.place.flac_only;
+
         // Check if already downloaded (skipped for cache mode, which checks the cache folder).
         // A replacement is always a fresh file: an existing one is what is being replaced.
         if !is_cache && options.replacement.is_none() {
-            if let Some(existing) = self
+            if let Some(mut existing) = self
                 .local_library
                 .get_local_path_for_external_song(external_provider, external_id)
                 .await
                 .filter(|path| file_exists(path))
+                .filter(|path| !flac_only || is_flac_path(path))
             {
+                // A member's copy the shared library now wants moves there, still one file.
+                if let Some(family) = family
+                    && pool_members.is_none()
+                    && family.is_pool_path(&existing)
+                {
+                    existing = family.settle(&existing, &[], true).await;
+                }
                 info!("Song already downloaded: {existing}");
-                self.track(|t| t.imported(external_provider, external_id, None, None, Some(&existing)));
+                // Navidrome shows a member's song at their link, never in the pool.
+                let shown = family
+                    .zip(pool_members.as_ref().and_then(|members| members.first()))
+                    .and_then(|(family, first)| family.link_path_for(&existing, first))
+                    .unwrap_or_else(|| existing.clone());
+                self.track(|t| t.imported(external_provider, external_id, None, None, Some(&shown)));
                 return Ok(existing);
             }
         } else if is_cache
@@ -674,6 +716,7 @@ impl BaseDownloadService {
                     Some(&song.album),
                 )
                 .await
+                .filter(|owned| !flac_only || owned.lossless)
         {
             let decision = LibraryOwnership::decide(
                 Some(&owned),
@@ -718,6 +761,50 @@ impl BaseDownloadService {
                 )
             });
             return Ok(owned.absolute_path);
+        }
+
+        // A song a family member already has on disk is never downloaded again: another member
+        // gets a link to the same file, and the shared library takes the file over.
+        if !is_cache
+            && options.replacement.is_none()
+            && !options.upgrade_search
+            && let Some(family) = family
+            && let Some(found) = family
+                .find_song(external_provider, external_id, &song)
+                .filter(|found| !flac_only || found.format == "flac")
+        {
+            let path = match &pool_members {
+                Some(_) => found.path.clone(),
+                None => family.settle(&found.path, &[], true).await,
+            };
+            info!(
+                "'{} - {}' is already on disk for the family at {path}; not downloading another copy",
+                song.artist, song.title
+            );
+            self.track(|t| {
+                t.log(
+                    external_provider,
+                    external_id,
+                    acquisition_event_kinds::LIBRARY,
+                    "Already on disk for the family, so no second copy",
+                    None,
+                )
+            });
+            let shown = pool_members
+                .as_ref()
+                .and_then(|members| members.first())
+                .and_then(|first| family.link_path_for(&path, first))
+                .unwrap_or_else(|| path.clone());
+            self.track(|t| {
+                t.imported(
+                    external_provider,
+                    external_id,
+                    Some(&song.artist),
+                    Some(&song.title),
+                    Some(&shown),
+                )
+            });
+            return Ok(path);
         }
 
         self.active_downloads.lock().insert(
@@ -783,6 +870,7 @@ impl BaseDownloadService {
             replacing_path: options.replacement.as_ref().map(|r| r.original_path.clone()),
             fetched_from: None,
             muted: false,
+            flac_only,
         };
         let transferred = self
             .backend
@@ -813,6 +901,16 @@ impl BaseDownloadService {
         let extension_fix = self.fix_landed_extension(&landed_path, external_provider, external_id);
         if let Some(fix) = &extension_fix {
             landed_path = fix.path.clone();
+        }
+        // Asked for a real FLAC copy: anything else, or a FLAC the spectrum check found was made
+        // from lossy audio, is thrown away rather than kept.
+        if flac_only && (!is_flac_path(&landed_path) || song.transcoded_from.is_some()) {
+            warn!(
+                "'{} - {}' had to be a real FLAC copy, and {landed_path} is not one; discarding it",
+                song.artist, song.title
+            );
+            let _ = std::fs::remove_file(&landed_path);
+            anyhow::bail!(NO_REAL_FLAC);
         }
         song.local_path = Some(landed_path.clone());
         self.track(|t| {
@@ -879,9 +977,15 @@ impl BaseDownloadService {
         // used to be moved inside DownloadTrackAsync, before any of this was known. A library
         // action's replacement is staged where no scan looks, and moved in only once it carries
         // the original's identity and has passed (W8).
-        let mut placement = match &options.replacement {
-            None => self.place_in_library(&song, &requested, &landed_path).await,
-            Some(_) => self.stage_replacement(&landed_path)?,
+        // A member's download is filed in the family pool by the same layout.
+        let pool_root = pool_members
+            .as_ref()
+            .and(family)
+            .and_then(|family| family.pool_root());
+        let mut placement = match (&options.replacement, &pool_root) {
+            (None, None) => self.place_in_library(&song, &requested, &landed_path).await,
+            (None, Some(root)) => self.place_in_root(&song, &requested, &landed_path, root).await,
+            (Some(_), _) => self.stage_replacement(&landed_path)?,
         };
         let mut local_path = placement.path.clone();
         song.local_path = Some(local_path.clone());
@@ -973,6 +1077,17 @@ impl BaseDownloadService {
             self.local_library
                 .register_downloaded_song(&song, &local_path)
                 .await?;
+            // A pool file is recorded and linked for every member who asked (their libraries
+            // are scanned one by one); Navidrome shows it at the first member's link.
+            let pooled = match (family, &pool_members, &pool_root) {
+                (Some(family), Some(members), Some(_)) => Some(
+                    family
+                        .placed(&local_path, &song, external_provider, external_id, members)
+                        .await
+                        .unwrap_or_else(|| local_path.clone()),
+                ),
+                _ => None,
+            };
             self.record_history(
                 &song,
                 &local_path,
@@ -982,26 +1097,33 @@ impl BaseDownloadService {
                 Some(&key_of(external_provider, external_id)),
             )
             .await;
-            self.ask_for_review(&song, &local_path, options.requested_by.as_deref());
+            if pooled.is_none() {
+                self.ask_for_review(&song, &local_path, options.requested_by.as_deref());
+            }
+            let shown = pooled.clone().unwrap_or_else(|| local_path.clone());
             self.track(|t| {
                 t.imported(
                     external_provider,
                     external_id,
                     Some(&song.artist),
                     Some(&song.title),
-                    Some(&local_path),
+                    Some(&shown),
                 )
             });
 
-            // Trigger a Subsonic library rescan (with debounce).
-            let library = Arc::clone(&self.local_library);
-            tokio::spawn(async move {
-                library.trigger_library_scan(false).await;
-            });
+            // Trigger a Subsonic library rescan (with debounce). The pool is no library: its
+            // members' libraries were scanned when the file was linked.
+            if pooled.is_none() {
+                let library = Arc::clone(&self.local_library);
+                tokio::spawn(async move {
+                    library.trigger_library_scan(false).await;
+                });
+            }
 
             // If download mode is Album and triggering is enabled, start background download of
             // remaining tracks.
-            if options.trigger_album_download
+            if pooled.is_none()
+                && options.trigger_album_download
                 && self.settings.current().subsonic.download_mode == DownloadMode::Album
                 && let Some(album_id) = song.album_id.as_deref().filter(|id| !id.is_empty())
                 && let Some(album_external_id) = self
@@ -1780,6 +1902,37 @@ impl IDownloadService for BaseDownloadService {
                 requested_by,
                 upgrade_search,
                 replacement,
+                ..Default::default()
+            },
+            cancellation_token,
+        )
+        .await
+    }
+
+    async fn execute_acquisition_to(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        trigger_album_download: bool,
+        force_permanent: bool,
+        source_override: Option<DownloadSource>,
+        cancellation_token: &CancellationToken,
+        requested_by: Option<Vec<String>>,
+        upgrade_search: bool,
+        replacement: Option<Arc<ReplacementHandoff>>,
+        place: AcquisitionPlace,
+    ) -> anyhow::Result<String> {
+        self.download_song_internal(
+            external_provider,
+            external_id,
+            DownloadOptions {
+                trigger_album_download,
+                force_permanent,
+                source_override,
+                requested_by,
+                upgrade_search,
+                replacement,
+                place,
                 ..Default::default()
             },
             cancellation_token,

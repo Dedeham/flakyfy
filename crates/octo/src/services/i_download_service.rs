@@ -15,6 +15,7 @@ use octo_core::models::download::DownloadInfo;
 use octo_core::settings::DownloadSource;
 use tokio_util::sync::CancellationToken;
 
+use crate::services::common::AcquisitionPlace;
 use crate::services::library::ReplacementHandoff;
 
 /// An audio body being read, chunk by chunk (the C# `Stream`). Dropping it closes the upstream
@@ -72,6 +73,38 @@ pub trait IDownloadService: Send + Sync {
         upgrade_search: bool,
         replacement: Option<Arc<ReplacementHandoff>>,
     ) -> anyhow::Result<String>;
+
+    /// [`IDownloadService::execute_acquisition`] with where the file goes and what it must be
+    /// (`place`): the family pool for members, and a real FLAC copy only. The default ignores
+    /// `place`, as a service without the family pool does.
+    #[allow(clippy::too_many_arguments)] // execute_acquisition's arguments and the place
+    async fn execute_acquisition_to(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        trigger_album_download: bool,
+        force_permanent: bool,
+        source_override: Option<DownloadSource>,
+        cancellation_token: &CancellationToken,
+        requested_by: Option<Vec<String>>,
+        upgrade_search: bool,
+        replacement: Option<Arc<ReplacementHandoff>>,
+        place: AcquisitionPlace,
+    ) -> anyhow::Result<String> {
+        let _ = place;
+        self.execute_acquisition(
+            external_provider,
+            external_id,
+            trigger_album_download,
+            force_permanent,
+            source_override,
+            cancellation_token,
+            requested_by,
+            upgrade_search,
+            replacement,
+        )
+        .await
+    }
 
     /// Runs one direct source for every missing track in an album.
     async fn download_album_with_source(

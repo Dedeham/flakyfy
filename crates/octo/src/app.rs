@@ -40,8 +40,8 @@ use crate::services::admin::{
 use crate::services::common::{
     AcquisitionActivity, AcquisitionTracker, AcquisitionWorker, CacheCleanupService, CatalogBlanks,
     DownloadConcurrency, DownloadCore, DownloadLogKeeper, DownloadPicks, DownloadServices,
-    ExternalSearchService, HeartAcquisitionCoordinator, HeartCoordinatorExtras, MeterPreview, SongFinder,
-    SongFinderServices, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome, StarOnArrival,
+    ExternalSearchService, FamilyHooks, HeartAcquisitionCoordinator, HeartCoordinatorExtras, MeterPreview,
+    SongFinder, SongFinderServices, SoulseekHoldResumer, SoulseekHoldStore, StarNavidrome, StarOnArrival,
     TrackAcquisitionQueue, TrackerServices,
 };
 use crate::services::cover_art::{
@@ -54,10 +54,14 @@ use octo_media::cover::CoverArtService;
 use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
+use crate::services::family::request_service::{
+    FamilyEvents, LiveRequestCatalog, LiveRequestFetcher, RequestParts, RequestService,
+};
 use crate::services::family::{
-    AnswerRules, AudioGate, DeviceRegistry, FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault,
-    LibraryIndex, MemberBridge, MemberCredentials, NavidromeAdmin, PlayerCaps, RequestStore, SavedStore,
-    ScopeResolver, family_service::FamilyService,
+    AnswerRules, AudioGate, DeviceRegistry, FamilyPlacement, FamilyPlaylistStore, FamilyPool,
+    FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, LibraryWriteGate, MemberBridge,
+    MemberCredentials, NavidromeAdmin, NavidromeMemberStars, PersonalLibrary, PlayerCaps, PoolParts,
+    RequestStore, SavedStore, ScopeResolver, family_service::FamilyService,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -498,6 +502,16 @@ pub struct AppInner {
     pub library_index: Arc<LibraryIndex>,
     /// Whether a song is shared or a member's own, for work that must keep to one or the other.
     pub library_scope: ScopeResolver,
+    /// The family pool: one file per member download, linked into each member's library.
+    pub family_pool_service: Arc<FamilyPool>,
+    /// Members' own libraries: their folders, their storage, removing a song.
+    pub personal_library: Arc<PersonalLibrary>,
+    /// What becomes of a family member's library writes (add now, request, or save only).
+    pub library_write_gate: Arc<LibraryWriteGate>,
+    /// Members' requests for a copy.
+    pub family_request_service: Arc<RequestService>,
+    /// Request events, for pushes and the apps.
+    pub family_events: Arc<FamilyEvents>,
     /// Sign-ins made from members' current hidden passwords, for work done later as a member.
     pub family_credentials: Arc<MemberCredentials>,
     /// Members' devices and the devices seen for everyone else.
@@ -655,6 +669,7 @@ struct Acquisition {
     heart_ownership: Arc<HeartOwnership>,
     heart_acquisition_coordinator: Arc<HeartAcquisitionCoordinator>,
     external_search: Arc<ExternalSearchService>,
+    family_pool_service: Arc<FamilyPool>,
 }
 
 impl Acquisition {
@@ -704,6 +719,8 @@ impl Acquisition {
             }),
             navidrome.local_library.clone(),
         ));
+        // With Family on, a member's own songs are never the shared library's copy.
+        library_ownership.set_scope(navidrome.library_scope.clone());
 
         // Lidarr (4-E). The heart service's lazy IServiceProvider lookups (the download
         // pipeline, the journal, the ownership check, the upgrade queue) are all built by now.
@@ -752,6 +769,7 @@ impl Acquisition {
                         lyrics: Some(downloads.lyrics.clone()),
                         last_fm: Some(integrations.last_fm.clone()),
                         picks: Some(stores.download_picks.clone()),
+                        family: Some(navidrome.family_pool_service.clone() as Arc<dyn FamilyPlacement>),
                     },
                     SoulseekDownloadParts {
                         slskd: downloads.soulseek_client.clone(),
@@ -810,6 +828,11 @@ impl Acquisition {
                 stars: Some(star_on_arrival.clone()),
             },
         );
+        heart_acquisition_coordinator.use_family(FamilyHooks {
+            gate: navidrome.library_write_gate.clone(),
+            pool: navidrome.family_pool_service.clone(),
+            metadata: music_metadata.clone(),
+        });
         let song_finder = Arc::new(SongFinder::new(SongFinderServices {
             settings: Some(settings.clone()),
             upgrade_queue: Some(upgrade_queue.clone()),
@@ -825,7 +848,9 @@ impl Acquisition {
             soulseek_link: Some(soulseek_link.clone()),
             lidarr_fetcher: Some(lidarr_fetcher),
             lidarr_client: Some(lidarr_client.clone()),
+            family: Default::default(),
         }));
+        song_finder.use_family(navidrome.library_write_gate.clone());
         let external_search = Arc::new(ExternalSearchService::new(
             music_metadata,
             Some(integrations.last_fm.clone()),
@@ -849,6 +874,7 @@ impl Acquisition {
             heart_ownership,
             heart_acquisition_coordinator,
             external_search,
+            family_pool_service: navidrome.family_pool_service.clone(),
         }
     }
 
@@ -860,13 +886,16 @@ impl Acquisition {
         stores: &Stores,
         notifications: &Arc<NotificationService>,
     ) {
-        let worker = Arc::new(AcquisitionWorker::new(
-            self.track_acquisition_queue.clone(),
-            self.download_service.clone(),
-            stores.external_id_registry.clone(),
-            notifications.clone(),
-            Some(stores.download_concurrency.clone()),
-        ));
+        let worker = Arc::new(
+            AcquisitionWorker::new(
+                self.track_acquisition_queue.clone(),
+                self.download_service.clone(),
+                stores.external_id_registry.clone(),
+                notifications.clone(),
+                Some(stores.download_concurrency.clone()),
+            )
+            .with_family(self.family_pool_service.clone() as Arc<dyn FamilyPlacement>),
+        );
         workers.register("AcquisitionWorker", move |stopping| worker.clone().run(stopping));
         let resumer = Arc::new(SoulseekHoldResumer::new(
             stores.soulseek_holds.clone(),
@@ -937,6 +966,9 @@ struct NavidromeServices {
     navidrome_admin: Arc<NavidromeAdmin>,
     library_index: Arc<LibraryIndex>,
     library_scope: ScopeResolver,
+    family_pool_service: Arc<FamilyPool>,
+    personal_library: Arc<PersonalLibrary>,
+    library_write_gate: Arc<LibraryWriteGate>,
 }
 
 impl NavidromeServices {
@@ -979,7 +1011,44 @@ impl NavidromeServices {
             http.clone(),
         ))];
         validators.extend(more_validators);
+        // The family pool and members' own libraries. Nothing of it acts while Family is off.
+        let configured_download_path = settings
+            .raw("Library:DownloadPath")
+            .unwrap_or_else(|| "./downloads".to_string());
+        let shared_identity = navidrome_identity.clone();
+        let family_pool_service = FamilyPool::new(PoolParts {
+            settings: Arc::clone(settings),
+            store: Arc::clone(&stores.family_pool),
+            family: Arc::clone(&stores.family_store),
+            index: Arc::clone(&library_index),
+            library: Arc::clone(&local_library),
+            playlists: Arc::clone(&stores.family_playlists),
+            stars: Arc::new(NavidromeMemberStars::new(
+                Arc::clone(settings),
+                http.clone(),
+                Arc::new(MemberCredentials::new(
+                    Arc::clone(&stores.family_store),
+                    Arc::clone(&stores.family_vault),
+                    Arc::clone(settings),
+                )),
+            )),
+            shared_root: Box::new(move || shared_identity.effective_download_path(&configured_download_path)),
+        });
+        let personal_library = Arc::new(PersonalLibrary::new(
+            Arc::clone(settings),
+            Arc::clone(&stores.family_store),
+            Arc::clone(&library_index),
+            Arc::clone(&family_pool_service),
+        ));
+        let library_write_gate = Arc::new(LibraryWriteGate::new(
+            Arc::clone(settings),
+            Arc::clone(&stores.family_store),
+            Arc::clone(&personal_library),
+        ));
         NavidromeServices {
+            family_pool_service,
+            personal_library,
+            library_write_gate,
             subsonic_proxy: SubsonicProxyService::new(Arc::clone(settings)),
             navidrome_song_path_resolver: Arc::new(NavidromeSongPathResolver::new(
                 navidrome_identity.clone(),
@@ -2013,19 +2082,22 @@ impl LibraryJobs {
         );
         let fingerprint_sweep_verifier = Arc::new(FingerprintSweepVerifier::new());
         let resolver = navidrome.navidrome_song_path_resolver.clone();
-        let library_review_sweep_worker = Arc::new(LibraryReviewSweepWorker::new(
-            LibraryReviewSweepParts {
-                store: stores.review_sweep_store.clone(),
-                notices: stores.notice_queue.clone(),
-                verifier: fingerprint_sweep_verifier.clone(),
-                activity: acquisition.acquisition_activity.clone(),
-                library: navidrome.local_library.clone(),
-                settings: settings.clone(),
-                // The resolver's root, the same one review actions resolve inside.
-                music_root: Box::new(move || resolver.music_root()),
-            },
-            Clock::system(),
-        ));
+        let library_review_sweep_worker = Arc::new(
+            LibraryReviewSweepWorker::new(
+                LibraryReviewSweepParts {
+                    store: stores.review_sweep_store.clone(),
+                    notices: stores.notice_queue.clone(),
+                    verifier: fingerprint_sweep_verifier.clone(),
+                    activity: acquisition.acquisition_activity.clone(),
+                    library: navidrome.local_library.clone(),
+                    settings: settings.clone(),
+                    // The resolver's root, the same one review actions resolve inside.
+                    music_root: Box::new(move || resolver.music_root()),
+                },
+                Clock::system(),
+            )
+            .with_library_scope(navidrome.library_scope.clone()),
+        );
         LibraryJobs {
             upgrade_worker,
             quality_upgrade_worker,
@@ -2058,6 +2130,61 @@ impl LibraryJobs {
         workers.register("LibraryReviewSweepWorker", move |stopping| {
             sweep.clone().run(stopping)
         });
+    }
+}
+
+/// Members' requests, over the acquisition services and the imports (which ask for a list's
+/// missing songs through them).
+struct FamilyRequests {
+    service: Arc<RequestService>,
+    events: Arc<FamilyEvents>,
+}
+
+impl FamilyRequests {
+    fn build(
+        settings: &Arc<SettingsStore>,
+        stores: &Stores,
+        navidrome: &NavidromeServices,
+        acquisition: &Acquisition,
+        metadata: Arc<dyn IMusicMetadataService>,
+        imports: &Arc<crate::services::imports::ImportService>,
+    ) -> FamilyRequests {
+        let events = Arc::new(FamilyEvents::new());
+        let fetcher = Arc::new(LiveRequestFetcher::new(
+            acquisition.track_acquisition_queue.clone(),
+            acquisition.heart_acquisition_coordinator.clone(),
+            acquisition.acquisition_tracker.clone(),
+            acquisition.upgrade_queue.clone(),
+        ));
+        fetcher.use_imports(imports);
+        let service = RequestService::new(RequestParts {
+            settings: Arc::clone(settings),
+            family: Arc::clone(&stores.family_store),
+            requests: Arc::clone(&stores.family_requests),
+            personal: navidrome.personal_library.clone(),
+            catalog: Arc::new(LiveRequestCatalog {
+                metadata,
+                ownership: acquisition.library_ownership.clone(),
+                library: navidrome.local_library.clone(),
+                registry: stores.external_id_registry.clone(),
+            }),
+            fetcher,
+            stars: Arc::new(NavidromeMemberStars::new(
+                Arc::clone(settings),
+                navidrome.http.clone(),
+                Arc::new(MemberCredentials::new(
+                    Arc::clone(&stores.family_store),
+                    Arc::clone(&stores.family_vault),
+                    Arc::clone(settings),
+                )),
+            )),
+            events: Arc::clone(&events),
+        });
+        imports.use_family(crate::services::imports::ImportFamily {
+            gate: navidrome.library_write_gate.clone(),
+            requests: Arc::downgrade(&service),
+        });
+        FamilyRequests { service, events }
     }
 }
 
@@ -2311,14 +2438,16 @@ impl AppState {
             settings.clone(),
             Clock::system(),
         ));
+        sync_catalog.use_library_scope(navidrome.library_scope.clone());
         // `FingerprintSweepVerifier(sp)` resolved the download verification service when the
         // sweep first asked; here it is handed over once both exist.
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
-        let library_snapshot = Arc::new(LibrarySnapshot::new(Arc::clone(
-            &navidrome.navidrome_playlist_api,
-        )));
+        let library_snapshot = Arc::new(
+            LibrarySnapshot::new(Arc::clone(&navidrome.navidrome_playlist_api))
+                .with_scope(navidrome.library_scope.clone()),
+        );
         let album_ownership = Arc::new(AlbumOwnership::over(
             Arc::clone(&library_snapshot),
             Arc::clone(&clients.deezer_metadata),
@@ -2351,6 +2480,14 @@ impl AppState {
             soulseek.link.clone(),
         );
         imports.register_workers(&workers);
+        let family_requests = FamilyRequests::build(
+            &settings,
+            &stores,
+            &navidrome,
+            &acquisition,
+            metadata_service.clone(),
+            &imports.service,
+        );
         let family_edge = FamilyEdge::build(
             &settings,
             &stores.family_store,
@@ -2505,6 +2642,11 @@ impl AppState {
             family_answer_rules: family_edge.answer_rules,
             family_audio: family_edge.audio,
             family: Arc::new(FamilyService::default()),
+            family_pool_service: navidrome.family_pool_service.clone(),
+            personal_library: navidrome.personal_library.clone(),
+            library_write_gate: navidrome.library_write_gate.clone(),
+            family_request_service: family_requests.service,
+            family_events: family_requests.events,
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
@@ -2648,15 +2790,17 @@ impl AppState {
             settings.clone(),
             Clock::system(),
         ));
+        sync_catalog.use_library_scope(navidrome.library_scope.clone());
         // `FingerprintSweepVerifier(sp)` resolved the download verification service when the
         // sweep first asked; here it is handed over once both exist.
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
         let library_snapshot = overrides.library_snapshot.clone().unwrap_or_else(|| {
-            Arc::new(LibrarySnapshot::new(Arc::clone(
-                &navidrome.navidrome_playlist_api,
-            )))
+            Arc::new(
+                LibrarySnapshot::new(Arc::clone(&navidrome.navidrome_playlist_api))
+                    .with_scope(navidrome.library_scope.clone()),
+            )
         });
         let album_ownership = Arc::new(AlbumOwnership::over(
             Arc::clone(&library_snapshot),
@@ -2692,6 +2836,14 @@ impl AppState {
             &navidrome,
             &acquisition,
             soulseek.link.clone(),
+        );
+        let family_requests = FamilyRequests::build(
+            &settings,
+            &stores,
+            &navidrome,
+            &acquisition,
+            metadata_service.clone(),
+            &imports.service,
         );
         let family_edge = FamilyEdge::build(
             &settings,
@@ -2847,6 +2999,11 @@ impl AppState {
             family_answer_rules: family_edge.answer_rules,
             family_audio: family_edge.audio,
             family: Arc::new(FamilyService::default()),
+            family_pool_service: navidrome.family_pool_service.clone(),
+            personal_library: navidrome.personal_library.clone(),
+            library_write_gate: navidrome.library_write_gate.clone(),
+            family_request_service: family_requests.service,
+            family_events: family_requests.events,
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();

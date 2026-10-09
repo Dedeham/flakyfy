@@ -26,6 +26,12 @@ use crate::services::common::{HeartAcquisitionCoordinator, TrackAcquisitionQueue
 use crate::services::library::LibraryOwnership;
 use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink, SoulseekMetadataService};
 
+/// A song the trickle may not fetch for this person now (a family member whose library is full,
+/// or who only saves songs), with the words they read. The job is skipped rather than failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct TrickleHeld(pub String);
+
 /// What the trickle is doing, in a word the dashboard and the apps know, and when it starts its
 /// next song.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +187,9 @@ impl TrickleWorker {
                     start_tracker.clone(),
                 );
                 Box::pin(async move {
+                    // A family member's songs go to their own library; one whose library is full
+                    // (or who only saves songs) gets nothing until that changes.
+                    let target = hearts.import_target(&job.owner).map_err(TrickleHeld)?;
                     let external_id = ids.register(SoulseekRouting {
                         kind: RoutingKind::Song,
                         artist: Some(job.artist.clone()),
@@ -205,7 +214,7 @@ impl TrickleWorker {
                         job.album.as_deref(),
                     );
                     hearts
-                        .acquire_track(provider, &external_id, Some(&job.owner), None)
+                        .acquire_track_for(provider, &external_id, Some(&job.owner), None, &target)
                         .await?;
                     Ok(key)
                 })
@@ -395,6 +404,15 @@ impl TrickleWorker {
         }
         .await;
         if let Err(e) = outcome {
+            if let Some(held) = e.downcast_ref::<TrickleHeld>() {
+                info!(
+                    "Trickle for '{} - {}' ({}) skipped: {held}",
+                    job.artist, job.title, job.owner
+                );
+                self.finish(&job, import_track_states::SKIPPED, Some(&held.0), None);
+                *self.current.lock() = None;
+                return;
+            }
             warn!(
                 "Trickle for '{} - {}' ({}) failed: {e}",
                 job.artist, job.title, job.owner

@@ -34,6 +34,8 @@ use super::{ImportList, ImportTrack, SpotifyAccount, TrickleJob};
 use crate::services::common::acquisition_tracker::{
     AcquisitionSnapshot, AcquisitionState, AcquisitionTracker, key_of,
 };
+use crate::services::family::request_service::{RequestFacts, RequestService};
+use crate::services::family::{LibraryWriteGate, WriteDecision};
 
 /// Where Octo answers Spotify's redirect itself.
 pub const CALLBACK_PATH: &str = "/imports/spotify/callback";
@@ -72,6 +74,26 @@ pub struct ImportService {
     playlist_retries: Mutex<HashMap<String, (u32, DateTime<Utc>)>>,
     stopping: Mutex<CancellationToken>,
     clock: Mutex<Clock>,
+    /// Family's write gate and requests: a member who must ask first asks for a list's missing
+    /// songs instead of fetching them. Unset, or with Family off, everyone fetches as always.
+    family: std::sync::OnceLock<ImportFamily>,
+}
+
+/// What imports use for family members.
+#[derive(Clone)]
+pub struct ImportFamily {
+    pub gate: Arc<LibraryWriteGate>,
+    pub requests: std::sync::Weak<RequestService>,
+}
+
+/// What a family member reads once their list's missing songs were asked for.
+const LIST_ASKED: &str = "Asked for a copy of this list's missing songs. You'll hear back once it's decided.";
+
+/// What import lists do for this person: fetch, or a request, or a refusal.
+enum ListWrite {
+    Fetch,
+    Ask(Option<String>),
+    Refuse(String),
 }
 
 /// What the import is built over.
@@ -126,6 +148,7 @@ impl ImportService {
             playlist_retries: Mutex::new(HashMap::new()),
             stopping: Mutex::new(CancellationToken::new()),
             clock: Mutex::new(Clock::system()),
+            family: std::sync::OnceLock::new(),
         });
         let weak = Arc::downgrade(&service);
         service.trickle.on_finished(Arc::new(move |job| {
@@ -880,11 +903,69 @@ impl ImportService {
         })
     }
 
+    /// Gives imports Family's write gate and requests. Once only.
+    pub fn use_family(&self, family: ImportFamily) {
+        let _ = self.family.set(family);
+    }
+
+    /// What a list's missing songs do for `user`: fetch (everyone outside the family, members
+    /// who add songs at once, and a list an approver said yes to), become one request for the
+    /// list, or nothing (an account that only saves songs).
+    fn list_write(&self, user: &str, list: &ImportList) -> ListWrite {
+        let Some(family) = self.family.get() else {
+            return ListWrite::Fetch;
+        };
+        match family.gate.decide(Some(user)) {
+            WriteDecision::Shared | WriteDecision::Member(_) => ListWrite::Fetch,
+            WriteDecision::Request { .. } if list.family_approved => ListWrite::Fetch,
+            WriteDecision::Request { full, .. } => ListWrite::Ask(full),
+            WriteDecision::Refuse { message, .. } => ListWrite::Refuse(message),
+        }
+    }
+
+    /// One request for a whole list's missing songs.
+    fn ask_for_list(&self, user: &str, list: &ImportList, full: Option<String>) -> ImportActionResult {
+        let Some(requests) = self.family.get().and_then(|f| f.requests.upgrade()) else {
+            return ImportActionResult::failed("Requests are not running.");
+        };
+        let facts = RequestFacts {
+            title: list.name.clone(),
+            artist: list.by.clone().unwrap_or_default(),
+            album: String::new(),
+            cover_art: list.image_url.clone().unwrap_or_default(),
+        };
+        match requests.create_import(user, &list.id, facts) {
+            Ok(_) => ImportActionResult::ok(match full {
+                Some(full) => format!("{full}. {LIST_ASKED}"),
+                None => LIST_ASKED.to_string(),
+            })
+            .with_list(Some(list.id.clone())),
+            Err(e) => ImportActionResult::failed(e.message),
+        }
+    }
+
+    /// An approver said yes to a family member's list: it fetches its missing songs, and every
+    /// song added to it later, like anyone's.
+    pub fn approve_family_list(&self, user: &str, id: &str) -> ImportActionResult {
+        if self.store.get(user, id).is_none() {
+            return ImportActionResult::failed("That list is gone.");
+        }
+        self.store.update(user, id, |l| l.family_approved = true);
+        self.set_get_missing(user, id, true)
+    }
+
     /// Fetch the list's missing songs, and every song added to it later, or stop.
     pub fn set_get_missing(&self, user: &str, id: &str, on: bool) -> ImportActionResult {
         let Some(list) = self.store.get(user, id) else {
             return ImportActionResult::failed("There is no such list.");
         };
+        if on {
+            match self.list_write(user, &list) {
+                ListWrite::Fetch => {}
+                ListWrite::Ask(full) => return self.ask_for_list(user, &list, full),
+                ListWrite::Refuse(message) => return ImportActionResult::failed(message),
+            }
+        }
         // Never on a guess: a list nobody could match against the library would fetch songs
         // already there.
         if on && list.matched_utc.is_none() {
@@ -942,6 +1023,11 @@ impl ImportService {
         let Some(list) = self.store.get(user, id) else {
             return ImportActionResult::failed("There is no such list.");
         };
+        match self.list_write(user, &list) {
+            ListWrite::Fetch => {}
+            ListWrite::Ask(full) => return self.ask_for_list(user, &list, full),
+            ListWrite::Refuse(message) => return ImportActionResult::failed(message),
+        }
         let songs: Vec<&ImportTrack> = list
             .tracks
             .iter()

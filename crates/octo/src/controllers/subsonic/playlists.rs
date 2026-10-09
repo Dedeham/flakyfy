@@ -33,8 +33,13 @@ use crate::services::family::family_playlists::{
     self, FAMILY_OWNER, NewEntry, PlaylistError, SHARED_SCOPE, Serve, personal_scope,
 };
 use crate::services::family::{FamilyCaller, FamilyPlaylist, family_caller, kid_filter};
+use crate::services::library::library_action_playlist_provisioner::{
+    REMOVE_PLAYLIST, REQUEST_FLAC_PLAYLIST, REQUEST_PLAYLIST,
+};
 use crate::services::library::{GeneratedPlaylist, LibraryActionPlaylistProvisioner};
 use crate::services::subsonic::SubsonicResponseBuilderExt;
+use octo_core::family::abilities::RequestQuality;
+use tracing::info;
 
 /// How many songs of a family playlist are read at once.
 const FAMILY_SONGS_AT_ONCE: usize = 8;
@@ -68,7 +73,8 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     // playlists exist, using the body we already have so the common case costs no extra
     // request. Fire-and-forget: creating a playlist must never delay the listing.
     let names = playlist_names(Some(&relay.body), &format);
-    let provisioner = LibraryActionPlaylistProvisioner::new(call.proxy.clone(), state.settings.clone());
+    let provisioner = LibraryActionPlaylistProvisioner::new(call.proxy.clone(), state.settings.clone())
+        .with_family(state.family_store.clone());
     let ensured_user = username.clone();
     let ensured_parameters = call.parameters.clone();
     tokio::spawn(async move {
@@ -495,6 +501,111 @@ pub async fn mutate_playlist(State(state): State<AppState>, req: Request) -> Res
     .await
 }
 
+/// What a family action playlist does with a song put in it.
+enum FamilyPlaylistAction {
+    Request(RequestQuality),
+    Remove,
+}
+
+/// `updatePlaylist` on one of a family member's own action playlists ("Request a copy",
+/// "Request a copy in FLAC", "Remove from my library"): each song added becomes a request or
+/// leaves their library, and so does anything already in the playlist; the playlist is then
+/// emptied, since the requests are the record. None for any other playlist.
+async fn family_action_playlist(
+    state: &AppState,
+    call: &SubsonicCall,
+    id: &str,
+    user: &str,
+) -> Option<Response> {
+    const AUTH_KEYS: [&str; 9] = ["u", "p", "t", "s", "v", "c", "apiKey", "jwt", "f"];
+    if id.trim().is_empty() {
+        return None;
+    }
+    let mut auth: Vec<(String, String)> = call
+        .parameters
+        .iter()
+        .filter(|(key, _)| {
+            AUTH_KEYS.iter().any(|k| k.eq_ignore_ascii_case(key)) && !key.eq_ignore_ascii_case("f")
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    auth.push(("f".into(), "json".into()));
+    let mut ask = auth.clone();
+    ask.push(("id".into(), id.to_string()));
+    let read = call
+        .proxy
+        .relay_safe("rest/getPlaylist", ask.iter().map(|(k, v)| (k, v)))
+        .await?;
+    let body: Value = serde_json::from_slice(&read.body).ok()?;
+    let playlist = body.pointer("/subsonic-response/playlist")?;
+    let name = playlist.get("name").and_then(Value::as_str)?.trim().to_string();
+    let action = if name.eq_ignore_ascii_case(REQUEST_PLAYLIST) {
+        FamilyPlaylistAction::Request(RequestQuality::Best)
+    } else if name.eq_ignore_ascii_case(REQUEST_FLAC_PLAYLIST) {
+        FamilyPlaylistAction::Request(RequestQuality::Flac)
+    } else if name.eq_ignore_ascii_case(REMOVE_PLAYLIST) {
+        FamilyPlaylistAction::Remove
+    } else {
+        return None;
+    };
+    let already: Vec<String> = playlist
+        .get("entry")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let added: Vec<String> = call
+        .param("songIdToAdd")
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|song| !song.is_empty())
+        .map(str::to_string)
+        .collect();
+    for song in already.iter().chain(added.iter()) {
+        match &action {
+            FamilyPlaylistAction::Request(quality) => {
+                match state
+                    .family_request_service
+                    .create(user, song, *quality, None)
+                    .await
+                {
+                    Ok(request) => info!("FAMILY {user} asked for {song} through {name} ({})", request.id),
+                    Err(e) => info!("FAMILY {user} could not ask for {song}: {}", e.message),
+                }
+            }
+            FamilyPlaylistAction::Remove => {
+                if let Err(e) = state.personal_library.remove_from_my_library(user, song).await {
+                    info!("FAMILY {user} could not remove {song}: {}", e.message);
+                }
+            }
+        }
+    }
+    if !already.is_empty() {
+        let mut empty = auth.clone();
+        empty.push(("playlistId".into(), id.to_string()));
+        empty.extend((0..already.len()).map(|at| ("songIndexToRemove".to_string(), at.to_string())));
+        if call
+            .proxy
+            .relay_safe("rest/updatePlaylist", empty.iter().map(|(k, v)| (k, v)))
+            .await
+            .is_none()
+        {
+            warn!("Could not empty {user}'s {name} playlist");
+        }
+    }
+    Some(
+        state
+            .subsonic_response_builder
+            .create_response(&call.format, "updatePlaylist")
+            .into_response(),
+    )
+}
+
 /// Refuses Octo's own ids, changes family playlists, and relays everything else as
 /// `rest/<last path segment>` in the client's own spelling.
 async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, failure: &str) -> Response {
@@ -510,6 +621,16 @@ async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, fa
         .or_else(|| call.param("id"))
         .unwrap_or("")
         .to_string();
+    // A family member's request and remove playlists turn what is added to them into requests
+    // or removals, and stay empty.
+    if id_key == "playlistId"
+        && let Some(member) = family_caller(&call.parts.extensions)
+            .filter(|caller| caller.managed)
+            .map(|caller| caller.user.clone())
+        && let Some(answer) = family_action_playlist(&state, &call, &id, &member).await
+    {
+        return answer;
+    }
     if is_family_playlist_id(&state, &id)
         && let Some(change) = playlist_change(&call)
     {
@@ -525,9 +646,6 @@ async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, fa
     // has a last segment, so the C#'s fallback name was never used.
     let path = call.path();
     let endpoint = path.split('/').next_back().unwrap_or("").replace(".view", "");
-    if let Some(answer) = family_action_playlist(&state, &call, caller.as_ref(), &endpoint, &id).await {
-        return answer;
-    }
     match call
         .proxy
         .relay_safe(&format!("rest/{endpoint}"), &call.parameters)
@@ -539,19 +657,6 @@ async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, fa
             .create_error(format, 0, failure)
             .into_response(),
     }
-}
-
-/// The family's action playlists ("Request a copy", "Request a copy in FLAC" and "Remove from
-/// my library"): a change to one of them is acted on here instead of being relayed. None hands
-/// the call on to Navidrome.
-async fn family_action_playlist(
-    _state: &AppState,
-    _call: &SubsonicCall,
-    _caller: Option<&FamilyCaller>,
-    _endpoint: &str,
-    _id: &str,
-) -> Option<Response> {
-    None
 }
 
 /// Whether `id` is a family playlist's while Family is on.

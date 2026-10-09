@@ -1111,6 +1111,10 @@ impl SoulseekDownloadService {
             }
             (None, Some(p)) => vec![p.hit.clone()],
         };
+        // Asked for a real FLAC copy: only FLAC files are tried.
+        if download.flac_only {
+            ranked.retain(|hit| normalize_extension(Some(&hit.extension), &hit.filename) == "flac");
+        }
         // Whether `ranked` is the album folder's copy (the C# compared the hit by reference).
         let mut ranked_is_prepared = prepared.is_some();
 

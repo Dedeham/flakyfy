@@ -369,7 +369,10 @@ async fn local_file_shortcut_relays_the_library_copy_with_the_ceiling() {
 
 #[tokio::test]
 async fn serve_acquired_relays_the_library_copy_with_the_ceiling() {
-    let f = family(true, capped(), |s| s.subsonic.wait_for_lossless_on_play = true).await;
+    // Only a member who adds songs at once has a play keep a copy, so only their play joins
+    // the acquisition.
+    let direct = Alex::with(json!({ "addToLibrary": "Direct", "streamCap": 192 }));
+    let f = family(true, direct, |s| s.subsonic.wait_for_lossless_on_play = true).await;
     let file = f.index_song(false).await;
     // The acquisition this play joins has already landed the file.
     let landed = f
@@ -382,6 +385,19 @@ async fn serve_acquired_relays_the_library_copy_with_the_ceiling() {
     let sent = f.streamed().await;
     assert_eq!(value(&sent, "id"), Some("lib-9"));
     assert_eq!(value(&sent, "maxBitRate"), Some("192"));
+}
+
+#[tokio::test]
+async fn a_capped_listener_plays_from_the_source_and_never_gets_the_file() {
+    let f = family(true, capped(), |s| s.subsonic.wait_for_lossless_on_play = true).await;
+    let file = f.index_song(false).await;
+    let landed = f
+        .state
+        .track_acquisition_queue
+        .enqueue("deezer", "1", false, false, true, None, true, None, false, None);
+    assert!(landed.try_set_result(file));
+    let r = get(&f, &format!("/rest/stream?{ALEX}&id=ext-deezer-song-1"), HOME).await;
+    assert!(!r.body.contains("the-original-flac-file"), "{}", r.body);
 }
 
 #[tokio::test]

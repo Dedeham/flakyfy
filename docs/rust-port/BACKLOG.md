@@ -1354,6 +1354,10 @@ observable changes.
 - [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library
 - [x] G5-8 Family playlists: `of` ids while Family is on, listed for the owner and every member, each entry served per viewer (the library song when shared or the viewer's own, else its outside version), additions held for approval with a request hook, changes by ability; create, rename, approval switch and delete for the `/family/` page
 - [x] G5-9 Kid profiles: explicit songs left out of their answers by the index's mark (any client, DSub too), outside songs by the catalog's mark, getSong answers error 70, counts kept; clean stations, mixes, Made for you, charts and song radio; `unrated_count` for "Mark them now"
+  - [x] Library write gate (`port/g5-library`): hearts on outside songs and albums, plays that keep a copy (download on play, Lidarr album on play, the lossless wait), imports Get missing and chosen songs, Find songs picks and `libraryAction`. Direct members add into the family pool, Request members ask (one request per album, one per import list), SaveOnly members save or are told no; a full library turns a Direct add into a request; plays keep no copy for anyone who must ask
+- [x] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library (`port/g5-library`). The family pool: one file per member download under `<members>/.pool`, relative links in each member's folder, refs in `family-pool.json`, gc to the trash, a better copy repointing every link, a song the shared library wants moving there, stars and family playlist entries following a song whose id changed, copy mode where links do not work (probed, or switched to when Navidrome never shows a linked song), dangling pool files swept. Downloads for members land in the pool (in-flight key `provider:id`, a member who joins gets a link); a song already on disk is linked, never fetched again. Requests: already shared, added from the family, joined in flight, or pending and approved by policy; done only once the index finds the song in the member's library (forced targeted scans, up to 10 minutes); FLAC means FLAC files only and no FLAC made from lossy audio, else "No real FLAC copy found" and try again as MP3; a better copy of a shared song through the upgrade queue as the owner; import lists to the trickle once approved; request events for pushes. Storage used per member and Remove from my library (own songs only, shared songs refused). Request a copy, Request a copy in FLAC and Remove from my library playlists. Album ownership, heart ownership, outside dedupe, the review sweep and the sync catalog keep to each person's scope. Creating members' Navidrome users and libraries stays with the family service (G5-10)
+- [ ] G5-8 Family playlists
+- [ ] G5-9 Kid profiles (explicit status from the index)
 - [ ] G5-10 Member sign-in on `/family/`, pairing, invites
 - [ ] G5-11 `octoFamily` extension for the apps
 - [ ] G5-12 Notifications, ListenBrainz fallback rule
@@ -1369,6 +1373,7 @@ observable changes.
 - [ ] G5-14 Owner privacy (index answer filter)
 - [ ] G5-15 Scale (shim threads and single flight, radio cap, fair star queue, load)
   - [x] Shim threads from `SHIM_THREADS` (128), a single-flight test, active streams and running yt-dlp in the shim's health, and a radio stream limit that grows with the family; the load view's live streams come from the stream tracker
+  - [x] Fair star queue (`port/g5-library`): stars are handed out one requester at a time, one person's own stars keep their order, plays stay first in first out and after stars
 - [ ] G5-16 Apps (`C:\OctoPlayer`, `feat/family`)
 - [ ] G5-17 Parity, live checks, docs
 

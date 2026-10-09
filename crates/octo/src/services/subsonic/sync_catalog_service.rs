@@ -27,6 +27,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
+use crate::services::family::{LibraryScope, ScopeResolver};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::subsonic::SubsonicProxyService;
@@ -215,6 +216,10 @@ pub struct SyncCatalogService {
     catalogs: Mutex<HashMap<String, Arc<SyncCatalog>>>,
     builds: Mutex<HashMap<String, RunningBuild>>,
     walks: Mutex<HashMap<String, WalkMemo>>,
+
+    /// Which library each song is in, while Family is on: a song only in a family member's own
+    /// library is not owned by anyone else, so their catalog keeps its outside version.
+    scope: Mutex<Option<ScopeResolver>>,
 }
 
 /// What the library holds for one artist: its id, its albums by name, and its
@@ -252,7 +257,56 @@ impl SyncCatalogService {
             catalogs: Mutex::new(HashMap::new()),
             builds: Mutex::new(HashMap::new()),
             walks: Mutex::new(HashMap::new()),
+            scope: Mutex::new(None),
         }
+    }
+
+    /// Keeps what each person owns to their view of the library while Family is on: the
+    /// shared library, and a member's own songs for that member only.
+    pub fn use_library_scope(&self, scope: ScopeResolver) {
+        *self.scope.lock() = Some(scope);
+    }
+
+    /// A library lookup's answer as `user` may see it: with Family on, songs from another
+    /// member's own library go, and so do albums and artists only those songs had. Unchanged
+    /// with Family off or for anyone Octo cannot name.
+    pub(crate) fn scoped_answer(&self, user: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
+        let resolver = self.scope.lock().clone().filter(ScopeResolver::active)?;
+        let user = user.filter(|u| !u.trim().is_empty())?;
+        let scope = LibraryScope::Viewer(user.to_string());
+        let mut document: Value = serde_json::from_slice(body).ok()?;
+        let result = document.pointer_mut("/subsonic-response/searchResult3")?;
+        let songs = result.get_mut("song")?.as_array_mut()?;
+        let (mut kept_albums, mut kept_artists) = (HashSet::new(), HashSet::new());
+        let (mut gone_albums, mut gone_artists) = (HashSet::new(), HashSet::new());
+        songs.retain(|song| {
+            let id = song.get("id").and_then(Value::as_str);
+            let keep = resolver.allows(&scope, id, None);
+            let (albums, artists) = if keep {
+                (&mut kept_albums, &mut kept_artists)
+            } else {
+                (&mut gone_albums, &mut gone_artists)
+            };
+            if let Some(album) = song.get("albumId").and_then(Value::as_str) {
+                albums.insert(album.to_string());
+            }
+            if let Some(artist) = song.get("artistId").and_then(Value::as_str) {
+                artists.insert(artist.to_string());
+            }
+            keep
+        });
+        let only_gone = |gone: &HashSet<String>, kept: &HashSet<String>, row: &Value| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| gone.contains(id) && !kept.contains(id))
+        };
+        if let Some(albums) = result.get_mut("album").and_then(Value::as_array_mut) {
+            albums.retain(|album| !only_gone(&gone_albums, &kept_albums, album));
+        }
+        if let Some(artists) = result.get_mut("artist").and_then(Value::as_array_mut) {
+            artists.retain(|artist| !only_gone(&gone_artists, &kept_artists, artist));
+        }
+        serde_json::to_vec(&document).ok()
     }
 
     /// Whether a request comes from a client that syncs the library rather than searching
@@ -812,7 +866,9 @@ impl SyncCatalogService {
         if result.body.is_empty() {
             return None;
         }
-        match Self::parse_library_artist(&result.body, artist) {
+        let scoped = self.scoped_answer(parameters.get("u").map(String::as_str), &result.body);
+        let body = scoped.as_deref().unwrap_or(&result.body);
+        match Self::parse_library_artist(body, artist) {
             Ok(owned) => owned,
             Err(error) => {
                 debug!("sync catalog library lookup failed for {artist}: {error}");
@@ -944,3 +1000,93 @@ fn rows<'a>(parent: &'a Value, name: &str) -> ElementResult<&'a [Value]> {
 #[cfg(test)]
 #[path = "sync_catalog_service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod family_scope_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::services::common::test_fakes::FakeMetadata;
+    use crate::services::family::library_index::scope_for_tests;
+    use crate::services::family::test_support::{World, navidrome_with_songs, song_row};
+
+    fn service(scope: ScopeResolver) -> SyncCatalogService {
+        let settings = Arc::new(SettingsStore::for_tests(Default::default()));
+        let service = SyncCatalogService::new(
+            SubsonicProxyService::new(settings.clone()),
+            Arc::new(FakeMetadata::default()),
+            Arc::new(ExternalIdRegistry::new(None::<&str>)),
+            settings,
+            Clock::system(),
+        );
+        service.use_library_scope(scope);
+        service
+    }
+
+    /// An admin's lookup answer: one shared song, one in Sam's own library on an album and by
+    /// an artist nobody else has, and one of Alex's on the shared album.
+    fn answer() -> Vec<u8> {
+        serde_json::to_vec(&json!({"subsonic-response": {"status": "ok", "searchResult3": {
+            "artist": [{"id": "ar-shared", "name": "Portishead"}, {"id": "ar-sam", "name": "Sam's band"}],
+            "album": [{"id": "al-shared", "name": "Dummy"}, {"id": "al-sam", "name": "Sam's album"}],
+            "song": [
+                {"id": "shared-1", "albumId": "al-shared", "artistId": "ar-shared"},
+                {"id": "sam-1", "albumId": "al-sam", "artistId": "ar-sam"},
+                {"id": "alex-1", "albumId": "al-shared", "artistId": "ar-shared"}
+            ]
+        }}}))
+        .expect("JSON")
+    }
+
+    fn ids(body: &[u8], kind: &str) -> Vec<String> {
+        let document: Value = serde_json::from_slice(body).expect("JSON");
+        document["subsonic-response"]["searchResult3"][kind]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|row| row["id"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn another_members_songs_are_not_owned() {
+        let world = World::new(None);
+        let members = world.members();
+        let navidrome = navidrome_with_songs(json!([
+            song_row("shared-1", 1, "/music", "a.flac", 1),
+            song_row("sam-1", 4, &format!("{members}/sam"), "b.flac", 1),
+            song_row("alex-1", 3, &format!("{members}/alex"), "c.flac", 1),
+        ]))
+        .await;
+        world.point_at(&navidrome.uri());
+        world.index.refresh().await.expect("read");
+        let service = service(ScopeResolver::new(
+            world.settings.clone(),
+            world.family.clone(),
+            world.index.clone(),
+        ));
+
+        let owner = service.scoped_answer(Some("winters"), &answer()).expect("scoped");
+        assert_eq!(ids(&owner, "song"), ["shared-1"]);
+        assert_eq!(
+            ids(&owner, "album"),
+            ["al-shared"],
+            "Sam's album goes with Sam's song"
+        );
+        assert_eq!(ids(&owner, "artist"), ["ar-shared"]);
+
+        let alex = service.scoped_answer(Some("alex"), &answer()).expect("scoped");
+        assert_eq!(ids(&alex, "song"), ["shared-1", "alex-1"]);
+        let sam = service.scoped_answer(Some("sam"), &answer()).expect("scoped");
+        assert_eq!(ids(&sam, "song"), ["shared-1", "sam-1"]);
+        assert_eq!(ids(&sam, "album"), ["al-shared", "al-sam"]);
+    }
+
+    #[test]
+    fn family_off_leaves_the_answer_alone() {
+        let off = service(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+        assert!(off.scoped_answer(Some("winters"), &answer()).is_none());
+        let on = service(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+        assert!(on.scoped_answer(None, &answer()).is_none(), "nobody named");
+    }
+}

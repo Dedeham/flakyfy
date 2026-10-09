@@ -3,8 +3,8 @@
  * (or a new password after a reset). The token stays in the part after #, which browsers never
  * send to a server.
  *
- * Three steps, one card each: 1 your name and password, 2 your login (the server, username and
- * password to use in any app, with each app's steps), 3 done.
+ * Three steps, one card each: 1 sign up (your name and a password), 2 your login (the server,
+ * username and password to use in any app, with each app's steps), 3 done.
  */
 (function () {
   'use strict';
@@ -14,7 +14,7 @@
   var root = document.getElementById('join');
   document.getElementById('host').textContent = location.host;
 
-  var STEPS = ['Your name and password', 'Your login', 'Done'];
+  var STEPS = ['Sign up', 'Your login', 'Done'];
 
   function params() {
     return new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -82,7 +82,7 @@
     button);
     show([
       progress(1),
-      heading('Set up your login', 'Someone invited you to listen with them on Octo. Choose your name and a password.'),
+      heading('Sign up', 'Someone invited you to listen with them on Octo. Choose your name and a password: with your username, it is your login for every app.'),
       card(form)
     ]);
   }

@@ -30,6 +30,7 @@ pub mod notice_queue;
 pub mod quality_upgrade_worker;
 pub mod replacement_handoff;
 mod state_dictionary;
+pub mod tidy;
 pub mod upgrade_queue;
 pub mod upgrade_sources;
 

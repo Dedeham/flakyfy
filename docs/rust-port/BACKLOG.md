@@ -1345,7 +1345,7 @@ observable changes.
 
 - [x] G5-0 Start: `argon2 0.6`, `chacha20poly1305 0.11`, `ipnet 2.12`; this section
 - [x] G5-1 Pure model (`octo-core/src/family/`): abilities, policy, request, device (with the trusted-proxy client address), codes, endpoint classes and `docs/family/opensubsonic-endpoints.txt`
-- [ ] G5-2 Settings: the `Family` section, appsettings.json, the dashboard document, compose `/members`, install.sh
+- [x] G5-2 Settings: the `Family` section, appsettings.json, the dashboard document, compose `/members`, install.sh
 - [ ] G5-3 Vault, passwords and stores: `family.key` (AEAD half and web JWT half), `family.json`, requests, saved songs and albums, family playlists, the family pool
 - [ ] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`
 - [ ] G5-5 Member bridge, family gate, web session (Octo JWT), device registry

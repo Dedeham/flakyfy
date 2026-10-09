@@ -1,0 +1,140 @@
+//! The `Family` section: Octo Family, accounts for the people an owner shares their music
+//! with.
+
+use ipnet::IpNet;
+use serde::{Deserialize, Serialize};
+
+use crate::family::device::parse_networks;
+
+/// Octo Family's settings. Off by default, and with `Enabled` false nothing Octo answers
+/// changes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct FamilySettings {
+    /// Turns Family on. Environment variable: FAMILY__ENABLED (docker-compose maps
+    /// FAMILY_ENABLED).
+    pub enabled: bool,
+    /// Where members' own libraries live, at the same path inside Octo and Navidrome.
+    pub members_path: String,
+    /// Networks that count as home (commas or spaces between them; a bare address is one
+    /// host). Everything else is away.
+    pub home_networks: String,
+    /// Proxies listed here may set the client address through `Cf-Connecting-Ip` or
+    /// `X-Forwarded-For` (the tunnel and any reverse proxy beside Octo).
+    pub trusted_proxies: String,
+    /// Days an invite link works.
+    pub invite_days: u32,
+    /// Minutes a pairing code works.
+    pub pair_code_minutes: u32,
+    /// Whether the owner's own apps show members' personal libraries.
+    pub owner_sees_member_libraries: bool,
+    /// Whether the owner's own apps show members' playlists.
+    pub owner_sees_member_playlists: bool,
+    /// What Navidrome accounts outside the family get: "AsToday" (unchanged).
+    pub unmanaged_accounts: String,
+    /// Kid profiles also skip songs with no explicit mark.
+    pub kid_unrated_is_explicit: bool,
+    /// How many times a capped member's bitrate a fast pull may average before it is slowed.
+    pub fast_pull_factor: u32,
+    /// Radio streams Octo allows per person in the family.
+    pub radio_streams_per_person: u32,
+    /// Whether managers may manage the family from away from home.
+    pub manage_from_away: bool,
+}
+
+impl Default for FamilySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            members_path: "/members".to_string(),
+            home_networks: "127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, ::1/128, fc00::/7"
+                .to_string(),
+            trusted_proxies: "127.0.0.0/8, ::1/128".to_string(),
+            invite_days: 7,
+            pair_code_minutes: 10,
+            owner_sees_member_libraries: false,
+            owner_sees_member_playlists: false,
+            unmanaged_accounts: "AsToday".to_string(),
+            kid_unrated_is_explicit: false,
+            fast_pull_factor: 8,
+            radio_streams_per_person: 2,
+            manage_from_away: true,
+        }
+    }
+}
+
+impl FamilySettings {
+    /// The home networks, read from `HomeNetworks`; pieces that are not networks are skipped.
+    pub fn home_network_list(&self) -> Vec<IpNet> {
+        parse_networks(&self.home_networks).0
+    }
+
+    /// The trusted proxies, read from `TrustedProxies`; pieces that are not networks are
+    /// skipped.
+    pub fn trusted_proxy_list(&self) -> Vec<IpNet> {
+        parse_networks(&self.trusted_proxies).0
+    }
+
+    /// The members folder as written, without trailing slashes; `/members` when blank.
+    pub fn effective_members_path(&self) -> String {
+        let path = self.members_path.trim().trim_end_matches('/');
+        if path.is_empty() {
+            "/members".to_string()
+        } else {
+            path.to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ConfigTree;
+    use crate::settings::AppSettings;
+    use std::net::IpAddr;
+
+    #[test]
+    fn defaults_are_off_and_safe() {
+        let s = FamilySettings::default();
+        assert!(!s.enabled);
+        assert_eq!(s.members_path, "/members");
+        assert!(!s.owner_sees_member_libraries);
+        assert!(!s.owner_sees_member_playlists);
+        assert_eq!(s.unmanaged_accounts, "AsToday");
+        assert!(!s.kid_unrated_is_explicit);
+        assert_eq!((s.invite_days, s.pair_code_minutes), (7, 10));
+        assert_eq!((s.fast_pull_factor, s.radio_streams_per_person), (8, 2));
+        assert!(s.manage_from_away);
+        // Only the machine itself is a trusted proxy until the owner says otherwise.
+        let trusted = s.trusted_proxy_list();
+        assert_eq!(trusted.len(), 2);
+        assert!(
+            trusted
+                .iter()
+                .any(|n| n.contains(&"127.0.0.1".parse::<IpAddr>().unwrap()))
+        );
+        assert!(
+            !trusted
+                .iter()
+                .any(|n| n.contains(&"192.168.1.1".parse::<IpAddr>().unwrap()))
+        );
+        assert_eq!(s.home_network_list().len(), 6);
+        // An empty configuration binds to exactly these defaults.
+        let (settings, warnings) = AppSettings::bind(&ConfigTree::new());
+        assert!(warnings.is_empty());
+        assert_eq!(settings.family, s);
+    }
+
+    #[test]
+    fn the_section_binds_from_configuration() {
+        let mut tree = ConfigTree::new();
+        tree.set("Family:Enabled", Some("true".into()));
+        tree.set("Family:MembersPath", Some("/srv/members/".into()));
+        tree.set("Family:TrustedProxies", Some("127.0.0.1, 172.18.0.0/16".into()));
+        let (settings, warnings) = AppSettings::bind(&tree);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.family.enabled);
+        assert_eq!(settings.family.effective_members_path(), "/srv/members");
+        assert_eq!(settings.family.trusted_proxy_list().len(), 2);
+    }
+}

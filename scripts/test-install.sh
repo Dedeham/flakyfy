@@ -103,6 +103,8 @@ EXPLICIT_FILTER=Clean
 YTDLP_GATE_RESERVE=2
 YTDLP_BG_GATE_WAIT_SEC=45
 OCTO_CONFIG_DIR=$work/octo-config
+MEMBERS_DIR=$work/family-members
+FAMILY_ENABLED=true
 UPDATES_CHECK=false
 UPDATES_REPO=
 COMPOSE_PROFILES=sonic
@@ -138,6 +140,9 @@ touch "$work/probe" && chmod 600 "$work/probe"
 if [ "$(stat -c %a "$work/probe" 2>/dev/null)" = 600 ]; then
   [ "$(stat -c %a "$work/octo/.env")" = 600 ] && pass ".env is readable by its owner only" || fail ".env is not chmod 600"
 fi
+
+[ -d "$work/family-members" ] \
+  && pass "the Family members folder is made where MEMBERS_DIR says" || fail "no Family members folder"
 
 cp "$work/octo/.env" "$work/first.env"
 run

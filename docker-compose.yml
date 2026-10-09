@@ -299,6 +299,11 @@ services:
       # that signs people in itself. ADMIN_PORT gives the dashboard a port of its own.
       Admin__SignIn: ${ADMIN_SIGN_IN:-required}
       Admin__Port: ${ADMIN_PORT:-0}
+      # ----- Family -----
+      # Accounts for the people you share your music with, each with a library of their
+      # own under /members (MEMBERS_DIR on this host, ./members by default). Off until you
+      # turn it on here or on the dashboard.
+      Family__Enabled: ${FAMILY_ENABLED:-false}
       # ----- Logging -----
       # The two lines for every request and those for every call Octo makes to another
       # service are left out (Warning), so the log holds Octo's own lines and costs less
@@ -309,6 +314,8 @@ services:
       Logging__LogLevel__System.Net.Http.HttpClient: ${LOG_LEVEL_HTTPCLIENT:-Warning}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/music
+      # Family members' own libraries. Navidrome mounts the same folder at the same path.
+      - ${MEMBERS_DIR:-./members}:/members
       # Editable settings file: the admin UI writes here, Octo reloads it on
       # change. Bind-mounted to host so values survive `docker compose up`. The
       # update helper watches its update/ folder.
@@ -499,6 +506,8 @@ services:
       ND_DEVAUTOCREATEADMINPASSWORD: ${NAVIDROME_ADMIN_PASSWORD:-}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/music
+      # Family members' own libraries, at the same path Octo sees them.
+      - ${MEMBERS_DIR:-./members}:/members
       - ${NAVIDROME_DATA_DIR:-./navidrome-data}:/data
 
   # Octo and the sidecars built from this folder instead of pulled: for changes of your own,

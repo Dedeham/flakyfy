@@ -433,6 +433,10 @@ green "✓ wrote .env (chmod 600)"
 
 # Make sure the bind-mount targets exist so docker doesn't create them root-owned.
 mkdir -p "$(existing OCTO_CONFIG_DIR octo-config)" "$(existing SLSKD_STATE_DIR slskd-state)"
+# Family members' own libraries (Octo and Navidrome both mount it at /members). Group
+# writable, so a Navidrome running as another user of the same group can scan it.
+MEMBERS_DIR_PATH="$(existing MEMBERS_DIR members)"
+mkdir -p "$MEMBERS_DIR_PATH" && { chmod 775 "$MEMBERS_DIR_PATH" 2>/dev/null || true; }
 if [ "$STARTER" = true ]; then
   mkdir -p "$(existing NAVIDROME_DATA_DIR navidrome-data)"
 fi

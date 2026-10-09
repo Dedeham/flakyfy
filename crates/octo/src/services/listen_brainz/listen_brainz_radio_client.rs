@@ -182,7 +182,8 @@ impl ListenBrainzRadioClient {
         tracks.into_iter().take(count.max(0) as usize).collect()
     }
 
-    /// LB Radio for a prompt ("artist:(Kordhell)", "tag:(phonk)"); nothing without a token. `Err`
+    /// LB Radio for a prompt ("artist:(Kordhell)", "tag:(phonk)"), in the mode the settings
+    /// choose (each mode's answer kept apart); nothing without a token. `Err`
     /// where the C# reader threw: an answer whose `payload` is not the shape LB Radio writes.
     pub async fn lb_radio(&self, prompt: &str, count: i32) -> ElementResult<Vec<ListenBrainzTrack>> {
         let token = self.token();
@@ -190,14 +191,19 @@ impl ListenBrainzRadioClient {
             return Ok(Vec::new());
         }
         let take = |tracks: Vec<ListenBrainzTrack>| tracks.into_iter().take(count.max(0) as usize).collect();
-        let key = format!("lbradio|{prompt}");
+        let mode = self
+            .settings
+            .current()
+            .radio_sources
+            .effective_listen_brainz_radio_mode();
+        let key = format!("lbradio|{mode}|{prompt}");
         if let Some(Cached::Tracks(cached)) = self.cache.get(&key) {
             return Ok(take(cached));
         }
         let request = self
             .http
             .get(format!(
-                "{}/1/explore/lb-radio?prompt={}&mode=easy",
+                "{}/1/explore/lb-radio?prompt={}&mode={mode}",
                 self.api_url,
                 dotnet::escape_data_string(prompt)
             ))

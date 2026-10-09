@@ -29,6 +29,11 @@ pub struct RadioSourceSettings {
     /// The ListenBrainz similarity dataset, as Navidrome uses. RADIO_LISTENBRAINZ_ALGORITHM.
     pub listen_brainz_algorithm: String,
 
+    /// How far LB Radio reaches for artist and genre stations: "easy" keeps to the artist's
+    /// closest neighbours and popular songs, "medium" and "hard" go further out.
+    /// RADIO_LISTENBRAINZ_RADIO_MODE.
+    pub listen_brainz_radio_mode: String,
+
     /// How much each source counts in the blend before learning, 0 to 3. 0 leaves a source out
     /// of the blend. Dashboard only. Reasoned starting points: YouTube Music has the most
     /// listening data and knows uploads; Last.fm is strong for songs it knows; ListenBrainz is
@@ -55,6 +60,7 @@ impl Default for RadioSourceSettings {
             sonic_pause_seconds: 2,
             listen_brainz_algorithm:
                 "session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30".to_string(),
+            listen_brainz_radio_mode: "easy".to_string(),
             last_fm_weight: 0.9,
             you_tube_music_weight: 1.0,
             listen_brainz_weight: 0.7,
@@ -65,6 +71,15 @@ impl Default for RadioSourceSettings {
 }
 
 impl RadioSourceSettings {
+    /// LB Radio's mode as it is asked: easy, medium or hard, any other value easy.
+    pub fn effective_listen_brainz_radio_mode(&self) -> &'static str {
+        let mode = self.listen_brainz_radio_mode.trim();
+        ["medium", "hard"]
+            .into_iter()
+            .find(|known| known.eq_ignore_ascii_case(mode))
+            .unwrap_or("easy")
+    }
+
     pub fn effective_sonic_pause_seconds(&self) -> i32 {
         self.sonic_pause_seconds.clamp(0, 600)
     }
@@ -104,6 +119,25 @@ mod tests {
         };
         assert_eq!(s.effective_sonic_pause_seconds(), 600);
         assert_eq!(RadioSourceSettings::default().effective_sonic_pause_seconds(), 2);
+    }
+
+    #[test]
+    fn lb_radio_mode_is_easy_unless_medium_or_hard_is_chosen() {
+        let mode = |value: &str| {
+            RadioSourceSettings {
+                listen_brainz_radio_mode: value.into(),
+                ..Default::default()
+            }
+            .effective_listen_brainz_radio_mode()
+        };
+        assert_eq!(
+            RadioSourceSettings::default().effective_listen_brainz_radio_mode(),
+            "easy"
+        );
+        assert_eq!(mode(" Hard "), "hard");
+        assert_eq!(mode("medium"), "medium");
+        assert_eq!(mode("extreme"), "easy");
+        assert_eq!(mode(""), "easy");
     }
 
     /// The config binder matches names ignoring case and underscores, so the C# property names

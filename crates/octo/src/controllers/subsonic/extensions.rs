@@ -91,8 +91,8 @@ pub async fn get_acquisitions(State(state): State<AppState>, req: Request) -> Ap
 }
 
 /// Navidrome's extension list with octoAcquisitions added, so a client can tell this server
-/// answers getAcquisitions before it asks, and octoLibraryActions while library actions are
-/// on. Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
+/// answers getAcquisitions before it asks, octoLibraryActions while library actions are on, and
+/// octoTransitions while octo-sonic makes transition profiles. Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
 pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Request) -> Response {
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
@@ -114,6 +114,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             settings.library_actions.enabled,
             settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
+            super::transitions::offered(&state),
         )
         .into_response()
 }

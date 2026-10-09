@@ -1,8 +1,7 @@
-//! The tag-writing parts of `Services/Common/BaseDownloadService.cs` (`WriteMetadataAsync`'s
-//! tag body, `WriteAlbumGain`'s rewrite), and the lyrics in a song's own tags that
-//! `SongLyrics` and `LyricsSidecarWriter` read and write through `Tag.Lyrics`.
+//! The tag writing of a download (the tag body and the album gain rewrite), and the lyrics in a
+//! song's own tags that `SongLyrics` and `LyricsSidecarWriter` read and write.
 //!
-//! The rest of `WriteMetadataAsync` stays with the download service (task 4-B): it opens the
+//! The rest of a download's tagging stays with the download service: it opens the
 //! file, decides the genres (the genre plan and its Last.fm fallback) and the cover (the
 //! cover chain, from the picture the file already holds), then calls [`write_song`] and
 //! [`embed_cover`] and saves:
@@ -37,16 +36,17 @@ use super::tag_writer_extras::{self as extras, TagFields};
 pub enum GenreWrite {
     /// Leave the frame as the file has it.
     Keep,
-    /// `tagFile.Tag.Genres = genres`.
+    /// Replace the genres with `genres`.
     Write(Vec<String>),
-    /// `tagFile.Tag.Genres = []`: destructive, so the caller logs it.
+    /// Remove every genre: destructive, so the caller logs it.
     Clear,
 }
 
-/// The tag body of `WriteMetadataAsync`: the Song's fields onto the open file, in the C#
-/// order. The genre frame takes `genres`; the cover is [`embed_cover`]'s. `filed_elsewhere`
-/// says the file arrived filed under another album (`release_fact_tags::filed_elsewhere`), whose
-/// facts the caller took off first with `release_fact_tags::tidy`.
+/// The tag body of a download: the Song's fields onto the open file, in a fixed order (a new
+/// frame goes at the end, so the order decides where each one lands). The genre frame takes
+/// `genres`; the cover is [`embed_cover`]'s. `filed_elsewhere` says the file arrived filed
+/// under another album (`release_fact_tags::filed_elsewhere`), whose facts the caller took off
+/// first with `release_fact_tags::tidy`.
 pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite, filed_elsewhere: bool) {
     // Basic metadata. Title/artist we always have; only overwrite album + album-artist when we
     // actually resolved them, so a well-tagged Soulseek FLAC keeps its own album if Deezer had
@@ -198,13 +198,12 @@ pub fn write_song(file: &mut TagFile, song: &Song, genres: &GenreWrite, filed_el
 }
 
 /// The cover the chain chose, as the only picture: a front cover described as "Cover", with
-/// the MIME type of the bytes (`CoverImage.MimeType`).
+/// the MIME type of the bytes.
 pub fn embed_cover(file: &mut TagFile, bytes: Vec<u8>, mime_type: &str) {
     file.set_pictures(&[TagPicture::front_cover(bytes, mime_type)]);
 }
 
-/// The front cover a file already holds, else its first picture (`WriteMetadataAsync`'s
-/// `embedded`, and `CoverUpgrade.FrontOf`).
+/// The front cover a file already holds, else its first picture.
 pub fn front_cover(file: &TagFile) -> Option<TagPicture> {
     let pictures = file.pictures();
     let front = pictures
@@ -213,7 +212,7 @@ pub fn front_cover(file: &TagFile) -> Option<TagPicture> {
     pictures.into_iter().nth(front.unwrap_or(0))
 }
 
-/// `WriteAlbumGain`'s rewrite of one file: the album gain and peak, in place, so the library
+/// The album gain rewrite of one file: the album gain and peak, in place, so the library
 /// server keeps the file's id.
 pub fn write_album_gain(path: &Path, gain_db: f64, peak: f64) -> Result<(), TagError> {
     let mut file = TagFile::open(path)?;
@@ -221,21 +220,21 @@ pub fn write_album_gain(path: &Path, gain_db: f64, peak: f64) -> Result<(), TagE
     file.save()
 }
 
-/// `TagLib.File.Create(path).Tag.Lyrics`: the lyrics in the song's own tags, or an error when
+/// The lyrics in the song's own tags, or an error when
 /// the file cannot be read as audio.
 pub fn read_lyrics(path: &Path) -> Result<Option<String>, TagError> {
     Ok(TagFile::open(path)?.lyrics())
 }
 
-/// `Tag.Lyrics = lyrics; Save()`: None or empty removes them.
+/// Writes the lyrics into the song's own tags and saves: None or empty removes them.
 pub fn write_lyrics(path: &Path, lyrics: Option<&str>) -> Result<(), TagError> {
     let mut file = TagFile::open(path)?;
     file.set_lyrics(lyrics);
     file.save()
 }
 
-/// Rust-only: the branches of the tag body the fixture scenarios do not reach. The C# tests of
-/// the whole download (`DownloadTaggingTests`) go with the download service (task 4-B).
+/// The branches of the tag body the fixture scenarios do not reach. The tests of the whole
+/// download go with the download service.
 #[cfg(test)]
 mod tests {
     use octo_core::tagging::{ScoredCandidate, TagConfidence, TagPlan};

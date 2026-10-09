@@ -1,10 +1,9 @@
-//! Port of the file half of `Services/Tagging/ReleaseFactTags.cs` (2463c23): the release facts a
-//! file arrived with, and which of them may stay. A peer tags a file for the release it ripped;
-//! when Octo files the song under another album, or keeps none of that release's grouping
-//! values, what the peer wrote would describe the wrong album, and the library server reads it
-//! all the same. Names are lowercase and matched against ID3 TXXX descriptions, Vorbis field
-//! names and MP4 freeform names alike, covering every alias the library server reads for the
-//! field. The pure half (`AlbumGrouping`, `filed_elsewhere`) is
+//! The release facts a file arrived with, and which of them may stay. A peer tags a file for
+//! the release it ripped; when Octo files the song under another album, or keeps none of that
+//! release's grouping values, what the peer wrote would describe the wrong album, and the
+//! library server reads it all the same. Names are lowercase and matched against ID3 TXXX
+//! descriptions, Vorbis field names and MP4 freeform names alike, covering every alias the
+//! library server reads for the field. The pure half (`AlbumGrouping`, `filed_elsewhere`) is
 //! `octo_core::tagging::release_fact_tags`.
 
 use octo_core::common::dotnet::{eq_ignore_case, is_null_or_white_space};

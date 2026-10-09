@@ -1,6 +1,4 @@
-//! Port of `octo.Tests/KeptIdentityTests.cs`.
-//!
-//! W8: a replacement carries the tags Navidrome builds the song's ids from, read the way
+//! A replacement carries the tags Navidrome builds the song's ids from, read the way
 //! Navidrome reads them, so it takes the original's place instead of arriving as a new song.
 //! Everything else the new tagging wrote stays.
 

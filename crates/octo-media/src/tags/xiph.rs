@@ -1,5 +1,5 @@
 //! A Vorbis comment as TagLib# (`TagLib.Ogg.XiphComment`) models it: the vendor string and a
-//! .NET dictionary from upper-case field names to their values (whose enumeration order is the
+//! dictionary from upper-case field names to their values (whose enumeration order is the
 //! order TagLib# writes them in). Pictures are its METADATA_BLOCK_PICTURE (or old COVERART)
 //! fields, base64 text like any other value; pictures that are set are stored as those fields
 //! when the comment is written, as TagLib# stores them when it renders.

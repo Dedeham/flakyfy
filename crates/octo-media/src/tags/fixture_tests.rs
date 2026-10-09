@@ -1,17 +1,17 @@
-//! The tag-dump differential check (PLAN Phase 5): for FLAC, MP3, M4A and Opus, every frame,
-//! field and atom TagLibSharp writes must read back the same from the Rust writer.
+//! The tag-dump differential check: for FLAC, MP3, M4A and Opus, every frame, field and atom
+//! TagLibSharp writes must read back the same from this writer.
 //!
-//! docs/rust-migration/fixtures/tags/generate.sh ran each scenario below with the C# code
-//! (TagLibSharp 2.3.0) on the files in input/, and checked in each result and its dump in
-//! csharp/. Two checks run against those dumps:
+//! docs/rust-migration/fixtures/tags/generate.sh ran each scenario below with the reference
+//! tagger (TagLibSharp 2.3.0) on the files in input/, and checked in each result and its dump
+//! in the reference fixture folder. Two checks run against those reference dumps:
 //!
-//! - the Rust reader's dump of each C# file equals the C# dump: this port reads what TagLib#
-//!   wrote as TagLib# reads it;
-//! - the Rust writer, run through the same scenario on the same input, produces a file whose
-//!   dump equals the C# dump: what lands on disk reads back the same.
+//! - the reader's dump of each reference file equals its reference dump: what TagLib# wrote
+//!   reads here as TagLib# reads it;
+//! - the writer, run through the same scenario on the same input, produces a file whose dump
+//!   equals the reference dump: what lands on disk reads back the same.
 //!
-//! The dumps are compared after [`normalize`], which folds away only the differences listed in
-//! known-diffs.md.
+//! The dumps are compared after [`normalize`], which folds away only the known differences it
+//! lists.
 
 use std::path::{Path, PathBuf};
 
@@ -257,7 +257,7 @@ fn kept_source_scenario(path: &Path, format: &str) {
     save(file);
 }
 
-/// The dumps with the known differences folded away (each one is in known-diffs.md):
+/// The dumps with the known differences folded away:
 ///
 /// - TagLib# writes a multi-value iTunes freeform atom once per value, each copy repeating
 ///   the mean and name before every value, and later updates only the first copy; lofty writes
@@ -319,7 +319,7 @@ fn normalize(dump: &str, flac: bool) -> String {
     out.join("\n")
 }
 
-/// lofty writes a character ID3v1's Latin-1 cannot hold as "?", where .NET's encoder picks a
+/// lofty writes a character ID3v1's Latin-1 cannot hold as "?", where the reference picks a
 /// look-alike ("-" as "-"): an ID3v1 line matches when it differs only where Rust wrote "?".
 fn id3v1_matches(expected: &str, actual: &str) -> bool {
     expected.starts_with("id3v1 ")
@@ -373,7 +373,7 @@ fn csharp_dump(name: &str) -> String {
 }
 
 #[test]
-fn the_rust_reader_reads_the_csharp_files_as_taglib_reads_them() {
+fn the_reader_reads_the_reference_files_as_taglib_reads_them() {
     let dir = fixtures().join("csharp");
     let mut names: Vec<String> = std::fs::read_dir(&dir)
         .expect("csharp/")
@@ -397,7 +397,7 @@ fn the_rust_reader_reads_the_csharp_files_as_taglib_reads_them() {
 }
 
 #[test]
-fn the_rust_writer_writes_what_the_csharp_writer_wrote() {
+fn the_writer_writes_what_the_reference_writer_wrote() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let written = run_scenarios(dir.path());
     if let Ok(out) = std::env::var("OCTO_TAG_DUMPS") {
@@ -460,7 +460,7 @@ fn id3v1(bytes: &[u8]) -> Option<&[u8]> {
 /// encoding bytes, byte order marks and all, is the frame TagLib# wrote, in the same place.
 /// Only the padding after the frames differs (lofty pads a rewritten tag its own way), a tag
 /// left with no frames is dropped instead of written empty, and ID3v1's stand-in for a
-/// character Latin-1 lacks is "?" (all three in known-diffs.md).
+/// character Latin-1 lacks is "?".
 #[test]
 fn the_rust_writer_writes_taglibs_id3v2_frames_byte_for_byte() {
     let dir = tempfile::tempdir().expect("a temp dir");

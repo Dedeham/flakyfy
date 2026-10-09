@@ -84,7 +84,7 @@ const SEED_WAIT: Duration = Duration::from_secs(4);
 const MUSIC_HIT: Duration = Duration::from_secs(12 * 60 * 60);
 const MUSIC_GRAY: Duration = Duration::from_secs(10 * 60);
 const MUSIC_MISS: Duration = Duration::from_secs(60);
-/// The list covers' JPEG: quality 92, no chroma subsampling (ImageSharp's YCbCrRatio444).
+/// The list covers' JPEG: quality 92, no chroma subsampling (4:4:4).
 const JPEG_QUALITY: u8 = 92;
 
 /// The lightness a genre's or decade's stand-in color is given: the middle of the library's.
@@ -104,7 +104,7 @@ pub struct CoverArtService {
 impl CoverArtService {
     /// `covers_directory`: pictures that replace a generated cover, named after the playlist
     /// (/app/config/covers). The logo is looked for beside the executable, in `Assets/` or
-    /// `wwwroot/Assets/`, as the C# app looked in its publish root.
+    /// `wwwroot/Assets/`.
     pub fn new(covers_directory: Option<PathBuf>) -> CoverArtService {
         let base = std::env::current_exe()
             .ok()
@@ -170,7 +170,7 @@ impl CoverArtService {
 
     fn sized_logo(&self, width: u32, height: u32) -> Option<RgbaImage> {
         let logo = self.octo_logo()?;
-        // ImageSharp's default resampler is bicubic (Catmull-Rom).
+        // Bicubic (Catmull-Rom) resampling.
         Some(image::imageops::resize(
             logo,
             width.max(1),
@@ -276,7 +276,7 @@ impl CoverArtService {
     /// genre or decade; a painted background matched to the colors of its seed songs' covers,
     /// else to its genre's or decade's color, else picked by its name; and last a plain
     /// placeholder, never the logo. A replaced picture or a new seed cover shows without a
-    /// restart. Dropping the future cancels it, as C#'s token did.
+    /// restart. Dropping the future cancels it.
     pub async fn get_list_cover(&self, list: &ListCover, requested_size: Option<i32>) -> Vec<u8> {
         let (size, shown, lookup) = Self::names(list, requested_size);
         if let Some(custom) = self.override_cover(&shown, &lookup, size) {
@@ -520,9 +520,8 @@ impl CoverArtService {
     /// A picture's main colors, read from a small copy of it.
     pub fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
         let image = cover_image::decode(picture)?;
-        // C# asked ImageSharp's decoder for a 64 by 64 target, which shrinks the picture to fit
-        // inside it, keeping its shape, with a box filter; the triangle filter is the nearest
-        // the image crate has.
+        // The picture shrinks to fit inside 64 by 64, keeping its shape. A box filter is meant;
+        // the triangle filter is the nearest the image crate has.
         let image = if image.width() > 64 || image.height() > 64 {
             image.resize(64, 64, FilterType::Triangle)
         } else {
@@ -586,7 +585,7 @@ impl CoverArtService {
 
 const POSSESSIVES: &[&str] = &["Your", "My", "Our"];
 
-/// `n.ToString("N0", CultureInfo.InvariantCulture)`: thousands split by commas.
+/// A whole number with its thousands split by commas.
 fn thousands(n: i32) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
@@ -609,7 +608,7 @@ fn safe_name(name: &str) -> String {
     replaced.trim().to_string()
 }
 
-/// `Path.GetFullPath`: absolute, with `.` and `..` worked out on the text alone (no links followed).
+/// The path made absolute, with `.` and `..` worked out on the text alone (no links followed).
 fn full_path(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()

@@ -27,7 +27,7 @@ pub fn choose(book: &CoverBook, music: Option<&CoverMusic>, id: &str) -> usize {
         .map(|b| distance(b, music, &book.background_choice))
         .collect();
     let mut near: Vec<usize> = (0..all.len()).collect();
-    // A stable sort, as LINQ's OrderBy: ties stay in file order.
+    // A stable sort: ties stay in file order.
     near.sort_by(|&x, &y| distances[x].total_cmp(&distances[y]));
     // At least one, so a design asking for none cannot leave nothing to pick from.
     near.truncate(book.background_choice.nearest.max(1) as usize);

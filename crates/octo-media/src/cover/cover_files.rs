@@ -9,8 +9,7 @@ use super::text::eq_ignore_case;
 
 pub const FILE_NAME: &str = "cover.jpg";
 
-/// The names of the files in `dir` that `prefix*` matches. .NET matches search patterns
-/// case-sensitively on Linux, as here.
+/// The names of the files in `dir` that `prefix*` matches, case-sensitively.
 fn files_like(dir: &Path, prefix: &str) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -48,8 +47,8 @@ pub fn should_write(dir: &Path, cover: &[u8], folder_is_new: bool) -> bool {
     check().unwrap_or(false)
 }
 
-/// The longer side of `candidate` beats `current`'s (as C# documents it; the code, there and here, compares the
-/// shorter sides).
+/// Whether `candidate` beats `current`: its shorter side is longer than `current`'s shorter side.
+/// A current picture that is missing or cannot be measured always loses.
 pub fn is_larger(candidate: &[u8], current: Option<&[u8]>) -> bool {
     let Some(next) = cover_image::measure(candidate) else {
         return false;

@@ -1,10 +1,10 @@
 //! The golden covers from the design's reference (tools/cover-art/reference.py in the Octo
 //! app's repo, copied as octo.Tests/CoverGolden/samples.json): the words' sizes and boxes, and
-//! the veiled background before any words, sampled across each cover (C# `CoverGoldenTests`).
+//! the veiled background before any words, sampled across each cover.
 //!
-//! Beyond those, the C# renderer's own output (docs/rust-migration/fixtures/covers, written by
-//! its generator with the real C# code): every layout's sizes, lines and boxes, the fonts it
-//! chose, its veiled backgrounds pixel for pixel, and its finished covers, compared by SSIM.
+//! Beyond those, the reference renderer's output (docs/rust-migration/fixtures/covers): every
+//! layout's sizes, lines and boxes, the fonts it chose, its veiled backgrounds pixel for pixel,
+//! and its finished covers, compared by SSIM.
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -92,15 +92,15 @@ fn max_channel_difference(a: &Rgb<u8>, b: [i64; 3]) -> i64 {
 
 // ------------------------------------------------------------ the design's goldens
 
-/// The text metrics tolerance, in pixels, for a right edge against the reference: C# allowed
-/// max(2, 2% of the line) because Pillow sets Inter without kerning and SixLabors with it.
+/// The text metrics tolerance, in pixels, for a right edge against the reference:
+/// max(2, 2% of the line), because Pillow sets Inter without kerning and this renderer with it.
 fn right_slack(x: f64, right: f64) -> f64 {
     2f64.max(0.02 * (right - x))
 }
 
 /// Sizes, lines, left edges, tops and heights match the reference to the pixel. Right edges
 /// come from each engine's own widths: the reference's Pillow sets Inter without its kerning,
-/// the port (as SixLabors did) with it, so a right edge may sit a few pixels short of the reference's.
+/// this renderer with it, so a right edge may sit a few pixels short of the reference's.
 #[test]
 fn words_match_the_reference() {
     for index in 0..6 {
@@ -270,17 +270,18 @@ fn veil_with_the_servers_own_widths_stays_close() {
     }
 }
 
-// ------------------------------------------------------------ the C# renderer's own output
+// ------------------------------------------------------------ the reference renderer's output
 
-/// How far a C# text measurement may be from the port's, in pixels. cosmic-text (harfrust)
-/// shapes Inter and the fallback fonts to the same advances SixLabors did, so widths, left
-/// edges and baselines agree to rounding (see known-diffs.md).
+/// How far a reference text measurement may be from this renderer's, in pixels. cosmic-text
+/// (harfrust) shapes Inter and the fallback fonts to the same advances as the reference, so
+/// widths, left edges and baselines agree to rounding.
 const METRIC_TOLERANCE: f64 = 0.01;
 
-/// The least SSIM a finished cover may reach against the C# one (PLAN.md, Phase 7).
+/// The least SSIM a finished cover may reach against the reference one.
 const MIN_SSIM: f64 = 0.98;
 
-/// How far apart a veiled background (no words) may be from the C# one, in levels a channel.
+/// How far apart a veiled background (no words) may be from the reference one, in levels a
+/// channel.
 /// The background's decode, resampling and veil are the same maths in the same order.
 const VEIL_TOLERANCE: i64 = 1;
 
@@ -303,7 +304,7 @@ fn reference_spec(layout: &Value) -> CoverSpec {
     }
 }
 
-/// The C# layout's cover as the port composes it: its own background pick, except for the
+/// A reference layout's cover as this renderer composes it: its own background pick, except for the
 /// goldens, which name theirs.
 fn reference_art(layout: &Value) -> CoverArt {
     let side = num(layout, "side") as i32;
@@ -371,11 +372,11 @@ fn report_skipped(skipped: usize) {
     }
 }
 
-/// Every layout the C# code made (the goldens, long, cut, right-to-left and foreign names, the
+/// Every layout the reference renderer made (the goldens, long, cut, right-to-left and foreign names, the
 /// contact sheet's lists, at 600 and 1200): the same background and turn, the same blocks,
 /// sizes, lines, cuts, boxes and baselines, and each line set in the same font.
 #[test]
-fn layouts_match_the_csharp_renderer() {
+fn layouts_match_the_reference_renderer() {
     let mut worst = 0f64;
     let mut skipped = 0;
     for layout in layouts() {
@@ -483,7 +484,7 @@ fn layouts_match_the_csharp_renderer() {
 
 /// Widths of text on one line, as fitting asks for them, in each weight and script.
 #[test]
-fn advances_match_the_csharp_renderer() {
+fn advances_match_the_reference_renderer() {
     let mut worst = 0f64;
     let mut skipped = 0;
     for advance in REFERENCE["advances"].as_array().expect("advances") {
@@ -516,7 +517,7 @@ fn advances_match_the_csharp_renderer() {
 
 /// The fonts each text is set in, the families behind it, and which system fonts count.
 #[test]
-fn font_choices_match_the_csharp_renderer() {
+fn font_choices_match_the_reference_renderer() {
     if !same_fonts_as_reference() {
         report_skipped(REFERENCE["choices"].as_array().map_or(0, Vec::len));
         return;
@@ -567,7 +568,7 @@ fn diff_dir() -> PathBuf {
     target.join("cover-golden-diffs")
 }
 
-/// Writes the port's picture, the reference, and their difference (four times as strong) side
+/// Writes this renderer's picture, the reference, and their difference (four times as strong) side
 /// by side, for looking at a failure.
 fn write_diff(name: &str, got: &RgbImage, want: &RgbImage) -> PathBuf {
     let (w, h) = got.dimensions();
@@ -673,9 +674,10 @@ fn assert_looks_like(name: &str, got: &RgbImage, want: &RgbImage) -> f64 {
     score
 }
 
-/// The veiled backgrounds of the goldens, before any words, against the C# ones pixel for pixel.
+/// The veiled backgrounds of the goldens, before any words, against the reference ones pixel for
+/// pixel.
 #[test]
-fn veils_match_the_csharp_renderer() {
+fn veils_match_the_reference_renderer() {
     let _heavy = HEAVY.read();
     for layout in layouts()
         .iter()
@@ -694,11 +696,11 @@ fn veils_match_the_csharp_renderer() {
     }
 }
 
-/// The finished covers (background, veil and words) against the C# ones, by SSIM: the words'
-/// edges are smoothed by another rasteriser (tiny-skia, not ImageSharp), so they may differ by
+/// The finished covers (background, veil and words) against the reference ones, by SSIM: the
+/// words' edges are smoothed by another rasterizer (tiny-skia), so they may differ by
 /// a few levels where they meet the colors.
 #[test]
-fn covers_look_like_the_csharp_renderer() {
+fn covers_look_like_the_reference_renderer() {
     let _heavy = HEAVY.read();
     let mut least = f64::INFINITY;
     let skipped = layouts()
@@ -723,9 +725,9 @@ fn covers_look_like_the_csharp_renderer() {
     report_skipped(skipped);
 }
 
-/// A cover as the server serves it, JPEG and all, against the C# server's JPEG.
+/// A cover as the server serves it, JPEG and all, against the reference JPEG.
 #[test]
-fn served_cover_looks_like_the_csharp_one() {
+fn served_cover_looks_like_the_reference_one() {
     let _heavy = HEAVY.read();
     let service = super::CoverArtService::new(None);
     let spec = super::CoverArtService::spec(

@@ -1,5 +1,5 @@
-//! Shared pieces of the tag tests: the C# tests' synthetic audio (`AudioFixtures`) and the
-//! checked-in fixtures under docs/rust-migration/fixtures/tags.
+//! Shared pieces of the tag tests: synthetic audio and the checked-in fixtures under
+//! docs/rust-migration/fixtures/tags.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ pub(crate) fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/rust-migration/fixtures/tags")
 }
 
-/// `AudioFixtures.Mp3`: twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz.
+/// Twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz.
 pub(crate) fn mp3() -> Vec<u8> {
     const FRAME_LENGTH: usize = 417;
     let mut bytes = vec![0u8; FRAME_LENGTH * 20];
@@ -19,7 +19,7 @@ pub(crate) fn mp3() -> Vec<u8> {
     bytes
 }
 
-/// `AudioFixtures.Flac`: a FLAC with a STREAMINFO block describing two seconds of 16-bit stereo
+/// A FLAC with a STREAMINFO block describing two seconds of 16-bit stereo
 /// and no frames.
 pub(crate) fn flac() -> Vec<u8> {
     let mut bytes = b"fLaC".to_vec();

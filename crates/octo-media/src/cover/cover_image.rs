@@ -42,14 +42,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<DynamicImage> {
         .ok()
 }
 
-/// A picture as a JPEG at `quality` with 4:2:0 chroma, as ImageSharp wrote a JPEG whose color
-/// type was not set (`super::jpeg_420`).
+/// A picture as a JPEG at `quality` with 4:2:0 chroma (`super::jpeg_420`).
 pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
     super::jpeg_420::encode(&image.to_rgb8(), quality)
 }
 
-/// A picture as a JPEG at `quality` with full-size chroma (4:4:4), for the list covers the C#
-/// encoded with `JpegEncodingColor.YCbCrRatio444`.
+/// A picture as a JPEG at `quality` with full-size chroma (4:4:4), for the list covers.
 pub(crate) fn encode_jpeg_444(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     JpegEncoder::new_with_quality(&mut output, quality)
@@ -93,7 +91,7 @@ pub fn fit_within(bytes: &[u8], max_side: u32) -> Vec<u8> {
     let Some(image) = decode(bytes) else {
         return bytes.to_vec();
     };
-    // ImageSharp's ResizeMode.Max: the longer side to max_side, the other in proportion.
+    // The longer side to max_side, the other in proportion.
     let (w, h) = if width >= height {
         (
             max_side,
@@ -117,7 +115,7 @@ pub fn fit_within(bytes: &[u8], max_side: u32) -> Vec<u8> {
 pub fn looks_hash(bytes: Option<&[u8]>) -> Option<u64> {
     let bytes = bytes.filter(|b| !b.is_empty())?;
     let gray = decode(bytes)?.to_luma8();
-    // ImageSharp's default resampler is bicubic (Catmull-Rom).
+    // Bicubic (Catmull-Rom) resampling.
     let small = image::imageops::resize(&gray, 9, 8, FilterType::CatmullRom);
     let mut hash = 0u64;
     let mut bit = 0;
@@ -149,7 +147,7 @@ pub fn detail(bytes: &[u8], side: u32) -> Option<f64> {
         return None;
     }
     let gray = decode(bytes)?.to_luma8();
-    // ImageSharp's bicubic resampler is Catmull-Rom.
+    // Bicubic (Catmull-Rom) resampling.
     let image = image::imageops::resize(&gray, side, side, FilterType::CatmullRom);
     let half = image::imageops::resize(&image, side / 2, side / 2, FilterType::CatmullRom);
     let round = image::imageops::resize(&half, side, side, FilterType::CatmullRom);

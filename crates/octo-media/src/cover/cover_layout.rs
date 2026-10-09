@@ -44,7 +44,7 @@ pub struct Measured {
     pub cut: bool,
 }
 
-/// The text engine, as the cover's design needs it (C# `ICoverTypesetter`).
+/// The text engine, as the cover's design needs it.
 pub trait ICoverTypesetter {
     /// The text wrapped in `width`, at most `type_.max_lines` lines.
     fn measure(&self, text: &str, type_: &CoverType, width: f32) -> Measured;
@@ -431,7 +431,8 @@ const KIND_WORDS: &[&str] = &[
     "Charts",
 ];
 
-/// .NET's `\w`: letters, non-spacing marks, decimal digits and connector punctuation.
+/// Anything but a word character (letters, non-spacing marks, decimal digits and connector
+/// punctuation).
 static NOT_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[^\p{L}\p{Mn}\p{Nd}\p{Pc}]+").expect("a valid pattern"));
 

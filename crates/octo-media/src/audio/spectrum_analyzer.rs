@@ -1,5 +1,4 @@
-//! Port of `Services/Fingerprint/SpectrumAnalyzer.cs`: tells a lossless file made from a lossy
-//! one by its spectrum.
+//! Tells a lossless file made from a lossy one by its spectrum.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -62,7 +61,7 @@ impl SpectrumReport {
         self.verdict == SpectrumVerdict::LikelyLossy
     }
 
-    /// No opinion, for `reason`. C# defaulted `sampleRate` to 0; pass 0 for "not known".
+    /// No opinion, for `reason`. Pass 0 as `sample_rate` for "not known".
     pub fn unknown(reason: impl Into<String>, sample_rate: i32) -> Self {
         Self::new(SpectrumVerdict::Unknown, sample_rate, None, reason, None)
     }
@@ -73,7 +72,7 @@ impl SpectrumReport {
             SpectrumVerdict::LikelyLossy => format!(
                 "likely transcoded from {} (cutoff {} kHz)",
                 self.estimate.as_deref().unwrap_or(""),
-                // A null cutoff formatted as nothing in the C# interpolation.
+                // A missing cutoff is written as nothing.
                 self.cutoff_hz
                     .map(|hz| net_format::fixed(hz / 1000.0, 1, 1))
                     .unwrap_or_default()
@@ -134,7 +133,7 @@ const TOP_BAND_CONTENT_DB: f64 = 45.0;
 /// Unknown. Unknown is always preferred to a wrong LikelyLossy, because a wrong one makes Octo
 /// throw away a perfectly good download to go looking for another.
 ///
-/// Process handling is modelled on AudioFingerprinter: a missing ffmpeg, a timeout or a file
+/// Process handling is modeled on AudioFingerprinter: a missing ffmpeg, a timeout or a file
 /// that will not decode is no opinion, never a failed download.
 #[derive(Debug, Default)]
 pub struct SpectrumAnalyzer {
@@ -144,9 +143,9 @@ pub struct SpectrumAnalyzer {
 
 /// Why decoding a window stopped short of samples.
 enum DecodeError {
-    /// ffmpeg did not start (C#'s private `FfmpegMissingException`).
+    /// ffmpeg did not start.
     FfmpegMissing,
-    /// Reading the pipes or waiting for the exit failed. C# let this escape `AnalyzeAsync`.
+    /// Reading the pipes or waiting for the exit failed.
     Io(io::Error),
 }
 
@@ -237,8 +236,8 @@ impl SpectrumAnalyzer {
             }
         };
 
-        // The FFTs are CPU work, so they leave the async threads; a panic in them is C#'s
-        // "the check failed" catch.
+        // The FFTs are CPU work, so they leave the async threads; a panic in them is "the check
+        // failed".
         match tokio::task::spawn_blocking(move || judge(&windows, sample_rate)).await {
             Ok(report) => report,
             Err(error) => {
@@ -372,7 +371,7 @@ pub(crate) fn average_spectrum(windows: &[Vec<f32>], sample_rate: i32) -> (Optio
             let mut energy = 0f64;
             for i in 0..size {
                 let sample = samples[start + i];
-                // float * float, as in C#, then widened into the double sum.
+                // float * float, then widened into the double sum.
                 energy += (sample * sample) as f64;
                 re[i] = sample as f64 * window[i];
                 im[i] = 0.0;
@@ -528,8 +527,7 @@ pub(crate) fn blackman_harris(size: usize) -> Vec<f64> {
         .collect()
 }
 
-/// In-place iterative radix-2 FFT. The length must be a power of two; anything else panics,
-/// as C# threw an `ArgumentException`.
+/// In-place iterative radix-2 FFT. The length must be a power of two; anything else panics.
 pub(crate) fn fft(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     assert!(n != 0 && n.is_power_of_two(), "the length must be a power of two");

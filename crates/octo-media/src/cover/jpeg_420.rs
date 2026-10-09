@@ -1,9 +1,8 @@
 //! A baseline JPEG with 4:2:0 chroma: the luma at full size and the two chroma planes at half
-//! size each way, as ImageSharp wrote a JPEG whose color type the code did not set (the
-//! placeholder, a badged cover, a cropped or shrunk picture). The `image` crate's encoder only
-//! writes 4:4:4, which made those JPEGs half as large again (17.6 KB against the C#'s 11.8 KB
-//! for the 600 px placeholder) for no difference anyone can see. List covers stay 4:4:4, as the
-//! C# asked for them (`YCbCrRatio444`).
+//! size each way, for every JPEG but the list covers (the placeholder, a badged cover, a cropped
+//! or shrunk picture). The `image` crate's encoder only writes 4:4:4, which makes those JPEGs
+//! half as large again (17.6 KB against 11.8 KB for the 600 px placeholder) for no difference
+//! anyone can see. List covers stay 4:4:4.
 //!
 //! The tables are the standard ones (ITU T.81 Annex K), scaled for the quality as libjpeg and
 //! the `image` crate scale them.

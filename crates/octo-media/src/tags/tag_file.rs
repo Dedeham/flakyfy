@@ -549,12 +549,12 @@ impl TagFile {
         self.format
     }
 
-    /// `Properties.Duration`.
+    /// The audio's length.
     pub fn duration(&self) -> Duration {
         self.duration
     }
 
-    /// `(int)Math.Round(Properties.Duration.TotalSeconds)`.
+    /// The audio's length in whole seconds, rounded half to even.
     pub fn duration_seconds(&self) -> i32 {
         super::net::round_seconds(self.duration.as_secs_f64())
     }
@@ -1316,7 +1316,7 @@ mod padding_tests {
 
     /// TagLib#'s rule for FLAC (`Flac.File.Save`): rewritten metadata keeps its size on disk
     /// while its blocks fit, the padding taking up the rest, so an edit in place leaves a FLAC the
-    /// size the library server saw (parity `19-health/settle1-*`); blocks that outgrow it get
+    /// size the library server saw; blocks that outgrow it get
     /// 4096 bytes of padding.
     #[test]
     fn rewritten_flac_metadata_keeps_its_size_while_the_blocks_fit() {
@@ -1341,7 +1341,7 @@ mod padding_tests {
 
     /// TagLib# gives every MPEG file an ID3v1 tag, a blank one when it has nothing to say, so
     /// an edit that leaves it empty (the undo of an ISRC retag) keeps the file the size the
-    /// library server saw (parity `20-library-edits/remove-copy-seen`).
+    /// library server saw.
     #[test]
     fn an_mp3_keeps_a_blank_id3v1_tag_across_edits() {
         let dir = tempfile::tempdir().expect("a temp dir");

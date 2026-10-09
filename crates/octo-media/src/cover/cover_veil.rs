@@ -153,7 +153,7 @@ pub fn apply(image: &mut RgbImage, regions: &[Region], veil: &VeilNumbers) {
     veil_pixels(image.as_mut(), side, regions, veil);
 }
 
-/// Rows split into bands, one a thread, as C#'s Parallel.For spread them.
+/// Rows split into bands, one a thread.
 fn bands(side: usize) -> usize {
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())

@@ -1,5 +1,3 @@
-//! Port of `Services/Tagging/AudioContainer.cs`.
-//!
 //! What a file really is, read from its first bytes rather than its name. A peer's file can be
 //! named for one format and hold another: a FLAC named .mp3, an M4A named .flac. The tagger
 //! picks how to read and write a file by its extension, so a wrong one writes tags the library
@@ -120,7 +118,7 @@ pub fn detect(path: &str) -> Option<&'static str> {
     detect_kind(path).map(|kind| kind.extension)
 }
 
-/// `Path.ChangeExtension`: the file name's extension replaced, or added when it has none.
+/// The file name's extension replaced, or added when it has none.
 fn change_extension(path: &str, extension: &str) -> String {
     let name_start = path.rfind('/').map_or(0, |slash| slash + 1);
     match path[name_start..].rfind('.') {
@@ -165,7 +163,7 @@ pub fn fix_extension(path: &str) -> std::io::Result<Option<ExtensionFix>> {
             .into_owned();
         n += 1;
     }
-    // File.Move refuses to overwrite; the loop above found a free name.
+    // The loop above found a free name, so the rename overwrites nothing.
     std::fs::rename(path, &target)?;
     Ok(Some(ExtensionFix {
         from: current.to_ascii_lowercase(),
@@ -257,8 +255,8 @@ fn frame(bytes: &[u8], at: usize) -> Option<&'static Kind> {
     if version == 1 { None } else { Some(&MP3) }
 }
 
-/// Up to `count` bytes from `offset`; None when the file cannot be read (the C# caught
-/// `IOException` and `UnauthorizedAccessException` and answered no format).
+/// Up to `count` bytes from `offset`; None when the file cannot be read (an I/O or permission
+/// error answers no format).
 fn read(file: &mut File, length: u64, offset: u64, count: usize) -> Option<Vec<u8>> {
     if offset >= length {
         return Some(Vec::new());
@@ -280,7 +278,7 @@ fn read(file: &mut File, length: u64, offset: u64, count: usize) -> Option<Vec<u
 
 #[cfg(test)]
 mod tests {
-    //! AudioContainerTests: a file's real format from its first bytes, and the rename that fixes
+    //! A file's real format from its first bytes, and the rename that fixes
     //! a name that says another one. Real headers, written to files in a temp folder.
 
     use super::*;

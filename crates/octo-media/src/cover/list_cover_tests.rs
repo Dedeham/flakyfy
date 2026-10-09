@@ -1,7 +1,6 @@
-//! octo.Tests/ListCoverTests.cs: the color rules the covers share with the Octo apps and which
-//! painted background a list's music gets (`CoverColourTests`); list covers as the server
-//! serves them (`ListCoverTests`); and how quickly a cover draws (`CoverTimingTests`). The
-//! golden covers (`CoverGoldenTests`) are in golden_tests.rs.
+//! Tests of the color rules the covers share with the Octo apps and which painted background a
+//! list's music gets; of list covers as the server serves them; and of how quickly a cover
+//! draws. The golden covers are in golden_tests.rs.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,7 +26,7 @@ fn hex(text: &str) -> i32 {
     cover_colors::hex(text).expect("a colour")
 }
 
-// ================================================================ CoverColourTests
+// ================================================================ colors and backgrounds
 
 /// FNV-1a 64 over UTF-8, shifted right once, as the apps hash a list.
 #[test]
@@ -405,7 +404,7 @@ fn library_has_every_background_it_names_and_they_decode() {
     }
 }
 
-// ================================================================ ListCoverTests
+// ================================================================ list covers as served
 
 /// A covers folder of its own, removed when the test ends.
 struct Fixture {
@@ -516,9 +515,9 @@ fn seeds(pictures: Vec<Vec<u8>>) -> SeedsFn {
                 .enumerate()
                 .map(|(i, bytes)| {
                     let bytes = bytes.clone();
-                    // C# named a seed by its length and fifth-last byte, which differed between
-                    // ImageSharp's PNGs of two pictures; the image crate's PNGs of two flat
-                    // pictures can share both, so a digest of the bytes keeps them apart.
+                    // A seed's length and fifth-last byte alone do not tell two pictures apart:
+                    // the image crate's PNGs of two flat pictures can share both, so a digest of
+                    // the bytes keeps them apart.
                     let digest = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
                         (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
                     });
@@ -1356,7 +1355,7 @@ async fn contact_sheet() {
         .expect("saves the sheet");
 }
 
-// ================================================================ CoverTimingTests
+// ================================================================ how quickly a cover draws
 
 /// Drawing a cover: background, veil, words and JPEG. The fastest of several runs is the
 /// cover's own cost; the middle one also carries whatever else the machine is doing. Runs

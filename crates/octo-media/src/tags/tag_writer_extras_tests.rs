@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/TagWriterExtrasTests.cs`.
-//!
 //! Every new field lands in the exact frame Picard writes and the library server reads, on an
 //! MP3 and on a FLAC: the raw frames are read back, not TagLib's properties, since four of
 //! TagLib's own names differ from Picard's. A new ID3 tag is version 4 so the original date has
@@ -270,7 +268,7 @@ fn read_facts_unreadable_file_is_unknown_not_a_throw() {
     assert!(!facts.tags_are_evidence);
 }
 
-/// Rust-only: `TagWriterExtras` is the release identifier's `FileFactsReader`.
+/// `TagWriterExtras` is the release identifier's `FileFactsReader`.
 #[test]
 fn the_facts_reader_is_read_facts() {
     use octo_core::tagging::FileFactsReader;
@@ -288,7 +286,7 @@ fn the_facts_reader_is_read_facts() {
     );
 }
 
-/// Rust-only: a FLAC has its STREAMINFO length only when audio follows the metadata. TagLib#'s
+/// A FLAC has its STREAMINFO length only when audio follows the metadata. TagLib#'s
 /// `StreamHeader.Duration` is zero for an empty stream, which the download tagging tests'
 /// fixture is, and lofty would otherwise read the two seconds STREAMINFO claims.
 #[test]
@@ -303,7 +301,7 @@ fn a_flac_has_a_length_only_when_it_has_audio() {
     assert_eq!(open(&new_flac(dir.path())).duration_seconds(), 0);
 }
 
-// ---- From `DownloadPlacementTests` (task 4-B): the recording id and the artists ---------------
+// ---- The recording id and the artists ---------------------------------------------------------
 
 /// TagLib# after 2.3.0 writes Tag.MusicBrainzTrackId as the release TRACK id on ID3. Writing the
 /// UFID frame directly keeps the recording id where Navidrome reads it whatever the package.
@@ -360,11 +358,10 @@ fn set_multi_value_writes_one_value_per_artist() {
     }
 }
 
-// ---- Fixed in the port: clearing a field takes it off the file -------------------------------
+// ---- Clearing a field takes it off the file -------------------------------------------------
 
-/// C# `LibraryTagEdits.Set` wrote an ISRC through `SetText`, which returns on an empty value
-/// (`TagWriterExtras.cs:98-101`), so clearing an ISRC, and undoing an ISRC retag, left the code in
-/// the file. `set_or_clear_text` takes it off under every container's name for it, and an empty
+/// Clearing an ISRC, and undoing an ISRC retag, takes the code off the file: `set_or_clear_text`
+/// takes it off under every container's name for it, and an empty
 /// value given to `set_text` still leaves a peer's value alone.
 #[test]
 fn clearing_an_isrc_takes_it_off_the_file() {

@@ -4,8 +4,8 @@
 //!
 //! Real audio, made by ffmpeg when the tests run: stereo pink noise as the music, the same noise
 //! through an MP3 encoder and back to FLAC as the fake, and the cases that must never be called
-//! fake. Each file is twelve seconds. The C# fixture made them all once per class; here each
-//! test makes the files it needs in its own temp folder, which cleans itself up.
+//! fake. Each file is twelve seconds. Each test makes the files it needs in its own temp
+//! folder, which cleans itself up.
 
 use std::path::Path;
 
@@ -229,9 +229,10 @@ fn too_little_sound_is_unknown() {
     assert_eq!(judge(&[quiet], 44100).verdict, SpectrumVerdict::Unknown);
 }
 
-// ---- From TranscodeDecisionTests: the parts that are SpectrumReport's own ----------------
+// ---- The transcode decision: the parts that are SpectrumReport's own ---------------------
 
-/// `LibraryActionExecutor.NotReallyLossless` is `"is " + Describe()` for a likely transcode.
+/// `LibraryActionExecutor::not_really_lossless` is `"is "` and [`SpectrumReport::describe`] for a
+/// likely transcode.
 #[test]
 fn a_likely_transcode_describes_its_source_and_cutoff() {
     let fake = SpectrumReport::new(

@@ -1,13 +1,13 @@
-//! The few pieces of .NET number handling these tools depend on: `Math.Round` (which rounds
-//! half to even), the custom numeric format strings (`"0.0"`, `"0.###"`, `"0.000000"`) with
-//! the invariant culture, and `Path.GetExtension`.
+//! The few pieces of number handling these tools depend on: rounding half to even, fixed
+//! decimal formats (`"0.0"`, `"0.###"`, `"0.000000"`) the same in every locale, and a file
+//! name's extension.
 
-/// `Math.Round(value)`: half to even, as .NET's default `MidpointRounding.ToEven` does.
+/// Rounds half to even.
 pub(crate) fn round(value: f64) -> f64 {
     value.round_ties_even()
 }
 
-/// `Math.Round(value, digits)`, the way .NET computes it: scale by a power of ten, round half
+/// Rounds to `digits` places: scale by a power of ten, round half
 /// to even, scale back. Values too big to carry a fraction come back unchanged.
 pub(crate) fn round_digits(value: f64, digits: i32) -> f64 {
     if value.abs() < 1e16 {
@@ -18,7 +18,7 @@ pub(crate) fn round_digits(value: f64, digits: i32) -> f64 {
     }
 }
 
-/// `Math.Max(double, double)`: NaN wins, where Rust's `f64::max` ignores it.
+/// The larger of two values, where NaN wins (Rust's `f64::max` ignores it).
 pub(crate) fn max(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
@@ -27,10 +27,10 @@ pub(crate) fn max(a: f64, b: f64) -> f64 {
     }
 }
 
-/// `value.ToString(format, CultureInfo.InvariantCulture)` for a custom format of the shape
-/// `0.00##`: at least `min_decimals` and at most `max_decimals` digits after the point.
+/// A value in a fixed decimal format of the shape `0.00##`, the same in every locale: at least
+/// `min_decimals` and at most `max_decimals` digits after the point.
 ///
-/// .NET takes the value to 15 significant digits first and then rounds that digit string half
+/// The value is taken to 15 significant digits first, and that digit string is rounded half
 /// away from zero at the last place shown, so `16.95` (really 16.9499999…) shows as `17.0`
 /// with `"0.0"`, where Rust's own `{:.1}` would show `16.9`. A negative value that rounds to
 /// zero loses its sign.
@@ -125,7 +125,7 @@ pub(crate) fn fixed(value: f64, min_decimals: usize, max_decimals: usize) -> Str
     text
 }
 
-/// `Path.GetExtension` on Linux: from the last dot of the file name, dot included, or empty
+/// A file name's extension: from the last dot of the file name, dot included, or empty
 /// when there is no dot or it is the last character. `".flac"` alone is an extension here,
 /// where `std::path::Path::extension` calls it a file stem.
 pub(crate) fn get_extension(path: &str) -> &str {
@@ -150,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_matches_dotnet_custom_formats() {
+    fn fixed_rounds_half_away_from_zero_within_its_decimals() {
         let cases: &[(f64, usize, usize, &str)] = &[
             (16.95, 1, 1, "17.0"),
             (16.929, 1, 1, "16.9"),
@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn get_extension_matches_dotnet() {
+    fn get_extension_is_from_the_last_dot_of_the_file_name() {
         let cases = [
             ("song.flac", ".flac"),
             ("/music/a.b/song", ""),

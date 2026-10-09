@@ -27,7 +27,7 @@ pub(crate) fn round(v: f64) -> i32 {
     (v + 0.5).floor() as i32
 }
 
-/// Half up, in single precision, as the C# `Round(float)` overload.
+/// Half up, in single precision.
 pub(crate) fn round_f32(v: f32) -> i32 {
     (v + 0.5f32).floor() as i32
 }
@@ -108,7 +108,7 @@ pub fn from_lch(lch: Lch) -> i32 {
 fn linear_rgb(lightness: f64, chroma: f64, hue: f64) -> (f64, f64, f64) {
     let a = chroma * (hue * std::f64::consts::PI / 180.0).cos();
     let bb = chroma * (hue * std::f64::consts::PI / 180.0).sin();
-    // Math.Pow, as the C# wrote it.
+    // Cubed with `powf`, not by multiplying.
     let l = (lightness + 0.3963377774 * a + 0.2158037573 * bb).powf(3.0);
     let m = (lightness - 0.1055613458 * a - 0.0638541728 * bb).powf(3.0);
     let s = (lightness - 0.0894841775 * a - 1.2914855480 * bb).powf(3.0);
@@ -233,7 +233,7 @@ impl Bucket {
 
 /// A picture's main colors, most of the picture first, up to `most`: pixels counted in coarse
 /// buckets (4 bits a channel), every `step`th one, each bucket joining the first color it looks
-/// like or starting one of its own. (C# defaults: step 3, most 6.)
+/// like or starting one of its own.
 pub fn swatches(pixels: &[i32], step: usize, most: usize) -> Vec<Swatch> {
     if pixels.is_empty() {
         return Vec::new();
@@ -273,7 +273,7 @@ pub fn swatches(pixels: &[i32], step: usize, most: usize) -> Vec<Swatch> {
         }
     }
     let mut buckets: Vec<Bucket> = groups.into_iter().map(|(_, b)| b).collect();
-    // A stable sort, as LINQ's OrderByDescending: equal counts keep the order they were found in.
+    // A stable sort: equal counts keep the order they were found in.
     buckets.sort_by_key(|b| std::cmp::Reverse(b.count));
     buckets
         .into_iter()
@@ -336,7 +336,7 @@ impl CoverMusic {
             })
             .filter(|(lch, _)| lch.c >= Self::COLORLESS && (0.15..=0.97).contains(&lch.l))
             .collect();
-        // LINQ's MaxBy keeps the first of equal scores.
+        // The first of equal scores is kept.
         let mut first: Option<(Lch, f64)> = None;
         for &(lch, weight) in &colorful {
             let score = weight.sqrt() * (0.3 + lch.c * 5.0);

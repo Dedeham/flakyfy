@@ -1,4 +1,4 @@
-//! Port of `Services/Fingerprint/AudioFingerprinter.cs`: Chromaprint fingerprints via fpcalc.
+//! Chromaprint fingerprints via fpcalc.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,8 +91,8 @@ impl AudioFingerprinter {
 
         // Deliberately not linked to any caller token. Verification runs between a finished
         // transfer and the file joining the library, and a caller who has already left must
-        // not be able to wave an unchecked file through. (A negative timeout, which C# threw
-        // on, times out at once here.)
+        // not be able to wave an unchecked file through. (A negative timeout times out at
+        // once.)
         let timeout = Duration::from_secs(timeout_seconds.max(0).unsigned_abs() as u64);
         let run = match tokio::time::timeout(timeout, tool::collect(&mut child, true)).await {
             Ok(Ok(run)) => run,
@@ -146,8 +146,7 @@ impl AudioFingerprinter {
         let root: serde_json::Value = serde_json::from_str(stdout).ok()?;
         let root = root.as_object()?;
 
-        // A "fingerprint" that is not a string made C# throw from GetString(); here it is
-        // "not fpcalc's shape" like any other.
+        // A "fingerprint" that is not a string is "not fpcalc's shape" like any other.
         let fingerprint = match root.get("fingerprint") {
             None | Some(serde_json::Value::Null) => None,
             Some(serde_json::Value::String(text)) => Some(text.clone()),
@@ -248,7 +247,7 @@ mod tests {
         assert_ne!(result.outcome, FingerprintOutcome::Ok);
     }
 
-    // ---- Rust-only ----------------------------------------------------------------------
+    // ---- The missing-tool latch and a real fpcalc ----------------------------------------
 
     /// A missing fpcalc is latched: the second call does not try to start it again. Skips when
     /// fpcalc is installed, since then nothing is latched.

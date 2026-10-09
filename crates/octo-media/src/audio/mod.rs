@@ -1,8 +1,7 @@
 //! The ffmpeg and fpcalc tools: loudness for ReplayGain, Chromaprint fingerprints, and the
 //! spectrum check that tells a fake lossless file from a real one.
 //!
-//! C# sources: `Services/Audio/LoudnessMeter.cs`, `Services/Fingerprint/AudioFingerprinter.cs`
-//! and `Services/Fingerprint/SpectrumAnalyzer.cs`. Each one shells out to a binary that may be
+//! Each one shells out to a binary that may be
 //! missing from a misbuilt image, and each one degrades to "no opinion" when it is, latching the
 //! fact after one warning.
 

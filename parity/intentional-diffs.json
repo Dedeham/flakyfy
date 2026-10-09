@@ -496,6 +496,112 @@
       "reason": "A failed call says what happened in plain words instead of .NET's exception text (BACKLOG, Improvements we want while porting): \"Could not connect to stubs:9: the connection was refused.\" for \"Connection refused (stubs:9)\", and likewise a timeout (\"No answer came within 100 seconds, so Octo stopped waiting.\"), a name that cannot be looked up and a status that is not a success (\"The server answered 404 (Not Found).\"). The Lidarr test is the one answer the corpus reaches.",
       "knownDiff": "Plain error words",
       "reviewed": "Brandon 2026-10-08"
+    },
+    {
+      "id": "cover-kind-word-any-kind",
+      "backlog": "lists",
+      "requests": [
+        "16-lists/listener-playlists-lists-*",
+        "16-lists/listener-popular-*",
+        "16-lists/admin-opens-listener-popular-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "octoCoverTitle",
+        "Popular",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ "
+      ],
+      "reason": "Popular right now's row carries octoCoverTitle \"Popular\" so the Octo apps draw \"Popular\" over \"Chart\" at full title size, as the server's own cover now does. A list name ending in Mix, Radio or Chart reads as two lines whatever kind of list it is (\"Discovery Mix\" is \"Discovery\" over \"Mix\"); no corpus request draws such a cover, so only the row field shows.",
+      "knownDiff": "List covers: the kind word and Popular"
+    },
+    {
+      "id": "notice-glyph-covers",
+      "backlog": "lists",
+      "requests": [
+        "05-playlists/playlists-json",
+        "05-playlists/playlists-xml",
+        "05-playlists/playlists-listener-json",
+        "16-lists/listener-playlists-lists-*",
+        "90-mutations/playlists-after-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "octoNotice",
+        "oc-notice-",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ "
+      ],
+      "reason": "The listener's own Review and Duplicates playlists carry coverArt oc-notice-review or oc-notice-duplicates (Octo's painted cover with a magnifier or two squares) and octoNotice, so every client shows the glyph cover and the Octo apps know the list. Only rows the parity stack has as notice playlists of the caller change.",
+      "knownDiff": "Review, Duplicates and Liked Songs covers"
+    },
+    {
+      "id": "liked-songs-first",
+      "backlog": "lists",
+      "requests": [
+        "05-playlists/playlists-json",
+        "05-playlists/playlists-xml",
+        "05-playlists/playlists-listener-json",
+        "16-lists/listener-playlists-lists-*",
+        "90-mutations/playlists-after-json",
+        "09-admin/settings",
+        "09-admin/settings-with-origin-no-cors",
+        "09-admin/config-sources",
+        "11-signin/in-get-settings",
+        "11-signin/in-get-config-sources",
+        "11-signin/in-header-token",
+        "11-signin/recovery-settings",
+        "11-signin/alt-admin-settings",
+        "14-settings-media/settings-*",
+        "14-settings-media/config-sources-*",
+        "14-settings-media/recovery-reads-settings",
+        "15-radio/settings-learning-*-read",
+        "18-dashboard/settings-*",
+        "90-mutations/settings-after-patch"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "Liked Songs",
+        "LikedSongs",
+        "octoList",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ "
+      ],
+      "reason": "Every listener with a heart gets Liked Songs (octoList \"liked\"), newest heart first, listed before every other playlist; the dashboard's settings and config sources gain GeneratedPlaylists LikedSongs, LikedSongsName and LikedSongsMax.",
+      "knownDiff": "Liked Songs"
+    },
+    {
+      "id": "lists-show-current-hearts",
+      "backlog": "lists",
+      "requests": [
+        "05-playlists/playlist-octo-mix-id-json",
+        "16-lists/listener-popular-*",
+        "16-lists/listener-new-releases-*",
+        "16-lists/listener-rediscover-json",
+        "16-lists/listener-deep-cuts-*",
+        "16-lists/admin-opens-listener-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "starred",
+        "userRating",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ "
+      ],
+      "reason": "Mixes, Made for you and the chart lists put the listener's hearts and ratings as Navidrome holds them now onto their library songs, so a heart given after a list was made (16-lists/listener-star-hjarta) shows on it at once. Outside songs keep their own marks.",
+      "knownDiff": "Lists show current hearts"
     }
   ]
 }

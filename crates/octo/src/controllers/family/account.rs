@@ -19,7 +19,6 @@ use crate::app::AppState;
 use crate::services::admin::{SessionKind, SignInThrottle};
 use crate::services::family::FamilyService;
 use crate::services::family::family_service::{NewRequest, quality_json};
-use crate::services::family::member_bridge::TryKeys;
 use crate::services::last_fm::LastFmConnectError;
 use crate::services::notifications::notification_service::is_member_topic;
 
@@ -98,9 +97,13 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
     }
     let throttle = &state.family.sign_in_throttle;
     // Tries count per address and account (so signing in to one account never clears the
-    // wrong tries at another), per peer Octo can vouch for, and per account from everywhere.
-    let keys = TryKeys::new(&web.address, &web.peer, &username, SignInThrottle::MAX_FAILURES);
+    // wrong tries at another), per peer Octo can vouch for, and per account from everywhere,
+    // where an address that signed in to the account before counts apart from new ones.
+    let keys = state
+        .family_bridge
+        .try_keys(&web.address, &web.peer, &username, SignInThrottle::MAX_FAILURES);
     let keys = keys.keys();
+    let known = |user: &str| state.family_bridge.known.signed_in(&web.address, user);
     let throttled = |wait| {
         family_error(&crate::services::family::FamilyError::Throttled(
             format!(
@@ -152,6 +155,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         // this account are cleared.
         throttle.forgive_all(keys);
         throttle.succeeded(&keys[0].0);
+        known(&member.username);
         let token = state
             .browse_sessions
             .create_family(&member.username, SessionKind::Member);
@@ -183,6 +187,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         }
         NavidromeSignIn::NotAdmin => {
             throttle.succeeded(&keys[0].0);
+            known(&username);
             let token = state
                 .browse_sessions
                 .create_family(&username, SessionKind::FamilyGuest);
@@ -194,6 +199,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         }
         NavidromeSignIn::Admin(login) => {
             throttle.succeeded(&keys[0].0);
+            known(&username);
             state.navidrome_identity.capture_login(&login);
             let owner = state.family_store.owner();
             let role = if owner.is_empty() || eq_ignore_case(&owner, &username) {

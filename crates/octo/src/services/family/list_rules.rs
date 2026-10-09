@@ -17,12 +17,14 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use octo_core::common::dotnet::eq_ignore_case;
+use octo_subsonic::subsonic_request_parser::Parameters;
 use octo_subsonic::xml::{XElement, XNode};
 use serde_json::{Map, Value};
 
 use super::owner_privacy::{PrivacyCache, PrivateView};
 use super::rules::{AnswerContext, AnswerRule, AnswerRules};
 use super::{kid_filter, owner_privacy, personal_marks};
+use crate::app::AppState;
 
 /// Every endpoint these rules read. Each rule keeps to its own list within it.
 pub const ENDPOINTS: &[&str] = &[
@@ -353,11 +355,176 @@ fn artists_in_xml(element: &XElement) -> usize {
 /// (`callback(...)`) or XML (its declaration kept). None when nothing changed or the answer
 /// cannot be read, so the caller sends the bytes it has.
 pub fn rewrite_answer(body: &[u8], judge: &Judge<'_>) -> Option<Vec<u8>> {
+    match judge_answer(body, judge) {
+        Edit::Changed(bytes) => Some(bytes),
+        Edit::Unchanged | Edit::Unreadable => None,
+    }
+}
+
+/// What editing an answer came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Edit {
+    /// The answer, changed, in the shape it came in.
+    Changed(Vec<u8>),
+    /// The answer was read and nothing in it changed.
+    Unchanged,
+    /// The answer is not a Subsonic answer in any format: not UTF-8, not one XML element, not
+    /// a JSON or JSONP object holding a `subsonic-response` object.
+    Unreadable,
+}
+
+/// The shape an answer is written in, read from its own bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shape {
+    Xml,
+    Json,
+    /// JSON wrapped in a call of this callback.
+    Jsonp(String),
+}
+
+/// A JSONP callback Octo writes back: letters, digits, `_`, `.` and `$`.
+pub fn valid_callback(callback: &str) -> bool {
+    !callback.is_empty()
+        && callback
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$'))
+}
+
+/// The shape of an answer: from its own bytes (`<` is XML, `{` is JSON, `name(` is JSONP),
+/// else from its content type, else XML. A JSONP answer whose callback cannot be read takes
+/// the request's `callback`, or is written as JSON.
+pub fn shape_of(body: &[u8], content_type: Option<&str>, parameters: &Parameters) -> Shape {
+    let text = String::from_utf8_lossy(body);
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    if trimmed.starts_with('<') {
+        return Shape::Xml;
+    }
+    if trimmed.starts_with('{') {
+        return Shape::Json;
+    }
+    if let Some(open) = trimmed.find('(') {
+        let callback = trimmed[..open].trim();
+        if valid_callback(callback) {
+            return Shape::Jsonp(callback.to_string());
+        }
+    }
+    let content_type = content_type.unwrap_or("").to_ascii_lowercase();
+    if content_type.contains("javascript") {
+        return match parameters.get("callback").filter(|c| valid_callback(c)) {
+            Some(callback) => Shape::Jsonp(callback.clone()),
+            None => Shape::Json,
+        };
+    }
+    if content_type.contains("json") {
+        return Shape::Json;
+    }
+    Shape::Xml
+}
+
+/// A Subsonic error written in `shape`.
+pub fn error_in(state: &AppState, shape: &Shape, code: i32, message: &str) -> Bytes {
+    let builder = &state.subsonic_response_builder;
+    match shape {
+        Shape::Xml => Bytes::from(builder.create_error("xml", code, message).text().into_owned()),
+        Shape::Json => Bytes::from(builder.create_error("json", code, message).text().into_owned()),
+        Shape::Jsonp(callback) => {
+            let text = builder.create_error("json", code, message).text().into_owned();
+            Bytes::from(format!("{callback}({text});"))
+        }
+    }
+}
+
+/// What an answer rule sends in place of an answer it has to change and cannot read: error 0,
+/// in the shape the answer seems to be in.
+pub const UNREADABLE_ANSWER: &str = "Octo could not read this answer.";
+
+/// Error 0 in place of `body`, an answer a rule cannot read.
+pub fn unreadable(context: &AnswerContext<'_>, body: &[u8]) -> Bytes {
+    let shape = shape_of(body, context.content_type, context.parameters);
+    error_in(context.state, &shape, 0, UNREADABLE_ANSWER)
+}
+
+/// An answer changed in the shape it came in: `json` gets the `subsonic-response` object of a
+/// JSON or JSONP answer, `xml` the root element of an XML one (its declaration kept). Each says
+/// whether it changed anything. The shape is read from the answer's own bytes, never from what
+/// the request asked for.
+pub fn edit(
+    body: &[u8],
+    json: impl FnOnce(&mut Map<String, Value>) -> bool,
+    xml: impl FnOnce(&mut XElement) -> bool,
+) -> Edit {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return Edit::Unreadable;
+    };
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    if trimmed.starts_with('<') {
+        let (declaration, rest) = match trimmed.strip_prefix("<?xml") {
+            Some(after) => {
+                let Some(end) = after.find("?>").map(|at| at + "<?xml".len() + 2) else {
+                    return Edit::Unreadable;
+                };
+                let rest = &trimmed[end..];
+                let gap = rest.len() - rest.trim_start().len();
+                (&trimmed[..end + gap], rest.trim_start())
+            }
+            None => ("", trimmed),
+        };
+        let Ok(mut root) = XElement::parse(rest) else {
+            return Edit::Unreadable;
+        };
+        if !xml(&mut root) {
+            return Edit::Unchanged;
+        }
+        return Edit::Changed(format!("{declaration}{}", root.to_xml_string()).into_bytes());
+    }
+    let (head, body_json, tail) = if trimmed.starts_with('{') {
+        ("", trimmed, "")
+    } else {
+        // JSONP: `callback({...});`.
+        let (Some(open), Some(close)) = (trimmed.find('('), trimmed.rfind(')')) else {
+            return Edit::Unreadable;
+        };
+        if close <= open || !valid_callback(trimmed[..open].trim()) {
+            return Edit::Unreadable;
+        }
+        (&trimmed[..=open], &trimmed[open + 1..close], &trimmed[close..])
+    };
+    let Ok(mut root) = serde_json::from_str::<Value>(body_json) else {
+        return Edit::Unreadable;
+    };
+    let changed = match root.get_mut("subsonic-response") {
+        Some(Value::Object(response)) => json(response),
+        _ => return Edit::Unreadable,
+    };
+    if !changed {
+        return Edit::Unchanged;
+    }
+    match serde_json::to_string(&root) {
+        Ok(written) => Edit::Changed(format!("{head}{written}{tail}").into_bytes()),
+        Err(_) => Edit::Unreadable,
+    }
+}
+
+/// [`edit`], answering the changed answer only. None when nothing changed or the answer cannot
+/// be read.
+pub fn edit_answer(
+    body: &[u8],
+    json: impl FnOnce(&mut Map<String, Value>) -> bool,
+    xml: impl FnOnce(&mut XElement) -> bool,
+) -> Option<Vec<u8>> {
+    match edit(body, json, xml) {
+        Edit::Changed(bytes) => Some(bytes),
+        Edit::Unchanged | Edit::Unreadable => None,
+    }
+}
+
+/// The answer with `judge` applied to every node, as [`edit`] tells it.
+fn judge_answer(body: &[u8], judge: &Judge<'_>) -> Edit {
     let walk = std::cell::RefCell::new(Walk {
         judge,
         changed: false,
     });
-    edit_answer(
+    edit(
         body,
         |response| {
             let mut walk = walk.borrow_mut();
@@ -372,57 +539,9 @@ pub fn rewrite_answer(body: &[u8], judge: &Judge<'_>) -> Option<Vec<u8>> {
     )
 }
 
-/// An answer changed in the shape it came in: `json` gets the `subsonic-response` object of a
-/// JSON or JSONP answer, `xml` the root element of an XML one (its declaration kept). Each says
-/// whether it changed anything. None when nothing changed or the answer cannot be read.
-pub fn edit_answer(
-    body: &[u8],
-    json: impl FnOnce(&mut Map<String, Value>) -> bool,
-    xml: impl FnOnce(&mut XElement) -> bool,
-) -> Option<Vec<u8>> {
-    let text = std::str::from_utf8(body).ok()?;
-    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
-    if trimmed.starts_with('<') {
-        let (declaration, rest) = match trimmed.strip_prefix("<?xml") {
-            Some(after) => {
-                let end = after.find("?>")? + "<?xml".len() + 2;
-                let rest = &trimmed[end..];
-                let gap = rest.len() - rest.trim_start().len();
-                (&trimmed[..end + gap], rest.trim_start())
-            }
-            None => ("", trimmed),
-        };
-        let mut root = XElement::parse(rest).ok()?;
-        if !xml(&mut root) {
-            return None;
-        }
-        return Some(format!("{declaration}{}", root.to_xml_string()).into_bytes());
-    }
-    let (head, body_json, tail) = if trimmed.starts_with('{') {
-        ("", trimmed, "")
-    } else {
-        // JSONP: `callback({...});`.
-        let open = trimmed.find('(')?;
-        let close = trimmed.rfind(')')?;
-        if close <= open {
-            return None;
-        }
-        (&trimmed[..=open], &trimmed[open + 1..close], &trimmed[close..])
-    };
-    let mut root: Value = serde_json::from_str(body_json).ok()?;
-    let changed = match root.get_mut("subsonic-response") {
-        Some(Value::Object(response)) => json(response),
-        _ => false,
-    };
-    if !changed {
-        return None;
-    }
-    let written = serde_json::to_string(&root).ok()?;
-    Some(format!("{head}{written}{tail}").into_bytes())
-}
-
-/// Whether any song in the answer is one `pick` picks (the answer is not changed).
-pub fn any_song(body: &[u8], pick: impl Fn(&NodeFacts<'_>) -> bool) -> bool {
+/// Whether any song in the answer is one `pick` picks (the answer is not changed). None when
+/// the answer cannot be read.
+pub fn any_song(body: &[u8], pick: impl Fn(&NodeFacts<'_>) -> bool) -> Option<bool> {
     let found = Cell::new(false);
     let judge = |facts: &NodeFacts<'_>| {
         if facts.kind == NodeKind::Song && pick(facts) {
@@ -430,8 +549,10 @@ pub fn any_song(body: &[u8], pick: impl Fn(&NodeFacts<'_>) -> bool) -> bool {
         }
         Verdict::Keep
     };
-    let _ = rewrite_answer(body, &judge);
-    found.get()
+    match judge_answer(body, &judge) {
+        Edit::Unreadable => None,
+        Edit::Changed(_) | Edit::Unchanged => Some(found.get()),
+    }
 }
 
 /// Registers the rules for every endpoint in [`ENDPOINTS`].
@@ -463,23 +584,27 @@ fn lists_rule(context: &AnswerContext<'_>, body: Bytes, privacy: &PrivacyCache) 
 
     if let Some(unrated) = kid
         && eq_ignore_case(endpoint, "getSong")
-        && any_song(&body, |facts| {
-            kid_filter::song_is_explicit(index, facts.id, facts.explicit_status, unrated)
-        })
     {
-        return kid_filter::not_found(state, context);
+        match any_song(&body, |facts| {
+            kid_filter::song_is_explicit(index, facts.id, facts.explicit_status, unrated)
+        }) {
+            Some(true) => return kid_filter::not_found(state, context, &body),
+            Some(false) => {}
+            None => return unreadable(context, &body),
+        }
     }
 
     let view: Option<Arc<PrivateView>> = owner
         .filter(|o| o.libraries)
         .map(|_| privacy.view(index, state.library_scope.personal_library_ids()));
     if eq_ignore_case(endpoint, "getGenres") {
-        return match view
-            .as_ref()
-            .and_then(|view| owner_privacy::genres_answer(&body, view))
-        {
-            Some(rewritten) => Bytes::from(rewritten),
-            None => body,
+        let Some(view) = view.as_ref() else {
+            return body;
+        };
+        return match owner_privacy::genres_answer(&body, view) {
+            Edit::Changed(rewritten) => Bytes::from(rewritten),
+            Edit::Unchanged => body,
+            Edit::Unreadable => unreadable(context, &body),
         };
     }
     let members: HashSet<String> = if owner.is_some_and(|o| o.playlists) {
@@ -531,9 +656,11 @@ fn lists_rule(context: &AnswerContext<'_>, body: Bytes, privacy: &PrivacyCache) 
             }
         }
     };
-    match rewrite_answer(&body, &judge) {
-        Some(rewritten) => Bytes::from(rewritten),
-        None => body,
+    match judge_answer(&body, &judge) {
+        Edit::Changed(rewritten) => Bytes::from(rewritten),
+        Edit::Unchanged => body,
+        // An answer these rules apply to is never sent unread.
+        Edit::Unreadable => unreadable(context, &body),
     }
 }
 
@@ -690,5 +817,68 @@ mod tests {
     fn unreadable_answers_are_left_alone() {
         assert_eq!(rewrite_answer(b"not an answer", &drop_ids(&["a"])), None);
         assert_eq!(rewrite_answer(&[0xff, 0xfe], &drop_ids(&["a"])), None);
+    }
+
+    #[test]
+    fn an_edit_tells_an_unreadable_answer_from_an_unchanged_one() {
+        let keep = |_: &mut Map<String, Value>| false;
+        let keep_xml = |_: &mut XElement| false;
+        for body in [
+            &b"not an answer"[..],
+            &[0xff, 0xfe],
+            b"",
+            br#"{"subsonic-response":"#,
+            br#"{"other":{}}"#,
+            b"<subsonic-response",
+            b"bad name!({});",
+            br#"cb({"subsonic-response":{}}"#,
+        ] {
+            assert_eq!(
+                edit(body, keep, keep_xml),
+                Edit::Unreadable,
+                "{:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
+        for body in [
+            &br#"{"subsonic-response":{"status":"ok"}}"#[..],
+            br#"cb({"subsonic-response":{"status":"ok"}});"#,
+            br#"<?xml version="1.0"?><subsonic-response status="ok"/>"#,
+        ] {
+            assert_eq!(edit(body, keep, keep_xml), Edit::Unchanged);
+        }
+    }
+
+    #[test]
+    fn the_shape_of_an_answer_is_read_from_its_bytes_first() {
+        let asked_jsonp = {
+            let mut parameters = Parameters::new();
+            parameters.insert("f".into(), "jsonp".into());
+            parameters.insert("callback".into(), "asked".into());
+            parameters
+        };
+        let none = Parameters::new();
+        for (body, content_type, parameters, shape) in [
+            (&b"<x/>"[..], Some("application/json"), &none, Shape::Xml),
+            (b"{}", Some("application/xml"), &none, Shape::Json),
+            (b" cb({});", None, &none, Shape::Jsonp("cb".into())),
+            (b"", Some("application/json; charset=utf-8"), &none, Shape::Json),
+            (b"", Some("text/xml"), &asked_jsonp, Shape::Xml),
+            (
+                b"",
+                Some("application/javascript"),
+                &asked_jsonp,
+                Shape::Jsonp("asked".into()),
+            ),
+            (b"", Some("application/javascript"), &none, Shape::Json),
+            (b"garbage", None, &asked_jsonp, Shape::Xml),
+        ] {
+            assert_eq!(
+                shape_of(body, content_type, parameters),
+                shape,
+                "{:?} {content_type:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
     }
 }

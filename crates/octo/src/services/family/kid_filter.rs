@@ -81,22 +81,10 @@ pub fn song_is_explicit(
     )
 }
 
-/// The error 70 that stands for an explicit song, in the format the request asked for.
-pub(crate) fn not_found(state: &AppState, context: &AnswerContext<'_>) -> Bytes {
-    let builder = &state.subsonic_response_builder;
-    let json = context.format.eq_ignore_ascii_case("json") || context.format.eq_ignore_ascii_case("jsonp");
-    let reply = builder.create_error(if json { "json" } else { "xml" }, 70, NOT_FOUND);
-    let text = reply.text().into_owned();
-    if context.format.eq_ignore_ascii_case("jsonp")
-        && let Some(callback) = context.parameters.get("callback").filter(|c| {
-            !c.is_empty()
-                && c.chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$'))
-        })
-    {
-        return Bytes::from(format!("{callback}({text});"));
-    }
-    Bytes::from(text)
+/// The error 70 that stands for an explicit song, in the format nswer is written in.
+pub(crate) fn not_found(state: &AppState, context: &AnswerContext<'_>, answer: &[u8]) -> Bytes {
+    let shape = super::list_rules::shape_of(answer, context.content_type, context.parameters);
+    super::list_rules::error_in(state, &shape, 70, NOT_FOUND)
 }
 
 /// The explicit filter for lists Octo builds for `user` (radio, stations, mixes, Made for you,

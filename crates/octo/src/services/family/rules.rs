@@ -44,10 +44,11 @@ use octo_core::models::domain::{Album, Song};
 use octo_subsonic::subsonic_request_parser::Parameters;
 use octo_subsonic::xml::{XElement, XNode};
 use parking_lot::RwLock;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::audio_gate::{self, DOWNLOADS_OFF, NOT_AVAILABLE, SHARES_OFF, subsonic_refusal};
 use super::caller::FamilyCaller;
+use super::list_rules::{self, Edit};
 use super::saved_store::{SavedAlbum, SavedSong};
 use crate::app::AppState;
 use crate::http::error::json_relaxed_response;
@@ -151,9 +152,9 @@ pub struct AnswerContext<'a> {
     /// The request path as the routes spell it.
     pub path: &'a str,
     pub parameters: &'a Parameters,
-    /// `f`: `xml` (the default), `json` or `jsonp`.
-    pub format: &'a str,
-    /// The answer's content type.
+    /// The answer's content type. A rule reads the answer's format from the answer itself
+    /// ([`super::list_rules::edit`]), never from what the request asked for: Navidrome reads a
+    /// repeated or empty `f` its own way.
     pub content_type: Option<&'a str>,
 }
 
@@ -206,57 +207,20 @@ impl AnswerRules {
     }
 }
 
-/// Rewrites a JSON (or JSONP) answer with `change`, which answers whether it changed anything.
-/// An answer that cannot be read goes out as it came.
-fn with_json(body: Bytes, jsonp: bool, change: impl FnOnce(&mut Value) -> bool) -> Bytes {
-    let text = String::from_utf8_lossy(&body);
-    let (head, inner, tail) = if jsonp {
-        let (Some(open), Some(close)) = (text.find('('), text.rfind(')')) else {
-            return body;
-        };
-        if close < open {
-            return body;
-        }
-        (&text[..=open], &text[open + 1..close], &text[close..])
-    } else {
-        ("", &text[..], "")
-    };
-    let Ok(mut value) = serde_json::from_str::<Value>(inner) else {
-        return body;
-    };
-    if !change(&mut value) {
-        return body;
-    }
-    Bytes::from(format!("{head}{}{tail}", octo_core::json::to_string(&value)))
-}
-
-/// Rewrites an XML answer with `change`, which answers whether it changed anything.
-fn with_xml(body: Bytes, change: impl FnOnce(&mut XElement) -> bool) -> Bytes {
-    let Ok(mut root) = XElement::parse(&String::from_utf8_lossy(&body)) else {
-        return body;
-    };
-    if !change(&mut root) {
-        return body;
-    }
-    Bytes::from(root.to_xml_string())
-}
-
-/// Runs the JSON or the XML form of a rule, by the answer's format.
+/// Runs the JSON or the XML form of a rule, by the format the answer is written in. `json`
+/// gets the `subsonic-response` object. An answer that cannot be read is never sent as it came:
+/// it becomes error 0.
 fn rewrite(
     context: &AnswerContext<'_>,
     body: Bytes,
-    json: impl FnOnce(&mut Value) -> bool,
+    json: impl FnOnce(&mut Map<String, Value>) -> bool,
     xml: impl FnOnce(&mut XElement) -> bool,
 ) -> Bytes {
-    match context.format {
-        "json" => with_json(body, false, json),
-        "jsonp" => with_json(body, true, json),
-        _ => with_xml(body, xml),
+    match list_rules::edit(&body, json, xml) {
+        Edit::Changed(changed) => Bytes::from(changed),
+        Edit::Unchanged => body,
+        Edit::Unreadable => list_rules::unreadable(context, &body),
     }
-}
-
-fn subsonic_response(value: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
-    value.get_mut("subsonic-response")?.as_object_mut()
 }
 
 /// `getUser`: a member's download and share roles are their abilities, and a member is never
@@ -274,11 +238,8 @@ fn user_roles(context: &AnswerContext<'_>, body: Bytes) -> Bytes {
     rewrite(
         context,
         body,
-        |value| {
-            let Some(user) = subsonic_response(value)
-                .and_then(|r| r.get_mut("user"))
-                .and_then(Value::as_object_mut)
-            else {
+        |response| {
+            let Some(user) = response.get_mut("user").and_then(Value::as_object_mut) else {
                 return false;
             };
             for (name, on) in roles {
@@ -314,26 +275,35 @@ fn own_now_playing(context: &AnswerContext<'_>, body: Bytes) -> Bytes {
     rewrite(
         context,
         body,
-        |value| {
-            let Some(entries) = subsonic_response(value)
-                .and_then(|r| r.get_mut("nowPlaying"))
-                .and_then(|n| n.get_mut("entry"))
-                .and_then(Value::as_array_mut)
-            else {
+        |response| {
+            let Some(list) = response.get_mut("nowPlaying").and_then(Value::as_object_mut) else {
                 return false;
             };
-            entries.retain(|entry| mine(entry.get("username").and_then(Value::as_str)));
-            true
+            match list.get_mut("entry") {
+                Some(Value::Array(entries)) => {
+                    entries.retain(|entry| mine(entry.get("username").and_then(Value::as_str)));
+                    true
+                }
+                // One entry written as an object rather than a list of one.
+                Some(entry @ Value::Object(_)) => {
+                    if !mine(entry.get("username").and_then(Value::as_str)) {
+                        list.remove("entry");
+                    }
+                    true
+                }
+                _ => false,
+            }
         },
         |root| {
-            let Some(list) = root.elements_mut().find(|e| e.name == "nowPlaying") else {
-                return false;
-            };
-            list.content.retain(|node| match node {
-                XNode::Element(entry) if entry.name == "entry" => mine(entry.attribute("username")),
-                _ => true,
-            });
-            true
+            let mut found = false;
+            for list in root.elements_mut().filter(|e| e.name == "nowPlaying") {
+                found = true;
+                list.content.retain(|node| match node {
+                    XNode::Element(entry) if entry.name == "entry" => mine(entry.attribute("username")),
+                    _ => true,
+                });
+            }
+            found
         },
     )
 }
@@ -390,10 +360,7 @@ fn saved_in_starred(context: &AnswerContext<'_>, body: Bytes) -> Bytes {
     rewrite(
         context,
         body,
-        |value| {
-            let Some(response) = subsonic_response(value) else {
-                return false;
-            };
+        |response| {
             if response.get("status").and_then(Value::as_str) != Some("ok") {
                 return false;
             }
@@ -509,15 +476,16 @@ mod tests {
         FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener))
     }
 
+    /// The rules for `endpoint` over `body`, for a request that asked for `f=format`.
     fn run(state: &AppState, caller: &FamilyCaller, endpoint: &str, format: &str, body: &str) -> String {
-        let parameters = Parameters::new();
+        let mut parameters = Parameters::new();
+        parameters.insert("f".into(), format.into());
         let context = AnswerContext {
             state,
             caller,
             endpoint,
             path: "/rest/x",
             parameters: &parameters,
-            format,
             content_type: None,
         };
         let mut body = Bytes::from(body.to_string());
@@ -576,6 +544,57 @@ mod tests {
         assert_eq!(run(&state, &owner, "getNowPlaying", "json", &answer), answer);
         let co = FamilyCaller::member("jo", Preset::CoAdmin, Abilities::preset(Preset::CoAdmin));
         assert_eq!(run(&state, &co, "getNowPlaying", "json", &answer), answer);
+    }
+
+    #[test]
+    fn rules_read_the_format_from_the_answer_not_from_the_request() {
+        let state = state();
+        let json = r#"{"subsonic-response":{"status":"ok","nowPlaying":{"entry":[{"id":"1","username":"alex"},{"id":"2","username":"sam"}]}}}"#;
+        let xml = r#"<subsonic-response status="ok"><nowPlaying><entry id="1" username="alex" /><entry id="2" username="sam" /></nowPlaying></subsonic-response>"#;
+        let jsonp = format!("cb({json});");
+        for asked in ["xml", "json", "jsonp", "json,xml", ""] {
+            for answer in [json, xml, jsonp.as_str()] {
+                let out = run(&state, &listener(), "getNowPlaying", asked, answer);
+                assert!(
+                    out.contains("alex") && !out.contains("sam"),
+                    "asked {asked:?}: {out}"
+                );
+            }
+            let out = run(
+                &state,
+                &listener(),
+                "getUser",
+                asked,
+                r#"<subsonic-response status="ok"><user username="alex" adminRole="true" /></subsonic-response>"#,
+            );
+            assert!(out.contains(r#"adminRole="false""#), "asked {asked:?}: {out}");
+        }
+        // One entry written as an object is filtered too.
+        let single =
+            r#"{"subsonic-response":{"status":"ok","nowPlaying":{"entry":{"id":"2","username":"sam"}}}}"#;
+        let out = run(&state, &listener(), "getNowPlaying", "json", single);
+        assert!(!out.contains("sam"), "{out}");
+    }
+
+    #[test]
+    fn an_answer_a_rule_must_change_and_cannot_read_is_error_0() {
+        let state = state();
+        for (answer, code) in [
+            (r#"{"subsonic-response":{"nowPlaying":"#, r#""code":0"#),
+            (
+                r#"<subsonic-response><nowPlaying><entry username="sam">"#,
+                r#"code="0""#,
+            ),
+            ("sam", r#"code="0""#),
+            ("cb({not json});", r#""code":0"#),
+        ] {
+            let out = run(&state, &listener(), "getNowPlaying", "json", answer);
+            assert!(!out.contains("sam"), "{answer}: {out}");
+            assert!(out.contains(code), "{answer}: {out}");
+        }
+        // The owner's answer is no rule's to change, so it goes as it came.
+        let owner = FamilyCaller::unmanaged("winters", true);
+        assert_eq!(run(&state, &owner, "getNowPlaying", "json", "sam"), "sam");
     }
 
     fn saved(state: &AppState) {

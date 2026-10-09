@@ -182,8 +182,15 @@ fn keys_in(reading: &RequestReading) -> Vec<&'static str> {
 }
 
 /// The sign-in exactly as read, for Navidrome to check: each sign-in key with its one value
-/// from the query or the body (in any case), and `v` and `c`. None when a key carries two
-/// different values, or `u` is not exactly `user` (or is there at all when `user` is None).
+/// from the query or the body, and `v` and `c`. It is the sign-in Navidrome then reads on the
+/// call itself, or None:
+///
+/// - when a key carries two different values, or an empty value beside a real one (Navidrome
+///   reads a key's first value, which could be either);
+/// - when a key is first written in another spelling than Subsonic's (`U`, `P`) in the query
+///   or the body: the relay sends a key's values in the spelling it was first sent with, and
+///   Navidrome reads keys in their own spelling only;
+/// - when `u` is not exactly `user` (or is there at all when `user` is None).
 pub fn credential_of(
     reading: &RequestReading,
     parameters: &Parameters,
@@ -193,16 +200,26 @@ pub fn credential_of(
     let mut values: IndexMap<String, String> = IndexMap::new();
     for key in SIGN_IN_KEYS {
         let mut found: Vec<&String> = Vec::new();
+        let mut empty = false;
         let sources = [Some(&reading.query), body.as_ref()];
         for source in sources.into_iter().flatten() {
-            for value in source.get(key).unwrap_or_default() {
-                if !value.is_empty() && !found.contains(&value) {
+            let Some((spelling, sent)) = source.iter().find(|(name, _)| eq_ignore_case(name, key)) else {
+                continue;
+            };
+            if spelling != key {
+                return None;
+            }
+            for value in sent {
+                if value.is_empty() {
+                    empty = true;
+                } else if !found.contains(&value) {
                     found.push(value);
                 }
             }
         }
         match found.as_slice() {
             [] => {}
+            [_] if empty => return None,
             [value] => {
                 values.insert(key.to_string(), (*value).clone());
             }
@@ -259,6 +276,49 @@ mod tests {
             Some("pw")
         );
         assert_eq!(keys_in(&reading), ["u", "p"]);
+    }
+
+    #[test]
+    fn a_sign_in_navidrome_would_read_differently_checks_nothing() {
+        let form = Some("application/x-www-form-urlencoded");
+        let json = Some("application/json");
+        // Another spelling first, in the query or the body: Navidrome reads no `u` or `p`.
+        for (query, content_type, body) in [
+            ("U=winters&p=pw", None, &b""[..]),
+            ("u=winters&P=pw", None, b""),
+            ("U=winters&u=winters&p=pw", None, b""),
+            ("u=winters&p=pw", form, b"P=pw"),
+            ("", json, br#"{"U":"winters","p":"pw"}"#),
+            // An empty value beside a real one: Navidrome may read the empty one.
+            ("u=&u=winters&p=pw", None, b""),
+            ("u=winters&p=&p=pw", None, b""),
+            ("u=winters&p=pw&p=", None, b""),
+            ("u=winters&p=pw", form, b"p="),
+        ] {
+            let (reading, parameters) = read(query, content_type, body);
+            assert!(
+                credential_of(&reading, &parameters, Some("winters")).is_none(),
+                "{query} {:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
+        // The same value twice in Subsonic's spelling, or a key only ever empty, is read alike.
+        for (query, content_type, body) in [
+            ("u=winters&p=pw&p=pw", None, &b""[..]),
+            ("u=winters&u=winters&p=pw", None, b""),
+            ("u=winters&p=pw", form, b"p=pw"),
+            ("u=winters&p=pw&U=winters", None, b""),
+            ("u=winters&p=pw&t=", None, b""),
+            ("%75=winters&%70=pw", None, b""),
+            ("", json, br#"{"u":"winters","p":"pw"}"#),
+        ] {
+            let (reading, parameters) = read(query, content_type, body);
+            assert!(
+                credential_of(&reading, &parameters, Some("winters")).is_some(),
+                "{query} {:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
     }
 
     #[test]

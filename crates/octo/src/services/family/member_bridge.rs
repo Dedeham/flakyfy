@@ -337,8 +337,13 @@ pub const MAX_FAILURES: usize = 20;
 /// Wrong sign-ins allowed from one peer Octo can vouch for, to any account, in the window. A
 /// peer may stand for several people (a proxy Octo does not trust), so its ceiling is higher.
 pub const PEER_FAILURES: usize = 100;
-/// Wrong sign-ins allowed for one account, from every address together, in the window.
+/// Wrong sign-ins allowed for one account in the window, from every address that never signed
+/// in to it together, and again from every address that did. A flood of guesses from new
+/// addresses then never holds back a device at an address it signed in from before, and
+/// guessing stays bounded either way.
 pub const ACCOUNT_FAILURES: usize = 100;
+/// How long an address that signed in to an account stays known for that account.
+pub const KNOWN_FOR: TimeDelta = TimeDelta::days(30);
 /// How long a wrong sign-in counts.
 pub const FAILURE_WINDOW: TimeDelta = TimeDelta::minutes(15);
 const MAX_KEYS: usize = 10_000;
@@ -356,21 +361,38 @@ fn recent(failures: &mut HashMap<String, VecDeque<DateTime<Utc>>>, key: &str, no
     tries.len()
 }
 
+/// An account name as the throttle keys it.
+fn account_key(user: &str) -> String {
+    user.trim().to_lowercase()
+}
+
 /// The keys one sign-in try counts under, each with its ceiling: the client address with the
 /// account, the peer Octo can vouch for (whatever hops it names), and the account across every
-/// address. A try is held back when any of them is used up.
+/// address, counted apart for addresses that signed in to it before. A try is held back when
+/// any of them is used up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TryKeys(Vec<(String, usize)>);
 
 impl TryKeys {
-    /// The keys for a try at `user` from `address` (behind `peer`), allowing `per_address` wrong
-    /// tries from that address.
+    /// The keys for a try at `user` from `address` (behind `peer`), an address that never
+    /// signed in to `user`, allowing `per_address` wrong tries from that address.
     pub fn new(address: &IpAddr, peer: &IpAddr, user: &str, per_address: usize) -> Self {
-        let user = user.trim().to_lowercase();
+        Self::at(address, peer, user, per_address, false)
+    }
+
+    /// [`TryKeys::new`] for an address that is `known` to have signed in to `user` before, or
+    /// not: the account's tries from known addresses count apart from everyone else's.
+    pub fn at(address: &IpAddr, peer: &IpAddr, user: &str, per_address: usize, known: bool) -> Self {
+        let user = account_key(user);
+        let account = if known {
+            format!("account-known|{user}")
+        } else {
+            format!("account|{user}")
+        };
         TryKeys(vec![
             (format!("{address}|{user}"), per_address),
             (format!("peer|{peer}"), PEER_FAILURES),
-            (format!("account|{user}"), ACCOUNT_FAILURES),
+            (account, ACCOUNT_FAILURES),
         ])
     }
 
@@ -531,13 +553,64 @@ impl FailureThrottle {
     }
 }
 
+/// The addresses each account signed in from lately, at most [`MAX_KEYS`] of them.
+pub struct KnownAddresses {
+    seen: Mutex<HashMap<String, DateTime<Utc>>>,
+    clock: Clock,
+}
+
+impl KnownAddresses {
+    pub fn new(clock: Clock) -> Self {
+        KnownAddresses {
+            seen: Mutex::new(HashMap::new()),
+            clock,
+        }
+    }
+
+    fn key(address: &IpAddr, user: &str) -> String {
+        format!("{address}|{}", account_key(user))
+    }
+
+    /// `user` signed in from `address` just now, with a sign-in that checked out.
+    pub fn signed_in(&self, address: &IpAddr, user: &str) {
+        let now = self.clock.now();
+        let mut seen = self.seen.lock();
+        let key = Self::key(address, user);
+        if seen.len() >= MAX_KEYS && !seen.contains_key(&key) {
+            seen.retain(|_, at| now - *at < KNOWN_FOR);
+            trim_oldest(&mut seen, MAX_KEYS - 1, |at| Some(*at));
+        }
+        seen.insert(key, now);
+    }
+
+    /// Whether `user` signed in from `address` within [`KNOWN_FOR`].
+    pub fn knows(&self, address: &IpAddr, user: &str) -> bool {
+        let now = self.clock.now();
+        self.seen
+            .lock()
+            .get(&Self::key(address, user))
+            .is_some_and(|at| now - *at < KNOWN_FOR)
+    }
+
+    /// How many addresses are kept now.
+    pub fn len(&self) -> usize {
+        self.seen.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// How soon a member's hidden password may be set again after a repair.
 pub const REPAIR_EVERY: Duration = Duration::from_secs(60);
 const LOG_EVERY: Duration = Duration::from_secs(60);
 
-/// The throttle, the repairs under way and the refusals logged lately.
+/// The throttle, the addresses accounts signed in from, the repairs under way and the refusals
+/// logged lately.
 pub struct MemberBridge {
     pub throttle: FailureThrottle,
+    pub known: KnownAddresses,
     repairs: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<Instant>>>>>,
     logged: Mutex<HashMap<String, Instant>>,
 }
@@ -551,10 +624,17 @@ impl Default for MemberBridge {
 impl MemberBridge {
     pub fn new(clock: Clock) -> Self {
         MemberBridge {
-            throttle: FailureThrottle::new(clock),
+            throttle: FailureThrottle::new(clock.clone()),
+            known: KnownAddresses::new(clock),
             repairs: Mutex::new(HashMap::new()),
             logged: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The keys a sign-in try at `user` from `address` (behind `peer`) counts under, with the
+    /// account's count for known addresses when `user` signed in from `address` before.
+    pub fn try_keys(&self, address: &IpAddr, peer: &IpAddr, user: &str, per_address: usize) -> TryKeys {
+        TryKeys::at(address, peer, user, per_address, self.known.knows(address, user))
     }
 
     /// Whether a line about `key` may be logged now (once a minute per key).
@@ -933,6 +1013,56 @@ mod tests {
         ));
         throttle.forgive_by(&TryKeys::new(&last, &last, "alex", MAX_FAILURES));
         assert!(throttle.attempt_by(&keys));
+    }
+
+    #[test]
+    fn known_addresses_count_apart_from_new_ones() {
+        let now = Arc::new(Mutex::new(Utc::now()));
+        let reading = now.clone();
+        let bridge = MemberBridge::new(Clock::new(move || *reading.lock()));
+        let ip = |text: String| -> IpAddr { text.parse().expect("an address") };
+        let known = ip("198.51.100.50".into());
+        bridge.known.signed_in(&known, "Alex");
+        assert!(bridge.known.knows(&known, "alex"));
+        assert!(!bridge.known.knows(&known, "sam"));
+        for n in 0..ACCOUNT_FAILURES {
+            let from = ip(format!("203.0.{}.{}", n / 200, n % 200 + 1));
+            let keys = bridge.try_keys(&from, &from, "alex", MAX_FAILURES);
+            assert!(!bridge.throttle.blocked_by(&keys));
+            bridge.throttle.failed_by(&keys);
+        }
+        let new = ip("198.51.100.9".into());
+        assert!(
+            bridge
+                .throttle
+                .blocked_by(&bridge.try_keys(&new, &new, "alex", MAX_FAILURES))
+        );
+        let keys = bridge.try_keys(&known, &known, "alex", MAX_FAILURES);
+        assert!(!bridge.throttle.blocked_by(&keys));
+        // Known addresses together have their own hundred.
+        for n in 0..ACCOUNT_FAILURES {
+            let from = ip(format!("10.1.{}.{}", n / 200, n % 200 + 1));
+            bridge.known.signed_in(&from, "alex");
+            bridge
+                .throttle
+                .failed_by(&bridge.try_keys(&from, &from, "alex", MAX_FAILURES));
+        }
+        assert!(bridge.throttle.blocked_by(&keys));
+        // An address is known for thirty days.
+        *now.lock() += KNOWN_FOR;
+        assert!(!bridge.known.knows(&known, "alex"));
+    }
+
+    #[test]
+    fn known_addresses_stay_bounded() {
+        let known = KnownAddresses::new(Clock::system());
+        for n in 0..(MAX_KEYS + 50) {
+            let address: IpAddr = format!("10.2.{}.{}", n / 256, n % 256)
+                .parse()
+                .expect("an address");
+            known.signed_in(&address, "alex");
+        }
+        assert!(known.len() <= MAX_KEYS, "{}", known.len());
     }
 
     #[test]

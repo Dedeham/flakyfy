@@ -173,10 +173,10 @@ impl PrivateView {
 
 /// A `getGenres` answer without the members' own music: each genre's `songCount` and
 /// `albumCount` lose what is in members' own libraries, and a genre left with nothing goes.
-/// None when nothing changed or the answer cannot be read.
-pub fn genres_answer(body: &[u8], view: &PrivateView) -> Option<Vec<u8>> {
+/// Unchanged without reading it when no genre holds members' music.
+pub fn genres_answer(body: &[u8], view: &PrivateView) -> list_rules::Edit {
     if view.genres.is_empty() {
-        return None;
+        return list_rules::Edit::Unchanged;
     }
     // The counts a genre keeps, or None when it has nothing left.
     let lowered = |genre: &str, songs: i64, albums: i64| -> Option<(i64, i64, bool)> {
@@ -192,7 +192,7 @@ pub fn genres_answer(body: &[u8], view: &PrivateView) -> Option<Vec<u8>> {
         Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
         _ => 0,
     };
-    list_rules::edit_answer(
+    list_rules::edit(
         body,
         |response| {
             let Some(Value::Array(list)) = response
@@ -362,7 +362,10 @@ mod tests {
             ..PrivateView::default()
         };
         let xml = br#"<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><genres><genre songCount="5" albumCount="3">Rock</genre><genre songCount="1" albumCount="1">Pop</genre><genre songCount="2" albumCount="1">Jazz</genre></genres></subsonic-response>"#;
-        let out = String::from_utf8(genres_answer(xml, &view).expect("changed")).expect("text");
+        let list_rules::Edit::Changed(out) = genres_answer(xml, &view) else {
+            panic!("changed");
+        };
+        let out = String::from_utf8(out).expect("text");
         assert!(
             out.contains(r#"<genre songCount="3" albumCount="2">Rock</genre>"#),
             "{out}"
@@ -370,7 +373,8 @@ mod tests {
         assert!(!out.contains("Pop"), "{out}");
         assert!(out.contains(">Jazz</genre>"), "{out}");
         let untouched = br#"<subsonic-response status="ok"><genres><genre songCount="2" albumCount="1">Jazz</genre></genres></subsonic-response>"#;
-        assert_eq!(genres_answer(untouched, &view), None);
+        assert_eq!(genres_answer(untouched, &view), list_rules::Edit::Unchanged);
+        assert_eq!(genres_answer(b"<genres", &view), list_rules::Edit::Unreadable);
     }
 
     #[test]

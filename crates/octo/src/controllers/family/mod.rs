@@ -238,7 +238,7 @@ async fn check_signed_call(
     address: IpAddr,
     peer: IpAddr,
 ) -> Result<Signed, Response> {
-    use crate::services::family::member_bridge::{self, DeviceSecret, MAX_FAILURES, TryKeys, Verdict};
+    use crate::services::family::member_bridge::{self, DeviceSecret, MAX_FAILURES, Verdict};
     let sign_in = SignIn::of(reading, None);
     let users = sign_in.named_users();
     let [user] = users.as_slice() else {
@@ -246,8 +246,11 @@ async fn check_signed_call(
     };
     let user = user.to_string();
     let throttle = &state.family_bridge.throttle;
+    let known = &state.family_bridge.known;
     if let Some(member) = state.family_store.member(&user) {
-        let keys = TryKeys::new(&address, &peer, &member.username, MAX_FAILURES);
+        let keys = state
+            .family_bridge
+            .try_keys(&address, &peer, &member.username, MAX_FAILURES);
         if throttle.blocked_by(&keys) {
             return Err(wrong_sign_in());
         }
@@ -271,6 +274,7 @@ async fn check_signed_call(
                 return Err(wrong_sign_in());
             }
         };
+        known.signed_in(&address, &member.username);
         if member.suspended {
             return Err(refusal(StatusCode::FORBIDDEN, PAUSED));
         }
@@ -284,7 +288,7 @@ async fn check_signed_call(
             device_id: Some(device_id),
         });
     }
-    let keys = TryKeys::new(&address, &peer, &user, MAX_FAILURES);
+    let keys = state.family_bridge.try_keys(&address, &peer, &user, MAX_FAILURES);
     if throttle.blocked_by(&keys) {
         return Err(wrong_sign_in());
     }
@@ -314,7 +318,7 @@ async fn check_signed_call(
         .check(Some(&credential), &state.subsonic_proxy)
         .await
     {
-        Ok(crate::services::subsonic::CredentialVerdict::Accepted) => {}
+        Ok(crate::services::subsonic::CredentialVerdict::Accepted) => known.signed_in(&address, &user),
         Ok(crate::services::subsonic::CredentialVerdict::Refused) => {
             throttle.failed_by(&keys);
             return Err(wrong_sign_in());

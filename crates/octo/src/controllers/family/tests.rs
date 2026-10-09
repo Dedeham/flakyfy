@@ -2955,6 +2955,59 @@ async fn auth_tries_for_one_account_from_many_addresses_count_together() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
 }
 
+/// The owner signed in from an address before: a flood of wrong passwords for the owner's
+/// account from new addresses holds back every new address (100 tries in 15 minutes, as
+/// before) and never that one. Its own wrong tries still count: 10 from it, then it waits too.
+#[tokio::test]
+async fn auth_tries_from_new_addresses_never_lock_the_owner_out_of_a_known_address() {
+    use crate::services::admin::SignInThrottle;
+    use crate::services::family::member_bridge::ACCOUNT_FAILURES;
+    let f = fam().await;
+    let known = "198.51.100.50";
+    let right = json!({ "username": "winters", "password": "owner pass" });
+    let r = f
+        .call(Method::POST, "/api/family/auth", None, Some(right.clone()), known)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let wrong = json!({ "username": "winters", "password": "guess" });
+    for n in 0..ACCOUNT_FAILURES {
+        let from = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        let r = f
+            .call(Method::POST, "/api/family/auth", None, Some(wrong.clone()), &from)
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    }
+    let r = f
+        .call(
+            Method::POST,
+            "/api/family/auth",
+            None,
+            Some(right.clone()),
+            "198.51.100.9",
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a new address waits: {}",
+        r.body
+    );
+    let r = f
+        .call(Method::POST, "/api/family/auth", None, Some(right.clone()), known)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "the known address does not: {}", r.body);
+    for _ in 0..SignInThrottle::MAX_FAILURES {
+        let r = f
+            .call(Method::POST, "/api/family/auth", None, Some(wrong.clone()), known)
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    }
+    let r = f
+        .call(Method::POST, "/api/family/auth", None, Some(right), known)
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+}
+
 /// A device on the home network naming a new X-Forwarded-For hop on every try still counts
 /// against the address that connected.
 #[tokio::test]

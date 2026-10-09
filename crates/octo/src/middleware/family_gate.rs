@@ -16,6 +16,8 @@
 //!   own; the real one stays on the member's web device and is swapped in on the way to
 //!   Navidrome, and every fresh one Navidrome hands back is swapped for a fresh Octo token.
 //! - **Radio streams** name their listener through the stream's session.
+//! - **Audio**: every request that hands out audio, a radio stream included, passes the audio
+//!   gate ([`audio_gate`]), which may refuse it, sets its quality and tracks its body.
 //!
 //! When Navidrome refuses a member's rewritten sign-in (someone changed the password there),
 //! the gate sets a new hidden password once and tries again.
@@ -47,6 +49,7 @@ use tracing::{info, warn};
 use crate::app::AppState;
 use crate::http::error::json_relaxed_response;
 use crate::middleware::admin_guard;
+use crate::services::family::audio_gate;
 use crate::services::family::device_registry::detected_device_id;
 use crate::services::family::member_bridge::{self, DeviceSecret, FailureThrottle, SignIn, Verdict};
 use crate::services::family::web_session::{self, WebClaims};
@@ -385,6 +388,7 @@ async fn apply_answer_rules(
         .map(str::to_string);
     let format = Format::of(parameters);
     let context = AnswerContext {
+        state,
         caller,
         endpoint,
         path,
@@ -506,15 +510,29 @@ async fn pass_rest(
         return next.run(Request::from_parts(parts, Body::from(body))).await;
     };
     state.family_devices.seen(&caller, &seen);
-    if let Some(refused) = request_rules(state, &caller, &endpoint, parameters) {
+    if let Some(refused) = request_rules(state, &caller, &parts.method, &endpoint, parameters) {
         return refused;
     }
+    let audio = match audio_gate::admit(
+        state,
+        &caller,
+        &parts.method,
+        &endpoint,
+        parameters,
+        &parts.headers,
+    )
+    .await
+    {
+        Ok(audio) => audio,
+        Err(refused) => return refused,
+    };
     let rules = state.family_answer_rules.has(&endpoint);
     if rules {
         parts.headers.remove(header::ACCEPT_ENCODING);
     }
     parts.extensions.insert(caller.clone());
-    let response = next.run(Request::from_parts(parts, Body::from(body))).await;
+    let req = audio.apply(Request::from_parts(parts, Body::from(body))).await;
+    let response = audio.track(state, next.run(req).await);
     if rules {
         apply_answer_rules(state, response, &caller, &endpoint, &path, parameters).await
     } else {
@@ -610,9 +628,23 @@ async fn member_rest(
     )
     .parameters();
     let first = assemble_from(rewritten);
-    if let Some(refused) = request_rules(state, &caller, &request.endpoint, &parameters) {
+    let method = &request.parts.method;
+    if let Some(refused) = request_rules(state, &caller, method, &request.endpoint, &parameters) {
         return refused;
     }
+    let audio = match audio_gate::admit(
+        state,
+        &caller,
+        method,
+        &request.endpoint,
+        &parameters,
+        &request.parts.headers,
+    )
+    .await
+    {
+        Ok(audio) => audio,
+        Err(refused) => return refused,
+    };
     let rules = state.family_answer_rules.has(&request.endpoint);
     let strip = |mut req: Request| {
         if rules {
@@ -621,7 +653,8 @@ async fn member_rest(
         req
     };
 
-    let (mut response, refused) = peek_refusal(next.clone().run(strip(first)).await).await;
+    let first = audio.apply(strip(first)).await;
+    let (mut response, refused) = peek_refusal(next.clone().run(first).await).await;
     if refused {
         match state
             .family_bridge
@@ -635,8 +668,8 @@ async fn member_rest(
             .await
         {
             Some(retry) => {
-                let (again, still) =
-                    peek_refusal(next.run(strip(assemble_from(rewrite_with(&retry)))).await).await;
+                let again = audio.apply(strip(assemble_from(rewrite_with(&retry)))).await;
+                let (again, still) = peek_refusal(next.run(again).await).await;
                 if still && state.family_bridge.may_log(&format!("repair|{user}")) {
                     warn!("FAMILY Navidrome still refuses {user}'s sign-in after a new hidden password");
                 }
@@ -649,6 +682,7 @@ async fn member_rest(
             }
         }
     }
+    let response = audio.track(state, response);
     if rules {
         apply_answer_rules(
             state,
@@ -681,9 +715,15 @@ async fn radio(state: &AppState, mut req: Request, next: Next, token: &str, at: 
         && !session.username.trim().is_empty()
     {
         let seen = sighting(req.headers(), &Parameters::new());
-        let caller = caller_for(state, &session.username, None, &seen, at);
+        let mut caller = caller_for(state, &session.username, None, &seen, at);
         state.family_devices.seen(&caller, &seen);
+        let audio =
+            match audio_gate::admit_radio(state, &mut caller, token, &session.station_id, req.method()) {
+                Ok(audio) => audio,
+                Err(refused) => return refused,
+            };
         req.extensions_mut().insert(caller);
+        return audio.track(state, next.run(req).await);
     }
     next.run(req).await
 }
@@ -871,7 +911,7 @@ async fn pass_native(
         Bytes::new(),
     )
     .parameters();
-    if let Some(refused) = request_rules(state, &caller, path, &parameters) {
+    if let Some(refused) = request_rules(state, &caller, req.method(), path, &parameters) {
         return refused;
     }
     req.extensions_mut().insert(caller);

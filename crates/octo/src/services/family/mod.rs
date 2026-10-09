@@ -1,8 +1,10 @@
 //! Octo Family's services: the key file and sealed secrets, member passwords, the family
 //! stores, Octo's admin calls to Navidrome, the library index that tells shared music from
 //! members' own, and what the family gate uses to sign members in: the bridge to their hidden
-//! Navidrome passwords, browser tokens, the device registry and the rule hooks.
+//! Navidrome passwords, browser tokens, the device registry and the rule hooks; and the rules
+//! about audio: the audio gate, the stream tracker and players held to a member's limit.
 
+pub mod audio_gate;
 pub mod caller;
 pub mod device_registry;
 pub mod family_playlist_store;
@@ -13,13 +15,16 @@ pub mod member_bridge;
 pub mod member_credentials;
 pub mod navidrome_admin;
 pub mod passwords;
+pub mod player_caps;
 pub mod request_store;
 pub mod rules;
 pub mod saved_store;
 mod store_file;
+pub mod stream_tracker;
 pub mod vault;
 pub mod web_session;
 
+pub use audio_gate::{AudioGate, AudioPlan};
 pub use caller::{FamilyCaller, family_caller};
 pub use device_registry::{DeviceRegistry, NewDevice, Sighting};
 pub use family_playlist_store::{FamilyPlaylist, FamilyPlaylistEntry, FamilyPlaylistStore};
@@ -29,7 +34,9 @@ pub use library_index::{IndexedSong, LibraryIndex, LibraryScope, ScopeResolver};
 pub use member_bridge::MemberBridge;
 pub use member_credentials::MemberCredentials;
 pub use navidrome_admin::{NavidromeAdmin, NdLibrary, NdPlayer, NdUser};
+pub use player_caps::PlayerCaps;
 pub use request_store::RequestStore;
 pub use rules::{AnswerContext, AnswerRule, AnswerRules, request_rules};
 pub use saved_store::{SavedAlbum, SavedSong, SavedStore};
+pub use stream_tracker::{LiveStreamView, StreamPurpose, StreamStart, StreamTracker};
 pub use vault::FamilyVault;

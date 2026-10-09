@@ -24,6 +24,7 @@ use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
 use crate::services::common::song_finder::UpgradeGate;
+use crate::services::family::{audio_gate, family_caller};
 use crate::services::library::library_tag_edits::song_tag_fields;
 use crate::services::library::{
     LibraryActionOutcome, LibraryActionRequest, LibraryActionState, LibraryEditOutcome, SongLookup,
@@ -93,7 +94,11 @@ pub async fn get_acquisitions(State(state): State<AppState>, req: Request) -> Ap
 /// Navidrome's extension list with octoAcquisitions added, so a client can tell this server
 /// answers getAcquisitions before it asks, and octoLibraryActions while library actions are
 /// on. Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
+///
+/// A caller whose audio has a ceiling (a family limit, or their own quality for where they
+/// are) is not offered `transcoding`: its decisions would let a client play a file as it is.
 pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Request) -> Response {
+    let capped = family_caller(req.extensions()).is_some_and(|caller| audio_gate::ceiling(caller).is_some());
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return response,
@@ -104,7 +109,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
         .relay_safe("rest/getOpenSubsonicExtensions", &call.parameters)
         .await;
     let settings = state.settings.current();
-    state
+    let mut reply = state
         .subsonic_response_builder
         .merge_open_subsonic_extensions_with(
             &format,
@@ -114,8 +119,12 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             settings.library_actions.enabled,
             settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
-        )
-        .into_response()
+        );
+    if capped && let Some(body) = audio_gate::without_extension(&reply.body, format == "json", "transcoding")
+    {
+        reply.body = body;
+    }
+    reply.into_response()
 }
 
 /// Whether a source Better quality searches (Soulseek, Lidarr) is set up here at all.

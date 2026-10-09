@@ -30,6 +30,8 @@ pub mod admin_port_split;
 pub mod admin_sign_in_gate;
 pub mod cors;
 pub mod exception;
+#[cfg(test)]
+mod family_bypass_tests;
 pub mod family_gate;
 pub mod forwarded;
 pub mod request_log;

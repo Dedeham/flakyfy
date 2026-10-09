@@ -177,13 +177,14 @@ pub fn artist_lookup_url(mbid: &str) -> Option<String> {
     ))
 }
 
-/// The relative URL of the search for an artist by name: the best three, or None for a name
-/// with nothing to search by.
+/// The relative URL of the search for an artist by name or alias: the best three, or None for
+/// a name with nothing to search by.
 pub fn artist_search_url(name: &str) -> Option<String> {
     if SongIdentity::key(name).is_empty() {
         return None;
     }
-    let query = format!("artist:\"{}\"", escape_query(name.trim()));
+    let escaped = escape_query(name.trim());
+    let query = format!("artist:\"{escaped}\" OR alias:\"{escaped}\"");
     Some(format!(
         "artist/?query={}&limit=3&fmt=json",
         dotnet::escape_data_string(&query)

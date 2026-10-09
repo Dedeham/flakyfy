@@ -1,7 +1,7 @@
 # Every Subsonic and OpenSubsonic endpoint, from the OpenSubsonic endpoint index
 # (https://opensubsonic.netlify.app/docs/endpoints/, read 2026-10-08), then Octo's own /rest
-# extension endpoints (crates/octo/src/controllers/subsonic routes) and the octoFamily ones
-# (FAMILY-API.md). The test every_opensubsonic_endpoint_is_classified
+# extension endpoints (crates/octo/src/controllers/subsonic routes) and the octoFamily ones.
+# The test every_opensubsonic_endpoint_is_classified
 # (crates/octo-core/src/family/endpoints.rs) fails on any name here without an endpoint class.
 # Add a name when the index grows; one name per line, lines starting with # are notes.
 
@@ -115,7 +115,7 @@ pickFoundSong
 setLyricsChoice
 testPing
 
-# octoFamily (FAMILY-API.md)
+# octoFamily
 getFamily
 getFamilyRequests
 requestCopy

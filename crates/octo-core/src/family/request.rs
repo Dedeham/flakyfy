@@ -82,7 +82,7 @@ pub struct FamilyRequest {
 }
 
 impl FamilyRequest {
-    /// The request as `getFamilyRequests` and `/api/family/*` answer it (FAMILY-API.md).
+    /// The request as `getFamilyRequests` and `/api/family/*` answer it.
     pub fn api_json(&self, display_name: &str) -> Value {
         json!({
             "id": self.id,

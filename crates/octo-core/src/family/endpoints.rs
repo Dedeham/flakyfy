@@ -1,4 +1,4 @@
-//! Every endpoint a family member can reach, in a class (CHECK-DELTA.md C1 item 1). The family
+//! Every endpoint a family member can reach, in a class. The family
 //! gate denies by default for capped and kid members: a `/rest` endpoint this file does not
 //! know is refused for them, so a future audio endpoint cannot hand out original files.
 //!
@@ -142,7 +142,7 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("pickFoundSong", LibraryWrite),
     ("setLyricsChoice", LibraryWrite),
     ("testPing", Read),
-    // Octo Family (`octoFamily`, FAMILY-API.md): each checks the caller's own rights.
+    // Octo Family (`octoFamily`): each checks the caller's own rights.
     ("getFamily", Read),
     ("getFamilyRequests", Read),
     ("requestCopy", Read),
@@ -236,7 +236,8 @@ pub fn classify_known(path: &str, method: &Method) -> Option<EndpointClass> {
 
 /// Navidrome's native API (`server/nativeapi`, 0.64.2).
 fn native_class(path: &str, method: &Method) -> Option<EndpointClass> {
-    // Approving a Jellyfin Quick Connect device hands out a Jellyfin token (C1 g).
+    // Approving a Jellyfin Quick Connect device hands out a Jellyfin token, which streams
+    // original files past every cap.
     if under(path, "/api/quickconnect/authorize") {
         return Some(Refused);
     }

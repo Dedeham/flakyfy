@@ -1,5 +1,5 @@
 //! Devices: what a member signs in with, the app name Octo shows for it, whether it is home or
-//! away, and the client address behind trusted proxies (CHECK-DELTA.md M5).
+//! away, and the client address behind trusted proxies.
 
 use std::net::IpAddr;
 
@@ -52,8 +52,8 @@ pub struct Device {
     pub place: NetworkPlace,
     #[serde(default)]
     pub seen_apps: Vec<String>,
-    /// A `NavidromeWeb` device's real Navidrome JWT, sealed (CHECK-DELTA.md C1 item 4). Never
-    /// handed to the member.
+    /// A `NavidromeWeb` device's real Navidrome JWT, sealed. Never handed to the member: their
+    /// browser holds a token Octo signs, swapped for this one on the way to Navidrome.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub navidrome_jwt: Option<String>,
 }
@@ -170,7 +170,7 @@ pub fn place_of(ip: IpAddr, home: &[IpNet]) -> NetworkPlace {
     }
 }
 
-/// The address of the person making the request (CHECK-DELTA.md M5, Navidrome 0.64.0's rule).
+/// The address of the person making the request (the rule Navidrome 0.64.0 uses).
 ///
 /// Headers are believed only when the TCP peer is a trusted proxy (the tunnel or a reverse
 /// proxy running beside Octo). Then `Cf-Connecting-Ip` wins; else the rightmost

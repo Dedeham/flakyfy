@@ -108,7 +108,7 @@ pub enum RequestDecision {
 }
 
 /// `Some("Your library is full (10.2 of 10 GB)")` when the member's personal library holds
-/// their storage limit or more (CHECK-DELTA.md D-1); None when there is room or no limit.
+/// their storage limit or more; None when there is room or no limit.
 pub fn storage_full(a: &Abilities, used_bytes: u64) -> Option<String> {
     let limit = a.storage_limit_bytes()?;
     (used_bytes >= limit).then(|| {

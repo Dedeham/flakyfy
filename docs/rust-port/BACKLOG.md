@@ -1338,10 +1338,10 @@ The Rust tests read the shared case files as they are.
 
 ## Group FAM: Family (wave G5)
 
-Octo Family, multi-user accounts, Rust only (D26): the plan is
-`~/.claude/plans/octo-family/PLAN.md` with `CHECK-DELTA.md` (which wins where they
-differ) and the API contract `FAMILY-API.md`. Branch `port/g5-family`, local only. With
-`Family:Enabled=false` (the default) nothing observable changes.
+Octo Family: accounts for the people an owner shares their music with, each with their
+own library, devices and abilities. Built in the Rust server only; branch
+`port/g5-family`, local only. With `Family:Enabled=false` (the default) nothing
+observable changes.
 
 - [x] G5-0 Start: `argon2 0.6`, `chacha20poly1305 0.11`, `ipnet 2.12`; this section
 - [x] G5-1 Pure model (`octo-core/src/family/`): abilities, policy, request, device (with the trusted-proxy client address), codes, endpoint classes and `docs/family/opensubsonic-endpoints.txt`

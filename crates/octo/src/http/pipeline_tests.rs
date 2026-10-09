@@ -740,8 +740,8 @@ async fn exception_envelopes_use_the_relaxed_encoder() {
 
 // ---- Family ----
 
-/// Octo Family refuses a `/rest` endpoint it has no class for to capped and kid members
-/// (CHECK-DELTA.md C1): every `/rest` route Octo answers itself must have one.
+/// Octo Family refuses a `/rest` endpoint it has no class for to capped and kid members:
+/// every `/rest` route Octo answers itself must have one.
 #[test]
 fn every_rest_route_has_a_family_class() {
     let names: Vec<String> = app_routes(&StaticAssets::default())

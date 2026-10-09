@@ -1,9 +1,8 @@
-//! What a family member may do: five presets (PLAN.md table 4.2, plus `StorageLimitGb` and
-//! `InstantFromFamily` from CHECK-DELTA.md) and per-member edits stored as a sparse map over
+//! What a family member may do: five presets and per-member edits stored as a sparse map over
 //! the preset, so a preset change keeps the edits.
 //!
-//! [`Abilities`] serializes with the field names of the `octoFamily` API (FAMILY-API.md,
-//! `family.me.abilities`): camelCase, caps as kbps with `0` for no cap.
+//! [`Abilities`] serializes with the field names of the `octoFamily` API
+//! (`family.me.abilities`): camelCase, caps as kbps with `0` for no cap.
 
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -20,7 +19,7 @@ pub enum Preset {
 }
 
 /// Who a caller is to the family: a preset, or a Navidrome account Octo does not manage
-/// (`role` in FAMILY-API.md).
+/// (`role` in the `octoFamily` API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Role {
     Owner,
@@ -93,7 +92,7 @@ impl RequestQuality {
 }
 
 /// The highest bitrate a member's library streams arrive at. Written as a number of kbps,
-/// with `0` for the original file (FAMILY-API.md); read from a number, `"Original"`, or a
+/// with `0` for the original file; read from a number, `"Original"`, or a
 /// number in a string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StreamCap {
@@ -211,7 +210,7 @@ pub struct Abilities {
 }
 
 impl Abilities {
-    /// The preset's abilities, exactly as PLAN.md table 4.2 and CHECK-DELTA.md set them.
+    /// The preset's abilities.
     pub fn preset(preset: Preset) -> Self {
         match preset {
             Preset::Owner => Abilities {
@@ -463,11 +462,11 @@ mod tests {
         for (a, on) in [(&o, true), (&c, false), (&m, false), (&l, false), (&k, false)] {
             assert_eq!(a.library_actions, on);
         }
-        // StorageLimitGb (CHECK-DELTA.md D-1)
+        // StorageLimitGb
         for (a, gb) in [(&o, 0), (&c, 0), (&m, 50), (&l, 10), (&k, 5)] {
             assert_eq!(a.storage_limit_gb, gb);
         }
-        // InstantFromFamily (CHECK-DELTA.md, the family pool)
+        // InstantFromFamily
         for (a, on) in [(&o, true), (&c, true), (&m, true), (&l, true), (&k, false)] {
             assert_eq!(a.instant_from_family, on);
         }

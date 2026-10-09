@@ -18,7 +18,7 @@ use axum::response::Response;
 use chrono::Utc;
 use http_body_util::BodyExt;
 use octo_core::family::abilities::Preset;
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::family::request::{RequestKind, RequestState};
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, FamilySettings, NotificationSettings, SubsonicSettings};
@@ -46,7 +46,7 @@ const OUTSIDE_TOO: &str = "ext-deezer-song-78";
 /// The owner's Navidrome password.
 const OWNER_PASSWORD: &str = "right-password";
 
-/// The app password of each member's Subsonic app.
+/// Each member's one password, which their apps sign in with.
 fn app_password(user: &str) -> String {
     format!("{}-APPP-ASSW-ORDX", user.to_uppercase())
 }
@@ -86,7 +86,8 @@ fn member(state: &AppState, name: &str, preset: Preset, library: i64) -> Member 
         navidrome_password: state.family_vault.seal("hidden").expect("sealed"),
         personal_library_id: Some(library),
         shared_libraries: SharedLibraries::All,
-        account_password: String::new(),
+        account_password: crate::services::family::passwords::seal(&state.family_vault, &app_password(name))
+            .expect("sealed"),
         created: Utc::now(),
         suspended: false,
         ntfy_topic: format!("{name}-topic"),
@@ -236,8 +237,6 @@ async fn wired(family_on: bool) -> Wired {
             id: format!("d_{user}"),
             username: user.into(),
             name: format!("{user}'s phone"),
-            kind: DeviceKind::SubsonicApp,
-            secret: state.family_vault.seal(&app_password(user)).expect("sealed"),
             created: Utc::now(),
             last_seen: None,
             app: String::new(),
@@ -1142,9 +1141,8 @@ async fn no_unchecked_sign_in_names_a_member_or_a_manager_on_rest() {
     let w = wired(true).await;
     let devices = w.state.family_store.devices().len();
     let tail = "v=1.16.1&c=evil&f=json";
-    let add_for_alex = "name=evil&kind=SubsonicApp&username=alex";
     let mut tries: Vec<(String, Vec<(&str, String)>)> = Vec::new();
-    for endpoint in ["getFamily".to_string(), format!("addFamilyDevice?{add_for_alex}")] {
+    for endpoint in ["getFamily", "forgetFamilyDevice?id=d_alex"] {
         let join = if endpoint.contains('?') { '&' } else { '?' };
         let base = format!("/rest/{endpoint}{join}{tail}");
         for token in [
@@ -1171,12 +1169,12 @@ async fn no_unchecked_sign_in_names_a_member_or_a_manager_on_rest() {
         let answer = r.subsonic();
         assert_ne!(answer["status"], "ok", "{uri} {headers:?}: {}", r.body);
         assert!(answer.get("family").is_none(), "{uri}: {}", r.body);
-        assert!(answer.get("familyDeviceAdded").is_none(), "{uri}: {}", r.body);
+        assert!(answer.get("familyLogin").is_none(), "{uri}: {}", r.body);
     }
     assert_eq!(
         w.state.family_store.devices().len(),
         devices,
-        "no device was added"
+        "no device was added or removed"
     );
     // The real sign-ins still work.
     let alex = w.rest("alex", "getFamily", "").await;
@@ -1220,18 +1218,30 @@ async fn no_unchecked_sign_in_reaches_the_family_api() {
             r.body
         );
     }
-    // A device added through the API needs a real sign-in too.
-    let devices = w.state.family_store.devices().len();
+    // Resetting a password through the API needs a real sign-in too.
+    let before = w
+        .state
+        .family_store
+        .member("alex")
+        .expect("member")
+        .account_password;
     let forged = forged_navidrome_token("winters");
     let r = send_with_headers(
         &w,
         Method::POST,
-        &format!("/api/family/members/alex/devices?u=winters&jwt={forged}&{tail}"),
+        &format!("/api/family/members/alex/reset?u=winters&jwt={forged}&{tail}"),
         &[("x-octo-family", "1".to_string())],
     )
     .await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
-    assert_eq!(w.state.family_store.devices().len(), devices);
+    assert_eq!(
+        w.state
+            .family_store
+            .member("alex")
+            .expect("member")
+            .account_password,
+        before
+    );
     // A signed call with the member's own app password works.
     let signed = send_with_headers(
         &w,
@@ -1248,7 +1258,8 @@ async fn signing_in_to_one_account_never_clears_wrong_tries_at_another() {
     let w = wired(true).await;
     for (name, pw) in [("alex", "alex-own-password"), ("sam", "sams-secret-password")] {
         let mut m = w.state.family_store.member(name).expect("member");
-        m.account_password = crate::services::family::passwords::hash(pw);
+        m.account_password =
+            crate::services::family::passwords::seal(&w.state.family_vault, pw).expect("sealed");
         w.state.family_store.upsert_member(m);
     }
     let mut throttled = 0;
@@ -1341,7 +1352,9 @@ async fn wrong_sign_ins_make_no_devices_or_notices() {
 async fn sign_ins_sent_all_at_once_count_before_they_are_checked() {
     let w = wired(true).await;
     let mut sam = w.state.family_store.member("sam").expect("member");
-    sam.account_password = crate::services::family::passwords::hash("sams-secret-password");
+    sam.account_password =
+        crate::services::family::passwords::seal(&w.state.family_vault, "sams-secret-password")
+            .expect("sealed");
     w.state.family_store.upsert_member(sam);
     let tries = (0..15).map(|n| {
         w.send(

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::http::Method;
 use chrono::Utc;
 use octo_core::family::abilities::Preset;
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, FamilySettings, GeneratedPlaylistSettings, SubsonicSettings};
 use octo_subsonic::subsonic_response_builder::json_shape_to_xml;
@@ -238,7 +238,7 @@ fn auth(user: &str) -> String {
 }
 
 /// The owner `winters`, the member alex, the listener sam and the kid profile kid (each with
-/// an Octo app device whose secret is `<name>-secret`), with the library index read.
+/// the password `<name>-secret` and an Octo app device), with the library index read.
 async fn fixture(enabled: bool) -> Fixture {
     fixture_with(enabled, |_| {}).await
 }
@@ -333,16 +333,14 @@ async fn fixture_with(enabled: bool, change: impl FnOnce(&mut FamilySettings)) -
         let mut person = member(name, state.family_vault.seal("hidden").expect("sealed"));
         person.preset = preset;
         person.personal_library_id = Some(library);
+        person.account_password =
+            crate::services::family::passwords::seal(&state.family_vault, &format!("{name}-secret"))
+                .expect("sealed");
         store.upsert_member(person);
         store.add_device(Device {
             id: format!("d_{name}"),
             username: name.into(),
             name: String::new(),
-            kind: DeviceKind::OctoApp,
-            secret: state
-                .family_vault
-                .seal(&format!("{name}-secret"))
-                .expect("sealed"),
             created: Utc::now(),
             last_seen: None,
             app: String::new(),

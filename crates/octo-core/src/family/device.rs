@@ -1,5 +1,6 @@
-//! Devices: what a member signs in with, the app name Octo shows for it, whether it is home or
-//! away, and the client address behind trusted proxies.
+//! Devices: what Octo records of the apps people sign in with, the app name it shows for each,
+//! whether it is home or away, and the client address behind trusted proxies. A device holds no
+//! secret: everyone signs in with their one account password.
 
 use std::net::IpAddr;
 
@@ -10,19 +11,6 @@ use serde::{Deserialize, Serialize};
 use super::quality::DeviceQualityMode;
 use crate::json::datetime;
 
-/// How a device signs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DeviceKind {
-    /// An Octo app paired with a 6-digit code.
-    OctoApp,
-    /// Any Subsonic app, with a shown-once app password.
-    SubsonicApp,
-    /// Navidrome's web player, signed in through Octo.
-    NavidromeWeb,
-    /// Seen but not signed in by Octo (the owner and unmanaged accounts).
-    Detected,
-}
-
 /// Home or away, from the client address and `Family:HomeNetworks`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum NetworkPlace {
@@ -31,7 +19,8 @@ pub enum NetworkPlace {
     Away,
 }
 
-/// One device as `family.json` keeps it.
+/// One device as `family.json` keeps it. Files written before devices lost their kind and
+/// secret still load: those fields are ignored and gone at the next write.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Device {
@@ -39,10 +28,7 @@ pub struct Device {
     pub username: String,
     #[serde(default)]
     pub name: String,
-    pub kind: DeviceKind,
-    /// The device's secret, sealed (`sealed:...`); empty for detected devices.
-    #[serde(default)]
-    pub secret: String,
+    /// When the device was first seen.
     #[serde(with = "datetime::utc")]
     pub created: DateTime<Utc>,
     #[serde(default, with = "datetime::utc_option")]
@@ -53,8 +39,9 @@ pub struct Device {
     pub place: NetworkPlace,
     #[serde(default)]
     pub seen_apps: Vec<String>,
-    /// A `NavidromeWeb` device's real Navidrome JWT, sealed. Never handed to the member: their
-    /// browser holds a token Octo signs, swapped for this one on the way to Navidrome.
+    /// A web player device's real Navidrome JWT, sealed: its web session. Never handed to the
+    /// member: their browser holds a token Octo signs, swapped for this one on the way to
+    /// Navidrome.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub navidrome_jwt: Option<String>,
     /// Whether the device follows the account's audio quality or lets its app decide.
@@ -519,8 +506,6 @@ mod tests {
             id: "d_1".into(),
             username: "alex".into(),
             name: "Pixel 9".into(),
-            kind: DeviceKind::OctoApp,
-            secret: "sealed:abc".into(),
             created: datetime::parse_utc("2026-10-20T18:00:00Z").expect("a date"),
             last_seen: None,
             app: "Octo 1.6 (Android)".into(),
@@ -532,8 +517,19 @@ mod tests {
         let text = serde_json::to_string(&device).expect("serializes");
         assert!(!text.contains("NavidromeJwt"));
         assert!(!text.contains("Quality"));
-        assert!(text.contains("\"Kind\":\"OctoApp\""));
+        assert!(!text.contains("Kind") && !text.contains("Secret"));
         let back: Device = serde_json::from_str(&text).expect("reads back");
         assert_eq!(back, device);
+    }
+
+    #[test]
+    fn a_device_from_before_one_login_loads_without_its_kind_and_secret() {
+        let old = r#"{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"OctoApp",
+            "Secret":"sealed:abc","Created":"2026-10-20T18:00:00Z","App":"Octo"}"#;
+        let device: Device = serde_json::from_str(old).expect("loads");
+        assert_eq!(device.id, "d_1");
+        let text = serde_json::to_string(&device).expect("serializes");
+        assert!(!text.contains("Secret") && !text.contains("sealed:abc"), "{text}");
+        assert!(!text.contains("Kind"), "{text}");
     }
 }

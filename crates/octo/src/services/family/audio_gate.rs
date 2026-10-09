@@ -722,15 +722,16 @@ pub fn songs_named(endpoint: &str, sent: &Sent<'_>) -> Vec<String> {
 }
 
 /// Whether a stream marked `X-Octo-Purpose: offline` comes from one of the caller's own paired
-/// Octo apps, the only devices that make offline copies.
-fn from_paired_octo_app(state: &AppState, caller: &FamilyCaller) -> bool {
+/// Octo apps, the only devices that make offline copies: the caller's device is one whose app
+/// Octo last saw as Octo.
+fn from_octo_app(state: &AppState, caller: &FamilyCaller) -> bool {
     caller
         .device_id
         .as_deref()
         .and_then(|id| state.family_store.device(id))
         .is_some_and(|device| {
-            device.kind == octo_core::family::device::DeviceKind::OctoApp
-                && eq_ignore_case(&device.username, &caller.user)
+            eq_ignore_case(&device.username, &caller.user)
+                && (device.app == "Octo" || device.app.starts_with("Octo "))
         })
 }
 
@@ -886,7 +887,7 @@ pub async fn admit(
         .get("x-octo-purpose")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|purpose| purpose.trim().eq_ignore_ascii_case("offline"))
-        && (!caller.managed || from_paired_octo_app(state, caller));
+        && (!caller.managed || from_octo_app(state, caller));
     let songs = songs_named(endpoint, sent);
     if caller.managed {
         // The quality and the song are read from the query, a url-encoded form and a JSON

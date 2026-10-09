@@ -166,9 +166,7 @@ mod tests {
     use crate::services::family::device_registry::Sighting;
     use crate::services::family::member_credentials::tests::member;
     use crate::services::family::navidrome_admin::tests::{admin_for, navidrome};
-    use chrono::Utc;
     use octo_core::family::abilities::{Abilities, Preset};
-    use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
     use octo_core::settings::{AppSettings, FamilySettings};
     use serde_json::{Map, Value, json};
     use wiremock::matchers::{body_json, method, path};
@@ -279,20 +277,6 @@ mod tests {
             .await;
         let store = Arc::new(FamilyStore::in_memory());
         store.upsert_member(capped("alex", 192));
-        store.add_device(Device {
-            id: "d_1".into(),
-            username: "alex".into(),
-            name: String::new(),
-            kind: DeviceKind::OctoApp,
-            secret: String::new(),
-            created: Utc::now(),
-            last_seen: None,
-            app: String::new(),
-            place: NetworkPlace::Home,
-            seen_apps: Vec::new(),
-            navidrome_jwt: None,
-            quality: Default::default(),
-        });
         let (caps, devices) = caps_for(&server, Arc::clone(&store));
         let caps = Arc::new(caps.with_timing(Duration::from_secs(3600), Duration::from_millis(10)));
         let token = CancellationToken::new();
@@ -308,8 +292,9 @@ mod tests {
             puts(&server.received_requests().await.unwrap_or_default()).len(),
             2
         );
+        // A device seen for the first time, after its sign-in checked out.
         let mut alex = FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener));
-        alex.device_id = Some("d_1".into());
+        alex.device_id = Some("x_1".into());
         devices.seen(&alex, &Sighting::default());
         for _ in 0..200 {
             if puts(&server.received_requests().await.unwrap_or_default()).len() >= 4 {

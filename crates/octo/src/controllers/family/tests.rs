@@ -12,11 +12,10 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use http_body_util::BodyExt;
-use octo_core::common::Clock;
 use octo_core::family::abilities::{Preset, RequestQuality};
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::family::request::{FamilyRequest, RequestKind, RequestState};
 use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
 use parking_lot::Mutex;
@@ -29,10 +28,11 @@ use crate::app::{AppState, TestServices};
 use crate::http::pipeline::{App, app_routes, build_with};
 use crate::http::static_files::{StaticAssets, StaticRoots};
 use crate::services::admin::SessionKind;
+use crate::services::family::device_registry::{Sighting, detected_device_id};
 use crate::services::family::family_service::{
     FamilyError, FilesChoice, LinkMode, LiveStreams, LoadReport, LoadStream, MemberAccounts, MemberFiles,
-    MyLibraryPage, MySong, NewRequest, PAIR_CAP, PAIR_REFUSED, PairGuard, PersonalFolders, Playing,
-    RemoveFromMyLibrary, RequestService, StorageUsage, UnratedCount, valid_username,
+    MyLibraryPage, MySong, NewRequest, PersonalFolders, Playing, RemoveFromMyLibrary, RequestService,
+    StorageUsage, UnratedCount, valid_username,
 };
 use crate::services::family::navidrome_admin::{AdminError, NdLibrary, NdUser};
 use crate::services::family::request_store::new_request_id;
@@ -43,10 +43,12 @@ mod members_place_tests;
 
 const HOME: &str = "192.168.1.20";
 const AWAY: &str = "203.0.113.9";
-const ALEX_PASSWORD: &str = "correct horse";
-const ALEX_APP: &str = "ABCD-EFGH-JKMN-PQRS";
-const ALEX_SECRET: &str = "octo-app-secret-alex-000000000000";
-const SAM_APP: &str = "SAMM-EFGH-JKMN-PQRS";
+/// Alex's one login password: what every app of theirs signs in with.
+const ALEX_PASSWORD: &str = "correct-horse";
+const ALEX_APP: &str = ALEX_PASSWORD;
+const ALEX_SECRET: &str = ALEX_PASSWORD;
+const SAM_PASSWORD: &str = "sam-password";
+const SAM_APP: &str = SAM_PASSWORD;
 
 // ------------------------------------------------------------------------------------------
 // Fakes
@@ -400,13 +402,11 @@ impl Reply {
     }
 }
 
-fn device(id: &str, user: &str, kind: DeviceKind, sealed: String) -> Device {
+fn device(id: &str, user: &str) -> Device {
     Device {
         id: id.into(),
         username: user.into(),
         name: "Pixel 9".into(),
-        kind,
-        secret: sealed,
         created: Utc::now(),
         last_seen: None,
         app: String::new(),
@@ -433,7 +433,9 @@ fn member(
         navidrome_password: state.family_vault.seal("hidden").expect("sealed"),
         personal_library_id: library,
         shared_libraries: SharedLibraries::All,
-        account_password: password.map(passwords::hash).unwrap_or_default(),
+        account_password: password
+            .map(|password| passwords::seal(&state.family_vault, password).expect("sealed"))
+            .unwrap_or_default(),
         created: Utc::now(),
         suspended: false,
         ntfy_topic: String::new(),
@@ -539,13 +541,13 @@ async fn fam_on(change: impl FnOnce(&mut AppSettings), sign_in: Option<&str>, sh
         &state,
         "sam",
         Preset::CoAdmin,
-        Some("sam password"),
+        Some(SAM_PASSWORD),
         Some(4),
     ));
-    let seal = |secret: &str| state.family_vault.seal(secret).expect("sealed");
-    store.add_device(device("d_app", "alex", DeviceKind::OctoApp, seal(ALEX_SECRET)));
-    store.add_device(device("d_sub", "alex", DeviceKind::SubsonicApp, seal(ALEX_APP)));
-    store.add_device(device("d_sam", "sam", DeviceKind::SubsonicApp, seal(SAM_APP)));
+    // Devices Octo already saw them use (nothing set up: devices hold no secret).
+    store.add_device(device("d_app", "alex"));
+    store.add_device(device("d_sub", "alex"));
+    store.add_device(device("d_sam", "sam"));
     store.note_detected(
         "x_owner",
         "winters",
@@ -704,6 +706,23 @@ impl Fam {
         let uri = format!("/rest/{endpoint}?u=sam&p={SAM_APP}&v=1.16.1&c=test&f=json&{query}");
         raw(&self.app, Method::GET, &uri, &[], String::new(), HOME).await
     }
+}
+
+/// The device id Octo gives `user`'s app that sends `client` as `c` and nothing else.
+fn app_id(user: &str, client: &str) -> String {
+    detected_device_id(
+        user,
+        &Sighting {
+            client: client.into(),
+            ..Default::default()
+        },
+    )
+}
+
+/// A Subsonic call as `user` with `password`, sending `client` as `c`.
+async fn rest_with(f: &Fam, user: &str, password: &str, client: &str, from: &str) -> Reply {
+    let uri = format!("/rest/getFamily?u={user}&p={password}&v=1.16.1&c={client}&f=json");
+    raw(&f.app, Method::GET, &uri, &[], String::new(), from).await
 }
 
 async fn raw(
@@ -995,56 +1014,14 @@ async fn my_devices_lists_mine_and_refuses_without_a_sign_in() {
         .collect();
     assert_eq!(ids, ["d_app", "d_sub"]);
     assert_eq!(list[0]["playing"]["title"], "Hyperballad");
-    assert_eq!(list[0]["kind"], "OctoApp");
+    assert!(list[0].get("kind").is_none(), "{list}");
+    assert!(list[0]["firstSeen"].is_string(), "{list}");
     // The owner's own devices are the ones Octo saw.
     let owner = f
         .get("/api/family/me/devices", Some(&f.owner_cookie()))
         .await
         .json();
     assert_eq!(owner[0]["id"], "x_owner");
-}
-
-#[tokio::test]
-async fn add_my_device_gives_an_app_password_once_and_refuses_the_owner() {
-    let f = fam().await;
-    let r = f
-        .post(
-            "/api/family/me/devices",
-            Some(&f.alex()),
-            json!({ "name": "Work laptop", "kind": "SubsonicApp" }),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let added = r.json();
-    let password = added["appPassword"].as_str().expect("a password");
-    assert_eq!(password.len(), 19);
-    assert_eq!(added["pairCode"], Value::Null);
-    assert_eq!(added["username"], "alex");
-    assert_eq!(added["server"], "http://localhost");
-    let id = added["deviceId"].as_str().expect("an id");
-    let stored = f.state.family_store.device(id).expect("kept");
-    assert_eq!(stored.name, "Work laptop");
-    assert_eq!(
-        f.state.family_vault.open_sealed(&stored.secret).as_deref(),
-        Some(password)
-    );
-    // The owner's account is Navidrome's own, so Octo gives it no app passwords.
-    let owner = f
-        .post(
-            "/api/family/me/devices",
-            Some(&f.owner_cookie()),
-            json!({ "name": "x", "kind": "SubsonicApp" }),
-        )
-        .await;
-    assert_eq!(owner.status, StatusCode::FORBIDDEN);
-    let bad = f
-        .post(
-            "/api/family/me/devices",
-            Some(&f.alex()),
-            json!({ "name": "x", "kind": "Fax" }),
-        )
-        .await;
-    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1071,21 +1048,25 @@ async fn change_my_device_sets_its_quality_mode_and_refuses_others() {
 }
 
 #[tokio::test]
-async fn sign_out_my_device_removes_mine_only() {
+async fn remove_my_device_takes_it_off_the_list_until_it_signs_in_again() {
     let f = fam().await;
     let other = f
         .delete("/api/family/me/devices/d_sam", Some(&f.alex()), None)
         .await;
     assert_eq!(other.status, StatusCode::NOT_FOUND);
     assert!(f.state.family_store.device("d_sam").is_some());
+    // Alex's app signs in, so it is on the list.
+    let id = app_id("alex", "test");
+    assert_eq!(f.rest_as_alex("getFamily", "").await.subsonic()["status"], "ok");
+    assert!(f.state.family_store.device(&id).is_some());
     let mine = f
-        .delete("/api/family/me/devices/d_sub", Some(&f.alex()), None)
+        .delete(&format!("/api/family/me/devices/{id}"), Some(&f.alex()), None)
         .await;
     assert_eq!(mine.status, StatusCode::NO_CONTENT);
-    assert!(f.state.family_store.device("d_sub").is_none());
-    // A device signed out stops signing in at once.
-    let r = f.rest_as_alex("getFamily", "").await;
-    assert_eq!(r.subsonic()["error"]["code"], 40);
+    assert!(f.state.family_store.device(&id).is_none());
+    // The one password still works: the device signs in and is on the list again.
+    assert_eq!(f.rest_as_alex("getFamily", "").await.subsonic()["status"], "ok");
+    assert!(f.state.family_store.device(&id).is_some());
 }
 
 #[tokio::test]
@@ -1200,8 +1181,11 @@ async fn my_library_pages_and_removes() {
 }
 
 #[tokio::test]
-async fn my_password_changes_with_the_current_one_only() {
+async fn my_password_changes_with_the_current_one_only_and_signs_out_everywhere() {
     let f = fam().await;
+    let other_session = f.alex();
+    let sealed = f.state.family_vault.seal("a.b.c").expect("sealed");
+    assert!(f.state.family_store.set_device_jwt("d_app", Some(sealed)));
     let wrong = f
         .put(
             "/api/family/me/password",
@@ -1210,6 +1194,14 @@ async fn my_password_changes_with_the_current_one_only() {
         )
         .await;
     assert_eq!(wrong.status, StatusCode::FORBIDDEN);
+    let short = f
+        .put(
+            "/api/family/me/password",
+            Some(&f.alex()),
+            json!({ "current": ALEX_PASSWORD, "next": "short" }),
+        )
+        .await;
+    assert_eq!(short.status, StatusCode::BAD_REQUEST);
     let right = f
         .put(
             "/api/family/me/password",
@@ -1217,9 +1209,71 @@ async fn my_password_changes_with_the_current_one_only() {
             json!({ "current": ALEX_PASSWORD, "next": "a new password" }),
         )
         .await;
-    assert_eq!(right.status, StatusCode::NO_CONTENT);
+    assert_eq!(right.status, StatusCode::NO_CONTENT, "{}", right.body);
+    // The page that changed it stays signed in with a fresh cookie.
+    let fresh = format!("octo_family={}", right.cookie_token());
+    assert_eq!(
+        f.get("/api/family/session", Some(&fresh)).await.status,
+        StatusCode::OK
+    );
     let member = f.state.family_store.member("alex").expect("there");
-    assert!(passwords::verify("a new password", &member.account_password));
+    assert!(passwords::matches(
+        &f.state.family_vault,
+        &member.account_password,
+        "a new password"
+    ));
+    // Everywhere else is signed out: other Family page sessions, web player sessions, and
+    // every app still using the old password.
+    assert_eq!(
+        f.get("/api/family/session", Some(&other_session)).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        f.state
+            .family_store
+            .device("d_app")
+            .expect("there")
+            .navidrome_jwt
+            .is_none()
+    );
+    assert_eq!(
+        rest_with(&f, "alex", ALEX_PASSWORD, "test", HOME)
+            .await
+            .subsonic()["error"]["code"],
+        40
+    );
+    assert_eq!(
+        rest_with(&f, "alex", "a%20new%20password", "test", HOME)
+            .await
+            .subsonic()["status"],
+        "ok"
+    );
+    // The apps' own call does the same.
+    let r = raw(
+        &f.app,
+        Method::POST,
+        "/rest/changeFamilyPassword",
+        &[(
+            "content-type",
+            "application/x-www-form-urlencoded".to_string(),
+        )],
+        "u=alex&p=a%20new%20password&v=1.16.1&c=test&f=json&current=a%20new%20password&next=another%20one%20here"
+            .to_string(),
+        HOME,
+    )
+    .await;
+    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+    assert_eq!(
+        rest_with(&f, "alex", "another%20one%20here", "test", HOME)
+            .await
+            .subsonic()["status"],
+        "ok"
+    );
+    // The owner's password is Navidrome's.
+    let owner = f
+        .rest_as_owner("changeFamilyPassword", "current=a&next=bbbbbbbb")
+        .await;
+    assert_eq!(owner.subsonic()["error"]["code"], 50, "{}", owner.body);
 }
 
 #[tokio::test]
@@ -1575,13 +1629,14 @@ async fn invite_member_sends_a_new_sign_in_link() {
         )
         .await;
     assert_eq!(joined.status, StatusCode::OK);
-    assert!(passwords::verify(
-        "brand new pass",
+    assert!(passwords::matches(
+        &f.state.family_vault,
         &f.state
             .family_store
             .member("alex")
             .expect("there")
-            .account_password
+            .account_password,
+        "brand new pass"
     ));
     assert_eq!(
         f.post("/api/family/members/alex/invite", Some(&f.alex()), json!({}))
@@ -1591,6 +1646,88 @@ async fn invite_member_sends_a_new_sign_in_link() {
     );
     assert_eq!(
         f.post("/api/family/members/nobody/invite", Some(&f.sam()), json!({}))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn reset_password_ends_the_old_one_at_once_and_gives_a_working_link() {
+    let f = fam().await;
+    let other_session = f.alex();
+    let sealed = f.state.family_vault.seal("a.b.c").expect("sealed");
+    assert!(f.state.family_store.set_device_jwt("d_app", Some(sealed)));
+    let r = f
+        .post("/api/family/members/alex/reset", Some(&f.sam()), json!({}))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let answer = r.json();
+    assert!(answer["expires"].is_string(), "{answer}");
+    assert_eq!(answer["inviteLink"], answer["links"]["home"]);
+    let link = answer["inviteLink"].as_str().expect("a link").to_string();
+    // The old password stops at once, everywhere.
+    assert_eq!(
+        f.rest_as_alex("getFamily", "").await.subsonic()["error"]["code"],
+        40
+    );
+    let page = f
+        .post(
+            "/api/family/auth",
+            None,
+            json!({ "username": "alex", "password": ALEX_PASSWORD }),
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::UNAUTHORIZED);
+    assert!(page.error().contains("choosing again"), "{}", page.body);
+    assert_eq!(
+        f.get("/api/family/session", Some(&other_session)).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        f.state
+            .family_store
+            .device("d_app")
+            .expect("there")
+            .navidrome_jwt
+            .is_none()
+    );
+    // The owner's overview says alex needs a new password.
+    let members = f.get("/api/family/members", Some(&f.owner_cookie())).await.json();
+    let alex = members
+        .as_array()
+        .expect("a list")
+        .iter()
+        .find(|m| m["username"] == "alex")
+        .expect("alex")
+        .clone();
+    assert_eq!(alex["needsPassword"], true, "{alex}");
+    assert_eq!(alex["joined"], true, "{alex}");
+    // The link sets a new one, which works in every app.
+    let token = link.split("#invite=").nth(1).expect("a token");
+    let joined = f
+        .post(
+            "/api/family/join",
+            None,
+            json!({ "token": token, "password": "brand-new-pass" }),
+        )
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    assert_eq!(
+        rest_with(&f, "alex", "brand-new-pass", "test", HOME)
+            .await
+            .subsonic()["status"],
+        "ok"
+    );
+    // Only managers reset, and only members.
+    assert_eq!(
+        f.post("/api/family/members/sam/reset", Some(&f.alex()), json!({}))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.post("/api/family/members/nobody/reset", Some(&f.sam()), json!({}))
             .await
             .status,
         StatusCode::NOT_FOUND
@@ -1707,7 +1844,7 @@ async fn devices_lists_everyone_for_managers() {
 }
 
 #[tokio::test]
-async fn sign_out_device_is_for_managers_and_never_a_seen_device() {
+async fn remove_device_is_for_managers_and_only_members_devices() {
     let f = fam().await;
     assert_eq!(
         f.delete("/api/family/devices/d_app", Some(&f.alex()), None)
@@ -1715,10 +1852,12 @@ async fn sign_out_device_is_for_managers_and_never_a_seen_device() {
             .status,
         StatusCode::FORBIDDEN
     );
+    // The owner's devices are not a manager's to remove.
     let seen = f
         .delete("/api/family/devices/x_owner", Some(&f.sam()), None)
         .await;
-    assert_eq!(seen.status, StatusCode::FORBIDDEN);
+    assert_eq!(seen.status, StatusCode::NOT_FOUND);
+    assert!(f.state.family_store.detected().iter().any(|d| d.id == "x_owner"));
     let r = f.delete("/api/family/devices/d_app", Some(&f.sam()), None).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
     assert!(f.state.family_store.device("d_app").is_none());
@@ -1958,248 +2097,8 @@ async fn away_manager_refused_when_off() {
 }
 
 // ------------------------------------------------------------------------------------------
-// Pairing
+// Usernames
 // ------------------------------------------------------------------------------------------
-
-async fn pair_code(f: &Fam, name: &str) -> String {
-    let r = f
-        .post(
-            "/api/family/me/devices",
-            Some(&f.alex()),
-            json!({ "name": name, "kind": "OctoApp" }),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let added = r.json();
-    assert_eq!(added["appPassword"], Value::Null);
-    assert!(added["expires"].is_string());
-    let code = added["pairCode"].as_str().expect("a code").to_string();
-    assert_eq!(code.len(), 6);
-    code
-}
-
-async fn pair(f: &Fam, user: &str, code: &str, from: &str) -> Reply {
-    let uri = format!(
-        "/rest/octoFamilyPair.view?username={user}&code={code}&deviceName=Pixel%209&platform=Android&f=json"
-    );
-    raw(&f.app, Method::GET, &uri, &[], String::new(), from).await
-}
-
-#[tokio::test]
-async fn pair_code_flow_end_to_end() {
-    let f = fam().await;
-    let code = pair_code(&f, "").await;
-    let wrong = pair(
-        &f,
-        "alex",
-        if code == "123456" { "654321" } else { "123456" },
-        HOME,
-    )
-    .await;
-    assert_eq!(wrong.subsonic()["error"]["code"], 40);
-    assert_eq!(wrong.subsonic()["error"]["message"], PAIR_REFUSED);
-    // Without the username the code means nothing.
-    let nameless = pair(&f, "sam", &code, HOME).await;
-    assert_eq!(nameless.subsonic()["error"]["code"], 40);
-
-    let r = pair(&f, "alex", &code, HOME).await;
-    let answer = r.subsonic();
-    assert_eq!(answer["status"], "ok", "{}", r.body);
-    assert_eq!(answer["type"], "octo");
-    let paired = &answer["familyPair"];
-    assert_eq!(paired["username"], "alex");
-    assert_eq!(paired["server"], "http://localhost");
-    let secret = paired["secret"].as_str().expect("a secret").to_string();
-    assert_eq!(secret.len(), 32);
-    let id = paired["deviceId"].as_str().expect("an id").to_string();
-    let device = f.state.family_store.device(&id).expect("kept");
-    assert_eq!(device.kind, DeviceKind::OctoApp);
-    assert_eq!(device.name, "Pixel 9");
-    assert_eq!(device.app, "Octo (Android)");
-    assert_eq!(
-        f.state.family_vault.open_sealed(&device.secret).as_deref(),
-        Some(secret.as_str())
-    );
-
-    // The code is used up.
-    assert_eq!(
-        pair(&f, "alex", &code, HOME).await.subsonic()["error"]["code"],
-        40
-    );
-
-    // The secret signs the app in, and the app knows which device it is.
-    let uri = format!("/rest/getFamily?u=alex&p={secret}&v=1.16.1&c=Octo&f=json");
-    let me = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME)
-        .await
-        .subsonic();
-    assert_eq!(me["family"]["me"]["deviceId"], id.as_str());
-
-    // A form post pairs too, and another app can ask for an app password instead.
-    let code = pair_code(&f, "Desktop").await;
-    let body = format!("username=alex&code={code}&platform=Windows&kind=SubsonicApp&f=json");
-    let form = raw(
-        &f.app,
-        Method::POST,
-        "/rest/octoFamilyPair",
-        &[("content-type", "application/x-www-form-urlencoded".to_string())],
-        body,
-        HOME,
-    )
-    .await;
-    let paired = form.subsonic()["familyPair"].clone();
-    assert_eq!(paired["secret"].as_str().map(str::len), Some(19), "{}", form.body);
-    let device = f
-        .state
-        .family_store
-        .device(paired["deviceId"].as_str().expect("an id"))
-        .expect("kept");
-    assert_eq!(device.kind, DeviceKind::SubsonicApp);
-    assert_eq!(device.name, "Desktop");
-}
-
-/// Makes a device on `route` as `cookie`, ending the pairing code `replaces` names. Answers
-/// the pairing code (empty for an app password) and the device id.
-async fn add_replacing(f: &Fam, route: &str, cookie: &str, kind: &str, replaces: &str) -> (String, String) {
-    let r = f
-        .post(
-            route,
-            Some(cookie),
-            json!({ "name": "", "kind": kind, "replaces": replaces }),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let added = r.json();
-    let id = added["deviceId"].as_str().expect("an id").to_string();
-    (added["pairCode"].as_str().unwrap_or_default().to_string(), id)
-}
-
-#[tokio::test]
-async fn replaces_ends_the_old_unused_code() {
-    let f = fam().await;
-    let mine = "/api/family/me/devices";
-    let (old_code, old_id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
-    let (new_code, new_id) = add_replacing(&f, mine, &f.alex(), "OctoApp", &old_id).await;
-    assert_ne!(old_id, new_id);
-    if old_code != new_code {
-        assert_eq!(
-            pair(&f, "alex", &old_code, HOME).await.subsonic()["error"]["code"],
-            40
-        );
-    }
-    // The new code pairs, and its device takes the id the code reserved.
-    let r = pair(&f, "alex", &new_code, HOME).await;
-    assert_eq!(
-        r.subsonic()["familyPair"]["deviceId"],
-        new_id.as_str(),
-        "{}",
-        r.body
-    );
-    assert!(f.state.family_store.device(&new_id).is_some());
-    assert!(f.state.family_store.device(&old_id).is_none());
-
-    // Switching to an app password ends the code the dialog showed.
-    let (code, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
-    assert!(f.state.family_store.any_live_pair_code(Utc::now()));
-    let (none, _) = add_replacing(&f, mine, &f.alex(), "SubsonicApp", &id).await;
-    assert!(none.is_empty());
-    assert!(!f.state.family_store.any_live_pair_code(Utc::now()));
-    assert_eq!(
-        pair(&f, "alex", &code, HOME).await.subsonic()["error"]["code"],
-        40
-    );
-
-    // The app's own call ends it the same way.
-    let (_, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
-    let r = f
-        .rest_as_alex("addFamilyDevice", &format!("kind=SubsonicApp&replaces={id}"))
-        .await;
-    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
-    assert!(!f.state.family_store.any_live_pair_code(Utc::now()));
-}
-
-#[tokio::test]
-async fn replaces_never_touches_a_used_code() {
-    let f = fam().await;
-    let mine = "/api/family/me/devices";
-    let (code, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
-    let r = pair(&f, "alex", &code, HOME).await;
-    assert_eq!(r.subsonic()["familyPair"]["deviceId"], id.as_str(), "{}", r.body);
-    let secret = r.subsonic()["familyPair"]["secret"]
-        .as_str()
-        .expect("a secret")
-        .to_string();
-    // Naming the used code changes nothing about the device it paired.
-    let (_, next) = add_replacing(&f, mine, &f.alex(), "OctoApp", &id).await;
-    assert_ne!(next, id);
-    add_replacing(&f, mine, &f.alex(), "SubsonicApp", &id).await;
-    let device = f.state.family_store.device(&id).expect("still there");
-    assert_eq!(device.username, "alex");
-    let uri = format!("/rest/getFamily?u=alex&p={secret}&v=1.16.1&c=Octo&f=json");
-    let me = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME)
-        .await
-        .subsonic();
-    assert_eq!(me["family"]["me"]["deviceId"], id.as_str());
-}
-
-#[tokio::test]
-async fn replaces_never_touches_another_members_code() {
-    let f = fam().await;
-    let (code, id) = add_replacing(&f, "/api/family/me/devices", &f.alex(), "OctoApp", "").await;
-    // Sam names Alex's code from Sam's own devices, both kinds, and as a manager for Sam.
-    add_replacing(&f, "/api/family/me/devices", &f.sam(), "SubsonicApp", &id).await;
-    add_replacing(&f, "/api/family/me/devices", &f.sam(), "OctoApp", &id).await;
-    add_replacing(
-        &f,
-        "/api/family/members/sam/devices",
-        &f.sam(),
-        "SubsonicApp",
-        &id,
-    )
-    .await;
-    let r = pair(&f, "alex", &code, HOME).await;
-    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
-    assert_eq!(r.subsonic()["familyPair"]["deviceId"], id.as_str());
-}
-
-#[tokio::test]
-async fn global_pair_cap_locks_guessing() {
-    let f = fam().await;
-    let code = pair_code(&f, "").await;
-    // Thirty wrong codes from three addresses, none against alex's own code.
-    for n in 0..PAIR_CAP {
-        let from = format!("10.0.{}.1", n % 3);
-        let r = pair(&f, &format!("guess{n}"), "111111", &from).await;
-        assert_eq!(r.subsonic()["error"]["code"], 40);
-    }
-    // Now even the right code is refused while a code is live, from anywhere.
-    let r = pair(&f, "alex", &code, "10.9.9.9").await;
-    assert_eq!(r.subsonic()["error"]["message"], PAIR_REFUSED);
-    // The code itself was not touched: it still works once the window passes (below).
-    assert!(f.state.family_store.any_live_pair_code(Utc::now()));
-}
-
-#[test]
-fn pair_guard_counts_a_window_per_address_and_for_everyone() {
-    let now = Arc::new(Mutex::new(Utc::now()));
-    let clock = {
-        let now = now.clone();
-        Clock::new(move || *now.lock())
-    };
-    let guard = PairGuard::new(clock);
-    for _ in 0..10 {
-        guard.failed("10.0.0.1");
-    }
-    assert!(guard.address_blocked("10.0.0.1"));
-    assert!(!guard.address_blocked("10.0.0.2"));
-    for n in 0..20 {
-        guard.failed(&format!("10.1.0.{n}"));
-    }
-    assert!(guard.capped());
-    *now.lock() += TimeDelta::minutes(11);
-    assert!(!guard.capped(), "the window passed");
-    *now.lock() += TimeDelta::minutes(5);
-    assert!(!guard.address_blocked("10.0.0.1"));
-}
 
 #[test]
 fn usernames_are_checked() {
@@ -2221,7 +2120,7 @@ async fn get_family_answers_me_and_the_manager_view() {
     let alex = f.rest_as_alex("getFamily", "").await.subsonic();
     assert_eq!(alex["status"], "ok");
     assert_eq!(alex["type"], "octo");
-    assert_eq!(alex["family"]["me"]["deviceId"], "d_sub");
+    assert_eq!(alex["family"]["me"]["deviceId"], app_id("alex", "test").as_str());
     assert_eq!(alex["family"]["me"]["role"], "Listener");
     assert!(alex["family"].get("manager").is_none());
 
@@ -2297,7 +2196,8 @@ async fn signed_request_reaches_member_routes() {
     .await;
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert_eq!(me.json()["username"], "alex");
-    assert_eq!(me.json()["deviceId"], "d_app");
+    let octo = app_id("alex", "Octo");
+    assert_eq!(me.json()["deviceId"], octo.as_str());
     let devices = raw(
         &f.app,
         Method::GET,
@@ -2307,7 +2207,16 @@ async fn signed_request_reaches_member_routes() {
         HOME,
     )
     .await;
-    assert_eq!(devices.json()[0]["current"], true);
+    let current: Vec<Value> = devices
+        .json()
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter(|d| d["current"] == true)
+        .cloned()
+        .collect();
+    assert_eq!(current.len(), 1, "{}", devices.body);
+    assert_eq!(current[0]["id"], octo.as_str());
     let quality = raw(
         &f.app,
         Method::PUT,
@@ -2387,60 +2296,6 @@ async fn unsigned_write_without_header_refused() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert_eq!(r.error(), "Family changes must come from the Family page.");
     assert!(!f.state.family_store.member("alex").expect("there").suspended);
-}
-
-#[tokio::test]
-async fn manager_adds_a_device_for_a_member() {
-    let f = fam().await;
-    let before = f
-        .state
-        .family_store
-        .member("alex")
-        .expect("there")
-        .account_password;
-    let r = f
-        .post(
-            "/api/family/members/alex/devices",
-            Some(&f.sam()),
-            json!({ "name": "Alex's tablet", "kind": "SubsonicApp" }),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json()["username"], "alex");
-    assert_eq!(r.json()["appPassword"].as_str().map(str::len), Some(19));
-    assert_eq!(
-        f.state
-            .family_store
-            .member("alex")
-            .expect("there")
-            .account_password,
-        before
-    );
-    assert_eq!(
-        f.post(
-            "/api/family/members/sam/devices",
-            Some(&f.alex()),
-            json!({ "kind": "OctoApp" })
-        )
-        .await
-        .status,
-        StatusCode::FORBIDDEN
-    );
-    // The same through addFamilyDevice with a username.
-    let code = f
-        .rest_as_sam("addFamilyDevice", "name=Phone&kind=OctoApp&username=alex")
-        .await
-        .subsonic();
-    assert_eq!(code["familyDeviceAdded"]["username"], "alex");
-    assert_eq!(
-        code["familyDeviceAdded"]["pairCode"].as_str().map(str::len),
-        Some(6)
-    );
-    let refused = f
-        .rest_as_alex("addFamilyDevice", "name=x&kind=OctoApp&username=sam")
-        .await
-        .subsonic();
-    assert_eq!(refused["error"]["code"], 50);
 }
 
 #[tokio::test]
@@ -2536,10 +2391,11 @@ async fn get_family_devices_mine_or_all_for_managers() {
         .as_array()
         .expect("a list")
         .clone();
-    assert_eq!(list.len(), 2);
+    // The two Octo saw before, and the app making this call.
+    assert_eq!(list.len(), 3, "{mine}");
     let current: Vec<&Value> = list.iter().filter(|d| d["current"] == true).collect();
     assert_eq!(current.len(), 1);
-    assert_eq!(current[0]["id"], "d_sub");
+    assert_eq!(current[0]["id"], app_id("alex", "test").as_str());
     assert_eq!(
         f.rest_as_alex("getFamilyDevices", "all=true").await.subsonic()["error"]["code"],
         50
@@ -2551,55 +2407,34 @@ async fn get_family_devices_mine_or_all_for_managers() {
         .iter()
         .filter_map(|d| d["id"].as_str())
         .collect();
-    // Members' devices, the owner's seen device, and the app making this call.
-    assert_eq!(&ids[..4], ["d_app", "d_sub", "d_sam", "x_owner"]);
-    assert_eq!(ids.len(), 5);
+    // Members' devices, the owner's seen device, and the owner's app making this call.
+    let alex_app = app_id("alex", "test");
+    let owner_app = app_id("winters", "test");
+    for id in ["d_app", "d_sub", "d_sam", "x_owner", &alex_app, &owner_app] {
+        assert!(ids.contains(&id), "{id} in {ids:?}");
+    }
+    assert_eq!(ids.len(), 6, "{ids:?}");
 }
 
 #[tokio::test]
-async fn sign_out_family_device_own_or_any_member_for_managers() {
+async fn forget_family_device_own_or_any_member_for_managers() {
     let f = fam().await;
-    let other = f.rest_as_alex("signOutFamilyDevice", "id=d_sam").await.subsonic();
+    let other = f.rest_as_alex("forgetFamilyDevice", "id=d_sam").await.subsonic();
     assert_eq!(other["error"]["code"], 70);
-    let seen = f
-        .rest_as_owner("signOutFamilyDevice", "id=x_owner")
+    let missing = f.rest_as_alex("forgetFamilyDevice", "").await.subsonic();
+    assert_eq!(missing["error"]["code"], 10);
+    // A manager never removes the owner's devices; the owner removes their own.
+    let seen = f.rest_as_sam("forgetFamilyDevice", "id=x_owner").await.subsonic();
+    assert_eq!(seen["error"]["code"], 70);
+    let own = f
+        .rest_as_owner("forgetFamilyDevice", "id=x_owner")
         .await
         .subsonic();
-    assert_eq!(seen["error"]["code"], 50);
-    let r = f
-        .rest_as_owner("signOutFamilyDevice", "id=d_app")
-        .await
-        .subsonic();
+    assert_eq!(own["status"], "ok", "{own}");
+    assert!(!f.state.family_store.detected().iter().any(|d| d.id == "x_owner"));
+    let r = f.rest_as_owner("forgetFamilyDevice", "id=d_app").await.subsonic();
     assert_eq!(r["status"], "ok");
     assert!(f.state.family_store.device("d_app").is_none());
-}
-
-#[tokio::test]
-async fn add_family_device_gives_a_code_or_a_password() {
-    let f = fam().await;
-    let code = f
-        .rest_as_alex("addFamilyDevice", "name=Tablet&kind=OctoApp")
-        .await
-        .subsonic();
-    let added = &code["familyDeviceAdded"];
-    assert_eq!(added["kind"], "OctoApp");
-    assert_eq!(added["pairCode"].as_str().map(str::len), Some(6));
-    assert_eq!(added["appPassword"], Value::Null);
-    let password = f
-        .rest_as_alex("addFamilyDevice", "name=Car&kind=SubsonicApp")
-        .await
-        .subsonic();
-    assert_eq!(
-        password["familyDeviceAdded"]["appPassword"]
-            .as_str()
-            .map(str::len),
-        Some(19)
-    );
-    let owner = f
-        .rest_as_owner("addFamilyDevice", "name=x&kind=SubsonicApp")
-        .await
-        .subsonic();
-    assert_eq!(owner["error"]["code"], 50);
 }
 
 #[tokio::test]
@@ -2767,6 +2602,7 @@ async fn family_page_is_served() {
         ("/family/", "text/html"),
         ("/family/index.html", "text/html"),
         ("/family/join", "text/html"),
+        ("/family/signin", "text/html"),
         ("/family/family.js", "text/javascript"),
         ("/family/family.css", "text/css"),
     ] {
@@ -2953,9 +2789,12 @@ async fn new_device_tells_the_owner_once() {
     let mut events = f.state.family_devices.subscribe();
     let r = f.rest_as_alex("getFamily", "").await;
     assert_eq!(r.subsonic()["status"], "ok");
+    let id = app_id("alex", "test");
     let event = events.try_recv().expect("a new device");
-    assert_eq!(event.device_id, "d_sub");
-    assert!(store.device("d_sub").expect("there").last_seen.is_some());
+    assert_eq!(event.device_id, id);
+    assert!(store.device(&id).expect("there").last_seen.is_some());
+    f.rest_as_alex("getFamily", "").await;
+    assert!(events.try_recv().is_err(), "once");
 }
 
 #[tokio::test]
@@ -3190,29 +3029,6 @@ async fn a_password_over_the_cap_is_wrong() {
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
 }
 
-#[test]
-fn pair_guard_counts_per_peer_and_per_username_across_addresses() {
-    let guard = PairGuard::new(Clock::system());
-    use crate::services::family::family_service::{PAIR_ACCOUNT_FAILURES, PAIR_PEER_FAILURES};
-    for n in 0..PAIR_ACCOUNT_FAILURES {
-        guard.failed_from(&format!("10.0.0.{n}"), &format!("10.0.0.{n}"), "Alex");
-    }
-    assert!(
-        guard.blocked("10.9.9.9", "10.9.9.9", "alex"),
-        "the username waits"
-    );
-    assert!(!guard.blocked("10.9.9.9", "10.9.9.9", "sam"));
-    let guard = PairGuard::new(Clock::system());
-    for n in 0..PAIR_PEER_FAILURES {
-        guard.failed_from(&format!("203.0.113.{n}"), "192.168.1.5", &format!("user-{n}"));
-    }
-    assert!(
-        guard.blocked("198.51.100.1", "192.168.1.5", "someone"),
-        "the peer waits, whatever hop it names"
-    );
-    assert!(!guard.blocked("198.51.100.1", "192.168.1.6", "someone"));
-}
-
 // ------------------------------------------------------------------------------------------
 // The outside address, links for anywhere and for home, and the dashboard's handoff
 // ------------------------------------------------------------------------------------------
@@ -3239,15 +3055,32 @@ async fn write_from(
     raw(&f.app, method, uri, &headers, body.to_string(), from).await
 }
 
-async fn alex_code_from(f: &Fam, host: &str) -> Value {
+/// The invite answer for alex, asked by sam with `host` as the Host header.
+async fn invite_from(f: &Fam, host: &str) -> Value {
     let r = write_from(
         f,
         Method::POST,
-        "/api/family/me/devices",
-        &f.alex(),
-        json!({ "name": "", "kind": "OctoApp" }),
+        "/api/family/members/alex/invite",
+        &f.sam(),
+        json!({}),
         host,
         &[],
+        HOME,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.json()
+}
+
+/// Alex's login, asked with `host` as the Host header.
+async fn login_from(f: &Fam, host: &str) -> Value {
+    let headers = vec![("cookie", f.alex()), ("host", host.to_string())];
+    let r = raw(
+        &f.app,
+        Method::GET,
+        "/api/family/me/login",
+        &headers,
+        String::new(),
         HOME,
     )
     .await;
@@ -3274,25 +3107,26 @@ async fn session_from(f: &Fam, cookie: &str, host: &str, extra: &[(&str, String)
 #[tokio::test]
 async fn home_only_when_public_url_unset_and_lan() {
     let f = fam().await;
-    let added = alex_code_from(&f, "192.168.50.119:5274").await;
-    assert_eq!(added["homeOnly"], true, "{added}");
-    assert_eq!(added["publicUrl"], Value::Null);
-    assert_eq!(added["server"], "http://192.168.50.119:5274");
-    let code = added["pairCode"].as_str().expect("a code");
-    assert_eq!(
-        added["links"]["home"],
-        format!("http://192.168.50.119:5274/family/join#u=alex&c={code}")
+    let invite = invite_from(&f, "192.168.50.119:5274").await;
+    assert_eq!(invite["homeOnly"], true, "{invite}");
+    assert_eq!(invite["publicUrl"], Value::Null);
+    let link = invite["links"]["home"].as_str().expect("a link");
+    assert!(
+        link.starts_with("http://192.168.50.119:5274/family/join#invite="),
+        "{link}"
     );
-    assert_eq!(added["links"]["anywhere"], Value::Null);
+    assert_eq!(invite["links"]["anywhere"], Value::Null);
+    let login = login_from(&f, "192.168.50.119:5274").await;
+    assert_eq!(login["servers"]["home"], "http://192.168.50.119:5274");
     let session = session_from(&f, &f.owner_cookie(), "octo.lan:5274", &[], HOME).await;
     assert_eq!(session["homeOnly"], true);
     // A name the outside world can reach is not home only, even without an outside address.
-    let added = alex_code_from(&f, "music.example.com").await;
-    assert_eq!(added["homeOnly"], false, "{added}");
+    let invite = invite_from(&f, "music.example.com").await;
+    assert_eq!(invite["homeOnly"], false, "{invite}");
     // With an outside address set, nothing is home only.
     let set = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
-    let added = alex_code_from(&set, "192.168.50.119:5274").await;
-    assert_eq!(added["homeOnly"], false, "{added}");
+    let invite = invite_from(&set, "192.168.50.119:5274").await;
+    assert_eq!(invite["homeOnly"], false, "{invite}");
     let session = session_from(&set, &set.owner_cookie(), "192.168.50.119:5274", &[], HOME).await;
     assert_eq!(session["homeOnly"], false);
     assert_eq!(session["publicUrl"], "https://music.example.com");
@@ -3318,7 +3152,7 @@ async fn suggested_public_url_only_from_trusted_proxy() {
     let alex = session_from(&f, &f.alex(), "192.168.1.20:5274", &[], HOME).await;
     assert_eq!(alex["suggestedPublicUrl"], Value::Null);
     assert_eq!(f.state.settings.current().server.public_url, "");
-    assert_eq!(alex_code_from(&f, "192.168.1.20:5274").await["homeOnly"], true);
+    assert_eq!(invite_from(&f, "192.168.1.20:5274").await["homeOnly"], true);
     // A home address through the proxy is never suggested over it.
     let lan = [("x-forwarded-host", "192.168.1.2:5274".to_string())];
     session_from(&f, &f.owner_cookie(), "octo:5274", &lan, "127.0.0.1").await;
@@ -3390,8 +3224,8 @@ async fn public_address_put_writes_the_status_page_setting() {
         settings.body
     );
     // Links use it from now on.
-    let added = alex_code_from(&f, "192.168.1.20:5274").await;
-    assert_eq!(added["server"], "https://music.example.com");
+    let login = login_from(&f, "192.168.1.20:5274").await;
+    assert_eq!(login["servers"]["anywhere"], "https://music.example.com");
 }
 
 #[tokio::test]
@@ -3462,21 +3296,52 @@ async fn check_reports_reachable() {
 #[tokio::test]
 async fn links_carry_home_when_public_differs() {
     let f = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
-    let added = alex_code_from(&f, "192.168.1.5:5274").await;
-    let code = added["pairCode"].as_str().expect("a code");
-    assert_eq!(
-        added["links"]["anywhere"],
-        format!("https://music.example.com/family/join#u=alex&c={code}&home=http%3A%2F%2F192.168.1.5%3A5274")
+    let invite = invite_from(&f, "192.168.1.5:5274").await;
+    let anywhere = invite["links"]["anywhere"].as_str().expect("a link");
+    assert!(
+        anywhere.starts_with("https://music.example.com/family/join#invite="),
+        "{anywhere}"
     );
-    assert_eq!(
-        added["links"]["home"],
-        format!("http://192.168.1.5:5274/family/join#u=alex&c={code}")
+    assert!(
+        anywhere.ends_with("&home=http%3A%2F%2F192.168.1.5%3A5274"),
+        "{anywhere}"
     );
-    let invite = write_from(
+    let home = invite["links"]["home"].as_str().expect("a link");
+    assert!(
+        home.starts_with("http://192.168.1.5:5274/family/join#invite="),
+        "{home}"
+    );
+    assert!(!home.contains("home="), "{home}");
+    assert_eq!(invite["inviteLink"], invite["links"]["anywhere"]);
+    // Through the outside address, home is still the home address seen last.
+    let login = login_from(&f, "music.example.com").await;
+    assert_eq!(login["servers"]["home"], "http://192.168.1.5:5274", "{login}");
+    // When the outside address is where the request came from and no home was seen, the
+    // anywhere link names no home.
+    let fresh = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let invite = invite_from(&fresh, "music.example.com").await;
+    let anywhere = invite["links"]["anywhere"].as_str().expect("a link");
+    assert!(!anywhere.contains("home="), "{anywhere}");
+}
+
+#[tokio::test]
+async fn subpath_public_url_links() {
+    let f = fam_with(|s| s.server.public_url = "example.com/octo/".into(), None).await;
+    let login = login_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(login["servers"]["anywhere"], "https://example.com/octo");
+    let invite = invite_from(&f, "192.168.1.5:5274").await;
+    let anywhere = invite["links"]["anywhere"].as_str().expect("a link");
+    assert!(
+        anywhere.starts_with("https://example.com/octo/family/join#invite="),
+        "{anywhere}"
+    );
+    assert!(anywhere.contains("&home="), "{anywhere}");
+    // The hand-over page's links are under the prefix too.
+    let start = write_from(
         &f,
         Method::POST,
-        "/api/family/members/alex/invite",
-        &f.sam(),
+        "/api/family/signin/start",
+        &f.alex(),
         json!({}),
         "192.168.1.5:5274",
         &[],
@@ -3484,97 +3349,34 @@ async fn links_carry_home_when_public_differs() {
     )
     .await
     .json();
-    let link = invite["inviteLink"].as_str().expect("a link");
-    assert!(
-        link.starts_with("https://music.example.com/family/join#invite="),
-        "{link}"
+    assert_eq!(
+        start["links"]["anywhere"],
+        "https://example.com/octo/family/signin"
     );
-    assert!(link.ends_with("&home=http%3A%2F%2F192.168.1.5%3A5274"), "{link}");
-    // Through the outside address, home is still the home address seen last.
-    let added = alex_code_from(&f, "music.example.com").await;
-    assert_eq!(added["servers"]["home"], "http://192.168.1.5:5274", "{added}");
-    // When the outside address is where the request came from and no home was seen, the
-    // anywhere link names no home.
-    let fresh = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
-    let added = alex_code_from(&fresh, "music.example.com").await;
-    let anywhere = added["links"]["anywhere"].as_str().expect("a link");
-    assert!(!anywhere.contains("home="), "{anywhere}");
-}
-
-#[tokio::test]
-async fn subpath_public_url_links() {
-    let f = fam_with(|s| s.server.public_url = "example.com/octo/".into(), None).await;
-    let added = alex_code_from(&f, "192.168.1.5:5274").await;
-    assert_eq!(added["server"], "https://example.com/octo");
-    let code = added["pairCode"].as_str().expect("a code");
-    let anywhere = added["links"]["anywhere"].as_str().expect("a link");
-    assert!(
-        anywhere.starts_with(&format!(
-            "https://example.com/octo/family/join#u=alex&c={code}&home="
-        )),
-        "{anywhere}"
-    );
-    let invite = f
-        .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
-        .await
-        .json();
-    let link = invite["inviteLink"].as_str().expect("a link");
-    assert!(
-        link.starts_with("https://example.com/octo/family/join#invite="),
-        "{link}"
-    );
-    // An app password's server is the prefixed address too.
-    let r = f
-        .post(
-            "/api/family/me/devices",
-            Some(&f.alex()),
-            json!({ "name": "", "kind": "SubsonicApp" }),
-        )
-        .await
-        .json();
-    assert_eq!(r["server"], "https://example.com/octo");
-    assert_eq!(r["servers"]["anywhere"], "https://example.com/octo");
+    assert_eq!(start["links"]["home"], "http://192.168.1.5:5274/family/signin");
+    assert_eq!(start["servers"]["anywhere"], "https://example.com/octo");
+    assert_eq!(start["servers"]["home"], "http://192.168.1.5:5274");
 }
 
 #[tokio::test]
 async fn links_offer_anywhere_and_home() {
     let f = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
-    let added = alex_code_from(&f, "192.168.1.5:5274").await;
-    assert_eq!(added["anywhereAvailable"], true, "{added}");
-    assert_eq!(added["awayAllowed"], true);
-    assert_eq!(added["homeOnly"], false);
-    // The old single field is the default choice: anywhere.
-    assert_eq!(added["server"], "https://music.example.com");
-    assert_eq!(added["servers"]["anywhere"], "https://music.example.com");
-    assert_eq!(added["servers"]["home"], "http://192.168.1.5:5274");
-    // Both links carry the one code.
-    let code = added["pairCode"].as_str().expect("a code");
-    for which in ["anywhere", "home"] {
-        let link = added["links"][which].as_str().expect("a link");
-        assert!(link.contains(&format!("#u=alex&c={code}")), "{link}");
-    }
-    // An app password gives servers, not join links.
-    let r = write_from(
-        &f,
-        Method::POST,
-        "/api/family/me/devices",
-        &f.alex(),
-        json!({ "name": "", "kind": "SubsonicApp" }),
-        "192.168.1.5:5274",
-        &[],
-        HOME,
-    )
-    .await
-    .json();
-    assert_eq!(r["links"], Value::Null);
-    assert_eq!(r["servers"]["home"], "http://192.168.1.5:5274");
+    let login = login_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(login["username"], "alex", "{login}");
+    assert_eq!(login["anywhereAvailable"], true);
+    assert_eq!(login["awayAllowed"], true);
+    assert_eq!(login["servers"]["anywhere"], "https://music.example.com");
+    assert_eq!(login["servers"]["home"], "http://192.168.1.5:5274");
+    // No password in it: it is the one alex chose.
+    assert!(!login.to_string().contains(ALEX_PASSWORD), "{login}");
     // The apps' call answers the same shape.
-    let r = f.rest_as_alex("addFamilyDevice", "kind=OctoApp").await.subsonic();
-    let added = &r["familyDeviceAdded"];
-    assert_eq!(added["anywhereAvailable"], true, "{r}");
-    assert!(added["links"]["anywhere"].is_string(), "{r}");
-    assert!(added["links"]["home"].is_string(), "{r}");
-    // So does an invite.
+    let r = f.rest_as_alex("getFamilyLogin", "").await.subsonic();
+    let apps = &r["familyLogin"];
+    assert_eq!(apps["username"], "alex", "{r}");
+    assert_eq!(apps["anywhereAvailable"], true, "{r}");
+    assert_eq!(apps["servers"]["anywhere"], "https://music.example.com", "{r}");
+    assert!(apps["servers"]["home"].is_string(), "{r}");
+    // An invite offers both links.
     let invite = f
         .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
         .await
@@ -3592,12 +3394,11 @@ async fn links_offer_anywhere_and_home() {
 #[tokio::test]
 async fn anywhere_unavailable_without_public_url() {
     let f = fam().await;
-    let added = alex_code_from(&f, "192.168.1.5:5274").await;
-    assert_eq!(added["anywhereAvailable"], false);
-    assert_eq!(added["awayAllowed"], true);
-    assert_eq!(added["links"]["anywhere"], Value::Null);
-    assert_eq!(added["servers"]["anywhere"], Value::Null);
-    assert_eq!(added["server"], "http://192.168.1.5:5274");
+    let login = login_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(login["anywhereAvailable"], false);
+    assert_eq!(login["awayAllowed"], true);
+    assert_eq!(login["servers"]["anywhere"], Value::Null);
+    assert_eq!(login["servers"]["home"], "http://192.168.1.5:5274");
     let invite = f
         .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
         .await
@@ -3605,8 +3406,8 @@ async fn anywhere_unavailable_without_public_url() {
     assert_eq!(invite["anywhereAvailable"], false);
     assert_eq!(invite["links"]["anywhere"], Value::Null);
     assert_eq!(invite["inviteLink"], invite["links"]["home"]);
-    let r = f.rest_as_alex("addFamilyDevice", "kind=OctoApp").await.subsonic();
-    assert_eq!(r["familyDeviceAdded"]["anywhereAvailable"], false, "{r}");
+    let r = f.rest_as_alex("getFamilyLogin", "").await.subsonic();
+    assert_eq!(r["familyLogin"]["anywhereAvailable"], false, "{r}");
 }
 
 #[tokio::test]
@@ -3635,21 +3436,26 @@ async fn member_without_away_defaults_home() {
     );
     let kim = f.state.family_store.member("kim").expect("added");
     assert!(!kim.abilities().away);
-    // A device a manager adds for kim defaults home too.
-    let device = write_from(
+    // A new sign-in link for kim defaults home too.
+    let reset = write_from(
         &f,
         Method::POST,
-        "/api/family/members/kim/devices",
+        "/api/family/members/kim/reset",
         &f.owner_cookie(),
-        json!({ "name": "", "kind": "OctoApp" }),
+        json!({}),
         "192.168.1.5:5274",
         &[],
         HOME,
     )
     .await
     .json();
-    assert_eq!(device["anywhereAvailable"], false, "{device}");
-    assert_eq!(device["server"], "http://192.168.1.5:5274");
+    assert_eq!(reset["anywhereAvailable"], false, "{reset}");
+    assert!(
+        reset["inviteLink"]
+            .as_str()
+            .is_some_and(|l| l.starts_with("http://192.168.1.5:5274/family/join#invite=")),
+        "{reset}"
+    );
     // Left on (the default), a new member's links default to anywhere.
     let lee = f
         .post(
@@ -3735,4 +3541,316 @@ async fn handoff_refused_for_non_admin_sessions() {
     let open = fam().await;
     let r = open.post("/api/admin/family/open", None, json!({})).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+}
+
+// ------------------------------------------------------------------------------------------
+// One login per person
+// ------------------------------------------------------------------------------------------
+
+/// A member's one password signs every Subsonic form in: plain, `enc:` and token.
+#[tokio::test]
+async fn one_password_signs_in_plain_enc_and_token() {
+    let f = fam().await;
+    assert_eq!(
+        rest_with(&f, "alex", ALEX_PASSWORD, "test", HOME)
+            .await
+            .subsonic()["status"],
+        "ok"
+    );
+    let enc = format!("enc:{}", hex::encode(ALEX_PASSWORD));
+    assert_eq!(
+        rest_with(&f, "alex", &enc, "test", HOME).await.subsonic()["status"],
+        "ok"
+    );
+    let token = octo_core::family::codes::subsonic_token(ALEX_PASSWORD, "a1b2c3");
+    let uri = format!("/rest/getFamily?u=alex&t={token}&s=a1b2c3&v=1.16.1&c=test&f=json");
+    let r = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME).await;
+    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+    // Sam's password is not alex's.
+    assert_eq!(
+        rest_with(&f, "alex", SAM_PASSWORD, "test", HOME).await.subsonic()["error"]["code"],
+        40
+    );
+}
+
+/// Wrong passwords count toward the throttle on `/rest` and on signed Family calls alike.
+#[tokio::test]
+async fn wrong_passwords_count_toward_the_throttle() {
+    use crate::services::family::member_bridge::MAX_FAILURES;
+    let f = fam().await;
+    let from = "10.1.1.1";
+    for _ in 0..MAX_FAILURES {
+        let r = rest_with(&f, "alex", "not-the-password", "test", from).await;
+        assert_eq!(r.subsonic()["error"]["code"], 40, "{}", r.body);
+    }
+    // The right password now waits from that address, on every surface.
+    let r = rest_with(&f, "alex", ALEX_PASSWORD, "test", from).await;
+    assert_ne!(r.subsonic()["status"], "ok", "{}", r.body);
+    let signed = raw(
+        &f.app,
+        Method::GET,
+        &format!("/api/family/me?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=test"),
+        &[],
+        String::new(),
+        from,
+    )
+    .await;
+    assert_eq!(signed.status, StatusCode::UNAUTHORIZED, "{}", signed.body);
+    // Another address is not held back.
+    assert_eq!(
+        rest_with(&f, "alex", ALEX_PASSWORD, "test", HOME)
+            .await
+            .subsonic()["status"],
+        "ok"
+    );
+}
+
+/// Devices are told apart per app and per Octo install, and recorded only after a sign-in
+/// that checked out.
+#[tokio::test]
+async fn devices_are_recorded_per_app_and_per_octo_install_after_a_verified_sign_in() {
+    let f = fam().await;
+    let store = &f.state.family_store;
+    let symfonium = app_id("alex", "Symfonium");
+    let r = rest_with(&f, "alex", "not-the-password", "Symfonium", HOME).await;
+    assert_eq!(r.subsonic()["error"]["code"], 40);
+    assert!(
+        store.device(&symfonium).is_none(),
+        "a refused sign-in records nothing"
+    );
+    rest_with(&f, "alex", ALEX_PASSWORD, "Symfonium", HOME).await;
+    let device = store.device(&symfonium).expect("recorded");
+    assert_eq!(device.username, "alex");
+    assert!(device.last_seen.is_some());
+    assert!(!device.app.is_empty());
+    // Another app is another device.
+    rest_with(&f, "alex", ALEX_PASSWORD, "Feishin", HOME).await;
+    let feishin = app_id("alex", "Feishin");
+    assert_ne!(feishin, symfonium);
+    assert!(store.device(&feishin).is_some());
+    // Octo apps are told apart by their install, whatever else they send.
+    let mut ids = Vec::new();
+    for install in ["install-1", "install-2"] {
+        let headers = vec![
+            ("x-octo-device-id", install.to_string()),
+            ("user-agent", "Octo/1.6 (Android)".to_string()),
+        ];
+        let uri = format!("/rest/getFamily?u=alex&p={ALEX_PASSWORD}&v=1.16.1&c=Octo&f=json");
+        let r = raw(&f.app, Method::GET, &uri, &headers, String::new(), HOME).await;
+        assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+        let id = detected_device_id(
+            "alex",
+            &Sighting {
+                octo_device_id: Some(install.into()),
+                ..Default::default()
+            },
+        );
+        let device = store.device(&id).expect("recorded");
+        assert_eq!(device.app, "Octo 1.6 (Android)");
+        ids.push(id);
+    }
+    assert_ne!(ids[0], ids[1]);
+}
+
+// ------------------------------------------------------------------------------------------
+// Signing in on another device with a QR code
+// ------------------------------------------------------------------------------------------
+
+async fn start_hand_over(f: &Fam, cookie: &str) -> Value {
+    let r = f.post("/api/family/signin/start", Some(cookie), json!({})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.json()
+}
+
+/// The new device redeems `token` from `from`.
+async fn redeem_from(f: &Fam, token: &str, from: &str) -> Reply {
+    f.call(
+        Method::POST,
+        "/api/family/signin/redeem",
+        None,
+        Some(json!({ "token": token, "deviceName": "Kitchen iPad", "platform": "iPadOS" })),
+        from,
+    )
+    .await
+}
+
+async fn fetch_box(f: &Fam, id: &str) -> Value {
+    let r = f.get(&format!("/api/family/signin/redeem/{id}"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.json()
+}
+
+#[tokio::test]
+async fn hand_over_allowed_carries_the_box_once() {
+    let f = fam().await;
+    let start = start_hand_over(&f, &f.alex()).await;
+    let token = start["token"].as_str().expect("a token").to_string();
+    assert!(start["expires"].is_string(), "{start}");
+    assert_eq!(start["links"]["home"], "http://localhost/family/signin");
+    assert_eq!(start["links"]["anywhere"], Value::Null);
+    assert_eq!(start["servers"]["home"], "http://localhost");
+    assert_eq!(start["anywhereAvailable"], false);
+    let pending = format!("/api/family/signin/{token}/pending");
+    // Nothing waits yet.
+    let none = f.get(&pending, Some(&f.alex())).await;
+    assert_eq!(none.status, StatusCode::NO_CONTENT, "{}", none.body);
+    let redeemed = redeem_from(&f, &token, AWAY).await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{}", redeemed.body);
+    let id = redeemed.json()["id"].as_str().expect("an id").to_string();
+    // Someone else can neither see nor decide it.
+    assert_eq!(
+        f.get(&pending, Some(&f.sam())).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let decide = format!("/api/family/signin/{token}/decide");
+    assert_eq!(
+        f.post(&decide, Some(&f.sam()), json!({ "allow": true }))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let waiting = f.get(&pending, Some(&f.alex())).await.json();
+    assert_eq!(
+        waiting,
+        json!({ "id": id, "deviceName": "Kitchen iPad", "platform": "iPadOS" })
+    );
+    assert_eq!(fetch_box(&f, &id).await, json!({ "state": "Waiting" }));
+    // No box before allow.
+    let put = format!("/api/family/signin/{token}/box");
+    assert_eq!(
+        f.post(&put, Some(&f.alex()), json!({ "box": "sealed" }))
+            .await
+            .status,
+        StatusCode::CONFLICT
+    );
+    let allowed = f.post(&decide, Some(&f.alex()), json!({ "allow": true })).await;
+    assert_eq!(allowed.json(), json!({ "state": "Allowed" }));
+    assert_eq!(fetch_box(&f, &id).await, json!({ "state": "Allowed" }));
+    // A box over 16 KB is refused, whole or within the body limit.
+    let large = "x".repeat(crate::services::family::handover::MAX_BOX + 1);
+    let r = f.post(&put, Some(&f.alex()), json!({ "box": large })).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
+    let huge = "x".repeat(64 * 1024);
+    let r = f.post(&put, Some(&f.alex()), json!({ "box": huge })).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let r = f
+        .post(&put, Some(&f.alex()), json!({ "box": "opaque-sealed-box" }))
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert_eq!(
+        fetch_box(&f, &id).await,
+        json!({ "state": "Allowed", "box": "opaque-sealed-box" })
+    );
+    // Deleted on fetch.
+    assert_eq!(fetch_box(&f, &id).await, json!({ "state": "Expired" }));
+    assert_eq!(f.state.family.handover.live(), 0);
+    // The token was used once.
+    assert_eq!(redeem_from(&f, &token, AWAY).await.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn hand_over_denied_ends_on_both_sides() {
+    let f = fam().await;
+    let start = start_hand_over(&f, &f.owner_cookie()).await;
+    let token = start["token"].as_str().expect("a token").to_string();
+    let id = redeem_from(&f, &token, HOME).await.json()["id"]
+        .as_str()
+        .expect("an id")
+        .to_string();
+    let decide = format!("/api/family/signin/{token}/decide");
+    let denied = f
+        .post(&decide, Some(&f.owner_cookie()), json!({ "allow": false }))
+        .await;
+    assert_eq!(denied.json(), json!({ "state": "Denied" }));
+    assert_eq!(fetch_box(&f, &id).await, json!({ "state": "Denied" }));
+    assert_eq!(fetch_box(&f, &id).await, json!({ "state": "Expired" }));
+    // An unknown id is simply expired.
+    assert_eq!(fetch_box(&f, "nothing").await, json!({ "state": "Expired" }));
+    // Starting needs a sign-in.
+    assert_eq!(
+        f.post("/api/family/signin/start", None, json!({})).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// Wrong tokens count against the peer: after ten, even a right one waits.
+#[tokio::test]
+async fn hand_over_wrong_tokens_are_throttled_per_peer() {
+    use crate::services::family::handover::PEER_FAILURES;
+    let f = fam().await;
+    let start = start_hand_over(&f, &f.alex()).await;
+    let token = start["token"].as_str().expect("a token").to_string();
+    for n in 0..PEER_FAILURES {
+        let r = redeem_from(&f, &format!("wrong-{n}"), "10.2.2.2").await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    }
+    let r = redeem_from(&f, &token, "10.2.2.2").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+    assert!(r.headers.contains_key("retry-after"));
+    // Another peer still redeems it.
+    assert_eq!(redeem_from(&f, &token, HOME).await.status, StatusCode::OK);
+}
+
+/// The apps' octoFamily calls make the same hand-over.
+#[tokio::test]
+async fn hand_over_through_octo_family_calls() {
+    let f = fam().await;
+    let start = f.rest_as_alex("startFamilySignIn", "").await.subsonic();
+    let token = start["familySignIn"]["token"]
+        .as_str()
+        .expect("a token")
+        .to_string();
+    // Redeeming is open: the new device has no sign-in yet.
+    let uri = format!(
+        "/rest/redeemFamilySignIn?token={token}&deviceName=Pixel%209&platform=Android&v=1.16.1&c=Octo&f=json"
+    );
+    let redeemed = raw(&f.app, Method::GET, &uri, &[], String::new(), AWAY)
+        .await
+        .subsonic();
+    let id = redeemed["familySignInRedeemed"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_string();
+    let wrong = raw(
+        &f.app,
+        Method::GET,
+        "/rest/redeemFamilySignIn?token=wrong&v=1.16.1&c=Octo&f=json",
+        &[],
+        String::new(),
+        AWAY,
+    )
+    .await
+    .subsonic();
+    assert_eq!(wrong["error"]["code"], 40, "{wrong}");
+    let pending = f
+        .rest_as_alex("getFamilySignInPending", &format!("token={token}"))
+        .await
+        .subsonic();
+    assert_eq!(
+        pending["familySignInPending"]["deviceName"], "Pixel 9",
+        "{pending}"
+    );
+    let decided = f
+        .rest_as_alex("decideFamilySignIn", &format!("token={token}&allow=true"))
+        .await
+        .subsonic();
+    assert_eq!(decided["familySignInDecided"]["state"], "Allowed", "{decided}");
+    let put = f
+        .rest_as_alex("putFamilySignInBox", &format!("token={token}&box=opaque"))
+        .await
+        .subsonic();
+    assert_eq!(put["status"], "ok", "{put}");
+    let fetch = format!("/rest/getFamilySignInRedeem?id={id}&v=1.16.1&c=Octo&f=json");
+    let fetched = raw(&f.app, Method::GET, &fetch, &[], String::new(), AWAY)
+        .await
+        .subsonic();
+    assert_eq!(
+        fetched["familySignInRedeem"],
+        json!({ "state": "Allowed", "box": "opaque" }),
+        "{fetched}"
+    );
+    let again = raw(&f.app, Method::GET, &fetch, &[], String::new(), AWAY)
+        .await
+        .subsonic();
+    assert_eq!(again["familySignInRedeem"]["state"], "Expired");
 }

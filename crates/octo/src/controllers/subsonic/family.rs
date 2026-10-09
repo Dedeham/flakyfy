@@ -5,9 +5,9 @@
 //! `"type":"octo"`, JSON or XML (XML writes scalars as attributes and lists as elements).
 //! While Family is off these calls reach Navidrome as any unknown call would.
 //!
-//! `octoFamilyPair` is open: an app pairs with a member's username and 6-digit code before it
-//! has a secret. Wrong codes count per address, per peer, per account, against the member's
-//! live code (five burn it), and for everyone together.
+//! Everyone signs in with their one login. `redeemFamilySignIn` and `getFamilySignInRedeem` are
+//! open: a new device redeeming a sign-in hand-over has no sign-in yet. Wrong hand-over tokens
+//! count per peer, and each account takes a bounded number of redemptions.
 
 use crate::services::family::public_address::{self, LinkBases};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -18,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::RequestQuality;
-use octo_core::family::device::{ClientOrigin, DeviceKind, NetworkPlace, client_origin};
+use octo_core::family::device::{ClientOrigin, NetworkPlace, client_origin};
 use octo_core::family::request::RequestKind;
 use octo_subsonic::subsonic_response_builder::{
     SUBSONIC_NAMESPACE, SUBSONIC_VERSION, SubsonicReply, json_shape_to_xml,
@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 
 use super::caller_checks::SubsonicCall;
 use crate::app::AppState;
-use crate::controllers::family::account::{device_kind, quality_choice, quality_mode, set_preference};
+use crate::controllers::family::account::{quality_choice, quality_mode, set_preference};
 use crate::controllers::family::manage::request_state;
 use crate::http::routes::RouteSet;
 use crate::middleware::family_gate::{GateReading, Unverified};
@@ -65,10 +65,14 @@ pub fn routes() -> RouteSet {
             get(get_family_devices).post(get_family_devices),
         )
         .subsonic(
-            "signOutFamilyDevice",
-            get(sign_out_family_device).post(sign_out_family_device),
+            "forgetFamilyDevice",
+            get(forget_family_device).post(forget_family_device),
         )
-        .subsonic("addFamilyDevice", get(add_family_device).post(add_family_device))
+        .subsonic("getFamilyLogin", get(get_family_login).post(get_family_login))
+        .subsonic(
+            "changeFamilyPassword",
+            get(change_family_password).post(change_family_password),
+        )
         .subsonic(
             "removeFromMyLibrary",
             get(remove_from_my_library).post(remove_from_my_library),
@@ -77,7 +81,30 @@ pub fn routes() -> RouteSet {
             "createFamilyPlaylist",
             get(create_family_playlist).post(create_family_playlist),
         )
-        .subsonic("octoFamilyPair", get(octo_family_pair).post(octo_family_pair))
+        .subsonic(
+            "startFamilySignIn",
+            get(start_family_sign_in).post(start_family_sign_in),
+        )
+        .subsonic(
+            "redeemFamilySignIn",
+            get(redeem_family_sign_in).post(redeem_family_sign_in),
+        )
+        .subsonic(
+            "getFamilySignInPending",
+            get(get_family_sign_in_pending).post(get_family_sign_in_pending),
+        )
+        .subsonic(
+            "decideFamilySignIn",
+            get(decide_family_sign_in).post(decide_family_sign_in),
+        )
+        .subsonic(
+            "putFamilySignInBox",
+            get(put_family_sign_in_box).post(put_family_sign_in_box),
+        )
+        .subsonic(
+            "getFamilySignInRedeem",
+            get(get_family_sign_in_redeem).post(get_family_sign_in_redeem),
+        )
 }
 
 /// The extension's name and versions, as `getOpenSubsonicExtensions` lists it.
@@ -519,70 +546,56 @@ pub async fn get_family_devices(State(state): State<AppState>, req: Request) -> 
     )
 }
 
-/// `signOutFamilyDevice`: own devices, or any member's for managers.
-pub async fn sign_out_family_device(State(state): State<AppState>, req: Request) -> Response {
+/// `forgetFamilyDevice`: `id`, "Remove from list". Own devices, or any member's for managers.
+/// The device is recorded again if it signs in again.
+pub async fn forget_family_device(State(state): State<AppState>, req: Request) -> Response {
     let call = started!(state, req);
     let id = call.param("id");
     if id.is_empty() {
         return error(&state, &call.format, 10, "Required parameter is missing: id");
     }
     let manager = manages_here(&state, &call);
-    match state.family.sign_out_device(&state, &call.actor(), id, manager) {
+    match state.family.forget_device(&state, &call.actor(), id, manager) {
         Ok(()) => octo_reply(&state, &call.format, None),
         Err(e) => family_failure(&state, &call.format, &e),
     }
 }
 
-/// `addFamilyDevice`: `name`, `kind` (`OctoApp` gives a pairing code, `SubsonicApp` an app
-/// password), `username` for a manager adding a device for any member, and `replaces`: the
-/// device id of an unused pairing code of the same member's to end first.
-pub async fn add_family_device(State(state): State<AppState>, req: Request) -> Response {
+/// `getFamilyLogin`: the caller's username and the server addresses to sign in with anywhere.
+pub async fn get_family_login(State(state): State<AppState>, req: Request) -> Response {
     let call = started!(state, req);
-    let Some(kind) = device_kind(call.param("kind")) else {
-        return error(&state, &call.format, 10, "Choose kind OctoApp or SubsonicApp.");
-    };
-    let user = match call.param("username") {
-        "" => call.caller.user.clone(),
-        other if eq_ignore_case(other, &call.caller.user) => call.caller.user.clone(),
-        other => {
-            if !manages_here(&state, &call) {
-                return error(
-                    &state,
-                    &call.format,
-                    50,
-                    "Only people who manage the family can add a device for someone else.",
-                );
-            }
-            match state.family_store.member(other) {
-                Some(member) => member.username,
-                None => {
-                    return error(
-                        &state,
-                        &call.format,
-                        70,
-                        &format!("{other} is not in the family."),
-                    );
-                }
-            }
-        }
-    };
-    let bases = LinkBases::new(&state, &call.origin, public_address::away_allowed(&state, &user));
-    match state.family.add_device(
+    let bases = LinkBases::new(
         &state,
-        &user,
-        call.param("name"),
-        kind,
-        bases.default_base(),
-        call.param("replaces"),
-    ) {
-        Ok(added) => octo_reply(
+        &call.origin,
+        public_address::away_allowed(&state, &call.caller.user),
+    );
+    let login = FamilyService::login_json(&state, &call.caller.user, &bases);
+    octo_reply(&state, &call.format, Some(("familyLogin", &login)))
+}
+
+/// `changeFamilyPassword` (form POST): `current`, `next`. "Sign out everywhere": every app
+/// needs the new password, and every web player session ends.
+pub async fn change_family_password(State(state): State<AppState>, req: Request) -> Response {
+    let call = started!(state, req);
+    if !call.caller.managed {
+        return error(
             &state,
             &call.format,
-            Some((
-                "familyDeviceAdded",
-                &public_address::device_answer(&added, &bases),
-            )),
-        ),
+            50,
+            "Change this account's password in Navidrome.",
+        );
+    }
+    match state
+        .family
+        .change_password(
+            &state,
+            &call.caller.user,
+            call.call.param("current"),
+            call.call.param("next"),
+        )
+        .await
+    {
+        Ok(()) => octo_reply(&state, &call.format, None),
         Err(e) => family_failure(&state, &call.format, &e),
     }
 }
@@ -687,47 +700,106 @@ fn origin_of_client(state: &AppState, req: &Request) -> ClientOrigin {
     )
 }
 
-/// `octoFamilyPair` (open, GET or form POST): `username`, `code`, `deviceName`, `platform`.
-/// `kind=SubsonicApp` gives an app password for another app instead of an Octo app's secret.
-pub async fn octo_family_pair(State(state): State<AppState>, req: Request) -> Response {
+// --- signing in on another device with a QR code ---------------------------------------------
+
+/// `startFamilySignIn`: a hand-over token for a QR code (any signed-in account).
+pub async fn start_family_sign_in(State(state): State<AppState>, req: Request) -> Response {
+    let call = started!(state, req);
+    let answer = crate::controllers::family::handover::start_json(&state, &call.caller.user, &call.origin);
+    octo_reply(&state, &call.format, Some(("familySignIn", &answer)))
+}
+
+/// `getFamilySignInPending`: `token`; the new device waiting for an answer, if any.
+pub async fn get_family_sign_in_pending(State(state): State<AppState>, req: Request) -> Response {
+    let call = started!(state, req);
+    match state
+        .family
+        .handover
+        .pending(&call.caller.user, call.param("token"))
+    {
+        Ok(pending) => octo_reply(
+            &state,
+            &call.format,
+            Some(("familySignInPending", &json!(pending))),
+        ),
+        Err(e) => family_failure(&state, &call.format, &e),
+    }
+}
+
+/// `decideFamilySignIn`: `token`, `allow` (true or false).
+pub async fn decide_family_sign_in(State(state): State<AppState>, req: Request) -> Response {
+    let call = started!(state, req);
+    let allow = call.flag("allow");
+    match state
+        .family
+        .handover
+        .decide(&call.caller.user, call.param("token"), allow)
+    {
+        Ok(decided) => octo_reply(
+            &state,
+            &call.format,
+            Some(("familySignInDecided", &json!({ "state": decided }))),
+        ),
+        Err(e) => family_failure(&state, &call.format, &e),
+    }
+}
+
+/// `putFamilySignInBox` (form POST): `token`, `box` (the sealed sign-in, at most 16 KB).
+pub async fn put_family_sign_in_box(State(state): State<AppState>, req: Request) -> Response {
+    let call = started!(state, req);
+    match state
+        .family
+        .handover
+        .put_box(&call.caller.user, call.param("token"), call.call.param("box"))
+    {
+        Ok(()) => octo_reply(&state, &call.format, None),
+        Err(e) => family_failure(&state, &call.format, &e),
+    }
+}
+
+/// `redeemFamilySignIn` (open): `token`, `deviceName`, `platform`; answers the `id` to fetch
+/// the sealed sign-in with.
+pub async fn redeem_family_sign_in(State(state): State<AppState>, req: Request) -> Response {
     if !state.settings.current().family.enabled {
         return crate::http::catch_all::catch_all(State(state.clone()), req).await;
     }
     let from = origin_of_client(&state, &req);
-    let origin = origin_of(&req);
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(res) => return res,
     };
     let format = format_of(&call);
-    let (username, code) = (call.param("username").trim(), call.param("code").trim());
-    if username.is_empty() || code.is_empty() {
-        return error(
+    let token = call.param("token").trim();
+    if token.is_empty() {
+        return error(&state, &format, 10, "Required parameter is missing: token");
+    }
+    match state.family.handover.redeem(
+        &from.peer.to_string(),
+        token,
+        call.param("deviceName"),
+        call.param("platform"),
+    ) {
+        Ok(id) => octo_reply(
             &state,
             &format,
-            10,
-            "Required parameter is missing: username or code",
-        );
-    }
-    let kind = match call.param("kind").trim() {
-        "" => DeviceKind::OctoApp,
-        text => device_kind(text).unwrap_or(DeviceKind::OctoApp),
-    };
-    let device_name = call.param("deviceName").to_string();
-    let base = FamilyService::public_base(&state, &origin);
-    match state.family.pair(
-        &state,
-        &from.address.to_string(),
-        &from.peer.to_string(),
-        username,
-        code,
-        &device_name,
-        call.param("platform"),
-        kind,
-        &base,
-    ) {
-        Ok(paired) => octo_reply(&state, &format, Some(("familyPair", &json!(paired)))),
+            Some(("familySignInRedeemed", &json!({ "id": id }))),
+        ),
         Err(FamilyError::Refused(message)) => error(&state, &format, 40, &message),
         Err(e) => family_failure(&state, &format, &e),
     }
+}
+
+/// `getFamilySignInRedeem` (open): `id`; where the hand-over stands, and the sealed box once it
+/// is there (handed out once).
+pub async fn get_family_sign_in_redeem(State(state): State<AppState>, req: Request) -> Response {
+    if !state.settings.current().family.enabled {
+        return crate::http::catch_all::catch_all(State(state.clone()), req).await;
+    }
+    let call = match SubsonicCall::read(&state, req).await {
+        Ok(call) => call,
+        Err(res) => return res,
+    };
+    let format = format_of(&call);
+    let fetched = state.family.handover.fetch(call.param("id").trim());
+    octo_reply(&state, &format, Some(("familySignInRedeem", &json!(fetched))))
 }

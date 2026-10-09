@@ -124,8 +124,14 @@ requestCopy
 cancelFamilyRequest
 decideFamilyRequest
 getFamilyDevices
-signOutFamilyDevice
-addFamilyDevice
+forgetFamilyDevice
+getFamilyLogin
+changeFamilyPassword
 removeFromMyLibrary
 createFamilyPlaylist
-octoFamilyPair
+startFamilySignIn
+redeemFamilySignIn
+getFamilySignInPending
+decideFamilySignIn
+putFamilySignInBox
+getFamilySignInRedeem

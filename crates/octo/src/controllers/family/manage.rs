@@ -231,8 +231,8 @@ fn invite_days(state: &AppState) -> u32 {
     state.settings.current().family.invite_days.max(1)
 }
 
-/// `POST /api/family/members/{name}/invite`: a new sign-in link (also how a forgotten
-/// password is set again).
+/// `POST /api/family/members/{name}/invite`: a new sign-up link for a member who has not
+/// signed up yet ("Send a new link").
 pub async fn invite_member(State(state): State<AppState>, web: Web, Path(name): Path<String>) -> Response {
     if let Err(res) = web.manager(&state).await {
         return res;
@@ -247,37 +247,23 @@ pub async fn invite_member(State(state): State<AppState>, web: Web, Path(name): 
     }
 }
 
-/// `POST /api/family/members/{name}/devices`: a manager adds a device for a member and gets
-/// its pairing code or app password. The member's password is not touched.
-pub async fn add_member_device(
-    State(state): State<AppState>,
-    web: Web,
-    Path(name): Path<String>,
-    body: Bytes,
-) -> Response {
-    if let Err(res) = web.manager(&state).await {
-        return res;
-    }
-    let request: super::account::AddDeviceBody = match body_as(&body) {
-        Ok(request) => request,
+/// `POST /api/family/members/{name}/reset`: "Reset password". The member's password stops
+/// working at once, every web player and Family page session of theirs ends, and the answer is
+/// a new single-use sign-up link (the invite shape) to choose another.
+pub async fn reset_member(State(state): State<AppState>, web: Web, Path(name): Path<String>) -> Response {
+    let signed = match web.manager(&state).await {
+        Ok(signed) => signed,
         Err(res) => return res,
     };
-    let Some(kind) = super::account::device_kind(&request.kind) else {
-        return refusal(StatusCode::BAD_REQUEST, "Choose OctoApp or SubsonicApp.");
-    };
-    if state.family_store.member(&name).is_none() {
-        return refusal(StatusCode::NOT_FOUND, &format!("{name} is not in the family."));
-    }
-    let bases = web.link_bases(&state, &name);
-    match state.family.add_device(
-        &state,
-        &name,
-        &request.name,
-        kind,
-        bases.default_base(),
-        &request.replaces,
-    ) {
-        Ok(added) => ok(&public_address::device_answer(&added, &bases)),
+    match state
+        .family
+        .reset_password(&state, &signed.actor, &name, &web.base(&state))
+    {
+        Ok(link) => ok(&public_address::invite_answer(
+            &link,
+            &web.link_bases(&state, &name),
+            invite_days(&state),
+        )),
         Err(e) => family_error(&e),
     }
 }
@@ -393,13 +379,13 @@ pub async fn devices(State(state): State<AppState>, web: Web) -> Response {
     ok(&Value::Array(list))
 }
 
-/// `DELETE /api/family/devices/{id}`.
-pub async fn sign_out_device(State(state): State<AppState>, web: Web, Path(id): Path<String>) -> Response {
+/// `DELETE /api/family/devices/{id}`: takes a member's device off the list.
+pub async fn forget_device(State(state): State<AppState>, web: Web, Path(id): Path<String>) -> Response {
     let signed = match web.manager(&state).await {
         Ok(signed) => signed,
         Err(res) => return res,
     };
-    match state.family.sign_out_device(&state, &signed.actor, &id, true) {
+    match state.family.forget_device(&state, &signed.actor, &id, true) {
         Ok(()) => no_content(),
         Err(e) => family_error(&e),
     }

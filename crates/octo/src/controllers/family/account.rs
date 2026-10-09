@@ -1,6 +1,6 @@
 //! Signing in, joining, and everything a person does for themselves on the Family page: their
-//! plan, devices, requests, saved songs, own library, password, audio quality, push topic and
-//! Last.fm.
+//! plan, their login, the devices Octo saw them use, requests, saved songs, own library,
+//! password, audio quality, push topic and Last.fm.
 
 use axum::body::Bytes;
 use axum::extract::{Path, RawQuery, State};
@@ -8,7 +8,6 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use octo_core::common::dotnet::{eq_ignore_case, is_blank};
 use octo_core::family::abilities::{RequestQuality, Role};
-use octo_core::family::device::DeviceKind;
 use octo_core::family::quality::{DeviceQualityMode, QualityPreference, StreamQuality};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -121,10 +120,14 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         if !enabled {
             return refusal(StatusCode::NOT_FOUND, "Family is off on this server.");
         }
-        if member.account_password.is_empty() {
+        if !member.has_password() {
             return refusal(
                 StatusCode::UNAUTHORIZED,
-                "Open your invite link to set your password first.",
+                if member.signed_up() {
+                    "Your password needs choosing again. Ask whoever runs this server for a new sign-in link."
+                } else {
+                    "Open your invite link to set your password first."
+                },
             );
         }
         // The try counts before the password is checked, so tries sent all at once cannot each
@@ -132,18 +135,8 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         if let Some(wait) = throttle.attempt_all(keys) {
             return throttled(wait);
         }
-        match state
-            .family
-            .check_member_password(&member, &request.password)
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password."),
-            Err(_) => {
-                // Not checked at all, so the try is not held against anyone.
-                throttle.forgive_all(keys);
-                return family_error(&crate::services::family::family_service::busy());
-            }
+        if !FamilyService::check_member_password(&state, &member, &request.password) {
+            return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password.");
         }
         if member.suspended {
             return refusal(
@@ -346,52 +339,15 @@ pub async fn my_devices(State(state): State<AppState>, web: Web) -> Response {
     ok(&Value::Array(devices))
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct AddDeviceBody {
-    pub name: String,
-    pub kind: String,
-    /// The device id of a pairing code this one takes the place of. That code ends when it is
-    /// still unused and the same member's.
-    pub replaces: String,
-}
-
-/// Reads `OctoApp` or `SubsonicApp`.
-pub fn device_kind(text: &str) -> Option<DeviceKind> {
-    match text.trim().to_ascii_lowercase().as_str() {
-        "octoapp" => Some(DeviceKind::OctoApp),
-        "subsonicapp" => Some(DeviceKind::SubsonicApp),
-        _ => None,
-    }
-}
-
-/// `POST /api/family/me/devices`: an app password (shown once) or a pairing code.
-pub async fn add_my_device(State(state): State<AppState>, web: Web, body: Bytes) -> Response {
-    let (signed, _) = match web.member(&state).await {
-        Ok(found) => found,
+/// `GET /api/family/me/login`: what the signed-in person types into any app: their username
+/// and the server addresses (their password is the one they chose).
+pub async fn my_login(State(state): State<AppState>, web: Web) -> Response {
+    let signed = match web.anyone(&state).await {
+        Ok(signed) => signed,
         Err(res) => return res,
-    };
-    let request: AddDeviceBody = match body_as(&body) {
-        Ok(request) => request,
-        Err(res) => return res,
-    };
-    let Some(kind) = device_kind(&request.kind) else {
-        return refusal(StatusCode::BAD_REQUEST, "Choose OctoApp or SubsonicApp.");
     };
     let bases = web.link_bases(&state, signed.user());
-    match state.family.add_device(
-        &state,
-        signed.user(),
-        &request.name,
-        kind,
-        bases.default_base(),
-        &request.replaces,
-    ) {
-        Ok(added) => ok(&crate::services::family::public_address::device_answer(
-            &added, &bases,
-        )),
-        Err(e) => family_error(&e),
-    }
+    ok(&FamilyService::login_json(&state, signed.user(), &bases))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -441,13 +397,14 @@ pub async fn change_my_device(
     }
 }
 
-/// `DELETE /api/family/me/devices/{id}`.
-pub async fn sign_out_my_device(State(state): State<AppState>, web: Web, Path(id): Path<String>) -> Response {
+/// `DELETE /api/family/me/devices/{id}`: "Remove from list". The device is recorded again if
+/// it signs in again.
+pub async fn forget_my_device(State(state): State<AppState>, web: Web, Path(id): Path<String>) -> Response {
     let signed = match web.anyone(&state).await {
         Ok(signed) => signed,
         Err(res) => return res,
     };
-    match state.family.sign_out_device(&state, &signed.actor, &id, false) {
+    match state.family.forget_device(&state, &signed.actor, &id, false) {
         Ok(()) => no_content(),
         Err(e) => family_error(&e),
     }
@@ -601,7 +558,9 @@ pub struct PasswordBody {
     pub next: String,
 }
 
-/// `PUT /api/family/me/password`.
+/// `PUT /api/family/me/password`: "Sign out everywhere". Every app needs the new password,
+/// and every web player and Family page session ends; the page that asked gets a new sign-in
+/// of its own.
 pub async fn change_password(State(state): State<AppState>, web: Web, body: Bytes) -> Response {
     let (signed, _) = match web.member(&state).await {
         Ok(found) => found,
@@ -616,7 +575,16 @@ pub async fn change_password(State(state): State<AppState>, web: Web, body: Byte
         .change_password(&state, signed.user(), &request.current, &request.next)
         .await
     {
-        Ok(()) => no_content(),
+        Ok(()) => {
+            let mut res = no_content();
+            if web.signed_call.is_none() {
+                let token = state
+                    .browse_sessions
+                    .create_family(signed.user(), SessionKind::Member);
+                res.headers_mut().append(header::SET_COOKIE, web.cookie(&token));
+            }
+            res
+        }
         Err(e) => family_error(&e),
     }
 }

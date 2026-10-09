@@ -2,9 +2,9 @@
 //! page keeps. It is stored, never discovered: Octo only suggests the address it last saw
 //! through a trusted reverse proxy, and the owner confirms it.
 //!
-//! Every invite and add-device answer offers two links, one for anywhere (on the public
-//! address, naming the home address too) and one for home (on the address the owner used at
-//! home), and says which is the default.
+//! Every invite and login answer offers two addresses, one for anywhere (the public address,
+//! with an invite link naming the home address too) and one for home (the address the owner
+//! used at home), and says which is the default.
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -239,36 +239,15 @@ pub fn away_allowed(state: &AppState, user: &str) -> bool {
     state.family_store.member(user).is_none_or(|m| m.abilities().away)
 }
 
-/// An add-device answer with both links: `server` is the default base, `servers` both bases,
-/// and for a pairing code `links` holds both join links.
-pub fn device_answer(
-    added: &crate::services::family::family_service::DeviceAdded,
-    bases: &LinkBases,
-) -> Value {
-    let mut answer = serde_json::json!(added);
-    answer["server"] = Value::String(bases.default_base().to_string());
-    answer["servers"] = serde_json::json!({
-        "anywhere": bases.anywhere.as_ref().filter(|_| bases.anywhere_available),
-        "home": bases.home,
-    });
-    answer["links"] = match &added.pair_code {
-        Some(code) => bases.links(&format!(
-            "/family/join#u={}&c={code}",
-            octo_core::common::dotnet::escape_data_string(&added.username)
-        )),
-        None => Value::Null,
-    };
-    facts(&mut answer, bases);
-    answer
-}
-
 /// An invite answer with both links. `link` is the invite link on any base.
 pub fn invite_answer(link: &str, bases: &LinkBases, days: u32) -> Value {
     let tail = link.find("/family/join").map_or(link, |at| &link[at..]);
+    let expires = chrono::Utc::now() + chrono::TimeDelta::days(i64::from(days.max(1)));
     let mut answer = serde_json::json!({
         "inviteLink": bases.default_link(tail),
         "links": bases.links(tail),
         "inviteDays": days,
+        "expires": octo_core::json::datetime::format_utc(&expires),
     });
     facts(&mut answer, bases);
     answer

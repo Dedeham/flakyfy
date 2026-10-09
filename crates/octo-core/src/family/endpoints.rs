@@ -151,11 +151,17 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("cancelFamilyRequest", Read),
     ("decideFamilyRequest", Read),
     ("getFamilyDevices", Read),
-    ("signOutFamilyDevice", Read),
-    ("addFamilyDevice", Read),
+    ("forgetFamilyDevice", Read),
+    ("getFamilyLogin", Read),
+    ("changeFamilyPassword", Read),
     ("removeFromMyLibrary", Read),
     ("createFamilyPlaylist", Read),
-    ("octoFamilyPair", Read),
+    ("startFamilySignIn", Read),
+    ("redeemFamilySignIn", Read),
+    ("getFamilySignInPending", Read),
+    ("decideFamilySignIn", Read),
+    ("putFamilySignInBox", Read),
+    ("getFamilySignInRedeem", Read),
 ];
 
 /// The `/rest` endpoint a path names (`/rest/getAlbum.view` is `getAlbum`), or None for any

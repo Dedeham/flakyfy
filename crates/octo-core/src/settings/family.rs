@@ -32,8 +32,6 @@ pub struct FamilySettings {
     pub trusted_proxies: String,
     /// Days an invite link works.
     pub invite_days: u32,
-    /// Minutes a pairing code works.
-    pub pair_code_minutes: u32,
     /// Whether the owner's own apps show members' personal libraries.
     pub owner_sees_member_libraries: bool,
     /// Whether the owner's own apps show members' playlists.
@@ -59,7 +57,6 @@ impl Default for FamilySettings {
                 .to_string(),
             trusted_proxies: "127.0.0.0/8, ::1/128".to_string(),
             invite_days: 7,
-            pair_code_minutes: 10,
             owner_sees_member_libraries: false,
             owner_sees_member_playlists: false,
             unmanaged_accounts: "AsToday".to_string(),
@@ -143,7 +140,7 @@ mod tests {
         assert!(!s.owner_sees_member_playlists);
         assert_eq!(s.unmanaged_accounts, "AsToday");
         assert!(!s.kid_unrated_is_explicit);
-        assert_eq!((s.invite_days, s.pair_code_minutes), (7, 10));
+        assert_eq!(s.invite_days, 7);
         assert_eq!((s.fast_pull_factor, s.radio_streams_per_person), (8, 2));
         assert!(s.manage_from_away);
         // Only the machine itself is a trusted proxy until the owner says otherwise.

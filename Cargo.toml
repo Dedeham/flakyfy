@@ -24,7 +24,6 @@ octo-media = { path = "crates/octo-media" }
 
 anyhow = "1"
 arc-swap = "1"
-argon2 = "0.6"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 base64 = "0.23"

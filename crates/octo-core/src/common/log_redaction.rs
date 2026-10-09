@@ -22,8 +22,9 @@ pub const MASK: &str = "***";
 // Subsonic reads names case-insensitively, so this does. sk is a Last.fm session key,
 // which scrobbles as that listener, and api_sig is signed with the Last.fm shared secret.
 // user is the AcoustID user's own API key, sent with every submission. Subsonic's u is
-// not it, and stays readable. code, secret, password and invite are Octo Family's pairing
-// codes, device secrets, account passwords and invite tokens, and jwt a browser's sign-in.
+// not it, and stays readable. password and invite are Octo Family's account passwords and
+// invite tokens, box a sealed sign-in hand-over, code and secret the codes and secrets older
+// Family apps send, and jwt a browser's sign-in.
 //
 // The C# matched the value behind a lookbehind, `(?<=[?&;](?:...)=)[^&#\s"'<>]+`. Here the
 // name is group 1 and is written back. The two find the same values: a value never holds an
@@ -34,18 +35,37 @@ pub const MASK: &str = "***";
 static SECRET_PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
     let s = "(?-i:[sS])";
     Regex::new(&format!(
-        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig|code|{s}ecret|pa{s}{s}word|invite|jwt)=)[^&#\s"'<>]+"#
+        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig|code|{s}ecret|pa{s}{s}word|invite|jwt|box)=)[^&#\s"'<>]+"#
     ))
     .expect("a fixed pattern compiles")
 });
 
-/// The text with every secret query parameter's value replaced by [`MASK`].
-/// Borrows the text unchanged when there is nothing to mask.
+/// A sign-in hand-over token or redemption id in a Family page path:
+/// `/api/family/signin/<token>/pending` and `/api/family/signin/redeem/<id>`. Group 2 is the
+/// segment; `start` and `redeem` themselves are route names and stay readable.
+static HAND_OVER_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(/api/family/signin/(?:redeem/)?)([^/?#\s"'<>]+)"#).expect("a fixed pattern compiles")
+});
+
+/// The text with every secret query parameter's value, and any sign-in hand-over token in a
+/// path, replaced by [`MASK`]. Borrows the text unchanged when there is nothing to mask.
 pub fn redact(text: &str) -> Cow<'_, str> {
+    let text = if text.contains("/family/signin/") {
+        HAND_OVER_PATH.replace_all(text, |caps: &Captures| match &caps[2] {
+            "start" | "redeem" => caps[0].to_string(),
+            _ => format!("{}{MASK}", &caps[1]),
+        })
+    } else {
+        Cow::Borrowed(text)
+    };
     if !text.contains('=') {
-        return Cow::Borrowed(text);
+        return text;
     }
-    SECRET_PARAMETER.replace_all(text, |caps: &Captures| format!("{}{MASK}", &caps[1]))
+    let masked = match SECRET_PARAMETER.replace_all(&text, |caps: &Captures| format!("{}{MASK}", &caps[1])) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(masked) => Some(masked),
+    };
+    masked.map_or(text, Cow::Owned)
 }
 
 #[cfg(test)]
@@ -157,6 +177,33 @@ mod tests {
         );
         for secret in [t, s, p, api_key, token] {
             assert!(!redacted.contains(&secret));
+        }
+    }
+
+    #[test]
+    fn hand_over_tokens_are_masked_in_paths_and_queries() {
+        let cases = [
+            (
+                "GET /api/family/signin/AbC-123_x/pending - 200",
+                "GET /api/family/signin/***/pending - 200",
+            ),
+            (
+                "POST /api/family/signin/AbC/decide",
+                "POST /api/family/signin/***/decide",
+            ),
+            (
+                "GET /api/family/signin/redeem/Id-9?f=json",
+                "GET /api/family/signin/redeem/***?f=json",
+            ),
+            ("POST /api/family/signin/start", "POST /api/family/signin/start"),
+            ("POST /api/family/signin/redeem", "POST /api/family/signin/redeem"),
+            (
+                "/rest/putFamilySignInBox?u=a&t=T&s=S&token=K&box=B",
+                "/rest/putFamilySignInBox?u=a&t=***&s=***&token=***&box=***",
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(redact(text), expected, "{text}");
         }
     }
 

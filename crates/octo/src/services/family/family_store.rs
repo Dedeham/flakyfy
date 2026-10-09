@@ -1,6 +1,7 @@
-//! `family.json`: the owner, the members, their devices (secrets sealed), devices seen for the
-//! owner and unmanaged accounts, invites and pairing codes. Invite tokens and pairing codes are
-//! kept only as SHA-256 hashes.
+//! `family.json`: the owner, the members (their account passwords sealed), the devices they
+//! were seen signing in with, devices seen for the owner and unmanaged accounts, and invites.
+//! Invite tokens are kept only as SHA-256 hashes. Devices hold no secret: older files that kept
+//! one, or pairing codes, still load and lose them at the next write.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,7 +11,7 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::{Abilities, Preset};
 use octo_core::family::codes::constant_time_eq;
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::family::quality::{DeviceQualityMode, QualityPreference};
 use octo_core::json::datetime;
 use parking_lot::Mutex;
@@ -87,7 +88,8 @@ pub struct Member {
     pub personal_library_id: Option<i64>,
     #[serde(default)]
     pub shared_libraries: SharedLibraries,
-    /// The account password's Argon2id hash; empty until the member sets one.
+    /// The account password, sealed with the family key; empty until the member signs up. A
+    /// hash kept before one login opens to nothing, so that member needs a password reset.
     #[serde(default)]
     pub account_password: String,
     #[serde(with = "datetime::utc")]
@@ -102,6 +104,17 @@ impl Member {
     /// The member's abilities: their preset with their edits.
     pub fn abilities(&self) -> Abilities {
         Abilities::for_member(self.preset, &self.edits).0
+    }
+
+    /// Whether the member has signed up (chose a password at some point).
+    pub fn signed_up(&self) -> bool {
+        !self.account_password.is_empty()
+    }
+
+    /// Whether the member has an account password kept the sealed way. One who signed up
+    /// before one login has not, and needs a reset.
+    pub fn has_password(&self) -> bool {
+        self.account_password.starts_with(SEALED_PREFIX)
     }
 
     /// The name shown for the member: their display name, or their username.
@@ -124,23 +137,6 @@ pub struct Invite {
     pub expires: DateTime<Utc>,
 }
 
-/// A pairing code waiting for an Octo app.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct PairCode {
-    pub code_hash: String,
-    pub username: String,
-    #[serde(default)]
-    pub device_name: String,
-    #[serde(with = "datetime::utc")]
-    pub expires: DateTime<Utc>,
-    #[serde(default)]
-    pub tries: u32,
-    /// The id the paired device takes. Empty in files written before codes had one.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub device_id: String,
-}
-
 /// The whole file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
@@ -156,7 +152,6 @@ pub struct FamilyFile {
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     pub preferences: IndexMap<String, QualityPreference>,
     pub invites: Vec<Invite>,
-    pub pair_codes: Vec<PairCode>,
 }
 
 impl Default for FamilyFile {
@@ -169,31 +164,9 @@ impl Default for FamilyFile {
             detected: Vec::new(),
             preferences: IndexMap::new(),
             invites: Vec::new(),
-            pair_codes: Vec::new(),
         }
     }
 }
-
-/// What trying a pairing code came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PairOutcome {
-    /// The code was right: the member, the device name it was made for and the id the device
-    /// takes (empty for a code from an older file). It is used up.
-    Ok {
-        username: String,
-        device_name: String,
-        device_id: String,
-    },
-    /// Not the member's live code (a wrong guess counts against it).
-    Wrong,
-    /// The code was right but too late.
-    Expired,
-    /// Five wrong guesses: the code no longer works.
-    TooManyTries,
-}
-
-/// Wrong guesses a pairing code takes before it stops working.
-pub const PAIR_CODE_TRIES: u32 = 5;
 
 /// Detected devices kept at most; the longest unseen go first.
 pub const DETECTED_LIMIT: usize = 200;
@@ -242,8 +215,7 @@ impl FamilyStore {
         state
             .members
             .iter()
-            .any(|m| m.navidrome_password.starts_with(SEALED_PREFIX))
-            || state.devices.iter().any(|d| d.secret.starts_with(SEALED_PREFIX))
+            .any(|m| m.navidrome_password.starts_with(SEALED_PREFIX) || m.has_password())
     }
 
     pub fn owner(&self) -> String {
@@ -310,8 +282,7 @@ impl FamilyStore {
         self.save();
     }
 
-    /// Removes a member with their devices, invites and pairing codes. Answers whether they
-    /// were there.
+    /// Removes a member with their devices and invites. Answers whether they were there.
     pub fn remove_member(&self, name: &str) -> bool {
         let removed = {
             let mut state = self.state.lock();
@@ -319,7 +290,6 @@ impl FamilyStore {
             state.members.retain(|m| !eq_ignore_case(&m.username, name));
             state.devices.retain(|d| !eq_ignore_case(&d.username, name));
             state.invites.retain(|i| !eq_ignore_case(&i.username, name));
-            state.pair_codes.retain(|c| !eq_ignore_case(&c.username, name));
             before != state.members.len()
         };
         if removed {
@@ -328,7 +298,7 @@ impl FamilyStore {
         removed
     }
 
-    /// The member's signed-in devices.
+    /// The devices the member was seen signing in with.
     pub fn devices_of(&self, name: &str) -> Vec<Device> {
         self.state
             .lock()
@@ -339,7 +309,7 @@ impl FamilyStore {
             .collect()
     }
 
-    /// Every signed-in device of every member.
+    /// Every device of every member.
     pub fn devices(&self) -> Vec<Device> {
         self.state.lock().devices.clone()
     }
@@ -360,7 +330,8 @@ impl FamilyStore {
         self.save();
     }
 
-    /// Signs a device out. Answers whether it was there.
+    /// Takes a device off the list. It is recorded again if it signs in again. Answers whether
+    /// it was there.
     pub fn remove_device(&self, id: &str) -> bool {
         let removed = {
             let mut state = self.state.lock();
@@ -386,29 +357,72 @@ impl FamilyStore {
         true
     }
 
-    /// A member's device was just used: like [`FamilyStore::touch_device`], and the name the
-    /// device gave is kept when it has none yet (a name given at pairing or by a manager
-    /// stays). Answers None when the device is unknown, else whether this is the first time it
-    /// has been seen.
-    pub fn seen_device(
+    /// A member's device signed in and was used: recorded the first time (answering true),
+    /// else its last seen time, app and place change, and the name the device gave is kept when
+    /// it has none yet (a name a manager gave stays). In memory until the next flush.
+    pub fn record_device(
         &self,
         id: &str,
+        username: &str,
         app: &str,
         place: NetworkPlace,
         name: Option<&str>,
         now: DateTime<Utc>,
-    ) -> Option<bool> {
+    ) -> bool {
+        let name = name.map(str::trim).filter(|n| !n.is_empty());
         let mut state = self.state.lock();
-        let device = state.devices.iter_mut().find(|d| d.id == id)?;
-        let first = device.last_seen.is_none();
-        touch(device, app, place, now);
-        if let Some(name) = name.filter(|n| !n.trim().is_empty())
-            && device.name.trim().is_empty()
-        {
-            device.name = name.to_string();
-        }
+        let first = match state.devices.iter_mut().find(|d| d.id == id) {
+            Some(device) => {
+                touch(device, app, place, now);
+                if let Some(name) = name
+                    && device.name.trim().is_empty()
+                {
+                    device.name = name.to_string();
+                }
+                false
+            }
+            None => {
+                let app = app_label_kept(app);
+                state.devices.push(Device {
+                    id: id.to_string(),
+                    username: username.to_string(),
+                    name: name.unwrap_or_default().to_string(),
+                    created: now,
+                    last_seen: Some(now),
+                    app: app.clone(),
+                    place,
+                    seen_apps: if app.is_empty() { Vec::new() } else { vec![app] },
+                    navidrome_jwt: None,
+                    quality: DeviceQualityMode::Account,
+                });
+                true
+            }
+        };
         self.dirty.store(true, Ordering::Release);
-        Some(first)
+        first
+    }
+
+    /// Ends every web player session of `username`: their devices' real Navidrome tokens go,
+    /// so the browser tokens Octo signed for them stop working. Answers how many there were.
+    pub fn drop_web_sessions(&self, username: &str) -> usize {
+        let dropped = {
+            let mut state = self.state.lock();
+            let mut dropped = 0;
+            for device in state
+                .devices
+                .iter_mut()
+                .filter(|d| eq_ignore_case(&d.username, username))
+            {
+                if device.navidrome_jwt.take().is_some() {
+                    dropped += 1;
+                }
+            }
+            dropped
+        };
+        if dropped > 0 {
+            self.save();
+        }
+        dropped
     }
 
     /// Keeps a web device's real Navidrome sign-in (sealed), in memory until the next flush:
@@ -523,8 +537,6 @@ impl FamilyStore {
                     id: id.to_string(),
                     username: username.to_string(),
                     name: name.unwrap_or_default().to_string(),
-                    kind: DeviceKind::Detected,
-                    secret: String::new(),
                     created: now,
                     last_seen: Some(now),
                     app: app.clone(),
@@ -542,6 +554,21 @@ impl FamilyStore {
         };
         self.dirty.store(true, Ordering::Release);
         new
+    }
+
+    /// Takes a device of the owner or an unmanaged account off the list. It is noted again
+    /// the next time it is seen. Answers whether it was there.
+    pub fn forget_detected(&self, id: &str) -> bool {
+        let removed = {
+            let mut state = self.state.lock();
+            let before = state.detected.len();
+            state.detected.retain(|d| d.id != id);
+            before != state.detected.len()
+        };
+        if removed {
+            self.save();
+        }
+        removed
     }
 
     /// Writes the file when a device has been seen since the last write.
@@ -581,106 +608,6 @@ impl FamilyStore {
             self.save();
         }
         found
-    }
-
-    /// Keeps a pairing code for `username`, replacing any code they had. `device_id` is the id
-    /// the device paired with it takes.
-    pub fn add_pair_code(
-        &self,
-        code: &str,
-        username: &str,
-        device_name: &str,
-        expires: DateTime<Utc>,
-        device_id: &str,
-    ) {
-        {
-            let mut state = self.state.lock();
-            state
-                .pair_codes
-                .retain(|c| !eq_ignore_case(&c.username, username));
-            state.pair_codes.push(PairCode {
-                code_hash: sha256_hex(code),
-                username: username.to_string(),
-                device_name: device_name.to_string(),
-                expires,
-                tries: 0,
-                device_id: device_id.to_string(),
-            });
-        }
-        self.save();
-    }
-
-    /// Ends `username`'s pairing code whose device would take `device_id`, while it is still
-    /// unused. A used code is already gone, and another member's code never matches. Answers
-    /// whether a code was ended.
-    pub fn end_pair_code(&self, username: &str, device_id: &str) -> bool {
-        if device_id.is_empty() {
-            return false;
-        }
-        let ended = {
-            let mut state = self.state.lock();
-            let before = state.pair_codes.len();
-            state
-                .pair_codes
-                .retain(|c| !(c.device_id == device_id && eq_ignore_case(&c.username, username)));
-            before != state.pair_codes.len()
-        };
-        if ended {
-            self.save();
-        }
-        ended
-    }
-
-    /// Whether any member has a pairing code that still works.
-    pub fn any_live_pair_code(&self, now: DateTime<Utc>) -> bool {
-        self.state
-            .lock()
-            .pair_codes
-            .iter()
-            .any(|c| c.expires > now && c.tries < PAIR_CODE_TRIES)
-    }
-
-    /// Tries `code` against `username`'s pairing code. A wrong guess counts against that code,
-    /// and the fifth burns it.
-    pub fn take_pair_code(&self, username: &str, code: &str, now: DateTime<Utc>) -> PairOutcome {
-        let hash = sha256_hex(code.trim());
-        let outcome = {
-            let mut state = self.state.lock();
-            let Some(at) = state
-                .pair_codes
-                .iter()
-                .position(|c| eq_ignore_case(&c.username, username))
-            else {
-                return PairOutcome::Wrong;
-            };
-            let entry = &mut state.pair_codes[at];
-            if entry.tries >= PAIR_CODE_TRIES {
-                if entry.expires <= now {
-                    state.pair_codes.remove(at);
-                }
-                PairOutcome::TooManyTries
-            } else if constant_time_eq(entry.code_hash.as_bytes(), hash.as_bytes()) {
-                let entry = state.pair_codes.remove(at);
-                if entry.expires <= now {
-                    PairOutcome::Expired
-                } else {
-                    PairOutcome::Ok {
-                        username: entry.username,
-                        device_name: entry.device_name,
-                        device_id: entry.device_id,
-                    }
-                }
-            } else {
-                entry.tries += 1;
-                if entry.tries >= PAIR_CODE_TRIES {
-                    PairOutcome::TooManyTries
-                } else {
-                    PairOutcome::Wrong
-                }
-            }
-        };
-        self.save();
-        outcome
     }
 
     /// A copy of the whole file, for tests and the Family page's summary.
@@ -741,7 +668,7 @@ mod tests {
             navidrome_password: "sealed:AAAA".into(),
             personal_library_id: Some(3),
             shared_libraries: SharedLibraries::Ids(vec![1]),
-            account_password: "$argon2id$v=19$m=19456,t=2,p=1$salt$hash".into(),
+            account_password: "sealed:CCCC".into(),
             created: now(),
             suspended: false,
             ntfy_topic: String::new(),
@@ -753,8 +680,6 @@ mod tests {
             id: id.to_string(),
             username: user.to_string(),
             name: "Pixel 9".into(),
-            kind: DeviceKind::OctoApp,
-            secret: "sealed:BBBB".into(),
             created: now(),
             last_seen: None,
             app: String::new(),
@@ -771,7 +696,11 @@ mod tests {
         (dir, path)
     }
 
-    const FIXTURE: &str = r#"{"Version":1,"Owner":"winters","Members":[{"Username":"alex","DisplayName":"Alex","Preset":"Listener","Edits":{"OfflineCopies":true},"NavidromeUserId":"a1b2c3","NavidromePassword":"sealed:AAAA","PersonalLibraryId":3,"SharedLibraries":[1],"AccountPassword":"$argon2id$v=19$m=19456,t=2,p=1$salt$hash","Created":"2026-10-20T18:00:00Z","Suspended":false,"NtfyTopic":""}],"Devices":[{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"OctoApp","Secret":"sealed:BBBB","Created":"2026-10-20T18:00:00Z","LastSeen":null,"App":"","Place":"Home","SeenApps":[]}],"Detected":[],"Invites":[{"TokenHash":"abc","Username":"alex","Expires":"2026-10-27T18:00:00Z"}],"PairCodes":[{"CodeHash":"def","Username":"alex","DeviceName":"","Expires":"2026-10-20T18:10:00Z","Tries":0}]}"#;
+    const FIXTURE: &str = r#"{"Version":1,"Owner":"winters","Members":[{"Username":"alex","DisplayName":"Alex","Preset":"Listener","Edits":{"OfflineCopies":true},"NavidromeUserId":"a1b2c3","NavidromePassword":"sealed:AAAA","PersonalLibraryId":3,"SharedLibraries":[1],"AccountPassword":"sealed:CCCC","Created":"2026-10-20T18:00:00Z","Suspended":false,"NtfyTopic":""}],"Devices":[{"Id":"d_1","Username":"alex","Name":"Pixel 9","Created":"2026-10-20T18:00:00Z","LastSeen":null,"App":"","Place":"Home","SeenApps":[]}],"Detected":[],"Invites":[{"TokenHash":"abc","Username":"alex","Expires":"2026-10-27T18:00:00Z"}]}"#;
+
+    /// A file from before one login: an account password hash, device kinds and secrets, and
+    /// pairing codes.
+    const OLD_FIXTURE: &str = r#"{"Version":1,"Owner":"winters","Members":[{"Username":"alex","DisplayName":"Alex","Preset":"Listener","Edits":{"OfflineCopies":true},"NavidromeUserId":"a1b2c3","NavidromePassword":"sealed:AAAA","PersonalLibraryId":3,"SharedLibraries":[1],"AccountPassword":"$argon2id$v=19$m=19456,t=2,p=1$salt$hash","Created":"2026-10-20T18:00:00Z","Suspended":false,"NtfyTopic":""}],"Devices":[{"Id":"d_1","Username":"alex","Name":"Pixel 9","Kind":"OctoApp","Secret":"sealed:BBBB","Created":"2026-10-20T18:00:00Z","LastSeen":null,"App":"","Place":"Home","SeenApps":[]}],"Detected":[],"Invites":[{"TokenHash":"abc","Username":"alex","Expires":"2026-10-27T18:00:00Z"}],"PairCodes":[{"CodeHash":"def","Username":"alex","DeviceName":"","Expires":"2026-10-20T18:10:00Z","Tries":0}]}"#;
 
     #[test]
     fn round_trip_fixture() {
@@ -781,11 +710,30 @@ mod tests {
         assert!(store.load_warning().is_none());
         assert_eq!(store.owner(), "winters");
         assert_eq!(store.member("alex"), Some(member("alex")));
+        assert!(store.member("alex").expect("there").has_password());
         assert_eq!(store.devices_of("alex"), vec![device("d_1", "alex")]);
         assert!(store.has_sealed_secrets());
         // Written back byte for byte.
         store.set_owner("winters");
         assert_eq!(std::fs::read_to_string(&path).expect("reads"), FIXTURE);
+    }
+
+    #[test]
+    fn stored_legacy_device_secrets_load_and_are_dropped() {
+        let (_dir, path) = temp();
+        std::fs::write(&path, OLD_FIXTURE).expect("writes");
+        let store = FamilyStore::new(Some(&path));
+        assert!(store.load_warning().is_none());
+        assert_eq!(store.devices_of("alex"), vec![device("d_1", "alex")]);
+        // The old hash is kept but opens to nothing: Alex signed up, and needs a reset.
+        let alex = store.member("alex").expect("there");
+        assert!(alex.signed_up());
+        assert!(!alex.has_password());
+        store.set_owner("winters");
+        let written = std::fs::read_to_string(&path).expect("reads");
+        for gone in ["Secret", "sealed:BBBB", "Kind", "PairCodes", "CodeHash"] {
+            assert!(!written.contains(gone), "{gone} in {written}");
+        }
     }
 
     #[test]
@@ -861,53 +809,6 @@ mod tests {
     }
 
     #[test]
-    fn pair_code_locks_after_five_tries() {
-        let store = FamilyStore::in_memory();
-        store.add_pair_code("123456", "alex", "Pixel 9", now() + TimeDelta::minutes(10), "");
-        assert!(store.any_live_pair_code(now()));
-        for _ in 0..4 {
-            assert_eq!(store.take_pair_code("alex", "000000", now()), PairOutcome::Wrong);
-        }
-        assert_eq!(
-            store.take_pair_code("alex", "000000", now()),
-            PairOutcome::TooManyTries
-        );
-        // Burned: even the right code no longer works.
-        assert_eq!(
-            store.take_pair_code("alex", "123456", now()),
-            PairOutcome::TooManyTries
-        );
-        assert!(!store.any_live_pair_code(now()));
-    }
-
-    #[test]
-    fn pair_code_works_once_for_its_member_only() {
-        let store = FamilyStore::in_memory();
-        store.add_pair_code(
-            "123456",
-            "alex",
-            "Pixel 9",
-            now() + TimeDelta::minutes(10),
-            "d_pixel",
-        );
-        assert_eq!(store.take_pair_code("sam", "123456", now()), PairOutcome::Wrong);
-        assert_eq!(
-            store.take_pair_code("ALEX", " 123456 ", now()),
-            PairOutcome::Ok {
-                username: "alex".into(),
-                device_name: "Pixel 9".into(),
-                device_id: "d_pixel".into()
-            }
-        );
-        assert_eq!(store.take_pair_code("alex", "123456", now()), PairOutcome::Wrong);
-        store.add_pair_code("654321", "alex", "", now() - TimeDelta::seconds(1), "");
-        assert_eq!(
-            store.take_pair_code("alex", "654321", now()),
-            PairOutcome::Expired
-        );
-    }
-
-    #[test]
     fn corrupt_file_is_kept_aside() {
         let (dir, path) = temp();
         std::fs::write(&path, "{ not json").expect("writes");
@@ -969,28 +870,47 @@ mod tests {
     }
 
     #[test]
-    fn seen_device_reports_the_first_sight_and_keeps_a_given_name() {
+    fn record_device_reports_the_first_sight_and_keeps_a_given_name() {
         let store = FamilyStore::in_memory();
-        let mut unnamed = device("d_1", "alex");
-        unnamed.name = String::new();
-        store.add_device(unnamed);
         store.add_device(device("d_2", "alex"));
         let seen = |id: &str, name: Option<&str>| {
-            store.seen_device(id, "Octo 1.6 (Android)", NetworkPlace::Away, name, now())
+            store.record_device(id, "alex", "Octo 1.6 (Android)", NetworkPlace::Away, name, now())
         };
-        assert_eq!(seen("d_1", Some("Sam\u{2019}s phone")), Some(true));
-        assert_eq!(seen("d_1", Some("Other")), Some(false));
-        assert_eq!(store.device("d_1").expect("there").name, "Sam\u{2019}s phone");
-        // A device named at pairing keeps its name.
-        assert_eq!(seen("d_2", Some("Other")), Some(true));
+        assert!(seen("x_1", Some("Sam\u{2019}s phone")));
+        assert!(!seen("x_1", Some("Other")));
+        let recorded = store.device("x_1").expect("recorded");
+        assert_eq!(recorded.name, "Sam\u{2019}s phone");
+        assert_eq!(recorded.username, "alex");
+        assert_eq!(recorded.app, "Octo 1.6 (Android)");
+        assert_eq!(recorded.last_seen, Some(now()));
+        // A device a manager named keeps its name.
+        assert!(!seen("d_2", Some("Other")));
         assert_eq!(store.device("d_2").expect("there").name, "Pixel 9");
-        assert_eq!(seen("d_9", None), None);
-        assert!(store.set_device_jwt("d_1", Some("sealed:J".into())));
+        assert!(store.set_device_jwt("x_1", Some("sealed:J".into())));
         assert_eq!(
-            store.device("d_1").expect("there").navidrome_jwt.as_deref(),
+            store.device("x_1").expect("there").navidrome_jwt.as_deref(),
             Some("sealed:J")
         );
         assert!(!store.set_device_jwt("d_9", None));
+        // Taken off the list, it is recorded again the next time it signs in.
+        assert!(store.remove_device("x_1"));
+        assert!(store.device("x_1").is_none());
+        assert!(seen("x_1", None));
+    }
+
+    #[test]
+    fn dropping_web_sessions_ends_every_web_player_token_of_the_member() {
+        let store = FamilyStore::in_memory();
+        store.add_device(device("d_1", "alex"));
+        store.add_device(device("d_2", "alex"));
+        store.add_device(device("d_3", "sam"));
+        for id in ["d_1", "d_3"] {
+            assert!(store.set_device_jwt(id, Some("sealed:J".into())));
+        }
+        assert_eq!(store.drop_web_sessions("ALEX"), 1);
+        assert!(store.device("d_1").expect("there").navidrome_jwt.is_none());
+        assert!(store.device("d_3").expect("there").navidrome_jwt.is_some());
+        assert_eq!(store.drop_web_sessions("alex"), 0);
     }
 
     #[test]
@@ -1057,7 +977,6 @@ mod tests {
         let detected = reloaded.detected();
         assert_eq!(detected.len(), 1);
         assert_eq!(detected[0].seen_apps, ["Feishin", "Feishin 0.12"]);
-        assert_eq!(detected[0].kind, DeviceKind::Detected);
         assert_eq!(detected[0].name, "Desk");
         for n in 0..DETECTED_LIMIT + 5 {
             store.note_detected(

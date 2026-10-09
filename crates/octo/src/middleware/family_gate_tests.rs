@@ -29,10 +29,15 @@ use crate::services::family::family_caller;
 use crate::services::family::family_store::SharedLibraries;
 use crate::services::family::member_bridge::FailureThrottle;
 
+/// Alex's one login password, whatever app or page signs in with it.
 const APP_SECRET: &str = "app-secret-1";
-const APP_PASSWORD: &str = "ABCD-EFGH-JKMN-PQRS";
-const ACCOUNT_PASSWORD: &str = "correct horse";
+const ACCOUNT_PASSWORD: &str = APP_SECRET;
 const HIDDEN: &str = "hidden-1";
+
+/// The id Octo gives an app of Alex's that sends no app name, User-Agent or install id.
+fn plain_device() -> String {
+    detected_device_id("alex", &Sighting::default())
+}
 
 /// A Navidrome sign-in Navidrome would hand out: a JWT shape with `sub` and `exp`.
 fn navidrome_jwt(marker: &str) -> String {
@@ -162,18 +167,13 @@ async fn family(enabled: bool) -> Family {
     );
     alex.display_name = "Alex".into();
     alex.shared_libraries = SharedLibraries::All;
-    alex.account_password = passwords::hash(ACCOUNT_PASSWORD);
+    alex.account_password = passwords::seal(&state.family_vault, ACCOUNT_PASSWORD).expect("sealed");
     store.upsert_member(alex);
-    for (id, kind, secret) in [
-        ("d_app", DeviceKind::OctoApp, APP_SECRET),
-        ("d_sub", DeviceKind::SubsonicApp, APP_PASSWORD),
-    ] {
+    for id in ["d_app", "d_sub"] {
         store.add_device(Device {
             id: id.into(),
             username: "alex".into(),
             name: String::new(),
-            kind,
-            secret: state.family_vault.seal(secret).expect("sealed"),
             created: Utc::now(),
             last_seen: None,
             app: String::new(),
@@ -368,11 +368,8 @@ async fn member_token_is_rewritten() {
     );
     assert!(signed_with(&pairs(query), HIDDEN), "{query}");
     assert!(!query.contains(&t));
-    // The app password works too, typed in lower case, and as `enc:` hex.
-    for p in [
-        "abcd-efgh-jkmn-pqrs".to_string(),
-        format!("enc:{}", hex::encode(APP_SECRET)),
-    ] {
+    // The password works plain too, and as `enc:` hex.
+    for p in [APP_SECRET.to_string(), format!("enc:{}", hex::encode(APP_SECRET))] {
         let r = send(
             &f.app,
             Method::GET,
@@ -383,8 +380,14 @@ async fn member_token_is_rewritten() {
         .await;
         assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{p}: {}", r.body);
     }
-    // The device was seen, with its app.
-    let device = f.state.family_store.device("d_app").expect("there");
+    // The device was recorded, with its app.
+    let device = f
+        .state
+        .family_store
+        .devices_of("alex")
+        .into_iter()
+        .find(|d| d.seen_apps.iter().any(|a| a == "Octo 1.6 (Android)"))
+        .expect("recorded");
     assert!(
         device.seen_apps.iter().any(|a| a == "Octo 1.6 (Android)"),
         "{:?}",
@@ -411,7 +414,7 @@ async fn member_form_body_is_rewritten_and_length_fixed() {
     let seen = r.json();
     assert_eq!(seen["user"], "alex");
     assert_eq!(seen["managed"], true);
-    assert_eq!(seen["device"], "d_app");
+    assert_eq!(seen["device"], plain_device());
     let sent_body = seen["body"].as_str().expect("a body");
     assert!(sent_body.starts_with("id=1&id=2&u=alex&t="), "{sent_body}");
     assert!(signed_with(&pairs(sent_body), HIDDEN));
@@ -599,8 +602,6 @@ fn web_device_with(f: &Family, real: &str) -> String {
         id: "d_web".into(),
         username: "alex".into(),
         name: "Navidrome in a browser".into(),
-        kind: DeviceKind::NavidromeWeb,
-        secret: f.state.family_vault.seal("web-secret").expect("sealed"),
         created: Utc::now(),
         last_seen: None,
         app: String::new(),
@@ -698,12 +699,14 @@ async fn member_web_sign_in_returns_device_token() {
         ("alex", "u-alex", false)
     );
     assert_eq!(Some(claims.exp), web_session::unverified_expiry(&real));
-    // The Subsonic pair is the web device's, and signs in through the gate.
+    // The Subsonic pair is the account password's, and signs in through the gate.
     let device = f.state.family_store.device(&claims.did).expect("a web device");
-    assert_eq!(device.kind, DeviceKind::NavidromeWeb);
-    let secret = f.state.family_vault.open_sealed(&device.secret).expect("opens");
+    assert!(device.navidrome_jwt.is_some());
     let salt = answer["subsonicSalt"].as_str().expect("a salt");
-    assert_eq!(answer["subsonicToken"], json!(subsonic_token(&secret, salt)));
+    assert_eq!(
+        answer["subsonicToken"],
+        json!(subsonic_token(ACCOUNT_PASSWORD, salt))
+    );
     let r = send(
         &f.app,
         Method::GET,
@@ -716,15 +719,15 @@ async fn member_web_sign_in_returns_device_token() {
     )
     .await;
     assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
-    // Any device secret signs in too, and the web device is reused.
-    let again = web_login(&f, "abcd-efgh-jkmn-pqrs").await;
+    // Signing in again reuses the web device.
+    let again = web_login(&f, ACCOUNT_PASSWORD).await;
     assert_eq!(again.status, StatusCode::OK);
     let webs: Vec<_> = f
         .state
         .family_store
         .devices_of("alex")
         .into_iter()
-        .filter(|d| d.kind == DeviceKind::NavidromeWeb)
+        .filter(|d| d.navidrome_jwt.is_some())
         .collect();
     assert_eq!(webs.len(), 1);
     // A wrong password is a 401, and Navidrome is never asked.
@@ -840,7 +843,7 @@ async fn refreshed_token_is_swapped() {
         .family_store
         .devices_of("alex")
         .into_iter()
-        .find(|d| d.kind == DeviceKind::NavidromeWeb)
+        .find(|d| d.navidrome_jwt.is_some())
         .expect("a web device");
     let kept = f
         .state
@@ -965,7 +968,11 @@ async fn utf8_device_name_is_decoded() {
     .await;
     assert_eq!(r.json()["user"], "alex");
     assert_eq!(
-        f.state.family_store.device("d_app").expect("there").name,
+        f.state
+            .family_store
+            .device(&plain_device())
+            .expect("recorded")
+            .name,
         "Sam\u{2019}s Caf\u{e9}"
     );
     // A name far too long, or not even UTF-8, is cut or patched, never refused. The owner's
@@ -1196,9 +1203,19 @@ async fn caller_carries_the_account_quality() {
     let r = send(&f.app, Method::GET, "/rest/testEcho?u=winters&t=a&s=b", &[], "").await;
     assert_eq!(r.json()["away"], "DataSaver");
     assert_eq!(r.json()["deviceQuality"], "Account");
-    f.state
-        .family_store
-        .set_device_quality("d_app", octo_core::family::quality::DeviceQualityMode::App);
+    // Alex's app is recorded at its first sign-in; its own choice then rides on each call.
+    send(
+        &f.app,
+        Method::GET,
+        "/rest/testEcho?u=alex&p=app-secret-1",
+        &[],
+        "",
+    )
+    .await;
+    assert!(f.state.family_store.set_device_quality(
+        &plain_device(),
+        octo_core::family::quality::DeviceQualityMode::App
+    ));
     let r = send(
         &f.app,
         Method::GET,
@@ -1308,7 +1325,7 @@ async fn navidrome_web_device_is_reused() {
         .family_store
         .devices_of("alex")
         .into_iter()
-        .filter(|d| d.kind == DeviceKind::NavidromeWeb)
+        .filter(|d| d.navidrome_jwt.is_some())
         .count();
     assert_eq!(webs, 1);
     let device = f.state.family_store.device(&did(&first)).expect("there");

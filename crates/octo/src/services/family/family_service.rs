@@ -8,7 +8,7 @@
 //! puts each over the service that does the work ([`super::hooks`]); the state installs them
 //! once it is built, and tests replace any of them with [`FamilyService::wire`].
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,8 +17,8 @@ use octo_core::common::Clock;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::RequestQuality;
 use octo_core::family::abilities::{Abilities, Preset, Role};
-use octo_core::family::codes::{app_password, device_secret, pair_code, token};
-use octo_core::family::device::{DEVICE_NAME_LIMIT, Device, DeviceKind, NetworkPlace};
+use octo_core::family::codes::{hidden_password, token};
+use octo_core::family::device::{DEVICE_NAME_LIMIT, Device, NetworkPlace};
 use octo_core::family::quality::DeviceQualityMode;
 use octo_core::family::request::{FamilyRequest, RequestKind, RequestState};
 use octo_core::json::datetime;
@@ -29,7 +29,7 @@ use serde_json::{Map, Value, json};
 use tracing::{info, warn};
 
 use super::device_registry::NewDevice;
-use super::family_store::{Member, PairOutcome, SharedLibraries};
+use super::family_store::{Member, SharedLibraries};
 use super::navidrome_admin::{AdminError, NavidromeAdmin, NdLibrary, NdUser};
 use super::passwords;
 use super::request_service::FamilyEvent;
@@ -484,132 +484,6 @@ impl SavedItems for StoreSaved {
 // Throttles
 // ------------------------------------------------------------------------------------------
 
-/// Wrong pairing codes Octo takes in [`PAIR_CAP_WINDOW`] while any code is live, from everyone
-/// together, before it stops taking codes at all.
-pub const PAIR_CAP: usize = 30;
-pub const PAIR_CAP_WINDOW: TimeDelta = TimeDelta::minutes(10);
-/// Wrong pairing codes from one address in [`PAIR_ADDRESS_WINDOW`] before it waits.
-pub const PAIR_ADDRESS_FAILURES: usize = 10;
-pub const PAIR_ADDRESS_WINDOW: TimeDelta = TimeDelta::minutes(15);
-/// Wrong pairing codes from one peer Octo can vouch for (whatever hops it names) in
-/// [`PAIR_ADDRESS_WINDOW`] before it waits. A peer may stand for several people, so it is higher.
-pub const PAIR_PEER_FAILURES: usize = 50;
-/// Wrong pairing codes for one username, from every address together, in
-/// [`PAIR_ADDRESS_WINDOW`] before it waits.
-pub const PAIR_ACCOUNT_FAILURES: usize = 20;
-/// Addresses whose wrong pairing codes are kept at most.
-const PAIR_ADDRESSES: usize = 10_000;
-
-/// The words for every refused pairing code, so a wrong, used, expired or locked code read
-/// alike.
-pub const PAIR_REFUSED: &str = "That code did not work. Ask for a new one.";
-
-/// Counts wrong pairing codes per address, per peer, per username and for everyone together.
-pub struct PairGuard {
-    clock: Clock,
-    by_address: Mutex<HashMap<String, VecDeque<DateTime<Utc>>>>,
-    everyone: Mutex<VecDeque<DateTime<Utc>>>,
-}
-
-impl PairGuard {
-    pub fn new(clock: Clock) -> Self {
-        PairGuard {
-            clock,
-            by_address: Mutex::new(HashMap::new()),
-            everyone: Mutex::new(VecDeque::new()),
-        }
-    }
-
-    fn now(&self) -> DateTime<Utc> {
-        self.clock.now()
-    }
-
-    /// Whether `address` has had too many wrong codes lately.
-    pub fn address_blocked(&self, address: &str) -> bool {
-        let now = self.now();
-        let mut map = self.by_address.lock();
-        let Some(list) = map.get_mut(address) else {
-            return false;
-        };
-        while list.front().is_some_and(|at| now - *at >= PAIR_ADDRESS_WINDOW) {
-            list.pop_front();
-        }
-        list.len() >= PAIR_ADDRESS_FAILURES
-    }
-
-    /// Whether a pairing from `address` behind `peer` for `username` has to wait: too many wrong
-    /// codes from that address, that peer, or for that username lately.
-    pub fn blocked(&self, address: &str, peer: &str, username: &str) -> bool {
-        let now = self.now();
-        let mut map = self.by_address.lock();
-        pair_keys(address, peer, username)
-            .into_iter()
-            .any(|(key, ceiling)| {
-                let Some(list) = map.get_mut(&key) else {
-                    return false;
-                };
-                while list.front().is_some_and(|at| now - *at >= PAIR_ADDRESS_WINDOW) {
-                    list.pop_front();
-                }
-                list.len() >= ceiling
-            })
-    }
-
-    /// One more wrong code from `address` behind `peer` for `username`.
-    pub fn failed_from(&self, address: &str, peer: &str, username: &str) {
-        let keys = pair_keys(address, peer, username);
-        let now = self.now();
-        {
-            let mut map = self.by_address.lock();
-            for (key, _) in &keys[1..] {
-                map.entry(key.clone()).or_default().push_back(now);
-            }
-        }
-        self.failed(&keys[0].0);
-    }
-
-    /// Whether everyone together has had [`PAIR_CAP`] wrong codes in the window.
-    pub fn capped(&self) -> bool {
-        let now = self.now();
-        let mut everyone = self.everyone.lock();
-        while everyone.front().is_some_and(|at| now - *at >= PAIR_CAP_WINDOW) {
-            everyone.pop_front();
-        }
-        everyone.len() >= PAIR_CAP
-    }
-
-    pub fn failed(&self, address: &str) {
-        let now = self.now();
-        {
-            let mut map = self.by_address.lock();
-            if map.len() > PAIR_ADDRESSES {
-                map.retain(|_, list| list.back().is_some_and(|at| now - *at < PAIR_ADDRESS_WINDOW));
-                crate::services::admin::sign_in_throttle::trim_oldest(&mut map, PAIR_ADDRESSES, |list| {
-                    list.back().copied()
-                });
-            }
-            map.entry(address.to_string()).or_default().push_back(now);
-        }
-        let mut everyone = self.everyone.lock();
-        everyone.push_back(now);
-        while everyone.len() > PAIR_CAP * 4 {
-            everyone.pop_front();
-        }
-    }
-}
-
-/// The keys a pairing try counts under, each with its ceiling; the address comes first.
-fn pair_keys(address: &str, peer: &str, username: &str) -> [(String, usize); 3] {
-    [
-        (address.to_string(), PAIR_ADDRESS_FAILURES),
-        (format!("peer|{peer}"), PAIR_PEER_FAILURES),
-        (
-            format!("account|{}", username.trim().to_lowercase()),
-            PAIR_ACCOUNT_FAILURES,
-        ),
-    ]
-}
-
 // ------------------------------------------------------------------------------------------
 // The service
 // ------------------------------------------------------------------------------------------
@@ -650,29 +524,6 @@ pub struct EditMember {
     pub suspended: Option<bool>,
 }
 
-/// A device added from the page or an app: shown once.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceAdded {
-    pub device_id: Option<String>,
-    pub kind: DeviceKind,
-    pub app_password: Option<String>,
-    pub pair_code: Option<String>,
-    pub expires: Option<String>,
-    pub server: String,
-    pub username: String,
-}
-
-/// A paired Octo app (or another app given an app password from a code).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Paired {
-    pub username: String,
-    pub secret: String,
-    pub device_id: String,
-    pub server: String,
-}
-
 /// Turning Family on or off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -706,7 +557,8 @@ pub struct FamilyService {
     pub sign_in_throttle: SignInThrottle,
     /// Wrong invite links, per address.
     pub join_throttle: SignInThrottle,
-    pub pair_guard: PairGuard,
+    /// Signing in on another device with a QR code: the short-lived hand-over records.
+    pub handover: super::handover::Handover,
     /// What the last link probe found.
     links: RwLock<Option<LinkMode>>,
     /// The library ids each member was last given, so a change is sent only once.
@@ -756,11 +608,6 @@ pub fn clean_device_name(name: &str) -> String {
     name.trim().chars().take(DEVICE_NAME_LIMIT).collect()
 }
 
-/// A new device id.
-pub fn new_device_id() -> String {
-    format!("d_{}", &device_secret()[..16])
-}
-
 /// Edit keys as `family.json` keeps them: the ability's name starting with a capital.
 fn stored_edit_key(key: &str) -> String {
     let mut chars = key.chars();
@@ -783,7 +630,7 @@ impl FamilyService {
             hooks: RwLock::new(None),
             sign_in_throttle: SignInThrottle::new().with_clock(clock.clone()),
             join_throttle: SignInThrottle::new().with_clock(clock.clone()),
-            pair_guard: PairGuard::new(clock),
+            handover: super::handover::Handover::new(clock),
             links: RwLock::new(None),
             applied_libraries: Mutex::new(HashMap::new()),
             instance: hex::encode(rand::random::<[u8; 12]>()),
@@ -1014,7 +861,9 @@ impl FamilyService {
                 },
             );
             map.insert("personalLibraryId".into(), json!(m.personal_library_id));
-            map.insert("joined".into(), json!(!m.account_password.is_empty()));
+            map.insert("joined".into(), json!(m.signed_up()));
+            // Signed up before one login: no password kept the sealed way until a reset.
+            map.insert("needsPassword".into(), json!(m.signed_up() && !m.has_password()));
             map.insert("created".into(), json!(datetime::format_utc(&m.created)));
         }
         value
@@ -1027,9 +876,8 @@ impl FamilyService {
             "id": device.id,
             "username": device.username,
             "name": device.name,
-            "kind": device.kind,
             "app": device.app,
-            "created": datetime::format_utc(&device.created),
+            "firstSeen": datetime::format_utc(&device.created),
             "lastSeen": device.last_seen.as_ref().map(datetime::format_utc),
             "place": device.place,
             "playing": hooks.streams.playing(&device.id),
@@ -1204,7 +1052,7 @@ impl FamilyService {
                 .unwrap_or_else(|| username.clone()),
             name => name.to_string(),
         };
-        let hidden = device_secret();
+        let hidden = hidden_password();
         let sealed = state
             .family_vault
             .seal(&hidden)
@@ -1469,7 +1317,8 @@ impl FamilyService {
         Ok(())
     }
 
-    /// A new sign-in link for a member: the join page, where they set their account password.
+    /// A new sign-up link for a member: the join page, where they choose their account
+    /// password. Single use, working for `Family:InviteDays`.
     pub fn invite(&self, state: &AppState, name: &str, base: &str) -> FamilyResult<String> {
         let member = state
             .family_store
@@ -1481,6 +1330,32 @@ impl FamilyService {
             .family_store
             .add_invite(&invite, &member.username, Utc::now() + TimeDelta::days(days));
         Ok(format!("{base}/family/join#invite={invite}"))
+    }
+
+    /// Resets a member's password: the one they have stops working at once, every web player
+    /// and Family page session of theirs ends, and they get a new single-use sign-up link to
+    /// choose another. Answers the link.
+    pub fn reset_password(
+        &self,
+        state: &AppState,
+        actor: &Actor,
+        name: &str,
+        base: &str,
+    ) -> FamilyResult<String> {
+        let mut member = state
+            .family_store
+            .member(name)
+            .ok_or_else(|| FamilyError::NotFound(format!("{name} is not in the family.")))?;
+        if member.signed_up() {
+            // Kept non-empty, so the member still reads as having signed up while the link waits.
+            member.account_password = RESET_MARK.to_string();
+            state.family_store.upsert_member(member.clone());
+        }
+        state.family_store.drop_web_sessions(&member.username);
+        state.browse_sessions.revoke_user(&member.username);
+        let link = self.invite(state, &member.username, base)?;
+        info!("FAMILY password of {} reset by {}", member.username, actor.user);
+        Ok(link)
     }
 
     /// Sets a new hidden Navidrome password for a member and gives them their libraries again.
@@ -1496,7 +1371,7 @@ impl FamilyService {
             )));
         }
         let hooks = self.hooks(state);
-        let hidden = device_secret();
+        let hidden = hidden_password();
         let sealed = state
             .family_vault
             .seal(&hidden)
@@ -1592,30 +1467,25 @@ impl FamilyService {
             ));
         }
         self.join_throttle.succeeded(address);
-        member.account_password = hashed(password).await?;
+        member.account_password = sealed(state, password)?;
         if let Some(name) = display_name.map(str::trim).filter(|n| !n.is_empty()) {
             member.display_name = name.chars().take(64).collect();
         }
         state.family_store.upsert_member(member.clone());
+        state.family_store.drop_web_sessions(&member.username);
         state.browse_sessions.revoke_user(&member.username);
         info!("FAMILY {} joined", member.username);
         Ok(member.username)
     }
 
-    /// Checks a member's account password: whether it is right, or [`passwords::Busy`] when
-    /// no hashing slot came free in time.
-    pub async fn check_member_password(
-        &self,
-        member: &Member,
-        password: &str,
-    ) -> Result<bool, passwords::Busy> {
-        if member.account_password.is_empty() {
-            return Ok(false);
-        }
-        passwords::verify_async(password, &member.account_password).await
+    /// Whether `password` is the member's account password.
+    pub fn check_member_password(state: &AppState, member: &Member, password: &str) -> bool {
+        passwords::matches(&state.family_vault, &member.account_password, password)
     }
 
-    /// Changes a member's account password after checking the current one.
+    /// Changes a member's account password after checking the current one: "sign out
+    /// everywhere". Every app needs the new password, and every web player and Family page
+    /// session of theirs ends.
     pub async fn change_password(
         &self,
         state: &AppState,
@@ -1627,243 +1497,62 @@ impl FamilyService {
             .family_store
             .member(user)
             .ok_or_else(|| FamilyError::NotFound("This account is not in the family.".into()))?;
-        match self.check_member_password(&member, current).await {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(FamilyError::Refused("Your current password is not right.".into()));
-            }
-            Err(passwords::Busy) => return Err(busy()),
+        if !Self::check_member_password(state, &member, current) {
+            return Err(FamilyError::Refused("Your current password is not right.".into()));
         }
         passwords::acceptable(next).map_err(|e| FamilyError::Invalid(e.into()))?;
-        member.account_password = hashed(next).await?;
-        state.family_store.upsert_member(member);
+        member.account_password = sealed(state, next)?;
+        state.family_store.upsert_member(member.clone());
+        state.family_store.drop_web_sessions(&member.username);
+        state.browse_sessions.revoke_user(&member.username);
+        info!("FAMILY {} changed their password", member.username);
         Ok(())
+    }
+
+    /// What `user` signs in with: their username and the server addresses for apps (no
+    /// password: it is the one they chose).
+    pub fn login_json(state: &AppState, user: &str, bases: &super::public_address::LinkBases) -> Value {
+        let username = state
+            .family_store
+            .member(user)
+            .map_or_else(|| user.to_string(), |m| m.username);
+        json!({
+            "username": username,
+            "servers": {
+                "anywhere": bases.anywhere.as_ref().filter(|_| bases.anywhere_available),
+                "home": bases.home,
+            },
+            "anywhereAvailable": bases.anywhere_available,
+            "awayAllowed": bases.away_allowed,
+        })
     }
 
     // --- devices ---------------------------------------------------------------------------
 
-    /// Adds a device for a member: an app password (any Subsonic app, shown once) or a pairing
-    /// code (an Octo app).
-    pub fn add_device(
-        &self,
-        state: &AppState,
-        user: &str,
-        name: &str,
-        kind: DeviceKind,
-        base: &str,
-        replaces: &str,
-    ) -> FamilyResult<DeviceAdded> {
-        let member = state
-            .family_store
-            .member(user)
-            .ok_or_else(|| FamilyError::Refused("Only family members add devices here.".into()))?;
-        if member.suspended {
-            return Err(FamilyError::Refused(
-                "This account is paused by the family owner.".into(),
-            ));
-        }
-        let name = clean_device_name(name);
-        let replaces = replaces.trim();
-        if matches!(kind, DeviceKind::SubsonicApp | DeviceKind::OctoApp)
-            && state.family_store.end_pair_code(&member.username, replaces)
-        {
-            info!(
-                "FAMILY unused pairing code ended for {} ({replaces})",
-                member.username
-            );
-        }
-        match kind {
-            DeviceKind::SubsonicApp => {
-                let password = app_password();
-                let device =
-                    self.new_device(state, &member, &name, DeviceKind::SubsonicApp, &password, "", "")?;
-                info!(
-                    "FAMILY app password made for {} ({:?})",
-                    member.username, device.name
-                );
-                Ok(DeviceAdded {
-                    device_id: Some(device.id),
-                    kind,
-                    app_password: Some(password),
-                    pair_code: None,
-                    expires: None,
-                    server: base.to_string(),
-                    username: member.username,
-                })
-            }
-            DeviceKind::OctoApp => {
-                let code = pair_code();
-                let minutes = i64::from(state.settings.current().family.pair_code_minutes.max(1));
-                let expires = Utc::now() + TimeDelta::minutes(minutes);
-                let device_id = new_device_id();
-                state
-                    .family_store
-                    .add_pair_code(&code, &member.username, &name, expires, &device_id);
-                Ok(DeviceAdded {
-                    device_id: Some(device_id),
-                    kind,
-                    app_password: None,
-                    pair_code: Some(code),
-                    expires: Some(datetime::format_utc(&expires)),
-                    server: base.to_string(),
-                    username: member.username,
-                })
-            }
-            DeviceKind::NavidromeWeb | DeviceKind::Detected => Err(FamilyError::Invalid(
-                "Choose OctoApp for an Octo app or SubsonicApp for any other app.".into(),
-            )),
-        }
-    }
-
-    fn new_device(
-        &self,
-        state: &AppState,
-        member: &Member,
-        name: &str,
-        kind: DeviceKind,
-        secret: &str,
-        app: &str,
-        id: &str,
-    ) -> FamilyResult<Device> {
-        let sealed = state
-            .family_vault
-            .seal(secret)
-            .ok_or_else(|| FamilyError::Unavailable("family.key is missing.".into()))?;
-        // A pairing code's id, unless a device has it already.
-        let id = if id.is_empty() || state.family_store.device(id).is_some() {
-            new_device_id()
-        } else {
-            id.to_string()
-        };
-        let device = Device {
-            id,
-            username: member.username.clone(),
-            name: name.to_string(),
-            kind,
-            secret: sealed,
-            created: Utc::now(),
-            last_seen: None,
-            app: app.to_string(),
-            place: NetworkPlace::Home,
-            seen_apps: if app.is_empty() {
-                Vec::new()
-            } else {
-                vec![app.to_string()]
-            },
-            navidrome_jwt: None,
-            quality: DeviceQualityMode::Account,
-        };
-        state.family_store.add_device(device.clone());
-        Ok(device)
-    }
-
-    /// Pairs an app with a member's code. `kind` SubsonicApp gives an app password in place of
-    /// an Octo app's secret, for a person who opened the join link and uses another app.
-    #[allow(clippy::too_many_arguments)]
-    pub fn pair(
-        &self,
-        state: &AppState,
-        address: &str,
-        peer: &str,
-        username: &str,
-        code: &str,
-        device_name: &str,
-        platform: &str,
-        kind: DeviceKind,
-        base: &str,
-    ) -> FamilyResult<Paired> {
-        let refused = || FamilyError::Refused(PAIR_REFUSED.into());
-        let now = Utc::now();
-        if self.pair_guard.blocked(address, peer, username) {
-            return Err(refused());
-        }
-        if self.pair_guard.capped() && state.family_store.any_live_pair_code(now) {
-            if state.family_bridge.may_log("pair-cap") {
-                warn!("FAMILY pairing paused: {PAIR_CAP} wrong codes in 10 minutes");
-            }
-            return Err(refused());
-        }
-        let (username, code_name, code_id) =
-            match state
-                .family_store
-                .take_pair_code(username.trim(), code.trim(), now)
-            {
-                PairOutcome::Ok {
-                    username,
-                    device_name,
-                    device_id,
-                } => (username, device_name, device_id),
-                _ => {
-                    self.pair_guard.failed_from(address, peer, username);
-                    return Err(refused());
-                }
-            };
-        let member = state.family_store.member(&username).ok_or_else(refused)?;
-        if member.suspended {
-            return Err(FamilyError::Refused(
-                "This account is paused by the family owner.".into(),
-            ));
-        }
-        let platform = platform.trim();
-        let name = match clean_device_name(device_name) {
-            name if !name.is_empty() => name,
-            _ if !code_name.trim().is_empty() => code_name,
-            _ if !platform.is_empty() => format!("Octo on {platform}"),
-            _ => "Octo app".to_string(),
-        };
-        let (secret, app) = match kind {
-            DeviceKind::SubsonicApp => (app_password(), String::new()),
-            _ => (
-                device_secret(),
-                if platform.is_empty() {
-                    "Octo".to_string()
-                } else {
-                    format!("Octo ({platform})")
-                },
-            ),
-        };
-        let kind = if kind == DeviceKind::SubsonicApp {
-            kind
-        } else {
-            DeviceKind::OctoApp
-        };
-        let device = self.new_device(state, &member, &name, kind, &secret, &app, &code_id)?;
-        info!(
-            "FAMILY device paired {} {:?} ({})",
-            member.username, device.name, device.app
-        );
-        Ok(Paired {
-            username: member.username,
-            secret,
-            device_id: device.id,
-            server: base.to_string(),
-        })
-    }
-
-    /// Signs a device out. Members sign out their own; managers anyone's but the devices Octo
-    /// only saw (the owner's and accounts outside the family).
-    pub fn sign_out_device(
+    /// Takes a device off the list ("Remove from list"). It is recorded again if it signs in
+    /// again: only a new password keeps it out. Anyone removes their own; managers any member's.
+    pub fn forget_device(
         &self,
         state: &AppState,
         actor: &Actor,
         id: &str,
         as_manager: bool,
     ) -> FamilyResult<()> {
-        let Some(device) = state.family_store.device(id) else {
-            if state.family_store.detected().iter().any(|d| d.id == id) {
-                return Err(FamilyError::Refused(
-                    "Octo did not sign this device in, so it cannot sign it out. Change the account's password in Navidrome instead.".into(),
-                ));
-            }
-            return Err(FamilyError::NotFound("There is no such device.".into()));
-        };
+        let device = state
+            .family_store
+            .device(id)
+            .or_else(|| state.family_store.detected().into_iter().find(|d| d.id == id))
+            .ok_or_else(|| FamilyError::NotFound("There is no such device.".into()))?;
         let own = eq_ignore_case(&device.username, &actor.user);
-        if !own && !as_manager {
+        let a_members = state.family_store.member(&device.username).is_some();
+        if !own && !(as_manager && a_members) {
             return Err(FamilyError::NotFound("There is no such device.".into()));
         }
-        state.family_store.remove_device(&device.id);
+        if !state.family_store.remove_device(&device.id) {
+            state.family_store.forget_detected(&device.id);
+        }
         info!(
-            "FAMILY device signed out {} {:?} by {}",
+            "FAMILY device taken off the list {} {:?} by {}",
             device.username, device.name, actor.user
         );
         Ok(())
@@ -1883,7 +1572,7 @@ impl FamilyService {
             .find(|d| d.id == id)
             .ok_or_else(|| FamilyError::NotFound("There is no such device.".into()))?;
         if let Some(name) = name.map(clean_device_name).filter(|n| !n.is_empty()) {
-            if device.kind == DeviceKind::Detected {
+            if state.family_store.device(id).is_none() {
                 return Err(FamilyError::Invalid(
                     "Octo names this device from what its app sends.".into(),
                 ));
@@ -2163,20 +1852,14 @@ fn api_edits(edits: &Map<String, Value>) -> Map<String, Value> {
         .collect()
 }
 
-/// Every hashing slot stayed busy: the person tries again shortly.
-pub fn busy() -> FamilyError {
-    FamilyError::Throttled(passwords::BUSY.into(), TimeDelta::seconds(5))
-}
+/// What a reset password is kept as until the member chooses a new one: not empty (they
+/// signed up once) and opening to nothing, so no password works.
+pub const RESET_MARK: &str = "reset";
 
-/// An account password's hash, made when a hashing slot is free.
-async fn hashed(password: &str) -> FamilyResult<String> {
-    let hash = passwords::hash_async(password).await.map_err(|_| busy())?;
-    if hash.is_empty() {
-        return Err(FamilyError::Unavailable(
-            "Octo could not save the password. Try again.".into(),
-        ));
-    }
-    Ok(hash)
+/// A new account password, sealed with the family key.
+fn sealed(state: &AppState, password: &str) -> FamilyResult<String> {
+    passwords::seal(&state.family_vault, password)
+        .ok_or_else(|| FamilyError::Unavailable("family.key is missing.".into()))
 }
 
 /// Saves `Family:Enabled` in settings.json and makes it the running value.

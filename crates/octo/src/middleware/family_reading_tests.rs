@@ -19,7 +19,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{TimeZone, Utc};
 use http_body_util::BodyExt;
 use octo_core::family::codes::subsonic_token;
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -262,6 +262,8 @@ async fn family_with(enabled: bool, edits: Value) -> Family {
     let store = &state.family_store;
     store.set_owner("winters");
     let mut alex = member("alex", state.family_vault.seal(HIDDEN).expect("sealed"));
+    alex.account_password =
+        crate::services::family::passwords::seal(&state.family_vault, APP_SECRET).expect("sealed");
     if let Value::Object(edits) = edits {
         alex.edits = edits;
     }
@@ -270,28 +272,20 @@ async fn family_with(enabled: bool, edits: Value) -> Family {
         "sam",
         state.family_vault.seal("hidden-2").expect("sealed"),
     ));
-    store.upsert_member(member(
-        "mira",
-        state.family_vault.seal("hidden-3").expect("sealed"),
-    ));
+    let mut mira = member("mira", state.family_vault.seal("hidden-3").expect("sealed"));
+    mira.account_password =
+        crate::services::family::passwords::seal(&state.family_vault, "mira-secret").expect("sealed");
+    store.upsert_member(mira);
     let real_jwt = navidrome_jwt("alex");
-    for (id, user, kind, secret, jwt) in [
-        ("d_app", "alex", DeviceKind::OctoApp, APP_SECRET, None),
-        (
-            "d_web",
-            "alex",
-            DeviceKind::NavidromeWeb,
-            "web-secret",
-            Some(real_jwt.as_str()),
-        ),
-        ("d_mira", "mira", DeviceKind::OctoApp, "mira-secret", None),
+    for (id, user, jwt) in [
+        ("d_app", "alex", None),
+        ("d_web", "alex", Some(real_jwt.as_str())),
+        ("d_mira", "mira", None),
     ] {
         store.add_device(Device {
             id: id.into(),
             username: user.into(),
             name: String::new(),
-            kind,
-            secret: state.family_vault.seal(secret).expect("sealed"),
             created: Utc::now(),
             last_seen: None,
             app: String::new(),
@@ -1238,7 +1232,7 @@ async fn web_player_sign_ins_from_new_addresses_never_lock_out_a_known_address()
         .mount(&f.server)
         .await;
     let known = "198.51.100.50";
-    assert_eq!(web_sign_in(&f, "web-secret", known).await.status, StatusCode::OK);
+    assert_eq!(web_sign_in(&f, APP_SECRET, known).await.status, StatusCode::OK);
     for n in 0..ACCOUNT_FAILURES {
         let from = format!("203.0.{}.{}", n / 200, n % 200 + 1);
         assert_eq!(
@@ -1247,12 +1241,12 @@ async fn web_player_sign_ins_from_new_addresses_never_lock_out_a_known_address()
         );
     }
     assert_eq!(
-        web_sign_in(&f, "web-secret", "198.51.100.9").await.status,
+        web_sign_in(&f, APP_SECRET, "198.51.100.9").await.status,
         StatusCode::UNAUTHORIZED,
         "a new address waits"
     );
     assert_eq!(
-        web_sign_in(&f, "web-secret", known).await.status,
+        web_sign_in(&f, APP_SECRET, known).await.status,
         StatusCode::OK,
         "a known address does not"
     );

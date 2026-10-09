@@ -588,7 +588,6 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 ("HomeNetworks", n_str(&family.home_networks)),
                 ("TrustedProxies", n_str(&family.trusted_proxies)),
                 ("InviteDays", n_num(family.invite_days)),
-                ("PairCodeMinutes", n_num(family.pair_code_minutes)),
                 (
                     "OwnerSeesMemberLibraries",
                     Node::Bool(family.owner_sees_member_libraries),

@@ -11,21 +11,22 @@
 //!   asked about exactly the sign-in the gate read (a cached ping), and only then is their
 //!   device noted.
 //! - **Subsonic (`/rest`)**: a request whose `u` names a member is checked against the
-//!   member's device secrets (`p`, plain or `enc:` hex, or `t` with `s`, or a browser token
-//!   Octo signed) and rewritten, in the query and in a url-encoded or JSON body, to `u` with a
+//!   member's one account password (`p`, plain or `enc:` hex, or `t` with `s`, or a browser
+//!   token Octo signed for a web player session) and rewritten, in the query and in a url-encoded or JSON body, to `u` with a
 //!   fresh `s` and `t` made from the hidden password. An API key or a `jwt` that turns out to be
 //!   a member's is rewritten the same way. A wrong sign-in is answered with Subsonic error 40
 //!   and never reaches Navidrome; twenty wrong ones from one address for one member in 15
 //!   minutes, or a hundred from the peer that connected, or a hundred for the member from
 //!   addresses that never signed in as them, and the rest are refused unchecked. Addresses that
 //!   did sign in as the member count their wrong tries apart (a hundred more together), so a
-//!   flood from strangers never locks out a device that already has its secret. The owner and
-//!   anyone outside the family pass through exactly as they came.
+//!   flood from strangers never locks out an app that already has the password. The owner and
+//!   anyone outside the family pass through exactly as they came. A member's device is recorded
+//!   only once its sign-in checked out.
 //! - **Paths**: a request is judged by its path as Navidrome may end up reading it
 //!   ([`gate_path`]), so `/rest/%67etNowPlaying`, `/rest/x/../getNowPlaying` and the like meet
 //!   the rules of the endpoint they reach.
-//! - **Navidrome's web player**: a member signs in on `/auth/login` with their account password
-//!   or any device secret. Octo signs in to Navidrome for them and answers with a token of its
+//! - **Navidrome's web player**: a member signs in on `/auth/login` with their account
+//!   password. Octo signs in to Navidrome for them and answers with a token of its
 //!   own; the real one stays on the member's web device and is swapped in on the way to
 //!   Navidrome, and every fresh one Navidrome hands back is swapped for a fresh Octo token.
 //! - **Radio streams** name their listener through the stream's session.
@@ -51,8 +52,8 @@ use futures::StreamExt;
 use http_body_util::BodyExt;
 use indexmap::IndexMap;
 use octo_core::common::dotnet::eq_ignore_case;
-use octo_core::family::codes::{constant_time_eq, device_secret, normalize_app_password, subsonic_token};
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace, client_origin, decode_device_name};
+use octo_core::family::codes::subsonic_token;
+use octo_core::family::device::{Device, NetworkPlace, client_origin, decode_device_name};
 use octo_core::family::endpoints::rest_endpoint_name;
 use octo_subsonic::SubsonicCredential;
 use octo_subsonic::subsonic_request_parser::{
@@ -66,9 +67,7 @@ use crate::http::error::json_relaxed_response;
 use crate::middleware::admin_guard;
 use crate::services::family::audio_gate;
 use crate::services::family::device_registry::detected_device_id;
-use crate::services::family::member_bridge::{
-    self, DeviceSecret, MAX_FAILURES, Rewritten, SignIn, TryKeys, Verdict,
-};
+use crate::services::family::member_bridge::{self, MAX_FAILURES, Rewritten, SignIn, TryKeys, Verdict};
 use crate::services::family::web_session::{self, WebClaims};
 use crate::services::family::{AnswerContext, FamilyCaller, Member, Sighting, passwords, request_rules};
 use crate::services::subsonic::IncomingRequest;
@@ -289,20 +288,18 @@ fn caller_for(
     }
 }
 
-/// The member's devices, each with its secret opened.
-fn device_secrets(state: &AppState, user: &str) -> Vec<DeviceSecret> {
+/// The member's account password, opened: None when they have none kept the sealed way.
+fn account_password(state: &AppState, member: &Member) -> Option<String> {
+    passwords::open(&state.family_vault, &member.account_password)
+}
+
+/// The member's web player session a browser token names, when it is still on: the device it
+/// was made for is theirs and still holds its real Navidrome token.
+fn web_session_device(state: &AppState, user: &str, claims: &WebClaims) -> Option<Device> {
     state
         .family_store
-        .devices_of(user)
-        .into_iter()
-        .filter_map(|device| {
-            Some(DeviceSecret {
-                secret: state.family_vault.open_sealed(&device.secret)?,
-                id: device.id,
-                kind: device.kind,
-            })
-        })
-        .collect()
+        .device(&claims.did)
+        .filter(|d| eq_ignore_case(&d.username, user) && d.navidrome_jwt.is_some())
 }
 
 /// A browser token Octo signed, still good.
@@ -647,8 +644,11 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts, gate_p
     if request.reading.unreadable() {
         return subsonic_error(&state, &request.format, 0, UNREADABLE);
     }
-    // A device pairs before it has a sign-in, so nobody is named on a pairing.
-    if eq_ignore_case(&request.endpoint, "octoFamilyPair") {
+    // A new device redeeming a sign-in hand-over has no sign-in yet, so nobody is named.
+    if ["redeemFamilySignIn", "getFamilySignInRedeem"]
+        .iter()
+        .any(|open| eq_ignore_case(&request.endpoint, open))
+    {
         return pass_rest(&state, request, next, None).await;
     }
     let sign_in = SignIn::of(&request.reading, request.content_type.as_deref());
@@ -684,11 +684,7 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts, gate_p
             let signed = sign_in.jwts.iter().find_map(|jwt| {
                 let claims = web_claims(&state, jwt)?;
                 let member = state.family_store.member(&claims.sub)?;
-                state
-                    .family_store
-                    .device(&claims.did)
-                    .is_some_and(|d| eq_ignore_case(&d.username, &member.username))
-                    .then_some((member, claims.did))
+                web_session_device(&state, &member.username, &claims).map(|device| (member, device.id))
             });
             if let Some((member, device_id)) = signed {
                 return member_rest(&state, request, next, &sign_in, member, Some(Some(device_id))).await;
@@ -894,7 +890,8 @@ fn note_when_checked(
 }
 
 /// A member's `/rest` request. `checked` is None when the sign-in still has to be checked, or
-/// the device (if any) when an API key or a browser token already named the member.
+/// the web player session (if any) when an API key or a browser token already named the
+/// member. Their device is the one the request describes, recorded once the sign-in checks out.
 async fn member_rest(
     state: &AppState,
     request: RestRequest,
@@ -921,28 +918,29 @@ async fn member_rest(
                 log_refusal(state, &user, &request.at, "too many wrong tries");
                 return refuse(WRONG_SIGN_IN);
             }
-            let devices = device_secrets(state, &user);
+            let password = account_password(state, &member);
             let web_device = sign_in
                 .jwts
                 .iter()
                 .filter_map(|jwt| web_claims(state, jwt))
-                .find(|claims| {
-                    eq_ignore_case(&claims.sub, &user) && devices.iter().any(|d| d.id == claims.did)
-                })
-                .map(|claims| claims.did);
-            match member_bridge::verify(&devices, sign_in, web_device.as_deref()) {
-                Verdict::Verified { device_id } => Some(device_id),
+                .filter(|claims| eq_ignore_case(&claims.sub, &user))
+                .find_map(|claims| web_session_device(state, &user, &claims))
+                .map(|device| device.id);
+            match member_bridge::verify(password.as_deref(), sign_in, web_device.is_some()) {
+                Verdict::Verified => web_device,
                 Verdict::Missing => {
                     return subsonic_error(state, &request.format, 10, "Required parameter is missing.");
                 }
                 Verdict::Refused => {
                     throttle.failed_by(&keys);
-                    log_refusal(state, &user, &request.at, "a wrong secret");
+                    log_refusal(state, &user, &request.at, "a wrong password");
                     return refuse(WRONG_SIGN_IN);
                 }
             }
         }
     };
+    // The app's own device, told apart by what it sends, unless a web player session named it.
+    let device_id = device_id.or_else(|| Some(detected_device_id(&user, &request.seen)));
     // The sign-in checked out, so tries from this address no longer count with strangers'.
     state.family_bridge.known.signed_in(&request.at.address, &user);
     if member.suspended {
@@ -1300,7 +1298,7 @@ async fn native(state: AppState, req: Request, next: Next, at: Whereabouts, gate
     let (Some(member), Some(device)) = (member, device) else {
         return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
     };
-    if !eq_ignore_case(&device.username, &member.username) || device.kind != DeviceKind::NavidromeWeb {
+    if !eq_ignore_case(&device.username, &member.username) {
         let keys = try_keys(&state, &at, &member.username);
         state.family_bridge.throttle.failed_by(&keys);
         return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
@@ -1378,34 +1376,6 @@ async fn pass_native(
     response
 }
 
-/// Whether `password` is the member's account password or one of their device secrets.
-/// Answers the device whose secret it was, if it was one; [`passwords::Busy`] when the account
-/// password could not be checked for want of a hashing slot.
-async fn web_password_ok(
-    state: &AppState,
-    member: &Member,
-    password: &str,
-) -> Result<(bool, Option<DeviceSecret>), passwords::Busy> {
-    for device in device_secrets(state, &member.username) {
-        let exact = constant_time_eq(password.as_bytes(), device.secret.as_bytes());
-        let typed = device.kind == DeviceKind::SubsonicApp
-            && constant_time_eq(
-                normalize_app_password(password).as_bytes(),
-                normalize_app_password(&device.secret).as_bytes(),
-            );
-        if exact || typed {
-            return Ok((true, Some(device)));
-        }
-    }
-    if member.account_password.is_empty() {
-        return Ok((false, None));
-    }
-    Ok((
-        passwords::verify_async(password, &member.account_password).await?,
-        None,
-    ))
-}
-
 /// Navidrome's own sign-in for a member, with the hidden password.
 async fn navidrome_login(
     state: &AppState,
@@ -1462,20 +1432,12 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
     let keys = try_keys(&state, &at, &user);
     let throttle = &state.family_bridge.throttle;
     // The try counts before the password is checked, so tries sent all at once cannot each
-    // pass the throttle while the others are still being checked. A right one is forgiven, and
-    // so is one that could not be checked at all.
+    // pass the throttle while the others are still being checked. A right one is forgiven.
     if !throttle.attempt_by(&keys) {
         log_refusal(&state, &user, &at, "too many wrong tries");
         return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
-    let (ok, matched) = match web_password_ok(&state, &member, &password).await {
-        Ok(checked) => checked,
-        Err(passwords::Busy) => {
-            throttle.forgive_by(&keys);
-            return native_refusal(StatusCode::TOO_MANY_REQUESTS, passwords::BUSY);
-        }
-    };
-    if !ok {
+    if !passwords::matches(&state.family_vault, &member.account_password, &password) {
         log_refusal(&state, &user, &at, "a wrong password");
         return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
@@ -1524,72 +1486,65 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
             "Navidrome did not sign this account in.",
         );
     };
-    let sealed_real = state.family_vault.seal(&real);
-    let device = web_device(&state, &member, matched.as_ref(), sealed_real);
-    let Some(secret) = state.family_vault.open_sealed(&device.secret) else {
-        return native_refusal(StatusCode::UNAUTHORIZED, NEEDS_REPAIR);
+    let seen = Sighting {
+        client: "NavidromeUI".into(),
+        ..sighting(&parts.headers, &Parameters::new())
     };
+    let sealed_real = state.family_vault.seal(&real);
+    let device = web_device(&state, &member, &seen, &at, sealed_real);
     let uid = fields.get("id").and_then(Value::as_str).map(str::to_string);
     let Some(octo) = mint_for(&state, &member, &device.id, &real, uid.as_deref()) else {
         return native_refusal(StatusCode::UNAUTHORIZED, NEEDS_REPAIR);
     };
     let salt = hex::encode(rand::random::<[u8; 6]>());
     fields.insert("token".into(), Value::String(octo));
+    // The web player signs its Subsonic calls with the account password the member typed.
     fields.insert(
         "subsonicToken".into(),
-        Value::String(subsonic_token(&secret, &salt)),
+        Value::String(subsonic_token(&password, &salt)),
     );
     fields.insert("subsonicSalt".into(), Value::String(salt));
-    let seen = Sighting {
-        client: "NavidromeUI".into(),
-        ..sighting(&parts.headers, &Parameters::new())
-    };
     let caller = member_caller(&state, &member, Some(device.id.clone()), &at);
     state.family_devices.seen(&caller, &seen);
     json_relaxed_response(StatusCode::OK, &Value::Object(fields), "application/json").into_response()
 }
 
-/// The member's web device to keep this sign-in on: the one whose secret they typed, else
-/// the one they used last, else a new one. Its real Navidrome token becomes `sealed_real`.
+/// The member's web device for this sign-in (the browser, told apart by what it sends),
+/// recorded if it is new; its web player session becomes `sealed_real`.
 fn web_device(
     state: &AppState,
     member: &Member,
-    matched: Option<&DeviceSecret>,
+    seen: &Sighting,
+    at: &Whereabouts,
     sealed_real: Option<String>,
 ) -> Device {
     let store = &state.family_store;
-    let existing = matched
-        .filter(|d| d.kind == DeviceKind::NavidromeWeb)
-        .and_then(|d| store.device(&d.id))
-        .or_else(|| {
-            store
-                .devices_of(&member.username)
-                .into_iter()
-                .filter(|d| d.kind == DeviceKind::NavidromeWeb)
-                .max_by_key(|d| d.last_seen.unwrap_or(d.created))
-        });
-    if let Some(mut device) = existing {
-        store.set_device_jwt(&device.id, sealed_real.clone());
-        device.navidrome_jwt = sealed_real;
-        return device;
+    let id = detected_device_id(&member.username, seen);
+    let app = octo_core::family::device::app_label(&seen.client, &seen.user_agent);
+    if store.record_device(
+        &id,
+        &member.username,
+        &app,
+        at.place,
+        Some(WEB_DEVICE_NAME),
+        Utc::now(),
+    ) {
+        info!("FAMILY web player signed in for {}", member.username);
     }
-    let device = Device {
-        id: format!("d_{}", &device_secret()[..16]),
+    store.set_device_jwt(&id, sealed_real);
+    store.flush_if_dirty();
+    store.device(&id).unwrap_or_else(|| Device {
+        id,
         username: member.username.clone(),
         name: WEB_DEVICE_NAME.to_string(),
-        kind: DeviceKind::NavidromeWeb,
-        secret: state.family_vault.seal(&device_secret()).unwrap_or_default(),
         created: Utc::now(),
         last_seen: None,
-        app: String::new(),
-        place: NetworkPlace::Home,
+        app,
+        place: at.place,
         seen_apps: Vec::new(),
-        navidrome_jwt: sealed_real,
+        navidrome_jwt: None,
         quality: Default::default(),
-    };
-    store.add_device(device.clone());
-    info!("FAMILY web player signed in for {}", member.username);
-    device
+    })
 }
 
 #[cfg(test)]

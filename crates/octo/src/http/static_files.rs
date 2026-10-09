@@ -37,10 +37,12 @@ pub const WWWROOT_ENV: &str = "OCTO_WWWROOT";
 pub const ASSETS_ENV: &str = "OCTO_ASSETS";
 
 /// The Family pages' short addresses and the files they serve: `/family` (and `/family/`) is
-/// the Family page, `/family/join` the page a join link or QR code opens.
-pub const FAMILY_PAGES: [(&str, &str); 2] = [
+/// the Family page, `/family/join` the page an invite link or QR code opens, and
+/// `/family/signin` the page a sign-in hand-over QR code opens on a new device.
+pub const FAMILY_PAGES: [(&str, &str); 3] = [
     ("/family", "/family/index.html"),
     ("/family/join", "/family/join.html"),
+    ("/family/signin", "/family/signin.html"),
 ];
 
 /// Where the static files come from.

@@ -536,7 +536,7 @@ async fn a_members_own_album_stands_in_for_its_outside_version_in_their_own_sear
     use crate::services::family::library_index::scope_for_tests;
     use crate::services::family::member_credentials::tests::member;
     use octo_core::family::abilities::Preset;
-    use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+    use octo_core::family::device::{Device, NetworkPlace};
     use octo_core::settings::FamilySettings;
 
     let navidrome = MockServer::start().await;
@@ -592,16 +592,14 @@ async fn a_members_own_album_stands_in_for_its_outside_version_in_their_own_sear
         let mut person = member(name, state.family_vault.seal("hidden").expect("sealed"));
         person.preset = Preset::Listener;
         person.personal_library_id = Some(library);
+        person.account_password =
+            crate::services::family::passwords::seal(&state.family_vault, &format!("{name}-secret"))
+                .expect("sealed");
         state.family_store.upsert_member(person);
         state.family_store.add_device(Device {
             id: format!("d_{name}"),
             username: name.into(),
             name: String::new(),
-            kind: DeviceKind::OctoApp,
-            secret: state
-                .family_vault
-                .seal(&format!("{name}-secret"))
-                .expect("sealed"),
             created: chrono::Utc::now(),
             last_seen: None,
             app: String::new(),

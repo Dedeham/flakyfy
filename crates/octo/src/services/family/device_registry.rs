@@ -1,8 +1,8 @@
 //! What Octo knows of the devices people listen on: when each was last seen, from where, with
-//! which app and under which name. Members' devices are the ones they signed in; for the owner
-//! and accounts outside the family, devices are told apart by what the app sends
-//! ([`detected_device_id`]). Everything here changes memory only; the store's flush worker
-//! writes it every 30 seconds.
+//! which app and under which name. Nobody sets a device up: every device is told apart by what
+//! its app sends ([`detected_device_id`]) and recorded the first time it signs in. A member's
+//! device is recorded only after its sign-in checked out. Everything here changes memory only;
+//! the store's flush worker writes it every 30 seconds.
 //!
 //! The first time a device is seen, a [`NewDevice`] goes out to whoever listens
 //! ([`DeviceRegistry::subscribe`]), for the "new device" notice.
@@ -31,7 +31,7 @@ pub struct NewDevice {
     /// The name the device gave, if any.
     pub name: String,
     pub place: NetworkPlace,
-    /// A member's signed-in device (true), or a detected device of the owner (false).
+    /// A member's device (true), or a device of the owner (false).
     pub managed: bool,
 }
 
@@ -49,9 +49,9 @@ pub struct Sighting {
     pub navidrome_client_id: Option<String>,
 }
 
-/// The id of a device Octo did not sign in: a SHA-256 of the user and the Octo app's install
-/// id when it sends one, else of the user, the client name, the User-Agent's product (without
-/// its version, so an update is the same device) and Navidrome's client id.
+/// The id of a device: a SHA-256 of the user and the Octo app's install id when it sends one,
+/// else of the user, the client name, the User-Agent's product (without its version, so an
+/// update is the same device) and Navidrome's client id.
 pub fn detected_device_id(user: &str, sighting: &Sighting) -> String {
     let user = user.trim().to_lowercase();
     let text = match sighting
@@ -147,8 +147,9 @@ impl DeviceRegistry {
         self.events.subscribe()
     }
 
-    /// The caller's device was used now: its last seen time, app, place and name are kept.
-    /// The first sighting of a member's device, or of a new device of the owner, is announced.
+    /// The caller's device was used now, after a checked sign-in: recorded the first time,
+    /// else its last seen time, app, place and name are kept. The first sighting of a member's
+    /// device, or of a new device of the owner, is announced.
     pub fn seen(&self, caller: &FamilyCaller, sighting: &Sighting) {
         let Some(device_id) = caller.device_id.as_deref() else {
             return;
@@ -162,9 +163,14 @@ impl DeviceRegistry {
         };
         let now = Utc::now();
         let first = if caller.managed {
-            self.store
-                .seen_device(device_id, &app, caller.place, sighting.name.as_deref(), now)
-                .unwrap_or(false)
+            self.store.record_device(
+                device_id,
+                &caller.user,
+                &app,
+                caller.place,
+                sighting.name.as_deref(),
+                now,
+            )
         } else {
             let new = self.store.note_detected(
                 device_id,
@@ -195,7 +201,6 @@ mod tests {
     use super::*;
     use crate::services::family::member_credentials::tests::member;
     use octo_core::family::abilities::{Abilities, Preset};
-    use octo_core::family::device::{Device, DeviceKind};
 
     fn sighting(device: Option<&str>, client: &str, ua: &str) -> Sighting {
         Sighting {
@@ -238,36 +243,26 @@ mod tests {
         let store = Arc::new(FamilyStore::in_memory());
         store.set_owner("winters");
         store.upsert_member(member("alex", String::new()));
-        store.add_device(Device {
-            id: "d_1".into(),
-            username: "alex".into(),
-            name: String::new(),
-            kind: DeviceKind::OctoApp,
-            secret: String::new(),
-            created: Utc::now(),
-            last_seen: None,
-            app: String::new(),
-            place: NetworkPlace::Home,
-            seen_apps: Vec::new(),
-            navidrome_jwt: None,
-            quality: Default::default(),
-        });
         let registry = DeviceRegistry::new(store.clone());
         let mut events = registry.subscribe();
 
-        let mut alex = FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener));
-        alex.device_id = Some("d_1".into());
-        let mut seen = sighting(None, "Octo", "Octo/1.6 (Android)");
+        let mut seen = sighting(Some("install-1"), "Octo", "Octo/1.6 (Android)");
         seen.name = Some("Pixel 9".into());
+        let id = detected_device_id("alex", &seen);
+        let mut alex = FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener));
+        alex.device_id = Some(id.clone());
+        assert!(store.device(&id).is_none(), "nothing set up beforehand");
         registry.seen(&alex, &seen);
         registry.seen(&alex, &seen);
         let event = events.try_recv().expect("one notice");
-        assert_eq!(event.device_id, "d_1");
+        assert_eq!(event.device_id, id);
         assert_eq!(event.app, "Octo 1.6 (Android)");
         assert_eq!(event.name, "Pixel 9");
         assert!(event.managed);
         assert!(events.try_recv().is_err(), "only the first sighting");
-        assert_eq!(store.device("d_1").expect("there").name, "Pixel 9");
+        let recorded = store.device(&id).expect("recorded");
+        assert_eq!(recorded.name, "Pixel 9");
+        assert_eq!(recorded.username, "alex");
 
         // The owner's new device is announced once; someone outside the family's is not.
         let mut owner = FamilyCaller::unmanaged("winters", true);

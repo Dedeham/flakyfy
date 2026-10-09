@@ -14,7 +14,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use http_body_util::BodyExt;
 use octo_core::family::abilities::Preset;
-use octo_core::family::device::{Device, DeviceKind, NetworkPlace};
+use octo_core::family::device::{Device, NetworkPlace};
 use octo_core::family::quality::{DeviceQualityMode, QualityPreference, StreamQuality};
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
@@ -25,10 +25,11 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::{App, build_with};
+use crate::services::family::device_registry::{Sighting, detected_device_id};
 use crate::services::family::member_credentials::tests::member;
 
+/// Alex's one login password.
 const APP_SECRET: &str = "app-secret-1";
-const APP_PASSWORD: &str = "ABCD-EFGH-JKMN-PQRS";
 const HOME: &str = "192.168.1.5";
 const AWAY: &str = "203.0.113.9";
 const LIBRARY_AUDIO: &str = "library-audio-bytes";
@@ -62,8 +63,30 @@ impl Alex {
     }
 }
 
-/// The owner `winters` and Alex (an Octo app `d_app` and a Subsonic app `d_sub`), over a
-/// Navidrome that answers every call.
+/// The id Octo gives Alex's Octo app ([`ALEX`], `c=Octo`).
+fn d_app() -> String {
+    detected_device_id(
+        "alex",
+        &Sighting {
+            client: "Octo".into(),
+            ..Default::default()
+        },
+    )
+}
+
+/// The id Octo gives Alex's Symfonium ([`ALEX_SUB`]).
+fn d_sub() -> String {
+    detected_device_id(
+        "alex",
+        &Sighting {
+            client: "Symfonium".into(),
+            ..Default::default()
+        },
+    )
+}
+
+/// The owner `winters` and Alex (the Octo app [`d_app`] and Symfonium [`d_sub`], both seen
+/// before), over a Navidrome that answers every call.
 async fn family(enabled: bool, alex: Alex, configure: impl FnOnce(&mut AppSettings)) -> Family {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -94,6 +117,8 @@ async fn family(enabled: bool, alex: Alex, configure: impl FnOnce(&mut AppSettin
     let store = &state.family_store;
     store.set_owner("winters");
     let mut member_alex = member("alex", state.family_vault.seal("hidden-1").expect("sealed"));
+    member_alex.account_password =
+        crate::services::family::passwords::seal(&state.family_vault, APP_SECRET).expect("sealed");
     member_alex.preset = alex.preset;
     if let Value::Object(edits) = alex.edits {
         member_alex.edits = edits;
@@ -102,19 +127,17 @@ async fn family(enabled: bool, alex: Alex, configure: impl FnOnce(&mut AppSettin
     let mut sam = member("sam", state.family_vault.seal("hidden-2").expect("sealed"));
     sam.personal_library_id = Some(7);
     store.upsert_member(sam);
-    for (id, kind, secret, name) in [
-        ("d_app", DeviceKind::OctoApp, APP_SECRET, "Alex's phone"),
-        ("d_sub", DeviceKind::SubsonicApp, APP_PASSWORD, "Pixel 9"),
+    for (id, name, app) in [
+        (d_app(), "Alex's phone", "Octo"),
+        (d_sub(), "Pixel 9", "Symfonium"),
     ] {
         store.add_device(Device {
-            id: id.into(),
+            id,
             username: "alex".into(),
             name: name.into(),
-            kind,
-            secret: state.family_vault.seal(secret).expect("sealed"),
             created: Utc::now(),
             last_seen: None,
-            app: String::new(),
+            app: app.into(),
             place: NetworkPlace::Home,
             seen_apps: Vec::new(),
             navidrome_jwt: None,
@@ -278,7 +301,7 @@ fn value<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
 }
 
 const ALEX: &str = "u=alex&p=app-secret-1&v=1.16.1&c=Octo&f=json";
-const ALEX_SUB: &str = "u=alex&p=ABCD-EFGH-JKMN-PQRS&v=1.16.1&c=Symfonium&f=json";
+const ALEX_SUB: &str = "u=alex&p=app-secret-1&v=1.16.1&c=Symfonium&f=json";
 const OWNER: &str = "u=winters&t=abc&s=def&v=1.16.1&c=Feishin&f=json";
 
 /// A Navidrome browser token for `sub`, as the web player would carry it.
@@ -304,8 +327,6 @@ fn octo_web_token(f: &Family) -> String {
         id: "d_web".into(),
         username: "alex".into(),
         name: "Navidrome in a browser".into(),
-        kind: DeviceKind::NavidromeWeb,
-        secret: f.state.family_vault.seal("web-secret").expect("sealed"),
         created: Utc::now(),
         last_seen: None,
         app: String::new(),
@@ -773,7 +794,7 @@ async fn app_mode_ignores_account_preference() {
     assert!(
         f.state
             .family_store
-            .set_device_quality("d_app", DeviceQualityMode::App)
+            .set_device_quality(&d_app(), DeviceQualityMode::App)
     );
     let _ = get(&f, &format!("/rest/stream?{ALEX}&id=lib-1&format=raw"), AWAY).await;
     let sent = f.streamed().await;
@@ -879,7 +900,7 @@ async fn a_stream_through_the_gate_is_tracked() {
     let live = f.state.family_audio.tracker().live();
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].username, "alex");
-    assert_eq!(live[0].device_id.as_deref(), Some("d_app"));
+    assert_eq!(live[0].device_id.as_deref(), Some(d_app().as_str()));
     assert_eq!(live[0].song_id, "lib-1");
     assert_eq!(live[0].bytes, LIBRARY_AUDIO.len() as u64);
     drop(body);
@@ -918,9 +939,12 @@ async fn offline_purpose_never_counts() {
     // The Pixel keeps playing next to the Octo app's offline copy.
     let live = f.state.family_audio.tracker().live();
     let devices: Vec<Option<&str>> = live.iter().map(|s| s.device_id.as_deref()).collect();
-    assert_eq!(devices, [Some("d_sub"), Some("d_app")]);
+    assert_eq!(devices, [Some(d_sub().as_str()), Some(d_app().as_str())]);
     assert_eq!(
-        f.state.family_audio.tracker().bumped_by("alex", Some("d_sub")),
+        f.state
+            .family_audio
+            .tracker()
+            .bumped_by("alex", Some(d_sub().as_str())),
         None
     );
     // Without offline copies the copy is refused.
@@ -947,13 +971,13 @@ async fn radio_streams_count_on_the_device_that_opened_them() {
         Preset::Listener,
         octo_core::family::abilities::Abilities::preset(Preset::Listener),
     );
-    caller.device_id = Some("d_sub".into());
+    caller.device_id = Some(d_sub());
     f.state
         .family_audio
         .note_radio_sessions(answer.as_bytes(), &caller);
     assert_eq!(
         f.state.family_audio.radio_opener(&token).as_deref(),
-        Some("d_sub")
+        Some(d_sub().as_str())
     );
     assert!(f.state.family_audio.radio_refusal("alex", &token).is_none());
 }
@@ -1269,14 +1293,14 @@ async fn offline_purpose_counts_only_from_a_paired_octo_app() {
         f.state
             .family_audio
             .tracker()
-            .bumped_by("alex", Some("d_app"))
+            .bumped_by("alex", Some(d_app().as_str()))
             .as_deref(),
         Some("Pixel 9")
     );
     let live = f.state.family_audio.tracker().live();
     let pixel = live
         .iter()
-        .find(|s| s.device_id.as_deref() == Some("d_sub"))
+        .find(|s| s.device_id.as_deref() == Some(d_sub().as_str()))
         .expect("the Pixel plays");
     assert_eq!(
         pixel.purpose,
@@ -1467,7 +1491,7 @@ async fn an_owner_named_in_the_address_with_a_guest_sign_in_behind_a_long_bounda
     )
     .await;
     assert!(
-        !r.body.contains("d_app"),
+        !r.body.contains(&d_app()),
         "every member's devices went out: {}",
         r.body
     );
@@ -1487,7 +1511,7 @@ async fn an_owner_in_the_address_and_a_guest_in_a_form_body_is_refused() {
         b"u=guest&p=guest-pw".to_vec(),
     )
     .await;
-    assert!(!r.body.contains("d_app"), "{}", r.body);
+    assert!(!r.body.contains(&d_app()), "{}", r.body);
     assert_eq!(r.error_code(), Some(40), "{}", r.body);
 }
 

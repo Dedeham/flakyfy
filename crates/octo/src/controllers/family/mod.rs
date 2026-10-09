@@ -13,6 +13,7 @@
 pub mod account;
 pub mod address;
 pub mod admin_entry;
+pub mod handover;
 pub mod manage;
 
 #[cfg(test)]
@@ -85,10 +86,11 @@ pub fn routes() -> RouteSet {
             post(join).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
         )
         .route("/api/family/me", get(me))
-        .route("/api/family/me/devices", get(my_devices).post(add_my_device))
+        .route("/api/family/me/login", get(my_login))
+        .route("/api/family/me/devices", get(my_devices))
         .route(
             "/api/family/me/devices/{id}",
-            put(change_my_device).delete(sign_out_my_device),
+            put(change_my_device).delete(forget_my_device),
         )
         .route("/api/family/me/requests", get(my_requests).post(ask))
         .route("/api/family/me/requests/{id}", delete(cancel_my_request))
@@ -112,12 +114,12 @@ pub fn routes() -> RouteSet {
         )
         .route("/api/family/members/{name}/invite", post(invite_member))
         .route("/api/family/members/{name}/repair", post(repair_member))
-        .route("/api/family/members/{name}/devices", post(add_member_device))
+        .route("/api/family/members/{name}/reset", post(reset_member))
         .route("/api/family/requests", get(requests))
         .route("/api/family/requests/{id}/approve", post(approve))
         .route("/api/family/requests/{id}/decline", post(decline))
         .route("/api/family/devices", get(devices))
-        .route("/api/family/devices/{id}", delete(sign_out_device))
+        .route("/api/family/devices/{id}", delete(forget_device))
         .route("/api/family/playlists", get(playlists).post(create_playlist))
         .route(
             "/api/family/playlists/{id}",
@@ -128,6 +130,7 @@ pub fn routes() -> RouteSet {
         .route("/api/family/libraries", get(libraries))
         .route("/api/family/unrated", get(unrated))
         .route("/api/family/unrated/mark", post(mark_unrated))
+        .merge(handover::routes())
         .merge(admin_entry::routes())
 }
 
@@ -247,10 +250,12 @@ fn wrong_sign_in() -> Response {
 async fn check_signed_call(
     state: &AppState,
     reading: &RequestReading,
+    headers: &HeaderMap,
     address: IpAddr,
     peer: IpAddr,
+    place: octo_core::family::device::NetworkPlace,
 ) -> Result<Signed, Response> {
-    use crate::services::family::member_bridge::{self, DeviceSecret, MAX_FAILURES, Verdict};
+    use crate::services::family::member_bridge::{self, MAX_FAILURES, Verdict};
     let sign_in = SignIn::of(reading, None);
     let users = sign_in.named_users();
     let [user] = users.as_slice() else {
@@ -266,20 +271,10 @@ async fn check_signed_call(
         if throttle.blocked_by(&keys) {
             return Err(wrong_sign_in());
         }
-        let devices: Vec<DeviceSecret> = state
-            .family_store
-            .devices_of(&member.username)
-            .into_iter()
-            .filter_map(|d| {
-                Some(DeviceSecret {
-                    secret: state.family_vault.open_sealed(&d.secret)?,
-                    id: d.id,
-                    kind: d.kind,
-                })
-            })
-            .collect();
-        let device_id = match member_bridge::verify(&devices, &sign_in, None) {
-            Verdict::Verified { device_id } => device_id,
+        let password =
+            crate::services::family::passwords::open(&state.family_vault, &member.account_password);
+        match member_bridge::verify(password.as_deref(), &sign_in, false) {
+            Verdict::Verified => {}
             Verdict::Missing => return Err(wrong_sign_in()),
             Verdict::Refused => {
                 throttle.failed_by(&keys);
@@ -290,6 +285,19 @@ async fn check_signed_call(
         if member.suspended {
             return Err(refusal(StatusCode::FORBIDDEN, PAUSED));
         }
+        // The app's own device, told apart by what it sends, as the gate tells it apart, and
+        // recorded now that its sign-in checked out.
+        let seen = crate::middleware::family_gate::sighting(headers, &reading.parameters());
+        let device_id = crate::services::family::device_registry::detected_device_id(&member.username, &seen);
+        let mut caller = crate::services::family::caller::FamilyCaller::member(
+            &member.username,
+            member.preset,
+            member.abilities(),
+        );
+        caller.device_id = Some(device_id.clone());
+        caller.place = place;
+        caller.address = address;
+        state.family_devices.seen(&caller, &seen);
         return Ok(Signed {
             actor: Actor {
                 user: member.username.clone(),
@@ -422,7 +430,9 @@ impl FromRequestParts<AppState> for Web {
             ),
         );
         let signed_call = match (signed, reading.as_ref()) {
-            (true, Some(reading)) => Some(check_signed_call(state, reading, address, peer).await?),
+            (true, Some(reading)) => {
+                Some(check_signed_call(state, reading, &parts.headers, address, peer, place).await?)
+            }
             _ => None,
         };
         Ok(Web {

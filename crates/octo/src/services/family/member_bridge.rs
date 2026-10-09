@@ -1,6 +1,7 @@
-//! Members sign in to Octo with their device secrets; Octo signs in to Navidrome for them with
-//! a hidden password they never see. This reads the sign-in a Subsonic request carries,
-//! checks it against the member's devices, and rewrites the request to the hidden password.
+//! Members sign in to Octo with their one account password; Octo signs in to Navidrome for
+//! them with a hidden password they never see. This reads the sign-in a Subsonic request
+//! carries, checks it against the account password, and rewrites the request to the hidden
+//! password.
 //! It also keeps the failure throttle and repairs a hidden password Navidrome stopped taking.
 
 use std::collections::{HashMap, VecDeque};
@@ -12,8 +13,7 @@ use bytes::Bytes;
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::common::Clock;
 use octo_core::common::dotnet::eq_ignore_case;
-use octo_core::family::codes::{constant_time_eq, device_secret, normalize_app_password, subsonic_token};
-use octo_core::family::device::DeviceKind;
+use octo_core::family::codes::{constant_time_eq, hidden_password, subsonic_token};
 use octo_subsonic::subsonic_request_parser::{
     BodyReading, RequestParts, RequestReading, StringValuesCollection, escape_data_string, json_object,
     read_request, unescape_data_string,
@@ -149,68 +149,40 @@ fn distinct_exact(values: &[String]) -> Vec<&str> {
     out
 }
 
-/// One of a member's devices with its secret opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceSecret {
-    pub id: String,
-    pub kind: DeviceKind,
-    pub secret: String,
-}
-
 /// What checking a member's sign-in came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// One of the member's devices signed this request.
-    Verified { device_id: String },
+    /// The member's account password, or one of their web player sessions, signed this
+    /// request.
+    Verified,
     /// A sign-in was there and it was wrong.
     Refused,
     /// No password, token or web token at all.
     Missing,
 }
 
-/// The ways an app password may have been typed: as shown, without dashes, in lower case.
-fn spellings(device: &DeviceSecret) -> Vec<String> {
-    let mut out = vec![device.secret.clone()];
-    if device.kind == DeviceKind::SubsonicApp {
-        let plain = normalize_app_password(&device.secret);
-        for spelling in [plain.clone(), plain.to_lowercase(), device.secret.to_lowercase()] {
-            if !out.contains(&spelling) {
-                out.push(spelling);
-            }
-        }
-    }
-    out
-}
-
-/// Checks a member's sign-in against their devices: `p` (plain or `enc:` hex) equal to a
-/// device secret, or `t` equal to `md5(secret + s)` for one of them, or a web token Octo
-/// signed for one of their devices (`web_device`). App passwords match however they were
-/// typed. Every comparison takes the same time wherever the values differ.
-pub fn verify(devices: &[DeviceSecret], sign_in: &SignIn, web_device: Option<&str>) -> Verdict {
+/// Checks a member's sign-in against their account password (`password`, None when they have
+/// none): `p` (plain or `enc:` hex) equal to it, or `t` equal to `md5(password + s)`, or a web
+/// token Octo signed for one of their web player sessions (`web_session`). Every comparison
+/// takes the same time wherever the values differ.
+pub fn verify(password: Option<&str>, sign_in: &SignIn, web_session: bool) -> Verdict {
     let passwords = distinct_exact(&sign_in.passwords);
     if !passwords.is_empty() {
         if passwords.len() > 1 {
             return Verdict::Refused;
         }
-        let mut password = passwords[0].to_string();
-        if let Some(encoded) = password.strip_prefix("enc:")
+        let mut typed = passwords[0].to_string();
+        if let Some(encoded) = typed.strip_prefix("enc:")
             && let Ok(bytes) = hex::decode(encoded)
         {
-            password = String::from_utf8_lossy(&bytes).into_owned();
+            typed = String::from_utf8_lossy(&bytes).into_owned();
         }
-        let mut found = None;
-        for device in devices {
-            let exact = constant_time_eq(password.as_bytes(), device.secret.as_bytes());
-            let typed = device.kind == DeviceKind::SubsonicApp
-                && constant_time_eq(
-                    normalize_app_password(&password).as_bytes(),
-                    normalize_app_password(&device.secret).as_bytes(),
-                );
-            if (exact || typed) && found.is_none() {
-                found = Some(device.id.clone());
-            }
-        }
-        return found.map_or(Verdict::Refused, |device_id| Verdict::Verified { device_id });
+        let right = password.is_some_and(|password| constant_time_eq(typed.as_bytes(), password.as_bytes()));
+        return if right {
+            Verdict::Verified
+        } else {
+            Verdict::Refused
+        };
     }
     let tokens = distinct_exact(&sign_in.tokens);
     let salts = distinct_exact(&sign_in.salts);
@@ -219,21 +191,17 @@ pub fn verify(devices: &[DeviceSecret], sign_in: &SignIn, web_device: Option<&st
             return Verdict::Refused;
         }
         let token = tokens[0].to_ascii_lowercase();
-        let mut found = None;
-        for device in devices {
-            for spelling in spellings(device) {
-                let expected = subsonic_token(&spelling, salts[0]);
-                if constant_time_eq(expected.as_bytes(), token.as_bytes()) && found.is_none() {
-                    found = Some(device.id.clone());
-                }
-            }
-        }
-        return found.map_or(Verdict::Refused, |device_id| Verdict::Verified { device_id });
-    }
-    if let Some(device_id) = web_device {
-        return Verdict::Verified {
-            device_id: device_id.to_string(),
+        let right = password.is_some_and(|password| {
+            constant_time_eq(subsonic_token(password, salts[0]).as_bytes(), token.as_bytes())
+        });
+        return if right {
+            Verdict::Verified
+        } else {
+            Verdict::Refused
         };
+    }
+    if web_session {
+        return Verdict::Verified;
     }
     if !sign_in.jwts.is_empty() {
         return Verdict::Refused;
@@ -721,7 +689,7 @@ pub async fn repair(
     if member.navidrome_user_id.trim().is_empty() {
         return Err(format!("{user} has no Navidrome account on record"));
     }
-    let hidden = device_secret();
+    let hidden = hidden_password();
     let sealed = vault
         .seal(&hidden)
         .ok_or_else(|| "family.key is missing".to_string())?;
@@ -777,117 +745,89 @@ mod tests {
         assert!(bridge.logged_len() <= MAX_KEYS, "{}", bridge.logged_len());
     }
 
-    fn devices() -> Vec<DeviceSecret> {
-        vec![
-            DeviceSecret {
-                id: "d_app".into(),
-                kind: DeviceKind::OctoApp,
-                secret: "Zx9-secret_value".into(),
-            },
-            DeviceSecret {
-                id: "d_sub".into(),
-                kind: DeviceKind::SubsonicApp,
-                secret: "ABCD-EFGH-JKMN-PQRS".into(),
-            },
-        ]
-    }
+    const PASSWORD: &str = "Zx9-secret value";
 
     fn sign_in(query: &str) -> SignIn {
         SignIn::read(Some(query), None, b"")
     }
 
-    fn verified(id: &str) -> Verdict {
-        Verdict::Verified { device_id: id.into() }
-    }
-
     #[test]
-    fn token_from_any_device_verifies() {
-        let t = subsonic_token("Zx9-secret_value", "c19b2d");
+    fn the_account_password_verifies_as_a_token() {
+        let t = subsonic_token(PASSWORD, "c19b2d");
         assert_eq!(
-            verify(&devices(), &sign_in(&format!("u=alex&t={t}&s=c19b2d")), None),
-            verified("d_app")
+            verify(Some(PASSWORD), &sign_in(&format!("u=alex&t={t}&s=c19b2d")), false),
+            Verdict::Verified
         );
-        let t = subsonic_token("ABCD-EFGH-JKMN-PQRS", "aa");
         assert_eq!(
             verify(
-                &devices(),
-                &sign_in(&format!("u=alex&t={}&s=aa", t.to_uppercase())),
-                None
+                Some(PASSWORD),
+                &sign_in(&format!("u=alex&t={}&s=c19b2d", t.to_uppercase())),
+                false
             ),
-            verified("d_sub")
+            Verdict::Verified
         );
         assert_eq!(
-            verify(&devices(), &sign_in("u=alex&t=0000&s=aa"), None),
+            verify(Some(PASSWORD), &sign_in("u=alex&t=0000&s=aa"), false),
             Verdict::Refused
         );
     }
 
     #[test]
     fn plain_and_enc_passwords_verify() {
+        let plain = format!("u=alex&p={}", escape_data_string(PASSWORD));
+        assert_eq!(verify(Some(PASSWORD), &sign_in(&plain), false), Verdict::Verified);
+        let encoded = format!("enc:{}", hex::encode(PASSWORD));
         assert_eq!(
-            verify(&devices(), &sign_in("u=alex&p=Zx9-secret_value"), None),
-            verified("d_app")
+            verify(Some(PASSWORD), &sign_in(&format!("u=alex&p={encoded}")), false),
+            Verdict::Verified
         );
-        let encoded = format!("enc:{}", hex::encode("Zx9-secret_value"));
+        // The password is exact: case matters.
         assert_eq!(
-            verify(&devices(), &sign_in(&format!("u=alex&p={encoded}")), None),
-            verified("d_app")
-        );
-        // Device secrets are exact: case matters for them.
-        assert_eq!(
-            verify(&devices(), &sign_in("u=alex&p=zx9-secret_value"), None),
+            verify(Some(PASSWORD), &sign_in("u=alex&p=zx9-secret%20value"), false),
             Verdict::Refused
         );
     }
 
     #[test]
-    fn lower_case_app_password_verifies() {
-        for typed in ["abcd-efgh-jkmn-pqrs", "ABCDEFGHJKMNPQRS", "abcd efgh jkmn pqrs"] {
-            let query = format!("u=alex&p={}", escape_data_string(typed));
-            assert_eq!(
-                verify(&devices(), &sign_in(&query), None),
-                verified("d_sub"),
-                "{typed}"
-            );
-        }
-        for typed in ["abcdefghjkmnpqrs", "abcd-efgh-jkmn-pqrs"] {
-            let t = subsonic_token(typed, "s1");
-            assert_eq!(
-                verify(&devices(), &sign_in(&format!("u=alex&t={t}&s=s1")), None),
-                verified("d_sub"),
-                "{typed}"
-            );
-        }
-    }
-
-    #[test]
-    fn other_members_secret_is_refused() {
-        let sams = [DeviceSecret {
-            id: "d_sam".into(),
-            kind: DeviceKind::OctoApp,
-            secret: "sams-secret".into(),
-        }];
+    fn no_password_or_a_wrong_one_is_refused() {
+        // A member with no password kept (never signed up, or from before one login).
+        let t = subsonic_token(PASSWORD, "aa");
         assert_eq!(
-            verify(&sams, &sign_in("u=alex&p=Zx9-secret_value"), None),
+            verify(None, &sign_in(&format!("u=alex&t={t}&s=aa")), false),
+            Verdict::Refused
+        );
+        assert_eq!(
+            verify(None, &sign_in("u=alex&p=anything"), false),
+            Verdict::Refused
+        );
+        assert_eq!(
+            verify(
+                Some("sams password"),
+                &sign_in(&format!("u=alex&t={t}&s=aa")),
+                false
+            ),
             Verdict::Refused
         );
         // Two different passwords, or a token without its salt, are refused too.
         assert_eq!(
-            verify(&devices(), &sign_in("u=alex&p=Zx9-secret_value&p=other"), None),
+            verify(Some(PASSWORD), &sign_in("u=alex&p=x&p=other"), false),
             Verdict::Refused
         );
         assert_eq!(
-            verify(&devices(), &sign_in("u=alex&t=abc"), None),
-            Verdict::Refused
-        );
-        assert_eq!(verify(&devices(), &sign_in("u=alex"), None), Verdict::Missing);
-        assert_eq!(
-            verify(&devices(), &sign_in("u=alex&jwt=x"), None),
+            verify(Some(PASSWORD), &sign_in("u=alex&t=abc"), false),
             Verdict::Refused
         );
         assert_eq!(
-            verify(&devices(), &sign_in("u=alex&jwt=x"), Some("d_web")),
-            verified("d_web")
+            verify(Some(PASSWORD), &sign_in("u=alex"), false),
+            Verdict::Missing
+        );
+        assert_eq!(
+            verify(Some(PASSWORD), &sign_in("u=alex&jwt=x"), false),
+            Verdict::Refused
+        );
+        assert_eq!(
+            verify(Some(PASSWORD), &sign_in("u=alex&jwt=x"), true),
+            Verdict::Verified
         );
     }
 

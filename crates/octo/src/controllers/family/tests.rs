@@ -41,6 +41,9 @@ use crate::services::family::{FamilyStore, Member, RequestStore, SharedLibraries
 #[path = "members_place_tests.rs"]
 mod members_place_tests;
 
+#[path = "login_props_tests.rs"]
+mod login_props_tests;
+
 const HOME: &str = "192.168.1.20";
 const AWAY: &str = "203.0.113.9";
 /// Alex's one login password: what every app of theirs signs in with.

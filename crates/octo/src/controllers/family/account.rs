@@ -131,9 +131,21 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
             );
         }
         // The try counts before the password is checked, so tries sent all at once cannot each
-        // pass the throttle while the others are still being checked.
+        // pass the throttle while the others are still being checked. It counts with the
+        // member's sign-ins everywhere else too (the apps, the web player, signed calls), so
+        // guesses spread over every surface share one account limit.
         if let Some(wait) = throttle.attempt_all(keys) {
             return throttled(wait);
+        }
+        let everywhere = state.family_bridge.try_keys(
+            &web.address,
+            &web.peer,
+            &member.username,
+            crate::services::family::member_bridge::MAX_FAILURES,
+        );
+        if !state.family_bridge.throttle.attempt_by(&everywhere) {
+            throttle.forgive_all(keys);
+            return throttled(crate::services::family::member_bridge::FAILURE_WINDOW);
         }
         if !FamilyService::check_member_password(&state, &member, &request.password) {
             return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password.");
@@ -147,6 +159,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         // This try was right: it is taken back everywhere, and the address's wrong tries at
         // this account are cleared.
         throttle.forgive_all(keys);
+        state.family_bridge.throttle.forgive_by(&everywhere);
         throttle.succeeded(&keys[0].0);
         known(&member.username);
         let token = state
@@ -570,9 +583,15 @@ pub async fn change_password(State(state): State<AppState>, web: Web, body: Byte
         Ok(request) => request,
         Err(res) => return res,
     };
+    let keys = state.family_bridge.try_keys(
+        &web.address,
+        &web.peer,
+        signed.user(),
+        crate::services::family::member_bridge::MAX_FAILURES,
+    );
     match state
         .family
-        .change_password(&state, signed.user(), &request.current, &request.next)
+        .change_password(&state, signed.user(), &request.current, &request.next, &keys)
         .await
     {
         Ok(()) => {

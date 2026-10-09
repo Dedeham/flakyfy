@@ -574,8 +574,10 @@ pub async fn get_family_login(State(state): State<AppState>, req: Request) -> Re
 }
 
 /// `changeFamilyPassword` (form POST): `current`, `next`. "Sign out everywhere": every app
-/// needs the new password, and every web player session ends.
+/// needs the new password, and everything else signed in with the old one ends. A wrong
+/// current password counts as a wrong sign-in from where the call came.
 pub async fn change_family_password(State(state): State<AppState>, req: Request) -> Response {
+    let from = origin_of_client(&state, &req);
     let call = started!(state, req);
     if !call.caller.managed {
         return error(
@@ -585,6 +587,12 @@ pub async fn change_family_password(State(state): State<AppState>, req: Request)
             "Change this account's password in Navidrome.",
         );
     }
+    let keys = state.family_bridge.try_keys(
+        &from.address,
+        &from.peer,
+        &call.caller.user,
+        crate::services::family::member_bridge::MAX_FAILURES,
+    );
     match state
         .family
         .change_password(
@@ -592,6 +600,7 @@ pub async fn change_family_password(State(state): State<AppState>, req: Request)
             &call.caller.user,
             call.call.param("current"),
             call.call.param("next"),
+            &keys,
         )
         .await
     {

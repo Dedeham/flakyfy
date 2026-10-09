@@ -1221,7 +1221,9 @@ fn mint_for(
 }
 
 /// Swaps a fresh Navidrome token in a member's answer for a fresh Octo token, keeping the
-/// real one on the device. No real token ever goes back to a member.
+/// real one on the device. No real token ever goes back to a member, and a session that ended
+/// while the call was with Navidrome (the password changed, say) stays ended: its fresh token is
+/// dropped and no Octo token is made.
 fn swap_answer_token(state: &AppState, response: &mut Response, member: &Member, device_id: &str) {
     let name = header::HeaderName::from_static("x-nd-authorization");
     let Some(value) = response.headers().get(&name).cloned() else {
@@ -1237,7 +1239,9 @@ fn swap_answer_token(state: &AppState, response: &mut Response, member: &Member,
         return;
     }
     let sealed = state.family_vault.seal(&real);
-    state.family_store.set_device_jwt(device_id, sealed);
+    if !state.family_store.renew_web_session(device_id, sealed) {
+        return;
+    }
     if let Some(octo) = mint_for(state, member, device_id, &real, None)
         && let Ok(value) = HeaderValue::from_str(&format!("{prefix}{octo}"))
     {
@@ -1491,7 +1495,11 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
         ..sighting(&parts.headers, &Parameters::new())
     };
     let sealed_real = state.family_vault.seal(&real);
-    let device = web_device(&state, &member, &seen, &at, sealed_real);
+    // The password was checked before Navidrome was asked; a change or reset since then means
+    // this sign-in makes no session.
+    let Some(device) = web_device(&state, &member, &seen, &at, sealed_real) else {
+        return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
+    };
     let uid = fields.get("id").and_then(Value::as_str).map(str::to_string);
     let Some(octo) = mint_for(&state, &member, &device.id, &real, uid.as_deref()) else {
         return native_refusal(StatusCode::UNAUTHORIZED, NEEDS_REPAIR);
@@ -1510,14 +1518,16 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
 }
 
 /// The member's web device for this sign-in (the browser, told apart by what it sends),
-/// recorded if it is new; its web player session becomes `sealed_real`.
+/// recorded if it is new; its web player session becomes `sealed_real`. None when the member's
+/// password is no longer the one `member` was checked with, or they were paused meanwhile: then
+/// no session starts.
 fn web_device(
     state: &AppState,
     member: &Member,
     seen: &Sighting,
     at: &Whereabouts,
     sealed_real: Option<String>,
-) -> Device {
+) -> Option<Device> {
     let store = &state.family_store;
     let id = detected_device_id(&member.username, seen);
     let app = octo_core::family::device::app_label(&seen.client, &seen.user_agent);
@@ -1531,20 +1541,12 @@ fn web_device(
     ) {
         info!("FAMILY web player signed in for {}", member.username);
     }
-    store.set_device_jwt(&id, sealed_real);
+    let started = store.start_web_session(&id, &member.username, &member.account_password, sealed_real);
     store.flush_if_dirty();
-    store.device(&id).unwrap_or_else(|| Device {
-        id,
-        username: member.username.clone(),
-        name: WEB_DEVICE_NAME.to_string(),
-        created: Utc::now(),
-        last_seen: None,
-        app,
-        place: at.place,
-        seen_apps: Vec::new(),
-        navidrome_jwt: None,
-        quality: Default::default(),
-    })
+    if !started {
+        return None;
+    }
+    store.device(&id)
 }
 
 #[cfg(test)]

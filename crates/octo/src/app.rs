@@ -2293,6 +2293,16 @@ impl AppInner {
                 Arc::new(move || store.flush_if_dirty()),
             )
         });
+        // Sign-in hand-overs, and boxes nobody fetched, leave memory once their time is up.
+        let family = self.family.clone();
+        self.workers.register("FamilyHandover", move |token| {
+            let family = family.clone();
+            crate::services::state_file::flush_every(
+                crate::services::family::handover::SWEEP_EVERY,
+                token,
+                Arc::new(move || family.handover.sweep()),
+            )
+        });
         true
     }
 
@@ -3467,6 +3477,13 @@ mod tests {
             .filter(|s| s.name == "FamilyStore")
             .count();
         assert_eq!(flushers, 1);
+        let sweepers = state
+            .workers
+            .status()
+            .into_iter()
+            .filter(|s| s.name == "FamilyHandover")
+            .count();
+        assert_eq!(sweepers, 1, "hand-overs are swept once Family is on");
         let indexes = state
             .workers
             .status()

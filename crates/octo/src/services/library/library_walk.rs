@@ -11,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use octo_core::settings::LibraryActionSettings;
+use octo_core::settings::family::FAMILY_FOLDER;
 
 /// The trash folder of the music folder `root`: `root/<QuarantineDirectory>`, the folder
 /// `LibraryActionQuarantine::root_for` moves files into.
@@ -21,6 +22,13 @@ pub fn trash_folder(root: &Path, settings: &LibraryActionSettings) -> PathBuf {
 /// Whether `folder` is the trash folder (or a folder inside it).
 pub fn is_trash(folder: &Path, trash: Option<&Path>) -> bool {
     trash.is_some_and(|trash| folder.starts_with(trash))
+}
+
+/// Whether a walk of the music folder `root` leaves `folder` out: the trash folder, and the
+/// folder of Family members' music kept next to the library (`.octo-family`), which is theirs
+/// and not part of the owner's library.
+pub fn is_left_out(root: &Path, folder: &Path, trash: Option<&Path>) -> bool {
+    is_trash(folder, trash) || folder == root.join(FAMILY_FOLDER)
 }
 
 /// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)` without the trash folder.
@@ -38,7 +46,7 @@ pub fn all_files(root: &Path, trash: Option<&Path>) -> io::Result<Vec<String>> {
                 kind => kind.is_dir(),
             };
             if is_dir {
-                if !is_trash(&path, trash) {
+                if !is_left_out(root, &path, trash) {
                     folders.push(path);
                 }
             } else {
@@ -85,6 +93,25 @@ mod tests {
             ]
         );
         assert_eq!(all_files(root, None).expect("listed").len(), 3);
+    }
+
+    #[test]
+    fn members_music_next_to_the_library_is_left_out() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let root = dir.path();
+        for path in [
+            "Artist/Album/01 - Song.flac",
+            ".octo-family/alex/Artist/Album/01 - Song.flac",
+            ".octo-family/.pool/Artist/Album/02 - Pooled.flac",
+        ] {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().expect("a folder")).expect("made");
+            std::fs::write(&file, b"x").expect("written");
+        }
+        let walked = all_files(root, None).expect("listed");
+        assert_eq!(walked.len(), 1, "{walked:?}");
+        assert!(walked[0].ends_with("Artist/Album/01 - Song.flac"));
+        assert!(!is_left_out(root, &root.join("Artist/.octo-family"), None));
     }
 
     #[test]

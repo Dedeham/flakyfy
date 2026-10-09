@@ -256,7 +256,7 @@ async fn a_full_library_saves_and_asks_for_a_copy() {
     let mut full = member("alex", Preset::Member, 3);
     full.edits.insert("StorageLimitGb".into(), serde_json::json!(1));
     fixture.state.family_store.upsert_member(full);
-    let members = fixture.state.settings.current().family.effective_members_path();
+    let members = crate::services::family::members_place::members_path(&fixture.state);
     fixture
         .state
         .library_index

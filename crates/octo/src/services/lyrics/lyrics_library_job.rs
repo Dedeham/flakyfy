@@ -636,7 +636,8 @@ fn audio_files(root: &Path, trash: Option<&Path>) -> io::Result<Vec<String>> {
 /// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`, kept to `extensions`.
 /// Symbolic links to folders are followed, and any folder that cannot be read fails the whole
 /// listing (`IgnoreInaccessible` is off for that overload).
-/// The trash folder is left out (port fix).
+/// The trash folder is left out (port fix), and so is Family members' music kept next to the
+/// library.
 pub(super) fn files_with(root: &Path, extensions: &[&str], trash: Option<&Path>) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];
@@ -649,7 +650,7 @@ pub(super) fn files_with(root: &Path, extensions: &[&str], trash: Option<&Path>)
                 kind => kind.is_dir(),
             };
             if is_dir {
-                if !library_walk::is_trash(&path, trash) {
+                if !library_walk::is_left_out(root, &path, trash) {
                     folders.push(path);
                 }
                 continue;

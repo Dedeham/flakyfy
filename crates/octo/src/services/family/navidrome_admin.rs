@@ -362,6 +362,12 @@ impl NavidromeAdmin {
         }
         Ok(())
     }
+
+    /// Navidrome's settings as its admin About page reads them (`/api/config/config`). Navidrome
+    /// offers the page only while `DevUIShowConfig` is on; otherwise the call is refused.
+    pub async fn server_config(&self) -> Result<Value, AdminError> {
+        self.call(Method::GET, "/api/config/config", None).await
+    }
 }
 
 #[cfg(test)]

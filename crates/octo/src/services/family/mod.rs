@@ -21,6 +21,7 @@ pub mod library_write_gate;
 pub mod list_rules;
 pub mod member_bridge;
 pub mod member_credentials;
+pub mod members_place;
 pub mod navidrome_admin;
 pub mod owner_privacy;
 pub mod passwords;

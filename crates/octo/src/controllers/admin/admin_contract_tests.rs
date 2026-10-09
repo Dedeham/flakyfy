@@ -127,7 +127,7 @@ async fn effective_document_keeps_family() {
     for path in ["/api/admin/settings", "/api/admin/raw-config"] {
         let document = get(&on, path).await.json();
         assert_eq!(document["Family"]["Enabled"], Value::Bool(true), "{path}");
-        assert_eq!(document["Family"]["MembersPath"], "/members", "{path}");
+        assert_eq!(document["Family"]["MembersPath"], "Auto", "{path}");
         assert_eq!(missing_from(&document), Vec::<String>::new(), "{path}");
     }
 

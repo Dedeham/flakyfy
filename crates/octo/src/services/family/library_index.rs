@@ -277,15 +277,23 @@ impl LibraryIndex {
     }
 
     /// The library whose songs sit under `folder` (any one of them tells); None when the index
-    /// holds no song there.
+    /// holds no song there. Members' songs do not tell for a folder above the members folder
+    /// (the music folder, when members' music is kept next to it).
     pub fn library_of_folder(&self, folder: &str) -> Option<i64> {
         let prefix = format!("{}/", folder.trim_end_matches('/'));
+        let members = format!("{}/", self.members_path());
+        let above_members = !prefix.starts_with(&members);
         self.songs
             .read()
             .by_path
             .iter()
-            .find(|(path, _)| path.starts_with(&prefix))
+            .find(|(path, _)| path.starts_with(&prefix) && !(above_members && path.starts_with(&members)))
             .and_then(|(_, song)| song.library_id)
+    }
+
+    /// The members folder, without a trailing slash.
+    pub fn members_path(&self) -> String {
+        super::members_place::resolve(&self.settings, &self.identity)
     }
 
     /// The song whose file is at this full path.
@@ -500,7 +508,7 @@ impl ScopeResolver {
             } else {
                 HashMap::new()
             },
-            members_path: self.settings.current().family.effective_members_path(),
+            members_path: self.index.members_path(),
             index: Arc::clone(&self.index),
         }
     }
@@ -527,7 +535,7 @@ impl ScopeResolver {
     /// `Some("")` for a file under the members folder that is no member's library (the family
     /// pool), None for a file outside it.
     pub fn path_owner(&self, full: &str) -> Option<String> {
-        path_owner_under(&self.settings.current().family.effective_members_path(), full)
+        path_owner_under(&self.index.members_path(), full)
     }
 
     /// Whether a song (by id, path, or both) is in `scope`. Asking about many songs, make a
@@ -608,6 +616,7 @@ pub(crate) fn scope_for_tests(family_on: bool, members: &[(&str, i64)]) -> Scope
 
     let mut app = AppSettings::default();
     app.family.enabled = family_on;
+    app.family.members_path = "/members".into();
     let settings = Arc::new(SettingsStore::for_tests(app));
     let http = reqwest::Client::new();
     let index = Arc::new(LibraryIndex::new(
@@ -677,6 +686,9 @@ mod tests {
 
     fn index_for(url: &str) -> (Arc<LibraryIndex>, Arc<SettingsStore>) {
         let (_, identity, settings) = admin_for(url);
+        let mut app = (*settings.current()).clone();
+        app.family.members_path = "/members".into();
+        settings.set(app);
         let index = LibraryIndex::new(
             identity,
             crate::services::http_client_factory::default_client(),

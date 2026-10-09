@@ -141,8 +141,10 @@ if [ "$(stat -c %a "$work/probe" 2>/dev/null)" = 600 ]; then
   [ "$(stat -c %a "$work/octo/.env")" = 600 ] && pass ".env is readable by its owner only" || fail ".env is not chmod 600"
 fi
 
-[ -d "$work/family-members" ] \
-  && pass "the Family members folder is made where MEMBERS_DIR says" || fail "no Family members folder"
+# Family keeps members' music in the music folder, so the installer makes no folder for it;
+# an old MEMBERS_DIR line is kept like any other (checked above).
+[ ! -e "$work/family-members" ] && [ ! -e "$work/octo/members" ] \
+  && pass "no Family members folder is made" || fail "a Family members folder was made"
 
 cp "$work/octo/.env" "$work/first.env"
 run

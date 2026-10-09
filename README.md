@@ -280,6 +280,14 @@ Saved passwords, API keys, tokens and webhook addresses never come back out of t
 they read as "(saved, not shown)", and saving that back keeps what is stored. A saved one is
 also never sent to a new server address unless it is typed again with the address.
 
+## Family
+
+Octo Family gives the people you share your music with accounts and libraries of their own.
+Turn it on from the dashboard's Family entry. Members' music is kept next to yours in your
+music folder with no setup, and stays out of your own library; see
+[Where members' music lives](docs/family.md#where-members-music-lives). Music on rclone, SMB
+or NFS storage: see [Cloud and network storage](docs/family.md#cloud-and-network-storage).
+
 ## Notifications
 
 Optional push notifications for the download lifecycle, because Subsonic has no way to

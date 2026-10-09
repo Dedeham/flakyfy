@@ -674,7 +674,7 @@ impl FamilyPool {
 
     /// The members folder, without a trailing slash.
     pub fn members_root(&self) -> String {
-        self.settings.current().family.effective_members_path()
+        super::members_place::resolve_in(&self.settings.current(), &(self.shared_root)())
     }
 
     /// The pool folder, `<members>/.pool`.

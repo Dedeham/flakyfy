@@ -9,7 +9,6 @@
 //! once it is built, and tests replace any of them with [`FamilyService::wire`].
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -432,17 +431,6 @@ impl FamilyHooks {
     }
 }
 
-/// Makes a folder (and its parents) that Navidrome's user can read and the group can write.
-fn make_folder(path: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o775))?;
-    }
-    Ok(())
-}
-
 /// Saved songs and albums, from `family-saved.json`.
 pub struct StoreSaved {
     saved: Arc<super::SavedStore>,
@@ -693,6 +681,10 @@ pub struct EnableReport {
     pub members_path: String,
     pub links: LinkMode,
     pub message: String,
+    /// Where members' music lives.
+    pub members_place: super::members_place::MembersPlace,
+    /// Navidrome's `Scanner.IgnoreDotFolders`: `true`, `false` or `"unknown"`.
+    pub navidrome_skips_dot_folders: Value,
 }
 
 /// The words when Navidrome cannot see a member's folder.
@@ -702,11 +694,9 @@ pub fn cannot_see_members_folder(members_path: &str) -> String {
     )
 }
 
-/// The words for copy mode.
+/// The words for copy mode, named for the storage that holds the members folder.
 pub fn copy_mode_message(members_path: &str) -> String {
-    format!(
-        "This disk cannot link files, so a song two members want takes space twice. To fix it, start the rclone mount for {members_path} with --vfs-links."
-    )
+    super::members_place::link_hint(members_path).message
 }
 
 /// The service behind the Family page and the `octoFamily` calls.
@@ -877,8 +867,9 @@ impl FamilyService {
     pub fn link_status(&self, state: &AppState) -> Option<super::LinkStatus> {
         let mut status = super::LinkStatus::of(self.links(state)?);
         if status.message.is_some() {
-            let members_path = state.settings.current().family.effective_members_path();
-            status.message = Some(copy_mode_message(&members_path));
+            let hint = super::members_place::link_hint(&super::members_place::members_path(state));
+            status.message = Some(hint.message);
+            status.fix = Some(hint.fix);
         }
         Some(status)
     }
@@ -1100,7 +1091,7 @@ impl FamilyService {
     pub async fn libraries_json(&self, state: &AppState) -> FamilyResult<Value> {
         let libraries = self.hooks(state).accounts.libraries().await?;
         let members = state.family_store.members();
-        let members_path = state.settings.current().family.effective_members_path();
+        let members_path = super::members_place::members_path(state);
         Ok(Value::Array(
             libraries
                 .iter()
@@ -1131,7 +1122,7 @@ impl FamilyService {
             .iter()
             .filter_map(|m| m.personal_library_id)
             .collect();
-        let members_path = state.settings.current().family.effective_members_path();
+        let members_path = super::members_place::members_path(state);
         libraries
             .iter()
             .filter(|l| !personal.contains(&l.id) && !under_members(&l.path, &members_path))
@@ -1254,7 +1245,7 @@ impl FamilyService {
                 return Err(e.into());
             }
         };
-        let members_path = state.settings.current().family.effective_members_path();
+        let members_path = super::members_place::members_path(state);
         let library_id = match libraries.iter().find(|l| l.path.trim_end_matches('/') == folder) {
             Some(library) => library.id,
             None => {
@@ -1909,42 +1900,37 @@ impl FamilyService {
 
     // --- turning Family on -----------------------------------------------------------------
 
-    /// Turns Family on or off for `by` (a Navidrome admin). On: checks Octo can write the
-    /// members folder, probes links, makes `family.key`, makes `by` the owner when there is
-    /// none, saves `Family:Enabled` and starts Family's work.
-    pub async fn enable(&self, state: &AppState, by: &str, on: bool) -> FamilyResult<EnableReport> {
+    /// Turns Family on or off for `by` (a Navidrome admin). On: settles where members' music
+    /// lives (`place`: the enable body's `membersPath`) and checks Octo can write there, probes
+    /// links, makes `family.key`, makes `by` the owner when there is none, saves
+    /// `Family:Enabled` and starts Family's work.
+    pub async fn enable(
+        &self,
+        state: &AppState,
+        by: &str,
+        on: bool,
+        place: Option<&str>,
+    ) -> FamilyResult<EnableReport> {
         let owner = state.family_store.owner();
         if !owner.is_empty() && !eq_ignore_case(&owner, by) {
             return Err(FamilyError::Refused(format!(
                 "Only {owner} can turn Family on or off."
             )));
         }
-        let members_path = state.settings.current().family.effective_members_path();
+        let choice = super::members_place::parse_choice(place)?;
         if !on {
             save_enabled(state, false)?;
             info!("FAMILY turned off by {by}");
             return Ok(EnableReport {
                 enabled: false,
-                members_path,
+                members_path: super::members_place::members_path(state),
                 links: self.links(state).unwrap_or(LinkMode::Symlink),
                 message: "Family is off. Members cannot sign in until it is on again.".into(),
+                members_place: super::members_place::place(state, None),
+                navidrome_skips_dot_folders: super::members_place::dot_folders_json(None),
             });
         }
-        let root = PathBuf::from(&members_path);
-        let probe_root = root.clone();
-        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            make_folder(&probe_root)?;
-            let probe = probe_root.join(format!(".octo-write-probe-{}", hex::encode(rand::random::<[u8; 6]>())));
-            std::fs::write(&probe, b"octo")?;
-            std::fs::remove_file(&probe)
-        })
-        .await
-        .map_err(|e| FamilyError::Unavailable(e.to_string()))?
-        .map_err(|e| {
-            FamilyError::Conflict(format!(
-                "Octo cannot write to {members_path} ({e}). Give Octo a {members_path} folder it can write to: the members volume in docker-compose.yml."
-            ))
-        })?;
+        let members_path = super::members_place::settle(state, choice).await?;
         self.hooks(state)
             .folders
             .mark_pool()
@@ -1970,15 +1956,22 @@ impl FamilyService {
         save_enabled(state, true)?;
         state.start_family();
         info!("FAMILY turned on by {by} ({links:?})");
-        let message = match links {
+        let mut message = match links {
             LinkMode::Symlink => "Family is on. A song two members want is kept on disk once.".to_string(),
             LinkMode::Copy => copy_mode_message(&members_path),
         };
+        let skips = super::members_place::navidrome_skips_dot_folders(state).await;
+        let members_place = super::members_place::place(state, skips);
+        if let Some(note) = super::members_place::turn_on_note(&members_place, skips) {
+            message = format!("{message} {note}");
+        }
         Ok(EnableReport {
             enabled: true,
             members_path,
             links,
             message,
+            members_place,
+            navidrome_skips_dot_folders: super::members_place::dot_folders_json(skips),
         })
     }
 
@@ -2097,6 +2090,7 @@ pub async fn run_family_work(
     };
     let mut devices = first.family_devices.subscribe();
     let mut requests = first.family_events.subscribe();
+    super::members_place::pin_at_start(&first).await;
     first.family.probe_links(&first).await;
     // Approved requests a restart left unfinished start again, now that the pool knows how
     // members' libraries get files.

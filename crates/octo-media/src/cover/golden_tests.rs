@@ -730,6 +730,7 @@ fn served_cover_looks_like_the_csharp_one() {
     let service = super::CoverArtService::new(None);
     let spec = super::CoverArtService::spec(
         "Rock Radio",
+        None,
         Some(super::list_kinds::RADIO),
         None,
         service.fallback_music("Rock Radio", "Rock Radio"),

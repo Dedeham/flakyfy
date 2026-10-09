@@ -541,6 +541,7 @@ fn list(name: &str, label: Option<&str>, kind: &str) -> ListCover {
         kind: kind.to_string(),
         seeds: None,
         song_count: None,
+        cover_title: None,
     }
 }
 
@@ -642,6 +643,7 @@ fn station_cover_is_the_design_alone_with_no_badge() {
         .render(
             &CoverArtService::spec(
                 "Rock Radio",
+                None,
                 Some(list_kinds::RADIO),
                 None,
                 service.fallback_music("Rock Radio", "Rock Radio"),
@@ -806,7 +808,7 @@ fn spec_names_the_list_and_says_what_it_is() {
         ("Late Night Jazz", list_kinds::MIX, "Late Night Jazz", "Mix"),
     ];
     for (name, kind, title, line) in cases {
-        let spec = CoverArtService::spec(name, Some(kind), Some(50), None);
+        let spec = CoverArtService::spec(name, None, Some(kind), Some(50), None);
 
         assert_eq!(title, spec.name, "{name} ({kind})");
         assert_eq!(Some(line), spec.line.as_deref(), "{name} ({kind})");
@@ -817,24 +819,87 @@ fn spec_names_the_list_and_says_what_it_is() {
 
 #[test]
 fn the_cover_says_chart() {
-    let spec = CoverArtService::spec("Popular right now", Some(list_kinds::CHART), Some(50), None);
+    let spec = CoverArtService::spec("Popular right now", None, Some(list_kinds::CHART), Some(50), None);
     assert_eq!(
         ("Popular right now", Some("Chart"), Some("50 songs")),
         (spec.name.as_str(), spec.line.as_deref(), spec.footer.as_deref())
     );
     // A chart that already says it is one keeps its name and no second line.
-    let top = CoverArtService::spec("Top 50 Chart", Some(list_kinds::CHART), Some(50), None);
+    let top = CoverArtService::spec("Top 50 Chart", None, Some(list_kinds::CHART), Some(50), None);
     assert_eq!(
         ("Top 50", Some("Chart")),
         (top.name.as_str(), top.line.as_deref())
     );
-    let charts = CoverArtService::spec("My Charts", Some(list_kinds::CHART), None, None);
+    let charts = CoverArtService::spec("My Charts", None, Some(list_kinds::CHART), None, None);
     assert_eq!(None, charts.line.as_deref());
+    // Popular right now's cover says "Popular" over "Chart", at the size a title gets, and is
+    // still designed by its whole name.
+    let popular = CoverArtService::spec(
+        "Popular right now",
+        Some("Popular"),
+        Some(list_kinds::CHART),
+        Some(50),
+        None,
+    );
+    assert_eq!(
+        ("Popular", Some("Chart"), "Popular right now"),
+        (
+            popular.name.as_str(),
+            popular.line.as_deref(),
+            popular.id.as_str()
+        )
+    );
+}
+
+#[test]
+fn a_mix_named_mix_reads_as_two_lines_whatever_its_kind() {
+    let cases = [
+        ("Discovery Mix", list_kinds::RADIO, "Discovery", Some("Mix")),
+        ("Bad Bunny Radio", list_kinds::RADIO, "Bad Bunny", Some("Station")),
+        ("Bad Bunny Radio", list_kinds::MIX, "Bad Bunny", Some("Station")),
+        ("Your Mix", list_kinds::RADIO, "Your Mix", None),
+        ("Top 50 Chart", list_kinds::MIX, "Top 50", Some("Chart")),
+        // New and Trending stay bound to their kind: a mix named "Something New" keeps its name.
+        ("Something New", list_kinds::MIX, "Something New", Some("Mix")),
+        (
+            "Always Trending",
+            list_kinds::RADIO,
+            "Always Trending",
+            Some("Station"),
+        ),
+    ];
+    for (name, kind, title, line) in cases {
+        let spec = CoverArtService::spec(name, None, Some(kind), Some(50), None);
+
+        assert_eq!(
+            (title, line),
+            (spec.name.as_str(), spec.line.as_deref()),
+            "{name} ({kind})"
+        );
+        assert_eq!(name, spec.id, "{name} ({kind})");
+    }
+}
+
+#[test]
+fn a_cover_title_changes_the_words_but_not_the_design() {
+    let service = service_with(None);
+    let whole = CoverArtService::spec("Popular right now", None, Some(list_kinds::CHART), Some(50), None);
+    let titled = CoverArtService::spec(
+        "Popular right now",
+        Some("Popular"),
+        Some(list_kinds::CHART),
+        Some(50),
+        None,
+    );
+    let (a, b) = (service.compose(&whole, 600), service.compose(&titled, 600));
+    assert_eq!((a.background, a.orientation), (b.background, b.orientation));
+    let title = b.words.iter().find(|w| w.role == WordsRole::Title);
+    assert_eq!(Some("Popular"), title.map(|w| w.text.as_str()));
 }
 
 #[test]
 fn top_hip_hop_rap_keeps_its_whole_name() {
-    let spec = CoverArtService::spec("Top Hip-Hop/Rap", Some(list_kinds::CHART), Some(50), None);
+    let spec = CoverArtService::spec("Top Hip-Hop/Rap", None, Some(list_kinds::CHART), Some(50), None);
     assert_eq!(
         ("Top Hip-Hop/Rap", Some("Chart")),
         (spec.name.as_str(), spec.line.as_deref())
@@ -843,12 +908,18 @@ fn top_hip_hop_rap_keeps_its_whole_name() {
 
 #[test]
 fn best_new_songs_says_new_and_trending_songs_says_trending() {
-    let new = CoverArtService::spec("Best New Songs", Some(list_kinds::NEW_SONGS), Some(100), None);
+    let new = CoverArtService::spec(
+        "Best New Songs",
+        None,
+        Some(list_kinds::NEW_SONGS),
+        Some(100),
+        None,
+    );
     assert_eq!(
         ("Best New Songs", Some("New"), Some("100 songs")),
         (new.name.as_str(), new.line.as_deref(), new.footer.as_deref())
     );
-    let trending = CoverArtService::spec("Trending Songs", Some(list_kinds::TRENDING), Some(29), None);
+    let trending = CoverArtService::spec("Trending Songs", None, Some(list_kinds::TRENDING), Some(29), None);
     assert_eq!(
         ("Trending Songs", Some("Trending")),
         (trending.name.as_str(), trending.line.as_deref())
@@ -860,7 +931,6 @@ fn best_new_songs_says_new_and_trending_songs_says_trending() {
 fn spec_name_that_says_what_it_is_has_no_second_line() {
     let cases = [
         ("Your Mix", list_kinds::RADIO),
-        ("Discovery Mix", list_kinds::RADIO),
         ("Your Mix", list_kinds::MIX),
         ("Late Night Radio Station", list_kinds::RADIO),
         ("Road Trip Playlist", list_kinds::MIX),
@@ -870,7 +940,7 @@ fn spec_name_that_says_what_it_is_has_no_second_line() {
         ("Old Playlists", list_kinds::MIX),
     ];
     for (name, kind) in cases {
-        let spec = CoverArtService::spec(name, Some(kind), Some(50), None);
+        let spec = CoverArtService::spec(name, None, Some(kind), Some(50), None);
 
         assert_eq!(name, spec.name, "{name} ({kind})");
         assert_eq!(None, spec.line, "{name} ({kind})");
@@ -919,7 +989,13 @@ fn words_fit_inside_the_margins() {
     for name in NAMES {
         for side in [600, 1200] {
             let art = service.compose(
-                &CoverArtService::spec(&format!("{name} Radio"), Some(list_kinds::RADIO), Some(120), None),
+                &CoverArtService::spec(
+                    &format!("{name} Radio"),
+                    None,
+                    Some(list_kinds::RADIO),
+                    Some(120),
+                    None,
+                ),
                 side,
             );
             let margin = (side as f32 * book().layout.margin).round();
@@ -964,6 +1040,7 @@ fn long_names_wrap_onto_three_lines_at_most_and_the_longest_is_cut() {
         .compose(
             &CoverArtService::spec(
                 "Red Hot Chili Peppers And Friends Radio",
+                None,
                 Some(list_kinds::RADIO),
                 None,
                 None,
@@ -975,7 +1052,7 @@ fn long_names_wrap_onto_three_lines_at_most_and_the_longest_is_cut() {
     let long = ["Unreasonably"; 12].join(" ");
     let cut = service
         .compose(
-            &CoverArtService::spec(&long, Some(list_kinds::MIX), None, None),
+            &CoverArtService::spec(&long, None, Some(list_kinds::MIX), None, None),
             600,
         )
         .words
@@ -997,7 +1074,7 @@ fn right_to_left_names_are_set_from_the_right() {
     let words = fixture
         .service()
         .compose(
-            &CoverArtService::spec("فيروز Radio", Some(list_kinds::RADIO), None, None),
+            &CoverArtService::spec("فيروز Radio", None, Some(list_kinds::RADIO), None, None),
             600,
         )
         .words;
@@ -1045,7 +1122,7 @@ fn unicode_names_draw_their_letters() {
 
         let fixture = Fixture::new();
         let service = fixture.service();
-        let spec = CoverArtService::spec(name, Some(list_kinds::MIX), None, None);
+        let spec = CoverArtService::spec(name, None, Some(list_kinds::MIX), None, None);
         let image = service.paint(&spec, 600, true).expect("paints");
         let b = service.compose(&spec, 600).words[0].inked();
         let mut white = 0;
@@ -1075,6 +1152,7 @@ fn words_reach_their_contrast_on_every_pixel_behind_them() {
     let service = service_with(None);
     let spec = CoverArtService::spec(
         "Everything I Have Ever Loved Radio",
+        None,
         Some(list_kinds::RADIO),
         Some(1234),
         None,
@@ -1142,7 +1220,13 @@ fn words_still_read_after_jpeg() {
             .iter()
             .position(|b| b.file == background)
             .expect("in the library");
-        let spec = CoverArtService::spec("Sunday Morning Radio", Some(list_kinds::RADIO), Some(99), None);
+        let spec = CoverArtService::spec(
+            "Sunday Morning Radio",
+            None,
+            Some(list_kinds::RADIO),
+            Some(99),
+            None,
+        );
         let mut art = service.compose(&spec, 600);
         art.background = index;
         art.orientation = 0;
@@ -1367,6 +1451,7 @@ fn a_cover_draws_quickly() {
     let service = service_with(None);
     let spec = CoverArtService::spec(
         "Red Hot Chili Peppers Radio",
+        None,
         Some(list_kinds::RADIO),
         Some(100),
         None,

@@ -417,6 +417,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(seeds) }.boxed()
             })),
             song_count: Some(i32::try_from(station.tracks.len()).unwrap_or(i32::MAX)),
+            cover_title: None,
         };
         let bytes = state
             .cover_art_service
@@ -450,6 +451,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(mix_cover_seeds(&state, &proxy, &user, &mix, &parameters).await) }.boxed()
             })),
             song_count,
+            cover_title: None,
         };
         let bytes = state
             .cover_art_service
@@ -477,6 +479,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(seeds) }.boxed()
             })),
             song_count,
+            cover_title: chart_cover_title(&chart.chart).map(str::to_string),
         };
         let bytes = state
             .cover_art_service
@@ -632,6 +635,16 @@ async fn badge(state: &AppState, raw: Vec<u8>) -> Vec<u8> {
     tokio::task::spawn_blocking(move || service.add_octo_badge(&raw))
         .await
         .unwrap_or(fallback)
+}
+
+/// The words a chart's cover shows in place of its name, when they differ: Popular right now
+/// says "Popular".
+pub(crate) fn chart_cover_title(chart: &str) -> Option<&'static str> {
+    matches!(
+        octo_core::charts::chart_settings::kind(chart),
+        Some(octo_core::charts::chart_settings::ChartKind::Overall)
+    )
+    .then_some(octo_core::charts::chart_settings::OVERALL_COVER_TITLE)
 }
 
 /// The size a client asked a cover at, if it asked.

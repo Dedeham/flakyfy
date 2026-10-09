@@ -130,6 +130,10 @@ pub(crate) fn chart_playlist_fields(
     let kind = chart_settings::kind_word(&chart).unwrap_or("overall");
     let genre = list.name.strip_prefix("Top ").unwrap_or(&list.name);
     fields.insert("comment".into(), chart_playlist_comment(kind, genre).into());
+    // octoCoverTitle: the words the Octo apps put on the list's cover in place of its name.
+    if let Some(title) = super::media::chart_cover_title(&chart) {
+        fields.insert("octoCoverTitle".into(), title.into());
+    }
     fields
 }
 

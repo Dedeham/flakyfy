@@ -299,6 +299,9 @@ async fn get_playlists_lists_the_chart_lists_read_only() {
     assert_eq!(popular["public"], false);
     assert_eq!(popular["songCount"], 5);
     assert_eq!(popular["coverArt"], popular_id().as_str());
+    // The Octo apps put "Popular" on its cover; the other charts keep their names.
+    assert_eq!(popular["octoCoverTitle"], "Popular");
+    assert!(rows[1].get("octoCoverTitle").is_none());
     assert_eq!(
         popular["comment"],
         octo_subsonic::subsonic_response_builder::POPULAR_COMMENT
@@ -322,6 +325,7 @@ async fn get_playlists_xml_lists_them_too() {
 
     assert!(xml.contains("name=\"Popular right now\""), "{xml}");
     assert!(xml.contains("readonly=\"true\""), "{xml}");
+    assert!(xml.contains("octoCoverTitle=\"Popular\""), "{xml}");
 }
 
 #[tokio::test]

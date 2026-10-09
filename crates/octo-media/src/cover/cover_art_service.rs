@@ -55,6 +55,9 @@ pub struct ListCover {
     pub kind: String,
     pub seeds: Option<SeedsFn>,
     pub song_count: Option<i32>,
+    /// The words the cover shows in place of the name, when they differ from it. The design is
+    /// still picked by the name.
+    pub cover_title: Option<String>,
 }
 
 impl ListCover {
@@ -65,6 +68,7 @@ impl ListCover {
             kind: list_kinds::MIX.to_string(),
             seeds: None,
             song_count: None,
+            cover_title: None,
         }
     }
 }
@@ -236,7 +240,7 @@ impl CoverArtService {
     /// call it from a background task (`spawn_blocking`).
     pub fn warm(&self) {
         let warmed = self.render(
-            &Self::spec("Warm Radio", Some(list_kinds::RADIO), Some(1), None),
+            &Self::spec("Warm Radio", None, Some(list_kinds::RADIO), Some(1), None),
             MIN_COVER_SIZE,
             true,
         );
@@ -264,6 +268,7 @@ impl CoverArtService {
             kind: kind.to_string(),
             seeds: None,
             song_count: None,
+            cover_title: None,
         };
         let (size, shown, lookup) = Self::names(&list, size);
         if let Some(custom) = self.override_cover(&shown, &lookup, size) {
@@ -333,7 +338,13 @@ impl CoverArtService {
         seeded: Option<CoverMusic>,
     ) -> Vec<u8> {
         let music = seeded.or_else(|| self.fallback_music(shown, lookup));
-        let spec = Self::spec(shown, Some(&list.kind), list.song_count, music);
+        let spec = Self::spec(
+            shown,
+            list.cover_title.as_deref(),
+            Some(&list.kind),
+            list.song_count,
+            music,
+        );
         let background = cover_backgrounds::choose(self.book, spec.music.as_ref(), &spec.id);
         let key = format!(
             "{}\n{}\n{}\n{}\n{}\n{background}\n{size}",
@@ -381,29 +392,43 @@ impl CoverArtService {
         Some(CoverMusic::of(hue, chroma, GENRE_LIGHTNESS))
     }
 
-    /// What goes on a list's cover. The name is the list's own, less a trailing "Radio" on a
-    /// station or "Mix" on a mix, since the light line under it says which it is; "Your Mix"
-    /// stays whole. A name that still ends in a word saying what it is ("Your Mix", "Discovery
-    /// Mix") has no light line, as the name already says it. The foot line is its song count
-    /// when known. The design is picked by the list's full name, the same on every request.
+    /// What goes on a list's cover. The name is the list's own, less a trailing "Radio", "Chart"
+    /// or "Mix" whatever kind of list it is, and the light line under it says that word
+    /// ("Station" for Radio): "Discovery Mix" reads "Discovery" over "Mix". "Your Mix" and the
+    /// other possessives stay whole. With no such word the light line says the list's kind. A
+    /// name that still ends in a word saying what it is ("Your Mix") has no light line, as the
+    /// name already says it. `cover_title`, when given, is shown as it is in place of the name.
+    /// The foot line is its song count when known. The design is picked by the list's full name,
+    /// the same on every request.
     pub(crate) fn spec(
         shown: &str,
+        cover_title: Option<&str>,
         kind: Option<&str>,
         song_count: Option<i32>,
         music: Option<CoverMusic>,
     ) -> CoverSpec {
-        let (line, suffix) = match kind {
-            Some(list_kinds::RADIO) => ("Station", " Radio"),
-            Some(list_kinds::CHART) => ("Chart", " Chart"),
-            Some(list_kinds::NEW_SONGS) => ("New", " New"),
-            Some(list_kinds::TRENDING) => ("Trending", " Trending"),
-            _ => ("Mix", " Mix"),
+        let mut line = match kind {
+            Some(list_kinds::RADIO) => "Station",
+            Some(list_kinds::CHART) => "Chart",
+            Some(list_kinds::NEW_SONGS) => "New",
+            Some(list_kinds::TRENDING) => "Trending",
+            _ => "Mix",
         };
         let mut title = shown;
-        if let Some(head) = strip_suffix_ignore_case(shown, suffix) {
-            let head = head.trim();
-            if utf16_len(head) > 1 && !POSSESSIVES.iter().any(|p| eq_ignore_case(p, head)) {
-                title = head;
+        match cover_title.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(given) => title = given,
+            None => {
+                for (suffix, word) in KIND_SUFFIXES {
+                    let Some(head) = strip_suffix_ignore_case(shown, suffix) else {
+                        continue;
+                    };
+                    let head = head.trim();
+                    if utf16_len(head) > 1 && !POSSESSIVES.iter().any(|p| eq_ignore_case(p, head)) {
+                        title = head;
+                        line = word;
+                        break;
+                    }
+                }
             }
         }
         CoverSpec {
@@ -585,6 +610,9 @@ impl CoverArtService {
 }
 
 const POSSESSIVES: &[&str] = &["Your", "My", "Our"];
+
+/// Name endings that say what a list is, and the word the light line uses for each.
+const KIND_SUFFIXES: &[(&str, &str)] = &[(" Radio", "Station"), (" Chart", "Chart"), (" Mix", "Mix")];
 
 /// `n.ToString("N0", CultureInfo.InvariantCulture)`: thousands split by commas.
 fn thousands(n: i32) -> String {

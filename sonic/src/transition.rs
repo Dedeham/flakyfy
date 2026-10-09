@@ -18,20 +18,98 @@
 //! `levels` is base64 of one byte per hop: the level in half-dB steps above
 //! -100 dBFS. The tail's features are measured against the whole song's
 //! level.
+//!
+//! A published tempo (a catalog's BPM or the file's BPM tag) is right less
+//! often than the analysis, so it never sets a tempo: it only picks between
+//! the octaves the analysis found (half, the same, or double), and only when
+//! one of them is within [`PUBLISHED_WITHIN`] of it.
 
 use serde_json::{json, Map, Value};
 
-use crate::automix::features::{SectionFeatures, Tempo};
-use crate::automix::profile::{level_code, SectionProfile, TransitionProfile, PROFILE_VERSION};
+use crate::automix::envelope::{EnvelopeBuilder, SectionEnvelope, SILENT_DB};
+use crate::automix::features::{
+    analyze_head, analyze_tail, SectionAnalysis, SectionFeatures, Tempo, HEAD_BODY_PERCENTILE,
+};
+use crate::automix::profile::{
+    level_code, SectionProfile, TransitionProfile, PROFILE_HEAD_MS, PROFILE_TAIL_MS, PROFILE_VERSION,
+};
+
+/// How close a published tempo must be to one of the analysis's octaves, as a share of it,
+/// to pick that octave.
+pub const PUBLISHED_WITHIN: f64 = 0.02;
 
 /// The profile version this octo-sonic writes.
 pub fn version() -> u32 {
     PROFILE_VERSION
 }
 
-/// The profile of decoded mono sound at `sample_rate`.
-pub fn analyze(mono: &[f32], sample_rate: u32) -> TransitionProfile {
-    TransitionProfile::analyze(mono, sample_rate, 1)
+/// The profile of decoded mono sound at `sample_rate`. `published` is the song's published
+/// tempo, when it has one.
+pub fn analyze(mono: &[f32], sample_rate: u32, published: Option<f64>) -> TransitionProfile {
+    let mut builder = EnvelopeBuilder::new(sample_rate, 1, 0);
+    builder.push(mono);
+    profile_of(&builder.into_envelope(), published)
+}
+
+/// The octave of a detected tempo that a published one picks: 0.5, 1 or 2, whichever puts the
+/// detected tempo within [`PUBLISHED_WITHIN`] of the published one (the closest, should two).
+/// `None` when the published tempo is missing (0) or none of them is that close.
+pub fn octave_for(detected: f64, published: f64) -> Option<f64> {
+    if !(published.is_finite() && published > 0.0 && detected.is_finite() && detected > 0.0) {
+        return None;
+    }
+    [0.5, 1.0, 2.0]
+        .into_iter()
+        .map(|factor| (factor, (detected * factor / published - 1.0).abs()))
+        .filter(|&(_, off)| off <= PUBLISHED_WITHIN)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(factor, _)| factor)
+}
+
+/// A section as analyzed on its own, or analyzed again in the octave a published tempo picks.
+/// The analysis is handed the octave it found itself, never the published number, so the
+/// published tempo only ever moves the beat by a whole octave.
+fn in_published_octave(
+    plain: SectionAnalysis,
+    published: Option<f64>,
+    again: impl FnOnce(f64) -> SectionAnalysis,
+) -> SectionAnalysis {
+    let Some(detected) = plain.features.tempo.map(|t| t.bpm) else {
+        return plain;
+    };
+    match published.and_then(|p| octave_for(detected, p)) {
+        Some(factor) if factor != 1.0 => again(detected * factor),
+        _ => plain,
+    }
+}
+
+/// [`TransitionProfile::of_envelope`] with a published tempo choosing the octave of the whole
+/// song, of its start and of its end, each on its own.
+pub fn profile_of(song: &SectionEnvelope, published: Option<f64>) -> TransitionProfile {
+    let duration_ms = song.end_ms();
+    let whole = in_published_octave(
+        SectionAnalysis::of(song.clone(), None, None, HEAD_BODY_PERCENTILE),
+        published,
+        |bpm| SectionAnalysis::of(song.clone(), Some(bpm), None, HEAD_BODY_PERCENTILE),
+    );
+    let body_db = Some(whole.features.body_db).filter(|&b| b > SILENT_DB as f64);
+    let head_part = song.slice(0.0, PROFILE_HEAD_MS.min(duration_ms) as f64);
+    let head = in_published_octave(analyze_head(head_part.clone(), None), published, |bpm| {
+        analyze_head(head_part, Some(bpm))
+    });
+    let tail_from = (duration_ms - PROFILE_TAIL_MS).max(0);
+    let tail_part = song.slice(tail_from as f64, duration_ms as f64);
+    let tail = in_published_octave(analyze_tail(tail_part.clone(), None, body_db), published, |bpm| {
+        analyze_tail(tail_part, Some(bpm), body_db)
+    });
+    TransitionProfile {
+        version: PROFILE_VERSION,
+        duration_ms,
+        body_db,
+        tempo: whole.features.tempo,
+        head: SectionProfile::of(&head),
+        tail: SectionProfile::of(&tail),
+    }
 }
 
 /// The profile as JSON.
@@ -166,7 +244,7 @@ mod tests {
 
     fn fixture_profile() -> Value {
         let song = fixture_song();
-        to_json(&analyze(&song.render_mono(0.0, song.length_ms as f64), song.rate))
+        to_json(&analyze(&song.render_mono(0.0, song.length_ms as f64), song.rate, None))
     }
 
     fn decode64(text: &str) -> Vec<u8> {
@@ -272,7 +350,7 @@ mod tests {
 
     #[test]
     fn a_silent_song_leaves_out_what_it_does_not_have() {
-        let p = to_json(&analyze(&vec![0.0; 22_050 * 40], 22_050));
+        let p = to_json(&analyze(&vec![0.0; 22_050 * 40], 22_050, Some(120.0)));
         assert!(p.get("bodyDb").is_none() && p.get("tempo").is_none());
         assert!(p["tail"].get("soundStartMs").is_none() && p["tail"].get("tempo").is_none());
         assert!(decode64(p["tail"]["levels"].as_str().unwrap())
@@ -290,5 +368,75 @@ mod tests {
         let all: Vec<u8> = (0..=255).collect();
         assert_eq!(decode64(&base64(&all)), all);
         assert_eq!(level_of_code(level_code(-14.26)), -14.5);
+    }
+
+    fn fixture_envelope() -> SectionEnvelope {
+        let song = fixture_song();
+        let mut builder = EnvelopeBuilder::new(song.rate, 1, 0);
+        builder.push(&song.render_mono(0.0, song.length_ms as f64));
+        builder.into_envelope()
+    }
+
+    fn bpm_of(tempo: Option<&Tempo>) -> f64 {
+        tempo.expect("a tempo").bpm
+    }
+
+    #[test]
+    fn a_published_tempo_picks_one_of_the_octaves_found() {
+        assert_eq!(octave_for(120.0, 60.0), Some(0.5));
+        assert_eq!(octave_for(120.0, 61.0), Some(0.5));
+        assert_eq!(octave_for(120.0, 118.0), Some(1.0));
+        assert_eq!(octave_for(120.0, 243.0), Some(2.0));
+        assert_eq!(octave_for(87.0, 174.0), Some(2.0));
+    }
+
+    #[test]
+    fn a_published_tempo_near_no_octave_or_missing_picks_nothing() {
+        // 70 is nearer the half octave (60) than 120, yet 17% from it.
+        assert_eq!(octave_for(120.0, 70.0), None);
+        assert_eq!(octave_for(120.0, 125.0), None);
+        assert_eq!(octave_for(120.0, 90.0), None);
+        assert_eq!(octave_for(120.0, 0.0), None);
+        assert_eq!(octave_for(120.0, -60.0), None);
+        assert_eq!(octave_for(120.0, f64::NAN), None);
+        assert_eq!(octave_for(0.0, 120.0), None);
+    }
+
+    #[test]
+    fn without_a_published_tempo_the_profile_is_the_engines_own() {
+        let song = fixture_envelope();
+        assert_eq!(profile_of(&song, None), TransitionProfile::of_envelope(&song));
+    }
+
+    #[test]
+    fn a_published_tempo_moves_every_part_to_the_octave_it_picks() {
+        let song = fixture_envelope();
+        let plain = profile_of(&song, None);
+        assert!((bpm_of(plain.tempo.as_ref()) - 120.0).abs() < 0.5);
+        for (published, want) in [(60.0, 60.0), (59.2, 60.0), (241.0, 240.0)] {
+            let picked = profile_of(&song, Some(published));
+            for tempo in [
+                picked.tempo.as_ref(),
+                picked.head.features.tempo.as_ref(),
+                picked.tail.features.tempo.as_ref(),
+            ] {
+                let bpm = bpm_of(tempo);
+                assert!((bpm - want).abs() < 0.5, "{published} gave {bpm}, expected {want}");
+            }
+            // Only the beat moves; the levels and where the sound starts and ends do not.
+            assert_eq!(picked.head.levels, plain.head.levels);
+            assert_eq!(picked.tail.features.outro_start_ms, plain.tail.features.outro_start_ms);
+        }
+    }
+
+    #[test]
+    fn a_published_tempo_that_matches_no_octave_or_is_missing_changes_nothing() {
+        let song = fixture_envelope();
+        let plain = profile_of(&song, None);
+        for published in [70.0, 100.0, 125.0, 180.0, 0.0, -1.0] {
+            assert_eq!(profile_of(&song, Some(published)), plain, "{published}");
+        }
+        // The octave the analysis found is the analysis as it was.
+        assert_eq!(profile_of(&song, Some(119.0)), plain);
     }
 }

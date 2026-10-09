@@ -73,6 +73,7 @@ enum Cached {
     Text(String),
     Album(AlbumLookup),
     Chart(Arc<Vec<octo_core::charts::top_songs::CatalogTrack>>),
+    Tempo(Option<f64>),
 }
 
 /// Result of one Deezer call. Deezer answers HTTP 200 even when it is refusing the
@@ -455,6 +456,7 @@ impl DeezerMetadataService {
         };
         let mut explicit_content = int(t, "explicit_content_lyrics")?;
         let mut gain = None;
+        let mut bpm = None;
         let mut track_id = None;
         if let Some(tid @ Value::Number(_)) = try_get_property(t, "id")? {
             let id = get_int64(tid)?;
@@ -477,6 +479,10 @@ impl DeezerMetadataService {
                 explicit_content = int(track, "explicit_content_lyrics")?.or(explicit_content);
                 if let Some(gn @ Value::Number(_)) = try_get_property(track, "gain")? {
                     gain = Some(get_double(gn)?);
+                }
+                bpm = tempo_of(track)?;
+                if let Some(code) = isrc.as_deref().and_then(SongIdentity::normalize_isrc) {
+                    self.put(tempo_key(&code), Cached::Tempo(bpm), POSITIVE_TTL);
                 }
                 if let Some(people @ Value::Array(_)) = try_get_property(track, "contributors")? {
                     let mut names: Vec<String> = Vec::new();
@@ -519,6 +525,7 @@ impl DeezerMetadataService {
             explicit_lyrics,
             explicit_content,
             catalog_gain: gain,
+            bpm,
         };
         Ok((meta, detail_unresolved))
     }
@@ -1692,6 +1699,11 @@ fn year_prefix(release_date: &str) -> Option<i32> {
 
 #[path = "deezer_metadata_service_explicit.rs"]
 mod explicit;
+#[path = "deezer_metadata_service_tempo.rs"]
+mod tempo;
+
+pub use tempo::DeezerPublishedTempo;
+use tempo::{tempo_key, tempo_of};
 
 pub use explicit::DeezerExplicitCatalog;
 // `DeezerMetadataService.Charts.cs`, a partial class in the C#: the chart and artist top lists.

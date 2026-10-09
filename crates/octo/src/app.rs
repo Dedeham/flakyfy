@@ -102,7 +102,8 @@ use crate::services::lyrics::{
     LyricsSidecarWriter, LyricsUndoJournal, lyrics_http,
 };
 use crate::services::metadata::{
-    DeezerExplicitCatalog, DeezerMetadataService, DeezerRateLimitHandler, DeezerRateLimiter,
+    DeezerExplicitCatalog, DeezerMetadataService, DeezerPublishedTempo, DeezerRateLimitHandler,
+    DeezerRateLimiter,
 };
 use crate::services::metadata::{GenreBackfillJournal, GenreBackfillStore, GenreBackfillWorker};
 use crate::services::notifications::{DiscordSink, INotificationSink, NotificationService, NtfySink};
@@ -1557,6 +1558,7 @@ impl Radio {
             Clock::system(),
         );
         sonic_worker.listen_to(&stores.download_arrivals);
+        sonic_worker.use_published_tempo(Arc::new(DeezerPublishedTempo::new(Arc::clone(deezer))));
         // Radio's suggestion sources, asked together and blended (multi-source radio).
         let listen_brainz = Arc::new(match &overrides.listen_brainz_radio_urls {
             Some((labs, api)) => ListenBrainzRadioClient::with_urls(settings.clone(), labs, api)

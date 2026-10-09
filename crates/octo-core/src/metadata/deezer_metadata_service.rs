@@ -58,6 +58,10 @@ pub struct FullTrackMeta {
     /// edit; any other value says it does not know.
     pub explicit_content: Option<i32>,
     pub catalog_gain: Option<f64>,
+    /// The track's tempo in beats per minute, from its own record; None when the catalog has
+    /// none (it sends 0). Right less often than measuring the sound, so it only ever helps
+    /// choose between half and double time.
+    pub bpm: Option<f64>,
 }
 
 /// The catalog's ranked answers for one song, or the fact that it did not answer.

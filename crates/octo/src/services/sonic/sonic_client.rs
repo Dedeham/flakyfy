@@ -82,8 +82,14 @@ pub trait ISonicClient: Send + Sync {
 
     /// What was asked of the song, or an error to remember: octo-sonic could not read it. A
     /// dropped connection is `Err`; an answer Octo cannot read, or one missing a part asked for,
-    /// is that song's error.
-    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped>;
+    /// is that song's error. `bpm`, the song's published tempo, goes with a profile only, where
+    /// it can do no more than pick the octave of the tempo the profile finds.
+    async fn analyze(
+        &self,
+        path: &str,
+        parts: SonicParts,
+        bpm: Option<f64>,
+    ) -> Result<SonicAnswer, SonicDropped>;
 }
 
 /// The octo-sonic sidecar over HTTP.
@@ -196,14 +202,22 @@ impl ISonicClient for SonicClient {
         })
     }
 
-    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(
+        &self,
+        path: &str,
+        parts: SonicParts,
+        bpm: Option<f64>,
+    ) -> Result<SonicAnswer, SonicDropped> {
         let url = format!("{}/analyse", self.base_url());
         // The sound alone goes as it always went, so an older octo-sonic reads it the same.
-        let body = if parts == SonicParts::SOUND {
+        let mut body = if parts == SonicParts::SOUND {
             json!({ "path": path })
         } else {
             json!({ "path": path, "parts": parts.names() })
         };
+        if let Some(bpm) = bpm.filter(|bpm| parts.transition && bpm.is_finite() && *bpm > 0.0) {
+            body["bpm"] = json!(bpm);
+        }
         let response = self
             .http
             .post(&url)
@@ -391,7 +405,7 @@ mod tests {
             .await;
         let client = client(&server).await;
         let ok = client
-            .analyze("/music/a.flac", SonicParts::SOUND)
+            .analyze("/music/a.flac", SonicParts::SOUND, None)
             .await
             .expect("an answer");
         assert_eq!(
@@ -402,7 +416,7 @@ mod tests {
             })
         );
         let refused = client
-            .analyze("/music/a.flac", SonicParts::SOUND)
+            .analyze("/music/a.flac", SonicParts::SOUND, None)
             .await
             .expect("an answer");
         assert_eq!(
@@ -410,12 +424,12 @@ mod tests {
             (Some("too short"), 422)
         );
         let bare = client
-            .analyze("/music/a.flac", SonicParts::SOUND)
+            .analyze("/music/a.flac", SonicParts::SOUND, None)
             .await
             .expect("an answer");
         assert_eq!(bare.error.as_deref(), Some("HTTP 500"));
         let odd = client
-            .analyze("/music/a.flac", SonicParts::SOUND)
+            .analyze("/music/a.flac", SonicParts::SOUND, None)
             .await
             .expect("an answer");
         assert_eq!(
@@ -447,7 +461,10 @@ mod tests {
             sound: true,
             transition: true,
         };
-        let answer = client.analyze("/music/a.flac", both).await.expect("an answer");
+        let answer = client
+            .analyze("/music/a.flac", both, Some(128.5))
+            .await
+            .expect("an answer");
         assert_eq!(answer.features.map(|f| f.version), Some(2));
         assert_eq!(answer.transition, Some(json!({"version": 1, "durationMs": 1000})));
         // A profile without its version is not one.
@@ -455,12 +472,20 @@ mod tests {
             sound: false,
             transition: true,
         };
-        let odd = client.analyze("/music/a.flac", only).await.expect("an answer");
+        let odd = client
+            .analyze("/music/a.flac", only, None)
+            .await
+            .expect("an answer");
         assert!(odd.error.is_some() && odd.transition.is_none());
+        // A published tempo has nothing to do with how a song sounds.
+        let _ = client
+            .analyze("/music/a.flac", SonicParts::SOUND, Some(128.5))
+            .await;
         let sent = server.received_requests().await.expect("recorded");
+        assert_eq!(sent[2].body, br#"{"path":"/music/a.flac"}"#);
         assert_eq!(
             sent[0].body,
-            br#"{"path":"/music/a.flac","parts":["sound","transition"]}"#
+            br#"{"path":"/music/a.flac","parts":["sound","transition"],"bpm":128.5}"#
         );
         assert_eq!(
             sent[1].body,
@@ -481,7 +506,12 @@ mod tests {
             },
             ..Default::default()
         })));
-        assert!(client.analyze("/music/a.flac", SonicParts::SOUND).await.is_err());
+        assert!(
+            client
+                .analyze("/music/a.flac", SonicParts::SOUND, None)
+                .await
+                .is_err()
+        );
         assert_eq!(client.health().await, None);
     }
 }

@@ -2,7 +2,7 @@
 //! its transition profile (where it can blend into the next song). Octo keeps the numbers
 //! and finds songs that sound alike, and hands the profiles to the apps; this only reads
 //! files, and only under MUSIC_ROOT. Each file is read by a child process (`octo-sonic read
-//! <path> [parts]`): FFmpeg can crash on a damaged file, and a crash there must cost that
+//! <path> [parts] [bpm]`): FFmpeg can crash on a damaged file, and a crash there must cost that
 //! file, not the server.
 
 mod automix;
@@ -38,6 +38,16 @@ struct Analyse {
     /// sound when left out, as an Octo that knows nothing of profiles asks.
     #[serde(default)]
     parts: Option<Vec<String>>,
+    /// The song's published tempo (a catalog's BPM or its BPM tag), when it has one. It only
+    /// picks the octave of the tempo the profile finds; see `transition`.
+    #[serde(default)]
+    bpm: Option<f64>,
+}
+
+/// A published tempo worth handing on: a real number of beats per minute. 0 is how catalogs
+/// and tags say they have none.
+fn published_bpm(bpm: Option<f64>) -> Option<f64> {
+    bpm.filter(|bpm| bpm.is_finite() && *bpm > 0.0 && *bpm < 1_000.0)
 }
 
 /// What a reading covers.
@@ -98,9 +108,10 @@ fn sounds_alike(value: Option<&str>) -> bool {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if (args.len() == 3 || args.len() == 4) && args[1] == "read" {
+    if (3..=5).contains(&args.len()) && args[1] == "read" {
         let parts = Parts::of(args.get(3).map_or("sound", String::as_str).split(','));
-        std::process::exit(read_one(Path::new(&args[2]), parts));
+        let bpm = published_bpm(args.get(4).and_then(|bpm| bpm.parse().ok()));
+        std::process::exit(read_one(Path::new(&args[2]), parts, bpm));
     }
     tracing_subscriber::fmt::init();
     let root = std::env::var("MUSIC_ROOT").unwrap_or_else(|_| "/music".into());
@@ -137,8 +148,8 @@ async fn stopped() {
 
 /// The child: print what was asked for as JSON on stdout, or the error on stderr. Exit 0
 /// or 2. The song is decoded once (mono, 22050 Hz) for both parts.
-fn read_one(path: &Path, parts: Parts) -> i32 {
-    match read_parts(path, parts) {
+fn read_one(path: &Path, parts: Parts, bpm: Option<f64>) -> i32 {
+    match read_parts(path, parts, bpm) {
         Ok(answer) => {
             println!("{answer}");
             0
@@ -150,11 +161,11 @@ fn read_one(path: &Path, parts: Parts) -> i32 {
     }
 }
 
-fn read_parts(path: &Path, parts: Parts) -> Result<serde_json::Value, bliss_audio::BlissError> {
+fn read_parts(path: &Path, parts: Parts, bpm: Option<f64>) -> Result<serde_json::Value, bliss_audio::BlissError> {
     let decoded = FFmpegDecoder::decode(path)?;
     let mut answer = serde_json::Map::new();
     if parts.transition {
-        let profile = transition::analyze(&decoded.sample_array, DECODED_RATE);
+        let profile = transition::analyze(&decoded.sample_array, DECODED_RATE, bpm);
         answer.insert("transition".into(), transition::to_json(&profile));
     }
     if parts.sound {
@@ -211,8 +222,12 @@ async fn analyse(State(app): State<App>, Json(body): Json<Analyse>) -> impl Into
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "not a file" })));
     }
     let _slot = app.slots.acquire().await.expect("semaphore");
-    let child = tokio::process::Command::new(&app.program)
-        .arg("read").arg(&path).arg(parts.arg())
+    let mut command = tokio::process::Command::new(&app.program);
+    command.arg("read").arg(&path).arg(parts.arg());
+    if let Some(bpm) = published_bpm(body.bpm).filter(|_| parts.transition) {
+        command.arg(bpm.to_string());
+    }
+    let child = command
         .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn();
@@ -291,6 +306,10 @@ mod tests {
             Some(parts) => json!({ "path": path.to_string_lossy(), "parts": parts }),
             None => json!({ "path": path.to_string_lossy() }),
         };
+        post_body(app, body).await
+    }
+
+    async fn post_body(app: Router, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
         let res = app.oneshot(Request::post("/analyse").header("content-type", "application/json")
             .body(Body::from(body.to_string())).unwrap()).await.unwrap();
         let status = res.status();
@@ -305,7 +324,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(dir).unwrap();
         let program = dir.join("echo-reader.sh");
-        std::fs::write(&program, "#!/bin/sh\nprintf '{\"parts\":\"%s\"}' \"$3\"\n").unwrap();
+        std::fs::write(&program, "#!/bin/sh\nprintf '{\"parts\":\"%s\",\"bpm\":\"%s\"}' \"$3\" \"$4\"\n").unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
         program
     }
@@ -396,6 +415,34 @@ mod tests {
         assert_eq!(value["parts"], json!("sound,transition"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_published_tempo_goes_to_the_reader_only_with_a_profile() {
+        let root = std::env::temp_dir().join("octo-sonic-bpm");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("song.flac"), b"x").unwrap();
+        let reader = echoing_reader(&std::env::temp_dir().join("octo-sonic-bpm-reader"));
+        let song = root.join("song.flac").to_string_lossy().to_string();
+        let ask = |parts: &[&str], bpm: serde_json::Value| {
+            let app = app_running(&root, true, reader.clone());
+            let body = json!({ "path": song, "parts": parts, "bpm": bpm });
+            async move { post_body(app, body).await.1["bpm"].clone() }
+        };
+        assert_eq!(ask(&["transition"], json!(128.5)).await, json!("128.5"));
+        assert_eq!(ask(&["sound"], json!(128.5)).await, json!(""));
+        assert_eq!(ask(&["transition"], json!(0)).await, json!(""));
+        assert_eq!(ask(&["transition"], json!(-3)).await, json!(""));
+        assert_eq!(ask(&["transition"], serde_json::Value::Null).await, json!(""));
+    }
+
+    #[test]
+    fn only_a_real_tempo_is_handed_on() {
+        assert_eq!(published_bpm(Some(128.0)), Some(128.0));
+        for missing in [None, Some(0.0), Some(-1.0), Some(f64::NAN), Some(f64::INFINITY), Some(5_000.0)] {
+            assert_eq!(published_bpm(missing), None);
+        }
+    }
+
     #[tokio::test]
     async fn an_empty_music_folder_is_not_healthy() {
         let root = std::env::temp_dir().join("octo-sonic-empty");
@@ -439,6 +486,6 @@ mod tests {
     fn a_file_that_is_not_music_is_an_error_not_a_crash() {
         let junk = std::env::temp_dir().join("octo-sonic-junk.flac");
         std::fs::write(&junk, b"not audio").unwrap();
-        assert_eq!(read_one(&junk, Parts::of(["sound", "transition"])), 2);
+        assert_eq!(read_one(&junk, Parts::of(["sound", "transition"]), Some(120.0)), 2);
     }
 }

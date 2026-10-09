@@ -8,7 +8,8 @@ pub mod sonic_store;
 pub mod transition_store;
 
 pub use sonic_analysis_worker::{
-    ISonicLibrary, NavidromeSonicLibrary, SonicAnalysisWorker, SonicFile, SonicStatus,
+    IPublishedTempo, ISonicLibrary, NavidromeSonicLibrary, SonicAnalysisWorker, SonicFile, SonicStatus,
+    file_tempo_tags,
 };
 pub use sonic_client::{
     ISonicClient, SonicAnswer, SonicClient, SonicDropped, SonicFeatures, SonicHealth, SonicParts,

@@ -28,6 +28,8 @@ struct Sidecar {
     transition: Mutex<Option<i32>>,
     /// What each reading asked for.
     parts: Mutex<Vec<SonicParts>>,
+    /// The published tempo each reading was handed.
+    bpms: Mutex<Vec<Option<f64>>>,
     /// Its music folder is empty or unreadable: health answers 503.
     blind: AtomicBool,
     /// Sounds alike is off in .env, on an octo-sonic from before profiles: health answers 503
@@ -50,6 +52,7 @@ impl Default for Sidecar {
             version: Mutex::new(Some(2)),
             transition: Mutex::new(None),
             parts: Mutex::default(),
+            bpms: Mutex::default(),
             blind: AtomicBool::new(false),
             off: AtomicBool::new(false),
             profiles_only: AtomicBool::new(false),
@@ -94,7 +97,13 @@ impl ISonicClient for Sidecar {
         })
     }
 
-    async fn analyze(&self, path: &str, parts: SonicParts) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(
+        &self,
+        path: &str,
+        parts: SonicParts,
+        bpm: Option<f64>,
+    ) -> Result<SonicAnswer, SonicDropped> {
+        self.bpms.lock().push(bpm);
         self.parts.lock().push(parts);
         let name = std::path::Path::new(path)
             .file_name()
@@ -936,4 +945,145 @@ async fn turning_sounds_alike_on_reads_the_sound_of_songs_that_have_only_a_profi
     t.ticks_until_done().await;
     assert_eq!(t.sidecar.parts.lock().last(), Some(&SonicParts::SOUND));
     assert!(t.store.read(|s| s.songs.contains_key("a")));
+}
+
+// ---- published tempo ---------------------------------------------------------------------
+
+/// A catalog's tempos by ISRC, counting what it is asked.
+#[derive(Default)]
+struct Catalog {
+    tempos: Mutex<HashMap<String, f64>>,
+    asked: Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait]
+impl IPublishedTempo for Catalog {
+    async fn bpm(&self, isrcs: &[String]) -> Option<f64> {
+        self.asked.lock().push(isrcs.to_vec());
+        let tempos = self.tempos.lock();
+        isrcs
+            .iter()
+            .filter_map(|isrc| octo_core::common::SongIdentity::normalize_isrc(isrc))
+            .find_map(|isrc| tempos.get(&isrc).copied())
+    }
+}
+
+fn with_catalog(t: &T) -> Arc<Catalog> {
+    let catalog = Arc::new(Catalog::default());
+    catalog.tempos.lock().insert("GBAAA9800001".into(), 77.1);
+    t.worker.use_published_tempo(catalog.clone());
+    catalog
+}
+
+fn listed_with(t: &T, id: &str, bpm: Option<i32>, isrcs: &[&str]) {
+    let mut row = t.library.add(id, &format!("{id}.flac"), Some(200), false);
+    row.bpm = bpm;
+    row.isrcs = isrcs.iter().map(|isrc| isrc.to_string()).collect();
+    t.library.rows.lock().push(row);
+}
+
+#[tokio::test]
+async fn a_profile_is_handed_the_files_bpm_tag_without_asking_the_catalog() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let catalog = with_catalog(&t);
+    listed_with(&t, "a", Some(128), &["GBAAA9800001"]);
+    t.tick().await;
+    assert_eq!(*t.sidecar.bpms.lock(), [Some(128.0)]);
+    assert!(catalog.asked.lock().is_empty());
+}
+
+#[tokio::test]
+async fn without_a_bpm_tag_the_catalogs_tempo_for_the_isrc_goes_with_the_profile() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let catalog = with_catalog(&t);
+    listed_with(&t, "a", None, &["GBAAA9800001"]);
+    listed_with(&t, "b", None, &["USAAA0000009"]);
+    t.ticks_until_done().await;
+    assert_eq!(*t.sidecar.bpms.lock(), [Some(77.1), None]);
+    assert_eq!(catalog.asked.lock().len(), 2);
+}
+
+#[tokio::test]
+async fn a_song_with_neither_a_bpm_tag_nor_an_isrc_asks_nothing() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let catalog = with_catalog(&t);
+    listed_with(&t, "a", None, &[]);
+    t.tick().await;
+    assert_eq!(*t.sidecar.bpms.lock(), [None]);
+    assert!(catalog.asked.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_reading_of_the_sound_alone_asks_for_no_tempo() {
+    // An octo-sonic from before profiles.
+    let t = make(None);
+    let catalog = with_catalog(&t);
+    listed_with(&t, "a", Some(128), &["GBAAA9800001"]);
+    listed_with(&t, "b", None, &["GBAAA9800001"]);
+    t.ticks_until_done().await;
+    assert_eq!(*t.sidecar.bpms.lock(), [None, None]);
+    assert!(catalog.asked.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_song_already_profiled_asks_for_no_tempo() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let catalog = with_catalog(&t);
+    listed_with(&t, "a", None, &["GBAAA9800001"]);
+    t.ticks_until_done().await;
+    t.advance(PASS_INTERVAL + TimeDelta::minutes(1));
+    t.ticks_until_done().await;
+    assert_eq!(t.sidecar.analysed().len(), 1);
+    assert_eq!(catalog.asked.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn an_outside_song_takes_its_tempo_and_isrc_from_its_own_tags() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    let catalog = with_catalog(&t);
+    let tagged = |name: &str, bpm: Option<u32>, isrc: Option<&str>| {
+        let path = t.library.directory.join(name);
+        std::fs::write(&path, crate::services::test_support::flac()).expect("written");
+        let mut file = octo_media::tags::TagFile::open(&path).expect("opens");
+        if let Some(bpm) = bpm {
+            file.set_bpm(bpm);
+        }
+        octo_media::tags::tag_writer_extras::set_text(&mut file, octo_media::tags::TagFields::ISRC, isrc);
+        file.save().expect("saved");
+        path.to_string_lossy().into_owned()
+    };
+    let with_tag = tagged("tagged.flac", Some(96), Some("GBAAA9800001"));
+    let with_isrc = tagged("isrc.flac", None, Some("GB-AAA-98-00001"));
+    let bare = tagged("bare.flac", None, None);
+    t.worker.arrived_outside("soulseek:1", &with_tag);
+    t.worker.arrived_outside("soulseek:2", &with_isrc);
+    t.worker.arrived_outside("soulseek:3", &bare);
+    for _ in 0..3 {
+        t.tick().await;
+    }
+    assert_eq!(*t.sidecar.bpms.lock(), [Some(96.0), Some(77.1), None]);
+    assert_eq!(*catalog.asked.lock(), [vec!["GB-AAA-98-00001".to_string()]]);
+    assert_eq!(
+        file_tempo_tags(&with_tag),
+        (Some(96), vec!["GBAAA9800001".to_string()])
+    );
+}
+
+#[test]
+fn navidromes_bpm_of_0_is_no_bpm_tag() {
+    let root = serde_json::json!([
+        { "id": "a", "path": "A/a.flac", "bpm": 124 },
+        { "id": "b", "path": "B/b.flac", "bpm": 0 },
+        { "id": "c", "path": "C/c.flac" },
+    ]);
+    let (rows, _) = crate::services::library::quality_upgrade_worker::parse_songs(&root)
+        .expect("read")
+        .expect("rows");
+    let bpms: Vec<Option<i32>> = rows.iter().map(|row| row.bpm).collect();
+    assert_eq!(bpms, [Some(124), None, None]);
 }

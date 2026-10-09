@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -70,6 +70,26 @@ pub trait ISonicLibrary: Send + Sync {
     fn local_file(&self, row: &LibrarySongRow) -> Option<SonicFile>;
 }
 
+/// A song's published tempo by its ISRCs. A trait so the worker can be tested without a
+/// catalog.
+#[async_trait]
+pub trait IPublishedTempo: Send + Sync {
+    /// The first published tempo found for these ISRCs; None when none has one or the catalog
+    /// does not answer.
+    async fn bpm(&self, isrcs: &[String]) -> Option<f64>;
+}
+
+/// The tempo in a file's BPM tag and its ISRC, read from the file itself.
+pub fn file_tempo_tags(path: &str) -> (Option<i32>, Vec<String>) {
+    match octo_media::tags::TagFile::open(path) {
+        Ok(mut file) => (
+            i32::try_from(file.bpm()).ok().filter(|&bpm| bpm > 0),
+            file.isrc().into_iter().collect(),
+        ),
+        Err(_) => (None, Vec::new()),
+    }
+}
+
 /// The library as Navidrome lists it, with each file checked where Octo can read it.
 pub struct NavidromeSonicLibrary {
     api: Arc<NavidromePlaylistApi>,
@@ -88,9 +108,17 @@ impl ISonicLibrary for NavidromeSonicLibrary {
         self.api.list_songs(start, count).await
     }
 
+    /// A song that just arrived, with the BPM tag and ISRC from its file, which the resolver
+    /// does not carry.
     async fn arrived(&self, id: &str) -> Option<LibrarySongRow> {
         let file = self.resolver.resolve(id).await?;
+        let path = file.absolute_path.clone();
+        let (bpm, isrcs) = tokio::task::spawn_blocking(move || file_tempo_tags(&path))
+            .await
+            .unwrap_or_default();
         Some(LibrarySongRow {
+            bpm,
+            isrcs,
             id: id.to_string(),
             path: file.absolute_path,
             library_path: None,
@@ -218,6 +246,8 @@ pub struct SonicAnalysisWorker {
     status: Mutex<(String, Option<String>)>,
     /// Whether the last look read how songs sound, or made profiles only.
     reads_sound: AtomicBool,
+    /// Songs' published tempos, for their profiles.
+    published: OnceLock<Arc<dyn IPublishedTempo>>,
 }
 
 impl SonicAnalysisWorker {
@@ -245,6 +275,7 @@ impl SonicAnalysisWorker {
             pass: Mutex::new(Pass::default()),
             generation: AtomicU64::new(0),
             reads_sound: AtomicBool::new(true),
+            published: OnceLock::new(),
             status: Mutex::new((
                 "Waiting".to_string(),
                 Some("Starts a couple of minutes after Octo does.".to_string()),
@@ -448,7 +479,12 @@ impl SonicAnalysisWorker {
             parts,
             outside,
         } = target;
-        let answer = match self.sonic.analyze(&file, parts).await {
+        let bpm = if parts.transition {
+            self.published_tempo(&row, &file, outside).await
+        } else {
+            None
+        };
+        let answer = match self.sonic.analyze(&file, parts, bpm).await {
             Ok(answer) => answer,
             Err(_) => {
                 // The connection dropped mid-file: octo-sonic restarted, or the file crashed its
@@ -616,6 +652,33 @@ impl SonicAnalysisWorker {
             }
         }
         None
+    }
+
+    /// The tempo a profile may take its octave from: the file's BPM tag, else the catalog's
+    /// tempo for the song's ISRC (usually kept from the download's own lookup, else asked on
+    /// the background lane). A song from outside the library has its file's tags read for
+    /// both; a library song has them from Navidrome.
+    async fn published_tempo(&self, row: &LibrarySongRow, file: &str, outside: bool) -> Option<f64> {
+        let (bpm, isrcs) = if outside {
+            let path = file.to_string();
+            tokio::task::spawn_blocking(move || file_tempo_tags(&path))
+                .await
+                .unwrap_or_default()
+        } else {
+            (row.bpm, row.isrcs.clone())
+        };
+        if let Some(bpm) = bpm.filter(|&bpm| bpm > 0) {
+            return Some(f64::from(bpm));
+        }
+        if isrcs.is_empty() {
+            return None;
+        }
+        self.published.get()?.bpm(&isrcs).await
+    }
+
+    /// Where songs' published tempos come from, when a catalog is at hand.
+    pub fn use_published_tempo(&self, published: Arc<dyn IPublishedTempo>) {
+        let _ = self.published.set(published);
     }
 
     /// A landed file from outside the library, unless it already has this profile.

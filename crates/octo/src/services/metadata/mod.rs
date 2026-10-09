@@ -9,7 +9,7 @@ pub mod genre_backfill_journal;
 pub mod genre_backfill_state;
 pub mod genre_backfill_worker;
 
-pub use deezer_metadata_service::{DeezerExplicitCatalog, DeezerMetadataService};
+pub use deezer_metadata_service::{DeezerExplicitCatalog, DeezerMetadataService, DeezerPublishedTempo};
 pub use deezer_rate_limit_handler::DeezerRateLimitHandler;
 pub use deezer_rate_limiter::DeezerRateLimiter;
 pub use genre_backfill_journal::{GenreBackfillJournal, GenreJournalEntry};

@@ -15,7 +15,9 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::models::domain::Song;
-use octo_core::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind};
+use octo_core::models::radio::{
+    LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack,
+};
 use octo_core::radio::radio_provider;
 use octo_core::settings::ExplicitFilter;
 use octo_subsonic::xml::XElement;
@@ -671,8 +673,8 @@ pub async fn bootstrap_radio_profile(
 }
 
 /// A station's tracks as songs this listener can play: each resolved (the library's copy
-/// first), the explicit filter applied, and back-to-back repeats of an artist or an album
-/// dropped.
+/// first), the explicit filter applied, Discovery Mix held to the Discovery balance's share of
+/// library songs, and back-to-back repeats of an artist or an album dropped.
 pub async fn materialize_station(
     state: &AppState,
     proxy: &SubsonicProxyService,
@@ -684,9 +686,98 @@ pub async fn materialize_station(
         state.metadata_service.clone(),
         state.external_id_registry.clone(),
     );
+    let snapshot = state.settings.current();
+    let explicit_filter = snapshot.subsonic.explicit_filter;
+    let mut resolved = resolve_station_tracks(&resolver, &station.tracks, parameters, explicit_filter).await;
+    if station.kind == LastFmRadioStationKind::Discovery {
+        let cap = dotnet::round(
+            resolved.len() as f64 * f64::from(snapshot.last_fm.effective_discovery_percent()) / 100.0,
+            0,
+        ) as usize;
+        keep_library_share(
+            &mut resolved,
+            cap,
+            &station.reserve,
+            |tracks: Vec<LastFmRadioTrack>| {
+                let resolver = &resolver;
+                async move { resolve_station_tracks(resolver, &tracks, parameters, explicit_filter).await }
+            },
+        )
+        .await;
+    }
+    let mut spaced = Vec::with_capacity(resolved.len());
+    let mut previous_artist: Option<String> = None;
+    let mut previous_album_key: Option<String> = None;
+    for song in resolved {
+        let album_key = (!dotnet::is_blank(&song.album)).then(|| format!("{}|{}", song.artist, song.album));
+        let same_artist = previous_artist
+            .as_deref()
+            .is_some_and(|previous| dotnet::eq_ignore_case(previous, &song.artist));
+        let same_album = album_key.as_deref().is_some_and(|key| {
+            previous_album_key
+                .as_deref()
+                .is_some_and(|previous| dotnet::eq_ignore_case(previous, key))
+        });
+        if same_artist || same_album {
+            continue;
+        }
+        previous_artist = Some(song.artist.clone());
+        previous_album_key = album_key;
+        spaced.push(song);
+    }
+    spaced
+}
+
+/// Holds a mix to at most `cap` library songs. Each library song past the first `cap` gives its
+/// place to the next outside song the reserve resolves to, in the reserve's order; when the
+/// reserve runs out, the library songs left keep their places, so a thin reserve still gives a
+/// full mix. The reserve is resolved only when a place needs it.
+async fn keep_library_share<F, Fut>(songs: &mut [Song], cap: usize, reserve: &[LastFmRadioTrack], resolve: F)
+where
+    F: Fn(Vec<LastFmRadioTrack>) -> Fut,
+    Fut: std::future::Future<Output = Vec<Song>>,
+{
+    let over: Vec<usize> = songs
+        .iter()
+        .enumerate()
+        .filter(|(_, song)| song.is_local)
+        .map(|(index, _)| index)
+        .skip(cap)
+        .collect();
+    if over.is_empty() {
+        return;
+    }
+    let mut present: std::collections::HashSet<String> = songs.iter().map(|song| song.id.clone()).collect();
+    let mut stand_ins = Vec::with_capacity(over.len());
+    for chunk in reserve.chunks(over.len().max(4)) {
+        if stand_ins.len() >= over.len() {
+            break;
+        }
+        for song in resolve(chunk.to_vec()).await {
+            if stand_ins.len() >= over.len() {
+                break;
+            }
+            if !song.is_local && present.insert(song.id.clone()) {
+                stand_ins.push(song);
+            }
+        }
+    }
+    for (index, stand_in) in over.into_iter().zip(stand_ins) {
+        songs[index] = stand_in;
+    }
+}
+
+/// Each track resolved, as a station plays it: the library's copy first, else the outside one;
+/// a sounds-alike song only from the library; the explicit filter applied. Tracks that resolve
+/// to nothing are left out.
+async fn resolve_station_tracks(
+    resolver: &LastFmRadioTrackResolver,
+    tracks: &[LastFmRadioTrack],
+    parameters: &Parameters,
+    explicit_filter: ExplicitFilter,
+) -> Vec<Song> {
     let gate = Semaphore::new(4);
-    let tasks = station.tracks.iter().map(|track| {
-        let resolver = &resolver;
+    let tasks = tracks.iter().map(|track| {
         let gate = &gate;
         async move {
             let _permit = gate.acquire().await.expect("the gate is never closed");
@@ -724,8 +815,7 @@ pub async fn materialize_station(
             song
         }
     });
-    let explicit_filter = state.settings.current().subsonic.explicit_filter;
-    let resolved: Vec<Song> = futures::future::join_all(tasks)
+    futures::future::join_all(tasks)
         .await
         .into_iter()
         .filter(|song| !song.id.is_empty())
@@ -734,28 +824,7 @@ pub async fn materialize_station(
             ExplicitFilter::ExplicitOnly => song.explicit_content_lyrics != Some(3),
             ExplicitFilter::All => true,
         })
-        .collect();
-    let mut spaced = Vec::with_capacity(resolved.len());
-    let mut previous_artist: Option<String> = None;
-    let mut previous_album_key: Option<String> = None;
-    for song in resolved {
-        let album_key = (!dotnet::is_blank(&song.album)).then(|| format!("{}|{}", song.artist, song.album));
-        let same_artist = previous_artist
-            .as_deref()
-            .is_some_and(|previous| dotnet::eq_ignore_case(previous, &song.artist));
-        let same_album = album_key.as_deref().is_some_and(|key| {
-            previous_album_key
-                .as_deref()
-                .is_some_and(|previous| dotnet::eq_ignore_case(previous, key))
-        });
-        if same_artist || same_album {
-            continue;
-        }
-        previous_artist = Some(song.artist.clone());
-        previous_album_key = album_key;
-        spaced.push(song);
-    }
-    spaced
+        .collect()
 }
 
 /// Who a native (Navidrome API) request is: `u` when it has one, else the owner of the

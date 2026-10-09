@@ -302,7 +302,80 @@ pub fn shape(
     banned: Option<&IgnoreCaseKeys>,
     disliked: Option<&IgnoreCaseKeys>,
 ) -> Vec<LastFmRadioTrack> {
+    shape_walk(
+        candidates,
+        plays,
+        settings,
+        unavailable,
+        random,
+        previous,
+        artist_cap,
+        exclude_recent,
+        familiar_quota,
+        banned,
+        disliked,
+        1,
+    )
+    .tracks
+}
+
+/// A station's tracks and, behind them, the walk's next picks.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Shaped {
+    pub tracks: Vec<LastFmRadioTrack>,
+    pub reserve: Vec<LastFmRadioTrack>,
+}
+
+/// [`shape`] without a familiar quota, the walk carried on past the station's size so that
+/// tracks and reserve together hold up to twice as many. The tracks are exactly what [`shape`]
+/// would take; the reserve is what the same walk would take next, under the same caps, for
+/// whatever the station cannot use once its tracks are resolved.
+pub fn shape_with_reserve(
+    candidates: Vec<Candidate>,
+    plays: &[LastFmRadioPlay],
+    settings: &LastFmSettings,
+    unavailable: &IgnoreCaseKeys,
+    random: &mut dyn RadioRandom,
+    previous: &IgnoreCaseKeys,
+    artist_cap: i32,
+    exclude_recent: bool,
+    banned: Option<&IgnoreCaseKeys>,
+    disliked: Option<&IgnoreCaseKeys>,
+) -> Shaped {
+    shape_walk(
+        candidates,
+        plays,
+        settings,
+        unavailable,
+        random,
+        previous,
+        artist_cap,
+        exclude_recent,
+        None,
+        banned,
+        disliked,
+        2,
+    )
+}
+
+/// The walk behind [`shape`] and [`shape_with_reserve`]: it takes up to `reach` times the
+/// station's size, and everything past the size is the reserve.
+fn shape_walk(
+    candidates: Vec<Candidate>,
+    plays: &[LastFmRadioPlay],
+    settings: &LastFmSettings,
+    unavailable: &IgnoreCaseKeys,
+    random: &mut dyn RadioRandom,
+    previous: &IgnoreCaseKeys,
+    artist_cap: i32,
+    exclude_recent: bool,
+    familiar_quota: Option<i32>,
+    banned: Option<&IgnoreCaseKeys>,
+    disliked: Option<&IgnoreCaseKeys>,
+    reach: i32,
+) -> Shaped {
     let target = settings.effective_radio_track_count();
+    let walk_target = target.saturating_mul(reach.max(1));
     let recent: IgnoreCaseKeys = plays
         .iter()
         .take(30)
@@ -381,7 +454,7 @@ pub fn shape(
     };
     let mut held = Vec::new();
     for candidate in weighted_order(distinct, random, previous) {
-        if walk.output.len() as i32 >= target {
+        if walk.output.len() as i32 >= walk_target {
             break;
         }
         if walk.admit(&candidate, true) == Verdict::Wait {
@@ -389,18 +462,19 @@ pub fn shape(
         }
     }
     for candidate in &held {
-        if walk.output.len() as i32 >= target {
+        if walk.output.len() as i32 >= walk_target {
             break;
         }
         walk.admit(candidate, false);
     }
     let Walk {
-        output,
+        mut output,
         familiar_flags,
         output_artists,
         output_titles,
         ..
     } = walk;
+    let reserve = output.split_off(output.len().min(target.max(0) as usize));
     // Your Mix (and Starter Radio): the familiar tracks and the discoveries take turns at random
     // at the discovery share (last_fm_radio_placement), instead of the walk's order putting the
     // familiar first. The share is paced to what the walk took, so a short walk ends on no block
@@ -417,7 +491,7 @@ pub fn shape(
             .map(|((track, familiar), (artist, title))| (track, familiar, artist, title))
             .collect();
         let title_of = |(_, _, _, title): &Placed| title.clone();
-        return last_fm_radio_placement::place(
+        let tracks = last_fm_radio_placement::place(
             &flagged,
             |(_, familiar, _, _): &Placed| !*familiar,
             |(_, _, artist, _): &Placed| Some(artist.clone()),
@@ -432,8 +506,12 @@ pub fn shape(
         .into_iter()
         .map(|(track, _, _, _)| track)
         .collect();
+        return Shaped { tracks, reserve };
     }
-    output
+    Shaped {
+        tracks: output,
+        reserve,
+    }
 }
 
 /// A Your Mix track with what its placement needs: whether it is familiar, and the walk's
@@ -753,6 +831,7 @@ pub fn create<S: AsRef<str>>(
             .map(str::to_string)
             .collect(),
         tracks,
+        reserve: Vec::new(),
     }
 }
 
@@ -1083,6 +1162,66 @@ mod tests {
             let tail = pattern.len() - pattern.trim_end_matches('D').len();
             assert!(tail <= 6, "seed {seed} ends on {tail} discoveries: {pattern}");
             assert!(!pattern.contains("FFF"), "seed {seed}: {pattern}");
+        }
+    }
+
+    /// The reserve is what the same walk takes next: the tracks are exactly what `shape` takes,
+    /// and tracks and reserve together hold at most twice the station's size.
+    #[test]
+    fn the_reserve_follows_the_station_and_leaves_its_tracks_as_they_were() {
+        let settings = LastFmSettings {
+            radio_track_count: 20,
+            ..Default::default()
+        };
+        let candidates: Vec<Candidate> = (0..80)
+            .map(|i| Candidate {
+                track: SimilarTrack::new(format!("Artist {}", i % 40), format!("Tune {i}"), 1.0),
+                weight: 1.0 / f64::from(i + 1),
+                source: format!("tag:{}", i % 3),
+            })
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..20 {
+            let plain = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                2,
+                true,
+                None,
+                None,
+                None,
+            );
+            let shaped = shape_with_reserve(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                2,
+                true,
+                None,
+                None,
+            );
+            assert_eq!(shaped.tracks, plain, "seed {seed}");
+            assert_eq!(shaped.tracks.len(), 20, "seed {seed}");
+            assert!(!shaped.reserve.is_empty(), "seed {seed}");
+            assert!(shaped.reserve.len() <= 20, "seed {seed}");
+            let keys: IgnoreCaseKeys = shaped
+                .tracks
+                .iter()
+                .chain(&shaped.reserve)
+                .map(|track| seed_normalizer::track_key(&track.artist, &track.title))
+                .collect();
+            assert_eq!(
+                keys.len(),
+                shaped.tracks.len() + shaped.reserve.len(),
+                "seed {seed}"
+            );
         }
     }
 

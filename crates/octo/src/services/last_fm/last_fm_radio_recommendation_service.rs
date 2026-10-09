@@ -13,8 +13,8 @@ use octo_core::last_fm::SimilarTrack;
 use octo_core::last_fm::last_fm_radio_recommendation_service::{
     Candidate, HEARTED_SEED_AFFINITY, IgnoreCaseKeys, NEIGHBOUR_ARTIST_AFFINITY, Randomizer,
     SEED_RECENCY_DECAY, SEEDS_AT_ONCE, artist_cap, artist_key, create, default_randomizer,
-    definition_version, key, ranked, score_artists, score_local_tags, seed_score, shape, source_weight,
-    suppress_station_overlap, title, to_candidate,
+    definition_version, key, ranked, score_artists, score_local_tags, seed_score, shape, shape_with_reserve,
+    source_weight, suppress_station_overlap, title, to_candidate,
 };
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use octo_core::models::domain::Song;
@@ -249,7 +249,9 @@ impl LastFmRadioRecommendationService {
                         .tracks_from_tags(username, &top_tags, candidate_target, &budget)
                         .await?;
                     if discovery.len() >= 5 {
-                        let tracks = shape(
+                        // The reserve stands in for library songs past the Discovery balance's
+                        // share, which only resolving the tracks can tell.
+                        let shaped = shape_with_reserve(
                             discovery,
                             &plays,
                             settings,
@@ -258,21 +260,22 @@ impl LastFmRadioRecommendationService {
                             previous("discovery"),
                             artist_cap(settings, LastFmRadioStationKind::Discovery),
                             true,
-                            None,
                             Some(&banned),
                             Some(&disliked),
                         );
-                        stations.push(create(
+                        let mut station = create(
                             username,
                             "discovery",
                             "Discovery Mix",
                             LastFmRadioStationKind::Discovery,
                             true,
                             &top_tags,
-                            tracks,
+                            shaped.tracks,
                             1,
                             Utc::now(),
-                        ));
+                        );
+                        station.reserve = shaped.reserve;
+                        stations.push(station);
                     }
                 }
 

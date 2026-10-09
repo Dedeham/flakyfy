@@ -1,5 +1,5 @@
-//! Port of `octo.Tests/SubsonicModelMapperTests.cs`, plus Rust-only checks of the merge order,
-//! the dedup keys and a search2 envelope read from XML.
+//! Tests of the search response parsing and the search merge: the merge order, the dedup keys
+//! and a search2 envelope read from XML.
 
 use std::sync::Arc;
 
@@ -328,7 +328,7 @@ fn merge_search_results_empty_external_results_returns_only_local() {
     assert_eq!(counts(&merged), (1, 1, 1));
 }
 
-// ---- Rust-only --------------------------------------------------------------------------
+// ---- Merge order, dedup keys and partial reads --------------------------------------------
 
 fn ids(rows: &[Row]) -> Vec<String> {
     rows.iter()

@@ -1,27 +1,24 @@
-//! Port of `Services/Subsonic/SubsonicRequestParser.cs`: the one parameter dictionary every
-//! Subsonic action works from (endpoints.md §2.3), plus the ASP.NET request collections it was
-//! built from, which the relay needs again to send repeated keys as the client sent them.
+//! The one parameter dictionary every Subsonic action works from, plus the request collections
+//! it was built from, which the relay needs again to send repeated keys as the client sent them.
 //!
-//! The C# read an `HttpRequest`; this reads a [`RequestParts`] (raw query string, content
-//! type, content length and the body bytes), so it stays free of any HTTP stack. The rules are
-//! ASP.NET Core's, checked against .NET 9:
+//! The parser reads a [`RequestParts`] (raw query string, content type, content length and the
+//! body bytes), so it stays free of any HTTP stack. The rules:
 //!
-//! - **Query** (`request.Query`): split on `&` only (never `;`), empty segments skipped, a
+//! - **Query**: split on `&` only (never `;`), empty segments skipped, a
 //!   segment without `=` is a key with an empty value, `=v` is the empty key. `+` is a space,
 //!   then `%XX` is decoded as UTF-8; an escape that is not valid UTF-8 (or not an escape at all)
 //!   is left as written (`%FF`, `%ZZ`, a lone `%`). Keys are matched **ignoring case**, keep
 //!   the spelling they were first sent with, and collect every value (`u=a&U=b` is one key `u`
 //!   holding `a` and `b`).
 //! - **The dictionary** is ordinal (`F` is not `f`), keeps insertion order, and a repeated key
-//!   becomes its values joined with commas, leaving out the empty ones (`StringValues.ToString`:
-//!   `id=&id=B` reads `B`).
+//!   becomes its values joined with commas, leaving out the empty ones (`id=&id=B` reads `B`).
 //! - **Body**, read only when `Content-Length > 0` or a `Content-Type` is present:
 //!   - a form (`application/x-www-form-urlencoded` or `multipart/form-data`, the media type
-//!     matched exactly, ignoring case): every text field, file parts left out. When ASP.NET's
+//!     matched exactly, ignoring case): every text field, file parts left out. When the
 //!     form reader fails before reading anything (a multipart type with no usable boundary), the
 //!     body is parsed as a query string instead; when it fails part way, nothing comes of it.
 //!   - otherwise a content type that contains `application/json` (ordinal, case-sensitive): a
-//!     top-level object, each value as `JsonElement.ToString()` (strings unquoted, numbers,
+//!     top-level object, each value as text (strings unquoted, numbers,
 //!     objects and arrays as their raw text, `True`/`False`, null as empty). Anything that is
 //!     not one object with at most 64 levels of nesting is ignored entirely.
 //!
@@ -31,7 +28,7 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
-/// The parameter dictionary (`Dictionary<string, string>`): keys compared ordinally,
+/// The parameter dictionary: keys compared ordinally,
 /// insertion order kept, and an overwrite keeps the key where it first appeared.
 pub type Parameters = IndexMap<String, String>;
 
@@ -45,9 +42,8 @@ pub struct RequestParts<'a> {
     pub body: &'a [u8],
 }
 
-/// A request's values by name, as ASP.NET's `IQueryCollection` and `IFormCollection` hold
-/// them: keys matched ignoring case (`OrdinalIgnoreCase`), spelled as first sent, in the order
-/// first sent, each with every value it was given.
+/// A request's values by name, from its query or its form: keys matched ignoring case,
+/// spelled as first sent, in the order first sent, each with every value it was given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StringValuesCollection {
     entries: Vec<(String, Vec<String>)>,
@@ -72,7 +68,7 @@ impl StringValuesCollection {
         }
     }
 
-    /// Every value sent under `key`, matched ignoring case (`TryGetValue`).
+    /// Every value sent under `key`, matched ignoring case.
     pub fn get(&self, key: &str) -> Option<&[String]> {
         self.entries
             .iter()
@@ -94,7 +90,7 @@ impl StringValuesCollection {
     }
 }
 
-/// `StringValues.ToString()`: the values joined with commas, empty ones left out.
+/// The values joined with commas, empty ones left out.
 pub fn join_values(values: &[String]) -> String {
     let mut out = String::new();
     for value in values.iter().filter(|v| !v.is_empty()) {
@@ -106,8 +102,8 @@ pub fn join_values(values: &[String]) -> String {
     out
 }
 
-/// `request.Query`: the query string as ASP.NET Core's `QueryFeature` parses it. The text is
-/// the query without its `?`; a second `?` is part of the first key, as it was in C#.
+/// The query string by the rules in the module docs. The text is the query without its `?`;
+/// a second `?` is part of the first key.
 pub fn parse_query(raw: &str) -> StringValuesCollection {
     let mut collection = StringValuesCollection::new();
     for segment in raw.split('&').filter(|s| !s.is_empty()) {
@@ -117,18 +113,18 @@ pub fn parse_query(raw: &str) -> StringValuesCollection {
     collection
 }
 
-/// `QueryHelpers.ParseQuery`: the same parse, after dropping one leading `?`. The form
+/// The same parse, after dropping one leading `?`. The form
 /// reader's fallback parses a body this way.
 pub fn parse_query_helpers(text: &str) -> StringValuesCollection {
     parse_query(text.strip_prefix('?').unwrap_or(text))
 }
 
-/// `+` as a space, then `Uri.UnescapeDataString`.
+/// `+` as a space, then [`unescape_data_string`].
 fn decode_component(text: &str) -> String {
     unescape_data_string(&text.replace('+', " "))
 }
 
-/// `Uri.UnescapeDataString`: each run of `%XX` escapes is decoded as UTF-8, and any escape
+/// Percent-decoding: each run of `%XX` escapes is decoded as UTF-8, and any escape
 /// that does not form valid UTF-8 is left as written. A `%` not followed by two hex digits is
 /// left alone too.
 pub fn unescape_data_string(text: &str) -> String {
@@ -185,21 +181,20 @@ fn hex_value(b: u8) -> u8 {
     }
 }
 
-/// The characters `Uri.EscapeDataString` leaves alone: the RFC 3986 unreserved set.
+/// The characters [`escape_data_string`] leaves alone: the RFC 3986 unreserved set.
 const DATA_STRING: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'.')
     .remove(b'~');
 
-/// `Uri.EscapeDataString`: everything but `A-Z a-z 0-9 - _ . ~` as upper-case `%XX` of its
+/// Percent-encoding: everything but `A-Z a-z 0-9 - _ . ~` as upper-case `%XX` of its
 /// UTF-8 bytes.
 pub fn escape_data_string(text: &str) -> String {
     utf8_percent_encode(text, DATA_STRING).to_string()
 }
 
-/// `request.HasFormContentType`: the media type, parameters aside, is exactly a form type,
-/// ignoring case.
+/// Whether the media type, parameters aside, is exactly a form type, ignoring case.
 pub fn has_form_content_type(content_type: Option<&str>) -> bool {
     let Some(content_type) = content_type else {
         return false;
@@ -209,28 +204,28 @@ pub fn has_form_content_type(content_type: Option<&str>) -> bool {
         || media_type.eq_ignore_ascii_case("multipart/form-data")
 }
 
-/// How `ReadFormAsync` failed, which decides what its callers' fallback could still read.
+/// How [`read_form`] failed, which decides what its callers' fallback could still read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormError {
-    /// It threw before reading the body (a multipart type with no usable boundary), so the
+    /// It failed before reading the body (a multipart type with no usable boundary), so the
     /// whole body was still there for the fallback.
     #[error("{0}")]
     BeforeReading(String),
-    /// It threw part way through, after consuming the body.
+    /// It failed part way through, after consuming the body.
     #[error("{0}")]
     WhileReading(String),
 }
 
-/// `FormOptions.ValueCountLimit`.
+/// The most values one form may hold.
 const VALUE_COUNT_LIMIT: usize = 1024;
-/// `FormOptions.KeyLengthLimit`.
+/// The longest form key, in bytes.
 const KEY_LENGTH_LIMIT: usize = 2048;
-/// `FormOptions.ValueLengthLimit`.
+/// The longest form value, in bytes.
 const VALUE_LENGTH_LIMIT: usize = 4 * 1024 * 1024;
-/// `FormOptions.MultipartBoundaryLengthLimit`.
+/// The longest multipart boundary.
 const BOUNDARY_LENGTH_LIMIT: usize = 70;
 
-/// `request.ReadFormAsync()` for a request whose content type is a form type: the text fields
+/// The form of a request whose content type is a form type: the text fields
 /// (file parts are not form values), keys matched ignoring case. The body is read as UTF-8.
 pub fn read_form(content_type: &str, body: &[u8]) -> Result<StringValuesCollection, FormError> {
     let media_type = content_type.split(';').next().unwrap_or("").trim();
@@ -268,8 +263,8 @@ fn read_url_encoded(body: &[u8]) -> Result<StringValuesCollection, FormError> {
     Ok(collection)
 }
 
-/// One parameter of a header value (`boundary=...`, `name="..."`), quotes removed
-/// (`HeaderUtilities.RemoveQuotes`), the name matched ignoring case.
+/// One parameter of a header value (`boundary=...`, `name="..."`), quotes removed, the name
+/// matched ignoring case.
 fn header_parameter(value: &str, name: &str) -> Option<String> {
     value.split(';').skip(1).find_map(|part| {
         let (key, val) = part.split_once('=')?;
@@ -370,8 +365,8 @@ fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .map(|i| i + from)
 }
 
-/// The form `ExtractFormParametersAsync` reads: `ReadFormAsync`, or when that fails, what was
-/// left of the body parsed as a query string.
+/// A form body's parameters: [`read_form`], or when that fails, what was left of the body
+/// parsed as a query string.
 fn form_parameters(content_type: &str, body: &[u8]) -> StringValuesCollection {
     match read_form(content_type, body) {
         Ok(form) => form,
@@ -388,13 +383,13 @@ fn form_parameters(content_type: &str, body: &[u8]) -> StringValuesCollection {
     }
 }
 
-/// `JsonSerializerOptions.MaxDepth`'s default.
+/// The deepest nesting a JSON body may have.
 const MAX_JSON_DEPTH: usize = 64;
 
-/// `ExtractJsonParametersAsync`: a top-level object's members as `JsonElement.ToString()`
-/// gives them, or `None` when the body is not one (which the C# ignored).
+/// A JSON body's parameters: a top-level object's members as text (see the module docs), or
+/// `None` when the body is not one, which adds no parameters.
 pub fn json_parameters(body: &[u8]) -> Option<Vec<(String, String)>> {
-    // StreamReader: UTF-8 with replacement characters, a byte order mark dropped.
+    // UTF-8 with replacement characters, a byte order mark dropped.
     let text = String::from_utf8_lossy(body);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     if text.is_empty() {
@@ -412,7 +407,7 @@ pub fn json_parameters(body: &[u8]) -> Option<Vec<(String, String)>> {
             Some(b'"') => serde_json::from_str::<String>(raw).ok()?,
             Some(b't') => "True".to_string(),
             Some(b'f') => "False".to_string(),
-            // Deserialized into `object`, a JSON null is a C# null, and `?? ""` follows.
+            // A JSON null is an empty value.
             Some(b'n') => String::new(),
             // Numbers, objects and arrays: their raw text, whitespace and all.
             _ => raw.to_string(),
@@ -448,8 +443,7 @@ fn depth(raw: &str) -> usize {
     deepest
 }
 
-/// `SubsonicRequestParser.ExtractAllParametersAsync`: query values first, then the body's,
-/// which override them (endpoints.md §2.3).
+/// Every parameter of a request: query values first, then the body's, which override them.
 pub fn extract_all_parameters(request: &RequestParts<'_>) -> Parameters {
     let mut parameters = Parameters::new();
     for (key, values) in parse_query(request.query.unwrap_or("")).iter() {
@@ -478,7 +472,7 @@ pub fn extract_all_parameters(request: &RequestParts<'_>) -> Parameters {
     parameters
 }
 
-/// `SubsonicRequestParser.ExtractParameterValuesAsync`: every occurrence of a parameter, from
+/// Every occurrence of a parameter, from
 /// the query and then the form, blank ones skipped. The dictionary joins a repeated key into
 /// one comma-separated value for lookups; this keeps them apart. The name is matched ignoring
 /// case, as the collections match it. A form that fails to read adds nothing.

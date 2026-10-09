@@ -1,14 +1,13 @@
-//! Port of `Services/Subsonic/SubsonicResponseBuilder.cs` (and its `.Lyrics` and
-//! `.LibraryActions` parts): building Subsonic API responses in both XML and JSON formats.
+//! Building Subsonic API responses in both XML and JSON formats, the lyrics and library
+//! actions answers included.
 //!
 //! Everything here needs only the models. The parts that take app-service types (an
 //! acquisition snapshot, a generated mix, a library-action outcome, an upgrade job) are in
 //! `octo::services::subsonic::subsonic_response_builder`, which adds them to this builder.
 //!
-//! Shapes are kept as C# built them: a `Dictionary<string, object>` is a [`Fields`] map in
-//! insertion order (removals use `shift_remove`, so the order of what stays is kept), and every
-//! answer is a [`SubsonicReply`] carrying the exact bytes and content type the ASP.NET result
-//! (`JsonResult`, `ContentResult` or `FileContentResult`) wrote.
+//! Field order is part of the shape: an object's fields are a [`Fields`] map in insertion
+//! order (removals use `shift_remove`, so the order of what stays is kept), and every answer is
+//! a [`SubsonicReply`] carrying the exact bytes and content type it goes out with.
 
 mod library_actions;
 mod lyrics;
@@ -48,7 +47,7 @@ pub use top_songs::{
     json_as_xml, library_song_xml,
 };
 
-/// A `Dictionary<string, object>` of response fields, in insertion order.
+/// Response fields, in insertion order.
 pub type Fields = Map<String, Value>;
 
 pub const SUBSONIC_NAMESPACE: &str = "http://subsonic.org/restapi";
@@ -77,7 +76,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
         &[1, 2, LIBRARY_ACTIONS_EXTENSION_VERSION],
     ),
     ("songLyrics", &[1, 2]),
-    // After songLyrics, where the C# lists it.
+    // Listed after songLyrics.
     (TOP_SONGS_EXTENSION, &[1, TOP_SONGS_EXTENSION_VERSION]),
     (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
@@ -94,7 +93,7 @@ pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
 pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
 pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
-/// octoLists v1 (f54467a): Made for you (New Releases, Rediscover, Deep Cuts) are read-only
+/// octoLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only
 /// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
 pub const LISTS_EXTENSION: &str = "octoLists";
 pub const LISTS_EXTENSION_VERSION: i32 = 1;
@@ -126,8 +125,7 @@ pub struct SubsonicResponseBuilder {
     /// a client that has already cached those rows. The setting is restart-required.
     externals_are_lossless: bool,
 
-    /// `DateTime.UtcNow`, for the `created` of album rows. A seam for tests; the C# read the
-    /// system clock.
+    /// The clock, for the `created` of album rows. A seam for tests.
     clock: Clock,
 }
 
@@ -140,8 +138,7 @@ impl std::fmt::Debug for SubsonicResponseBuilder {
 }
 
 impl SubsonicResponseBuilder {
-    /// `subsonic` is read here and not again (`IOptions<SubsonicSettings>`): see
-    /// `externals_are_lossless`.
+    /// `subsonic` is read here and not again: see `externals_are_lossless`.
     pub fn new(id_registry: Arc<dyn IdRegistry>, subsonic: &SubsonicSettings) -> Self {
         Self {
             id_registry,
@@ -158,8 +155,7 @@ impl SubsonicResponseBuilder {
 
     /// Creates a generic Subsonic response with status "ok".
     ///
-    /// (C# also took the data to send, and ignored it: the JSON answer leaves the element out
-    /// entirely, while the XML one writes it empty.)
+    /// The JSON answer leaves the element out entirely, while the XML one writes it empty.
     pub fn create_response(&self, format: &str, element_name: &str) -> SubsonicReply {
         if format == "json" {
             return self.create_json_response(json!({ "status": "ok", "version": SUBSONIC_VERSION }));
@@ -285,8 +281,8 @@ impl SubsonicResponseBuilder {
 
     /// A playlist whose entries are Navidrome's own songs, passed through as Navidrome
     /// described them; in XML only their scalar fields, since Subsonic's XML entry is
-    /// attribute-only. The second half of C#'s `CreateGeneratedPlaylistResponse`, from the mix's
-    /// fields on (the mix itself is an app type; see the `octo` crate).
+    /// attribute-only. A generated mix's answer is built with this from the mix's fields on
+    /// (the mix itself is an app type; see the `octo` crate).
     pub fn create_entries_playlist_response(
         &self,
         format: &str,
@@ -521,8 +517,8 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs and
-    /// octoRadioSources are left out; [`Self::merge_open_subsonic_extensions_with`] lists them.
+    /// octoTopSongs and octoRadioSources are left out;
+    /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
         format: &str,
@@ -545,7 +541,7 @@ impl SubsonicResponseBuilder {
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
     /// discovery being off hides, and octoRadioSources while radio can answer
-    /// (`radio_sources`). The C# defaults were true and false.
+    /// (`radio_sources`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -701,7 +697,6 @@ impl SubsonicResponseBuilder {
         // song. Apple Music represents singles as "song-name = album-name", so
         // doing the same here makes each placeholder look like a single and
         // satisfies the album-required filter.
-        // (C# fell back to "Singles" for a null title; a Rust title is never null.)
         let album_name = if is_blank(&song.album) {
             song.title.clone()
         } else {
@@ -906,7 +901,7 @@ impl SubsonicResponseBuilder {
 
     /// Converts a Subsonic JSON element to a dictionary: every property converted as
     /// [`convert_json_value`] does, then `isExternal` set. None when the element is not an
-    /// object (C#'s `EnumerateObject` threw).
+    /// object.
     pub fn convert_subsonic_json_element(&self, element: &Value, is_local: bool) -> Option<Value> {
         let Value::Object(properties) = element else {
             return None;
@@ -942,7 +937,7 @@ fn build_artist_fields(artist: &Artist) -> Fields {
     fields
 }
 
-/// `new XElement(ns + "subsonic-response", status, version)`.
+/// The `subsonic-response` root in the Subsonic namespace, with its status and version.
 fn envelope(status: &str) -> XElement {
     XElement::ns(SUBSONIC_NAMESPACE, "subsonic-response")
         .attr("status", status)
@@ -954,7 +949,7 @@ fn subsonic_element(name: impl Into<String>) -> XElement {
     XElement::ns(SUBSONIC_NAMESPACE, name)
 }
 
-/// `yyyy-MM-ddTHH:mm:ss.fffZ`: milliseconds cut, not rounded, as .NET's `fff` does.
+/// `yyyy-MM-ddTHH:mm:ss.fffZ`: milliseconds cut, not rounded.
 pub(crate) fn millis(value: &DateTime<Utc>) -> String {
     value.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
@@ -969,7 +964,7 @@ fn year_of(value: &DateTime<Utc>) -> i32 {
 }
 
 /// `"🎵 {Provider with a capital}{ curator}"`, the artist a playlist shown as an album gets.
-/// (C# threw on an empty provider; every provider is a fixed non-empty name.)
+/// (Every provider is a fixed non-empty name.)
 pub(crate) fn curator_artist_name(playlist: &ExternalPlaylist) -> String {
     let mut chars = playlist.provider.chars();
     let mut name = String::from("\u{1F3B5} ");
@@ -1046,9 +1041,8 @@ pub(crate) fn attributes(element: &mut XElement, fields: &Fields) {
 }
 
 /// A list of plain text, such as OpenSubsonic's `isrc`, as one child element per value:
-/// `<isrc>USRC17607839</isrc>`, the shape the upstream server writes. (C# took the fields
-/// whose value was a `string[]`; every list the builder makes of anything else holds
-/// objects or is empty, which writes the same nothing.)
+/// `<isrc>USRC17607839</isrc>`, the shape the upstream server writes. A list holding anything
+/// but strings is skipped; every such list the builder makes holds objects.
 pub(crate) fn text_lists(element: &mut XElement, fields: &Fields, ns: Option<&str>) {
     for (name, value) in fields {
         let Value::Array(items) = value else { continue };
@@ -1086,7 +1080,7 @@ pub(crate) fn scalar(value: &Value) -> String {
         Value::Bool(b) => b.to_xml_value(),
         Value::Number(n) => number_text(n),
         Value::String(s) => s.clone(),
-        // `object.ToString()` of the list or dictionary ConvertJsonValue made: its type name.
+        // A list or an object has no scalar text; it is written as a fixed type name.
         Value::Array(_) => "System.Collections.Generic.List`1[System.Object]".to_string(),
         Value::Object(_) => {
             "System.Collections.Generic.Dictionary`2[System.String,System.Object]".to_string()
@@ -1095,7 +1089,7 @@ pub(crate) fn scalar(value: &Value) -> String {
     }
 }
 
-/// A number as .NET writes it: integers as they are, doubles in the round-trip format.
+/// A number as text: integers as they are, doubles in the round-trip format.
 pub(crate) fn number_text(n: &Number) -> String {
     if let Some(i) = n.as_i64() {
         i.to_string()
@@ -1106,8 +1100,8 @@ pub(crate) fn number_text(n: &Number) -> String {
     }
 }
 
-/// `value?.ToString()` of a converted JSON value: what the merge compares artist and title
-/// keys by. Booleans are `True`/`False`, as .NET writes them.
+/// A converted JSON value as text: what the merge compares artist and title keys by.
+/// Booleans are `True`/`False`.
 pub(crate) fn text_of(value: Option<&Value>) -> Option<String> {
     match value? {
         Value::Null => None,
@@ -1117,8 +1111,8 @@ pub(crate) fn text_of(value: Option<&Value>) -> Option<String> {
     }
 }
 
-/// `ConvertJsonValue`: a JSON value as the CLR object C# kept it as. Numbers become an `int`
-/// when they are an integer that fits one, and a `double` otherwise, which is how they are
+/// A JSON value as the merge keeps it. Numbers become an `i32` when they are an integer that
+/// fits one, and an `f64` otherwise, which is how they are
 /// written back (`3000000000` and `1.0` come back as `3000000000` and `1`, and `1e20` as
 /// `1E+20`).
 pub fn convert_json_value(value: &Value) -> Value {
@@ -1142,7 +1136,7 @@ pub fn convert_json_value(value: &Value) -> Value {
     }
 }
 
-/// A builder-made value as a `JsonNode`, numbers written as STJ writes them.
+/// A builder-made value as a [`Node`], numbers written as [`number_text`] writes them.
 pub(crate) fn to_node(value: &Value) -> Node {
     match value {
         Value::Null => Node::Null,
@@ -1154,7 +1148,7 @@ pub(crate) fn to_node(value: &Value) -> Node {
     }
 }
 
-/// `GetValue<int>()` on a JSON node: an integer literal that fits, or nothing (C# threw).
+/// A JSON node as an `i32`: an integer literal that fits, or nothing.
 fn node_int(node: &Node) -> Option<i32> {
     match node {
         Node::Number(text) => text.parse::<i32>().ok(),
@@ -1162,8 +1156,8 @@ fn node_int(node: &Node) -> Option<i32> {
     }
 }
 
-/// The JSON branch of the extensions merge. None for anything C# would have thrown on, which
-/// hands the body back untouched.
+/// The JSON branch of the extensions merge. None for a body it cannot read or does not
+/// recognize, which hands the body back untouched.
 fn merge_extensions_json(upstream: &[u8], own: &[(&str, &[i32])]) -> Option<String> {
     let text = std::str::from_utf8(upstream).ok()?;
     let mut root = Node::parse(text).ok()?;
@@ -1282,7 +1276,7 @@ fn merge_extensions_xml(upstream: &[u8], own: &[(&str, &[i32])]) -> Option<Strin
     Some(response.to_xml_string())
 }
 
-/// `int.TryParse(text)`: optional surrounding whitespace and a leading sign, then digits.
+/// A 32-bit integer: optional surrounding whitespace and a leading sign, then digits.
 fn dotnet_int_parse(text: &str) -> Option<i32> {
     let trimmed = text.trim();
     let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);

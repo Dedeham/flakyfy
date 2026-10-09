@@ -1,5 +1,5 @@
-//! What a builder method answers: the bytes and content type of the ASP.NET result it
-//! returned, ready to go out as an axum response.
+//! What a builder method answers: the bytes and content type of the answer, ready to go out
+//! as an axum response.
 
 use std::borrow::Cow;
 
@@ -10,15 +10,15 @@ use serde_json::Value;
 
 use crate::xml::XElement;
 
-/// Which ASP.NET result the C# built, which decides the content type it went out with.
+/// The kind of answer, which decides the content type it goes out with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyKind {
-    /// `JsonResult`: `application/json; charset=utf-8`, the default encoder's escaping.
+    /// JSON: `application/json; charset=utf-8`, with the default encoder's escaping.
     Json,
-    /// `ContentResult`: the content type exactly as given, no charset added
+    /// Text content: the content type exactly as given, no charset added
     /// (`application/xml` for every Octo-built XML document).
     Content,
-    /// `FileContentResult`: bytes passed through as they came.
+    /// A file: bytes passed through as they came.
     File,
 }
 
@@ -30,16 +30,16 @@ pub struct SubsonicReply {
     pub body: Vec<u8>,
 }
 
-/// The content type `JsonResult` wrote.
+/// The content type of every JSON answer.
 pub const JSON_CONTENT_TYPE: &str = "application/json; charset=utf-8";
 
 impl SubsonicReply {
-    /// `new JsonResult(value)`: compact, with the default encoder's escaping (`isn\u0027t`).
+    /// A JSON answer: compact, with the default encoder's escaping (`isn\u0027t`).
     pub fn json(value: &Value) -> Self {
         Self::json_text(octo_core::json::to_string(value))
     }
 
-    /// A `JsonResult` whose JSON is already written (a tree with numbers kept as written).
+    /// A JSON answer whose JSON is already written (a tree with numbers kept as written).
     pub fn json_text(text: String) -> Self {
         SubsonicReply {
             kind: ReplyKind::Json,
@@ -48,12 +48,12 @@ impl SubsonicReply {
         }
     }
 
-    /// `new ContentResult { Content = doc.ToString(), ContentType = "application/xml" }`.
+    /// An XML document, written out as `application/xml`.
     pub fn xml(document: &XElement) -> Self {
         Self::content(document.to_xml_string(), "application/xml")
     }
 
-    /// `new ContentResult { Content = content, ContentType = contentType }`.
+    /// Text content with the content type exactly as given.
     pub fn content(content: String, content_type: &str) -> Self {
         SubsonicReply {
             kind: ReplyKind::Content,
@@ -62,7 +62,7 @@ impl SubsonicReply {
         }
     }
 
-    /// `new FileContentResult(bytes, contentType)`.
+    /// Bytes passed through with the given content type.
     pub fn file(bytes: Vec<u8>, content_type: &str) -> Self {
         SubsonicReply {
             kind: ReplyKind::File,
@@ -83,16 +83,14 @@ impl SubsonicReply {
 }
 
 impl IntoResponse for SubsonicReply {
-    /// 200 with the content type as the result wrote it and an explicit `Content-Length`.
-    /// (`JsonResult` went out chunked; length and chunked framing are the same to a client,
-    /// see known-diffs.md.)
+    /// 200 with the content type as the answer gives it and an explicit `Content-Length`.
     fn into_response(self) -> Response {
         let length = self.body.len();
         let mut response = Response::new(Body::from(self.body));
         *response.status_mut() = StatusCode::OK;
         let headers = response.headers_mut();
         // A content type passed through from upstream that is not a valid header value
-        // falls back to the octet-stream ASP.NET would have refused it for.
+        // falls back to application/octet-stream.
         let content_type = HeaderValue::from_str(&self.content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
         headers.insert(header::CONTENT_TYPE, content_type);

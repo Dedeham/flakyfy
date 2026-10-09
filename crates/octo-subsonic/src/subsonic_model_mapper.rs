@@ -1,5 +1,4 @@
-//! Port of `Services/Subsonic/SubsonicModelMapper.cs`: parsing Subsonic search responses and
-//! merging local with external search results.
+//! Parsing Subsonic search responses and merging local with external search results.
 
 use std::collections::HashSet;
 
@@ -15,8 +14,7 @@ use crate::subsonic_response_builder::{
 };
 use crate::xml::XElement;
 
-/// One library row as the C# held it in a `List<object>`: a `Dictionary<string, object>`
-/// read from Navidrome's JSON, or an `XElement` read from its XML.
+/// One library row: a JSON object read from Navidrome's JSON, or an element read from its XML.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Row {
     Json(Value),
@@ -55,7 +53,7 @@ impl Row {
     }
 }
 
-/// Songs, albums and artists, in that order, as C#'s tuples held them.
+/// Songs, albums and artists, in that order.
 pub type SearchRows = (Vec<Row>, Vec<Row>, Vec<Row>);
 
 /// Handles parsing Subsonic API responses and merging local with external search results.
@@ -71,8 +69,7 @@ impl SubsonicModelMapper {
 
     /// Parses a Subsonic search response and extracts songs, albums, and artists.
     ///
-    /// A body it cannot read is logged and gives whatever rows were read before the problem,
-    /// as the C# did by catching around the whole read.
+    /// A body it cannot read is logged and gives whatever rows were read before the problem.
     pub fn parse_search_response(&self, response_body: &[u8], content_type: Option<&str>) -> SearchRows {
         let mut rows: SearchRows = (Vec::new(), Vec::new(), Vec::new());
         if let Err(e) = self.read_search_response(response_body, content_type, &mut rows) {
@@ -301,7 +298,7 @@ impl SubsonicModelMapper {
         (merged_songs, merged_albums, merged_artists)
     }
 
-    /// The XML merge. Every library row here is an element: the C# cast them, and a JSON row
+    /// The XML merge. Every library row here is an element, and a JSON row
     /// cannot reach it (rows are read as JSON exactly when the merge is JSON), so one is skipped.
     fn merge_search_results_xml(
         &self,

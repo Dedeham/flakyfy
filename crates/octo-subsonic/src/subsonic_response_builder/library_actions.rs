@@ -1,4 +1,4 @@
-//! Port of `SubsonicResponseBuilder.LibraryActions.cs`, the parts that need only settings.
+//! The library actions answers that need only settings.
 //! The answer for a `LibraryActionOutcome` and getUpgrades take app types and are in the
 //! `octo` crate.
 
@@ -52,9 +52,6 @@ pub const EDIT_ACTIONS: [&str; 6] = [
 impl SubsonicResponseBuilder {
     /// getLibraryActions: what this server lets the caller do. Always JSON. The field names are a
     /// contract with the Octo app.
-    ///
-    /// (C#'s defaults: `parallel` 1, `upgrade_ready` true, `upgrade_source` "Soulseek", `admin`,
-    /// `edits` and `covers` false.)
     #[allow(clippy::too_many_arguments)]
     pub fn create_library_actions_response(
         &self,

@@ -1,17 +1,15 @@
-//! A small stand-in for `System.Xml.Linq`'s `XElement`, writing exactly what
-//! `XDocument.ToString()` writes, and reading what `XDocument.Parse` reads.
+//! A small XML element tree: a writer with one exact layout, and a reader to match.
 //!
-//! Octo built every Subsonic XML answer as an `XDocument` and sent `doc.ToString()`. Clients
-//! parse it, but the parity harness compares bytes, so the writer reproduces .NET's layout:
+//! Every Subsonic XML answer is written in that layout, byte for byte:
 //! two-space indentation with `\n` line breaks, no XML declaration, `<name />` for an element
 //! with no content and `<name></name>` for one holding an empty string, the namespace
 //! declaration after the element's own attributes, attribute values with `<`, `>`, `&`, `"`
 //! and line breaks escaped (but not `'`), text with `<`, `>` and `&` escaped and its line breaks
 //! normalized to `\n`, and an element holding text written inline.
 //!
-//! Octo also re-serialized Navidrome's XML (the search merge, the OpenSubsonic extensions,
-//! the sync catalog page), so [`XElement::parse`] reads a document the way
-//! `XDocument.Parse(text)` (`LoadOptions.None`) does: whitespace-only text is dropped,
+//! Octo also re-serializes Navidrome's XML (the search merge, the OpenSubsonic extensions,
+//! the sync catalog page), so [`XElement::parse`] reads a document to suit that writer:
+//! whitespace-only text is dropped,
 //! `<a></a>` stays distinct from `<a/>`, attribute values are normalized, and an `xmlns`
 //! declaration is kept as an attribute in its place.
 
@@ -26,15 +24,15 @@ use quick_xml::reader::Reader;
 pub enum XNode {
     Element(XElement),
     Text(String),
-    /// `XCData`: written as `<![CDATA[...]]>`, and like text it stops indentation.
+    /// Written as `<![CDATA[...]]>`, and like text it stops indentation.
     CData(String),
-    /// `XComment`: written as `<!--...-->` on its own line, like an element.
+    /// Written as `<!--...-->` on its own line, like an element.
     Comment(String),
 }
 
 /// An element: a local name, attributes in insertion order, and content.
 ///
-/// `namespace` is the element's namespace (`XName.Namespace`): `None` is `XNamespace.None`.
+/// `namespace` is the element's namespace: `None` is no namespace.
 /// An element whose namespace differs from its parent's gets an `xmlns` declaration when
 /// written, unless it carries one already as an attribute (as a parsed element does).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -54,7 +52,7 @@ impl XElement {
         }
     }
 
-    /// An element in a namespace, as `new XElement(ns + name)`.
+    /// An element in a namespace.
     pub fn ns(namespace: &str, name: impl Into<String>) -> Self {
         XElement {
             name: name.into(),
@@ -63,7 +61,7 @@ impl XElement {
         }
     }
 
-    /// An element in `namespace`, which may be none (`XNamespace.None + name`).
+    /// An element in `namespace`, which may be none.
     pub fn in_namespace(namespace: Option<&str>, name: impl Into<String>) -> Self {
         XElement {
             name: name.into(),
@@ -72,8 +70,8 @@ impl XElement {
         }
     }
 
-    /// Adds an attribute. `XAttribute` takes any value and writes it through `XmlConvert`;
-    /// see [`XValue`] for the conversions.
+    /// Adds an attribute, or replaces the value of one already there. The value is written as
+    /// text; see [`XValue`] for the conversions.
     pub fn attr(mut self, name: impl Into<String>, value: impl XValue) -> Self {
         self.set_attr(name, value);
         self
@@ -82,8 +80,7 @@ impl XElement {
     pub fn set_attr(&mut self, name: impl Into<String>, value: impl XValue) {
         let name = name.into();
         let value = value.to_xml_value();
-        // XElement.SetAttributeValue replaces in place; Add of a duplicate would throw, and
-        // no Octo caller relies on that.
+        // Setting a name again replaces its value in place, so the attribute keeps its position.
         if let Some(slot) = self.attributes.iter_mut().find(|(n, _)| *n == name) {
             slot.1 = value;
         } else {
@@ -91,7 +88,7 @@ impl XElement {
         }
     }
 
-    /// Adds an attribute only when there is a value, the `if (x != null) el.Add(...)` idiom.
+    /// Adds an attribute only when there is a value.
     pub fn attr_opt<V: XValue>(self, name: impl Into<String>, value: Option<V>) -> Self {
         match value {
             Some(v) => self.attr(name, v),
@@ -99,7 +96,7 @@ impl XElement {
         }
     }
 
-    /// `Attribute(name)?.Value`.
+    /// The value of the attribute `name`, when the element has one.
     pub fn attribute(&self, name: &str) -> Option<&str> {
         self.attributes
             .iter()
@@ -112,7 +109,7 @@ impl XElement {
         self
     }
 
-    /// `Add(element)`.
+    /// Adds a child element after everything the element holds.
     pub fn push(&mut self, child: XElement) {
         self.add_node(XNode::Element(child));
     }
@@ -124,16 +121,16 @@ impl XElement {
         self
     }
 
-    /// Text content, as `new XElement(name, "text")`. An empty string still makes an empty
-    /// element non-empty: it is written `<name></name>`. Added to an element that already
-    /// has content, an empty string is nothing, as in XLinq.
+    /// Text content. An empty string still makes an empty element non-empty: it is written
+    /// `<name></name>`. Added to an element that already has content, an empty string is
+    /// nothing.
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.add_node(XNode::Text(text.into()));
         self
     }
 
-    /// `XContainer.Add` for one node. XLinq keeps an empty string only as the whole content of
-    /// an element that had none (`content = ""`), and drops it as soon as a node is added.
+    /// Adds one node. An empty string is kept only as the whole content of an element that had
+    /// none (`content = ""`), and is dropped as soon as a node is added.
     fn add_node(&mut self, node: XNode) {
         if let XNode::Text(t) = &node
             && t.is_empty()
@@ -151,7 +148,7 @@ impl XElement {
         matches!(self.content.as_slice(), [XNode::Text(t)] if t.is_empty())
     }
 
-    /// `AddFirst(elements)`: the elements before everything the element holds.
+    /// Puts the elements before everything the element holds.
     pub fn add_first(&mut self, elements: Vec<XElement>) {
         if elements.is_empty() {
             return;
@@ -164,19 +161,19 @@ impl XElement {
         self.content.extend(tail);
     }
 
-    /// `content[index].AddAfterSelf(elements)`: the elements right after the node at `index`.
+    /// Puts the elements right after the node at `index`.
     pub fn insert_after(&mut self, index: usize, elements: Vec<XElement>) {
         let at = (index + 1).min(self.content.len());
         self.content
             .splice(at..at, elements.into_iter().map(XNode::Element));
     }
 
-    /// Whether this is `{namespace}name`, as `element.Name == ns + name` compares.
+    /// Whether this is `{namespace}name`: the same local name in the same namespace.
     pub fn is(&self, namespace: Option<&str>, name: &str) -> bool {
         self.name == name && self.namespace.as_deref() == namespace
     }
 
-    /// `Elements()`: the child elements, in order.
+    /// The child elements, in order.
     pub fn elements(&self) -> impl Iterator<Item = &XElement> {
         self.content.iter().filter_map(|node| match node {
             XNode::Element(e) => Some(e),
@@ -191,7 +188,7 @@ impl XElement {
         })
     }
 
-    /// `Elements(ns + name)`.
+    /// The child elements named `{namespace}name`, in order.
     pub fn elements_named<'a>(
         &'a self,
         namespace: Option<&'a str>,
@@ -200,8 +197,8 @@ impl XElement {
         self.elements().filter(move |e| e.is(namespace, name))
     }
 
-    /// `Descendants(ns + name).FirstOrDefault()`: the first match in document order, not
-    /// counting this element itself.
+    /// The first descendant named `{namespace}name` in document order, not counting this
+    /// element itself.
     pub fn first_descendant(&self, namespace: Option<&str>, name: &str) -> Option<&XElement> {
         for child in self.elements() {
             if child.is(namespace, name) {
@@ -214,7 +211,7 @@ impl XElement {
         None
     }
 
-    /// `XElement.Value`: every text node beneath this element, concatenated.
+    /// Every text node beneath this element, concatenated.
     pub fn value(&self) -> String {
         let mut out = String::new();
         self.collect_text(&mut out);
@@ -231,7 +228,7 @@ impl XElement {
         }
     }
 
-    /// The element and its descendants as `XElement.ToString()` writes them.
+    /// The element and its descendants in the layout the module docs describe.
     pub fn to_xml_string(&self) -> String {
         let mut out = String::new();
         self.write(&mut out, 0, None, true);
@@ -250,8 +247,8 @@ impl XElement {
             escape_attribute(out, v);
             out.push('"');
         }
-        // XmlWriter declares the element's namespace after its attributes when nothing in
-        // scope binds it: `xmlns=".."`, or `xmlns=""` for no namespace under a parent that has one.
+        // The element's namespace is declared after its attributes when nothing in scope
+        // binds it: `xmlns=".."`, or `xmlns=""` for no namespace under a parent that has one.
         let own = self.namespace.as_deref();
         if !declared && own != parent_ns {
             out.push_str(" xmlns=\"");
@@ -263,8 +260,8 @@ impl XElement {
             return;
         }
         out.push('>');
-        // XmlWriter stops indenting inside an element once it holds text: mixed content is
-        // written as it stands.
+        // Indenting stops inside an element once it holds text: mixed content is written as
+        // it stands.
         let mixed = self
             .content
             .iter()
@@ -302,8 +299,7 @@ impl XElement {
         out.push('>');
     }
 
-    /// `XDocument.Parse(text).Root`: the document's root element, read as `LoadOptions.None`
-    /// reads it.
+    /// The root element of the document in `text`.
     ///
     /// - Text made only of whitespace is dropped, and text is kept with its line breaks
     ///   normalized to `\n` and its references resolved.
@@ -313,12 +309,12 @@ impl XElement {
     ///   `&#xA;` stays a line break.
     /// - `xmlns` declarations stay attributes in their place, and every unprefixed element
     ///   takes the default namespace in scope.
-    /// - The declaration, processing instructions and a DOCTYPE are not kept (`ToString`
-    ///   never writes the declaration; Navidrome writes neither of the others). A prefixed
+    /// - The declaration, processing instructions and a DOCTYPE are not kept (the writer
+    ///   never writes a declaration; Navidrome writes neither of the others). A prefixed
     ///   name is kept as written, without resolving its prefix.
     ///
     /// Anything that is not well-formed (a second root, text outside the root, an unclosed
-    /// or mismatched tag, an unknown entity) is an error, as `XmlException` was.
+    /// or mismatched tag, an unknown entity) is an error.
     pub fn parse(text: &str) -> Result<XElement, XmlParseError> {
         let mut reader = Reader::from_str(text);
         reader.config_mut().check_end_names = true;
@@ -364,8 +360,8 @@ impl XElement {
                     let mut element = stack
                         .pop()
                         .ok_or_else(|| XmlParseError::new("an end tag without a start"))?;
-                    // XContainer.ReadContentFrom: an element read from a start and an end tag
-                    // with nothing kept between them holds the empty string.
+                    // An element read from a start and an end tag with nothing kept between
+                    // them holds the empty string.
                     if element.content.is_empty() {
                         element.content.push(XNode::Text(String::new()));
                     }
@@ -385,7 +381,7 @@ impl XElement {
     }
 }
 
-/// Why [`XElement::parse`] refused a document (`XmlException`).
+/// Why [`XElement::parse`] refused a document.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct XmlParseError(String);
@@ -413,7 +409,7 @@ fn resolve_reference(reference: &quick_xml::events::BytesRef<'_>) -> Result<char
 }
 
 /// The text read since the last markup, as a text node of the open element. Whitespace alone
-/// is dropped (`XmlReaderSettings.IgnoreWhitespace`); anything else outside the root is an error.
+/// is dropped; anything else outside the root is an error.
 fn flush_text(stack: &mut [XElement], pending: &mut String) -> Result<(), XmlParseError> {
     if pending.is_empty() {
         return Ok(());
@@ -499,7 +495,7 @@ fn escape_text(out: &mut String, value: &str) {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '&' => out.push_str("&amp;"),
-            // NewLineHandling.Replace: \r\n and a lone \r both become the writer's \n.
+            // \r\n and a lone \r both become \n.
             '\r' => {
                 if chars.peek() == Some(&'\n') {
                     chars.next();
@@ -511,8 +507,7 @@ fn escape_text(out: &mut String, value: &str) {
     }
 }
 
-/// A value an attribute can take, converted the way `XAttribute`'s constructor does through
-/// `XmlConvert.ToString`.
+/// A value an attribute can take, converted to the text it is written as.
 pub trait XValue {
     fn to_xml_value(&self) -> String;
 }
@@ -565,14 +560,14 @@ impl XValue for f32 {
     }
 }
 
-/// `XmlConvert.ToString(DateTime, RoundtripKind)` for a UTC time: trimmed fraction and `Z`.
+/// A UTC time in the round-trip form: trimmed fraction and `Z`.
 impl XValue for DateTime<Utc> {
     fn to_xml_value(&self) -> String {
         octo_core::json::datetime::format_utc(self)
     }
 }
 
-/// `XmlConvert.ToString(DateTimeOffset)`: `Z` for a zero offset, `+hh:mm` otherwise.
+/// A time with an offset: `Z` for a zero offset, `+hh:mm` otherwise.
 impl XValue for DateTime<FixedOffset> {
     fn to_xml_value(&self) -> String {
         if self.offset().local_minus_utc() == 0 {
@@ -590,8 +585,8 @@ mod tests {
     const NS: &str = "http://subsonic.org/restapi";
 
     #[test]
-    fn layout_and_escaping_match_xdocument_to_string() {
-        // Captured from .NET 9: new XDocument(...).ToString() for the same tree.
+    fn layout_and_escaping_match_the_reference() {
+        // The reference output for the same tree.
         let doc = XElement::ns(NS, "subsonic-response")
             .attr("status", "ok")
             .attr("version", "1.16.1")
@@ -629,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn values_convert_like_xmlconvert() {
+    fn times_and_floats_convert_to_their_round_trip_text() {
         use chrono::TimeZone;
         let d = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
         let el = XElement::ns(NS, "x")
@@ -650,9 +645,9 @@ mod tests {
         assert_eq!(el.to_xml_string(), "<plain>\n  <child>x</child>\n</plain>");
     }
 
-    /// Each input, and what `XDocument.Parse(input).ToString()` gave on .NET 9.
+    /// Each input, and the reference output of reading it and writing it back.
     #[test]
-    fn parse_then_write_matches_xdocument_parse_to_string() {
+    fn parse_then_write_matches_the_reference() {
         let cases: &[(&str, &str)] = &[
             (
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\"><searchResult3><artist id=\"a\" name=\"A &amp; B\"><roles>artist</roles></artist><album id=\"x\"><genres name=\"Rock\"></genres><b/></album></searchResult3></subsonic-response>",
@@ -699,7 +694,7 @@ mod tests {
 
     #[test]
     fn adding_to_an_element_read_empty_drops_its_empty_string() {
-        // .NET 9: AddFirst into <c></c>, and an element in no namespace added under one.
+        // Adding first into <c></c>, and an element in no namespace added under one.
         let mut root = XElement::parse("<r xmlns=\"urn:a\"><c></c></r>").expect("parses");
         let c = root.elements_mut().next().expect("c");
         c.add_first(vec![XElement::ns("urn:a", "n")]);

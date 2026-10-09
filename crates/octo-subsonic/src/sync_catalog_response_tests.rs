@@ -1,5 +1,5 @@
-//! The page-writing tests of `octo.Tests/SyncCatalogTests.cs` (AppendJson_*, AppendXml_*),
-//! plus Rust-only checks of `count_rows` and of what stays byte for byte.
+//! Tests of the sync catalog page writing in JSON and XML, of `count_rows`, and of what stays
+//! byte for byte.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ fn builder() -> SubsonicResponseBuilder {
     SubsonicResponseBuilder::new(Arc::new(TestIds), &SubsonicSettings::default())
 }
 
-/// The catalog the C# test built: one song, its album and its artist, all added at `added`.
+/// A test catalog: one song, its album and its artist, all added at `added`.
 struct Catalog {
     songs: Vec<Song>,
     albums: Vec<Album>,
@@ -161,7 +161,7 @@ fn append_xml_keeps_schema_order() {
     );
 }
 
-// ---- Rust-only --------------------------------------------------------------------------
+// ---- Library rows kept byte for byte, envelopes and row counts ---------------------------
 
 /// The library's own rows keep their numbers and order as written; only the new rows follow.
 #[test]

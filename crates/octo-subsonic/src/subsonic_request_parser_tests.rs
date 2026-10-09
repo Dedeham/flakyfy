@@ -1,5 +1,5 @@
-//! Port of `SubsonicRequestParserTests`, plus the ASP.NET parsing rules the port relies on,
-//! each checked against .NET 9 (`DefaultHttpContext` + the C# parser) on 2026-10-04.
+//! Tests of the request parser: the parameter dictionary, and the query, form and JSON parsing
+//! rules it is built on.
 
 use super::*;
 
@@ -130,7 +130,7 @@ fn extract_all_parameters_duplicate_keys_body_overrides_query() {
     assert_eq!(result["artist"], "Beatles");
 }
 
-// What follows pins ASP.NET's own parsing, each case run through .NET 9 first.
+// What follows pins the parsing rules themselves, case by case.
 
 #[test]
 fn query_keys_merge_ignoring_case_under_the_first_spelling() {
@@ -139,7 +139,7 @@ fn query_keys_merge_ignoring_case_under_the_first_spelling() {
 }
 
 #[test]
-fn query_segments_follow_query_feature() {
+fn query_segments_split_and_decode_by_the_query_rules() {
     let cases: [(&str, &[(&str, &str)]); 5] = [
         (
             "a=1&&b=2&=3&c&d=",
@@ -156,7 +156,7 @@ fn query_segments_follow_query_feature() {
                 ("kA", "1"),
             ],
         ),
-        // StringValues.ToString leaves the empty values out.
+        // A repeated key leaves its empty values out.
         ("id=&id=B&id=", &[("id", "B")]),
         ("a=1;b=2", &[("a", "1;b=2")]),
         ("x=%C3%A9%FF%41&y=%ff", &[("x", "é%FFA"), ("y", "%ff")]),
@@ -224,8 +224,8 @@ fn multipart_fields_are_read_and_files_left_out() {
 }
 
 #[test]
-fn a_multipart_form_that_cannot_be_read_falls_back_as_asp_net_did() {
-    // No boundary: the reader threw before reading, so the body was parsed as a query string.
+fn a_multipart_form_that_cannot_be_read_falls_back_or_reads_nothing() {
+    // No boundary: the reader failed before reading, so the body was parsed as a query string.
     let result = extract_all_parameters(&with_body(None, "multipart/form-data", "a=1&b=2"));
     assert_eq!(pairs(&result), [("a", "1"), ("b", "2")]);
     // A boundary the body never uses: the reader consumed the body, so nothing is left.
@@ -238,7 +238,7 @@ fn a_multipart_form_that_cannot_be_read_falls_back_as_asp_net_did() {
 }
 
 #[test]
-fn json_values_are_json_element_to_string() {
+fn json_values_are_read_as_their_text() {
     let result = extract_all_parameters(&with_body(
         None,
         "application/json",
@@ -262,7 +262,7 @@ fn json_values_are_json_element_to_string() {
 }
 
 #[test]
-fn json_bodies_are_read_as_system_text_json_read_them() {
+fn json_bodies_follow_the_json_reading_rules() {
     let deep = |levels: usize| format!("{{\"a\":{}{}}}", "[".repeat(levels), "]".repeat(levels));
     let deepest_kept = format!("{}{}", "[".repeat(63), "]".repeat(63));
     let cases: Vec<(String, &str, String, Vec<(&str, &str)>)> = vec![
@@ -351,7 +351,7 @@ fn extract_parameter_values_keeps_repeats_apart_and_skips_blanks() {
 }
 
 #[test]
-fn escape_data_string_matches_uri_escape_data_string() {
+fn escape_data_string_encodes_all_but_unreserved_characters() {
     assert_eq!(
         escape_data_string("a b+c/é~-_.!*'()"),
         "a%20b%2Bc%2F%C3%A9~-_.%21%2A%27%28%29"

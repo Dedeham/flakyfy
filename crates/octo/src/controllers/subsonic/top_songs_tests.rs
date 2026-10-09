@@ -58,6 +58,13 @@ async fn navidrome() -> MockServer {
                         )
                     }
                 }
+                // Alice hearted Quebec after the chart was made.
+                "/rest/getStarred2" | "/rest/getStarred2.view" => navidrome_json(
+                    &json!({"subsonic-response": {"status": "ok", "version": "1.16.1", "starred2": {"song": [
+                        {"id": "nd-quebec", "title": "Quebec", "artist": "Drake", "starred": "2026-10-09T10:00:00Z", "userRating": 4}
+                    ]}}})
+                    .to_string(),
+                ),
                 "/rest/getTopSongs" | "/rest/getTopSongs.view" => navidrome_json(
                     r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","topSongs":{}}}"#,
                 ),
@@ -342,6 +349,10 @@ async fn get_playlist_library_songs_are_the_listeners_own_the_rest_outside() {
     assert_eq!(entries[1]["id"], "nd-quebec");
     assert_eq!(entries[0]["title"], "Solar Eclipse");
     assert_eq!(entries[0]["isExternal"], true);
+    // The listener's hearts and ratings as they are now, on library songs only.
+    assert_eq!(entries[1]["starred"], "2026-10-09T10:00:00Z");
+    assert_eq!(entries[1]["userRating"], 4);
+    assert!(entries[0].get("starred").is_none());
 }
 
 #[tokio::test]

@@ -56,6 +56,20 @@ const FOR_YOU_PREFIX: &str = "for:";
 // Where a stored outside song of New Releases keeps what it is made from; never sent out.
 const SEED_FIELD: &str = "octoCatalog";
 const RETRY_AFTER_FAILURE: TimeDelta = TimeDelta::minutes(5);
+/// How long a listener's hearts and ratings, read once, serve every list they open.
+const MARKS_FOR: Duration = Duration::from_secs(60);
+/// The most ratings set through Octo remembered per listener.
+const RATED_KEPT: usize = 1000;
+
+/// A library song's marks as its listener left them: when it was hearted, and its rating.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub starred: Option<String>,
+    pub rating: Option<i64>,
+}
+
+/// A listener's hearted songs, by id.
+pub type MarksById = HashMap<String, Marks>;
 
 /// The listeners' mixes and when each was last counted, under `_lock`.
 #[derive(Default)]
@@ -73,6 +87,11 @@ pub struct GeneratedPlaylistService {
     refreshes: SingleFlight<String, bool>,
     /// The draws, and the Discovery blend's candidates, until their period ends.
     drawn: MemoryCache<Arc<Vec<Node>>>,
+    /// Each listener's hearts, read from Navidrome at most once a minute.
+    marks: MemoryCache<Arc<MarksById>>,
+    /// Ratings set through Octo, per listener: Navidrome lists ratings only on hearted songs,
+    /// so these keep the rest of a list current.
+    rated: Mutex<HashMap<String, IndexMap<String, i64>>>,
     state: Mutex<Mixes>,
     /// What New Releases needs (the C# resolved them from a scope when it built the list):
     /// None leaves New Releases as it was, as a provider without them did.
@@ -99,6 +118,8 @@ impl GeneratedPlaylistService {
             settings,
             refreshes: SingleFlight::new(),
             drawn: MemoryCache::new(256),
+            marks: MemoryCache::new(256),
+            rated: Mutex::new(HashMap::new()),
             state: Mutex::new(Mixes::default()),
             for_you: None,
         };
@@ -766,6 +787,114 @@ impl GeneratedPlaylistService {
         }
     }
 
+    /// The listener's hearted songs with their marks, read from Navidrome once and kept a
+    /// minute. None when Navidrome did not answer, so nothing is changed on its say-so.
+    pub async fn marks(&self, username: &str, auth: &IndexMap<String, String>) -> Option<Arc<MarksById>> {
+        if dotnet::is_blank(username) {
+            return None;
+        }
+        let key = marks_key(username);
+        if let Some(cached) = self.marks.get(&key) {
+            return Some(cached);
+        }
+        let songs = self
+            .fetch_songs(auth, "rest/getStarred2", "starred2", &[])
+            .await?;
+        let marks: MarksById = songs
+            .iter()
+            .filter_map(|song| {
+                let id = song.get("id").and_then(Node::as_str)?;
+                Some((
+                    id.to_string(),
+                    Marks {
+                        starred: song.get("starred").and_then(Node::as_str).map(str::to_string),
+                        rating: song.get("userRating").and_then(node_i64),
+                    },
+                ))
+            })
+            .collect();
+        let marks = Arc::new(marks);
+        self.marks.set(key, Arc::clone(&marks), 1, MARKS_FOR);
+        Some(marks)
+    }
+
+    /// The listener hearted or unhearted something: their hearts are read again next time.
+    pub fn forget_marks(&self, username: &str) {
+        self.marks.forget(&marks_key(username));
+    }
+
+    /// The listener rated a song through Octo, and Navidrome took it.
+    pub fn rated(&self, username: &str, id: &str, rating: i64) {
+        if dotnet::is_blank(username) || id.is_empty() {
+            return;
+        }
+        let user = user_key(username);
+        {
+            let mut rated = self.rated.lock();
+            let mine = rated.entry(user).or_default();
+            mine.shift_remove(id);
+            mine.insert(id.to_string(), rating);
+            while mine.len() > RATED_KEPT {
+                mine.shift_remove_index(0);
+            }
+        }
+        let key = marks_key(username);
+        if let Some(cached) = self.marks.get(&key)
+            && let Some(marks) = cached.get(id)
+        {
+            let mut patched = cached.as_ref().clone();
+            patched.insert(
+                id.to_string(),
+                Marks {
+                    rating: Some(rating),
+                    ..marks.clone()
+                },
+            );
+            self.marks.set(key, Arc::new(patched), 1, MARKS_FOR);
+        }
+    }
+
+    /// Puts the listener's hearts and ratings as they are now onto library songs drawn
+    /// earlier. Outside songs keep their own marks, which Navidrome does not hold.
+    pub fn overlay(&self, username: &str, songs: &mut [Node], marks: &MarksById) {
+        let rated = self
+            .rated
+            .lock()
+            .get(&user_key(username))
+            .cloned()
+            .unwrap_or_default();
+        for song in songs {
+            let Some(fields) = song.as_object_mut() else {
+                continue;
+            };
+            if matches!(fields.get("isExternal"), Some(Node::Bool(true))) {
+                continue;
+            }
+            let Some(id) = fields.get("id").and_then(Node::as_str).map(str::to_string) else {
+                continue;
+            };
+            let mark = marks.get(&id);
+            match mark.and_then(|m| m.starred.as_deref()) {
+                Some(starred) => {
+                    fields.insert("starred".into(), Node::String(starred.to_string()));
+                }
+                None => {
+                    fields.shift_remove("starred");
+                }
+            }
+            match mark.and_then(|m| m.rating).or_else(|| rated.get(&id).copied()) {
+                Some(0) => {
+                    fields.shift_remove("userRating");
+                }
+                Some(rating) => {
+                    fields.insert("userRating".into(), Node::Number(rating.to_string()));
+                }
+                // Navidrome leaves a rating of 0 out, so no rating here is not known to be 0.
+                None => {}
+            }
+        }
+    }
+
     /// The songs of one Subsonic call, or None when it did not answer: an empty list is a real
     /// answer and None is not, and only the first may replace what is known.
     async fn fetch_songs(
@@ -857,6 +986,18 @@ fn stored_entry(entry: &Entry, responses: &SubsonicResponseBuilder) -> String {
         fields.insert(SEED_FIELD.to_string(), Node::from_value(&value));
     }
     song.to_json_string(false)
+}
+
+fn marks_key(username: &str) -> String {
+    format!("marks|{}", user_key(username))
+}
+
+/// A whole number, as a JSON number or a string of one.
+fn node_i64(node: &Node) -> Option<i64> {
+    match node {
+        Node::Number(text) | Node::String(text) => text.parse().ok(),
+        _ => None,
+    }
 }
 
 fn draw_key(username: &str, playlist: &GeneratedPlaylist) -> String {

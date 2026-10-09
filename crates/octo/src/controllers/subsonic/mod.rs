@@ -35,6 +35,8 @@ mod extensions_tests;
 #[cfg(test)]
 mod for_you_tests;
 #[cfg(test)]
+mod fresh_marks_tests;
+#[cfg(test)]
 mod library_edit_tests;
 #[cfg(test)]
 mod lyrics_endpoint_tests;

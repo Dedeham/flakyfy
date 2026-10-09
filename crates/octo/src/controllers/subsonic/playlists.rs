@@ -380,7 +380,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .into_response();
         }
         // The C# let a failure here escape to the global handler.
-        let entries = match state
+        let mut entries = match state
             .generated_playlists
             .materialize(&username, &mix, &call.parameters, &aborted.token)
             .await
@@ -388,6 +388,10 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
             Ok(entries) => entries,
             Err(error) => return crate::http::error::AppError::Internal(error).into_response(),
         };
+        // Drawn earlier, so hearts and ratings given since are put on as they are now.
+        if let Some(marks) = state.generated_playlists.marks(&username, &call.parameters).await {
+            state.generated_playlists.overlay(&username, &mut entries, &marks);
+        }
         let settings = state.settings.current().generated_playlists.clone();
         return builder
             .create_generated_playlist_response(format, &mix, &settings, &entries)
@@ -409,6 +413,22 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
             .songs(&username, &chart, &call.parameters)
             .await;
         let outside = state.chart_playlists.outside_songs(&username, &chart);
+        // Made hours ago, so the library songs' hearts and ratings are put on as they are now.
+        let entries = match state.generated_playlists.marks(&username, &call.parameters).await {
+            Some(marks) => entries
+                .into_iter()
+                .map(|entry| {
+                    if entry.get("isExternal").and_then(Value::as_bool) == Some(true) {
+                        return entry;
+                    }
+                    let mut one = [Node::from_value(&entry)];
+                    state.generated_playlists.overlay(&username, &mut one, &marks);
+                    let [one] = one;
+                    one.to_value()
+                })
+                .collect(),
+            None => entries,
+        };
         // A song this listener's sync catalog holds goes out as the catalog describes it, as on
         // a station: a syncing client keeps whichever description it read last.
         let entries: Vec<Value> = entries

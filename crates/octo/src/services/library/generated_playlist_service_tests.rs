@@ -451,3 +451,66 @@ mod response {
         assert_eq!(unknown["bitRate"], 1411);
     }
 }
+
+// ---- Marks put on drawn lists ----------------------------------------------------------------
+
+fn song_node(text: &str) -> Node {
+    Node::parse(text).expect("JSON")
+}
+
+#[tokio::test]
+async fn the_overlay_puts_hearts_on_library_songs_and_leaves_outside_songs_alone() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    let mut songs = vec![
+        song_node(r#"{"id":"a","title":"A","starred":"2026-01-01T00:00:00Z","userRating":2}"#),
+        song_node(r#"{"id":"b","title":"B"}"#),
+        song_node(r#"{"id":"x","title":"X","isExternal":true,"starred":"2026-02-02T00:00:00Z"}"#),
+    ];
+    let marks: MarksById = [(
+        "b".to_string(),
+        Marks {
+            starred: Some("2026-10-09T10:00:00Z".into()),
+            rating: Some(5),
+        },
+    )]
+    .into_iter()
+    .collect();
+
+    lists.overlay("alice", &mut songs, &marks);
+
+    // Unhearted since: the heart goes, and a rating nobody knows is left as drawn.
+    assert!(songs[0].get("starred").is_none());
+    assert_eq!(songs[0].get("userRating").and_then(node_i64), Some(2));
+    assert_eq!(
+        songs[1].get("starred").and_then(Node::as_str),
+        Some("2026-10-09T10:00:00Z")
+    );
+    assert_eq!(songs[1].get("userRating").and_then(node_i64), Some(5));
+    // Navidrome does not hold Octo's own hearts on outside songs.
+    assert_eq!(
+        songs[2].get("starred").and_then(Node::as_str),
+        Some("2026-02-02T00:00:00Z")
+    );
+}
+
+#[tokio::test]
+async fn a_rating_set_through_octo_reaches_unhearted_songs_and_zero_clears_it() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    let mut songs = vec![
+        song_node(r#"{"id":"a","userRating":2}"#),
+        song_node(r#"{"id":"b"}"#),
+    ];
+
+    lists.rated("alice", "a", 0);
+    lists.rated("alice", "b", 3);
+    lists.overlay("alice", &mut songs, &MarksById::new());
+
+    assert!(songs[0].get("userRating").is_none());
+    assert_eq!(songs[1].get("userRating").and_then(node_i64), Some(3));
+    // Someone else's ratings are theirs.
+    let mut bobs = vec![song_node(r#"{"id":"b"}"#)];
+    lists.overlay("bob", &mut bobs, &MarksById::new());
+    assert!(bobs[0].get("userRating").is_none());
+}

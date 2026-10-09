@@ -76,6 +76,14 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
             if raw.status == 200 && endpoint.eq_ignore_ascii_case("auth/login") {
                 state.navidrome_identity.capture_login(&raw.body);
             }
+            // An unheart reaches Navidrome through here: the listener's lists read their
+            // hearts again.
+            if raw.status == 200
+                && is_unstar(&endpoint)
+                && let Some(username) = parameters.get("u").filter(|u| !u.is_empty())
+            {
+                state.generated_playlists.forget_marks(username);
+            }
             write_raw_relay(raw, &format, &state.subsonic_response_builder)
         }
         Err(error) => state
@@ -87,6 +95,10 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
             )
             .into_response(),
     }
+}
+
+fn is_unstar(endpoint: &str) -> bool {
+    endpoint.eq_ignore_ascii_case("rest/unstar") || endpoint.eq_ignore_ascii_case("rest/unstar.view")
 }
 
 /// `Redirect("app/")`: a 302 with an empty body, to Navidrome's web app beside this address.

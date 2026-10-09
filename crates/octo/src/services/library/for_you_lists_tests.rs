@@ -48,6 +48,10 @@ pub(crate) struct ForYouUpstream {
     pub long_career: AtomicBool,
     /// A library of more than a page whose second page Navidrome fails to send.
     pub walk_breaks: AtomicBool,
+    /// The listener's hearts, newest last: song id and when it was hearted.
+    pub hearts: Mutex<Vec<(String, String)>>,
+    /// The listener's ratings, by song id.
+    pub ratings: Mutex<HashMap<String, i64>>,
     address: Mutex<String>,
 }
 
@@ -66,6 +70,8 @@ impl ForYouUpstream {
             hold,
             long_career: AtomicBool::new(false),
             walk_breaks: AtomicBool::new(false),
+            hearts: Mutex::new(Vec::new()),
+            ratings: Mutex::new(HashMap::new()),
             address: Mutex::new(String::new()),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -180,6 +186,28 @@ fn navidrome_songs(upstream: &ForYouUpstream, query: &HashMap<String, String>) -
     )
 }
 
+/// getStarred2 as Navidrome answers it: the hearted songs, with a rating only when it is not 0.
+fn starred_songs(upstream: &ForYouUpstream) -> String {
+    let ratings = upstream.ratings.lock();
+    let songs: Vec<String> = upstream
+        .hearts
+        .lock()
+        .iter()
+        .map(|(id, at)| {
+            let rating = ratings
+                .get(id)
+                .filter(|r| **r > 0)
+                .map(|r| format!(r#","userRating":{r}"#))
+                .unwrap_or_default();
+            format!(r#"{{"id":"{id}","title":"Song {id}","artist":"Big Artist","duration":200,"starred":"{at}"{rating}}}"#)
+        })
+        .collect();
+    format!(
+        r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1","starred2":{{"song":[{}]}}}}}}"#,
+        songs.join(",")
+    )
+}
+
 async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(raw): RawQuery) -> Response {
     let full = uri.path().trim_matches('/').to_string();
     let (host, path) = full.split_once('/').unwrap_or((full.as_str(), ""));
@@ -208,6 +236,27 @@ async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(
             "rest/search3" => json_body(navidrome_songs(&upstream, &query)),
             "rest/ping" | "rest/ping.view" => plain(&query, ""),
             "rest/getPlaylists" | "rest/getPlaylists.view" => plain(&query, "playlists"),
+            "rest/star" | "rest/star.view" => {
+                let id = query.get("id").cloned().unwrap_or_default();
+                let mut hearts = upstream.hearts.lock();
+                if !hearts.iter().any(|(heart, _)| *heart == id) {
+                    let at = Utc::now() + TimeDelta::seconds(hearts.len() as i64);
+                    hearts.push((id, at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+                }
+                plain(&query, "")
+            }
+            "rest/unstar" | "rest/unstar.view" => {
+                let id = query.get("id").cloned().unwrap_or_default();
+                upstream.hearts.lock().retain(|(heart, _)| *heart != id);
+                plain(&query, "")
+            }
+            "rest/setRating" | "rest/setRating.view" => {
+                let id = query.get("id").cloned().unwrap_or_default();
+                let rating = query.get("rating").and_then(|r| r.parse().ok()).unwrap_or(0);
+                upstream.ratings.lock().insert(id, rating);
+                plain(&query, "")
+            }
+            "rest/getStarred2" | "rest/getStarred2.view" => json_body(starred_songs(&upstream)),
             _ => json_body(r#"{"data":[]}"#.into()),
         };
     }

@@ -1293,3 +1293,20 @@ async fn a_song_without_a_routing_is_an_invalid_operation() {
         "Cannot download 'Nobody - Mystery': missing artist/title in external id"
     );
 }
+
+// What the row says while a peer has not started (2026-10-09).
+#[test]
+fn a_transfer_that_has_not_started_names_whom_it_waits_on() {
+    assert_eq!(
+        waiting_words("tokidoki", "Queued, Remotely"),
+        "Waiting in tokidoki's queue"
+    );
+    assert_eq!(
+        waiting_words("tokidoki", "Initializing"),
+        "Waiting for tokidoki to start sending"
+    );
+    assert_eq!(
+        waiting_words("tokidoki", "Requested"),
+        "Waiting for tokidoki to start sending"
+    );
+}

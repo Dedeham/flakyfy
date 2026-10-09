@@ -27,6 +27,14 @@ pub const OPERATION_RETRIES: u32 = 3;
 /// file is worth waiting on; one that trickles for an hour is not.
 pub const MAX_TRANSFER_TIME: Duration = Duration::from_secs(60 * 60);
 
+/// How long a peer that said it could send at once gets to send its first byte. One that
+/// accepts and then sends nothing is not coming; the full quiet window is for a transfer
+/// that started and went quiet, and for a peer that said it would queue us.
+pub const FIRST_BYTE_WAIT: Duration = Duration::from_secs(45);
+
+/// How long a transfer sits with nothing moved before the person is told whom it waits on.
+pub const WAITING_NOTE_AFTER: Duration = Duration::from_secs(15);
+
 /// How long a cancelled search is given to end and save its responses. slskd takes
 /// well under a second; the rest is slack for a busy disk.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
@@ -93,6 +101,7 @@ pub struct TransferWatch {
     ceiling: TimeDelta,
     quiet_since: DateTime<Utc>,
     bytes: i64,
+    first_byte: Option<TimeDelta>,
 }
 
 impl TransferWatch {
@@ -103,7 +112,20 @@ impl TransferWatch {
             ceiling: delta(ceiling),
             quiet_since: started,
             bytes: 0,
+            first_byte: None,
         }
+    }
+
+    /// Gives up sooner on a transfer that has not sent its first byte. Never longer than the
+    /// quiet window.
+    pub fn with_first_byte(mut self, wait: Option<Duration>) -> Self {
+        self.first_byte = wait.map(delta).map(|w| w.min(self.quiet));
+        self
+    }
+
+    /// Nothing has arrived yet.
+    pub fn never_started(&self) -> bool {
+        self.bytes == 0
     }
 
     pub fn saw(&mut self, bytes: Option<i64>, now: DateTime<Utc>) {
@@ -120,7 +142,8 @@ impl TransferWatch {
     }
 
     pub fn expired(&self, now: DateTime<Utc>) -> bool {
-        now - self.quiet_since >= self.quiet || self.hit_ceiling(now)
+        let silent = self.never_started() && self.first_byte.is_some_and(|wait| now - self.started >= wait);
+        silent || now - self.quiet_since >= self.quiet || self.hit_ceiling(now)
     }
 }
 

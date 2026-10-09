@@ -21,7 +21,9 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-pub use octo_core::soulseek::soulseek_client::{CANCEL_GRACE, MAX_TRANSFER_TIME, OPERATION_RETRIES};
+pub use octo_core::soulseek::soulseek_client::{
+    CANCEL_GRACE, FIRST_BYTE_WAIT, MAX_TRANSFER_TIME, OPERATION_RETRIES, WAITING_NOTE_AFTER,
+};
 
 /// What a Soulseek call that the C# let throw came to.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -973,13 +975,14 @@ impl SoulseekClient {
         username: &str,
         filename: &str,
         per_attempt_timeout_seconds: Option<i32>,
+        first_byte: Option<Duration>,
         ct: &CancellationToken,
         on_progress: Option<&(dyn Fn(&SoulseekTransferProgress) + Send + Sync)>,
         transfer: Option<&str>,
     ) -> Result<SoulseekTransferState, SoulseekClientError> {
         let timeout_sec = per_attempt_timeout_seconds.unwrap_or(self.inner.download_timeout_seconds);
         let quiet = Duration::from_secs(u64::try_from(timeout_sec).unwrap_or(0));
-        let mut watch = TransferWatch::new(self.now(), quiet, MAX_TRANSFER_TIME);
+        let mut watch = TransferWatch::new(self.now(), quiet, MAX_TRANSFER_TIME).with_first_byte(first_byte);
         let mut seen_at_least_once = false;
         let mut consecutive_misses = 0;
         let url = format!(
@@ -1087,6 +1090,11 @@ impl SoulseekClient {
             warn!(
                 "slskd transfer still not done after {} minutes; cancelled: {filename}",
                 MAX_TRANSFER_TIME.as_secs() / 60
+            );
+        } else if watch.never_started() && first_byte.is_some_and(|wait| wait < quiet) {
+            warn!(
+                "slskd transfer never started: not one byte in {}s from a peer that said it could send now; cancelled: {filename}",
+                first_byte.unwrap_or(quiet).as_secs()
             );
         } else {
             warn!("slskd transfer timed out: nothing new for {timeout_sec}s; cancelled: {filename}");

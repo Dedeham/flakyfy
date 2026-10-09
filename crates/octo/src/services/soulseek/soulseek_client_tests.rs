@@ -431,7 +431,15 @@ async fn a_slow_peer_that_keeps_sending_is_waited_for_past_the_window() {
     let (client, _server) = transfer_client(&slskd).await;
 
     let state = client
-        .wait_for_completion(PEER, REMOTE_FILE, Some(1), &CancellationToken::new(), None, None)
+        .wait_for_completion(
+            PEER,
+            REMOTE_FILE,
+            Some(1),
+            None,
+            &CancellationToken::new(),
+            None,
+            None,
+        )
         .await
         .expect("not cancelled");
 
@@ -449,7 +457,15 @@ async fn a_peer_that_sends_nothing_is_canceled_in_slskd() {
     let (client, _server) = transfer_client(&slskd).await;
 
     let state = client
-        .wait_for_completion(PEER, REMOTE_FILE, Some(1), &CancellationToken::new(), None, None)
+        .wait_for_completion(
+            PEER,
+            REMOTE_FILE,
+            Some(1),
+            None,
+            &CancellationToken::new(),
+            None,
+            None,
+        )
         .await
         .expect("not cancelled");
 
@@ -458,6 +474,62 @@ async fn a_peer_that_sends_nothing_is_canceled_in_slskd() {
     assert_eq!(deletes.len(), 1);
     assert_eq!(deletes[0].path(), "/api/v0/transfers/downloads/peer/transfer-7");
     assert_eq!(deletes[0].query(), Some("remove=true"));
+}
+
+// 2026-10-09, Drake - Forever: a peer that said it could send now accepted and sent
+// nothing, and the song waited the whole 180 s window for it.
+#[tokio::test]
+async fn a_peer_that_never_sends_a_byte_is_given_up_at_the_first_byte_wait() {
+    let slskd = FakeTransferSlskd::new(|_| ("Initializing", 0));
+    let (client, _server) = transfer_client(&slskd).await;
+
+    let state = client
+        .wait_for_completion(
+            PEER,
+            REMOTE_FILE,
+            Some(180),
+            Some(Duration::from_secs(3)),
+            &CancellationToken::new(),
+            None,
+            None,
+        )
+        .await
+        .expect("not cancelled");
+
+    assert_eq!(state, SoulseekTransferState::Errored);
+    let waited = slskd.state.lock().now - start();
+    assert!(
+        waited >= TimeDelta::seconds(3) && waited < TimeDelta::seconds(10),
+        "waited {waited}"
+    );
+    assert_eq!(slskd.deletes().len(), 1);
+}
+
+#[tokio::test]
+async fn a_peer_that_starts_sending_gets_the_full_quiet_window() {
+    // Bytes from the third poll on, slowly, finishing long after the first-byte wait.
+    let slskd = FakeTransferSlskd::new(|poll| match poll {
+        0..=2 => ("Initializing", 0),
+        3..=40 => ("InProgress", i64::from(poll) * 10_000),
+        _ => ("Completed, Succeeded", 400_000),
+    });
+    let (client, _server) = transfer_client(&slskd).await;
+
+    let state = client
+        .wait_for_completion(
+            PEER,
+            REMOTE_FILE,
+            Some(180),
+            Some(Duration::from_secs(3)),
+            &CancellationToken::new(),
+            None,
+            None,
+        )
+        .await
+        .expect("not cancelled");
+
+    assert_eq!(state, SoulseekTransferState::Succeeded);
+    assert!(slskd.deletes().is_empty());
 }
 
 #[tokio::test]
@@ -506,6 +578,7 @@ async fn the_listener_hears_each_poll_and_a_caller_can_give_up() {
             PEER,
             REMOTE_FILE,
             Some(30),
+            None,
             &CancellationToken::new(),
             Some(&listener),
             Some("transfer-7"),
@@ -518,7 +591,7 @@ async fn the_listener_hears_each_poll_and_a_caller_can_give_up() {
     gone.cancel();
     assert_eq!(
         client
-            .wait_for_completion(PEER, REMOTE_FILE, Some(30), &gone, None, None)
+            .wait_for_completion(PEER, REMOTE_FILE, Some(30), None, &gone, None, None)
             .await,
         Err(SoulseekClientError::Cancelled)
     );

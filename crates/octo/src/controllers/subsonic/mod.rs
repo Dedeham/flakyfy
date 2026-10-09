@@ -33,6 +33,8 @@ mod test_app;
 #[cfg(test)]
 mod extensions_tests;
 #[cfg(test)]
+mod family_lists_tests;
+#[cfg(test)]
 mod for_you_tests;
 #[cfg(test)]
 mod library_edit_tests;

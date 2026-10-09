@@ -57,6 +57,8 @@ pub struct AnswerContext<'a> {
     pub format: &'a str,
     /// The answer's content type.
     pub content_type: Option<&'a str>,
+    /// The app, for rules that read Octo's stores.
+    pub state: &'a AppState,
 }
 
 /// Rewrites one answer: takes the plain body, returns the body to send.
@@ -71,7 +73,12 @@ pub struct AnswerRules {
 impl AnswerRules {
     /// The rules Octo runs.
     pub fn standard() -> Self {
-        AnswerRules::default()
+        let rules = AnswerRules::default();
+
+        // Family lists: kid profiles, the owner's privacy, and members' own songs marked.
+        super::list_rules::register(&rules);
+
+        rules
     }
 
     /// Adds a rule for `endpoint`. Rules for one endpoint run in the order they were added.

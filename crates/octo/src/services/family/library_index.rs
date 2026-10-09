@@ -242,6 +242,14 @@ impl LibraryIndex {
             .collect()
     }
 
+    /// Calls `visit` with every song the index holds, in no order.
+    pub fn each_song(&self, mut visit: impl FnMut(&IndexedSong)) {
+        let songs = Arc::clone(&self.songs.read());
+        for song in songs.by_id.values() {
+            visit(song);
+        }
+    }
+
     /// The bytes one library holds: its songs at full size, plus files Octo placed there since
     /// the last read.
     pub fn bytes_in_library(&self, library_id: i64) -> u64 {

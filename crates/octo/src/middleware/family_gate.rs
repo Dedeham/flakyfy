@@ -391,6 +391,7 @@ async fn apply_answer_rules(
         parameters,
         format: &format.f,
         content_type: content_type.as_deref(),
+        state,
     };
     for rule in rules {
         bytes = rule(&context, bytes);

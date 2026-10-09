@@ -264,7 +264,7 @@ impl MusicBrainzClient {
         self.cache
             .set(key, Cached::Text(country.clone()), 1, Self::ARTIST_TTL);
         Ok(Some(country))
-}
+    }
 
     /// The MusicBrainz artists named exactly `name`, by name or alias, case and accents aside:
     /// empty when there is none, None when MusicBrainz could not be asked. Answers are kept for

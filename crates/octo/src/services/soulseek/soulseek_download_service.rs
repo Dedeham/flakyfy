@@ -34,8 +34,8 @@ use octo_core::soulseek::soulseek_download_service::{
     planned_queries, rank,
 };
 use octo_core::soulseek::{
-    AlbumFolderPicker, AlbumTrack, RoutingKind, SearchProfile, SoulseekFileHit, SoulseekLinkState,
-    SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState,
+    AlbumFolderPicker, AlbumTrack, LengthSource, RoutingKind, SearchProfile, SoulseekFileHit,
+    SoulseekLinkState, SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState,
 };
 use octo_media::audio::SpectrumReport;
 use octo_media::tags::TagFile;
@@ -1964,15 +1964,23 @@ impl DownloadBackend for SoulseekDownloadService {
                 .youtube
                 .search(&format!("{artist} {title}"), r.duration, false)
                 .await;
-            video_id = hit.map(|h| h.video_id).filter(|v| !v.is_empty());
+            let hit = hit.filter(|h| !h.video_id.is_empty());
+            video_id = hit.as_ref().map(|h| h.video_id.clone());
             // Cache back on the routing so a second click on the same placeholder
             // skips the yt-dlp ytsearch1: round trip: that 3-8s saving is the
             // difference between Arpeggi (~10s HTTP timeout) playing the song or
             // canceling and falling back to a local one. The routing is shared via
             // the registry, so this change is visible to every subsequent stream
             // request for this id.
-            if let Some(found) = &video_id {
-                routing.lock().you_tube_id = Some(found.clone());
+            if let Some(hit) = &hit {
+                routing.lock().you_tube_id = Some(hit.video_id.clone());
+                // The video that plays says how long the song runs, for every later row.
+                if !self
+                    .id_registry
+                    .remember_length(external_id, hit.duration, LengthSource::Video)
+                {
+                    routing.remember_length(hit.duration, LengthSource::Video);
+                }
             }
         }
         let Some(video_id) = video_id else {

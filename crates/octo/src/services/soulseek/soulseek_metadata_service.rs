@@ -416,6 +416,58 @@ impl Inner {
             .remember_length(id, meta.duration, LengthSource::Deezer);
     }
 
+    /// One song's video and its length from the shim's quick lookup: the video is pinned on
+    /// the routing for playback and its length remembered as the video's. `background`: the
+    /// song is already with the client, so only the routing is written and a video a play
+    /// pinned meanwhile is kept.
+    async fn resolve_video_length(&self, song: &mut Song, background: bool) {
+        let inner = self;
+        // Fast metadata-only lookup (flat search, no URL solve). Pass the
+        // Deezer duration as a hint so it picks the closest-length canonical
+        // video (not a long-form/compilation upload); playback reuses the
+        // stored videoId, so the shown length matches the audio.
+        let hit = inner
+            .youtube
+            .meta(
+                &format!("{} {}", song.artist, song.title),
+                song.duration,
+                background,
+            )
+            .await;
+        let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) else {
+            return;
+        };
+        let Some(d) = hit.duration.filter(|&d| d > 0) else {
+            return;
+        };
+        // Shown only inside the sane range. An hour-long upload is a mix or a
+        // live set, and its length is no better than the one the row has.
+        // Only the foreground pass may touch the Song. In the background the list is
+        // already with the client and cached for the next page, being serialized as this
+        // runs. getSong builds its answer from routing.Duration, so it still gets this length.
+        if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
+            song.duration = Some(shown);
+        }
+        let routing = inner.lookup(&song.id);
+        if let Some(routing) = &routing {
+            let mut r = routing.lock();
+            // A play can pin a different video while this lookup runs. The next Range
+            // request has to get the same video, so the pinned one wins.
+            if background
+                && r.you_tube_id
+                    .as_deref()
+                    .is_some_and(|y| !y.is_empty() && y != hit.video_id)
+            {
+                return;
+            }
+            r.you_tube_id = Some(hit.video_id.clone()); // playback reuses this exact video
+            r.duration = Some(d);
+        }
+        inner
+            .id_registry
+            .remember_length(&song.id, Some(d), LengthSource::Video);
+    }
+
     /// Complete the rows below the first page from what is already known, then fetch the
     /// rest off the critical path so the next search for this query can complete them too.
     ///
@@ -999,52 +1051,29 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 let Some(_permit) = bounded_wait(gate).await else {
                     return;
                 };
-                // Fast metadata-only lookup (flat search, no URL solve). Pass the
-                // Deezer duration as a hint so it picks the closest-length canonical
-                // video (not a long-form/compilation upload); playback reuses the
-                // stored videoId, so the shown length matches the audio.
-                let hit = inner
-                    .youtube
-                    .meta(
-                        &format!("{} {}", song.artist, song.title),
-                        song.duration,
-                        background,
-                    )
-                    .await;
-                let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) else {
-                    return;
-                };
-                let Some(d) = hit.duration.filter(|&d| d > 0) else {
-                    return;
-                };
-                // Shown only inside the sane range. An hour-long upload is a mix or a
-                // live set, and its length is no better than the one the row has.
-                // Only the foreground pass may touch the Song. In the background the list is
-                // already with the client and cached for the next page, being serialized as this
-                // runs. getSong builds its answer from routing.Duration, so it still gets this length.
-                if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
-                    song.duration = Some(shown);
-                }
-                let routing = inner.lookup(&song.id);
-                if let Some(routing) = &routing {
-                    let mut r = routing.lock();
-                    // A play can pin a different video while this lookup runs. The next Range
-                    // request has to get the same video, so the pinned one wins.
-                    if background
-                        && r.you_tube_id
-                            .as_deref()
-                            .is_some_and(|y| !y.is_empty() && y != hit.video_id)
-                    {
-                        return;
-                    }
-                    r.you_tube_id = Some(hit.video_id.clone()); // playback reuses this exact video
-                    r.duration = Some(d);
-                }
-                inner
-                    .id_registry
-                    .remember_length(&song.id, Some(d), LengthSource::Video);
+                inner.resolve_video_length(song, background).await;
             });
         futures::future::join_all(tasks).await;
+    }
+
+    async fn resolve_song_length(&self, song: &mut Song) {
+        if song.is_local || song.id.is_empty() || song.duration.is_some_and(|d| d > 0) {
+            return;
+        }
+        let Some(routing) = self.inner.lookup(&song.id) else {
+            return;
+        };
+        {
+            let r = routing.lock();
+            if r.kind != RoutingKind::Song
+                || !r.has_artist_title()
+                || r.you_tube_id.as_deref().is_some_and(|y| !y.is_empty())
+            {
+                return;
+            }
+        }
+        // Someone is waiting on this answer, so it never queues behind prewarm work.
+        self.inner.resolve_video_length(song, false).await;
     }
 
     /// Fire-and-forget background prewarm: resolve the YouTube videoId (and via

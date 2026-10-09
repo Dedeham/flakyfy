@@ -1444,3 +1444,69 @@ mod outside_explicit {
         assert_eq!(song.explicit_content_lyrics, Some(explicit_status::CLEAN));
     }
 }
+
+#[tokio::test]
+async fn get_song_an_unknown_length_is_looked_up_at_once_even_with_the_prewarm_lane_full() {
+    let fixture = LengthFixture::new().await;
+    fixture.video("Nobody Nothing", 211);
+    let row = fixture.search("Nobody", "Nothing").await;
+    let mut song = fixture
+        .service
+        .get_song("SOULSEEK", &row.id)
+        .await
+        .expect("registered");
+    assert_eq!(song.duration, None);
+    // Every prewarm permit is busy; someone reading this song must not wait on them.
+    let _busy = fixture
+        .service
+        .inner
+        .prewarm_gate
+        .acquire_many(3)
+        .await
+        .expect("the gate is open");
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        fixture.service.resolve_song_length(&mut song),
+    )
+    .await
+    .expect("answered without the prewarm lane");
+
+    assert_eq!(song.duration, Some(211));
+    assert_eq!(fixture.shown(&row), (Some(211), LengthSource::Video));
+    let pinned = fixture.registry.lookup(&row.id).expect("registered").snapshot();
+    assert_eq!(pinned.you_tube_id.as_deref(), Some("vid-Nobody Nothing"));
+    assert!(
+        fixture
+            .requests()
+            .iter()
+            .any(|r| r.starts_with("shim/meta?") && !r.contains("bg=1")),
+        "{:?}",
+        fixture.requests()
+    );
+}
+
+#[tokio::test]
+async fn get_song_an_unknown_length_keeps_the_video_a_play_pinned() {
+    let fixture = LengthFixture::new().await;
+    fixture.video("Nobody Nothing", 211);
+    let row = fixture.search("Nobody", "Nothing").await;
+    fixture
+        .registry
+        .lookup(&row.id)
+        .expect("registered")
+        .lock()
+        .you_tube_id = Some("vid-played".into());
+    let mut song = fixture
+        .service
+        .get_song("SOULSEEK", &row.id)
+        .await
+        .expect("registered");
+
+    fixture.service.resolve_song_length(&mut song).await;
+
+    assert_eq!(song.duration, None);
+    assert!(!fixture.requests().iter().any(|r| r.starts_with("shim/meta?")));
+    let pinned = fixture.registry.lookup(&row.id).expect("registered").snapshot();
+    assert_eq!(pinned.you_tube_id.as_deref(), Some("vid-played"));
+}

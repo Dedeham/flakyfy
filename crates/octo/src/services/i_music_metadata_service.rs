@@ -52,6 +52,12 @@ pub trait IMusicMetadataService: Send + Sync {
     /// pinned is kept, and the shim's background lane is used.
     async fn resolve_top_durations(&self, _songs: &mut [Song], _background: bool) {}
 
+    /// Looks up the length of one outside song that has none known yet, right away and on the
+    /// interactive lane, for a caller that answers with this one song (getSong). The video
+    /// found is pinned for playback, so the length shown is the length that plays. A song
+    /// whose video is already pinned is left as it is.
+    async fn resolve_song_length(&self, _song: &mut Song) {}
+
     /// Best-effort pre-resolve of upstream identifiers (e.g. YouTube videoIds) for
     /// the first N songs of a freshly-built search result. Called fire-and-forget
     /// so search3 still returns instantly. Provider-specific (a Deezer/Qobuz

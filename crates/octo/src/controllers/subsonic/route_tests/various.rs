@@ -327,6 +327,8 @@ struct LengthUpstream {
     deezer: Arc<Mutex<HashMap<String, i32>>>,
     last_fm: Arc<Mutex<HashMap<String, i32>>>,
     video: Arc<Mutex<HashMap<String, i32>>>,
+    /// Videos the shim's full search (the one a play makes) finds; its quick lookup does not.
+    played_video: Arc<Mutex<HashMap<String, i32>>>,
     search_tracks: Arc<Mutex<Vec<(String, String)>>>,
 }
 
@@ -390,6 +392,14 @@ impl Respond for LengthUpstream {
             && let Some(length) = self.video.lock().get(&q)
         {
             return json_reply(format!(r#"{{"video_id":"vid-{q}","duration":{length}}}"#));
+        }
+        if path == "/shim/search"
+            && let Some(length) = self.played_video.lock().get(&q)
+        {
+            return json_reply(format!(r#"{{"video_id":"vid-{q}","duration":{length}}}"#));
+        }
+        if path == "/shim/stream" {
+            return ResponseTemplate::new(200).set_body_raw(vec![0u8; 64], "audio/mp4");
         }
         ResponseTemplate::new(404)
     }
@@ -875,4 +885,90 @@ async fn radio_stream_tokens_of_another_length_are_relayed_and_unknown_ones_are_
     assert_eq!(short.body, "relayed");
     let asked = server.received_requests().await.unwrap();
     assert_eq!(asked[0].url.path(), "/Radio/Stream/tooshort");
+}
+
+/// One outside song from a station, by title: its id.
+async fn station_song_ids(fixture: &LengthFixture, songs: &[(&str, &str)]) -> HashMap<String, String> {
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    };
+    fixture.state.last_fm_radio_state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: station_id("alice", "your-mix"),
+            key: "your-mix".into(),
+            name: "Your Mix".into(),
+            owner: "alice".into(),
+            kind: LastFmRadioStationKind::YourMix,
+            personalized: true,
+            created_utc: Utc::now() - TimeDelta::hours(1),
+            changed_utc: Utc::now() - TimeDelta::hours(1),
+            valid_until_utc: Utc::now() + TimeDelta::days(1),
+            tracks: songs.iter().map(|(artist, title)| track(artist, title)).collect(),
+            ..Default::default()
+        }],
+    );
+    let body = get(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            station_id("alice", "your-mix")
+        ),
+    )
+    .await
+    .json();
+    fixture.state.music_metadata.last_length_warm().await;
+    body["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|song| {
+            (
+                song["title"].as_str().unwrap().to_string(),
+                song["id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+async fn song_by_id(fixture: &LengthFixture, id: &str) -> Value {
+    let url = format!("/rest/getSong?id={id}&u=alice&t=token&s=salt&f=json");
+    get(&fixture.app, &url).await.json()["subsonic-response"]["song"].clone()
+}
+
+#[tokio::test]
+async fn get_song_an_outside_song_with_no_known_length_takes_its_videos_length() {
+    let fixture = length_fixture().await;
+    let ids = station_song_ids(&fixture, &[("Nobody", "Nothing")]).await;
+    // Only the quick video lookup knows it, and nothing has looked yet.
+    fixture.upstream.video.lock().insert("Nobody Nothing".into(), 211);
+
+    let song = song_by_id(&fixture, &ids["Nothing"]).await;
+
+    assert_eq!(song["duration"], 211, "{song}");
+}
+
+#[tokio::test]
+async fn a_played_outside_song_remembers_the_length_of_the_video_that_played() {
+    let fixture = length_fixture().await;
+    let ids = station_song_ids(&fixture, &[("Nobody", "Nothing")]).await;
+    fixture
+        .upstream
+        .played_video
+        .lock()
+        .insert("Nobody Nothing".into(), 199);
+    let before = song_by_id(&fixture, &ids["Nothing"]).await;
+    assert!(before.get("duration").is_none(), "{before}");
+
+    let stream = get(
+        &fixture.app,
+        &format!("/rest/stream?id={}&u=alice&t=token&s=salt", ids["Nothing"]),
+    )
+    .await;
+    assert_eq!(stream.status, StatusCode::OK);
+
+    let after = song_by_id(&fixture, &ids["Nothing"]).await;
+    assert_eq!(after["duration"], 199, "{after}");
 }

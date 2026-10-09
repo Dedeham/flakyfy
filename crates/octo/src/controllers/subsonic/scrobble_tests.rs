@@ -82,6 +82,12 @@ async fn last_fm(State(fake): State<Arc<FakeLastFm>>, body: String) -> Response 
     let call: Call = url::form_urlencoded::parse(body.as_bytes())
         .map(|(k, v)| (k.into_owned(), v.into_owned()))
         .collect();
+    // Only a Last.fm call counts. The fake's port may have been another test's address that
+    // nothing listened on (`refused_address`), and that test's background calls can still
+    // arrive here: they carry no Last.fm method.
+    if !call.contains_key("method") {
+        return last_fm_error(3, "Not a Last.fm call");
+    }
     fake.calls.lock().push(call.clone());
     let hold = fake.hold.lock().clone();
     if let Some(hold) = hold {
@@ -351,12 +357,30 @@ impl Fixture {
         until(move || service.outstanding() == 0).await;
     }
 
+    /// The listens ListenBrainz took once Last.fm is idle and ListenBrainz has `expected` of
+    /// them, or after two seconds, whichever comes first: every sink a test asserts is waited
+    /// for before it is read.
+    async fn listens(&self, expected: usize) -> Vec<(String, String)> {
+        self.when_idle().await;
+        for _ in 0..200 {
+            let listens = self.listen_brainz_submissions().await;
+            if listens.len() == expected {
+                return listens;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.listen_brainz_submissions().await
+    }
+
+    /// The listens ListenBrainz took: `(authorization, body)` of each submission. Only real
+    /// submissions count; a stray request from another test that reaches this port does not.
     async fn listen_brainz_submissions(&self) -> Vec<(String, String)> {
         self.listen_brainz
             .received_requests()
             .await
             .unwrap_or_default()
             .iter()
+            .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/1/submit-listens")
             .map(|r| {
                 (
                     r.headers
@@ -539,7 +563,7 @@ async fn user_without_a_session_sends_nothing() {
 
     assert!(fixture.last_fm.calls().is_empty());
     // ListenBrainz still has alice's default token, so the play was not lost there.
-    assert_eq!(fixture.listen_brainz_submissions().await.len(), 1);
+    assert_eq!(fixture.listens(1).await.len(), 1);
 }
 
 #[tokio::test]
@@ -589,7 +613,7 @@ async fn one_submission_flag_applies_to_every_id() {
 
     assert_eq!(fixture.last_fm.calls_to("track.updateNowPlaying").len(), 2);
     assert!(fixture.last_fm.calls_to("track.scrobble").is_empty());
-    assert!(fixture.listen_brainz_submissions().await.is_empty());
+    assert!(fixture.listens(0).await.is_empty());
     assert_eq!(fixture.plays("bob"), 0);
 }
 
@@ -649,7 +673,7 @@ async fn a_repeated_finished_play_is_learned_once() {
         .map(|call| call.keys().filter(|key| key.starts_with("artist[")).count())
         .sum();
     assert_eq!(plays, 2);
-    assert_eq!(fixture.listen_brainz_submissions().await.len(), 2);
+    assert_eq!(fixture.listens(2).await.len(), 2);
 }
 
 /// The client's answer does not wait on Last.fm: a stalled call still gets an ok.
@@ -730,7 +754,7 @@ async fn api_key_scrobble_reaches_the_key_owners_last_fm() {
     assert_eq!(scrobbles.len(), 1, "{scrobbles:?}");
     assert_eq!(scrobbles[0]["sk"], "sk-bob");
     assert_eq!(fixture.last_fm.calls_to("track.updateNowPlaying").len(), 1);
-    let submissions = fixture.listen_brainz_submissions().await;
+    let submissions = fixture.listens(1).await;
     assert_eq!(submissions.len(), 1, "{submissions:?}");
     assert_eq!(submissions[0].0, "Token lb-bob-token");
     assert_eq!(fixture.plays("bob"), 1);
@@ -754,7 +778,7 @@ async fn api_key_scrobble_when_navidrome_will_not_say_whose_learns_nothing() {
     assert!(body.contains(r#""status":"ok""#), "{body}");
     assert_eq!(fixture.token_info_calls(), 1);
     assert!(fixture.last_fm.calls().is_empty());
-    assert!(fixture.listen_brainz_submissions().await.is_empty());
+    assert!(fixture.listens(0).await.is_empty());
     assert_eq!(fixture.plays("bob"), 0);
 }
 

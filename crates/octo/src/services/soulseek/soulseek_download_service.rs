@@ -35,8 +35,7 @@ use octo_core::soulseek::soulseek_download_service::{
 };
 use octo_core::soulseek::{
     AlbumFolderPicker, AlbumTrack, LengthSource, RoutingKind, SearchProfile, SoulseekFileHit,
-    SoulseekLinkState, SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState,
-    StreamFacts,
+    SoulseekLinkState, SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState, StreamFacts,
 };
 use octo_media::audio::SpectrumReport;
 use octo_media::tags::TagFile;

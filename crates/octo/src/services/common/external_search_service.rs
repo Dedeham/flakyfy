@@ -7,6 +7,7 @@ use std::time::Duration;
 use octo_core::common::dotnet::{self, ordinal_ignore_case_key};
 use octo_core::common::{SongIdentity, SupersedableBuildCoordinator};
 use octo_core::last_fm::last_fm_search_cleanup::LastFmSearchCleanup;
+use octo_core::last_fm::last_fm_search_ranking::LastFmSearchRanking;
 use octo_core::models::domain::{Album, Song};
 use octo_core::settings::SettingsStore;
 use tokio_util::sync::CancellationToken;
@@ -148,7 +149,7 @@ impl ExternalSearchService {
 
 /// Fans out to Last.fm, then fills in the metadata a client needs to render and play
 /// the rows. Order:
-///   1. track.search hits (best fuzzy matches for the query as typed)
+///   1. track.search hits for the query as typed, most listened first
 ///   2. canonical artist's top tracks (in case (1) was thin: common for
 ///      single-word artist queries)
 ///
@@ -166,8 +167,14 @@ async fn build(
     let mut collected: Vec<(String, String)> = Vec::new();
 
     // Last.fm's search carries rows from mislabelled scrobbles; put their names right first,
-    // or they reach the results, the player and each listener's Last.fm as they are.
-    let tracks = LastFmSearchCleanup::clean(&last_fm.search_tracks(&query, 50.min(BUILD_SIZE * 2)).await);
+    // or they reach the results, the player and each listener's Last.fm as they are. Then
+    // most listened first: track.search orders by fuzzy relevance, which puts a side project's
+    // song ahead of the hit everybody means. Repeated versions of a song are one row, and rows
+    // in another script than the query go last (see LastFmSearchRanking).
+    let tracks = LastFmSearchRanking::rank(
+        &query,
+        LastFmSearchCleanup::clean(&last_fm.search_tracks(&query, 50.min(BUILD_SIZE * 2)).await),
+    );
     for t in &tracks {
         let key = SongIdentity::match_key(&t.artist, &t.title);
         if seen.insert(ordinal_ignore_case_key(&key)) {

@@ -22,6 +22,7 @@ use super::action_helpers::{
     queue_refresh_if_stale, visible_stations,
 };
 use super::album_ownership::{judge_albums, settle_search_albums};
+use super::media::draws_its_own_marks_in;
 use crate::app::AppState;
 use crate::http::error::AppError;
 use crate::services::library::Standing;
@@ -113,8 +114,11 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     // Always include local results. The split itself lives in SearchBudget so it can be
     // unit-tested; the local floor used to be a flat 20, which is also the spec default for
     // songCount, so the most common search in the wild left nothing for discovery at all (#14).
-    let (local_song_target, external_target) =
+    let (budget_local, external_target) =
         SearchBudget::compute(requested_songs, subsonic.enable_search_discovery);
+    // The library first for most clients; see page_one_split.
+    let (local_song_target, external_share) =
+        page_one_split(&call.parameters, requested_songs, budget_local, external_target);
 
     // A client that asked for a handful of songs is searching as the user types. The
     // song side already costs nothing there (the budget leaves no room for discovery),
@@ -210,7 +214,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     let external_slice = SearchSongOrder::page_one_external_count(
         built.len() as i32,
         local_song_target,
-        external_target,
+        external_share,
         local_parsed.0.len() as i32,
     );
     let external_songs: Vec<Song> = built
@@ -234,7 +238,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
                 Arc::clone(&built),
                 requested_songs,
                 local_song_target,
-                external_target,
+                external_share,
                 &local_parsed.0,
             ),
         );
@@ -316,6 +320,24 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     ))
 }
 
+/// Page one's library rows and its own share of outside rows, from the budget's split. Every
+/// client but Octo's apps gets the library first: the whole page goes to the library and
+/// outside songs get no share of their own, only the places the library leaves empty. Octo's
+/// apps show library and outside songs in sections of their own, so they keep the budget's
+/// split.
+fn page_one_split(
+    parameters: &Parameters,
+    requested_songs: i32,
+    budget_local: i32,
+    external_target: i32,
+) -> (i32, i32) {
+    if draws_its_own_marks_in(parameters) {
+        (budget_local, external_target)
+    } else {
+        (SearchBudget::library_first_target(requested_songs), 0)
+    }
+}
+
 fn model_mapper(state: &AppState) -> SubsonicModelMapper {
     SubsonicModelMapper::new((*state.subsonic_response_builder).clone())
 }
@@ -379,10 +401,12 @@ async fn search_later_song_page(
         // again as if page one had asked for this page's count. The build is shared with
         // any page one still running for the query, so a client that asks for two pages
         // at once gets one build.
-        let (local_target, external_target) = SearchBudget::compute(requested_songs, true);
+        let (budget_local, external_target) = SearchBudget::compute(requested_songs, true);
         if external_target == 0 {
             return Ok(None);
         }
+        let (local_target, external_share) =
+            page_one_split(&call.parameters, requested_songs, budget_local, external_target);
 
         let built_task = {
             let external_search = Arc::clone(&state.external_search);
@@ -412,7 +436,7 @@ async fn search_later_song_page(
             built,
             requested_songs,
             local_target,
-            external_target,
+            external_share,
             &prefix_songs,
         );
         if let Some(key) = &key {

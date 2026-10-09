@@ -220,3 +220,91 @@ fn pick_answers_only_when_exactly_one_recording_fits() {
         None
     );
 }
+
+// ---- artists by name, and recording credits ------------------------------------------------
+
+const ARTISTS: &str = r#"{"artists":[
+  {"id":"a1","name":"Earth, Wind & Fire","score":100},
+  {"id":"a2","name":"Earth, Wind & Fire Experience","score":88},
+  {"id":"a1","name":"Earth, Wind & Fire","score":100},
+  {"id":"a3","name":"Ye","aliases":[{"name":"Kanye West"},{"name":"Yeezy"}]},
+  {"id":"a4","name":"Beyoncé"}
+]}"#;
+
+fn artists_named(name: &str) -> Vec<String> {
+    let doc: Value = serde_json::from_str(ARTISTS).expect("test JSON parses");
+    parse_artists_named(&doc, name)
+        .into_iter()
+        .map(|a| a.id)
+        .collect()
+}
+
+#[test]
+fn artists_named_keeps_only_the_exact_name_once() {
+    assert_eq!(artists_named("earth, wind & fire"), ["a1"]);
+    assert_eq!(artists_named("Earth, Wind and Fire"), ["a1"]);
+    assert!(artists_named("Earth").is_empty());
+}
+
+#[test]
+fn artists_named_finds_an_alias_and_an_unaccented_spelling() {
+    assert_eq!(artists_named("Kanye West"), ["a3"]);
+    assert_eq!(artists_named("Beyonce"), ["a4"]);
+    let none: Value = serde_json::from_str(r#"{"error":"nope"}"#).expect("parses");
+    assert!(parse_artists_named(&none, "X").is_empty());
+}
+
+#[test]
+fn the_artist_search_asks_by_name_and_alias() {
+    let url = artist_search_url("Bizarrap");
+    assert!(url.starts_with("artist/?query="), "{url}");
+    assert!(
+        url.contains("artist%3A%22Bizarrap%22%20OR%20alias%3A%22Bizarrap%22"),
+        "{url}"
+    );
+    assert!(artist_search_url("A \"B\"").contains("%5C%22B%5C%22"));
+}
+
+#[test]
+fn recording_credits_are_one_search_for_many_ids() {
+    let ids = vec![
+        "11111111-2222-3333-4444-555555555555".to_string(),
+        "not an id) OR artist:(x".to_string(),
+        "AAAAAAAA-2222-3333-4444-555555555555".to_string(),
+    ];
+    let url = recording_credits_url(&ids).expect("a url");
+    assert!(
+        url.contains(
+            "rid%3A%2811111111-2222-3333-4444-555555555555%20OR%20aaaaaaaa-2222-3333-4444-555555555555%29"
+        ),
+        "{url}"
+    );
+    assert!(url.ends_with("&fmt=json&limit=100"));
+    assert!(recording_credits_url(&["nope".to_string()]).is_none());
+}
+
+#[test]
+fn a_recording_credit_without_a_last_join_phrase_reads_as_empty() {
+    let doc: Value = serde_json::from_str(
+        r#"{"recordings":[{"id":"R1","artist-credit":[
+            {"name":"Bizarrap","joinphrase":" & ","artist":{"id":"b"}},
+            {"name":"Rauw Alejandro","artist":{"id":"r"}}]},
+           {"id":"r2"}]}"#,
+    )
+    .expect("parses");
+    let credits = parse_recording_credits(&doc);
+    assert_eq!(
+        credits["r1"],
+        [
+            CreditPart {
+                name: "Bizarrap".into(),
+                join_phrase: " & ".into()
+            },
+            CreditPart {
+                name: "Rauw Alejandro".into(),
+                join_phrase: String::new()
+            },
+        ]
+    );
+    assert!(credits["r2"].is_empty());
+}

@@ -130,3 +130,70 @@ async fn requests_are_spaced_a_second_apart() {
     client.fetch_isrcs("rec-2").await.expect("no timeout");
     assert!(Instant::now() - start >= Duration::from_millis(1100));
 }
+
+// ---- artists by name, and recording credits ------------------------------------------------
+
+#[tokio::test]
+async fn find_artists_named_asks_once_and_remembers_the_answer() {
+    let body = r#"{"artists":[{"id":"a1","name":"Earth, Wind & Fire"},{"id":"a2","name":"Earth, Wind & Fire Experience"}]}"#;
+    let (client, server) = client(ResponseTemplate::new(200).set_body_string(body)).await;
+
+    assert!(client.known_artists_named("Earth, Wind & Fire").is_none());
+    let first = client
+        .find_artists_named("Earth, Wind & Fire")
+        .await
+        .expect("no timeout")
+        .expect("asked");
+    let second = client
+        .find_artists_named("EARTH, WIND & FIRE")
+        .await
+        .expect("no timeout")
+        .expect("asked");
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(second, first);
+    assert_eq!(calls(&server).await.len(), 1);
+    assert!(client.known_artists_named("earth, wind & fire").is_some());
+}
+
+/// A failed request is "could not ask", never "no such artist", and is not remembered.
+#[tokio::test]
+async fn find_artists_named_failure_is_none_and_not_remembered() {
+    let (client, _server) = client(ResponseTemplate::new(503)).await;
+
+    assert!(
+        client
+            .find_artists_named("Bizarrap")
+            .await
+            .expect("no timeout")
+            .is_none()
+    );
+    assert!(client.known_artists_named("Bizarrap").is_none());
+}
+
+#[tokio::test]
+async fn recording_credits_answer_every_id_in_one_search() {
+    let body = r#"{"recordings":[{"id":"11111111-2222-3333-4444-555555555555","artist-credit":[{"name":"Bizarrap","joinphrase":", "},{"name":"Rauw Alejandro"}]}]}"#;
+    let (client, server) = client(ResponseTemplate::new(200).set_body_string(body)).await;
+    let ids = vec![
+        "11111111-2222-3333-4444-555555555555".to_string(),
+        "99999999-2222-3333-4444-555555555555".to_string(),
+    ];
+
+    let credits = client
+        .recording_credits(&ids)
+        .await
+        .expect("no timeout")
+        .expect("asked");
+    let again = client
+        .recording_credits(&ids)
+        .await
+        .expect("no timeout")
+        .expect("asked");
+
+    assert_eq!(credits[&ids[0]].len(), 2);
+    assert_eq!(credits[&ids[0]][1].join_phrase, "");
+    assert!(credits[&ids[1]].is_empty());
+    assert_eq!(again, credits);
+    assert_eq!(calls(&server).await.len(), 1);
+}

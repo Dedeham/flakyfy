@@ -939,6 +939,27 @@ async fn get_artist_albums_async_repeat_editions_are_one_row() {
 }
 
 #[tokio::test]
+async fn get_artist_albums_a_remaster_folds_into_its_record_and_a_single_keeps_its_row() {
+    // A remaster and the original are one record, shown as the first listed of the two; a
+    // single of another title is never folded into it and never takes its place.
+    let json = r#"{"data":[
+        {"id":2901,"title":"Northern Lights (2020 Remaster)","record_type":"album","nb_tracks":4,"release_date":"2020-11-20"},
+        {"id":2902,"title":"Northern Lights","record_type":"album","nb_tracks":4,"release_date":"2020-03-06"},
+        {"id":2903,"title":"Borealis","record_type":"single","nb_tracks":1,"release_date":"2022-01-14"}
+    ]}"#;
+    let h = Harness::new(vec![("/artist/1902/albums", json)]).await;
+
+    let hits = h.service.get_artist_albums("1902", "Aurora Vale").await;
+
+    assert_eq!(
+        hits.iter()
+            .map(|h| (h.deezer_id.as_str(), h.record_type.as_deref(), h.track_count))
+            .collect::<Vec<_>>(),
+        [("2901", Some("album"), 4), ("2903", Some("single"), 1)]
+    );
+}
+
+#[tokio::test]
 async fn get_artist_albums_on_more_pages_keeps_every_edition() {
     // New Releases reads the catalog's own listing: a new deluxe edition is news there.
     let json = r#"{"data":[

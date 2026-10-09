@@ -78,6 +78,7 @@ use crate::services::library::library_edit_service::{
 };
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::library_tag_edits::TagEditJournal;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
@@ -416,6 +417,8 @@ pub struct AppInner {
     /// `TagEditJournal`: the tag edits made from the apps and by the explicit marking,
     /// `<config>/tag-edits.json`.
     pub tag_edit_journal: Arc<TagEditJournal>,
+    /// The music folder's one-writer gate, shared by every job and placement that writes it.
+    pub library_write_gate: LibraryWriteGate,
     /// `LibraryActionQuarantine` (singleton).
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
     /// `LibraryActionExecutor` (singleton): the only code in library actions that touches a file.
@@ -708,6 +711,7 @@ impl Acquisition {
                         lyrics: Some(downloads.lyrics.clone()),
                         last_fm: Some(integrations.last_fm.clone()),
                         picks: Some(stores.download_picks.clone()),
+                        write_gate: Some(stores.library_write_gate.clone()),
                     },
                     SoulseekDownloadParts {
                         slskd: downloads.soulseek_client.clone(),
@@ -986,6 +990,7 @@ struct Stores {
     subsonic_response_builder: Arc<SubsonicResponseBuilder>,
     library_action_journal: Arc<LibraryActionJournal>,
     tag_edit_journal: Arc<TagEditJournal>,
+    library_write_gate: LibraryWriteGate,
     upgrade_queue: Arc<UpgradeQueue>,
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
@@ -1044,6 +1049,7 @@ impl Stores {
                 config_dir.join("library-actions.json"),
             ))),
             tag_edit_journal: Arc::new(TagEditJournal::new(Some(config_dir.join("tag-edits.json")))),
+            library_write_gate: LibraryWriteGate::new(),
             upgrade_queue: Arc::new(UpgradeQueue::with_path(Some(config_dir.join("upgrades.json")))),
             quality_upgrade_store: Arc::new(QualityUpgradeStore::with_path(Some(
                 config_dir.join("quality-upgrade.json"),
@@ -1264,6 +1270,7 @@ impl GenreAndCoverJobs {
         navidrome: &NavidromeServices,
         clients: &MetadataClients,
         tag_edit_journal: &Arc<TagEditJournal>,
+        write_gate: &LibraryWriteGate,
     ) -> GenreAndCoverJobs {
         // Genre backfill state lives beside the other config-dir files so a run survives a
         // restart and can be resumed deliberately rather than silently restarting.
@@ -1273,12 +1280,15 @@ impl GenreAndCoverJobs {
         let genre_backfill_journal = Arc::new(GenreBackfillJournal::new(
             config_dir.map(|dir| dir.join("genre-backfill-journal.jsonl")),
         ));
-        let genre_backfill_worker = Arc::new(GenreBackfillWorker::new(
-            genre_backfill_store.clone(),
-            genre_backfill_journal.clone(),
-            settings.clone(),
-            Some(navidrome.local_library.clone()),
-        ));
+        let genre_backfill_worker = Arc::new(
+            GenreBackfillWorker::new(
+                genre_backfill_store.clone(),
+                genre_backfill_journal.clone(),
+                settings.clone(),
+                Some(navidrome.local_library.clone()),
+            )
+            .with_write_gate(write_gate.clone()),
+        );
 
         // The cover upgrade: same shape as the genre backfill. Its journal keeps every replaced
         // picture (once per distinct picture, in cover-backups/) so a run can be undone.
@@ -1310,17 +1320,20 @@ impl GenreAndCoverJobs {
         let explicit_backfill_store = Arc::new(ExplicitBackfillStore::new(
             config_dir.map(|dir| dir.join("explicit-backfill.json")),
         ));
-        let explicit_backfill = Arc::new(ExplicitBackfill::new(
-            explicit_backfill_store.clone(),
-            tag_edit_journal.clone(),
-            Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
-            settings.clone(),
-            ExplicitBackfillServices {
-                identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
-                http: Some(navidrome.http.clone()),
-                library: Some(navidrome.local_library.clone()),
-            },
-        ));
+        let explicit_backfill = Arc::new(
+            ExplicitBackfill::new(
+                explicit_backfill_store.clone(),
+                tag_edit_journal.clone(),
+                Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
+                settings.clone(),
+                ExplicitBackfillServices {
+                    identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
+                    http: Some(navidrome.http.clone()),
+                    library: Some(navidrome.local_library.clone()),
+                },
+            )
+            .with_write_gate(write_gate.clone()),
+        );
         GenreAndCoverJobs {
             genre_backfill_store,
             genre_backfill_journal,
@@ -2026,6 +2039,9 @@ impl AppState {
         });
         let navidrome = NavidromeServices::build(&settings, &stores, true, vec![soulseek.validator]);
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
+        lyrics
+            .sidecar_writer
+            .set_write_gate(stores.library_write_gate.clone());
         let lyrics_library = lyrics.library_job(&settings, Some(&config_dir), &navidrome);
         lyrics_library.register_workers(&workers);
         let genre_cover_jobs = GenreAndCoverJobs::build(
@@ -2034,6 +2050,7 @@ impl AppState {
             &navidrome,
             &clients,
             &stores.tag_edit_journal,
+            &stores.library_write_gate,
         );
         genre_cover_jobs.register_workers(&workers);
         let acquisition = Acquisition::build(
@@ -2250,6 +2267,7 @@ impl AppState {
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             tag_edit_journal: stores.tag_edit_journal,
+            library_write_gate: stores.library_write_gate,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,
@@ -2330,10 +2348,19 @@ impl AppState {
             .unwrap_or_else(|| soulseek.metadata.clone());
         let navidrome = NavidromeServices::build(&settings, &stores, false, vec![soulseek.validator]);
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
+        lyrics
+            .sidecar_writer
+            .set_write_gate(stores.library_write_gate.clone());
         let lyrics_library = lyrics.library_job(&settings, None, &navidrome);
         // The genre backfill and the cover upgrade keep their runs in memory.
-        let genre_cover_jobs =
-            GenreAndCoverJobs::build(&settings, None, &navidrome, &clients, &stores.tag_edit_journal);
+        let genre_cover_jobs = GenreAndCoverJobs::build(
+            &settings,
+            None,
+            &navidrome,
+            &clients,
+            &stores.tag_edit_journal,
+            &stores.library_write_gate,
+        );
         // No workers: the acquisition worker, the resumer and the cache cleanup are not run.
         let acquisition = Acquisition::build(
             &settings,
@@ -2560,6 +2587,7 @@ impl AppState {
             sync_catalog,
             library_action_journal: stores.library_action_journal,
             tag_edit_journal: stores.tag_edit_journal,
+            library_write_gate: stores.library_write_gate,
             library_action_quarantine: library_actions.quarantine,
             library_action_executor: library_actions.executor,
             library_action_rating_worker: library_actions.rating_worker,

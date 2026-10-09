@@ -120,6 +120,11 @@ impl BaseDownloadService {
         requested: &RequestedIdentity,
         current_path: &str,
     ) -> Placement {
+        // Never while a library job (the tidy, a re-tag) is rewriting or moving folders.
+        let _share = match &self.services.write_gate {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        };
         match self.try_place(song, requested, current_path).await {
             Ok(placement) => placement,
             Err(e) => {

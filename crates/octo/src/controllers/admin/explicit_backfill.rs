@@ -26,8 +26,9 @@ use super::request_binding::{
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::library::explicit_backfill::{
-    ExplicitBackfillMode, ExplicitBackfillRequest, ExplicitBackfillStatus, writes,
+    ExplicitBackfill, ExplicitBackfillMode, ExplicitBackfillRequest, ExplicitBackfillStatus, writes,
 };
+use crate::services::library::library_write_gate::LibraryWriteGate;
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -217,6 +218,9 @@ async fn apply(State(state): State<AppState>, request: Request) -> Response {
             format!("To mark songs in your library, type the music path exactly: {root}"),
         );
     }
+    if let Some(busy) = other_job_writing(&state) {
+        return busy;
+    }
     if !worker.try_enqueue(ExplicitBackfillRequest::new(ExplicitBackfillMode::Apply, &user)) {
         return error(StatusCode::CONFLICT, BUSY);
     }
@@ -242,6 +246,9 @@ async fn undo(State(state): State<AppState>, request: Request) -> Response {
     if !state.explicit_backfill.can_undo() {
         return error(StatusCode::BAD_REQUEST, "There is no marking to undo.");
     }
+    if let Some(busy) = other_job_writing(&state) {
+        return busy;
+    }
     if !state
         .explicit_backfill
         .try_enqueue(ExplicitBackfillRequest::new(ExplicitBackfillMode::Undo, &user))
@@ -250,6 +257,15 @@ async fn undo(State(state): State<AppState>, request: Request) -> Response {
     }
     info!("Explicit marking undo requested by {user}");
     status(StatusCode::ACCEPTED, &json!({ "started": true }))
+}
+
+/// 409 while another library job (the tidy, a genre re-tag) writes the music folder.
+fn other_job_writing(state: &AppState) -> Option<Response> {
+    state
+        .library_write_gate
+        .job()
+        .filter(|holder| holder != ExplicitBackfill::JOB_NAME)
+        .map(|holder| error(StatusCode::CONFLICT, LibraryWriteGate::busy_message(&holder)))
 }
 
 /// `StringComparer.Ordinal`: UTF-16 code unit order.

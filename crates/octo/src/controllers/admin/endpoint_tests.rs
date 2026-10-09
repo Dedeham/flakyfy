@@ -1097,3 +1097,54 @@ async fn the_refusals_match_the_baseline() {
         Some("application/problem+json; charset=utf-8")
     );
 }
+
+/// While another library job (the tidy) writes the music folder, a genre re-tag is refused
+/// with that job's name; a preview, which writes nothing, still starts.
+#[tokio::test]
+async fn a_genre_apply_waits_for_another_library_job() {
+    let settings = AppSettings {
+        genre: octo_core::settings::GenreSettings {
+            enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let state = AppState::for_tests(settings);
+    let app = app(&state);
+    let token = state.browse_sessions.create("admin");
+    let tidy = state
+        .library_write_gate
+        .begin_job("Tidy artists")
+        .await
+        .expect("free");
+
+    let apply = send(
+        &app,
+        request(
+            Method::POST,
+            "/api/admin/genre/backfill",
+            Some(&token),
+            Some(json!({ "scope": "OctoDownloads", "dryRun": false })),
+        ),
+    )
+    .await;
+    assert_eq!(apply.status, StatusCode::CONFLICT, "{}", apply.body);
+    assert!(
+        apply.body.contains("Tidy artists is changing the music folder"),
+        "{}",
+        apply.body
+    );
+
+    let preview = send(
+        &app,
+        request(
+            Method::POST,
+            "/api/admin/genre/backfill",
+            Some(&token),
+            Some(json!({ "scope": "OctoDownloads", "dryRun": true })),
+        ),
+    )
+    .await;
+    assert_eq!(preview.status, StatusCode::ACCEPTED, "{}", preview.body);
+    drop(tidy);
+}

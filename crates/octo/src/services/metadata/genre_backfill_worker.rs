@@ -25,6 +25,7 @@ use super::genre_backfill_state::{
     GenreBackfillChange, GenreBackfillRun, GenreBackfillScope, GenreBackfillStatus, GenreBackfillStore,
 };
 use crate::services::library::library_walk;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::local::ILocalLibraryService;
 
 /// What the dashboard asks for: a walk over `scope` (a preview when `dry_run`), or an undo of
@@ -80,6 +81,8 @@ pub struct GenreBackfillWorker {
     pending: AtomicBool,
     sender: mpsc::Sender<GenreBackfillRequest>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<GenreBackfillRequest>>,
+    /// A run that writes takes this gate whole, one library job at a time.
+    write_gate: LibraryWriteGate,
 }
 
 enum FileOutcome {
@@ -114,8 +117,18 @@ impl GenreBackfillWorker {
             pending: AtomicBool::new(false),
             sender,
             receiver: tokio::sync::Mutex::new(receiver),
+            write_gate: LibraryWriteGate::new(),
         }
     }
+
+    /// The gate shared with the other jobs that write the music folder.
+    pub fn with_write_gate(mut self, gate: LibraryWriteGate) -> Self {
+        self.write_gate = gate;
+        self
+    }
+
+    /// What the dashboard calls this job when another one has to wait for it.
+    pub const JOB_NAME: &'static str = "The genre re-tag";
 
     pub fn is_running(&self) -> bool {
         self.store.read(|run| run.status == GenreBackfillStatus::Running)
@@ -225,6 +238,20 @@ impl GenreBackfillWorker {
             let Some(request) = request else {
                 break;
             };
+            let job = if request.undo || !request.dry_run {
+                match self.write_gate.begin_job(Self::JOB_NAME).await {
+                    Ok(job) => Some(job),
+                    Err(holder) => {
+                        let busy = LibraryWriteGate::busy_message(&holder);
+                        warn!("Genre backfill did not start: {busy}");
+                        self.store.update(|run| run.reason = Some(busy));
+                        self.pending.store(false, Ordering::SeqCst);
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             // Per-item catch is mandatory: one unhandled error here would take the worker
             // down (in C#, BackgroundServiceExceptionBehavior.StopHost took Octo down).
             let result = if request.undo {
@@ -240,6 +267,7 @@ impl GenreBackfillWorker {
                     run.finished_utc = Some(Utc::now());
                 });
             }
+            drop(job);
             self.pending.store(false, Ordering::SeqCst);
         }
         Ok(())

@@ -497,6 +497,26 @@ fn a_folder_named_from_the_request_follows_the_tags() {
 }
 
 #[test]
+fn a_folder_never_follows_its_tags_to_a_hidden_name() {
+    let plan = plan_of(&[song("38 Special/A/01 - S.flac", ".38 Special")]);
+    assert!(plan.moves.is_empty(), "{:?}", plan.moves);
+    let row = skip_saying(&plan, "start with a dot").expect("a skip row");
+    assert_eq!(row.path, "38 Special");
+}
+
+#[test]
+fn a_folder_never_splits_to_a_hidden_name() {
+    let credit = ".38 Special, Bizarrap";
+    let plan = plan_of(&[song("38 Special, Bizarrap/A/01 - S.flac", credit)
+        .album_artist(credit)
+        .artists(&[".38 Special", "Bizarrap"])]);
+    assert!(plan.moves.is_empty(), "{:?}", plan.moves);
+    assert!(row_of(&plan, TidyKind::Split).is_none());
+    let row = skip_saying(&plan, "start with a dot").expect("a skip row");
+    assert_eq!(row.path, "38 Special, Bizarrap");
+}
+
+#[test]
 fn a_capitals_only_folder_rename_on_a_case_insensitive_filesystem_is_skipped() {
     let files = [song("beyonc\u{e9}/A/01 - S.flac", "Beyonc\u{e9}")];
     let insensitive = TidyOptions {

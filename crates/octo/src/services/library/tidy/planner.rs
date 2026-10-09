@@ -601,7 +601,7 @@ fn folders(
 
         let pieces = SongIdentity::parse_artists(&credit).names;
         if pieces.len() < 2 {
-            push_follow(&mut result, &folder, &credit, spelling);
+            push_follow(&mut result, out, &folder, &credit, spelling, any_in_scope);
             continue;
         }
 
@@ -657,7 +657,7 @@ fn folders(
                     spelling,
                 );
             } else {
-                push_follow(&mut result, &folder, &credit, spelling);
+                push_follow(&mut result, out, &folder, &credit, spelling, any_in_scope);
                 if any_in_scope {
                     let why = if said.iter().all(|s| matches!(s, Said::Whole)) {
                         format!("The songs' tags name \"{credit}\" as one artist, so it stays whole.")
@@ -673,7 +673,7 @@ fn folders(
             continue;
         }
 
-        push_follow(&mut result, &folder, &credit, spelling);
+        push_follow(&mut result, out, &folder, &credit, spelling, any_in_scope);
         if !any_in_scope {
             continue;
         }
@@ -753,8 +753,37 @@ fn read_list(credit: &str, names: &[String]) -> Said {
     }
 }
 
+/// Why a folder may not be renamed to `target`: a name that starts with a dot is hidden from
+/// Navidrome's scan, and an empty one is no name at all. None when the name is fine.
+fn hidden_target(folder: &str, target: &str) -> Option<String> {
+    let sanitized = PathHelper::sanitize_folder_name(target);
+    if !target.trim().is_empty() && !sanitized.starts_with('.') {
+        return None;
+    }
+    if nfc(&sanitized) == nfc(folder) {
+        return None;
+    }
+    Some(format!(
+        "The folder would be named \"{}\", and a name that is empty or would start with a dot is hidden from Navidrome's scan, so this folder stays as it is.",
+        target.trim()
+    ))
+}
+
 /// The folder follows its songs' credit, respelled when the spelling changes.
-fn push_follow(result: &mut FolderResult, folder: &str, credit: &str, spelling: &Spelling) {
+fn push_follow(
+    result: &mut FolderResult,
+    out: &mut Planned,
+    folder: &str,
+    credit: &str,
+    spelling: &Spelling,
+    in_scope: bool,
+) {
+    if let Some(why) = hidden_target(folder, &spelling.respell(credit)) {
+        if in_scope {
+            out.skip(format!("hidden|{folder}"), folder, folder, why);
+        }
+        return;
+    }
     let row = match spelling.active.get(credit) {
         Some((_, row)) => Some(row.clone()),
         None if spelling.all.contains_key(credit) => None,
@@ -777,6 +806,11 @@ fn push_split(
     spelling: &Spelling,
 ) {
     let target = spelling.respell(primary);
+    if let Some(why) = hidden_target(folder, &target) {
+        result.decisions.retain(|decision| decision.name != folder);
+        out.skip(row.to_string(), folder, folder, why);
+        return;
+    }
     out.rows.push(TidyRow {
         id: row.to_string(),
         kind: TidyKind::Split,

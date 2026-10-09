@@ -130,6 +130,24 @@ impl FakeLidarr {
         Self::import_into(&self.octo_root, &mut self.state.lock(), track_id, title, quality)
     }
 
+    /// Lidarr's own upgrade of a track: the file it had goes, and a new one with a new id takes
+    /// its place. Returns Octo's path of the new file.
+    pub fn upgrade(&self, track_id: i32, title: &str, quality: &str) -> String {
+        let mut state = self.state.lock();
+        let old: Vec<i32> = state
+            .files
+            .iter()
+            .filter(|(_, f)| f.0 == track_id)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in old {
+            if let Some((_, lidarr_path, _)) = state.files.remove(&id) {
+                let _ = std::fs::remove_file(self.octo_root.join(&lidarr_path["/data/music/".len()..]));
+            }
+        }
+        Self::import_into(&self.octo_root, &mut state, track_id, title, quality)
+    }
+
     fn import_into(
         octo_root: &std::path::Path,
         state: &mut State,

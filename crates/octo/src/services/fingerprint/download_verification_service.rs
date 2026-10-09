@@ -9,6 +9,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use octo_core::common::SongIdentity;
 use octo_core::common::dotnet;
+use octo_core::common::song_versions::strip_versions;
 use octo_core::fingerprint::{
     AcoustIdLookup, AcoustIdRecording, AcoustIdResult, InconclusiveReason, TrackMatchComparer,
     VerificationResult, VerificationVerdict,
@@ -448,9 +449,12 @@ impl DownloadVerificationService {
             return verdict;
         };
 
+        // A stray link is not believed on its ISRC either: the request's ISRC belongs to the
+        // song asked for, so it names the stray as surely as its title did.
         let agreed = best.recordings.iter().find(|recording| {
             get_ignore_case(recording_isrcs, &recording.recording_id)
                 .is_some_and(|isrcs| isrcs.iter().any(|code| code == isrc))
+                && trustworthy(recording, best, verdict.duration_seconds)
         });
         if let Some(agreed) = agreed {
             return VerificationResult {
@@ -610,6 +614,41 @@ fn qualifying(lookup: &AcoustIdLookup, threshold: f64) -> Vec<&AcoustIdResult> {
     qualifying
 }
 
+/// A link this much weaker than the strongest recording of another song is taken as a stray.
+const STRAY_RATIO: i32 = 20;
+/// The least length gap, in seconds, that counts as a different recording.
+const MIN_LENGTH_SLACK: i32 = 10;
+/// The share of the file's length that counts as a different recording on long songs.
+const LENGTH_SLACK: f64 = 0.07;
+
+/// Whether an agreeing recording can be believed: not dwarfed by a recording of another song
+/// in the same result, and not far from the file's length. The comparison is only with other
+/// songs, since the same audio is often tied to several versions of one song (album, single,
+/// radio edit) with very different counts. A lone weak link still counts, and so does a
+/// length nobody knows.
+pub(crate) fn trustworthy(agreed: &AcoustIdRecording, result: &AcoustIdResult, file_seconds: i32) -> bool {
+    let song = SongIdentity::key(&strip_versions(&agreed.title));
+    let strongest_other = result
+        .recordings
+        .iter()
+        .filter(|r| SongIdentity::key(&strip_versions(&r.title)) != song)
+        .map(|r| r.sources)
+        .max()
+        .unwrap_or(0);
+    if strongest_other > 0 && agreed.sources.saturating_mul(STRAY_RATIO) < strongest_other {
+        return false;
+    }
+    if let Some(length) = agreed.duration_seconds.filter(|l| *l > 0)
+        && file_seconds > 0
+    {
+        let slack = MIN_LENGTH_SLACK.max((f64::from(file_seconds) * LENGTH_SLACK).round() as i32);
+        if (length - file_seconds).abs() > slack {
+            return false;
+        }
+    }
+    true
+}
+
 fn decide_core(
     lookup: &AcoustIdLookup,
     requested_artist: &str,
@@ -651,6 +690,7 @@ fn decide_core(
         .filter(|r| {
             TrackMatchComparer::title_matches(requested_title, &r.title)
                 && TrackMatchComparer::artist_matches(requested_artist, &r.artist_credit(), &r.artists)
+                && trustworthy(r, best, duration_seconds)
         })
         .collect();
     // The studio recording first, when the same audio is listed under both.
@@ -686,7 +726,13 @@ fn decide_core(
         return confirm(best, agreed, tags_authoritative);
     }
 
-    let actual = &best.recordings[0];
+    // The recording most submissions tie this audio to, the first listed on a tie.
+    let actual = best
+        .recordings
+        .iter()
+        .rev()
+        .max_by_key(|r| r.sources)
+        .unwrap_or(&best.recordings[0]);
     VerificationResult {
         verdict: VerificationVerdict::Mismatch,
         score: best.score,

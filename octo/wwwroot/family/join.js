@@ -1,11 +1,12 @@
 /*
  * The page a join link or QR code opens: /family/join#u=<username>&c=<code> adds a device,
  * /family/join#invite=<token> sets up a new member's account first. The secrets stay in the
- * part after #, which browsers never send to a server.
+ * part after #, which browsers never send to a server. A `home=` there names the server's
+ * home address, which the Octo app may use on the home network.
  *
- * On Android the Octo app is opened straight away through an intent link that comes back
- * here when the app is not installed. On a computer the page offers Open in Octo. Everywhere
- * it walks through getting Octo or signing in to another app.
+ * An invite walks through three steps, one card each: 1 your name and password, 2 get the
+ * app, 3 done. On Android the Octo app is opened straight away through an intent link that
+ * comes back here when the app is not installed; on a computer the page offers Open in Octo.
  */
 (function () {
   'use strict';
@@ -16,74 +17,85 @@
   var server = location.origin;
   document.getElementById('host').textContent = location.host;
 
+  var STEPS = ['Your name and password', 'Get the app', 'Done'];
+
   function params() {
     return new URLSearchParams(location.hash.replace(/^#/, ''));
   }
 
   function card() {
-    var node = el('section', { class: 'fam-card' });
+    var node = el('section', { class: 'info-card fam-card' });
     for (var i = 0; i < arguments.length; i++) F.append(node, arguments[i]);
     return node;
   }
 
   function heading(text, lede) {
-    return [el('h1', { class: 'fam-title' }, text), lede ? el('p', { class: 'fam-lede' }, lede) : null];
+    return el('header', { class: 'page-header fam-join-head' },
+      el('div', null, el('h1', { tabindex: '-1' }, text), lede ? el('p', null, lede) : null));
   }
 
-  function dots(step, of) {
-    var row = el('div', { class: 'fam-step-dots', 'aria-hidden': 'true' });
-    for (var i = 1; i <= of; i++) row.appendChild(el('span', { class: i <= step ? 'on' : '' }));
-    return row;
+  function progress(step) {
+    return el('ol', { class: 'fam-progress', 'aria-label': 'Step ' + step + ' of ' + STEPS.length },
+      STEPS.map(function (words, i) {
+        var n = i + 1;
+        return el('li', { class: (n <= step ? 'on' : '') + (n === step ? ' now' : ''), 'aria-current': n === step ? 'step' : null },
+          el('span', null, n + ' ' + words));
+      }));
   }
 
   function show(parts) {
     F.clear(root);
     F.append(root, parts);
     window.scrollTo(0, 0);
+    var h1 = root.querySelector('h1');
+    if (h1) h1.focus({ preventScroll: true });
+  }
+
+  function familyLink(words) {
+    return el('p', { class: 'fam-help fam-gap' }, words || 'Your devices, plan and audio quality are on ', el('a', { href: '/family/' }, 'your Family page'), '.');
   }
 
   // ── A code: add this device ──────────────────────────────────────────────────────────
-  function pageUrl(username, code, back) {
-    return server + '/family/join#u=' + encodeURIComponent(username) + '&c=' + encodeURIComponent(code) + (back ? '&back=1' : '');
+  function pageUrl(username, code, home, back) {
+    return server + '/family/join#u=' + encodeURIComponent(username) + '&c=' + encodeURIComponent(code) +
+      (home ? '&home=' + encodeURIComponent(home) : '') + (back ? '&back=1' : '');
   }
 
-  function openOctoButton(username, code) {
+  function openOctoButton(username, code, home) {
     var platform = F.platform();
     if (platform === 'android') {
-      return el('a', { class: 'fam-btn primary', href: F.intentLink(server, username, code, pageUrl(username, code, true)) }, 'Open the Octo app');
+      return el('a', { class: 'btn btn-primary fam-big', href: F.intentLink(server, username, code, pageUrl(username, code, home, true), home) }, 'Open the Octo app');
     }
     if (platform === 'desktop') {
-      return el('a', { class: 'fam-btn primary', href: F.octoLink(server, username, code) }, 'Open in Octo');
+      return el('a', { class: 'btn btn-primary fam-big', href: F.octoLink(server, username, code, home) }, 'Open in Octo');
     }
     return null;
   }
 
-  function codeCard(username, code) {
-    var link = pageUrl(username, code, false);
-    var open = openOctoButton(username, code);
+  function codeCard(username, code, home) {
+    var open = openOctoButton(username, code, home);
     var platform = F.platform();
+    var groups = String(code).match(/.{1,3}/g) || [];
     return card(
-      el('h2', { class: 'fam-h' }, 'With the Octo app'),
-      el('div', { class: 'fam-qr-wrap' },
-        platform === 'desktop' ? F.qrCard(link, 'QR code to add a phone') : null,
-        el('div', { class: 'fam-form', style: 'flex:1 1 220px;min-width:0' },
-          el('div', { class: 'fam-kv-label' }, 'Code'),
-          el('div', { class: 'fam-code' }, code),
-          F.secret('Username', username),
-          F.secret('Server address', server))),
-      el('ol', { class: 'fam-steps', style: 'margin-top:16px' },
-        open ? el('li', null, 'Press ' + open.textContent + '. If nothing happens, Octo is not installed yet: see Get Octo below.') : null,
-        el('li', null, 'Or open Octo, choose Join with a family code, and type the server address, your username and the code.'),
-        platform === 'desktop' ? el('li', null, 'To add a phone, scan this QR code with its camera.') : null),
-      open ? el('div', { class: 'fam-actions' }, open) : null);
+      el('h2', { class: 'info-card-title' }, 'With the Octo app'),
+      el('p', { class: 'fam-card-desc' }, open ? 'Press ' + open.textContent + '. If nothing happens, Octo is not installed yet: see Get Octo below.' : 'Open Octo and choose Join with a family code.'),
+      open ? el('div', { class: 'fam-actions' }, open) : null,
+      el('div', { class: 'fam-pair fam-gap' },
+        platform === 'desktop' ? el('figure', { class: 'fam-qr-panel' }, F.qrCard(pageUrl(username, code, home, false), 'QR code to add a phone'), el('figcaption', null, 'To add a phone, scan this with its camera.')) : null,
+        el('div', { class: 'fam-pair-info' },
+          el('section', { class: 'fam-way' },
+            el('h3', { class: 'fam-way-title' }, 'Or type it in Octo: ', el('strong', null, 'Join with a family code')),
+            F.table(
+              F.row('Server', server, { copy: 'Copy the server' }),
+              F.row('Username', username, { copy: 'Copy the username' }),
+              F.row('Code', code, { big: true, value: el('span', { class: 'fam-bigcode' }, groups.map(function (g) { return el('span', null, g); })), copy: 'Copy the code' }))))));
   }
 
-  function otherAppCard(username, code) {
+  function otherAppCard(username, code, after) {
     var body = el('div', { class: 'fam-form' });
-    var name = el('input', { class: 'fam-field', id: 'app-name', placeholder: 'Symfonium on my phone', autocomplete: 'off' });
-    var error = el('p', { class: 'fam-error', role: 'alert' });
-    var button = el('button', { class: 'fam-btn primary', type: 'submit' }, 'Make an app password');
-    body.appendChild(el('p', { class: 'fam-sub' }, 'Any Subsonic app works with Octo. Making an app password uses up this code.'));
+    var name = el('input', { class: 'set-input', id: 'app-name', placeholder: 'Symfonium on my phone', autocomplete: 'off' });
+    var error = el('p', { class: 'field-error', role: 'alert' });
+    var button = el('button', { class: 'btn btn-primary fam-big', type: 'submit' }, 'Make an app password');
     body.appendChild(el('form', { class: 'fam-form', onsubmit: async function (e) {
       e.preventDefault();
       button.disabled = true;
@@ -114,35 +126,43 @@
       }
       var paired = answer.familyPair;
       F.clear(body).appendChild(F.otherApp(server, paired.username, paired.secret));
+      if (after) body.appendChild(el('div', { class: 'fam-actions' }, after));
     } },
-    el('label', { class: 'fam-label', for: 'app-name' }, 'A name for it', name),
+    el('label', { class: 'fam-label', for: 'app-name' }, 'A name for it', name, el('span', { class: 'fam-help' }, 'So you can tell your devices apart later.')),
     error,
     el('div', null, button)));
-    return card(el('h2', { class: 'fam-h' }, 'With another app'), body);
+    return card(
+      el('h2', { class: 'info-card-title' }, 'With another app'),
+      el('p', { class: 'fam-card-desc' }, 'Any Subsonic app works with Octo: Symfonium, Feishin, Amperfy, Substreamer, Tempo and more. Making an app password uses up this code.'),
+      el('div', { class: 'fam-gap' }, body));
   }
 
-  function renderCode(username, code, lede) {
+  function renderCode(username, code, home, lede, step, who) {
+    var done = step ? el('button', { class: 'btn btn-primary fam-big', type: 'button', onclick: function () { renderDone(who || username); } }, 'I’m signed in') : null;
     show([
-      heading('Add a device', lede || 'This adds a device to ' + username + '’s Octo account.'),
-      codeCard(username, code),
-      card(el('h2', { class: 'fam-h' }, 'Get Octo'), F.getOcto()),
-      otherAppCard(username, code),
-      el('p', { class: 'fam-help', style: 'margin-top:20px' }, 'Your devices and plan are on ', el('a', { href: '/family/' }, 'your Family page'), '.')
+      step ? progress(step) : null,
+      heading('Add this device', lede || 'This adds a device to ' + username + '’s Octo account.'),
+      codeCard(username, code, home),
+      card(el('h2', { class: 'info-card-title' }, 'Get Octo'), el('div', { class: 'fam-gap' }, F.getOcto())),
+      otherAppCard(username, code, step ? el('button', { class: 'btn btn-primary fam-big', type: 'button', onclick: function () { renderDone(who || username); } }, 'I’m signed in') : null),
+      done ? el('div', { class: 'fam-actions' }, done) : null,
+      familyLink()
     ]);
   }
 
   // ── An invite: set up the account, then a first device ───────────────────────────────
   function renderInvite(token) {
-    var name = el('input', { class: 'fam-field', id: 'name', autocomplete: 'name', placeholder: 'Alex' });
-    var pass = el('input', { class: 'fam-field', id: 'password', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
-    var again = el('input', { class: 'fam-field', id: 'password-again', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
-    var error = el('p', { class: 'fam-error', role: 'alert' });
-    var button = el('button', { class: 'fam-btn primary block', type: 'submit' }, 'Continue');
+    var name = el('input', { class: 'set-input', id: 'name', autocomplete: 'name', placeholder: 'Alex' });
+    var pass = el('input', { class: 'set-input', id: 'password', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
+    var again = el('input', { class: 'set-input', id: 'password-again', type: 'password', autocomplete: 'new-password', minlength: 8, required: true });
+    var error = el('p', { class: 'field-error', role: 'alert' });
+    var button = el('button', { class: 'btn btn-primary btn-block fam-big', type: 'submit' }, 'Continue');
     var form = el('form', { class: 'fam-form', onsubmit: async function (e) {
       e.preventDefault();
       error.textContent = '';
       if (pass.value !== again.value) {
         error.textContent = 'The two passwords are not the same.';
+        again.focus();
         return;
       }
       button.disabled = true;
@@ -162,11 +182,10 @@
     error,
     button);
     show([
-      dots(1, 2),
+      progress(1),
       heading('Welcome to the family', 'Someone invited you to listen with them on Octo. Set up your account, then add your first device.'),
       card(form)
     ]);
-    name.focus();
   }
 
   function renderFirstDevice(username) {
@@ -175,27 +194,42 @@
       if (!reply.ok) return F.toast(F.errorOf(reply), true);
       var added = reply.data;
       if (kind === 'OctoApp') {
-        renderCode(added.username, added.pairCode, 'You are in, ' + username + '. Now add this device: it takes a minute.');
+        var home = added.servers && added.servers.anywhere && added.servers.home !== added.servers.anywhere ? added.servers.home : '';
+        renderCode(added.username, added.pairCode, home, 'You are in, ' + username + '. Now add this device: it takes a minute.', 2, username);
         return;
       }
       show([
-        dots(2, 2),
-        heading('Sign in to your app', 'Type these into your app, or copy them across.'),
+        progress(2),
+        heading('Sign in to your app', 'Type these into your app, or copy them across. The app password is shown once.'),
         card(F.otherApp(added.server, added.username, added.appPassword)),
-        el('p', { class: 'fam-help', style: 'margin-top:20px' }, 'More devices, your plan and your audio quality are on ', el('a', { href: '/family/' }, 'your Family page'), '.')
+        el('div', { class: 'fam-actions' }, el('button', { class: 'btn btn-primary fam-big', type: 'button', onclick: function () { renderDone(username); } }, 'I’m signed in'))
       ]);
     };
     show([
-      dots(2, 2),
-      heading('Add your first device', 'You are in, ' + username + '. Which app will you listen with?'),
+      progress(2),
+      heading('Get the app', 'You are in, ' + username + '. Which app will you listen with?'),
       card(el('div', { class: 'fam-choice' },
         el('button', { class: 'fam-option', type: 'button', onclick: function () { pick('OctoApp'); } },
+          F.icon('phone'),
           el('span', { class: 'fam-option-title' }, 'The Octo app'),
-          el('span', { class: 'fam-sub' }, 'Made for this server: requests, family playlists and your audio quality.')),
+          el('span', { class: 'fam-option-sub' }, 'Made for this server: requests, family playlists and your audio quality.')),
         el('button', { class: 'fam-option', type: 'button', onclick: function () { pick('SubsonicApp'); } },
+          F.icon('stack'),
           el('span', { class: 'fam-option-title' }, 'Another app'),
-          el('span', { class: 'fam-sub' }, 'Symfonium, Feishin, Amperfy, Substreamer, Tempo or any Subsonic app.')))),
-      el('p', { class: 'fam-help', style: 'margin-top:20px' }, 'Or go to ', el('a', { href: '/family/' }, 'your Family page'), ' and add devices later.')
+          el('span', { class: 'fam-option-sub' }, 'Symfonium, Feishin, Amperfy, Substreamer, Tempo or any Subsonic app.')))),
+      el('p', { class: 'fam-help fam-gap' }, 'Or go to ', el('a', { href: '/family/' }, 'your Family page'), ' and add devices later.')
+    ]);
+  }
+
+  function renderDone(username) {
+    show([
+      progress(3),
+      heading('You are all set', 'Welcome, ' + username + '. Your music is ready on your device.'),
+      card(
+        el('div', { class: 'fam-empty' },
+          el('span', { class: 'fam-empty-ico', 'aria-hidden': 'true' }, F.icon('check')),
+          el('p', null, 'Heart songs in your app to save them. Your devices, plan and audio quality are on your Family page.'),
+          el('a', { class: 'btn btn-primary fam-big', href: '/family/' }, 'Open my Family page')))
     ]);
   }
 
@@ -205,13 +239,14 @@
     var invite = p.get('invite');
     var username = p.get('u');
     var code = p.get('c');
+    var home = p.get('home') || '';
     if (invite) return renderInvite(invite);
     if (username && code) {
       if (F.platform() === 'android' && !p.get('back')) {
         // Opens the app at once; without it, Android comes back to this page with back=1.
-        location.href = F.intentLink(server, username, code, pageUrl(username, code, true));
+        location.href = F.intentLink(server, username, code, pageUrl(username, code, home, true), home);
       }
-      return renderCode(username, code);
+      return renderCode(username, code, home);
     }
     if (p.has('joined')) {
       F.api('GET', '/session').then(function (reply) {
@@ -222,7 +257,7 @@
     }
     show([
       heading('This link is not complete', 'Ask for a new link, or sign in on the Family page.'),
-      card(el('div', { class: 'fam-actions', style: 'margin:0' }, el('a', { class: 'fam-btn primary', href: '/family/' }, 'Open the Family page')))
+      card(el('div', { class: 'fam-actions', style: 'margin:0' }, el('a', { class: 'btn btn-primary fam-big', href: '/family/' }, 'Open the Family page')))
     ]);
   }
 

@@ -10,15 +10,19 @@
   <link rel="stylesheet" href="/admin/admin.css" />
   <link rel="stylesheet" href="/family/family.css" />
   <link rel="icon" type="image/png" href="/Assets/octo_logo.png" />
+  <link rel="preconnect" href="https://rsms.me" />
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
 </head>
-<body>
+<body class="fam">
   <div class="ambient" aria-hidden="true"><span class="ambient-light a1"></span><span class="ambient-light a2"></span><span class="ambient-light a3"></span></div>
   <div id="app" aria-live="polite">
-    <p class="fam-loading">Loading</p>
+    <p class="state">Loading</p>
   </div>
   <dialog class="fam-sheet" id="sheet" aria-labelledby="sheet-title"></dialog>
-  <div class="fam-toast" id="toast" role="status" aria-live="polite"></div>
-  <noscript><p class="fam-loading">The Family page needs JavaScript.</p></noscript>
+  <div class="activity" role="region" aria-label="Messages">
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <noscript><p class="state">The Family page needs JavaScript.</p></noscript>
   <script src="/family/qr.js" defer></script>
   <script src="/family/common.js" defer></script>
   <script src="/family/family.js" defer></script>

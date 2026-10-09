@@ -1,5 +1,5 @@
-//! `ReleaseCheckTests.cs` (all but the two `ReleaseVersion` theories, which are 2-B's), with
-//! GitHub as a wiremock server, plus the `update/release.json` fixture round trip.
+//! Tests of the release check, with GitHub as a wiremock server, plus the `update/release.json`
+//! fixture round trip.
 
 use super::*;
 use chrono::TimeZone;
@@ -227,7 +227,7 @@ async fn no_network_keeps_the_last_answer_and_says_why() {
     f.answer(ok(RELEASES)).await;
     f.check("2026.10.01").check(false).await;
 
-    // The same saved state, and GitHub out of reach (the C# handler threw HttpRequestException).
+    // The same saved state, and GitHub out of reach.
     f.advance(TimeDelta::hours(7));
     let offline = f.check_at("http://127.0.0.1:1", "2026.10.01", UpdateSettings::default());
     let view = offline.check(false).await;
@@ -336,7 +336,7 @@ async fn answer_that_is_not_a_list_is_an_error() {
     assert!(view.latest.is_none());
 }
 
-// ---- Rust-only ------------------------------------------------------------------------
+// ---- The saved state, entity tags, the release list and the worker ---------------------
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -374,7 +374,7 @@ fn an_unreadable_cache_starts_fresh() {
 }
 
 #[test]
-fn entity_tags_parse_as_dotnet_did() {
+fn entity_tags_parse_as_quoted_strings_optionally_weak() {
     for (text, expected) in [
         ("\"abc\"", Some("\"abc\"")),
         ("W/\"5f2c\"", Some("W/\"5f2c\"")),

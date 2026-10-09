@@ -1,4 +1,4 @@
-//! ParallelDownloadTests, the worker part: the worker runs several requests only once slskd has
+//! Parallel downloads, the worker part: the worker runs several requests only once slskd has
 //! proven it files each download in its own folder, and never more than the width.
 
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use crate::services::common::test_fakes::until;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo};
 use crate::services::library::ReplacementHandoff;
 
-/// `Mock<IDownloadService>` whose acquisitions wait for one release, counting how many run.
+/// A stand-in `IDownloadService` whose acquisitions wait for one release, counting how many run.
 struct HeldDownloads {
     inside: AtomicI32,
     most: AtomicI32,

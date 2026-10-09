@@ -1,12 +1,12 @@
-//! The app half of `Services/Subsonic/SubsonicResponseBuilder*.cs`.
+//! The app half of the Subsonic response builder.
 //!
 //! The builder itself, with every shape that needs only the models, is
 //! [`octo_subsonic::subsonic_response_builder::SubsonicResponseBuilder`]; its answers are
-//! [`SubsonicReply`] values, which are axum responses (`IntoResponse`: 200, the content type the
-//! ASP.NET result wrote, and a `Content-Length`). This module wires it to the app:
+//! [`SubsonicReply`] values, which are axum responses (`IntoResponse`: 200, the reply's content
+//! type, and a `Content-Length`). This module wires it to the app:
 //!
 //! - [`ExternalIdRegistry`] is its id registry;
-//! - [`new_subsonic_response_builder`] builds it from the settings, read once (`IOptions`);
+//! - [`new_subsonic_response_builder`] builds it from the settings, read once;
 //! - [`SubsonicResponseBuilderExt`] adds the answers that take app-service types: an
 //!   acquisition snapshot, a generated mix, a library-action outcome and an upgrade job.
 
@@ -39,9 +39,8 @@ impl IdRegistry for ExternalIdRegistry {
     }
 }
 
-/// The builder as `Program.cs` registered it: over the app's id registry, with
-/// `Subsonic:WaitForLosslessOnPlay` read once here (it decides what every row declares, and
-/// is restart-required).
+/// The app's builder: over the app's id registry, with `Subsonic:WaitForLosslessOnPlay` read once
+/// here (it decides what every row declares, and is restart-required).
 pub fn new_subsonic_response_builder(
     id_registry: Arc<ExternalIdRegistry>,
     subsonic: &SubsonicSettings,
@@ -74,7 +73,7 @@ pub trait SubsonicResponseBuilderExt {
     ) -> SubsonicReply;
 
     /// libraryAction: what happened to one request. Always ok, so the client reads the state
-    /// rather than an error, even when nothing was done. (C#'s default action is
+    /// rather than an error, even when nothing was done. (The default action is
     /// [`REMOVE_ACTION`].)
     fn create_library_action_outcome_response(
         &self,
@@ -435,7 +434,7 @@ pub fn candidate_json(copy: &AcquisitionCandidate) -> Fields {
     fields
 }
 
-/// The default action of C#'s `CreateLibraryActionResponse(songId, outcome)`.
+/// The action a libraryAction outcome answers with when none is given.
 pub const DEFAULT_LIBRARY_ACTION: &str = REMOVE_ACTION;
 
 /// One acquisition on the wire. The field names are a contract with the Octo app; a rename
@@ -482,7 +481,7 @@ fn millis(value: &DateTime<Utc>) -> String {
     value.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
-/// `DateTime.ToString("O")` of a UTC time: seven fraction digits and `Z`.
+/// A UTC time in the round-trip format: seven fraction digits and `Z`.
 fn round_trip(value: &DateTime<Utc>) -> String {
     format!(
         "{}.{:07}Z",

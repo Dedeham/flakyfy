@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/SearchBudget.cs`.
-
 use crate::services::common::external_search_service;
 
 /// Splits a client's requested song count between local library results and external
@@ -62,10 +60,10 @@ impl SearchBudget {
 
 #[cfg(test)]
 mod tests {
-    //! Port of `SearchBudgetTests`. These pin issue #14: the old local floor was a flat 20,
-    //! which is also the Subsonic spec default for songCount, so a client that sent the default
-    //! (or sent nothing) had its whole budget consumed by local results and never received a
-    //! single discovery row. Search looked like it only ever returned albums.
+    //! These pin issue #14: the old local floor was a flat 20, which is also the Subsonic spec
+    //! default for songCount, so a client that sent the default (or sent nothing) had its whole
+    //! budget consumed by local results and never received a single discovery row. Search looked
+    //! like it only ever returned albums.
 
     use super::*;
 
@@ -166,8 +164,7 @@ mod tests {
         }
     }
 
-    /// `Compute_DiscoveryDefaultsToEnabled`: the C# defaulted the flag to true. Rust has no
-    /// default arguments, so callers always pass it; the enabled split is the one pinned above.
+    /// Callers always pass the discovery flag; the enabled split is the one pinned above.
     #[test]
     fn compute_discovery_defaults_to_enabled() {
         assert_eq!(SearchBudget::compute(20, true), (12, 8));

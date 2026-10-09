@@ -1,7 +1,6 @@
-//! Port of `Services/LastFm/LastFmRadioRefreshWorker.cs`: runs canonical recommendation
-//! refreshes inside the existing Octo host. A hosted service (the "LastFmRadioRefreshWorker"
-//! worker), and the only `IOptionsMonitor.OnChange` subscriber: a settings change queues the
-//! rebuilds it implies.
+//! Runs canonical recommendation refreshes inside the existing Octo host. A background worker
+//! ("LastFmRadioRefreshWorker"), and the only settings-change subscriber: a settings change
+//! queues the rebuilds it implies.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,8 +28,8 @@ const REFRESH_DEADLINE: Duration = Duration::from_secs(35);
 
 /// What the settings looked like at the last change.
 struct Watched {
-    /// The enabled pinned definitions' fingerprints, by id (`StringComparer.OrdinalIgnoreCase`):
-    /// the ignore-case key, then the id and the fingerprint.
+    /// The enabled pinned definitions' fingerprints, by id ignoring case: the ignore-case key,
+    /// then the id and the fingerprint.
     definitions: IndexMap<String, (String, String)>,
     radio_enabled: bool,
     personalized_shape: String,
@@ -50,12 +49,12 @@ pub struct LastFmRadioRefreshWorker {
     queue: Arc<LastFmRadioRefreshQueue>,
     recommendations: Arc<LastFmRadioRecommendationService>,
     state: Arc<LastFmRadioStateStore>,
-    /// `IOptionsMonitor<LastFmSettings>`.
+    /// The Last.fm settings.
     settings: Arc<SettingsStore>,
     single_flight: SingleFlight<String, bool>,
     warmup: Option<Arc<LastFmRadioWarmupService>>,
     watched: Mutex<Watched>,
-    /// `settings.OnChange(...)`, subscribed at construction as the C# did.
+    /// Settings changes, subscribed at construction.
     changes: watch::Receiver<Arc<AppSettings>>,
 }
 
@@ -85,7 +84,7 @@ impl LastFmRadioRefreshWorker {
         self.single_flight.in_flight_count()
     }
 
-    /// The `OnChange` handler: a removed pinned definition, radio switched on, or a different set
+    /// The settings-change handler: a removed pinned definition, radio switched on, or a different set
     /// of personalized station kinds rebuilds every known listener; an added or edited pinned
     /// definition refreshes only that station.
     pub fn on_settings_changed(&self, changed: &LastFmSettings) {
@@ -133,7 +132,7 @@ impl LastFmRadioRefreshWorker {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker's loop, until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let watcher = tokio::spawn(Arc::clone(&self).watch_settings(stopping.clone()));
         // Jitter startup work deterministically so restarts do not fan out all profiles at once.
@@ -304,7 +303,7 @@ fn fingerprints(settings: &LastFmSettings) -> IndexMap<String, (String, String)>
         .collect()
 }
 
-/// `bool.ToString()`.
+/// A bool written "True" or "False".
 fn dotnet_bool(value: bool) -> &'static str {
     if value { "True" } else { "False" }
 }
@@ -387,7 +386,6 @@ mod tests {
         }
     }
 
-    // LastFmRadioRefreshQueueTests.Worker_RetainsStaleSnapshotAndRecordsFailedReplacement
     #[tokio::test]
     async fn worker_retains_stale_snapshot_and_records_failed_replacement() {
         let fixture = fixture(
@@ -429,7 +427,6 @@ mod tests {
         assert!(!user.refreshing);
     }
 
-    // LastFmRadioRefreshQueueTests.DefinitionChange_QueuesOnlyTheChangedPinnedDefinition
     #[tokio::test]
     async fn definition_change_queues_only_the_changed_pinned_definition() {
         let fixture = fixture(
@@ -467,7 +464,6 @@ mod tests {
         assert_eq!(job.station_definition_id.as_deref(), Some("jazz"));
     }
 
-    // LastFmRadioRefreshQueueTests.Worker_CollapsesConcurrentRefreshesForTheSameUser
     #[tokio::test]
     async fn worker_collapses_concurrent_refreshes_for_the_same_user() {
         let fixture = fixture(
@@ -501,7 +497,7 @@ mod tests {
         assert_eq!(fixture.worker.in_flight_count(), 0);
     }
 
-    /// Rust-only: switching radio on, removing a definition, or changing the personalized kinds
+    /// Switching radio on, removing a definition, or changing the personalized kinds
     /// rebuilds everyone; an unchanged change queues nothing.
     #[tokio::test]
     async fn the_rebuilds_a_settings_change_implies() {
@@ -563,7 +559,7 @@ mod tests {
         );
     }
 
-    /// Rust-only: a refresh with radio off does nothing, and a pinned refresh keeps the other
+    /// A refresh with radio off does nothing, and a pinned refresh keeps the other
     /// stations and replaces only its own.
     #[tokio::test]
     async fn a_pinned_refresh_replaces_only_its_station() {

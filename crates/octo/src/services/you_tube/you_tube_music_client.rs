@@ -1,5 +1,4 @@
-//! Port of `Services/YouTube/YouTubeMusicClient.cs`: YouTube Music search and radio, through the
-//! yt-dlp shim's `/ytm` endpoints.
+//! YouTube Music search and radio, through the yt-dlp shim's `/ytm` endpoints.
 
 use octo_core::common::dotnet;
 use octo_core::json::element::{ElementResult, enumerate_array, get_int32, try_get_property};
@@ -53,8 +52,8 @@ impl YouTubeMusicClient {
     }
 
     /// `filter`: "songs" for releases, "videos" for uploads. The rows; `Ok(None)` when the shim
-    /// could not answer, so a caller never keeps that as "nothing found". `Err` where the C#
-    /// threw: the shim unreachable, or an answer that is not its JSON.
+    /// could not answer, so a caller never keeps that as "nothing found". `Err` when the shim is
+    /// unreachable, or for an answer that is not its JSON.
     pub async fn search(&self, query: &str, filter: &str) -> anyhow::Result<Option<Vec<YtmRow>>> {
         Ok(self
             .get_rows(&format!(
@@ -168,8 +167,8 @@ mod tests {
 
     use super::*;
 
-    /// Rust-only: rows without an id or a title are left out, odd artists are skipped, and a
-    /// fractional length fails the answer as `GetInt32` threw.
+    /// Rows without an id or a title are left out, odd artists are skipped, and a fractional
+    /// length fails the answer.
     #[test]
     fn rows_are_read_as_the_shim_writes_them() {
         let read = rows(&json!({"tracks": [

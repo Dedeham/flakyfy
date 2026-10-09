@@ -1,5 +1,3 @@
-//! Port of `Services/Library/HeartOwnership.cs`.
-
 use std::sync::Arc;
 
 use octo_core::models::domain::{Album, Song};
@@ -16,9 +14,9 @@ use crate::services::i_music_metadata_service::IMusicMetadataService;
 pub struct HeartOwnership {
     ownership: Arc<LibraryOwnership>,
     metadata: Arc<dyn IMusicMetadataService>,
-    /// `IOptionsMonitor` of the Subsonic and library action settings: read at every use.
+    /// The Subsonic and library action settings, read at every use.
     settings: Arc<SettingsStore>,
-    /// Optional, as in the C#: without them nothing is queued for Better quality.
+    /// Optional: without them nothing is queued for Better quality.
     upgrades: Option<Arc<UpgradeQueue>>,
     sources: Option<Arc<UpgradeSources>>,
 }

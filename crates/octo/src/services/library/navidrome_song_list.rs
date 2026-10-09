@@ -1,4 +1,4 @@
-//! Port of `Services/Library/NavidromeSongList.cs`: Navidrome's own song list (`GET /api/song`,
+//! Navidrome's own song list (`GET /api/song`,
 //! 1000 a page, as the admin), which names every song's artist, title, album and tag lyrics in a
 //! few requests. A scan that would otherwise open every file over a network mount (a few songs a
 //! second) reads this instead.
@@ -135,7 +135,7 @@ pub async fn list(
     songs
 }
 
-/// `Path.Combine(base, relative)`.
+/// `relative` joined onto `base` with one separator; `base` alone when `relative` is empty.
 pub(crate) fn combine(base: &str, relative: &str) -> String {
     if relative.is_empty() {
         base.to_string()
@@ -146,7 +146,7 @@ pub(crate) fn combine(base: &str, relative: &str) -> String {
     }
 }
 
-/// `Path.GetFullPath`: made absolute against the working folder, with `.`, `..` and doubled
+/// The full path: made absolute against the working folder, with `.`, `..` and doubled
 /// separators taken out.
 pub(crate) fn full_path(path: &str) -> String {
     let absolute = if path.starts_with('/') {

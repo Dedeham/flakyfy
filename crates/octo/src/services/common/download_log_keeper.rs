@@ -1,4 +1,4 @@
-//! Port of `Services/Common/DownloadLogKeeper.cs`.
+//! Keeps each finished download's log with its fetched-songs entry.
 
 use std::sync::{Arc, Weak};
 
@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use crate::services::common::acquisition_tracker::acquisition_event_kinds;
 
-    /// `DateTime.UtcNow.ToString("o")`.
+    /// Now, in round-trip form with seven fractional digits.
     fn now_text() -> String {
         let now = chrono::Utc::now();
         format!(
@@ -77,7 +77,6 @@ mod tests {
         )
     }
 
-    /// AdminDownloadsTests.AFinishedDownloadsLogIsSaved_AndALineAfterTheEndSavesItAgain_AndAFailureSavesNothing.
     #[test]
     fn a_finished_downloads_log_is_saved_and_a_line_after_the_end_saves_it_again_and_a_failure_saves_nothing()
     {

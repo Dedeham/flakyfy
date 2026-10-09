@@ -1,5 +1,5 @@
-//! `Services/ListenBrainz` in the C#: listens submitted for plays of outside songs, and
-//! ListenBrainz's listening data for radio.
+//! ListenBrainz: listens submitted for plays of outside songs, and ListenBrainz's listening data
+//! for radio.
 
 pub mod listen_brainz_radio_client;
 pub mod listen_brainz_service;

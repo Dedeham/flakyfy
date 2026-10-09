@@ -23,7 +23,7 @@ pub struct AmbientPaletteService {
 }
 
 impl AmbientPaletteService {
-    /// The "ambient-palette" named client's timeout.
+    /// The cover client's timeout.
     pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(6);
 
     // A cover is a few hundred kilobytes; anything far past that is not one.
@@ -32,7 +32,7 @@ impl AmbientPaletteService {
 
     /// The production service, on its own 6 s client.
     pub fn new() -> Self {
-        // IHttpClientFactory's clients did not decompress.
+        // The client does not decompress responses.
         let http = reqwest::Client::builder()
             .timeout(Self::CLIENT_TIMEOUT)
             .no_gzip()
@@ -49,14 +49,14 @@ impl AmbientPaletteService {
         }
     }
 
-    /// `PaletteForAsync`: the palette of the cover at `cover_url`, None for a cover that cannot
-    /// be read or has no color. A caller that gives up drops the future.
+    /// The palette of the cover at `cover_url`, None for a cover that cannot be read or has no
+    /// color. A caller that gives up drops the future.
     pub async fn palette_for(&self, cover_url: Option<&str>) -> Option<Palette> {
         let cover_url = cover_url.filter(|u| !u.trim().is_empty())?;
         if let Some(known) = self.palettes.lock().get(cover_url) {
             return known.clone();
         }
-        // Uri.TryCreate(.., UriKind.Absolute) with an http or https scheme.
+        // Only an absolute URL with an http or https scheme.
         let uri = url::Url::parse(cover_url)
             .ok()
             .filter(|u| matches!(u.scheme(), "http" | "https"))?;

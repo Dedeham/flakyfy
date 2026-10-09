@@ -1,5 +1,5 @@
-//! LyricsTests (LRCLIB), the LRCLIB parts of LyricsWordTimingTests, SongIdentityTests and
-//! QueryVariantLookupTests.
+//! LRCLIB as a lyrics source: found and fallback answers, cooling down, word timing, song
+//! identity, and the spelled-out query variants.
 
 use octo_core::lyrics::{ILyricsSource, LyricsQuery, LyricsTiming};
 use serde_json::Value;
@@ -18,7 +18,6 @@ fn none() -> CancellationToken {
     CancellationToken::new()
 }
 
-// LyricsTests.Lrclib_Found_ReadsSyncedAndPlain
 #[tokio::test]
 async fn lrclib_found_reads_synced_and_plain() {
     let http = FakeHttp::start(|_| {
@@ -41,7 +40,6 @@ async fn lrclib_found_reads_synced_and_plain() {
     assert_eq!(result.source, "LRCLIB");
 }
 
-// LyricsTests.Lrclib_404_FallsBackToSearchWithinTwoSeconds
 #[tokio::test]
 async fn lrclib_404_falls_back_to_search_within_two_seconds() {
     let http = FakeHttp::start(|url| {
@@ -70,7 +68,6 @@ async fn lrclib_404_falls_back_to_search_within_two_seconds() {
 }
 
 /// A 503 is "not now", never "no lyrics", and LRCLIB asks callers to honor Retry-After.
-// LyricsTests.Lrclib_Overloaded_CoolsDownWithoutAnotherRequest
 #[tokio::test]
 async fn lrclib_overloaded_cools_down_without_another_request() {
     let http = FakeHttp::start(|_| {
@@ -93,7 +90,6 @@ async fn lrclib_overloaded_cools_down_without_another_request() {
     assert!(until > tokio::time::Instant::now() + std::time::Duration::from_secs(290));
 }
 
-// LyricsTests.Lrclib_AlbumThatIsOnlyTheTitle_IsNotSent
 #[tokio::test]
 async fn lrclib_album_that_is_only_the_title_is_not_sent() {
     let http = FakeHttp::start(|_| status(404, "{}")).await;
@@ -129,7 +125,6 @@ async fn lrclib_sends_a_real_album_and_no_length_past_an_hour() {
     );
 }
 
-// LyricsWordTimingTests.Lrclib_HasWordSync_UsesTheLyricsfileWords (its LrclibLyricsSource.Parse half)
 #[test]
 fn lrclib_has_word_sync_uses_the_lyricsfile_words() {
     let row: Value = serde_json::from_str(
@@ -146,7 +141,6 @@ fn lrclib_has_word_sync_uses_the_lyricsfile_words() {
     assert_eq!(result.doubt, None);
 }
 
-// SongIdentityTests.Lyrics_Lrclib_NeverTakesAnotherVersion (7 rows)
 #[test]
 fn lyrics_lrclib_never_takes_another_version() {
     for (want, got) in super::super::kugou_lyrics_source::tests::OTHER_VERSIONS {
@@ -159,7 +153,6 @@ fn lyrics_lrclib_never_takes_another_version() {
     }
 }
 
-// QueryVariantLookupTests.Lrclib_SearchesAgainUnderTheSpelledOutName
 #[tokio::test]
 async fn lrclib_searches_again_under_the_spelled_out_name() {
     let http = FakeHttp::start(|url| {
@@ -194,7 +187,6 @@ async fn lrclib_searches_again_under_the_spelled_out_name() {
     );
 }
 
-// QueryVariantLookupTests.Lrclib_APlainSong_CostsNoExtraSearch
 #[tokio::test]
 async fn lrclib_a_plain_song_costs_no_extra_search() {
     let http = FakeHttp::start(|url| {
@@ -243,7 +235,7 @@ async fn lrclib_search_offers_the_entries_with_their_lyrics_and_fetch_reads_one(
     assert!(!search.transient);
     let ids: Vec<String> = search.candidates.iter().map(|c| c.candidate_id()).collect();
     assert_eq!(ids, ["lrclib:5", "lrclib:6"]);
-    // Math.Round(200.5) is 200, to even.
+    // 200.5 rounds to 200, half to even.
     assert_eq!(search.candidates[0].duration_seconds, Some(200));
     assert_eq!(search.candidates[0].album.as_deref(), Some("LP"));
     assert_eq!(search.candidates[1].title, "Other");
@@ -282,7 +274,7 @@ async fn lrclib_an_answer_that_is_not_json_or_not_an_object_is_not_now() {
     .await;
     let lrclib = source(&http);
 
-    // The array where an object belongs threw in C#, and the service read that as a failure.
+    // An array where an object belongs is a failure.
     assert!(
         lrclib
             .find(&LyricsQuery::new("A", "B", None, None), &none())

@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/SearchSongPagePlanner.cs`.
-
 use super::search_song_order::SearchSongOrder;
 
 /// Where one later page of a search3 / search2 song list comes from.
@@ -120,10 +118,9 @@ fn clamp(value: i64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    //! Port of `SearchSongPagePlannerTests`: where each later page of a search's songs comes
-    //! from. Page one shows the library's best matches and then outside songs; these pin that
-    //! every page after it carries on from there, so a client scrolling the list sees each row
-    //! once and none go missing.
+    //! Where each later page of a search's songs comes from. Page one shows the library's best
+    //! matches and then outside songs; these pin that every page after it carries on from there, so
+    //! a client scrolling the list sees each row once and none go missing.
 
     use super::*;
     use crate::services::subsonic::search_budget::SearchBudget;

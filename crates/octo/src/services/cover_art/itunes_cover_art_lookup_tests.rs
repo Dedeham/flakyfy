@@ -1,6 +1,6 @@
-//! Rust-only tests of the iTunes lookup: no C# test file covered it. The state file is checked
-//! against its fixture (`docs/rust-migration/fixtures/state/itunes-masters.json`), and the
-//! master search against a mock Apple.
+//! The iTunes lookup. The state file is checked against its fixture
+//! (`docs/rust-migration/fixtures/state/itunes-masters.json`), and the master search against a
+//! mock Apple.
 
 use chrono::TimeZone;
 use wiremock::matchers::{path, query_param};

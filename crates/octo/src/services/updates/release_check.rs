@@ -1,4 +1,4 @@
-//! Port of `Services/Updates/ReleaseCheck.cs`, the GitHub release check behind
+//! The GitHub release check behind
 //! `update/release.json`.
 
 use std::path::{Path, PathBuf};
@@ -59,7 +59,7 @@ pub struct ReleaseCheckState {
 /// with the newest release: "behind", "current", "ahead" (a build cut after it), or "unknown"
 /// (a build that names no release, or no release known yet).
 ///
-/// The controller (6-B) owns how this is answered over the API.
+/// The controller owns how this is answered over the API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseCheckView {
     pub enabled: bool,
@@ -81,11 +81,11 @@ pub struct ReleaseCheck {
     path: PathBuf,
     http: reqwest::Client,
     api_base: String,
-    /// `IOptionsMonitor<UpdateSettings>`: read at every use.
+    /// The update settings, read at every use.
     settings: Arc<SettingsStore>,
     clock: Clock,
     running: String,
-    /// `SemaphoreSlim(1, 1)`: one check at a time.
+    /// One check at a time.
     gate: tokio::sync::Mutex<()>,
     state: Mutex<ReleaseCheckState>,
 }
@@ -116,7 +116,7 @@ impl ReleaseCheck {
     /// The production check: GitHub's API through a 15 s client, the system clock, and the
     /// release this build is. Loads `path` now.
     pub fn new(path: impl AsRef<Path>, settings: Arc<SettingsStore>) -> Self {
-        // IHttpClientFactory's clients did not decompress.
+        // Answers are not decompressed.
         let http = reqwest::Client::builder()
             .timeout(Self::CLIENT_TIMEOUT)
             .no_gzip()
@@ -212,7 +212,7 @@ impl ReleaseCheck {
     }
 
     /// Asks GitHub now, unless checks are off or a manual check ran a moment ago. Dropping the
-    /// future cancels the check, which then saves nothing (the C# rethrew the cancellation).
+    /// future cancels the check, which then saves nothing.
     pub async fn check(&self, manual: bool) -> ReleaseCheckView {
         let settings = self.settings.current().updates.clone();
         if !settings.check {
@@ -438,7 +438,7 @@ impl ReleaseCheck {
     }
 }
 
-/// `element.TryGetProperty(name, out v) && v.ValueKind == True`.
+/// Whether the property is `true`.
 fn json_bool(element: &Value, name: &str) -> bool {
     matches!(element.get(name), Some(Value::Bool(true)))
 }
@@ -448,8 +448,7 @@ fn json_text<'a>(element: &'a Value, name: &str) -> Option<&'a str> {
     element.get(name).and_then(Value::as_str)
 }
 
-/// The first `max` UTF-16 code units (`notes[..max]`). A surrogate pair the cut would split
-/// is left out whole, where .NET kept its first half.
+/// The first `max` UTF-16 code units. A surrogate pair the cut would split is left out whole.
 fn truncate_utf16(text: &str, max: usize) -> &str {
     let mut units = 0;
     for (i, c) in text.char_indices() {
@@ -461,8 +460,8 @@ fn truncate_utf16(text: &str, max: usize) -> &str {
     text
 }
 
-/// `EntityTagHeaderValue.TryParse` + `ToString()`: an optionally weak (`W/`) quoted string,
-/// surrounding whitespace ignored; None when it is not one.
+/// An entity tag in its normal form: an optionally weak (`W/`) quoted string, surrounding
+/// whitespace ignored; None when it is not one.
 fn parse_entity_tag(text: &str) -> Option<String> {
     let text = text.trim();
     let (weak, rest) = match text.strip_prefix("W/") {

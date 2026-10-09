@@ -1,6 +1,5 @@
-//! `NoticeQueueTests.cs` (`NoticeReconcileTests`): the reconcile decision for one person's notice
-//! playlist, driven directly. And `LibraryActionKeepTests.cs` (`AcoustIdSubmissionTests`): what
-//! goes back to AcoustID when a person keeps a track.
+//! The reconcile decision for one person's notice playlist, driven directly. And what goes back
+//! to AcoustID when a person keeps a track.
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -142,7 +141,7 @@ fn plan_a_group_that_fits_goes_in_whole_in_its_order() {
     assert_eq!(added(&plan), ["a1", "a2"]);
 }
 
-// ---- AcoustIdSubmissionTests (LibraryActionKeepTests.cs) --------------------------------
+// ---- What goes back to AcoustID ---------------------------------------------------------
 
 #[test]
 fn may_submit_needs_consent_both_keys_and_a_real_run() {

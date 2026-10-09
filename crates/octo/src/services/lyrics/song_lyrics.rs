@@ -1,6 +1,6 @@
-//! Port of the file-reading half of `Services/Lyrics/SongLyrics.cs` (`Of`, `MayWriteInside`,
-//! `MayWriteBeside`), and of `LyricsSidecarWriter.IsOctos`, which it calls. The answer and the
-//! timing rules are `octo_core::lyrics::song_lyrics`.
+//! The file-reading half of a song's lyrics: what the song has now (`of`), whether Octo may
+//! write inside or beside it, and whether a sidecar is Octo's own (`is_octos`). The answer and
+//! the timing rules are `octo_core::lyrics::song_lyrics`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -86,7 +86,7 @@ pub fn may_write_beside(stem: &Path, timed: bool) -> bool {
     !lrc.exists() && !with_suffix(stem, ".txt").exists()
 }
 
-/// `LyricsSidecarWriter.IsOctos`: whether a .lrc's first line (spaces and byte order mark
+/// Whether a .lrc's first line (spaces and byte order mark
 /// aside) is Octo's mark, so Octo wrote it and may replace it.
 pub fn is_octos(lrc_path: &Path) -> bool {
     let Ok(text) = state_file::read_all_text(lrc_path) else {
@@ -118,10 +118,8 @@ fn read_quietly(path: &Path) -> Option<String> {
     state_file::read_all_text(path).ok()
 }
 
-/// The lyrics in the song's own tags (TagLib's `Tag.Lyrics`), or an error when the file cannot
-/// be read as audio.
 /// The lyrics a song's own tags hold, through the tags port. A file that cannot be opened or
-/// read as audio is an error, as TagLib's was.
+/// read as audio is an error.
 pub(crate) fn read_tag_lyrics(audio_path: &Path) -> std::io::Result<Option<String>> {
     octo_media::tags::read_lyrics(audio_path).map_err(|e| std::io::Error::other(e.to_string()))
 }
@@ -138,8 +136,7 @@ mod tests {
         audio
     }
 
-    /// A real MP3 (the C# tests' `AudioFixtures.Mp3`: twenty silent MPEG-1 Layer III frames),
-    /// which the tag reader opens.
+    /// A real MP3 (twenty silent MPEG-1 Layer III frames), which the tag reader opens.
     fn readable_song(dir: &Path) -> PathBuf {
         let audio = dir.join("Artist - Real.mp3");
         let mut bytes = vec![0u8; 417 * 20];
@@ -219,7 +216,7 @@ mod tests {
         assert!(!may_write_beside(&stem, true));
     }
 
-    /// TagLib could not open a missing file or one that is not audio, so neither may be
+    /// The tag reader cannot open a missing file or one that is not audio, so neither may be
     /// written inside.
     #[test]
     fn a_file_that_cannot_be_opened_may_not_be_written_inside() {

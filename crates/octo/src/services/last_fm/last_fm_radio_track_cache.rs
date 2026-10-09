@@ -1,5 +1,5 @@
-//! Port of `Services/LastFm/LastFmRadioTrackCache.cs`: `<cache>/radio/<key>.mp3` and the
-//! measured profile beside each (`<key>.mp3.json`, state-files.md §4.25).
+//! The radio track cache: `<cache>/radio/<key>.mp3` and the measured profile beside each
+//! (`<key>.mp3.json`).
 //!
 //! Bounded temporary storage for fully transcoded Radio starter tracks. This is deliberately the
 //! normal Octo cache, not the music library: preparing a station must never turn listening into
@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(key.len(), 64);
     }
 
-    /// Rust-only: one production for two callers, an empty answer is refused and leaves nothing
+    /// One production for two callers, an empty answer is refused and leaves nothing
     /// behind, and a profile is read back.
     #[tokio::test]
     async fn a_track_is_produced_once_and_an_empty_one_is_refused() {

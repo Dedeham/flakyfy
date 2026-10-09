@@ -1,5 +1,4 @@
-//! Port of `Services/Health/LibraryHealthService.cs` (69f577f, e36d823): Library health on the
-//! server, for the dashboard.
+//! Library health on the server, for the dashboard.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -152,8 +151,7 @@ pub struct HealthAbilities {
     pub why: Option<String>,
 }
 
-/// The services the C# asked the container for (`IServiceProvider.GetService`), each optional:
-/// the tests' container had none of them.
+/// The services a run uses, each optional: the tests run with none of them.
 #[derive(Default, Clone)]
 pub struct HealthServices {
     pub edits: Option<Arc<LibraryEditService>>,
@@ -205,7 +203,7 @@ struct State {
 pub struct LibraryHealthService {
     snapshot: Arc<LibrarySnapshot>,
     rescan: Arc<LibraryRescan>,
-    /// `IOptionsMonitor<LibraryActionSettings>`: read at use.
+    /// The library action settings, read at use.
     settings: Arc<SettingsStore>,
     services: HealthServices,
     clock: Clock,
@@ -219,7 +217,7 @@ impl LibraryHealthService {
     /// Most steps one run takes.
     pub const MAX_STEPS: usize = 5000;
 
-    /// The C#'s `SettleFor` default: ninety seconds.
+    /// The default settle time: ninety seconds.
     pub const SETTLE_FOR: TimeDelta = TimeDelta::seconds(90);
 
     pub fn new(
@@ -868,12 +866,12 @@ impl LibraryHealthService {
 /// together, it names the same one the apps do.
 pub fn in_search_order(rows: &[Row]) -> Vec<Row> {
     let mut rows = rows.to_vec();
-    // `OrderBy(AddedUtc ?? DateTime.MaxValue)`: stable, unknown last.
+    // By when each was added: stable, unknown last.
     rows.sort_by_key(|row| (row.added_utc.is_none(), row.added_utc));
     rows
 }
 
-/// `finally { lock (_gate) if (_checking is null) _checkingSince = null; }` after a Check again.
+/// After a Check again, however it ends: clears when the check began, unless another is running.
 struct RefreshDone<'a>(&'a LibraryHealthService);
 
 impl Drop for RefreshDone<'_> {

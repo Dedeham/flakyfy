@@ -1,6 +1,6 @@
-//! `Services/Subsonic` in the C#: talking to Navidrome, and the parts of the Subsonic answers
-//! that need app services. The pure wire format (request parsing, credentials, the response
-//! builder, the model mapper, the sync catalog page) lives in `octo_subsonic`.
+//! Talking to Navidrome, and the parts of the Subsonic answers that need app services. The pure
+//! wire format (request parsing, credentials, the response builder, the model mapper, the sync
+//! catalog page) lives in `octo_subsonic`.
 
 pub mod credential_check;
 pub(crate) mod expiring_cache;

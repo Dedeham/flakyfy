@@ -1,5 +1,4 @@
-//! Port of `NewReleasesBuilder` in `Services/Library/ForYouLists.cs` (f54467a, 1f940f2,
-//! 452f47e): New Releases for one listener. The picking is `octo_core::library::for_you_lists`.
+//! New Releases for one listener. The picking is `octo_core::library::for_you_lists`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -27,7 +26,7 @@ use crate::services::soulseek::soulseek_metadata_service::SoulseekMetadataServic
 /// What an outside song of New Releases is made from, kept with the list so the song can be made
 /// again, with the same id, whenever the list is served: Octo remembers outside songs only so
 /// long (`ExternalIdRegistry` keeps the most recent 10,000), and the list outlives a busy day of
-/// searches. Stored as System.Text.Json wrote the C# record: its property names, nulls written.
+/// searches. Stored with PascalCase property names, nulls written.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CatalogSeed {
@@ -62,7 +61,7 @@ pub struct BuildResult {
 /// A catalog song made into an outside song: its artist, album and song registered so it
 /// plays, opens its album and is added like any other.
 ///
-/// `TopSongsService.CatalogSong` (3e35798), shared by New Releases and the charts
+/// Shared by New Releases and the charts
 /// (`services::common::top_songs_service::catalog_song` adds the charts' own fields on top).
 pub struct CatalogTrackSong<'a> {
     pub title: &'a str,

@@ -1,6 +1,6 @@
-//! `System.Threading.RateLimiting.SlidingWindowRateLimiter`, as the Deezer and AcoustID limiters
-//! configure it: `QueueProcessingOrder.OldestFirst`, `AutoReplenishment = true`, one permit per
-//! request. Not a C# file of Octo's; the framework type the two limiters were built on.
+//! A sliding-window rate limiter, as the Deezer and AcoustID limiters configure it: the oldest
+//! queued request is served first, permits come back on their own, and each request takes one
+//! permit.
 //!
 //! The window is cut into segments. A permit taken during a segment comes back when the window
 //! has slid all the way round to that segment again, so a burst spends the budget and it
@@ -8,10 +8,10 @@
 //! request that finds no permit waits in a bounded first-in-first-out queue; when the queue is
 //! full it gets a lease that was not acquired, at once.
 //!
-//! .NET moves the window with a timer. Here the window moves lazily: every acquire first
-//! replays the segment boundaries that have passed since the limiter was built (on the tokio
-//! clock, so `tokio::time::pause` drives it in tests), and a queued request sleeps until the
-//! next boundary and replays it. The boundaries fall where the timer would have fired them.
+//! The window moves lazily: every acquire first replays the segment boundaries that have passed
+//! since the limiter was built (on the tokio clock, so `tokio::time::pause` drives it in tests),
+//! and a queued request sleeps until the next boundary and replays it. The boundaries fall where a
+//! periodic timer would have fired them.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
-/// The options the C# set; the rest were the defaults Octo relied on.
+/// The limiter's options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlidingWindowRateLimiterOptions {
     pub permit_limit: u32,
@@ -84,9 +84,8 @@ impl SlidingWindowRateLimiter {
         }
     }
 
-    /// `AttemptAcquire(1)`: a permit now or a lease that was not acquired, never a wait. With
-    /// OldestFirst, a request that is waiting in the queue goes first, so this fails while
-    /// anyone waits.
+    /// A permit now or a lease that was not acquired, never a wait. The oldest request waiting
+    /// in the queue goes first, so this fails while anyone waits.
     pub fn attempt_acquire(&self) -> RateLimitLease {
         let mut state = self.state.lock();
         self.replenish(&mut state);
@@ -95,9 +94,8 @@ impl SlidingWindowRateLimiter {
         }
     }
 
-    /// `AcquireAsync(1)`: a permit now, or a place in the queue until one frees up. A full
-    /// queue answers at once with a lease that was not acquired. Dropping the future gives up
-    /// the place in the queue, as cancelling the token did.
+    /// A permit now, or a place in the queue until one frees up. A full queue answers at once
+    /// with a lease that was not acquired. Dropping the future gives up the place in the queue.
     pub async fn acquire(&self) -> RateLimitLease {
         let mut rx = {
             let mut state = self.state.lock();
@@ -136,7 +134,7 @@ impl SlidingWindowRateLimiter {
 
     /// Replays every segment boundary that has passed.
     fn replenish(&self, state: &mut State) {
-        // Waiters that gave up leave the queue, as a cancelled request did.
+        // Waiters that gave up leave the queue, as a canceled request did.
         state.queue.retain(|waiter| !waiter.tx.is_closed());
         let elapsed = Instant::now().saturating_duration_since(self.origin);
         let due = u64::try_from(elapsed.as_nanos() / self.segment.as_nanos()).unwrap_or(u64::MAX);

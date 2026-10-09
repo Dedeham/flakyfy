@@ -1,4 +1,4 @@
-//! Port of `StarOnArrivalTests`. #71: with StarDownloadsForRequester on (off by default), a star
+//! Star on arrival (#71): with StarDownloadsForRequester on (off by default), a star
 //! from another app on a song Octo found becomes a Navidrome favorite once the song lands, for
 //! the person who starred it, signed as them, and only once. A song already owned is favorited
 //! whatever it says.
@@ -468,7 +468,7 @@ fn without_password_leaves_a_token_sign_in_as_it_is() {
     assert_eq!(credential.without_password(), credential);
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- sign-in keys, song facts and unsubscribing ------------------------------------------
 
 /// An API key names nobody, so its fingerprint stands in; a second star from the same person
 /// replaces the first.
@@ -502,7 +502,7 @@ fn song_facts_reads_starred_and_the_album() {
     assert!(song_facts(b"[]").is_err());
 }
 
-/// Dropping the last handle stops listening, as `Dispose` unsubscribed.
+/// Dropping the last handle stops listening.
 #[tokio::test]
 async fn dropping_it_stops_listening() {
     let f = Fixture::new();

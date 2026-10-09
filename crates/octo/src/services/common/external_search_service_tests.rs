@@ -1,5 +1,5 @@
-//! Port of `ExternalSearchServiceTests`. The Moq'd Last.fm handler is a wiremock server
-//! answering by the `method` query parameter; the metadata service is a hand-written fake.
+//! The external search. Last.fm is a wiremock server answering by the `method` query
+//! parameter; the metadata service is a hand-written fake.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -209,7 +209,7 @@ async fn background_durations_run_before_the_video_prewarm() {
         .expect("open");
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- empty inputs and limits -------------------------------------------------------------
 
 /// No Last.fm key, or a blank query, is no discovery; a blank album query or limit is none.
 #[tokio::test]

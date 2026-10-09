@@ -1,5 +1,5 @@
-//! `NoticeQueueTests.cs` (`NoticeQueueTests`): what Octo has asked each person, and what they
-//! answered (#47). The reconcile tests of the same file are in `notice_playlist_worker_tests.rs`.
+//! The notice queue: what Octo has asked each person, and what they answered (#47). The
+//! reconcile tests are in `notice_playlist_worker_tests.rs`.
 
 use std::path::PathBuf;
 
@@ -274,7 +274,7 @@ fn load_a_corrupt_file_is_kept_aside_and_the_queue_starts_empty() {
     assert_eq!(aside.len(), 1, "{aside:?}");
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- The state file and the words --------------------------------------------------------
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -282,8 +282,8 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// The state file reads and writes back byte for byte: names for enums, `DateTime.MinValue`
-/// without a `Z`, seven-digit fractions, and `IsOpen` left out.
+/// The state file reads and writes back byte for byte: names for enums, the minimum date
+/// (`0001-01-01T00:00:00`) without a `Z`, seven-digit fractions, and `IsOpen` left out.
 #[test]
 fn the_notice_queue_fixture_round_trips_byte_for_byte() {
     let original = std::fs::read_to_string(fixture("notice-queue.json")).expect("the fixture");
@@ -304,7 +304,7 @@ fn the_notice_queue_fixture_round_trips_byte_for_byte() {
     assert_eq!(std::fs::read_to_string(&path).expect("written"), original);
 }
 
-/// The converter read names in any case, and numbers.
+/// Enums are read by name in any case, or by number.
 #[test]
 fn enums_are_read_by_name_in_any_case_or_by_number() {
     let entries: Vec<NoticeEntry> = serde_json::from_str(

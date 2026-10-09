@@ -1,5 +1,5 @@
-//! Port of `Services/CoverArt/CoverArtArchiveLookup.cs`, with its named client (`Program.cs`:
-//! base address https://coverartarchive.org/, an 8 s timeout, Octo's User-Agent).
+//! The Cover Art Archive lookup, with its own client (base address https://coverartarchive.org/,
+//! an 8 s timeout, Octo's User-Agent).
 
 use std::time::Duration;
 
@@ -78,7 +78,7 @@ mod tests {
 
     use super::*;
 
-    /// Rust-only: the release's 1200 first, then its 500, then the group's; a redirect to
+    /// The release's 1200 first, then its 500, then the group's; a redirect to
     /// another host is followed.
     #[tokio::test]
     async fn the_release_comes_before_its_group_and_redirects_are_followed() {

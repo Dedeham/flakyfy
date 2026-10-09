@@ -1,5 +1,4 @@
-//! Port of `LibraryActionJournalTests` (in `LibraryActionWorkerTests.cs`), plus the round trip of
-//! the state-file fixture.
+//! The library action journal, and the round trip of its state-file fixture.
 
 use std::cell::{Cell, RefCell};
 
@@ -342,14 +341,14 @@ fn recent_is_newest_first() {
     assert_eq!(journal.recent(200)[0].navidrome_id, "song-b");
 }
 
-// ---- Rust-only: the state file -------------------------------------------------------------
+// ---- The state file ------------------------------------------------------------------------
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/rust-migration/fixtures/state/library-actions.json")
 }
 
-/// state-files.md §4.12: read, write, compare, byte for byte.
+/// Read, write, compare, byte for byte.
 #[test]
 fn the_fixture_round_trips_byte_for_byte() {
     let original = std::fs::read_to_string(fixture()).expect("the fixture");
@@ -369,7 +368,7 @@ fn the_fixture_round_trips_byte_for_byte() {
     assert_eq!(recent[3].resolution, Some(PathSource::LocalMappings));
     assert_eq!(recent[3].history_kept, Some(true));
     assert!(journal.is_never_requested(Some("Sigur Rós"), Some("Svefn-g-englar")));
-    // 2026.10.05: a removed copy, a song allowed again and a put back block nothing.
+    // A removed copy, a song allowed again and a put back block nothing.
     assert!(recent[2].copy && !recent[2].blocks_downloads());
     assert!(recent[1].download_allowed && !recent[1].blocks_downloads());
     assert_eq!(recent[0].state, LibraryActionState::Restored);
@@ -441,7 +440,7 @@ fn the_journal_keeps_the_newest_two_thousand() {
 }
 
 #[test]
-fn keys_and_fingerprints_read_as_the_csharp_wrote_them() {
+fn keys_and_fingerprints_keep_their_format() {
     assert_eq!(
         LibraryActionJournal::make_key(
             LibraryAction::BetterQuality,

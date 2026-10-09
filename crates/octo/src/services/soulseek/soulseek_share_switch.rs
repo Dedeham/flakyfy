@@ -1,4 +1,4 @@
-//! Port of `Services/Soulseek/SoulseekShareSwitch.cs`: the Share my library switch. The block it
+//! The Share my library switch. The block it
 //! keeps in slskd.yml and the readers of slskd's answers are
 //! `octo_core::soulseek::soulseek_share_switch`.
 
@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use super::SoulseekClient;
 
 /// What the switch and the Sharing card ask of slskd: a seam, so the switch can be driven
-/// against a scripted slskd (the C# set its delegate properties).
+/// against a scripted slskd.
 #[async_trait]
 pub trait ISlskdShares: Send + Sync {
     /// slskd.yml as text, with slskd's status (403: remote configuration is off).
@@ -327,7 +327,7 @@ impl SoulseekShareSwitch {
         !folders.is_empty() && folders.iter().all(|folder| folder.files.is_some())
     }
 
-    /// Off means nothing goes out: uploads still waiting or under way are cancelled.
+    /// Off means nothing goes out: uploads still waiting or under way are canceled.
     async fn cancel_uploads(&self) {
         let uploads = self.slskd.read("transfers/uploads").await;
         for (user, id) in open_uploads(uploads.as_deref()) {

@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/BrowseSessionStore.cs`, the store behind `browse-sessions.json`.
+//! The dashboard's sign-in sessions, stored in `browse-sessions.json`.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,7 @@ struct Session {
     persist: bool,
 }
 
-/// One line of `browse-sessions.json` (the private record `Saved(string Hash, string User, DateTime Expires)`).
+/// One entry of `browse-sessions.json`: `Hash`, `User` and `Expires`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 struct Saved {
@@ -54,14 +54,13 @@ impl Default for Saved {
 /// is never written to disk, and the endpoints that touch library files do not accept it
 /// ([`BrowseSessionStore::navidrome_user_of`]).
 ///
-/// Remembered per browser, on disk, for as long as it keeps being used. These used to live
-/// in memory for twelve hours, so every restart and every deploy asked for the sign-in again,
-/// which made the dashboard tiresome to use (Brandon, 2026-10-03). Only a hash of each token
-/// is written, so the file holds nothing a browser could present; the token itself lives only
-/// in the browser's HttpOnly, SameSite=Strict cookie.
+/// Remembered per browser, on disk, for as long as it keeps being used. These used to live in
+/// memory for twelve hours, so every restart and every deploy asked for the sign-in again, which
+/// made the dashboard tiresome to use. Only a hash of each token is written, so the file holds
+/// nothing a browser could present; the token itself lives only in the browser's HttpOnly,
+/// SameSite=Strict cookie.
 pub struct BrowseSessionStore {
-    /// Keyed by the token's hash. (A `ConcurrentDictionary` in the C#, whose order, and so the
-    /// file's, was unspecified; this keeps insertion order.)
+    /// Keyed by the token's hash, in insertion order (and so is the file).
     sessions: Mutex<IndexMap<String, Session>>,
     path: Option<PathBuf>,
     save_lock: Mutex<()>,
@@ -102,8 +101,8 @@ impl BrowseSessionStore {
             })();
             match loaded {
                 Ok(list) => {
-                    // The C# compared with DateTime.UtcNow here, not with its settable Clock,
-                    // which a test could only set after construction.
+                    // Loading compares with the wall clock, not the settable clock, which a test
+                    // can only set after construction.
                     let now = Utc::now();
                     for saved in list {
                         if saved.expires > now {
@@ -131,7 +130,7 @@ impl BrowseSessionStore {
         }
     }
 
-    /// Reads the time from `clock` from now on (the C# `internal Func<DateTime> Clock`).
+    /// Reads the time from `clock` from now on.
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
         self
@@ -419,7 +418,6 @@ mod tests {
         assert!(store.validate(Some(&other)));
     }
 
-    // AdminSignInTests.ARecoverySignInIsNeverWrittenToDisk
     #[test]
     fn a_recovery_sign_in_is_never_written_to_disk() {
         let (_dir, path) = temp_file();
@@ -437,7 +435,7 @@ mod tests {
         assert_eq!(written.len(), 1);
     }
 
-    // ---- Rust-only ----------------------------------------------------------------------
+    // ---- The stored file, its hashes and its slides -------------------------------------
 
     const FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),

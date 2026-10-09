@@ -1,4 +1,4 @@
-//! ParallelLockSplitTests: with job folders proven, the transfer runs outside DownloadLock and
+//! The parallel lock split: with job folders proven, the transfer runs outside DownloadLock and
 //! everything after it runs inside. Twenty downloads with random transfer times: never more
 //! transfers than the width, more than one at once (or the split proves nothing), and never two
 //! placements at once.
@@ -43,8 +43,7 @@ impl Counter {
     }
 }
 
-/// The C# `SplitService`: a transfer of a random few milliseconds that lands an MP3 in the
-/// staging folder.
+/// A transfer of a random few milliseconds that lands an MP3 in the staging folder.
 struct SplitBackend {
     root: String,
     transfers: Arc<Counter>,
@@ -86,7 +85,7 @@ impl DownloadBackend for SplitBackend {
     }
 }
 
-/// `Mock<ILocalLibraryService>` whose registration counts how many run at once.
+/// A local library whose registration counts how many run at once.
 struct CountingLibrary {
     inner: FakeLocalLibrary,
     placements: Arc<Counter>,

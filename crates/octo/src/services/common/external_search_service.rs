@@ -1,4 +1,4 @@
-//! Port of `Services/Common/ExternalSearchService.cs`.
+//! The external search: outside songs and albums for a query.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ pub struct ExternalSearchService {
     album_builds: SupersedableBuildCoordinator<Arc<Vec<Album>>>,
     metadata: Arc<dyn IMusicMetadataService>,
     last_fm: Option<Arc<LastFmService>>,
-    /// `IOptionsMonitor<SubsonicSettings>?`: `WaitForSearchDurations`, read at every build.
+    /// Optional: `WaitForSearchDurations`, read at every build.
     settings: Option<Arc<SettingsStore>>,
 }
 
@@ -223,7 +223,7 @@ async fn build(
     // the first page of search results.
     //
     // It runs LAST on purpose. It used to run before enrichment, where it wrote a
-    // videoId chosen with no duration hint while ResolveTopDurationsAsync was choosing
+    // videoId chosen with no duration hint while the top durations pass was choosing
     // a different one using the Deezer duration: so for the top rows the two raced and
     // the loser could leave a song advertising the length of a video that would not be
     // the one played.

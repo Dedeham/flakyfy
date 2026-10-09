@@ -1,8 +1,8 @@
-//! Port of `Services/Common/StarOnArrival.cs`.
+//! Favorites a starred outside song once its download lands.
 //!
-//! The C# subscribed to the tracker's `Ended` event in its constructor and unsubscribed in
-//! `Dispose`. The tracker holds the listener and this holds the tracker, so the listener holds
-//! this only weakly ([`Weak`]); dropping the last `Arc` unsubscribes, as `Dispose` did.
+//! It listens for the tracker's ended rows from construction on. The tracker holds the listener
+//! and this holds the tracker, so the listener holds this only weakly ([`Weak`]); dropping the
+//! last `Arc` unsubscribes.
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -29,11 +29,11 @@ pub type NavidromeCall = Arc<
     dyn Fn(String, IndexMap<String, String>) -> BoxFuture<'static, anyhow::Result<Vec<u8>>> + Send + Sync,
 >;
 
-/// The Navidrome side the C# reached through `IServiceScopeFactory`: the relay that calls as the
-/// person, and what finds a placed file's id. Absent in tests, which answer through the seams.
+/// The Navidrome side: the relay that calls as the person, and what finds a placed file's id.
+/// Absent in tests, which answer through the seams.
 #[derive(Clone)]
 pub struct StarNavidrome {
-    /// A background `SubsonicProxyService` (no request of its own), as a fresh scope gave.
+    /// A background `SubsonicProxyService` (no request of its own).
     pub proxy: SubsonicProxyService,
     pub identity: NavidromeIdentityService,
     pub resolver: Arc<NavidromeSongPathResolver>,
@@ -53,8 +53,7 @@ struct Holds {
     albums: Vec<Hold>,
 }
 
-/// The C# internal settable properties: `Call`, `LibraryLookup`, `VisibilityPoll`,
-/// `VisibilityAttempts`.
+/// The test seams, and how long a landed song is watched for in Navidrome.
 #[derive(Clone)]
 pub struct StarSeams {
     /// Calls Navidrome as the user. Tests set it; otherwise the relay.
@@ -88,7 +87,7 @@ pub struct StarOnArrival {
     holds: Mutex<Holds>,
     tracker: Arc<AcquisitionTracker>,
     navidrome: Option<StarNavidrome>,
-    /// `IOptionsMonitor<SubsonicSettings>`: `StarDownloadsForRequester` is read when a song lands.
+    /// `StarDownloadsForRequester` is read when a song lands.
     settings: Arc<SettingsStore>,
     clock: Clock,
     seams: Mutex<StarSeams>,
@@ -468,8 +467,8 @@ pub struct SongFacts {
     pub album_id: Option<String>,
 }
 
-/// `Ok(None)` for a body that is not JSON or has no song; `Err` where `JsonElement` threw (a
-/// node that is not an object), as the C# let that out to its caller's catch.
+/// `Ok(None)` for a body that is not JSON or has no song; `Err` for a body of the wrong shape (a
+/// node that is not an object), which the caller catches.
 pub fn song_facts(body: &[u8]) -> anyhow::Result<Option<SongFacts>> {
     let Ok(document) = serde_json::from_slice::<Value>(body) else {
         return Ok(None);

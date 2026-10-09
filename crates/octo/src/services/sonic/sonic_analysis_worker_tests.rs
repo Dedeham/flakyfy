@@ -1,4 +1,4 @@
-//! `SonicAnalysisWorkerTests`: Sounds alike's pass over the library: when it holds, what it
+//! Sounds alike's pass over the library: when it holds, what it
 //! sends to octo-sonic, what it skips without touching the disk, how failures and crashes are
 //! remembered, and new arrivals first.
 
@@ -294,7 +294,6 @@ fn analyzed_song() -> SonicSong {
     }
 }
 
-// SonicAnalysisWorkerTests.ItHolds_WhenOff_Paused_Down_OrBusy
 #[tokio::test]
 async fn it_holds_when_off_paused_down_or_busy() {
     let off = make(Some(RadioSourceSettings {
@@ -328,7 +327,6 @@ async fn it_holds_when_off_paused_down_or_busy() {
     assert!(t.sidecar.analysed().is_empty());
 }
 
-// SonicAnalysisWorkerTests.WithoutANavidromeSignIn_ItSaysSo
 #[tokio::test]
 async fn without_a_navidrome_sign_in_it_says_so() {
     let t = make(None);
@@ -342,7 +340,6 @@ async fn without_a_navidrome_sign_in_it_says_so() {
     );
 }
 
-// SonicAnalysisWorkerTests.ItAnalysesEachSongOnce_ThenFinishesThePass
 #[tokio::test]
 async fn it_analyzes_each_song_once_then_finishes_the_pass() {
     let t = make(None);
@@ -364,7 +361,6 @@ async fn it_analyzes_each_song_once_then_finishes_the_pass() {
     assert_eq!(t.sidecar.analysed().len(), 2);
 }
 
-// SonicAnalysisWorkerTests.ANewFeatureVersion_IsAnalysedAgain
 #[tokio::test]
 async fn a_new_feature_version_is_analyzed_again() {
     let t = make(None);
@@ -379,7 +375,6 @@ async fn a_new_feature_version_is_analyzed_again() {
     assert_eq!(t.store.read(|s| s.songs["a"].version), 3);
 }
 
-// SonicAnalysisWorkerTests.AnUnreadableFile_IsRemembered_AndTriedAgainAWeekLater
 #[tokio::test]
 async fn an_unreadable_file_is_remembered_and_tried_again_a_week_later() {
     let t = make(None);
@@ -405,7 +400,6 @@ async fn an_unreadable_file_is_remembered_and_tried_again_a_week_later() {
     assert_eq!(t.sidecar.analysed().len(), 2);
 }
 
-// SonicAnalysisWorkerTests.AFileThatDropsTheConnectionTwice_IsMarkedUnreadable_AndThePassMovesOn
 #[tokio::test]
 async fn a_file_that_drops_the_connection_twice_is_marked_unreadable_and_the_pass_moves_on() {
     let t = make(None);
@@ -430,7 +424,6 @@ async fn a_file_that_drops_the_connection_twice_is_marked_unreadable_and_the_pas
     assert_eq!(t.sidecar.analysed(), ["crash.flac", "crash.flac", "fine.flac"]);
 }
 
-// SonicAnalysisWorkerTests.ASongThatJustArrived_GoesFirst_EvenIfThePassHasNotListedIt
 #[tokio::test]
 async fn a_song_that_just_arrived_goes_first_even_if_the_pass_has_not_listed_it() {
     let t = make(None);
@@ -446,7 +439,6 @@ async fn a_song_that_just_arrived_goes_first_even_if_the_pass_has_not_listed_it(
     assert_eq!(t.sidecar.analysed(), ["a.flac", "new.flac"]);
 }
 
-// SonicAnalysisWorkerTests.ALongMix_IsNeverRead
 #[tokio::test]
 async fn a_long_mix_is_never_read() {
     let t = make(None);
@@ -456,7 +448,6 @@ async fn a_long_mix_is_never_read() {
     assert_eq!(t.worker.status().state, "Done");
 }
 
-// SonicAnalysisWorkerTests.AtThePassEnd_GoneSongsAreForgotten_AndStartOverClearsEverything
 #[tokio::test]
 async fn at_the_pass_end_gone_songs_are_forgotten_and_start_over_clears_everything() {
     let t = make(None);
@@ -474,7 +465,6 @@ async fn at_the_pass_end_gone_songs_are_forgotten_and_start_over_clears_everythi
     assert_eq!(t.store.read(|s| s.pass), 0);
 }
 
-// SonicAnalysisWorkerTests.APageThatFails_ForgetsNothing
 #[tokio::test]
 async fn a_page_that_fails_forgets_nothing() {
     let t = make(None);
@@ -492,7 +482,6 @@ async fn a_page_that_fails_forgets_nothing() {
     assert_eq!(t.store.read(|s| s.pass), 0);
 }
 
-// SonicAnalysisWorkerTests.APageWithAMissingSong_IsNotTheEndOfTheList
 #[tokio::test]
 async fn a_page_with_a_missing_song_is_not_the_end_of_the_list() {
     let t = make(None);
@@ -514,7 +503,6 @@ async fn a_page_with_a_missing_song_is_not_the_end_of_the_list() {
     assert_eq!(t.worker.status().skipped, PAGE_SIZE + 4);
 }
 
-// SonicAnalysisWorkerTests.ASongThatArrivedDuringAPass_IsKeptAtItsEnd
 #[tokio::test]
 async fn a_song_that_arrived_during_a_pass_is_kept_at_its_end() {
     let t = make(None);
@@ -528,7 +516,6 @@ async fn a_song_that_arrived_during_a_pass_is_kept_at_its_end() {
     assert!(t.store.read(|s| s.songs.contains_key("new")));
 }
 
-// SonicAnalysisWorkerTests.ASongThatArrivesBetweenPasses_IsReadWithoutANewPass
 #[tokio::test]
 async fn a_song_that_arrives_between_passes_is_read_without_a_new_pass() {
     let t = make(None);
@@ -545,7 +532,6 @@ async fn a_song_that_arrives_between_passes_is_read_without_a_new_pass() {
     assert_eq!(t.worker.status().state, "Done");
 }
 
-// SonicAnalysisWorkerTests.TurnedOffInEnv_ItIsOff_NotWaitingOrFailing
 #[tokio::test]
 async fn turned_off_in_env_it_is_off_not_waiting_or_failing() {
     let t = make(None);
@@ -560,7 +546,6 @@ async fn turned_off_in_env_it_is_off_not_waiting_or_failing() {
     assert!(t.store.read(|s| s.failed.is_empty()));
 }
 
-// SonicAnalysisWorkerTests.WhenOctoSonicCannotSeeTheMusic_ItWaits_AndBlamesNoSong
 #[tokio::test]
 async fn when_octo_sonic_cannot_see_the_music_it_waits_and_blames_no_song() {
     let t = make(None);
@@ -582,7 +567,6 @@ async fn when_octo_sonic_cannot_see_the_music_it_waits_and_blames_no_song() {
     assert!(t.store.read(|s| s.songs.contains_key("a")));
 }
 
-// SonicAnalysisWorkerTests.AnAnswerOctoCannotRead_IsThatSongsFailure
 #[tokio::test]
 async fn an_answer_octo_cannot_read_is_that_songs_failure() {
     let t = make(None);
@@ -594,7 +578,6 @@ async fn an_answer_octo_cannot_read_is_that_songs_failure() {
     assert!(t.store.read(|s| s.songs.contains_key("fine")));
 }
 
-// SonicAnalysisWorkerTests.ASongWithNoLength_IsLeftOut_AndCounted
 #[tokio::test]
 async fn a_song_with_no_length_is_left_out_and_counted() {
     let t = make(None);
@@ -605,7 +588,6 @@ async fn a_song_with_no_length_is_left_out_and_counted() {
     assert_eq!(t.sidecar.analysed(), ["fine.flac"]);
 }
 
-// SonicAnalysisWorkerTests.PauseAndStartOver_AreSavedAtOnce
 #[tokio::test]
 async fn pause_and_start_over_are_saved_at_once() {
     let t = make(None);
@@ -624,8 +606,8 @@ async fn pause_and_start_over_are_saved_at_once() {
     );
 }
 
-/// Rust-only: before its first look the analysis says it is about to start (3de8dde), and the
-/// status names what the pass is reading.
+/// Before its first look the analysis says it is about to start, and the status names what the
+/// pass is reading.
 #[tokio::test]
 async fn before_its_first_look_it_says_it_is_about_to_start() {
     let t = make(None);

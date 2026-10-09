@@ -1,4 +1,4 @@
-//! DownloadLogTests: the downloads drawer's server half. Each row's log (what was searched, what
+//! The download log: the downloads drawer's server half. Each row's log (what was searched, what
 //! was found, the copy chosen and why, the checks, the tags, the cover and the lyrics), clearing
 //! finished rows, Find songs with its reasons, and a picked copy reaching the pipeline exactly
 //! once.

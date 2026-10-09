@@ -1,4 +1,4 @@
-//! Port of `Services/Library/DuplicateScanWorker.cs`: the walk for recordings the library holds
+//! The walk for recordings the library holds
 //! more than once (#53), handed to the Duplicates playlists.
 
 use std::collections::HashMap;
@@ -49,7 +49,7 @@ pub struct LibraryTrack {
 }
 
 impl LibraryTrack {
-    /// The positional part of the C# record.
+    /// A track from its row fields, with no spectrum note and no ISRCs.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: &str,
@@ -200,13 +200,13 @@ pub struct DuplicateScanWorker {
     queue: Arc<NoticeQueue>,
     identity: NavidromeIdentityService,
     http: reqwest::Client,
-    /// `IOptionsMonitor` of the Subsonic, library action and Soulseek settings, read at use.
+    /// The Subsonic, library action and Soulseek settings, read at use.
     settings: Arc<SettingsStore>,
     resolver: Option<Arc<NavidromeSongPathResolver>>,
     spectrum: Option<Arc<SpectrumAnalyzer>>,
-    /// `SemaphoreSlim(0, 1)`: one stored request, a second absorbed.
+    /// One stored request, a second absorbed.
     requested: Notify,
-    /// Whether that stored request is there (`CurrentCount > 0`), which `Notify` cannot say.
+    /// Whether that stored request is there, which `Notify` cannot say.
     request_waiting: AtomicBool,
     /// When the scan walking the library now began; None between scans.
     scan_started_utc: Mutex<Option<DateTime<Utc>>>,
@@ -281,7 +281,7 @@ impl DuplicateScanWorker {
         self.requested.notify_one();
     }
 
-    /// `ExecuteAsync`.
+    /// The worker loop, until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut wait = Self::FIRST_CHECK;
         while !stopping.is_cancelled() {
@@ -306,8 +306,7 @@ impl DuplicateScanWorker {
                 continue;
             }
 
-            // Per-scan catch is mandatory: BackgroundServiceExceptionBehavior defaults to
-            // StopHost, so one unhandled exception here would take Octo down.
+            // Per-scan catch is mandatory: one failed scan must never stop the worker.
             *self.scan_started_utc.lock() = Some(Utc::now());
             let scan = tokio::select! {
                 scan = self.scan(&settings) => scan,
@@ -374,8 +373,8 @@ impl DuplicateScanWorker {
     }
 
     /// Every track, by paging search3 with the empty query, the same walk
-    /// Symfonium makes to copy a library. Complete only when a short page ends it. `Err` where
-    /// the C# threw: the request failed, or the answer was not JSON of the expected shape.
+    /// Symfonium makes to copy a library. Complete only when a short page ends it. `Err` when
+    /// the request failed, or the answer was not JSON of the expected shape.
     pub async fn walk(&self) -> anyhow::Result<(Vec<LibraryTrack>, bool)> {
         let base_url = self
             .settings
@@ -425,8 +424,8 @@ impl DuplicateScanWorker {
 
     /// Adds the page's tracks, and returns how many rows the page held, or None when it is not a
     /// successful answer at all (a refusal must not read as the end).
-    /// `Err` where the C# threw: a member read on something that is not an object, or a status
-    /// that is not a string.
+    /// `Err` for a member read on something that is not an object, or a status that is not a
+    /// string.
     pub fn parse_page(root: &Value, into: &mut Vec<LibraryTrack>) -> Result<Option<usize>, String> {
         let Some(envelope) = property(root, "subsonic-response")? else {
             return Ok(None);
@@ -585,7 +584,7 @@ impl DuplicateScanWorker {
     }
 }
 
-/// `JsonElement.TryGetProperty`, which throws on anything but an object.
+/// A member of an object; anything but an object is an error.
 fn property<'a>(element: &'a Value, name: &str) -> Result<Option<&'a Value>, String> {
     match element {
         Value::Object(map) => Ok(map.get(name)),
@@ -621,7 +620,7 @@ fn int(element: &Value, name: &str) -> Result<i32, String> {
     })
 }
 
-/// `File.GetLastWriteTimeUtc(path).Ticks`: 1601-01-01 for a file that is not there.
+/// The file's last write time in 100 ns ticks: 1601-01-01 for a file that is not there.
 fn last_write_ticks(path: &str) -> i64 {
     const MISSING: i64 = 504_911_232_000_000_000;
     std::fs::metadata(path)

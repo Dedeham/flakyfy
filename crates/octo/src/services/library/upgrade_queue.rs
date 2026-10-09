@@ -1,6 +1,5 @@
-//! Port of `Services/Library/UpgradeQueue.cs`: the songs asked to be found in higher quality
-//! (`<config>/upgrades.json`, state-files.md §4.16), the worker that runs them, and
-//! `AudioSummary`.
+//! The songs asked to be found in higher quality (`<config>/upgrades.json`), the worker that runs
+//! them, and `AudioSummary`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -171,7 +170,7 @@ pub struct UpgradeAsk {
 }
 
 impl UpgradeAsk {
-    /// `new UpgradeAsk(id)`: everything else unknown.
+    /// An ask for one Navidrome id, everything else unknown.
     pub fn new(navidrome_id: impl Into<String>) -> Self {
         UpgradeAsk {
             navidrome_id: navidrome_id.into(),
@@ -202,7 +201,7 @@ impl UpgradeQueue {
     pub const MAX_OPEN_JOBS: usize = 5000;
     pub const KEEP_FINISHED: TimeDelta = TimeDelta::days(7);
 
-    /// A queue in memory only (`new UpgradeQueue()`).
+    /// A queue in memory only.
     pub fn new() -> Self {
         Self::with_path(None)
     }
@@ -228,7 +227,7 @@ impl UpgradeQueue {
         self.path.as_deref()
     }
 
-    /// The `Clock` seam the C# tests set.
+    /// The `Clock` seam the tests set.
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
         self
@@ -265,7 +264,7 @@ impl UpgradeQueue {
         let mut refused = 0;
         let mut seen: Vec<String> = Vec::new();
         for ask in asks {
-            // DistinctBy(a => a.NavidromeId): the first ask for an id wins.
+            // One ask per Navidrome id: the first ask for an id wins.
             if seen.contains(&ask.navidrome_id) {
                 continue;
             }
@@ -398,7 +397,7 @@ impl UpgradeQueue {
         let next = jobs
             .values()
             .filter(|job| job.state == UpgradeStates::QUEUED)
-            // OrderBy(QueuedUtc).FirstOrDefault(): the earliest, the first of equals.
+            // The earliest queued, the first of equals.
             .fold(None::<&UpgradeJob>, |best, job| match best {
                 Some(best) if best.queued_utc <= job.queued_utc => Some(best),
                 _ => Some(job),
@@ -477,18 +476,18 @@ impl UpgradeQueue {
     }
 }
 
-/// Runs Better quality on one request (`executor.ApplyAsync`).
+/// Runs Better quality on one request (`LibraryActionExecutor::apply`).
 pub type ApplyFn = Arc<
     dyn Fn(LibraryActionRequest) -> BoxFuture<'static, anyhow::Result<LibraryActionOutcome>> + Send + Sync,
 >;
 
-/// Describes a song from Navidrome (`resolver.ResolveAsync`).
+/// Describes a song from Navidrome (`NavidromeSongPathResolver::resolve`).
 pub type DescribeFn = Arc<dyn Fn(String) -> BoxFuture<'static, Option<ResolvedSongFile>> + Send + Sync>;
 
 /// Whether every source is out because Soulseek is.
 pub type OfflineFn = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
-/// `executor.ApplyAsync` as a seam.
+/// `LibraryActionExecutor::apply` as a seam.
 pub(crate) fn apply_with(executor: Arc<LibraryActionExecutor>) -> ApplyFn {
     Arc::new(move |request| {
         let executor = executor.clone();
@@ -496,7 +495,7 @@ pub(crate) fn apply_with(executor: Arc<LibraryActionExecutor>) -> ApplyFn {
     })
 }
 
-/// The C# default for `SoulseekOffline`: waiting only when every source is out. With Lidarr set
+/// The default `soulseek_offline` seam: waiting only when every source is out. With Lidarr set
 /// up, a Soulseek outage leaves Lidarr.
 pub(crate) fn soulseek_offline_with(
     sources: Option<Arc<UpgradeSources>>,
@@ -521,8 +520,7 @@ pub(crate) fn soulseek_offline_with(
     })
 }
 
-/// The seams the C# exposed as settable properties, "the same way the weekly upgrade exposes
-/// them".
+/// The worker's seams, which tests replace, the same way the weekly upgrade exposes them.
 #[derive(Clone)]
 pub struct UpgradeWorkerSeams {
     pub apply: ApplyFn,
@@ -532,7 +530,7 @@ pub struct UpgradeWorkerSeams {
     pub source_name: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
-/// What the C# constructor resolved, all but the queue optional where it was.
+/// What the worker is built from besides the queue, the optional services as `Option`.
 pub struct UpgradeWorkerParts {
     pub executor: Arc<LibraryActionExecutor>,
     pub resolver: Arc<NavidromeSongPathResolver>,
@@ -553,7 +551,7 @@ pub struct UpgradeWorker {
     queue: Arc<UpgradeQueue>,
     tracker: Option<Arc<AcquisitionTracker>>,
     attempts: Option<Arc<QualityUpgradeStore>>,
-    /// `IOptionsMonitor<SoulseekSettings>`, read at each report.
+    /// The Soulseek settings, read at each report.
     settings: Option<Arc<SettingsStore>>,
     seams: UpgradeWorkerSeams,
     running: Mutex<Vec<JoinHandle<()>>>,
@@ -585,13 +583,13 @@ impl UpgradeWorker {
         Self::with_seams(queue, seams, parts.tracker, parts.attempts, parts.settings).with_picks(parts.picks)
     }
 
-    /// The picks a job's chosen copy is pinned in for its download (the C# `picks` argument).
+    /// The picks a job's chosen copy is pinned in for its download.
     pub fn with_picks(mut self, picks: Option<Arc<DownloadPicks>>) -> Self {
         self.picks = picks;
         self
     }
 
-    /// A worker over the given seams (the C# tests' object initializer).
+    /// A worker over the given seams (tests).
     pub fn with_seams(
         queue: Arc<UpgradeQueue>,
         seams: UpgradeWorkerSeams,
@@ -636,8 +634,7 @@ impl UpgradeWorker {
             let run = tokio::spawn(async move {
                 tokio::select! {
                     _ = worker.run_job(job) => {}
-                    // OperationCanceledException was let through: the job stays working, and the
-                    // next start queues it again.
+                    // Stopped mid-job: the job stays working, and the next start queues it again.
                     _ = ct.cancelled() => {}
                 }
             });
@@ -878,11 +875,10 @@ impl UpgradeWorker {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker loop, until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         while !stopping.is_cancelled() {
-            // Per-tick catch: BackgroundServiceExceptionBehavior defaults to StopHost. A tick
-            // that panics is logged and the loop goes on.
+            // Per-tick catch: a tick that panics is logged and the loop goes on.
             let tick = std::panic::AssertUnwindSafe(self.tick(&stopping))
                 .catch_unwind()
                 .await;
@@ -898,12 +894,12 @@ impl UpgradeWorker {
     }
 }
 
-/// `Path.GetFileName`.
+/// Everything after the last separator.
 fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// `Path.GetDirectoryName` on Unix: everything before the last separator (and any separators
+/// The directory: everything before the last separator (and any separators
 /// right before it), the root kept; None for the root itself.
 fn directory_name(path: &str) -> Option<String> {
     if path.is_empty() || path == "/" {
@@ -988,7 +984,7 @@ impl AudioSummary {
     }
 }
 
-/// `Path.GetExtension(path).TrimStart('.')`.
+/// The extension without its dot, or empty.
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

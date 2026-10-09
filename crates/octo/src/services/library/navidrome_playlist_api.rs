@@ -1,5 +1,3 @@
-//! Port of `Services/Library/NavidromePlaylistApi.cs`.
-
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -19,8 +17,7 @@ use crate::services::subsonic::NavidromeIdentityService;
 /// An admin may edit any user's playlist (Navidrome's checkWritable), which is what lets Octo
 /// fill a playlist the user owns while the user keeps it private.
 ///
-/// The C# methods took a `CancellationToken` that only cancelled the HTTP calls; here a caller
-/// that stops drops the future instead.
+/// A caller that stops drops the future, which cancels the HTTP calls.
 pub struct NavidromePlaylistApi {
     http: reqwest::Client,
     identity: NavidromeIdentityService,
@@ -32,19 +29,17 @@ struct Call {
     method: Method,
     url: String,
     json_body: Option<String>,
-    /// The body's content type: `StringContent(body, Encoding.UTF8, "application/json")` sent
-    /// `application/json; charset=utf-8`.
+    /// The body's content type.
     content_type: &'static str,
 }
 
-/// What `StringContent(body, Encoding.UTF8, "application/json")` sent.
+/// JSON in UTF-8, the content type of every JSON body but the playlist create.
 const JSON_UTF8: &str = "application/json; charset=utf-8";
 
 /// The playlist create's content type. Navidrome 0.64 creates a playlist from JSON only when the
 /// content type is exactly this (`r.Header.Get("Content-type") == "application/json"`); with
-/// `; charset=utf-8`, as the C# sent it, it reads the body as an M3U file, makes an empty
-/// playlist named after the time and answers in M3U, which the C# could not read (BACKLOG H,
-/// "Keep as playlist").
+/// `; charset=utf-8` it reads the body as an M3U file, makes an empty playlist named after the
+/// time and answers in M3U, which breaks "Keep as playlist".
 const JSON_EXACT: &str = "application/json";
 
 impl NavidromePlaylistApi {
@@ -108,7 +103,7 @@ impl NavidromePlaylistApi {
             self.base_url(),
             start + count
         ));
-        // HttpClient's own timeout is Navidrome not answering, the same as any other failure.
+        // The client's own timeout is Navidrome not answering, the same as any other failure.
         let parsed = match self.read_json(call).await {
             Ok(Some(root)) => quality_upgrade_worker::parse_songs(&root),
             Ok(None) => return None,
@@ -125,7 +120,7 @@ impl NavidromePlaylistApi {
 
     /// Remove tracks by POSITION. Positions are reassigned on every change, so callers re-read
     /// the list immediately before and send every position in one call. `Err` when the call
-    /// itself failed, which the C# let escape to its caller.
+    /// itself failed.
     pub async fn remove_positions(&self, playlist_id: &str, positions: &[String]) -> Result<bool, String> {
         if positions.is_empty() {
             return Ok(true);
@@ -305,8 +300,8 @@ impl NavidromePlaylistApi {
         Ok(response.status().is_success().then_some(true))
     }
 
-    /// Deletes a playlist Octo made, so a keep that failed half way leaves nothing empty behind.
-    /// Not a C# call: the port's fix for "Keep as playlist".
+    /// Deletes a playlist Octo made, so a keep that failed half way leaves nothing empty behind
+    /// ("Keep as playlist").
     pub async fn delete_playlist(&self, playlist_id: &str) -> Result<bool, String> {
         let call = Call {
             method: Method::DELETE,
@@ -349,7 +344,7 @@ impl NavidromePlaylistApi {
     }
 
     /// The JSON of a successful answer: `Ok(None)` when there is no answer or it is not a
-    /// success, `Err` when the call or the parse failed (the C# caught those).
+    /// success, `Err` when the call or the parse failed.
     async fn read_json(&self, call: Call) -> Result<Option<Value>, String> {
         let Some(response) = self.try_send(call).await? else {
             return Ok(None);
@@ -559,7 +554,7 @@ mod tests {
 
         assert_eq!(count, 2);
         assert_eq!(rows.len(), 1);
-        // Math.Round: half to even.
+        // Rounded half to even.
         assert_eq!(
             (rows[0].size, rows[0].bit_rate, rows[0].duration),
             (10, 900, Some(2))

@@ -1,5 +1,5 @@
-//! Port of `Services/Imports/ImportModels.cs`: the imported lists and the trickle's jobs, as
-//! `imports.json` and `imports-trickle.json` keep them.
+//! The imported lists and the trickle's jobs, as `imports.json` and `imports-trickle.json` keep
+//! them.
 
 use chrono::{DateTime, Utc};
 use octo_core::json::datetime;

@@ -1,7 +1,6 @@
-//! Port of `octo.Tests/AlbumOwnershipTests.cs` (f49fb80): `DrakeSearch`, `AlbumOwnershipTests`
-//! and `LibrarySnapshotTests`. The library and the catalog of Brandon's "drake" search
-//! (2026-10-04), as Navidrome and Deezer gave them: what search listed as not in the library,
-//! and what the library really held.
+//! Album ownership and the library snapshot, against a real "drake" search: the library and the
+//! catalog as Navidrome and Deezer gave them, what search listed as not in the library, and what
+//! the library really held.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -587,7 +586,7 @@ async fn judge_without_the_library_counts_nothing() {
     );
 }
 
-/// Rust-only: a library album passes through unjudged, and a library that is not read in time
+/// A library album passes through unjudged, and a library that is not read in time
 /// counts nothing.
 #[tokio::test]
 async fn judge_leaves_library_albums_alone_and_gives_up_on_a_slow_library() {
@@ -613,7 +612,7 @@ async fn judge_leaves_library_albums_alone_and_gives_up_on_a_slow_library() {
     assert!(slow.library(Duration::from_millis(50)).await.is_none());
 }
 
-// ---- LibrarySnapshotTests ----------------------------------------------------------------
+// ---- The library snapshot ----------------------------------------------------------------
 
 #[derive(Default)]
 struct Pages {

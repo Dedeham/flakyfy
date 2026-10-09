@@ -2,10 +2,10 @@
 //!
 //! Delete from disk and the replaced originals go to the trash folder at the top of the music
 //! folder (`LibraryActions:QuarantineDirectory`, `.octo-trash` by default), under a dated
-//! folder. C# 2026.10.05 walked into it: the cover scan listed a trashed song as an album of its
-//! own, with an id that depended on the dated folder. The port leaves the trash out of every
-//! library walk (the cover scan, the genre re-tag, Find lyrics for the library, the review
-//! sweep and the explicit marking), by its configured name rather than a repeated string.
+//! folder. A walk that went into it would list a trashed song as an album of its own, with an id
+//! that depended on the dated folder. So every library walk (the cover scan, the genre re-tag,
+//! Find lyrics for the library, the review sweep and the explicit marking) leaves the trash out,
+//! by its configured name rather than a repeated string.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -23,9 +23,8 @@ pub fn is_trash(folder: &Path, trash: Option<&Path>) -> bool {
     trash.is_some_and(|trash| folder.starts_with(trash))
 }
 
-/// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)` without the trash folder.
-/// Symbolic links to folders are followed, and any folder that cannot be read fails the whole
-/// listing (`IgnoreInaccessible` is off for that overload).
+/// Every file under `root`, in all its folders, without the trash folder. Symbolic links to
+/// folders are followed, and any folder that cannot be read fails the whole listing.
 pub fn all_files(root: &Path, trash: Option<&Path>) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];

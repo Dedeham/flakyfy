@@ -1,6 +1,6 @@
-//! Port of `Services/LastFm/LastFmRadioTrackResolver.cs`: resolves a Last.fm candidate locally
-//! first, then as an external placeholder. Whether a library hit is the recommended recording
-//! is `octo_core::last_fm::last_fm_radio_track_resolver::is_same_recording`.
+//! Resolves a Last.fm candidate locally first, then as an external placeholder. Whether a
+//! library hit is the recommended recording is
+//! `octo_core::last_fm::last_fm_radio_track_resolver::is_same_recording`.
 
 use std::sync::Arc;
 
@@ -376,7 +376,7 @@ pub fn interleave<T: Clone>(lists: &[Vec<T>]) -> Vec<T> {
     out
 }
 
-/// `Random.Shared.Shuffle`: an unseeded Fisher-Yates shuffle.
+/// An unseeded Fisher-Yates shuffle.
 fn shuffle<T>(items: &mut [T]) {
     for i in (1..items.len()).rev() {
         let j = rand::random_range(0..=i);
@@ -384,8 +384,7 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
-/// What the library is searched with for a song (`TopSongsService.LibraryQuery`): the one the
-/// charts search with too.
+/// What the library is searched with for a song: the one the charts search with too.
 pub use octo_core::charts::top_songs::library_query;
 
 /// The songs of an album or a random-songs answer that have an id.
@@ -493,7 +492,6 @@ mod tests {
             .collect()
     }
 
-    // LastFmRadioTrackResolverTests.Resolver_PrefersAuthenticatedLocalMatchBeforeExternalPlaceholder
     #[tokio::test]
     async fn resolver_prefers_authenticated_local_match_before_external_placeholder() {
         let metadata = Arc::new(FakeMetadata::default());
@@ -521,7 +519,6 @@ mod tests {
         assert_eq!(song.album, "Album");
     }
 
-    // LastFmRadioTrackResolverTests.Resolver_UsesExternalPlaceholderOnlyAfterLocalMiss
     #[tokio::test]
     async fn resolver_uses_external_placeholder_only_after_local_miss() {
         let metadata = Arc::new(FakeMetadata::default());
@@ -547,7 +544,6 @@ mod tests {
         assert_eq!(song.map(|song| song.id), Some(expected.id));
     }
 
-    // LastFmRadioCoreTests.Resolver_KeepsTheVideoASourceNamed_WithoutReplacingOneAlreadyFound
     #[tokio::test]
     async fn resolver_keeps_the_video_a_source_named_without_replacing_one_already_found() {
         let metadata = Arc::new(FakeMetadata::default());
@@ -596,7 +592,7 @@ mod tests {
         assert_eq!(video(&resolver).as_deref(), Some("video-1"));
     }
 
-    /// Rust-only (446d393, 7a8cc5f): the library is searched with the main artist and the core
+    /// The library is searched with the main artist and the core
     /// title, a seed is a song, an album's first song or an artist's name, and the neighbors are
     /// the album's other songs and the genre's, never the seed.
     #[tokio::test]
@@ -649,7 +645,7 @@ mod tests {
             Arc::new(ExternalIdRegistry::in_memory()),
         );
         let no_auth = IndexMap::new();
-        // A fractional length is a song the C# reader threw on: the album reads as no seed.
+        // A fractional length fails the song's read: the album reads as no seed.
         assert!(resolver.read_seed("al-1", &no_auth).await.is_none());
         let album = resolver.read_seed("al-2", &no_auth).await.expect("an album seed");
         assert_eq!(album.artist, "X");
@@ -668,7 +664,7 @@ mod tests {
         assert_eq!(ids, ["s3", "g1"]);
     }
 
-    /// Rust-only: a hit that is another recording is passed over, an answer that is not the
+    /// A hit that is another recording is passed over, an answer that is not the
     /// shape read gives no match, and a scrobbled external id is its route.
     #[tokio::test]
     async fn other_recordings_and_odd_answers_are_no_match() {

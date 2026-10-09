@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LyricsService.cs`.
+//! The lyrics service: asks the sources in order and ranks what they find.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,8 +39,8 @@ impl LyricsService {
         }
     }
 
-    /// The four sources `Program.cs` registered, in its order: KuGou on the `kugou` client,
-    /// the others on the shared `lyrics` client.
+    /// The four sources, in order: KuGou on the `kugou` client, the others on the shared
+    /// `lyrics` client.
     pub fn default_sources(
         lyrics_client: reqwest::Client,
         kugou_client: reqwest::Client,
@@ -117,8 +117,8 @@ impl LyricsService {
             let Some(source) = self.source(name) else {
                 continue;
             };
-            // The sources never throw: a failure, a cancellation or an odd answer is a
-            // transient lookup, which is what the C# made of an exception.
+            // The sources never fail outright: a failure, a cancellation or an odd answer is a
+            // transient lookup.
             let lookup = source.find(query, ct).await;
             if ct.is_cancelled() && lookup.result.is_none() {
                 transient = true;

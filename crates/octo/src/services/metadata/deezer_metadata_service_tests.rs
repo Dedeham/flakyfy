@@ -1,10 +1,8 @@
-//! Port of `octo.Tests/DeezerMetadataServiceTests.cs` (its `ReleaseTypes` theory is in
-//! `octo_core::metadata::deezer_metadata_service`), and the two Deezer cases of
-//! `octo.Tests/QueryVariantLookupTests.cs`.
+//! Tests of the Deezer metadata service, including its query variant lookups. The release type
+//! cases are tested in `octo_core::metadata::deezer_metadata_service`.
 //!
-//! The C# answered from a Moq'd `HttpMessageHandler` by URL substring; here a mock server does,
-//! and the service asks it in place of api.deezer.com. As in the C# harness, the rate limiter
-//! never meters these requests (the handler meters api.deezer.com only).
+//! A mock server answers by URL substring, and the service asks it in place of api.deezer.com.
+//! The rate limiter never meters these requests (the handler meters api.deezer.com only).
 
 use octo_core::settings::{AppSettings, MetadataSettings};
 use tracing::Level;
@@ -959,7 +957,7 @@ async fn enrich_track_candidates_async_throttled_answers_nothing_and_remembers_n
     assert_eq!(h.calls("/search"), 2);
 }
 
-// ---- QueryVariantLookupTests: the Deezer cases ----------------------------------------
+// ---- Query variant lookups ------------------------------------------------------------
 // A source that indexes "Suicideboys" still finds a "$uicideboy$" song: each lookup tries the
 // song as asked, then the other ways SongIdentity writes it, and holds whatever it finds to
 // the song as asked.
@@ -1020,10 +1018,10 @@ async fn deezer_never_takes_another_versions_album_and_length() {
     );
 }
 
-// ---- Rust-only ------------------------------------------------------------------------
+// ---- The year prefix, shared requests and the catalog lookup ---------------------------
 
 #[test]
-fn year_prefix_reads_as_int_try_parse_did() {
+fn year_prefix_parses_the_first_four_characters() {
     assert_eq!(year_prefix("1998-04-30"), Some(1998));
     assert_eq!(year_prefix(" 199-01"), Some(199));
     assert_eq!(year_prefix("199"), None);
@@ -1049,7 +1047,7 @@ async fn concurrent_artist_searches_share_one_request() {
     assert_eq!(h.calls("/search/artist"), 1);
 }
 
-/// The release identifier reaches the catalog through 2-A's `CatalogLookup`.
+/// The release identifier reaches the catalog through `CatalogLookup`.
 #[tokio::test]
 async fn the_service_is_the_identifiers_catalog_lookup() {
     let one = r#"{"data":[{"id":11,"title":"Teardrop","duration":330,"album":{"id":1,"title":"Mezzanine"},"artist":{"name":"Massive Attack"}}]}"#;
@@ -1070,7 +1068,6 @@ async fn the_service_is_the_identifiers_catalog_lookup() {
     assert_eq!(answer.hits[0].album_title.as_deref(), Some("Mezzanine"));
 }
 
-/// `OutsideExplicitTests.ArtistPage_OfAReleaseInTwoCopies_ListsTheExplicitOne`.
 #[tokio::test]
 async fn artist_page_of_a_release_in_two_copies_lists_the_explicit_one() {
     let h = Harness::new(vec![(

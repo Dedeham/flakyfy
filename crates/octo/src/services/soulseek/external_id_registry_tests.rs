@@ -1,4 +1,4 @@
-//! `ExternalIdRegistryTests.cs`, the registry half of `SongLengthTests.cs`, and the
+//! Tests of the external id registry, the lengths it keeps for a song, and the
 //! `external-ids.json` fixture round trip.
 
 use super::*;
@@ -33,7 +33,7 @@ const FIXTURE: &str = concat!(
     "/../../docs/rust-migration/fixtures/state/external-ids.json"
 );
 
-// ---- ExternalIdRegistryTests ----------------------------------------------------------
+// ---- Registering and looking up --------------------------------------------------------
 
 #[test]
 fn register_same_routing_produces_same_id() {
@@ -130,7 +130,7 @@ fn register_survives_a_restart() {
             duration: Some(290),
             ..song("Radiohead", "Reckoner")
         })
-    }; // dropped: Dispose flushes
+    }; // dropped: the drop flushes
 
     let reopened = ExternalIdRegistry::new(Some(&path));
     let routing = reopened.lookup(&id).expect("restored").snapshot();
@@ -190,7 +190,7 @@ fn register_artist_by_name_alone_keeps_the_catalog_artist_already_chosen() {
     );
 }
 
-// ---- SongLengthTests: the registry keeps it ---------------------------------------------
+// ---- Song lengths: the registry keeps them ----------------------------------------------
 
 #[test]
 fn registry_re_minting_a_song_keeps_the_length_a_lookup_found() {
@@ -249,7 +249,7 @@ fn registry_length_outlives_a_restart() {
     );
 }
 
-// ---- Rust-only ------------------------------------------------------------------------
+// ---- The fixture and the rest of the registry ------------------------------------------
 
 #[test]
 fn the_fixture_round_trips_byte_for_byte() {
@@ -272,7 +272,7 @@ fn the_fixture_round_trips_byte_for_byte() {
 
 #[test]
 fn the_fixture_ids_are_the_ones_this_registry_mints() {
-    // The fixture came out of the real C# registry, so its ids are genuine.
+    // The fixture is a real registry file, so its ids are genuine.
     let text = std::fs::read_to_string(FIXTURE).expect("the fixture is in the repo");
     let entries: Vec<Persisted> = serde_json::from_str(&text).expect("the fixture reads");
     for e in entries {
@@ -388,7 +388,7 @@ fn songs_filed_under_finds_one_row_per_recording_newest_first() {
     );
 }
 
-// ---- OutsideExplicitTests: ids ------------------------------------------------------------
+// ---- Outside songs' explicit word: ids ----------------------------------------------------
 
 /// The seed an id is made from is unchanged for everything but a clean copy, so a star, a
 /// playlist place or a pin made before keeps working. Pinned to the ids the old seed made.
@@ -440,10 +440,9 @@ fn registry_a_search_row_minted_again_keeps_what_the_catalog_said() {
     );
 }
 
-/// Fixed in the port only (BACKLOG "Found while building the harness", known-diffs "An outside
-/// song's album in the registry"): a song's id leaves out its album, so radio registering a song
-/// Last.fm named without one must not undo the album a search filed it under. A registration
-/// with an album of its own still replaces it.
+/// A song's id leaves out its album, so radio registering a song Last.fm named without one must
+/// not undo the album a search filed it under. A registration with an album of its own still
+/// replaces it.
 #[test]
 fn a_registration_without_an_album_keeps_the_album_already_known() {
     let registry = ExternalIdRegistry::in_memory();

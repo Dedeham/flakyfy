@@ -1,5 +1,5 @@
-//! Port of `LocalLibraryServiceTests`, plus the `.mappings.json` contract (state-files.md §4.23).
-//! The Moq'd `HttpMessageHandler` is a wiremock server answering every call with the scan status.
+//! Tests of the local library service and the `.mappings.json` contract. A wiremock server
+//! stands in for Subsonic, answering every call with the scan status.
 
 use std::sync::Arc;
 
@@ -265,7 +265,7 @@ async fn parse_external_id_various_inputs_returns_expected() {
     }
 }
 
-// ---- Rust-only: the .mappings.json contract and the rest of the interface ------------------
+// ---- The .mappings.json contract and the rest of the interface -----------------------------
 
 /// The fixture is read and written back byte for byte, in its own key order.
 #[tokio::test]
@@ -411,8 +411,8 @@ async fn find_mapping_by_tags_answers_only_an_unambiguous_file() {
     );
 }
 
-/// The decision recorded in known-diffs.md: a file that does not parse is moved aside, and
-/// the service starts empty rather than failing every caller.
+/// A file that does not parse is moved aside, and the service starts empty rather than failing
+/// every caller.
 #[tokio::test]
 async fn a_corrupt_mappings_file_is_moved_aside() {
     let f = Fixture::new().await;
@@ -483,7 +483,7 @@ async fn a_refused_scan_and_an_odd_status() {
 }
 
 /// Navidrome answers getScanStatus only with a sign-in, so it carries the admin identity startScan
-/// uses (ca47988); without one it is the bare call.
+/// uses; without one it is the bare call.
 #[tokio::test]
 async fn get_scan_status_signs_in_as_the_admin_identity() {
     let f = Fixture::new().await;

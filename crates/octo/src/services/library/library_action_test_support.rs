@@ -1,6 +1,6 @@
-//! What the library action tests share: `ReviewFixtures` of the C# tests (a person Octo asked
-//! about one track), a recording `Mock<ILocalLibraryService>`, and an executor whose parts are
-//! real but idle, standing in for the C# tests' `null!` arguments.
+//! What the library action tests share: a person Octo asked about one track, a recording
+//! `ILocalLibraryService`, and an executor whose parts are real but idle, for tests that never
+//! reach them.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::services::local::{ILocalLibraryService, LocalSongMapping, ParsedExter
 use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink, RejectedPeerRegistry};
 use crate::services::subsonic::NavidromeIdentityService;
 
-/// `ReviewFixtures.AskedAbout`: a queue that asked `user` about Teardrop, Navidrome's `navidrome_id`.
+/// A queue that asked `user` about Teardrop, Navidrome's `navidrome_id`.
 pub(crate) fn asked_about(user: &str, navidrome_id: &str) -> Arc<NoticeQueue> {
     let queue = NoticeQueue::new();
     let unknown = VerificationResult {
@@ -51,7 +51,7 @@ pub(crate) fn store(settings: AppSettings) -> Arc<SettingsStore> {
     Arc::new(SettingsStore::for_tests(settings))
 }
 
-/// `Mock<ILocalLibraryService>`: answers nothing, and records the mappings forgotten.
+/// A stand-in `ILocalLibraryService`: answers nothing, and records the mappings forgotten.
 #[derive(Default)]
 pub(crate) struct RecordingLibrary {
     pub forgotten: Mutex<Vec<String>>,

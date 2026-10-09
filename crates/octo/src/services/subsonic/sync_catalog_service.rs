@@ -1,7 +1,7 @@
-//! Port of `Services/Subsonic/SyncCatalogService.cs`: the discovery catalog a syncing client is
-//! handed after the last library row ([`SyncCatalog`]), and the service that builds, caches and
-//! pages it ([`SyncCatalogService`]). The page writer that puts the rows on the wire is
-//! `octo_subsonic::sync_catalog_response`, whose `append` takes [`SyncCatalog::added`].
+//! The discovery catalog a syncing client is handed after the last library row ([`SyncCatalog`]),
+//! and the service that builds, caches and pages it ([`SyncCatalogService`]). The page writer that
+//! puts the rows on the wire is `octo_subsonic::sync_catalog_response`, whose `append` takes
+//! [`SyncCatalog::added`].
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -40,7 +40,7 @@ pub enum SyncCatalogKind {
 }
 
 impl SyncCatalogKind {
-    /// The enum's C# name, as `ToString()` wrote it into the walk key.
+    /// The kind's name, as the walk key spells it.
     fn name(self) -> &'static str {
         match self {
             SyncCatalogKind::Artist => "Artist",
@@ -65,7 +65,7 @@ pub struct SyncCatalog {
     songs_by_id: HashMap<String, usize>,
 }
 
-/// `SyncCatalog.Empty`, one shared instance.
+/// The empty catalog, one shared instance.
 static EMPTY: LazyLock<Arc<SyncCatalog>> = LazyLock::new(|| {
     Arc::new(SyncCatalog::new(
         Vec::new(),
@@ -77,7 +77,7 @@ static EMPTY: LazyLock<Arc<SyncCatalog>> = LazyLock::new(|| {
     ))
 });
 
-/// `DateTime.MinValue`: midnight, 1 January of the year 1.
+/// The earliest time: midnight, 1 January of the year 1.
 fn min_value() -> DateTime<Utc> {
     NaiveDate::from_ymd_opt(1, 1, 1)
         .and_then(|date| date.and_hms_opt(0, 0, 0))
@@ -109,7 +109,7 @@ impl SyncCatalog {
         }
     }
 
-    /// `SyncCatalog.Empty`.
+    /// The empty catalog.
     pub fn empty() -> Arc<SyncCatalog> {
         EMPTY.clone()
     }
@@ -166,7 +166,7 @@ pub(crate) const WALK_TTL: Duration = Duration::from_secs(20 * 60);
 
 const LOOKUP_CONCURRENCY: usize = 4;
 
-/// `now - at < ttl`, as the C# compared a `TimeSpan` (a clock that went back reads as fresh).
+/// `now - at < ttl` (a clock that went back reads as fresh).
 fn younger_than(now: DateTime<Utc>, at: DateTime<Utc>, ttl: Duration) -> bool {
     now.signed_duration_since(at) < TimeDelta::from_std(ttl).expect("the TTLs fit a TimeDelta")
 }
@@ -177,9 +177,9 @@ struct WalkMemo {
     at_utc: DateTime<Utc>,
 }
 
-/// A build in flight: the C# `(Fingerprint, Task<SyncCatalog>)`. `done` is the task's
-/// `IsCompleted`, set by the build itself (a `Shared` future only knows it has finished once
-/// someone polled it).
+/// A build in flight: its fingerprint and the shared build. `done` says whether the build has
+/// finished, set by the build itself (a `Shared` future only knows it has finished once someone
+/// polled it).
 #[derive(Clone)]
 struct RunningBuild {
     fingerprint: String,
@@ -203,8 +203,7 @@ struct RunningBuild {
 /// walk pins the catalog it started on, so a rebuild finishing half way through does not shift
 /// rows under it.
 pub struct SyncCatalogService {
-    /// The background proxy: the C# made a fresh DI scope per build, so its relays carried no
-    /// request.
+    /// The background proxy: a build's relays carry no client request.
     proxy: SubsonicProxyService,
     metadata: Arc<dyn IMusicMetadataService>,
     registry: Arc<ExternalIdRegistry>,
@@ -266,7 +265,7 @@ impl SyncCatalogService {
         if !settings.enable_sync_catalog {
             return false;
         }
-        // A substring match ignoring case (config.md §5): "Symfonium (Android)" is Symfonium.
+        // A substring match ignoring case: "Symfonium (Android)" is Symfonium.
         let client = ordinal_ignore_case_key(client);
         settings
             .sync_catalog_clients
@@ -428,11 +427,11 @@ impl SyncCatalogService {
 
     /// The user's catalog for these stations: the cached one while the stations are
     /// unchanged and it is younger than [`CATALOG_TTL`], else a build. One build per
-    /// user at a time, shared by every caller, and never cancelled by the request that
+    /// user at a time, shared by every caller, and never canceled by the request that
     /// started it, because the next page of the same walk is about to want it.
     ///
-    /// Like the C# `Task`, the decision and the start of a build happen before this returns;
-    /// only waiting for the catalog is left to the returned future.
+    /// The decision and the start of a build happen before this returns; only waiting for the
+    /// catalog is left to the returned future.
     pub fn get(
         self: &Arc<Self>,
         username: &str,
@@ -824,8 +823,8 @@ impl SyncCatalogService {
     /// Reads a Navidrome search3 answer for an artist name. Only an exact (normalized)
     /// name counts as the same artist: a search for "Air" also returns "Airbourne".
     ///
-    /// An error where `JsonDocument` threw (a body that is not JSON, an accessor on the wrong
-    /// kind of value); the lookup reads it as a failed lookup.
+    /// An error for a body that is not JSON, or a value of the wrong kind; the lookup reads it
+    /// as a failed lookup.
     pub(crate) fn parse_library_artist(body: &[u8], artist: &str) -> anyhow::Result<Option<LibraryArtist>> {
         let document: Value = serde_json::from_slice(body)?;
         let Some(response) = try_get_property(&document, "subsonic-response")? else {
@@ -882,7 +881,7 @@ impl SyncCatalogService {
     }
 }
 
-/// The walk key: the user and the kind, compared ignoring case as the C# dictionary did.
+/// The walk key: the user and the kind, compared ignoring case.
 fn walk_key(username: &str, kind: SyncCatalogKind) -> String {
     ordinal_ignore_case_key(&format!("{username}\n{}", kind.name()))
 }
@@ -891,7 +890,7 @@ fn fresh(memo: &WalkMemo, now: DateTime<Utc>) -> bool {
     younger_than(now, memo.at_utc, WALK_TTL)
 }
 
-/// `ExplicitFilter.ToString()`.
+/// The filter's name, as the fingerprint spells it.
 fn explicit_filter_name(filter: ExplicitFilter) -> &'static str {
     match filter {
         ExplicitFilter::All => "All",

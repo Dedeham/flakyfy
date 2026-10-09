@@ -1,4 +1,4 @@
-//! `Services/Sonic`: Sounds alike, octo-sonic's reading of every library song: the client, the
+//! Sounds alike, octo-sonic's reading of every library song: the client, the
 //! analysis pass, and what the analysis keeps on disk (`sonic-features.json`) with the
 //! nearest-song search.
 

@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/DirectoryBrowser.cs`.
+//! The folder picker behind the dashboard's download folder setting.
 
 use std::path::Path;
 
@@ -44,7 +44,7 @@ pub struct BrowseResult {
 /// and leaving them out keeps the amount this endpoint can disclose to the minimum
 /// the feature actually requires.
 ///
-/// Unix paths only: the C# offered the drives on Windows, which Octo never runs on.
+/// Unix paths only: Octo never runs on Windows.
 #[derive(Debug, Default)]
 pub struct DirectoryBrowser;
 
@@ -149,9 +149,9 @@ impl DirectoryBrowser {
     }
 }
 
-/// `Path.GetFullPath` on Unix: a relative path is taken from the working directory; `.`,
+/// The full form of a Unix path: a relative path is taken from the working directory; `.`,
 /// `..` (never above the root) and repeated separators are removed; a trailing separator is
-/// kept. None for a path holding a NUL, which .NET refused with an ArgumentException.
+/// kept. None for a path holding a NUL.
 fn get_full_path(path: &str) -> Option<String> {
     if path.contains('\0') {
         return None;
@@ -185,8 +185,8 @@ fn get_full_path(path: &str) -> Option<String> {
     Some(full)
 }
 
-/// `Directory.GetParent(full)?.FullName`: the path without its last segment (a trailing
-/// separator counts as an empty last segment), None at the root.
+/// The parent of a full path: the path without its last segment (a trailing separator counts as an
+/// empty last segment), None at the root.
 fn parent_of(full: &str) -> Option<String> {
     if full == "/" {
         return None;
@@ -200,7 +200,7 @@ fn parent_of(full: &str) -> Option<String> {
     })
 }
 
-/// `Path.Join`: one separator between the two.
+/// The two parts joined with one separator between them.
 fn join(dir: &str, name: &str) -> String {
     if dir.ends_with('/') {
         format!("{dir}{name}")
@@ -209,8 +209,8 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
-/// `Path.GetExtension`: from the last dot of the file name, "" when there is none or it ends
-/// the name. A name that is all extension (".flac") is all extension.
+/// The file's extension: from the last dot of the file name, "" when there is none or it ends the
+/// name. A name that is all extension (".flac") is all extension.
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {
@@ -344,10 +344,10 @@ mod tests {
         assert!(DirectoryBrowser::new().browse(Some("/")).parent.is_none());
     }
 
-    // ---- Rust-only: .NET's path rules, as .NET 9 answered them --------------------------
+    // ---- Path rules ---------------------------------------------------------------------
 
     #[test]
-    fn full_paths_and_parents_follow_dotnet() {
+    fn full_paths_and_parents_are_normalized() {
         let cases = [
             ("/tmp/x/", "/tmp/x/", Some("/tmp/x")),
             ("/tmp//x", "/tmp/x", Some("/tmp")),
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn extensions_and_joins_follow_dotnet() {
+    fn extensions_and_joins_follow_the_path_rules() {
         assert_eq!(get_extension("/a/b.FLAC"), ".FLAC");
         assert_eq!(get_extension("/a/.flac"), ".flac");
         assert_eq!(get_extension("/a/b."), "");

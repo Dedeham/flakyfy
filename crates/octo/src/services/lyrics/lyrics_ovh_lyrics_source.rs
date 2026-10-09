@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LyricsOvhLyricsSource.cs`.
+//! lyrics.ovh as a lyrics source.
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -153,7 +153,7 @@ impl ILyricsSource for LyricsOvhLyricsSource {
     }
 
     async fn fetch(&self, id: &str, ct: &CancellationToken) -> LyricsLookup {
-        // The id's URL-safe base64, padded back as C# padded it (by the id's own length).
+        // The id's URL-safe base64, padded back by the id's own length.
         let padded_length = id.chars().count().div_ceil(4) * 4;
         let mut standard: String = id
             .chars()
@@ -187,7 +187,6 @@ mod tests {
         LyricsOvhLyricsSource::with_base_url(lyrics_http_client(), &http.uri())
     }
 
-    // QueryVariantLookupTests.LyricsOvh_TriesTheSpelledOutName
     #[tokio::test]
     async fn lyrics_ovh_tries_the_spelled_out_name() {
         let http = routes(&[("/v1/suicideboys/SUICIDE", r#"{"lyrics":"Line one"}"#.into())]).await;
@@ -202,7 +201,6 @@ mod tests {
         assert_eq!(lookup.result.and_then(|r| r.plain).as_deref(), Some("Line one"));
     }
 
-    // QueryVariantLookupTests.LyricsOvh_NeverAsksForTheOriginalOfAVersion
     #[tokio::test]
     async fn lyrics_ovh_never_asks_for_the_original_of_a_version() {
         // lyrics.ovh names nothing back, so its answer to "Creep" could not be told from the

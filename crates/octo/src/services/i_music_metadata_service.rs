@@ -1,7 +1,7 @@
-//! Port of `Services/IMusicMetadataService.cs`.
+//! The music metadata service's interface.
 //!
-//! The C# methods that took a `CancellationToken` drop it here: a caller that gives up drops the
-//! future, which stops the work at its next await as the token did.
+//! The methods take no cancellation token: a caller that gives up drops the future, which stops
+//! the work at its next await.
 
 use async_trait::async_trait;
 use octo_core::models::domain::{Album, Artist, Song};
@@ -98,7 +98,6 @@ pub trait IMusicMetadataService: Send + Sync {
 
     /// Gets an artist's albums for a library artist's page. The library's album titles say
     /// which of two artists of one name is meant; a provider that cannot use them ignores them.
-    /// (The C# overload of `GetArtistAlbumsAsync` that takes `libraryAlbumTitles`.)
     async fn get_artist_albums_for_library(
         &self,
         external_provider: &str,

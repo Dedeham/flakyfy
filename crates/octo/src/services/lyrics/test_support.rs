@@ -1,5 +1,5 @@
-//! Test helpers for the lyrics sources: a local HTTP server standing in for the services, as
-//! the C# tests' mocked `HttpMessageHandler` did, and fakes for the tags and the sources.
+//! Test helpers for the lyrics sources: a local HTTP server standing in for the services, and
+//! fakes for the tags and the sources.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 use super::lyrics_sidecar_writer::{LyricsSongTags, LyricsTagAccess};
 
 /// A server that answers every request through `respond`, given the request's URL with its
-/// escapes undone (`Uri.UnescapeDataString`, as the C# tests compared them).
+/// percent-escapes undone.
 pub(crate) struct FakeHttp {
     server: MockServer,
 }
@@ -98,7 +98,7 @@ impl ILyricsSource for FakeSource {
     }
 }
 
-/// The songs' tags, held in memory: what TagLib read and wrote on the C# tests' MP3 fixture.
+/// The songs' tags, held in memory instead of in real audio files.
 #[derive(Default)]
 pub(crate) struct FakeTags {
     lyrics: Mutex<HashMap<PathBuf, String>>,
@@ -165,8 +165,7 @@ impl LyricsTagAccess for FakeTags {
 }
 
 /// A source whose answer depends on the query, which keeps the titles it was asked for and can
-/// run something after each lookup (`LyricsChoiceTests.CountingSource`,
-/// `LyricsLibraryStepsTests.Source`).
+/// run something after each lookup.
 pub(crate) struct AskingSource {
     key: String,
     answer: Box<dyn Fn(&LyricsQuery) -> LyricsLookup + Send + Sync>,

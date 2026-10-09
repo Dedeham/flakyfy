@@ -1,5 +1,3 @@
-//! Port of `Services/Soulseek/SoulseekCandidates.cs`.
-//!
 //! Soulseek files in words, for the downloads log and Find songs: what each one is, why Octo
 //! tried it, and why it would pass one over. Reads only; the choosing itself stays in the
 //! download.

@@ -1,5 +1,5 @@
-//! Port of `Services/Lidarr/LidarrHeartAcquisitionService.cs`. Which song an imported track is
-//! (`MatchSong`) is `octo_core::lidarr::lidarr_heart_acquisition_service`.
+//! Hearts fetched through Lidarr. Which song an imported track is (`match_song`) is
+//! `octo_core::lidarr::lidarr_heart_acquisition_service`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -40,8 +40,8 @@ use crate::services::subsonic::NavidromeIdentityService;
 pub trait ILidarrHeartAcquisitionService: Send + Sync {
     /// True once the song is in the library: Lidarr brought it and it passed Octo's checks, or it
     /// was there already. False when Lidarr could not get it, so the heart's next source tries.
-    /// Waits for Lidarr's import, up to Lidarr's import timeout. (`notify_failure` was `true`
-    /// by default, `requested_by` null.) `Err` where the C# threw.
+    /// Waits for Lidarr's import, up to Lidarr's import timeout. `Err` when the attempt itself
+    /// fails.
     async fn try_acquire_track(
         &self,
         provider: &str,
@@ -61,10 +61,10 @@ pub trait ILidarrHeartAcquisitionService: Send + Sync {
     ) -> anyhow::Result<bool>;
 }
 
-/// What the C# constructor took as optional, or resolved later from the `IServiceProvider`.
-/// The download pipeline, the journal, the ownership check and the upgrade queue sit on top of
-/// the acquisition queue that the heart coordinator, and so this class, feeds; each is None
-/// where the C# found no service. The library-action settings are read from the settings store.
+/// The optional services the heart service works with. The download pipeline, the journal, the
+/// ownership check and the upgrade queue sit on top of the acquisition queue that the heart
+/// coordinator, and so this service, feeds; each is None where the service is not there. The
+/// library-action settings are read from the settings store.
 #[derive(Default, Clone)]
 pub struct LidarrHeartExtras {
     /// The live progress list. Lidarr reports no bytes, so it only hears accepted from here;
@@ -72,7 +72,7 @@ pub struct LidarrHeartExtras {
     pub tracker: Option<Arc<AcquisitionTracker>>,
     pub music_brainz: Option<Arc<MusicBrainzClient>>,
     pub claims: Option<Arc<LidarrAlbumClaims>>,
-    /// A fresh one when None (`imports ?? new LidarrImportHandoff()`).
+    /// A fresh one when None.
     pub imports: Option<Arc<LidarrImportHandoff>>,
     pub ids: Option<Arc<ExternalIdRegistry>>,
     pub downloads: Option<Arc<dyn IDownloadService>>,
@@ -99,8 +99,8 @@ struct Inner {
     client: Arc<LidarrClient>,
     metadata: Arc<dyn IMusicMetadataService>,
     deezer: Arc<DeezerMetadataService>,
-    /// `IOptionsMonitor<LidarrSettings>`, `IOptionsMonitor<SubsonicSettings>`, the library
-    /// action settings and `IConfiguration["Library:DownloadPath"]`, all read at use.
+    /// The Lidarr, Subsonic and library action settings and `Library:DownloadPath`, all read at
+    /// use.
     settings: Arc<SettingsStore>,
     nav_identity: NavidromeIdentityService,
     notifications: Arc<NotificationService>,
@@ -119,7 +119,7 @@ struct Inner {
     timing: Mutex<Timing>,
 }
 
-/// The C# `internal` timing seams.
+/// The service's poll intervals.
 #[derive(Clone, Copy)]
 struct Timing {
     claim_poll: Duration,
@@ -131,7 +131,7 @@ type SharedResult = Result<(), Arc<anyhow::Error>>;
 
 /// The keys of the songs in the library when the job ended: a hearted song's own id, and every
 /// song's artist and title, so a heart that joined late still finds its song among the album's
-/// other tracks. Shared with the job's last handoffs, as the C# set was.
+/// other tracks. Shared with the job's last handoffs.
 type Landed = Arc<Mutex<HashSet<String>>>;
 
 /// One album Lidarr is fetching for one or more hearts.
@@ -315,13 +315,12 @@ impl LidarrHeartAcquisitionService {
         }
     }
 
-    /// `ClaimPoll`: how often a heart looks whether an upgrade let go of the album.
+    /// How often a heart looks whether an upgrade let go of the album.
     pub fn set_claim_poll(&self, poll: Duration) {
         self.inner.timing.lock().claim_poll = poll;
     }
 
-    /// `PollOverride`: how often Lidarr is asked what it imported, instead of the timeout's
-    /// thirtieth.
+    /// How often Lidarr is asked what it imported, instead of the timeout's thirtieth.
     pub fn set_poll_override(&self, poll: Option<Duration>) {
         self.inner.timing.lock().poll_override = poll;
     }
@@ -557,7 +556,7 @@ impl Inner {
             };
             job.join(&album.songs, match_by_number, album_heart, requested_by);
             if created {
-                // Task.Run: the submission runs whether or not anyone is still waiting.
+                // Spawned: the submission runs whether or not anyone is still waiting.
                 let handle = tokio::spawn(self.clone().submit(job.clone()));
                 let submitted: BoxFuture<'static, SharedResult> = async move {
                     match handle.await {
@@ -874,7 +873,7 @@ impl Inner {
     /// own id, so its progress row moves on, and any other track of the album by an id minted for
     /// it. Whatever the pipeline did not take is deleted through Lidarr, so nothing is left behind
     /// in the library unchecked.
-    #[allow(clippy::too_many_arguments)] // the C# signature
+    #[allow(clippy::too_many_arguments)]
     async fn hand_to_pipeline(
         self: Arc<Self>,
         job: Arc<AlbumJob>,
@@ -968,7 +967,7 @@ impl Inner {
     /// Why an imported file should not join the library, or None when it should. A song removed
     /// with a library action stays removed, and a song already in the library is not added twice,
     /// the same rules as a Soulseek download. An owned lossy copy is queued for Better quality
-    /// instead, which swaps it in place and keeps its plays (W8).
+    /// instead, which swaps it in place and keeps its plays.
     async fn should_drop(
         &self,
         album: &Album,
@@ -1174,7 +1173,7 @@ pub fn translate_imported_path(
     Ok(target)
 }
 
-/// `Path.Combine(a, b)` for a relative `b`.
+/// Joins `b` onto `a` with one `/`; a `b` that starts with `/` replaces `a`.
 fn path_combine(a: &str, b: &str) -> String {
     if b.starts_with('/') {
         b.to_string()
@@ -1185,7 +1184,7 @@ fn path_combine(a: &str, b: &str) -> String {
     }
 }
 
-/// `Path.GetRelativePath(relativeTo, path)` for two full paths on Unix (case-sensitive): "."
+/// `path` relative to `relative_to`, for two full paths on Unix (case-sensitive): "."
 /// for the same path, the rest of `path` under `relative_to`, otherwise a climb out with `..`.
 fn get_relative_path(relative_to: &str, path: &str) -> String {
     let from: Vec<&str> = relative_to.split('/').filter(|s| !s.is_empty()).collect();

@@ -1,4 +1,4 @@
-//! `ListenBrainzRadioSourceTests`: ListenBrainz as a radio source, against answers captured from
+//! ListenBrainz as a radio source, against answers captured from
 //! the live labs service (`octo.Tests/Fixtures/listenbrainz`, 2026-10-04): a recording found by
 //! name or by its tag, its similar recordings scaled to 0 to 1, and LB Radio only with a token.
 
@@ -106,7 +106,6 @@ async fn ask(source: &ListenBrainzRadioSource, seed: &RadioSeed) -> RadioAnswer 
         .expect("an answer")
 }
 
-// ListenBrainzRadioSourceTests.ASongFoundByName_IsTheSimilarRecordings_ScaledToItsBest
 #[tokio::test]
 async fn a_song_found_by_name_is_the_similar_recordings_scaled_to_its_best() {
     let (source, labs, _server) = source("", None).await;
@@ -140,7 +139,6 @@ async fn a_song_found_by_name_is_the_similar_recordings_scaled_to_its_best() {
     );
 }
 
-// ListenBrainzRadioSourceTests.ASongWithItsRecordingTagged_NeedsNoLookup
 #[tokio::test]
 async fn a_song_with_its_recording_tagged_needs_no_lookup() {
     let (source, labs, _server) = source("", None).await;
@@ -161,7 +159,6 @@ async fn a_song_with_its_recording_tagged_needs_no_lookup() {
     );
 }
 
-// ListenBrainzRadioSourceTests.ASongListenBrainzDoesNotKnow_IsNothing
 #[tokio::test]
 async fn a_song_listen_brainz_does_not_know_is_nothing() {
     let (source, labs, _server) = source("", None).await;
@@ -178,7 +175,6 @@ async fn a_song_listen_brainz_does_not_know_is_nothing() {
     );
 }
 
-// ListenBrainzRadioSourceTests.LbRadio_NeedsAToken_AndSendsIt
 #[tokio::test]
 async fn lb_radio_needs_a_token_and_sends_it() {
     let (without, quiet, _server) = source("", None).await;
@@ -219,14 +215,12 @@ async fn lb_radio_needs_a_token_and_sends_it() {
     assert!(decoded.iter().any(|call| call.contains("prompt=tag:(phonk)")));
 }
 
-// ListenBrainzRadioSourceTests.SlowDown_IsNothing_NotAnError
 #[tokio::test]
 async fn slow_down_is_nothing_not_an_error() {
     let (source, _labs, _server) = source("", Some(Box::new(|_| (429, "{}".into())))).await;
     assert_eq!(ask(&source, &murder()).await.r#match, RadioMatch::None);
 }
 
-// ListenBrainzRadioSourceTests.Rows_ReadBothShapesTheLabsDatasetsUse
 #[test]
 fn rows_read_both_shapes_the_labs_datasets_use() {
     let flat: Value = serde_json::from_str(r#"[{"recording_name":"A"},{"recording_name":"B"}]"#).unwrap();
@@ -242,7 +236,6 @@ fn rows_read_both_shapes_the_labs_datasets_use() {
     assert_eq!(rows.last().unwrap()["recording_name"], "C");
 }
 
-// ListenBrainzRadioSourceTests.AFailedLookup_IsAskedAgain_NotRememberedAsUnknown
 #[tokio::test]
 async fn a_failed_lookup_is_asked_again_not_remembered_as_unknown() {
     let down = Arc::new(AtomicBool::new(true));
@@ -263,7 +256,6 @@ async fn a_failed_lookup_is_asked_again_not_remembered_as_unknown() {
     assert_eq!(ask(&source, &murder()).await.r#match, RadioMatch::Song);
 }
 
-// ListenBrainzRadioSourceTests.AnOddScore_LeavesTheRestOfTheAnswer
 #[tokio::test]
 async fn an_odd_score_leaves_the_rest_of_the_answer() {
     let (source, _labs, _server) = source(
@@ -284,7 +276,7 @@ async fn an_odd_score_leaves_the_rest_of_the_answer() {
     assert!(answer.tracks.iter().any(|t| t.title == "Close Eyes"));
 }
 
-/// Rust-only: a call that would wait past the longest queue wait is skipped as nothing.
+/// A call that would wait past the longest queue wait is skipped as nothing.
 #[tokio::test]
 async fn a_call_too_far_back_in_the_queue_is_skipped() {
     let server = MockServer::start().await;

@@ -1,8 +1,6 @@
-//! Port of `NewReleasesBuilderTests`, `ForYouServiceTests` and `ForYouResponseTests` in
-//! `octo.Tests/ForYouListsTests.cs` (f54467a, 1f940f2, 452f47e): the catalog side of New Releases
-//! against a stand-in Deezer, and the whole refresh against a stand-in Navidrome and Deezer
-//! together. `ForYouListsTests` (the picking) is `octo_core::library::for_you_lists`'s;
-//! `ForYouControllerTests` is `controllers::subsonic::for_you_tests`.
+//! The catalog side of New Releases against a stand-in Deezer, and the whole refresh against a
+//! stand-in Navidrome and Deezer together. The picking is tested in
+//! `octo_core::library::for_you_lists`; the endpoints in `controllers::subsonic::for_you_tests`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,7 +34,7 @@ use crate::services::metadata::{DeezerMetadataService, DeezerRateLimitHandler, D
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::subsonic::{SubsonicProxyService, SubsonicResponseBuilderExt};
 
-/// The C# `ForYouUpstream`: a stand-in Deezer (under `/dz`) and Navidrome (under `/nd`) in one: an
+/// A stand-in Deezer (under `/dz`) and Navidrome (under `/nd`) in one: an
 /// artist with releases old, new and still to come, and a library whose listener plays that
 /// artist most.
 pub(crate) struct ForYouUpstream {
@@ -277,7 +275,7 @@ fn today() -> chrono::NaiveDate {
     Utc::now().date_naive()
 }
 
-// ---- NewReleasesBuilderTests --------------------------------------------------------------
+// ---- New releases -------------------------------------------------------------------------
 
 #[tokio::test]
 async fn new_releases_are_the_artists_latest_newest_first_with_the_listeners_own_copies() {
@@ -442,7 +440,7 @@ async fn listeners_building_together_take_the_catalog_in_turn() {
     assert_eq!(upstream.calls_ending("search/artist"), 2);
 }
 
-// ---- ForYouServiceTests -------------------------------------------------------------------
+// ---- The Made for you lists ---------------------------------------------------------------
 
 struct Built {
     service: Arc<GeneratedPlaylistService>,
@@ -802,7 +800,7 @@ async fn all_three_off_and_mixes_off_is_nothing() {
     assert!(lists.is_empty());
 }
 
-// ---- ForYouResponseTests ------------------------------------------------------------------
+// ---- What a client is told about the lists ------------------------------------------------
 
 fn builder() -> SubsonicResponseBuilder {
     SubsonicResponseBuilder::new(

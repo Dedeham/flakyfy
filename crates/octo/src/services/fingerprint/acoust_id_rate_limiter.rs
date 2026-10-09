@@ -1,4 +1,4 @@
-//! Port of `Services/Fingerprint/AcoustIdRateLimiter.cs`.
+//! The AcoustID request budget.
 
 use std::future::Future;
 use std::time::Duration;
@@ -6,9 +6,8 @@ use std::time::Duration;
 use crate::services::framework::{RateLimitLease, SlidingWindowRateLimiter, SlidingWindowRateLimiterOptions};
 
 tokio::task_local! {
-    /// `AsyncLocal<bool> BackgroundFlow`: set for the work run by
-    /// [`AcoustIdRateLimiter::in_background`]. Unlike an `AsyncLocal`, it does not reach a task
-    /// that work spawns; the lookups are awaited inline, so nothing relied on that.
+    /// Set for the work run by [`AcoustIdRateLimiter::in_background`]. It does not reach a task
+    /// that work spawns; the lookups are awaited inline, so nothing needs it to.
     static BACKGROUND_FLOW: bool;
 }
 
@@ -28,8 +27,8 @@ pub struct AcoustIdRateLimiter {
 }
 
 impl AcoustIdRateLimiter {
-    /// Named HttpClient that carries the limiting handler. A caller that resolves
-    /// any other client bypasses the budget entirely.
+    /// The name of the client that carries the limiter. A caller that uses any other client
+    /// bypasses the budget entirely.
     pub const CLIENT_NAME: &'static str = "acoustid";
 
     const PERMITS_PER_SECOND: u32 = 3;
@@ -40,7 +39,7 @@ impl AcoustIdRateLimiter {
                 permit_limit: Self::PERMITS_PER_SECOND,
                 window: Duration::from_secs(1),
                 segments_per_window: 3,
-                // Must be set explicitly: it defaults to 0, which makes AcquireAsync return a
+                // Must be set explicitly: it defaults to 0, which makes `acquire` return a
                 // NON-acquired lease immediately instead of waiting. A dropped lookup here is an
                 // accepted file, so dropping is the one thing this must not do by default.
                 // Bounded by the client's 10s timeout: 3/s drains 12 in four seconds.
@@ -55,7 +54,7 @@ impl AcoustIdRateLimiter {
         BACKGROUND_FLOW.scope(true, work).await
     }
 
-    /// Whether the current work runs in the background lane (`internal static bool InBackground`).
+    /// Whether the current work runs in the background lane.
     pub fn in_background_now() -> bool {
         BACKGROUND_FLOW.try_with(|flag| *flag).unwrap_or(false)
     }

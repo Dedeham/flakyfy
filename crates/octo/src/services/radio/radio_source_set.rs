@@ -1,5 +1,5 @@
-//! Port of `Services/Radio/RadioSourceSet.cs`: every radio source, asked together. One slow or
-//! failing source costs its own answer, never the radio.
+//! Every radio source, asked together. One slow or failing source costs its own answer, never
+//! the radio.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub const HIGHEST_WEIGHT: f64 = 1.5;
 
 pub struct RadioSourceSet {
     sources: Vec<Arc<dyn IRadioSource>>,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
     outcomes: Option<Arc<RadioOutcomeStore>>,
     source_timeout: Mutex<Duration>,
@@ -215,7 +215,7 @@ impl RadioSourceSet {
 
 #[cfg(test)]
 mod tests {
-    //! `RadioSourceSetTests`: the radio sources asked together: base weights, the seed-aware
+    //! The radio sources asked together: base weights, the seed-aware
     //! Sounds alike weight, and a source that keeps failing is rested instead of costing every
     //! radio its timeout.
 
@@ -318,7 +318,6 @@ mod tests {
         set.ask_all(&seed(), 10, &IndexMap::new(), None).await
     }
 
-    // RadioSourceSetTests.BaseWeights_AreTheReasonedStartingPoints
     #[test]
     fn base_weights_are_the_reasoned_starting_points() {
         let weights = set(RadioSourceSettings::default(), Vec::new()).weights(None, false);
@@ -329,7 +328,6 @@ mod tests {
         assert_eq!(weights[LIBRARY], 1.0);
     }
 
-    // RadioSourceSetTests.WhenNoCatalogKnowsTheSong_SoundsAlikeCountsMore_UnlessItWasLeftOut
     #[test]
     fn when_no_catalog_knows_the_song_sounds_alike_counts_more_unless_it_was_left_out() {
         let with = |weight: f64| {
@@ -347,7 +345,6 @@ mod tests {
         assert_eq!(with(0.0), 0.0);
     }
 
-    // RadioSourceSetTests.AnAdminWeightOutsideTheBounds_IsKept
     #[test]
     fn an_admin_weight_outside_the_bounds_is_kept() {
         let weights = set(
@@ -365,7 +362,6 @@ mod tests {
         assert!((weights[LISTEN_BRAINZ] - 3.0).abs() < 1e-6);
     }
 
-    // RadioSourceSetTests.ASlowSource_IsLeftOutOfOneRadio_TheOthersStillAnswer
     #[tokio::test]
     async fn a_slow_source_is_left_out_of_one_radio_the_others_still_answer() {
         let slow = FakeSource::new(YOU_TUBE_MUSIC, Behavior::Hang);
@@ -378,7 +374,6 @@ mod tests {
         assert_eq!(of(LAST_FM).tracks.len(), 1);
     }
 
-    // RadioSourceSetTests.ASourceThatKeepsFailing_IsRested_ThenComesBack
     #[tokio::test]
     async fn a_source_that_keeps_failing_is_rested_then_comes_back() {
         let failing = FakeSource::new(LISTEN_BRAINZ, Behavior::Fail);
@@ -398,7 +393,6 @@ mod tests {
         assert_eq!(set.available().len(), 1);
     }
 
-    // RadioSourceSetTests.ASuccess_ClearsTheFailures
     #[tokio::test]
     async fn a_success_clears_the_failures() {
         let flaky = FakeSource::new(LISTEN_BRAINZ, Behavior::Fail);
@@ -413,7 +407,6 @@ mod tests {
         assert_eq!(set.available().len(), 1);
     }
 
-    // RadioSourceSetTests.AnAnswerToACallFromBeforeTheRest_DoesNotEndTheRest
     #[tokio::test]
     async fn an_answer_to_a_call_from_before_the_rest_does_not_end_the_rest() {
         let gate = Arc::new(Notify::new());
@@ -442,7 +435,6 @@ mod tests {
         assert!(set.available().is_empty());
     }
 
-    // RadioSourceSetTests.OnlyTheSourcesAskedFor_AreAsked
     #[tokio::test]
     async fn only_the_sources_asked_for_are_asked() {
         let last_fm = FakeSource::new(LAST_FM, Behavior::Nothing);

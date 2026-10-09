@@ -1,4 +1,4 @@
-//! Port of `Services/Soulseek/RejectedPeerRegistry.cs`, the store behind `rejected-peers.json`.
+//! The rejected peer registry, the store behind `rejected-peers.json`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -39,14 +39,14 @@ impl Default for Entry {
             filename: String::new(),
             reason: String::new(),
             track: String::new(),
-            // default(DateTime) for a positional record parameter missing from the file.
+            // The earliest time, for an entry whose line in the file has none.
             rejected_utc: datetime::min_value(),
         }
     }
 }
 
 /// Remembers the peer-and-file pairs a completed download proved were the wrong recording,
-/// so RankCandidates never offers them again.
+/// so `rank_candidates` never offers them again.
 ///
 /// Before this, a rejection deleted the bytes and threw the fact away. The next star re-ran
 /// the same search, ranked the same peer first for the same reasons, and paid for the same
@@ -70,8 +70,7 @@ pub struct RejectedPeerRegistry {
 /// casing differs between a search response and a transfer record. Two distinct files on
 /// one peer never differ by case alone, so nothing is over-denied by that.
 ///
-/// Keyed by the case-folded key, the recency list included (the C# list removed keys
-/// case-sensitively; see known-diffs.md).
+/// Keyed by the case-folded key, the recency list included.
 #[derive(Default)]
 struct Lru {
     by_key: HashMap<String, (Entry, u64)>,
@@ -109,7 +108,7 @@ impl RejectedPeerRegistry {
     pub const MAX_ENTRIES: usize = 10_000;
 
     /// Fallback when no settings are supplied, which is only the case in tests. The real value
-    /// is Soulseek:RejectedPeerTtlDays, because how long a denial stands is a judgement about
+    /// is Soulseek:RejectedPeerTtlDays, because how long a denial stands is a judgment about
     /// how much a user trusts the verdict, not an invariant.
     pub const DEFAULT_TTL_DAYS: i32 = 30;
 
@@ -117,7 +116,7 @@ impl RejectedPeerRegistry {
     /// download into a burst of file writes. Same reasoning as the id registry.
     pub const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 
-    /// In memory only, with the default TTL (`new RejectedPeerRegistry()`).
+    /// In memory only, with the default TTL.
     pub fn in_memory() -> Self {
         Self::new(None::<PathBuf>, None)
     }
@@ -129,7 +128,7 @@ impl RejectedPeerRegistry {
         Self::with_clock(path, ttl_days, Clock::system())
     }
 
-    /// [`Self::new`] reading the time from `clock` (the C# read `DateTime.UtcNow`).
+    /// [`Self::new`] reading the time from `clock`.
     pub fn with_clock(
         path: Option<impl AsRef<Path>>,
         ttl_days: Option<Arc<dyn Fn() -> i32 + Send + Sync>>,
@@ -152,8 +151,8 @@ impl RejectedPeerRegistry {
         registry
     }
 
-    /// Identity of a candidate: the same pair SoulseekFileHit carries and the same pair
-    /// EnqueueDownloadAsync and WaitForCompletionAsync already use. Deliberately NOT the
+    /// Identity of a candidate: the same pair `SoulseekFileHit` carries and the same pair
+    /// `enqueue_download` and `wait_for_completion` already use. Deliberately NOT the
     /// username alone, which would blacklist a whole well-stocked library over one bad rip.
     pub fn make_key(username: Option<&str>, filename: Option<&str>) -> String {
         format!("{}|{}", username.unwrap_or(""), filename.unwrap_or(""))
@@ -315,7 +314,7 @@ impl RejectedPeerRegistry {
 }
 
 impl Drop for RejectedPeerRegistry {
-    /// `Dispose`: the last flush.
+    /// The last flush.
     fn drop(&mut self) {
         self.flush();
     }
@@ -447,7 +446,7 @@ mod tests {
         assert!(!registry.is_denied(Some(""), Some(FILE1)));
     }
 
-    // ---- Rust-only ----------------------------------------------------------------------
+    // ---- The state file and lapsed denials ----------------------------------------------
 
     const FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),

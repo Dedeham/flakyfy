@@ -1,4 +1,4 @@
-//! The Web API half of `ImportSourceTests.cs`, against a local stand-in for Spotify.
+//! Imports through Spotify's Web API, against a local stand-in for Spotify.
 
 use std::sync::Arc;
 

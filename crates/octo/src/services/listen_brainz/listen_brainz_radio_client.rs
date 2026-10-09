@@ -1,6 +1,5 @@
-//! Port of `Services/ListenBrainz/ListenBrainzRadioClient.cs`: ListenBrainz's listening data for
-//! radio: the labs datasets (no token, at most one call a second as its docs ask) and LB Radio (a
-//! user token since 2026-08-21).
+//! ListenBrainz's listening data for radio: the labs datasets (no token, at most one call a
+//! second as its docs ask) and LB Radio (a user token since 2026-08-21).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +25,7 @@ pub struct ListenBrainzTrack {
     pub duration_seconds: Option<i32>,
 }
 
-/// What the one cache holds (the C# kept one `MemoryCache` of objects).
+/// What the one cache holds: a recording lookup or a list of tracks.
 #[derive(Clone)]
 enum Cached {
     Recording(Option<String>),
@@ -38,7 +37,7 @@ pub struct ListenBrainzRadioClient {
     http: reqwest::Client,
     labs_url: String,
     api_url: String,
-    /// `IOptionsMonitor<ListenBrainzSettings>`: the token is read at every call.
+    /// The ListenBrainz settings: the token is read at every call.
     settings: Arc<SettingsStore>,
     minimum_gap: Duration,
     /// Longest a call waits for its one-a-second slot. Past that it gives up with nothing, which
@@ -183,7 +182,7 @@ impl ListenBrainzRadioClient {
     }
 
     /// LB Radio for a prompt ("artist:(Kordhell)", "tag:(phonk)"); nothing without a token. `Err`
-    /// where the C# reader threw: an answer whose `payload` is not the shape LB Radio writes.
+    /// for an answer whose `payload` is not the shape LB Radio writes.
     pub async fn lb_radio(&self, prompt: &str, count: i32) -> ElementResult<Vec<ListenBrainzTrack>> {
         let token = self.token();
         if dotnet::is_blank(&token) {

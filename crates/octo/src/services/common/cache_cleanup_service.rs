@@ -1,4 +1,4 @@
-//! Port of `Services/Common/CacheCleanupService.cs`, a worker of the supervisor.
+//! The cache cleanup, a worker of the supervisor.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,11 +14,9 @@ use tracing::{debug, error, info, warn};
 /// Background service that periodically cleans up old cached files
 /// Only runs when StorageMode is set to Cache
 pub struct CacheCleanupService {
-    // IOptionsMonitor, not IOptions: the admin UI writes settings.json and the
-    // config provider reloads it, but IOptions.Value is resolved once and this is a
-    // singleton, so a captured copy would serve startup values until a restart. The
-    // admin UI read through IOptionsMonitor and therefore SHOWED the new value while
-    // nothing acted on it.
+    // Read at use, never captured: the admin UI writes settings.json and the store
+    // reloads it, but this is a singleton, so a captured copy would serve startup values
+    // until a restart while the admin UI SHOWED the new value and nothing acted on it.
     settings: Arc<SettingsStore>,
     cleanup_interval: Duration,
     /// `PathHelper.GetCachePath()`; another folder in tests.
@@ -38,7 +36,7 @@ impl CacheCleanupService {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker's loop, until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         // Only run if storage mode is Cache
         if self.settings.current().subsonic.storage_mode != StorageMode::Cache {
@@ -243,7 +241,7 @@ mod tests {
             .expect("set the access time");
     }
 
-    /// Rust-only (no C# test): a file not read for the retention goes, a fresh one and the
+    /// A file not read for the retention goes, a fresh one and the
     /// radio sub-cache stay, and folders left empty go.
     #[test]
     fn old_files_go_and_radio_stays() {
@@ -263,7 +261,7 @@ mod tests {
         assert!(radio.exists());
     }
 
-    /// Outside Cache mode the worker ends at once, as `ExecuteAsync` returned.
+    /// Outside Cache mode the worker ends at once.
     #[tokio::test]
     async fn the_worker_does_nothing_outside_cache_mode() {
         let dir = tempfile::tempdir().expect("temp dir");

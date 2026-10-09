@@ -1,9 +1,8 @@
-//! Port of `Services/Common/AcquisitionTracker.cs`. The pure helpers (`FractionOf`, `UserSafe`)
-//! are `octo_core::common::acquisition_tracker`.
+//! The acquisition tracker: the live progress list. The pure helpers (`fraction_of`,
+//! `user_safe`) are `octo_core::common::acquisition_tracker`.
 //!
-//! The C# guarded every method with a catch-all, because "a bookkeeping mistake must never cost
-//! anyone a song". Nothing here can fail short of a panic, and a listener's panic is caught and
-//! logged, as a throwing listener was.
+//! A bookkeeping mistake must never cost anyone a song. Nothing here can fail short of a panic,
+//! and a listener's panic is caught and logged.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -44,7 +43,7 @@ pub enum AcquisitionState {
 }
 
 impl AcquisitionState {
-    /// The C# member name.
+    /// The state's name, capitalized.
     pub fn name(self) -> &'static str {
         match self {
             AcquisitionState::Queued => "Queued",
@@ -129,24 +128,22 @@ pub struct AcquisitionEnd {
     pub album_keys: Vec<String>,
 }
 
-/// Finds the Navidrome id of a placed file from its artist, title and path. `Err` where the
-/// C# lookup threw.
+/// Finds the Navidrome id of a placed file from its artist, title and path. `Err` when the
+/// lookup failed.
 pub type LibraryLookup =
     Arc<dyn Fn(String, String, String) -> BoxFuture<'static, anyhow::Result<Option<String>>> + Send + Sync>;
 
 /// Asks Navidrome to scan.
 pub type Rescan = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// Told when a row ends (the C# `Ended` event).
+/// Told when a row ends.
 pub type EndedListener = Arc<dyn Fn(&AcquisitionEnd) + Send + Sync>;
 
-/// Told, with the row's key, when a line arrives for a row that has already ended (the C#
-/// `LoggedAfterEnd` event).
+/// Told, with the row's key, when a line arrives for a row that has already ended.
 pub type LoggedAfterEndListener = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// What the tracker looks in Navidrome with: the services the C# resolved lazily from its
-/// `IServiceProvider` when a song was imported. None of them depends on the tracker, so they
-/// are simply handed over at construction.
+/// What the tracker looks in Navidrome with when a song was imported. None of them depends on
+/// the tracker, so they are simply handed over at construction.
 #[derive(Clone)]
 pub struct TrackerServices {
     pub identity: NavidromeIdentityService,
@@ -154,8 +151,8 @@ pub struct TrackerServices {
     pub library: Arc<dyn ILocalLibraryService>,
 }
 
-/// How an imported song is looked for in Navidrome, and the test seams (`Rescan`,
-/// `LibraryLookup`), which the C# exposed as internal settable properties.
+/// How an imported song is looked for in Navidrome, and the test seams (`rescan`,
+/// `library_lookup`).
 #[derive(Clone)]
 pub struct WatchSettings {
     /// Every `visibility_poll` for `visibility_attempts` tries, then every
@@ -334,7 +331,7 @@ impl AcquisitionTracker {
     pub const CAPACITY: usize = 500;
 
     /// `services` are what an imported song is looked for in Navidrome with; `None` (as the
-    /// tests built it, `services: null`) means only the [`WatchSettings`] seams can look.
+    /// tests build it) means only the [`WatchSettings`] seams can look.
     pub fn new(services: Option<TrackerServices>, clock: Clock) -> Self {
         AcquisitionTracker {
             state: Mutex::new(State::default()),
@@ -348,20 +345,20 @@ impl AcquisitionTracker {
     }
 
     /// Subscribes to lines that arrive for a row that has already ended (lyrics, an upgrade's
-    /// verdict), told the row's key outside the lock, so a saved copy of the log can catch up
-    /// (`LoggedAfterEnd += listener`). A listener that panics is logged and skipped.
+    /// verdict), told the row's key outside the lock, so a saved copy of the log can catch up. A
+    /// listener that panics is logged and skipped.
     pub fn subscribe_logged_after_end(&self, listener: LoggedAfterEndListener) -> u64 {
         let id = self.next_listener.fetch_add(1, Ordering::SeqCst);
         self.logged_after_end.lock().push((id, listener));
         id
     }
 
-    /// Changes how an imported song is watched for (the C# internal properties).
+    /// Changes how an imported song is watched for, and the test seams.
     pub fn configure_watch(&self, change: impl FnOnce(&mut WatchSettings)) {
         change(&mut self.watch.lock());
     }
 
-    /// Subscribes to rows ending (`Ended += listener`). Told outside the lock. A listener that
+    /// Subscribes to rows ending. Told outside the lock. A listener that
     /// panics is logged and skipped, so it can never cost anyone a song.
     pub fn subscribe_ended(&self, listener: EndedListener) -> u64 {
         let id = self.next_listener.fetch_add(1, Ordering::SeqCst);
@@ -369,7 +366,7 @@ impl AcquisitionTracker {
         id
     }
 
-    /// `Ended -= listener`.
+    /// Drops a listener [`Self::subscribe_ended`] added.
     pub fn unsubscribe_ended(&self, id: u64) {
         self.listeners.lock().retain(|(listener, _)| *listener != id);
     }
@@ -384,7 +381,7 @@ impl AcquisitionTracker {
 
     /// A star on a song was accepted. Starts an entry, or restarts one that already finished,
     /// or adds this user to one that is still running (a second heart joins the same download).
-    #[allow(clippy::too_many_arguments)] // the C# signature, member for member
+    #[allow(clippy::too_many_arguments)] // one argument per fact a row starts with
     pub fn begin(
         &self,
         provider: &str,
@@ -407,9 +404,8 @@ impl AcquisitionTracker {
         );
     }
 
-    /// [`Self::begin`] for a row of another kind: an upgrade, or a pick from Find songs (the
-    /// C# `kind` argument).
-    #[allow(clippy::too_many_arguments)] // the C# signature, member for member
+    /// [`Self::begin`] for a row of another kind: an upgrade, or a pick from Find songs.
+    #[allow(clippy::too_many_arguments)] // one argument per fact a row starts with
     pub fn begin_kind(
         &self,
         provider: &str,

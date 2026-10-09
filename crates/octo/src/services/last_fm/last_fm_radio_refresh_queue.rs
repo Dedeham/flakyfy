@@ -1,4 +1,4 @@
-//! Port of `Services/LastFm/LastFmRadioRefreshQueue.cs`: the bounded in-process refresh queue.
+//! The bounded in-process refresh queue.
 //! Duplicate user jobs collapse while queued.
 
 use std::collections::HashSet;
@@ -28,8 +28,8 @@ impl LastFmRadioRefreshJob {
     }
 }
 
-/// `Channel.CreateBounded(100)` with `DropWrite`, one reader, and the queued jobs' keys
-/// (`StringComparer.OrdinalIgnoreCase`).
+/// A channel of 100 that drops a write when full, one reader, and the queued jobs' keys,
+/// compared ignoring case.
 pub struct LastFmRadioRefreshQueue {
     sender: mpsc::Sender<LastFmRadioRefreshJob>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<LastFmRadioRefreshJob>>,
@@ -72,7 +72,7 @@ impl LastFmRadioRefreshQueue {
         false
     }
 
-    /// The next job, or None once `cancellation_token` is cancelled.
+    /// The next job, or None once `cancellation_token` is canceled.
     pub async fn dequeue(&self, cancellation_token: &CancellationToken) -> Option<LastFmRadioRefreshJob> {
         let mut receiver = self.receiver.lock().await;
         let job = tokio::select! {
@@ -97,7 +97,6 @@ fn queued_key(username: &str, station_definition_id: Option<&str>) -> String {
 mod tests {
     use super::*;
 
-    // LastFmRadioRefreshQueueTests.Queue_CollapsesIdenticalJobsButKeepsIndependentPinnedRefreshes
     #[tokio::test]
     async fn queue_collapses_identical_jobs_but_keeps_independent_pinned_refreshes() {
         let queue = LastFmRadioRefreshQueue::new();
@@ -127,7 +126,7 @@ mod tests {
         );
     }
 
-    /// Rust-only: a dequeued job can be queued again, a full queue drops the write, and a blank
+    /// A dequeued job can be queued again, a full queue drops the write, and a blank
     /// name is refused.
     #[tokio::test]
     async fn a_full_queue_drops_and_a_taken_job_can_come_back() {

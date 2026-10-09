@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/TrickleWorker.cs`.
+//! The trickle worker: fetches an import's missing songs a few an hour.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +75,7 @@ pub struct TrickleSeams {
 }
 
 impl Default for TrickleSeams {
-    /// As the C# built it with no services: nothing owned, no downloads set up.
+    /// A worker with no services: nothing owned, no downloads set up.
     fn default() -> Self {
         TrickleSeams {
             owned: Arc::new(|_| Box::pin(async { Ok(None) })),
@@ -254,7 +254,7 @@ impl TrickleWorker {
         worker
     }
 
-    /// Changes the seams (the C# settable properties).
+    /// Changes the seams (tests use it).
     pub fn configure(&self, change: impl FnOnce(&mut TrickleSeams)) {
         change(&mut self.seams.lock());
     }

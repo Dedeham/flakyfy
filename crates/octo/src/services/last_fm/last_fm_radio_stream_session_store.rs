@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/LastFmRadioStreamSessionStore.cs`.
-//!
 //! Bounded in-memory authorization bridge between an authenticated Subsonic station-list request
 //! and the credential-free streamUrl a radio client opens. Tokens disappear on restart and never
 //! expose usernames or Navidrome secrets.
@@ -41,7 +39,7 @@ impl PreparedRadioTrack {
 }
 
 /// A station a listener may stream, behind an opaque token. `authentication` holds only the
-/// Subsonic credential parameters (`StringComparer.OrdinalIgnoreCase` keys).
+/// Subsonic credential parameters, keyed ignoring case.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LastFmRadioStreamSession {
     pub token: String,
@@ -116,8 +114,7 @@ impl LastFmRadioStreamSessionStore {
             {
                 continue;
             }
-            // ToDictionary(OrdinalIgnoreCase) threw on a duplicate; the parameters are a
-            // dictionary already, so the first spelling stands.
+            // A key repeated in another case keeps its first spelling.
             if !auth.keys().any(|existing| dotnet::eq_ignore_case(existing, key)) {
                 auth.insert(key.to_string(), value.to_string());
             }
@@ -222,7 +219,6 @@ mod tests {
     use super::*;
     use crate::services::last_fm::last_fm_radio_stream_service::READY_POOL_SIZE;
 
-    // LastFmRadioCoreTests.StreamSessions_AreOpaqueScopedExpiringAndBounded
     #[test]
     fn stream_sessions_are_opaque_scoped_expiring_and_bounded() {
         let store = LastFmRadioStreamSessionStore::new();
@@ -307,8 +303,8 @@ mod tests {
         assert_eq!(store.count(), MAXIMUM_SESSIONS);
     }
 
-    // LastFmRadioCoreTests.RepeatedValueReader_PreservesQueryAndFormBatches: a station list's
-    // batch of ids reaches the radio whether the client sent it in the query or in a form body.
+    // A station list's batch of ids reaches the radio whether the client sent it in the query
+    // or in a form body.
     #[test]
     fn repeated_value_reader_preserves_query_and_form_batches() {
         use axum::http::{HeaderMap, HeaderValue, Method, header};
@@ -326,7 +322,6 @@ mod tests {
         assert_eq!(request.parameter_values("id"), ["q1", "q2", "f1", "f2"]);
     }
 
-    // RequestIdentityTests.RadioStreamSession_KeepsTheApiKey_ForTheRelaysItMakesLater
     #[test]
     fn radio_stream_session_keeps_the_api_key_for_the_relays_it_makes_later() {
         let store = LastFmRadioStreamSessionStore::new();
@@ -347,7 +342,7 @@ mod tests {
         assert!(!session.authentication.contains_key("id"));
     }
 
-    /// Rust-only: tokens are 48 lower-case hex characters, keys match ignoring case, and the
+    /// Tokens are 48 lower-case hex characters, keys match ignoring case, and the
     /// oldest session is the one a full store lets go.
     #[test]
     fn tokens_are_hex_and_the_oldest_session_goes_first() {

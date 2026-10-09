@@ -1,4 +1,4 @@
-//! Port of `Services/Common/TrackAcquisitionQueue.cs`: `AcquisitionRequest` and the queue.
+//! The track acquisition queue: `AcquisitionRequest` and the queue.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,13 +14,13 @@ use tracing::{debug, info, warn};
 use crate::services::library::ReplacementHandoff;
 
 /// How an acquisition ended: the path of the file on disk and fully registered, or why not.
-/// The error is shared, as every waiter of one `Task<string>` saw the same exception.
+/// The error is shared, so every waiter of one request sees the same error.
 pub type AcquisitionOutcome = Result<String, Arc<anyhow::Error>>;
 
-/// The C# `TaskCompletionSource<string>`: completed once, by the worker or by a drop, and
-/// awaited by everyone who joined the request. Waiters are woken as tasks of their own, so
-/// completing this never runs a waiting request's continuation: response headers, body writes,
-/// the client's whole download: inline on the worker (`RunContinuationsAsynchronously`).
+/// A one-shot completion: completed once, by the worker or by a drop, and awaited by everyone
+/// who joined the request. Waiters are woken as tasks of their own, so completing this never
+/// runs a waiting request's continuation (response headers, body writes, the client's whole
+/// download) inline on the worker.
 #[derive(Clone)]
 pub struct Completion {
     outcome: Arc<watch::Sender<Option<AcquisitionOutcome>>>,
@@ -35,12 +35,12 @@ impl Default for Completion {
 }
 
 impl Completion {
-    /// `TrySetResult`: false when it had already completed.
+    /// Completes with the file's path; false when it had already completed.
     pub fn try_set_result(&self, path: impl Into<String>) -> bool {
         self.try_set(Ok(path.into()))
     }
 
-    /// `TrySetException`: false when it had already completed.
+    /// Completes with an error; false when it had already completed.
     pub fn try_set_error(&self, error: impl Into<Arc<anyhow::Error>>) -> bool {
         self.try_set(Err(error.into()))
     }
@@ -86,7 +86,7 @@ pub struct AcquisitionRequest {
     pub notify_on_failure: bool,
 
     /// A library action's replacement: staged, given the original's identity and only
-    /// then moved in (W8). Not joined: a request already in flight runs without it.
+    /// then moved in. Not joined: a request already in flight runs without it.
     pub replacement: Option<Arc<ReplacementHandoff>>,
 
     // Set when a heart joins a request a play started. From then on the heart owns the
@@ -105,7 +105,7 @@ pub struct AcquisitionRequest {
 }
 
 impl AcquisitionRequest {
-    #[allow(clippy::too_many_arguments)] // the C# object initializer, member for member
+    #[allow(clippy::too_many_arguments)] // one argument per field of the request
     pub fn new(
         provider: impl Into<String>,
         external_id: impl Into<String>,
@@ -184,8 +184,7 @@ impl AcquisitionRequest {
     }
 }
 
-/// Runs when a play is skipped because another is still waiting: the test seam the C# test
-/// reached through the logger.
+/// Runs when a play is skipped because another is still waiting: a test seam.
 #[cfg(test)]
 pub(crate) type OnSkippedPlay = Arc<dyn Fn() + Send + Sync>;
 
@@ -198,7 +197,7 @@ struct Receivers {
 ///
 /// The point is that a download must never be tied to the HTTP request that asked for it.
 /// Playing a track used to run the whole Soulseek transfer inside the stream request, so a
-/// client giving up cancelled the transfer mid-flight while slskd finished the file anyway,
+/// client giving up canceled the transfer mid-flight while slskd finished the file anyway,
 /// and Octo kept no record of it (issue #9).
 ///
 /// Stars get their own channel and are never dropped: a star is explicit user intent,
@@ -267,7 +266,7 @@ impl TrackAcquisitionQueue {
     /// Queue an acquisition, or join the one already running for this track. The returned
     /// completion settles when the file is on disk and fully registered; callers that do not
     /// care may drop it.
-    #[allow(clippy::too_many_arguments)] // the C# signature, member for member
+    #[allow(clippy::too_many_arguments)] // one argument per field of the request
     pub fn enqueue(
         &self,
         provider: &str,
@@ -428,8 +427,7 @@ impl TrackAcquisitionQueue {
         Some(request)
     }
 
-    /// Take the next request, preferring stars. `None` once `cancellation_token` is cancelled
-    /// (where the C# threw `OperationCanceledException`, which every caller caught).
+    /// Take the next request, preferring stars. `None` once `cancellation_token` is canceled.
     pub(crate) async fn dequeue(
         &self,
         cancellation_token: &CancellationToken,

@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/AdminRoleCheck.cs`.
+//! The hourly check that each signed-in dashboard user is still a Navidrome admin.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,8 +66,7 @@ impl AdminRoleCheck {
         }
     }
 
-    /// Reads the time from `clock` from now on (the C# `internal Func<DateTime> Clock`, which a
-    /// test sets on the running instance).
+    /// Reads the time from `clock` from now on; a test sets it on the running instance.
     pub fn set_clock(&self, clock: Clock) {
         *self.clock.lock() = clock;
     }
@@ -109,7 +108,7 @@ impl AdminRoleCheck {
         if url.is_empty() {
             return Role::Unknown;
         }
-        // The whole exchange is bounded, as the C#'s linked token with CancelAfter was.
+        // The whole exchange is bounded.
         tokio::time::timeout(Self::ASK_FOR, self.ask_list(&url, user))
             .await
             .unwrap_or(Role::Unknown)

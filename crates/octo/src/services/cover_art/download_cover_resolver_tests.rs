@@ -1,7 +1,7 @@
-//! Port of `CoverChainTests`: the download-time cover chain (#51), the right release's cover when
-//! a fingerprint named it, the catalog and the aggregator next, and a cover that is not square
-//! never passes for one. Also the cover picture and cover.jpg rules and Apple's master lookups the
-//! chain stands on. The two `AlbumCoverFinder` tests go with that class (task 5-D).
+//! The download-time cover chain (#51): the right release's cover when a fingerprint named it,
+//! the catalog and the aggregator next, and a cover that is not square never passes for one.
+//! Also the cover picture and cover.jpg rules and Apple's master lookups the chain stands on.
+//! The `AlbumCoverFinder` tests are in `album_cover_finder_tests.rs`.
 
 use std::io::Cursor;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -131,7 +131,7 @@ impl ICoverArtSource for FixedSource {
 
 type Answer = Arc<dyn Fn(&str, &Request) -> ResponseTemplate + Send + Sync>;
 
-/// The C# tests' one `HttpMessageHandler` behind every client: answers by URL and records them.
+/// One stand-in behind every client: answers by URL and records the calls.
 #[derive(Clone)]
 struct Fake {
     answer: Answer,
@@ -253,7 +253,7 @@ fn matched_release(hosts: &Hosts) -> Song {
     )
 }
 
-/// The path of an archive call, as the C# read `new Uri(url).AbsolutePath` against its own base.
+/// The path of an archive call, read from its URL.
 fn archive_path(url: &str) -> Option<String> {
     url.split("/coverartarchive/").nth(1).map(str::to_string)
 }
@@ -289,7 +289,7 @@ async fn resolve_archive_first_when_the_album_is_the_matched_release() {
     assert!(hosts.calls().iter().any(|u| u.contains("deezer.example")));
 }
 
-/// The soft cover Brandon got: the archive's 500 px scan beat the catalog's 1000.
+/// A soft cover from a real library: the archive's 500 px scan beat the catalog's 1000.
 #[tokio::test]
 async fn resolve_a_small_archive_scan_loses_to_the_catalogs_larger_cover() {
     let (small, catalog) = (jpeg(500, 500), catalog());
@@ -948,7 +948,7 @@ async fn apple_matches_are_remembered_on_disk_across_a_restart() {
                 .await
                 .is_some()
         );
-        // `Dispose` wrote the matches.
+        // The last flush wrote the matches.
         first.flush_cache();
     }
     hosts.clear();
@@ -968,11 +968,11 @@ async fn apple_matches_are_remembered_on_disk_across_a_restart() {
     );
 }
 
-// ---- CoverKeepTests: the resolver ---------------------------------------------------------
+// ---- the cover keep, in the resolver ------------------------------------------------------
 //
-// Port of the resolver half of `CoverKeepTests`: the song's own cover is judged against the
-// release's art, kept when it is the same art and nothing much larger turned up, and the
-// timeline is told what was kept or replaced and what else was looked at.
+// The song's own cover is judged against the release's art, kept when it is the same art and
+// nothing much larger turned up, and the timeline is told what was kept or replaced and what
+// else was looked at.
 
 mod keep {
     use super::*;

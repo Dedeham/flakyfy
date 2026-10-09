@@ -1,7 +1,7 @@
-//! Port of `Services/Sonic/SonicAnalysisWorker.cs`: Sounds alike (multi-source radio) asks
-//! octo-sonic about every library song once, one at a time with a pause between, only while
-//! nothing downloads, then keeps up with new and changed songs on a pass every
-//! [`PASS_INTERVAL`]. A song that arrived through a tracked download goes first.
+//! The sonic analysis worker: Sounds alike (multi-source radio) asks octo-sonic about every
+//! library song once, one at a time with a pause between, only while nothing downloads, then
+//! keeps up with new and changed songs on a pass every [`PASS_INTERVAL`]. A song that arrived
+//! through a tracked download goes first.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,11 +30,11 @@ use crate::services::library::{NavidromePlaylistApi, NavidromeSongPathResolver};
 /// A local file of a library song, as the analysis stamps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SonicFile {
-    /// `FileInfo.FullName`.
+    /// The full path.
     pub full_name: String,
-    /// `FileInfo.Length`.
+    /// The size in bytes.
     pub length: i64,
-    /// `FileInfo.LastWriteTimeUtc.Ticks`.
+    /// The last write time, in 100-nanosecond ticks ([`dotnet_ticks`]).
     pub last_write_ticks: i64,
 }
 
@@ -99,7 +99,6 @@ impl ISonicLibrary for NavidromeSonicLibrary {
 
     /// The verified local file of a song from Navidrome's song list; None when Octo cannot read
     /// it here (Sounds alike sends only files it can name to octo-sonic).
-    /// (`NavidromeSongPathResolver.LocalFile` in the C#.)
     fn local_file(&self, row: &LibrarySongRow) -> Option<SonicFile> {
         let candidate = Candidate {
             id: row.id.clone(),
@@ -129,7 +128,7 @@ impl ISonicLibrary for NavidromeSonicLibrary {
 pub struct SonicStatus {
     pub state: String,
     pub reason: Option<String>,
-    /// "analysed" is the C# property's name; a JSON field keeps its name.
+    /// Spelled "analysed" because that is the JSON field's name, and a JSON field keeps its name.
     pub analysed: i32,
     pub total: i32,
     pub failed: i32,
@@ -178,7 +177,7 @@ pub struct SonicAnalysisWorker {
     sonic: Arc<dyn ISonicClient>,
     library: Arc<dyn ISonicLibrary>,
     activity: Arc<dyn IAcquisitionActivity>,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
     clock: Clock,
     first: Mutex<VecDeque<String>>,
@@ -591,7 +590,7 @@ impl SonicAnalysisWorker {
     }
 }
 
-/// One row per id, the first kept (`DistinctBy(row => row.Id, Ordinal)`).
+/// One row per id (compared exactly), the first kept.
 fn distinct(rows: Vec<LibrarySongRow>) -> Vec<LibrarySongRow> {
     let mut seen = HashSet::new();
     rows.into_iter()

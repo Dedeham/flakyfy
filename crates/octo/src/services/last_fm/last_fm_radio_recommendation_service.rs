@@ -1,6 +1,6 @@
-//! Port of `Services/LastFm/LastFmRadioRecommendationService.cs`: builds canonical station
-//! snapshots from bounded listening signals, asking Last.fm for the candidates. The weighing,
-//! the draw and the shaping are `octo_core::last_fm::last_fm_radio_recommendation_service`.
+//! Builds canonical station snapshots from bounded listening signals, asking Last.fm for the
+//! candidates. The weighing, the draw and the shaping are
+//! `octo_core::last_fm::last_fm_radio_recommendation_service`.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ use crate::services::radio::RadioSourceSet;
 /// Provider expansion has a hard fan-out and deadline. Partial results are useful.
 const PROVIDER_BUDGET: Duration = Duration::from_secs(25);
 
-/// `CancellationTokenSource.CreateLinkedTokenSource(ct)` with `CancelAfter(25 s)`.
+/// The caller's token with a 25 s deadline on top: either ends the build.
 struct Budget<'a> {
     caller: &'a CancellationToken,
     deadline: Instant,
@@ -44,7 +44,7 @@ struct Budget<'a> {
 
 impl Budget<'_> {
     /// The call, or [`OperationCanceled`] once the caller cancels or the deadline passes. (A
-    /// cancelled call is dropped, which cancels its request.)
+    /// canceled call is dropped, which cancels its request.)
     async fn run<F: Future>(&self, call: F) -> Result<F::Output, OperationCanceled> {
         tokio::select! {
             biased;
@@ -62,7 +62,7 @@ impl Budget<'_> {
 pub struct LastFmRadioRecommendationService {
     last_fm: Arc<LastFmService>,
     state: Arc<LastFmRadioStateStore>,
-    /// `IOptionsMonitor<LastFmSettings>`.
+    /// The Last.fm settings.
     settings: Arc<SettingsStore>,
     /// Source of the draw. Tests replace it with a seeded one so a build repeats exactly.
     randomizer: Mutex<Randomizer>,
@@ -91,9 +91,9 @@ impl LastFmRadioRecommendationService {
         *self.randomizer.lock() = randomizer;
     }
 
-    /// The listener's stations, built now. An error is what the C# threw out of `BuildAsync`: an
-    /// answer Last.fm's reader refused, or [`OperationCanceled`] when the caller cancelled or the
-    /// budget ran out while an artist station was being built.
+    /// The listener's stations, built now. An error is an answer Last.fm's reader refused, or
+    /// [`OperationCanceled`] when the caller canceled or the budget ran out while an artist
+    /// station was being built.
     pub async fn build(
         &self,
         username: &str,
@@ -108,7 +108,7 @@ impl LastFmRadioRecommendationService {
         let now = Utc::now();
         let randomizer = self.randomizer.lock().clone();
         let mut random = randomizer();
-        // GroupBy(Key, OrdinalIgnoreCase): the first station with a key names its snapshot.
+        // Grouped by key ignoring case: the first station with a key names its snapshot.
         let mut previous_snapshots: Vec<(String, IgnoreCaseKeys)> = Vec::new();
         for station in &user.stations {
             if !previous_snapshots
@@ -612,7 +612,7 @@ impl LastFmRadioRecommendationService {
     }
 }
 
-/// `previousSnapshots.GetValueOrDefault(stationKey) ?? new HashSet<string>()`.
+/// The station's previous snapshot, matched by key ignoring case, or `empty`.
 fn previous_snapshot<'a>(
     snapshots: &'a [(String, IgnoreCaseKeys)],
     empty: &'a IgnoreCaseKeys,
@@ -624,7 +624,7 @@ fn previous_snapshot<'a>(
         .map_or(empty, |(_, keys)| keys)
 }
 
-/// `string.Contains(value, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `value` appears in `text`, ignoring case.
 fn contains_ignore_case(text: &str, value: &str) -> bool {
     dotnet::ordinal_ignore_case_key(text).contains(&dotnet::ordinal_ignore_case_key(value))
 }

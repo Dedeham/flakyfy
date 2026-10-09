@@ -1,6 +1,6 @@
-//! Port of `Services/Radio/YouTubeMusicRadioSource.cs`: YouTube Music's radio for the seed. It
-//! knows uploads Last.fm never heard of, nightcore and phonk channels included, which is why it
-//! suits a library built from YouTube (#78).
+//! YouTube Music as a radio source: YouTube Music's radio for the seed. It knows uploads Last.fm
+//! never heard of, nightcore and phonk channels included, which is why it suits a library built
+//! from YouTube (#78).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +32,7 @@ pub struct SeedVideo {
 
 pub struct YouTubeMusicRadioSource {
     ytm: Arc<YouTubeMusicClient>,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
     seeds: MemoryCache<Option<SeedVideo>>,
 }
@@ -197,7 +197,7 @@ impl IRadioSource for YouTubeMusicRadioSource {
 
 #[cfg(test)]
 mod tests {
-    //! `YouTubeMusicRadioSourceTests`: YouTube Music as a radio source: finding the seed's video,
+    //! YouTube Music as a radio source: finding the seed's video,
     //! its radio, which rows count as music, artist radio only for the very artist, and the seed
     //! search cached.
 
@@ -290,7 +290,6 @@ mod tests {
             .count()
     }
 
-    // YouTubeMusicRadioSourceTests.ARelease_GetsItsRadio_WithoutUploadsPodcastsOrItself
     #[tokio::test]
     async fn a_release_gets_its_radio_without_uploads_podcasts_or_itself() {
         let (source, shim, _server) = source().await;
@@ -322,7 +321,6 @@ mod tests {
         );
     }
 
-    // YouTubeMusicRadioSourceTests.AnUpload_IsFoundAmongVideos_AndItsRadioKeepsUploads
     #[tokio::test]
     async fn an_upload_is_found_among_videos_and_its_radio_keeps_uploads() {
         let (source, shim, _server) = source().await;
@@ -343,7 +341,6 @@ mod tests {
         assert_eq!(titles, ["DRIFT KING", "Murder In My Mind"]);
     }
 
-    // YouTubeMusicRadioSourceTests.OnlyAnotherVersionOnYouTubeMusic_IsTheOriginalsRadio
     #[tokio::test]
     async fn only_another_version_on_you_tube_music_is_the_originals_radio() {
         let (source, shim, _server) = source().await;
@@ -360,7 +357,6 @@ mod tests {
         assert_eq!(answer.tracks.len(), 1);
     }
 
-    // YouTubeMusicRadioSourceTests.AKnownVideo_NeedsNoSearch
     #[tokio::test]
     async fn a_known_video_needs_no_search() {
         let (source, shim, _server) = source().await;
@@ -375,7 +371,6 @@ mod tests {
         assert_eq!(searches(&shim), 0);
     }
 
-    // YouTubeMusicRadioSourceTests.TheSeedSearch_IsAskedOnce
     #[tokio::test]
     async fn the_seed_search_is_asked_once() {
         let (source, shim, _server) = source().await;
@@ -389,7 +384,6 @@ mod tests {
         assert_eq!(searches(&shim), 1);
     }
 
-    // YouTubeMusicRadioSourceTests.ABusyShim_IsAskedAgainNextTime_NotRememberedAsNothingFound
     #[tokio::test]
     async fn a_busy_shim_is_asked_again_next_time_not_remembered_as_nothing_found() {
         let (source, shim, _server) = source().await;
@@ -411,7 +405,6 @@ mod tests {
         assert_eq!(ask(&source, &roads).await.tracks.len(), 1);
     }
 
-    // YouTubeMusicRadioSourceTests.NothingFound_IsNothing
     #[tokio::test]
     async fn nothing_found_is_nothing() {
         let (source, _shim, _server) = source().await;
@@ -420,7 +413,6 @@ mod tests {
         assert!(answer.tracks.is_empty());
     }
 
-    // YouTubeMusicRadioSourceTests.ArtistRadio_IsOnlyForTheVeryArtist
     #[tokio::test]
     async fn artist_radio_is_only_for_the_very_artist() {
         for (found, used) in [("Massive Attack", true), ("Massive Attack Tribute Band", false)] {
@@ -437,7 +429,6 @@ mod tests {
         }
     }
 
-    // YouTubeMusicRadioSourceTests.Rows_TolerateMissingFields
     #[test]
     fn rows_tolerate_missing_fields() {
         let rows = crate::services::you_tube::you_tube_music_client::rows(&json!({"tracks": [

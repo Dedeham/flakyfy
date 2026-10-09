@@ -1,5 +1,4 @@
-//! CoverUpgradeTests, and Rust-only tests of the state files, the journal and the Navidrome
-//! side.
+//! The cover upgrade, its state files, the journal and the Navidrome side.
 //!
 //! "Upgrade cover art" rewrites the owner's files, so what it touches, what it leaves and what
 //! Undo puts back are pinned here, on real MP3s (made by ffmpeg) with real tags.
@@ -470,7 +469,7 @@ async fn a_preview_keeps_a_small_copy_of_each_cover_it_found_and_a_new_scan_forg
     assert!(worker.found_thumbnail(&id).is_none());
 }
 
-/// Brandon's library is one folder of 2,400 songs: a pick must not read them all again.
+/// A library can be one folder of 2,400 songs: a pick must not read them all again.
 #[tokio::test]
 async fn in_a_flat_library_a_pick_reads_only_the_picked_albums_songs() {
     let library = Library::new(audio_or_skip!("mp3"));
@@ -598,18 +597,16 @@ async fn a_stopped_run_does_the_unfinished_part_again_on_resume_and_lists_each_a
 
     let current = store.current();
     assert_eq!(current.status, CoverUpgradeStatus::Completed);
-    // Albums are looked up four at a time, so the stopped batch may hold both. The C# ran the
-    // whole batch again on resume (3 or 4 lookups); the port goes on with only what the stop
-    // left undone (port fix, known-diffs "Cover upgrade: a resumed run's counts"), so each
-    // album is looked up, listed and counted once.
+    // Albums are looked up four at a time, so the stopped batch may hold both. A resume goes on
+    // with only what the stop left undone, never the whole batch again (3 or 4 lookups), so
+    // each album is looked up, listed and counted once.
     assert_eq!(*finder.calls.lock(), 2);
     assert_eq!(current.upgraded, 2);
     assert_eq!(current.preview.len(), 2);
 }
 
-/// Port fix (C# 2026.10.05 counted the stopped batch again: "6 of 3 albums", songs read 20 of
-/// 10): a resume takes off what the stopped batch counted before it runs the batch again, so
-/// each album and each song counts once.
+/// A resume takes off what the stopped batch counted before it runs the batch again, so each
+/// album and each song counts once (never "6 of 3 albums", or songs read 20 of 10).
 #[tokio::test]
 async fn a_resumed_run_counts_each_album_and_song_once() {
     let library = Library::new(audio_or_skip!("mp3"));
@@ -643,10 +640,9 @@ async fn a_resumed_run_counts_each_album_and_song_once() {
     assert!(!octo_core::json::to_string(&done).contains("Batch"));
 }
 
-/// Port fix (C# 2026.10.05 went through the whole batch again on resume, so an album a replace
-/// had already written was looked up again, found as sharp as the new cover and counted kept
-/// beside its upgraded row): a resumed replace leaves alone the albums it finished before the
-/// stop, and counts each once.
+/// A resumed replace leaves alone the albums it finished before the stop, and counts each once.
+/// Going through the whole batch again would look up an album it had already written, find it
+/// as sharp as the new cover and count it kept beside its upgraded row.
 #[tokio::test]
 async fn a_resumed_replace_does_not_count_a_written_album_again() {
     let library = Library::new(audio_or_skip!("mp3"));
@@ -682,7 +678,7 @@ async fn a_resumed_replace_does_not_count_a_written_album_again() {
     );
 }
 
-/// Port fix: a scan with folders Navidrome did not group never ends with more albums done than
+/// A scan with folders Navidrome did not group never ends with more albums done than
 /// it has in all.
 #[tokio::test]
 async fn albums_done_never_passes_albums_total() {
@@ -706,7 +702,7 @@ async fn albums_done_never_passes_albums_total() {
     assert_eq!(run.batch.expect("a batch").counted, ["a", "b"]);
 }
 
-/// Port fix: the cover scan used to walk into the trash folder and list a trashed song as an
+/// The cover scan used to walk into the trash folder and list a trashed song as an
 /// album of its own, with an id that depended on the dated folder it sat in.
 #[tokio::test]
 async fn a_scan_of_the_whole_library_leaves_the_trash_out() {
@@ -804,7 +800,7 @@ async fn the_same_artwork_sharper_is_marked_alike() {
     assert_eq!(current.preview[0].looks_same, Some(true));
 }
 
-// ---- Rust-only: the state files ------------------------------------------------------------
+// ---- the state files -----------------------------------------------------------------------
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -838,9 +834,9 @@ fn the_store_writes_the_fixture_back_unchanged() {
     assert!(!dir.path().join("cover-upgrade.json.tmp").exists());
 }
 
-/// Missing fields take the C# initializers; DryRun and CanResume are never written.
+/// Missing fields take their defaults; DryRun and CanResume are never written.
 #[test]
-fn missing_fields_take_the_csharp_defaults() {
+fn missing_fields_take_their_defaults() {
     let run: CoverUpgradeRun = serde_json::from_str(r#"{"RunId":"r","Errors":null}"#).expect("reads");
     assert!(run.folder_covers);
     assert_eq!(run.smaller_than, 1000);
@@ -972,7 +968,7 @@ fn the_journal_keeps_each_picture_once_and_forgets_unneeded_ones() {
         "r1"
     ));
     assert!(journal.has_entries());
-    // The hash .NET gives "hello" (SHA-256, the first 32 hex digits, lower case).
+    // The hash of "hello" (SHA-256, the first 32 hex digits, lower case).
     let hello = "2cf24dba5fb0a30e26e83b2ac5b9e29e";
     assert_eq!(journal.backup(Some(hello)).as_deref(), Some(&b"hello"[..]));
     let backups = dir.path().join("cover-backups");
@@ -1006,8 +1002,8 @@ fn the_journal_keeps_each_picture_once_and_forgets_unneeded_ones() {
 }
 
 #[test]
-fn album_ids_are_the_csharp_ones() {
-    // CoverUpgradeWorker.AlbumId on .NET 9.
+fn album_ids_keep_their_known_values() {
+    // A fixed value, so the album ids a saved run already holds keep matching.
     assert_eq!(
         CoverUpgradeWorker::album_id("/music/Daft Punk/Discovery", "daft punk|discovery"),
         "c45d1ab947dbef1b"
@@ -1058,7 +1054,7 @@ async fn a_png_folder_cover_is_reported_and_left() {
 }
 
 /// Octo's downloads come from the mappings; without a library service the run fails with the
-/// container's message, as the C# did. A real upgrade asks for a scan afterwards.
+/// missing service's message. A real upgrade asks for a scan afterwards.
 #[tokio::test]
 async fn octo_downloads_walk_the_mappings_and_a_write_asks_for_a_scan() {
     let library = Library::new(audio_or_skip!("mp3"));
@@ -1104,7 +1100,7 @@ async fn octo_downloads_walk_the_mappings_and_a_write_asks_for_a_scan() {
     assert_eq!(fake.scans(), 1);
 }
 
-// ---- Rust-only: Navidrome ------------------------------------------------------------------
+// ---- Navidrome -----------------------------------------------------------------------------
 
 fn navidrome(server: &MockServer) -> (AppSettings, Arc<NavidromeIdentityService>) {
     let settings = AppSettings {
@@ -1179,7 +1175,7 @@ async fn navidrome_names_the_albums_and_draws_their_tiles() {
         .collect();
     assert_eq!(items, [(Some("al-disc"), 2), (None, 1)]);
     // Only the albums the total counts are counted as done: Navidrome named one, so the loose
-    // folder's album is not (port fix; the C# counted it too and ended "2 of 1").
+    // folder's album is not (counting it too would end "2 of 1").
     assert_eq!((current.albums_total, current.albums_done), (1, 1));
     assert_eq!((current.songs_total, current.songs_read), (3, 3));
     let discovery = current

@@ -1,8 +1,8 @@
-//! Port of `Services/Lyrics/LyricsLibrarySteps.cs`, the other half of the C# partial class
-//! `LyricsLibraryWorker`: the lyrics page's steps (see `LyricsLibraryMode`): scan, preview, save,
-//! undo. A scan reads tags only, so it is quick and changes nothing; a preview looks the picked
-//! songs up one at a time with the same pause as a walk; Save writes only what the preview found,
-//! and only where Octo may; Undo puts back every file Save wrote over, newest first.
+//! The other half of `LyricsLibraryWorker`: the lyrics page's steps (see `LyricsLibraryMode`):
+//! scan, preview, save, undo. A scan reads tags only, so it is quick and changes nothing; a
+//! preview looks the picked songs up one at a time with the same pause as a walk; Save writes
+//! only what the preview found, and only where Octo may; Undo puts back every file Save wrote
+//! over, newest first.
 //!
 //! The rules without the files and the lookups are `octo_core::lyrics::lyrics_library_steps`.
 
@@ -91,9 +91,8 @@ impl LyricsLibraryWorker {
                 run.rows = Vec::new();
                 run.word_already = 0;
                 self.store.replace(run);
-                // The C# listed the songs into the run it had just put in the store, then put it
-                // there again: whatever happened to the run meanwhile (a review entry dismissed)
-                // stays.
+                // The songs are listed into the run already in the store, so whatever happened
+                // to the run meanwhile (a review entry dismissed) stays.
                 let queue = self.enumerate(whole).await;
                 let total = count(queue.len());
                 self.store.update(|run| {
@@ -152,7 +151,7 @@ impl LyricsLibraryWorker {
         true
     }
 
-    /// The rows by id, as the C# `ToDictionary` made them: two rows with one id are an error.
+    /// The rows by id: two rows with one id are an error.
     fn rows_by_id(&self) -> anyhow::Result<HashMap<String, LyricsLibraryRow>> {
         self.store.read(|run| {
             let mut rows = HashMap::with_capacity(run.rows.len());
@@ -315,9 +314,8 @@ impl LyricsLibraryWorker {
             } else {
                 SongLyrics::NOTHING
             };
-            // The C# caught a lookup's exception as the song's error, and a cancellation as an
-            // interruption. Neither reaches here: the lyrics service answers a source that throws
-            // as "not now", and a cancelled lookup as "not now" too (counted as busy before the
+            // A failed lookup never reaches here: the lyrics service answers a source that fails
+            // as "not now", and a canceled lookup as "not now" too (counted as busy before the
             // pause ends the run), so only a song that is gone fails.
             let lookup = if exists {
                 Some(self.writer.look_up(&job, has.timing, stopping).await)
@@ -491,7 +489,7 @@ pub(crate) fn lyrics_file_stems(root: &str, trash: Option<&Path>) -> Option<Hash
     Some(files.iter().map(|file| stem_of(&full_path(file))).collect())
 }
 
-/// `Path.Combine(Path.GetDirectoryName(full), Path.GetFileNameWithoutExtension(full))`.
+/// The full path without its extension.
 fn stem_of(full: &str) -> String {
     let name = full.rsplit('/').next().unwrap_or(full);
     full[..full.len() - extension_of(name).len()].to_string()

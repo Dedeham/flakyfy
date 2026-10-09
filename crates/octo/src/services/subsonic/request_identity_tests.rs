@@ -1,6 +1,5 @@
-//! Port of `RequestIdentityTests`' own subject. The C# tests drove it through the scrobble and
-//! search3 controllers; those wait for 6-A, so their intent is checked here against the
-//! service with Navidrome's tokenInfo stood in for by wiremock.
+//! Who a request is from, checked against the service with Navidrome's tokenInfo stood in for
+//! by wiremock.
 
 use super::*;
 use octo_core::settings::{AppSettings, SettingsStore, SubsonicSettings};
@@ -110,8 +109,7 @@ async fn a_named_request_is_never_looked_up() {
     assert_eq!(calls(&server).await, 0);
 }
 
-/// `ApiKeyScrobble_ReachesTheKeyOwnersLastFm` and `TwoApiKeyUsers_NeverShareASearchOrder`:
-/// each key is named after its owner, asked once, then remembered.
+/// Each key is named after its owner, asked once, then remembered.
 #[tokio::test]
 async fn an_api_key_is_named_once_then_remembered() {
     let server = navidrome(false, Duration::ZERO).await;
@@ -143,8 +141,6 @@ async fn an_api_key_is_named_once_then_remembered() {
     assert!(query.contains(&("f".into(), "json".into())));
 }
 
-/// `ApiKeyScrobble_WhenNavidromeWillNotSayWhose_LearnsNothing` and
-/// `ApiKey_NavidromeWouldNotName_IsNotAskedAgainStraightAway`.
 #[tokio::test]
 async fn a_key_navidrome_will_not_name_is_nobody_and_not_asked_again_straight_away() {
     let server = navidrome(true, Duration::ZERO).await;
@@ -160,7 +156,6 @@ async fn a_key_navidrome_will_not_name_is_nobody_and_not_asked_again_straight_aw
     assert_eq!(calls(&server).await, 1);
 }
 
-/// `ApiKey_NavidromeWouldNotName_IsAskedAgainAfterAWhile`.
 #[tokio::test]
 async fn a_key_navidrome_would_not_name_is_asked_again_after_a_while() {
     let failing = navidrome(true, Duration::ZERO).await;
@@ -183,7 +178,6 @@ async fn a_key_navidrome_would_not_name_is_asked_again_after_a_while() {
     assert_eq!(calls(&failing).await + calls(&answering).await, 2);
 }
 
-/// `ApiKey_RequestsArrivingTogether_AskOnce`.
 #[tokio::test]
 async fn requests_arriving_together_ask_once() {
     let server = navidrome(false, Duration::from_millis(300)).await;

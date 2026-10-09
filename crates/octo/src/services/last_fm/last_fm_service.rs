@@ -1,5 +1,5 @@
-//! Port of `Services/LastFm/LastFmService.cs`: Last.fm's web service as the radio and the search
-//! bar read it. The records are `octo_core::last_fm::last_fm_service`.
+//! Last.fm's web service as the radio and the search bar read it. The records are
+//! `octo_core::last_fm::last_fm_service`.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -28,7 +28,7 @@ use crate::services::framework::HttpAnswer;
 use crate::services::framework::http::client_builder;
 use crate::services::http_client_factory::DEFAULT_TIMEOUT;
 
-/// What the radio cache holds: the C# kept `object` and checked the type on the way out.
+/// What the radio cache holds, one kind of answer per variant.
 #[derive(Clone)]
 enum RadioValue {
     Artists(Vec<SimilarArtist>),
@@ -181,7 +181,7 @@ struct CachedSimilar {
 pub struct LastFmService {
     http: reqwest::Client,
     base_url: String,
-    /// `IOptionsMonitor<LastFmSettings>`: read at every use.
+    /// The Last.fm settings: read at every use.
     settings: Arc<SettingsStore>,
 
     // Behind locks because radio requests arrive on request tasks and this is written on
@@ -194,7 +194,7 @@ pub struct LastFmService {
 impl LastFmService {
     pub const BASE_URL: &'static str = "https://ws.audioscrobbler.com/2.0/";
 
-    /// The C# methods' default limits.
+    /// The default limits of each call.
     pub const SIMILAR_TRACKS_LIMIT: i32 = 50;
     pub const SEARCH_LIMIT: i32 = 30;
     pub const ARTIST_TOP_TRACKS_LIMIT: i32 = 30;
@@ -202,15 +202,14 @@ impl LastFmService {
     pub const TOP_TAGS_LIMIT: i32 = 10;
     pub const TAG_TOP_TRACKS_LIMIT: i32 = 50;
 
-    /// The production client (`AddHttpClient<LastFmService>()`: the default client, 100 s).
+    /// The production client: the default HTTP client, 100 s.
     pub fn new(settings: Arc<SettingsStore>) -> Self {
         Self::with_base_url(settings, Self::BASE_URL)
     }
 
     /// A client that asks another host: a test's mock server.
     pub fn with_base_url(settings: Arc<SettingsStore>, base_url: &str) -> Self {
-        // IOptions<MetadataSettings>: the Accept-Language is applied once, at construction,
-        // deliberately, as the C# applied it to its client.
+        // The metadata settings' Accept-Language is applied once, at construction, deliberately.
         let mut headers = HeaderMap::new();
         if let Some(language) = accept_language_header::header_value(&settings.current().metadata)
             && let Ok(value) = HeaderValue::from_str(&language)
@@ -425,7 +424,7 @@ impl LastFmService {
     }
 
     /// How many listeners Last.fm counts for an artist; 0 when it does not know them. An `Err`
-    /// where the C# reader threw: an answer whose `artist` is not an object.
+    /// for an answer whose `artist` is not an object.
     async fn artist_listeners(&self, artist: &str) -> ElementResult<i64> {
         self.cached(&format!("artist-listeners|{artist}"), || async {
             let Some(doc) = self.get_document("artist.getInfo", &[("artist", artist)]).await else {
@@ -619,8 +618,8 @@ impl LastFmService {
         })
     }
 
-    /// `Err` where the C# let an exception out of the method: an element of Last.fm's answer
-    /// that is not the kind the reader needs (an artist that is not an object, say).
+    /// `Err` for an element of Last.fm's answer that is not the kind the reader needs (an artist
+    /// that is not an object, say).
     pub async fn get_similar_artists(&self, artist: &str, limit: i32) -> ElementResult<Vec<SimilarArtist>> {
         self.cached(&format!("artist-similar|{artist}|{limit}"), || async {
             let doc = self
@@ -773,7 +772,8 @@ impl LastFmService {
             .await
             .expect("the gate is never closed");
         let api_key = self.last_fm().api_key;
-        // new Dictionary(parameters) with method, api_key and format set after them.
+        // The caller's parameters, then method, api_key and format, each replacing a parameter
+        // of the same name in place.
         let mut query: Vec<(&str, &str)> = Vec::new();
         for (name, value) in parameters.iter().copied().chain([
             ("method", method),
@@ -838,7 +838,7 @@ fn take<T>(mut items: Vec<T>, limit: i32) -> Vec<T> {
     items
 }
 
-/// `values.Select(read).Where(kept).Take(limit)`, evaluated lazily as LINQ did: an element after
+/// Reads each value, keeps the ones read as `Some`, and stops at `limit`. Lazy: an element after
 /// the last one taken is never read, so it cannot fail the call.
 fn take_valid<T>(
     values: &[Value],
@@ -861,7 +861,7 @@ fn take_valid<T>(
     Ok(out)
 }
 
-/// track.getsimilar's answer, read as `FetchSimilarTracksAsync` read it.
+/// track.getsimilar's answer.
 fn read_similar_tracks(doc: &Value) -> ElementResult<Vec<SimilarTrack>> {
     let mut tracks = Vec::new();
     let Some(similar_tracks) = try_get_property(doc, "similartracks")? else {
@@ -913,7 +913,7 @@ fn read_similar_tracks(doc: &Value) -> ElementResult<Vec<SimilarTrack>> {
     Ok(tracks)
 }
 
-/// track.search's answer, read as `SearchTracksAsync` read it.
+/// track.search's answer.
 fn read_search_tracks(doc: &Value) -> ElementResult<Vec<SimilarTrack>> {
     let mut tracks = Vec::new();
     if let Some(results) = try_get_property(doc, "results")?
@@ -955,7 +955,7 @@ fn try_array<'a>(root: &'a Value, container: &str, array: &str) -> ElementResult
     }
 }
 
-/// `JsonElement.ToString()`: a string's text, a number's raw text, `True`/`False`, nothing for
+/// A JSON value as text: a string's text, a number's raw text, `True`/`False`, nothing for
 /// null, and the JSON of an object or array.
 fn element_text(value: &Value) -> String {
     match value {
@@ -1000,7 +1000,7 @@ fn duration_seconds(element: &Value) -> ElementResult<Option<i32>> {
     }
 }
 
-// `LastFmService.Charts.cs`, a partial class in the C#: the play-count charts.
+// The play-count charts.
 #[path = "last_fm_charts.rs"]
 mod charts;
 
@@ -1008,11 +1008,10 @@ mod charts;
 #[path = "last_fm_service_tests.rs"]
 mod tests;
 
-/// The song-length chain's Last.fm step (`SoulseekMetadataService.CompleteLengthAsync`).
+/// The song-length chain's Last.fm step.
 ///
-/// An answer the radio readers refuse (`Err`) counts as no length. In the C# that exception
-/// escaped the length lookup and skipped its last step, the yt-dlp probe; here the probe is still
-/// tried. Recorded in known-diffs.md.
+/// An answer the radio readers refuse (`Err`) counts as no length, so the length lookup still
+/// goes on to its last step, the yt-dlp probe.
 #[async_trait::async_trait]
 impl crate::services::soulseek::soulseek_metadata_service::LastFmTrackLengths for LastFmService {
     fn has_api_key(&self) -> bool {

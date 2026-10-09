@@ -1,12 +1,10 @@
-//! Port of `AcquisitionTrackerTests`: the live progress list behind the app's download ring. It
-//! watches the pipeline and must tell the truth about it: one row per hearted song however many
-//! sources it falls through, failed only when the last one gives up, and gone three hours
-//! after it ends.
+//! The acquisition tracker: the live progress list behind the app's download ring. It watches
+//! the pipeline and must tell the truth about it: one row per hearted song however many sources
+//! it falls through, failed only when the last one gives up, and gone three hours after it ends.
 //!
-//! `ProgressComesFromTheBytesThenThePercentage`, `NoFiguresMeansNoProgress`,
-//! `ErrorsAreShortAndKeepServerPathsHome` and `AnOverlongErrorIsCut` test the pure helpers and
-//! are in `octo_core::common::acquisition_tracker`. The slskd transfer parsing of the last three
-//! transfer tests is 4-A's (`SoulseekClient`); their tracker half is here.
+//! The pure helpers (progress from bytes or a percentage, short errors that keep server paths
+//! home) are tested in `octo_core::common::acquisition_tracker`. The slskd transfer parsing of
+//! the last three transfer tests is tested with `SoulseekClient`; their tracker half is here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -705,9 +703,9 @@ fn a_note_stays_until_another_replaces_it_and_goes_when_the_song_arrives() {
     assert_eq!(only(&tracker, "alice").note, None);
 }
 
-/// The tracker half of `ATransferPollBecomesTheRowsProgress`: slskd's figures for a transfer
-/// part way through (12,180,000 of 29,000,000 bytes, 42%) become the row's progress. Reading
-/// them out of slskd's answer is 4-A's (`SoulseekClient`).
+/// The tracker half of a transfer poll: slskd's figures for a transfer part way through
+/// (12,180,000 of 29,000,000 bytes, 42%) become the row's progress. Reading them out of slskd's
+/// answer is tested with `SoulseekClient`.
 #[test]
 fn a_transfer_poll_becomes_the_rows_progress() {
     let tracker = new_tracker();
@@ -728,7 +726,7 @@ fn a_transfer_poll_becomes_the_rows_progress() {
     assert_eq!(row.bytes_total, Some(29_000_000));
 }
 
-// --- Rust-only ------------------------------------------------------------------------
+// --- listeners and keys ---------------------------------------------------------------
 
 /// Listeners hear each end once, outside the lock; one that panics is skipped and the next is
 /// still told; an unsubscribed one hears nothing.

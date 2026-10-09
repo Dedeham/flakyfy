@@ -1,16 +1,14 @@
-//! Port of `Services/Common/BaseDownloadService.cs`.
+//! The download pipeline every source shares.
 //!
-//! The C# was an abstract base class: the download pipeline every source shares, with the
-//! source-specific parts as abstract and virtual members a subclass (`SoulseekDownloadService`)
-//! overrode. Here the shared machinery is [`BaseDownloadService`], a struct, and the overridable
-//! members are the [`DownloadBackend`] trait it calls back into. A backend gets the base on every
-//! call, so it reaches the same protected members a subclass did (`download_path`, `track`,
+//! The shared machinery is [`BaseDownloadService`], and the source-specific parts (Soulseek's
+//! download service, for one) are the [`DownloadBackend`] trait it calls back into. A backend
+//! gets the base on every call, so it reaches the shared members (`download_path`, `track`,
 //! `notifications`, `services`, ...). `BaseDownloadService` implements [`IDownloadService`].
 //!
-//! The members a subclass reached through `OptionalService<T>()` and the service provider are
-//! the fields of [`DownloadServices`], each `None` where the C# found no such service.
+//! The optional services a backend can reach are the fields of [`DownloadServices`], each `None`
+//! when the host has no such service.
 //!
-//! The C# file is split here by topic: this module holds the download, the album walk and the
+//! The pipeline is split by topic: this module holds the download, the album walk and the
 //! bookkeeping; `placement` where a file goes; `tagging` what it is and what is written to it.
 
 mod placement;
@@ -102,7 +100,7 @@ impl RequestedIdentity {
     }
 }
 
-/// A download's file was not on disk (the C# `FileNotFoundException` of `EnsureOnDisk`).
+/// A download's file was not on disk (from `ensure_on_disk`).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct FileNotFoundException {
@@ -110,14 +108,13 @@ pub struct FileNotFoundException {
     pub path: Option<String>,
 }
 
-/// The caller's token was cancelled while the download waited (`OperationCanceledException`).
+/// The caller's token was canceled while the download waited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("The operation was canceled.")]
 pub struct OperationCanceled;
 
-/// One transfer a backend runs: `DownloadTrackAsync`'s arguments, the song it may correct as it
-/// goes (the peer, the verdict, the transcode), and the per-song facts the C# kept beside the
-/// `Song` in static tables.
+/// One transfer a backend runs: the download's arguments, the song it may correct as it goes (the
+/// peer, the verdict, the transcode), and the per-song facts kept beside the `Song`.
 pub struct TrackDownload {
     /// External track ID.
     pub track_id: String,
@@ -127,30 +124,30 @@ pub struct TrackDownload {
     pub suppress_notify: bool,
     pub source_override: Option<DownloadSource>,
     pub upgrade_search: bool,
-    /// `ReplacingPath`: the library file this download replaces, or `None` for an ordinary
-    /// download. The C# flowed it with the call (`AsyncLocal`), so a backend that can use it
-    /// (Lidarr reads the album from its tags) sees it without a new parameter.
+    /// The library file this download replaces, or `None` for an ordinary download. It travels
+    /// with the transfer, so a backend that can use it (Lidarr reads the album from its tags)
+    /// sees it without a new parameter.
     pub replacing_path: Option<String>,
-    /// `FetchedFrom`: the source a backend fetched the song from, when the format alone does not
+    /// The source a backend fetched the song from, when the format alone does not
     /// say: a FLAC can be Lidarr's as well as Soulseek's.
     pub fetched_from: Option<String>,
-    /// `Muted`: the backend asked for the song to land without a notice of its own (a Lidarr
+    /// The backend asked for the song to land without a notice of its own (a Lidarr
     /// album's songs that nobody hearted, and the songs of an album heart, which gets one for the
     /// album).
     pub muted: bool,
 }
 
-/// The source-specific members of the C# base: its abstract and virtual methods. Every call is
-/// handed the base, which is what a subclass reached through `this`.
+/// The source-specific parts of the download pipeline. Every call is handed the base, so a
+/// backend reaches the shared members through it.
 #[async_trait]
 pub trait DownloadBackend: Send + Sync + 'static {
-    /// `ProviderName`: the provider name (e.g., "deezer", "qobuz").
+    /// The provider name (e.g., "deezer", "qobuz").
     fn provider_name(&self) -> &str;
 
-    /// `IsAvailableAsync`: checks if the service is properly configured and functional.
+    /// Checks if the service is properly configured and functional.
     async fn is_available(&self, base: &BaseDownloadService) -> bool;
 
-    /// `GetDirectStreamAsync`: a direct stream from the provider CDN (true streaming, no disk).
+    /// A direct stream from the provider CDN (true streaming, no disk).
     /// The default is not supported.
     async fn get_direct_stream(
         &self,
@@ -163,7 +160,7 @@ pub trait DownloadBackend: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// `DownloadTrackAsync`: downloads a track and saves it to disk. Backends implement
+    /// Downloads a track and saves it to disk. Backends implement
     /// provider-specific logic (encryption, authentication, etc.). Returns the local file path
     /// where the track landed; the base places, tags and registers it from there.
     async fn download_track(
@@ -173,19 +170,19 @@ pub trait DownloadBackend: Send + Sync + 'static {
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<String>;
 
-    /// `ExtractExternalIdFromAlbumId`: the external album ID from the internal album ID format.
+    /// The external album ID from the internal album ID format.
     /// Example: "ext-deezer-album-123456" -> "123456".
     fn extract_external_id_from_album_id(&self, album_id: &str) -> Option<String>;
 
-    /// `EnsureRoutingRegistered`: re-assert any routing state a long-running batch depends on.
+    /// Re-assert any routing state a long-running batch depends on.
     /// An album download can run for hours while searches keep filling the id registry, so a
     /// track's routing can be evicted before its turn comes. Ids are a pure hash of the routing
     /// fields, so re-registering the SAME fields restores the SAME id and is idempotent.
     fn ensure_routing_registered(&self, _track: &Song) {}
 
-    /// `PrepareAlbumAsync`: queue what an album walk can take from one place in one go, before
-    /// the walk starts, and say which tracks that covers. Each of those tracks still goes through
-    /// its own download, which takes the queued file first. The default takes nothing, so the
+    /// Queue what an album walk can take from one place in one go, before the walk starts, and
+    /// say which tracks that covers. Each of those tracks still goes through its own download,
+    /// which takes the queued file first. The default takes nothing, so the
     /// walk is song by song.
     async fn prepare_album(
         &self,
@@ -198,18 +195,18 @@ pub trait DownloadBackend: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// `FinishAlbumAsync`: called when the walk ends, however it ends: let go of whatever was
+    /// Called when the walk ends, however it ends: let go of whatever was
     /// prepared and not used.
     async fn finish_album(&self, _base: &BaseDownloadService, _prepared: &[String]) {}
 }
 
-/// `NoticeQueue.AddReview` (task 5-B): ask one person about a download they can settle by
+/// The notice queue's review: ask one person about a download they can settle by
 /// listening. False when it was already asked.
 pub trait ReviewQueue: Send + Sync {
     fn add_review(&self, owner: &str, local_path: &str, song: &Song, verdict: &VerificationResult) -> bool;
 }
 
-/// The two `PlaylistSyncService` calls a download makes (task 5-F).
+/// The two playlist sync calls a download makes.
 #[async_trait]
 pub trait PlaylistTrackSync: Send + Sync {
     fn get_playlist_id_for_track(&self, song_id: &str) -> Option<String>;
@@ -223,11 +220,10 @@ pub trait PlaylistTrackSync: Send + Sync {
     ) -> anyhow::Result<()>;
 }
 
-/// What the C# base took in its constructor.
+/// The services every download needs.
 pub struct DownloadCore {
-    /// `IOptionsMonitor<SubsonicSettings>`, `<GenreSettings>`, `<SoulseekSettings>`,
-    /// `<MetadataSettings>` and `<LibraryActionSettings>`, all read at use; and the raw
-    /// `Library:DownloadPath`.
+    /// The Subsonic, genre, Soulseek, metadata and library action settings, all read at use;
+    /// and the raw `Library:DownloadPath`.
     pub settings: Arc<SettingsStore>,
     pub local_library: Arc<dyn ILocalLibraryService>,
     pub metadata: Arc<dyn IMusicMetadataService>,
@@ -236,8 +232,8 @@ pub struct DownloadCore {
     pub notifications: Arc<NotificationService>,
 }
 
-/// The services the C# base resolved per use from the service provider. `None` is a service the
-/// host did not register, which the base copes without, as the C# did with a null.
+/// The optional services. `None` is a service the host did not register, which the base copes
+/// without.
 #[derive(Clone, Default)]
 pub struct DownloadServices {
     /// How many transfers may run at once, and the gate they share. `None` is one at a time.
@@ -248,9 +244,9 @@ pub struct DownloadServices {
     pub upgrade_queue: Option<Arc<UpgradeQueue>>,
     pub upgrade_sources: Option<Arc<UpgradeSources>>,
     pub action_journal: Option<Arc<LibraryActionJournal>>,
-    /// `NoticeQueue` (task 5-B).
+    /// The notice queue, which asks a person to review a download.
     pub review_queue: Option<Arc<dyn ReviewQueue>>,
-    /// `PlaylistSyncService` (task 5-F).
+    /// The playlist sync.
     pub playlist_sync: Option<Arc<dyn PlaylistTrackSync>>,
     pub deezer: Option<Arc<DeezerMetadataService>>,
     pub music_brainz: Option<Arc<MusicBrainzClient>>,
@@ -260,12 +256,12 @@ pub struct DownloadServices {
     pub cover_resolver: Option<Arc<DownloadCoverResolver>>,
     pub lyrics: Option<Arc<LyricsSidecarWriter>>,
     pub last_fm: Option<Arc<LastFmService>>,
-    /// `DownloadPicks`: copies picked in Find songs, taken instead of a search.
+    /// Copies picked in Find songs, taken instead of a search.
     pub picks: Option<Arc<DownloadPicks>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
-/// parameters of `DownloadSongInternalAsync`.
+/// parameters of a download.
 #[derive(Clone, Default)]
 pub struct DownloadOptions {
     /// Start the album walk once this track lands, in Album mode.
@@ -284,7 +280,7 @@ pub struct DownloadOptions {
     pub album_context: Option<Arc<AlbumTagContext<Loudness>>>,
     /// Search Soulseek the slow, wide way (Better quality, weekly upgrade).
     pub upgrade_search: bool,
-    /// A library action's replacement, revealed in the original's place (W8).
+    /// A library action's replacement, revealed in the original's place.
     pub replacement: Option<Arc<ReplacementHandoff>>,
 }
 
@@ -302,15 +298,14 @@ pub struct BaseDownloadService {
     services: DownloadServices,
 
     /// The configured Library:DownloadPath. With auto-detect on this is only a fallback used
-    /// until Navidrome's real music folder is detected. Read once, at construction, as the C#
-    /// constructor read `configuration["Library:DownloadPath"]`.
+    /// until Navidrome's real music folder is detected. Read once, at construction.
     configured_download_path: String,
     cache_path: String,
 
     /// Shared because the album walk reads this WITHOUT holding the download lock while a
     /// request can be writing to it under the lock.
     active_downloads: Mutex<HashMap<String, DownloadInfo>>,
-    /// `SemaphoreSlim(1, 1)`.
+    /// One permit: one download at a time inside the lock.
     download_lock: Semaphore,
 
     identifier: OnceLock<Arc<ReleaseIdentifier>>,
@@ -371,8 +366,8 @@ impl BaseDownloadService {
                 && !std::path::Path::new(&dir).is_dir()
                 && let Err(e) = std::fs::create_dir_all(&dir)
             {
-                // The C# constructor threw; a host without its music folder still starts here,
-                // and the first download says why it cannot place anything.
+                // Not fatal: a host without its music folder still starts, and the first
+                // download says why it cannot place anything.
                 error!("Failed to create directory: {dir}: {e}");
             }
         }
@@ -475,7 +470,7 @@ impl BaseDownloadService {
         }
     }
 
-    /// The download record of a song id (`ActiveDownloads.TryGetValue`).
+    /// The download record of a song id, if one is active.
     pub fn active_download(&self, song_id: &str) -> Option<DownloadInfo> {
         self.active_downloads.lock().get(song_id).cloned()
     }
@@ -543,7 +538,7 @@ impl BaseDownloadService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // the body of one C# method, split at its try block
+    #[allow(clippy::too_many_arguments)] // the locked half of one download, with all its inputs
     async fn download_locked<'a>(
         &'a self,
         external_provider: &str,
@@ -876,9 +871,9 @@ impl BaseDownloadService {
         });
 
         // Placed from the Song, so the path and the tags come from one decision (#48). The file
-        // used to be moved inside DownloadTrackAsync, before any of this was known. A library
-        // action's replacement is staged where no scan looks, and moved in only once it carries
-        // the original's identity and has passed (W8).
+        // used to be moved inside the backend's download, before any of this was known. A
+        // library action's replacement is staged where no scan looks, and moved in only once it
+        // carries the original's identity and has passed.
         let mut placement = match &options.replacement {
             None => self.place_in_library(&song, &requested, &landed_path).await,
             Some(_) => self.stage_replacement(&landed_path)?,
@@ -1661,12 +1656,12 @@ fn external_id_of(song: &Song) -> &str {
     song.external_id.as_deref().unwrap_or("")
 }
 
-/// `File.Exists`: a file, not a directory.
+/// Whether `path` names an existing file, not a directory.
 pub(crate) fn file_exists(path: &str) -> bool {
     !path.is_empty() && std::path::Path::new(path).is_file()
 }
 
-/// `DateTime.ToString("o")` of a UTC instant: seven fractional digits and a `Z`.
+/// A UTC instant in round-trip ISO 8601 form: seven fractional digits and a `Z`.
 fn round_trip(value: &DateTime<Utc>) -> String {
     format!(
         "{}.{:07}Z",
@@ -1675,7 +1670,7 @@ fn round_trip(value: &DateTime<Utc>) -> String {
     )
 }
 
-/// `File.SetLastAccessTime(path, DateTime.UtcNow)`, best-effort.
+/// Sets the file's last access time to now, best-effort.
 fn touch_access_time(path: &str) {
     if let Ok(file) = std::fs::File::options().write(true).open(path) {
         let times = std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now());
@@ -1683,8 +1678,8 @@ fn touch_access_time(path: &str) {
     }
 }
 
-/// `Path.GetExtension`: the last dot of the file name and what follows, or empty when the name
-/// has no dot or ends with one.
+/// The extension of the file name: its last dot and what follows, or empty when the name has
+/// no dot or ends with one.
 pub(crate) fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

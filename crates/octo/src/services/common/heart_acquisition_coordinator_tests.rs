@@ -1,7 +1,6 @@
-//! Port of `HeartAcquisitionCoordinatorTests`. The two settings-only methods
-//! (`LegacyFallbackMapsToOrderedSourcesWithLidarrLast`,
-//! `ConfiguredOrderIsPreservedAndMissingSourcesAreAppendedDisabled`) were ported with the
-//! settings, in `octo_core::settings::subsonic`.
+//! The heart acquisition coordinator. The settings-only tests (the legacy fallback's order, a
+//! configured order with missing sources appended disabled) live with the settings, in
+//! `octo_core::settings::subsonic`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -433,9 +432,7 @@ async fn soulseek_first_plays_fall_back_to_you_tube_only_when_it_is_on() {
     }
 }
 
-/// C# ran each hand-off to its first real wait before `QueuePlay` returned, and the mock's
-/// answers were already complete; here the hand-off is a task, so each play waits for it to
-/// settle before the next.
+/// The hand-off is a task, so each play waits for it to settle before the next.
 #[tokio::test]
 async fn lidarr_album_on_play_tries_again_after_a_hand_off_that_did_not_take() {
     for throws in [false, true] {

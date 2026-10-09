@@ -1,4 +1,4 @@
-//! `RadioOutcomeStoreTests`: what radio learns from listening: a started radio song finished
+//! What radio learns from listening: a started radio song finished
 //! within a day is kept, one never finished is skipped, and each listener's counts give each
 //! source a multiplier around 1. Plus the file's own round trip.
 
@@ -92,7 +92,6 @@ fn row(store: &RadioOutcomeStore, provider: &str, now: DateTime<Utc>) -> Provide
     row
 }
 
-// RadioOutcomeStoreTests.AStartedSongFinishedWithinADay_IsKept_OneNeverFinished_IsSkipped
 #[test]
 fn a_started_song_finished_within_a_day_is_kept_one_never_finished_is_skipped() {
     let f = Fixture::new();
@@ -121,7 +120,6 @@ fn a_started_song_finished_within_a_day_is_kept_one_never_finished_is_skipped() 
     assert_eq!(row.name, "YouTube Music");
 }
 
-// RadioOutcomeStoreTests.WhatTeachesNothing_TeachesNothing
 #[test]
 fn what_teaches_nothing_teaches_nothing() {
     let f = Fixture::new();
@@ -172,7 +170,6 @@ fn what_teaches_nothing_teaches_nothing() {
     );
 }
 
-// RadioOutcomeStoreTests.OneSubmissionForSeveralIds_IsForAllOfThem
 #[test]
 fn one_submission_for_several_ids_is_for_all_of_them() {
     let f = Fixture::new();
@@ -184,7 +181,6 @@ fn one_submission_for_several_ids_is_for_all_of_them() {
     assert_eq!(row(&store, LAST_FM, t0() + minutes(3.0)).plays, 2);
 }
 
-// RadioOutcomeStoreTests.OneStar_IsThreeSkips
 #[test]
 fn one_star_is_three_skips() {
     let f = Fixture::new();
@@ -197,7 +193,6 @@ fn one_star_is_three_skips() {
     assert_eq!(row.keep_rate, 0.0);
 }
 
-// RadioOutcomeStoreTests.Outcomes_FadeByHalfEverySixtyDays
 #[test]
 fn outcomes_fade_by_half_every_sixty_days() {
     let f = Fixture::new();
@@ -219,7 +214,6 @@ fn outcomes_fade_by_half_every_sixty_days() {
     );
 }
 
-// RadioOutcomeStoreTests.ASourceSkippedMoreThanTheListenersAverage_CountsLess_OneKeptMore_CountsMore
 #[test]
 fn a_source_skipped_more_than_the_listeners_average_counts_less_one_kept_more_counts_more() {
     let f = Fixture::new();
@@ -241,7 +235,6 @@ fn a_source_skipped_more_than_the_listeners_average_counts_less_one_kept_more_co
     assert!(multipliers[LAST_FM] < 0.8, "{}", multipliers[LAST_FM]);
 }
 
-// RadioOutcomeStoreTests.AFewPlays_BarelyMoveASource
 #[test]
 fn a_few_plays_barely_move_a_source() {
     let counts: IndexMap<String, (f64, f64)> = [
@@ -254,7 +247,6 @@ fn a_few_plays_barely_move_a_source() {
     assert!((1.0..=1.1).contains(&multiplier), "{multiplier}");
 }
 
-// RadioOutcomeStoreTests.Multipliers_StayWithinTheirBounds
 #[test]
 fn multipliers_stay_within_their_bounds() {
     let counts: IndexMap<String, (f64, f64)> = [
@@ -268,7 +260,6 @@ fn multipliers_stay_within_their_bounds() {
     assert_eq!(multipliers[LAST_FM], HIGHEST_MULTIPLIER);
 }
 
-// RadioOutcomeStoreTests.WithLearningOff_NothingIsRecorded
 #[test]
 fn with_learning_off_nothing_is_recorded() {
     let f = Fixture::new();
@@ -289,7 +280,6 @@ fn with_learning_off_nothing_is_recorded() {
     );
 }
 
-// RadioOutcomeStoreTests.Listeners_AreOnePersonWhateverTheCase
 #[test]
 fn listeners_are_one_person_whatever_the_case() {
     let f = Fixture::new();
@@ -308,7 +298,6 @@ fn listeners_are_one_person_whatever_the_case() {
     );
 }
 
-// RadioOutcomeStoreTests.AStationRefetch_DoesNotRenewTheWindow
 #[test]
 fn a_station_refetch_does_not_renew_the_window() {
     let f = Fixture::new();
@@ -325,7 +314,6 @@ fn a_station_refetch_does_not_renew_the_window() {
     assert_eq!(store.stats(Some(t0() + hours(8.0))).len(), 1);
 }
 
-// RadioOutcomeStoreTests.TheQuietestListener_IsForgottenPastTheCap
 #[test]
 fn the_quietest_listener_is_forgotten_past_the_cap() {
     let f = Fixture::new();
@@ -350,7 +338,6 @@ fn the_quietest_listener_is_forgotten_past_the_cap() {
     );
 }
 
-// RadioOutcomeStoreTests.WhatWasLearned_SurvivesARestart_AndForgetClearsIt
 #[test]
 fn what_was_learned_survives_a_restart_and_forget_clears_it() {
     let f = Fixture::new();
@@ -375,7 +362,6 @@ fn what_was_learned_survives_a_restart_and_forget_clears_it() {
     );
 }
 
-// RadioOutcomeStoreTests.OneServing_TeachesOnce
 #[test]
 fn one_serving_teaches_once() {
     let f = Fixture::new();
@@ -393,7 +379,6 @@ fn one_serving_teaches_once() {
     assert_eq!(row(&store, LAST_FM, t0() + hours(2.0)).plays, 1);
 }
 
-// RadioOutcomeStoreTests.AStationRefetch_NeverRenewsAServingStillRemembered
 #[test]
 fn a_station_refetch_never_renews_a_serving_still_remembered() {
     let f = Fixture::new();
@@ -405,7 +390,6 @@ fn a_station_refetch_never_renews_a_serving_still_remembered() {
     assert!(store.stats(Some(t0() + hours(9.0))).is_empty());
 }
 
-// RadioOutcomeStoreTests.AFinishWithinThirtySecondsOfItsStart_IsASkip
 #[test]
 fn a_finish_within_thirty_seconds_of_its_start_is_a_skip() {
     let f = Fixture::new();
@@ -423,7 +407,6 @@ fn a_finish_within_thirty_seconds_of_its_start_is_a_skip() {
     assert_eq!(row.keep_rate, 0.0);
 }
 
-// RadioOutcomeStoreTests.AFinishArrivingDaysLate_TurnsItsSkipBackIntoAKeep
 #[test]
 fn a_finish_arriving_days_late_turns_its_skip_back_into_a_keep() {
     let f = Fixture::new();
@@ -439,7 +422,6 @@ fn a_finish_arriving_days_late_turns_its_skip_back_into_a_keep() {
     assert!((row.keep_rate - 1.0).abs() < 0.005);
 }
 
-// RadioOutcomeStoreTests.AFileWithNulls_IsReadWithoutThem
 #[test]
 fn a_file_with_nulls_is_read_without_them() {
     let f = Fixture::new();
@@ -478,7 +460,7 @@ fn nulls_in_the_file_are_dropped() {
     assert_eq!(load(&path), OutcomeState::default());
 }
 
-/// Rust-only: the dashboard's row names the source and spans its multipliers, a station's
+/// The dashboard's row names the source and spans its multipliers, a station's
 /// refetch sends nothing new, and an empty or blank listener teaches nothing.
 #[test]
 fn stats_name_the_source_and_blank_listeners_teach_nothing() {

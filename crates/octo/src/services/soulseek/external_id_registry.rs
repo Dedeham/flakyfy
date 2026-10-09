@@ -1,4 +1,4 @@
-//! Port of `Services/Soulseek/ExternalIdRegistry.cs`, the store behind `external-ids.json`.
+//! The external id registry, the store behind `external-ids.json`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -15,10 +15,10 @@ use tracing::{info, warn};
 
 use crate::services::state_file;
 
-/// A routing the registry and its callers share. The C# registry stored the very object a
-/// caller registered and handed the same object back from `Lookup`, and callers changed it in
-/// place (pinning a video, settling a catalog artist), so here it is one routing behind a
-/// mutex. The mutex also stands in for the `lock (routing)` of `SongLength`.
+/// A routing the registry and its callers share. The registry keeps the very routing a caller
+/// registered and hands the same one back from `lookup`, and callers change it in place
+/// (pinning a video, settling a catalog artist), so it is one routing behind a mutex. The
+/// mutex also guards the routing's [`SongLength`] updates.
 ///
 /// Lock order: the registry never takes a routing's lock while holding its own, so a caller
 /// may hold a routing locked and still call into the registry.
@@ -40,17 +40,17 @@ impl SharedRouting {
         self.0.lock().clone()
     }
 
-    /// Whether both are the same routing (C# `ReferenceEquals`).
+    /// Whether both are the same routing, not merely equal ones.
     pub fn ptr_eq(&self, other: &SharedRouting) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
-    /// `SongLength.Remember` under the routing's lock.
+    /// `SongLength::remember` under the routing's lock.
     pub fn remember_length(&self, seconds: Option<i32>, source: LengthSource) -> bool {
         SongLength::remember(&mut self.0.lock(), seconds, source)
     }
 
-    /// `SongLength.Shown` under the routing's lock.
+    /// `SongLength::shown` under the routing's lock.
     pub fn shown_length(&self) -> (Option<i32>, LengthSource) {
         SongLength::shown(&self.0.lock())
     }
@@ -73,7 +73,7 @@ impl From<SoulseekRouting> for SharedRouting {
 ///
 /// ## Persistence
 ///
-/// The registry is the ONLY thing that knows an id is ours: ParseExternalId decides
+/// The registry is the ONLY thing that knows an id is ours: `parse_external_id` decides
 /// "external" by looking it up here. So when this was memory-only, every restart made
 /// every id a client still held look local, and those ids were relayed to Navidrome,
 /// which has no such media and answers error 70 "data not found". Clients surface that
@@ -83,9 +83,9 @@ impl From<SoulseekRouting> for SharedRouting {
 /// is a recovery, not a design: a queue built before a restart has no reason to search
 /// again. Writing the map down is what makes an id outlive the process.
 ///
-/// Flushing: [`ExternalIdRegistry::flush`] writes when something changed. The C# ran it from a
-/// 10 s timer and from `Dispose`; here [`ExternalIdRegistry::run_flusher`] is the timer (a
-/// worker, which flushes once more on shutdown) and `Drop` is the `Dispose`.
+/// Flushing: [`ExternalIdRegistry::flush`] writes when something changed. It runs every 10 s
+/// from [`ExternalIdRegistry::run_flusher`] (a worker, which flushes once more on shutdown) and
+/// once more on `Drop`.
 pub struct ExternalIdRegistry {
     path: Option<PathBuf>,
     lru: Mutex<Lru>,
@@ -93,9 +93,8 @@ pub struct ExternalIdRegistry {
     flush_lock: Mutex<()>,
 }
 
-/// The entries and their recency. The C# kept a `ConcurrentDictionary` plus a `LinkedList`
-/// moved to front on every touch; a stamp per entry and a map from stamp to id is the same
-/// order without the linear `LinkedList.Remove`.
+/// The entries and their recency: a stamp per entry and a map from stamp to id keep the
+/// most-recently-used order without a linear removal from a list on every touch.
 #[derive(Default)]
 struct Lru {
     by_id: HashMap<String, (SharedRouting, u64)>,
@@ -192,10 +191,10 @@ impl ExternalIdRegistry {
                 )
             };
             let mut r = routing.lock();
-            // A song row mints an album routing with no Deezer id (ConvertSongToJson), and it
-            // hashes to the same id as the one an album search already resolved. Registering it
-            // must not erase that id. Best-effort only: this is an optimization, and losing the
-            // race just sends GetAlbumAsync down its cached name-lookup fallback.
+            // A song row mints an album routing with no Deezer id (`convert_song_to_json`), and
+            // it hashes to the same id as the one an album search already resolved. Registering
+            // it must not erase that id. Best-effort only: this is an optimization, and losing
+            // the race just sends `get_album` down its cached name-lookup fallback.
             if r.external_album_id.is_none() && prev_album_id.is_some() {
                 r.external_album_id = prev_album_id;
             }
@@ -222,9 +221,8 @@ impl ExternalIdRegistry {
                 r.explicit_content = prev_explicit;
             }
             // And the album, which a song's id leaves out: radio registers a song Last.fm named
-            // without one, and it must not undo the album a search or a listing filed it under.
-            // Fixed in the port only (the C# replaced it, so later answers lost the album until a
-            // search registered the song again).
+            // without one, and it must not undo the album a search or a listing filed it under
+            // (otherwise later answers lose the album until a search registers the song again).
             if r.kind == RoutingKind::Song
                 && r.album.as_deref().is_none_or(|album| album.trim().is_empty())
                 && prev_album
@@ -481,7 +479,7 @@ impl ExternalIdRegistry {
 }
 
 impl Drop for ExternalIdRegistry {
-    /// `Dispose`: the last flush.
+    /// The last flush.
     fn drop(&mut self) {
         self.flush();
     }

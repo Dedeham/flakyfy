@@ -1,8 +1,8 @@
-//! `CoverPalette`: the colors the dashboard's Afterglow look takes from a cover: three lights
+//! The colors the dashboard's Afterglow look takes from a cover: three lights
 //! behind the glass and an accent for the controls.
 //!
 //! The color logic is the station covers' own. A cover's main colors come from
-//! [`cover_colours::swatches`], grey ones are left out by the same rule, and the first light and
+//! [`cover_colors::swatches`], grey ones are left out by the same rule, and the first light and
 //! the accent are the color [`CoverMusic::from_covers`](octo_media::cover::CoverMusic::from_covers)
 //! would call the music's: so the dashboard, a station's cover and the apps agree on what color
 //! an album is. Only the lightness and chroma are the dashboard's, chosen for dark glass and dark
@@ -37,7 +37,7 @@ const ACCENT_L: f64 = 0.80;
 const ACCENT_C_MIN: f64 = 0.08;
 const ACCENT_C_MAX: f64 = 0.16;
 
-/// `CoverPalette.FromSwatches`: None for no swatches, or for a cover with no color and no lean.
+/// The palette of a cover's swatches: None for no swatches, or for a cover with no color and no lean.
 pub fn from_swatches(swatches: Option<&[Swatch]>) -> Option<Palette> {
     let swatches = swatches.filter(|s| !s.is_empty())?;
     let seen: Vec<(Lch, f32)> = swatches
@@ -53,7 +53,7 @@ pub fn from_swatches(swatches: Option<&[Swatch]>) -> Option<Palette> {
     if ranked.is_empty() {
         return muted(&seen);
     }
-    // A stable sort, as LINQ's OrderByDescending: equal scores keep their order.
+    // A stable sort, highest score first: equal scores keep their order.
     ranked.sort_by(|x, y| y.1.total_cmp(&x.1));
 
     let mut picks: Vec<Lch> = Vec::new();
@@ -111,7 +111,7 @@ const MUTED_ACCENT_C: f64 = 0.06;
 
 /// A grey cover's quiet palette from its own lean, or None for a cover with none.
 fn muted(seen: &[(Lch, f32)]) -> Option<Palette> {
-    // LINQ's OrderByDescending(..).FirstOrDefault(): the first of the highest scores.
+    // The first of the highest scores, or None when nothing qualifies.
     let mut lean: Option<(Lch, f64)> = None;
     for &(lch, share) in seen {
         if lch.c < TINTED || !(0.08..=0.97).contains(&lch.l) {

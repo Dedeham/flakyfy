@@ -1,4 +1,4 @@
-//! The playlist half of `ImportMatchTests.cs`, and the port's "Keep as playlist" fix.
+//! "Keep as playlist": the playlist an import keeps, and what a failure leaves behind.
 
 use super::super::ImportTrack;
 use super::super::test_support::FakeNavidrome;
@@ -106,7 +106,7 @@ async fn a_playlist_the_person_deleted_stays_deleted() {
     assert!(navidrome.calls().is_empty());
 }
 
-/// The port's fix: a playlist this call made and could not fill is deleted again, so a failure
+/// A playlist this call made and could not fill is deleted again, so a failure
 /// leaves nothing empty behind, and nothing is kept that the next try would find gone.
 #[tokio::test]
 async fn a_playlist_that_could_not_be_filled_is_not_left_behind() {

@@ -1,12 +1,10 @@
-//! Port of `Services/Subsonic/SubsonicProxyService.cs`: handles proxying requests to the
-//! underlying Subsonic server (endpoints.md §2.7).
+//! Handles proxying requests to the underlying Subsonic server.
 //!
-//! The C# service was **scoped**: it read the client's own request through
-//! `IHttpContextAccessor`, to forward the method, body and headers and to send repeated query
-//! keys upstream as the client sent them. Here that request is an explicit
-//! [`IncomingRequest`]: the [`SubsonicProxyService`] in `AppState` has none (a background
-//! scope, where `HttpContext` was null), and [`SubsonicProxyService::with_request`] makes the
-//! request-scoped copy a handler uses. Both are cheap handles onto one shared client.
+//! A relay reads the client's own request, to forward the method, body and headers and to send
+//! repeated query keys upstream as the client sent them. That request is an explicit
+//! [`IncomingRequest`]: the [`SubsonicProxyService`] in `AppState` has none (background work),
+//! and [`SubsonicProxyService::with_request`] makes the request-scoped copy a handler uses. Both
+//! are cheap handles onto one shared client.
 
 use std::sync::{Arc, OnceLock};
 
@@ -28,43 +26,41 @@ use crate::services::http_client_factory::{
 };
 use crate::services::i_download_service::DirectStreamInfo;
 
-/// `OctoNotConfiguredException`'s message: the Navidrome URL is missing or not absolute.
+/// The message for a Navidrome URL that is missing or not absolute.
 pub const NOT_CONFIGURED_MESSAGE: &str = "Octo has no valid Navidrome URL. Set SUBSONIC_URL (Subsonic__Url) to your \
      Navidrome server, e.g. http://192.168.1.10:4533. It must be an absolute URL the Octo \
      container can reach, not localhost.";
 
-/// What `HttpClient` threw for a request URI that was not absolute.
+/// The message for a request URI that is not absolute.
 const INVALID_REQUEST_URI: &str = "An invalid request URI was provided. Either the request URI must be an \
      absolute URI or BaseAddress must be set.";
 
-/// A relay that failed, named after the .NET exception it stands for. `Display` is that
-/// exception's `Message`, which callers put in front of users ("Error connecting to Subsonic
-/// server: ...").
+/// A relay that failed. `Display` is its message, which callers put in front of users ("Error
+/// connecting to Subsonic server: ...").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RelayError {
-    /// `OctoNotConfiguredException`: Octo's upstream Navidrome URL is missing or not an
-    /// absolute URL. The global handler surfaces its message to the client as an actionable
-    /// Subsonic error instead of an opaque "Invalid request".
+    /// Octo's upstream Navidrome URL is missing or not an absolute URL. The global handler surfaces
+    /// its message to the client as an actionable Subsonic error instead of an opaque "Invalid
+    /// request".
     #[error("{0}")]
     NotConfigured(String),
-    /// `HttpRequestException`: no connection, or a non-success status from `RelayAsync`.
+    /// No connection, or a non-success status from the relay.
     #[error("{0}")]
     Http(String),
-    /// `TaskCanceledException`: `HttpClient.Timeout` ran out.
+    /// The client's timeout ran out.
     #[error("{0}")]
     Canceled(String),
-    /// `NotSupportedException`: a URL whose scheme is not http or https
-    /// (`localhost:4533` is the scheme `localhost`).
+    /// A URL whose scheme is not http or https (`localhost:4533` is the scheme `localhost`).
     #[error("{0}")]
     NotSupported(String),
-    /// `InvalidOperationException`: a request URI that is not absolute (a URL such as `/music`
-    /// passes the absolute-URL check, as an implicit file path, and fails here).
+    /// A request URI that is not absolute (a URL such as `/music` passes the absolute-URL check, as
+    /// an implicit file path, and fails here).
     #[error("{0}")]
     InvalidOperation(String),
 }
 
 impl RelayError {
-    /// The .NET exception's type name, for log lines that named it.
+    /// The failure's type name, as log lines name it.
     pub fn type_name(&self) -> &'static str {
         match self {
             RelayError::NotConfigured(_) => "OctoNotConfiguredException",
@@ -86,21 +82,20 @@ impl RelayError {
     }
 }
 
-/// How `GlobalExceptionHandler` answered each of these when one escaped a handler.
+/// How the global error handler answers each of these when one escapes a handler.
 impl From<RelayError> for AppError {
     fn from(error: RelayError) -> AppError {
         match error {
             RelayError::NotConfigured(m) => AppError::NotConfigured(m),
             RelayError::Http(m) => AppError::Http(m),
-            // InvalidOperationException was mapped to 400 "Operation not valid".
+            // An invalid operation answers 400 "Operation not valid".
             RelayError::InvalidOperation(m) => AppError::InvalidOperation(m),
             RelayError::Canceled(m) | RelayError::NotSupported(m) => AppError::Internal(anyhow::anyhow!(m)),
         }
     }
 }
 
-/// The client's request as `IHttpContextAccessor.HttpContext.Request` showed it to the scoped
-/// proxy, with the body already read (the C#'s `HttpContext.Items["Octo.RawBody"]`).
+/// The client's request as the request-scoped proxy sees it, with the body already read.
 pub struct IncomingRequest {
     pub method: Method,
     pub headers: HeaderMap,
@@ -131,14 +126,14 @@ impl IncomingRequest {
         )
     }
 
-    /// `Request.ContentType`.
+    /// The request's content type.
     pub fn content_type(&self) -> Option<&str> {
         self.headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
     }
 
-    /// `Request.ContentLength`.
+    /// The request's content length.
     pub fn content_length(&self) -> Option<u64> {
         self.headers
             .get(header::CONTENT_LENGTH)
@@ -156,33 +151,32 @@ impl IncomingRequest {
         }
     }
 
-    /// `SubsonicRequestParser.ExtractAllParametersAsync(Request)`.
+    /// Every parameter of the request: query, form and body.
     pub fn parameters(&self) -> Parameters {
         parser::extract_all_parameters(&self.request_parts())
     }
 
-    /// `SubsonicRequestParser.ExtractParameterValuesAsync(Request, name)`.
+    /// Every value the request sent for `name`.
     pub fn parameter_values(&self, name: &str) -> Vec<String> {
         parser::extract_parameter_values(&self.request_parts(), name)
     }
 
-    /// `Request.Query`.
+    /// The request's query string, parsed.
     pub fn query_collection(&self) -> &StringValuesCollection {
         self.query_values
             .get_or_init(|| parser::parse_query(self.query.as_deref().unwrap_or("")))
     }
 
-    /// `HttpContext.Items["Octo.RawBody"]` when it held something: the middleware captured the
-    /// body of every POST, PUT and PATCH, and the relay forwards it only when it is not empty.
+    /// The captured body, when it holds something: the body of every POST, PUT and PATCH is
+    /// captured, and the relay forwards it only when it is not empty.
     pub fn raw_body(&self) -> Option<&Bytes> {
         let captured =
             self.method == Method::POST || self.method == Method::PUT || self.method == Method::PATCH;
         (captured && !self.body.is_empty()).then_some(&self.body)
     }
 
-    /// The client's form fields, or `None` when the request carries none: `ReadFormAsync`,
-    /// or when that fails the captured body read as a query string, as the request parser
-    /// falls back.
+    /// The client's form fields, or `None` when the request carries none: the form as read, or when
+    /// that fails the captured body read as a query string, as the request parser falls back.
     fn form(&self) -> Option<StringValuesCollection> {
         let content_type = self.content_type();
         if !parser::has_form_content_type(content_type) {
@@ -210,9 +204,8 @@ pub struct RawRelayResult {
     pub status: u16,
     pub body: Bytes,
     pub content_type: Option<String>,
-    /// The allowlisted response headers, one entry per value as .NET read them (a `Vary` list
-    /// is one entry per member). Writing them with `Response.Headers[name] = value` kept the
-    /// last of each name.
+    /// The allowlisted response headers, one entry per value (a `Vary` list is one entry per
+    /// member). When they are written, the last of each name wins.
     pub response_headers: Vec<(String, String)>,
 }
 
@@ -263,8 +256,8 @@ const STREAMING_REQUIRED_HEADERS: [&str; 5] = [
 struct ProxyShared {
     client: reqwest::Client,
     stream_client: reqwest::Client,
-    // IOptionsMonitor, not IOptions: the admin UI writes settings.json and the config provider
-    // reloads it, so the URL is read at the point of use. A captured copy would serve startup
+    // The admin UI writes settings.json and the config provider reloads it, so the URL is read
+    // at the point of use. A captured copy would serve startup
     // values until a restart while the admin UI SHOWED the new value.
     settings: Arc<SettingsStore>,
 }
@@ -296,8 +289,7 @@ impl SubsonicProxyService {
         }
     }
 
-    /// The request-scoped proxy for one client request (the C# service resolved in that
-    /// request's scope).
+    /// The request-scoped proxy for one client request.
     pub fn with_request(&self, incoming: Arc<IncomingRequest>) -> Self {
         SubsonicProxyService {
             shared: Arc::clone(&self.shared),
@@ -313,7 +305,7 @@ impl SubsonicProxyService {
         self.shared.settings.current().subsonic.url.clone()
     }
 
-    /// The configured URL, or `OctoNotConfiguredException` when it is blank or not absolute.
+    /// The configured URL, or [`RelayError::NotConfigured`] when it is blank or not absolute.
     fn configured_url(&self) -> Result<String, RelayError> {
         match self.url_setting() {
             Some(url) if !url.trim().is_empty() && is_absolute_uri(&url) => Ok(url),
@@ -322,10 +314,9 @@ impl SubsonicProxyService {
     }
 
     /// Relays a request to the Subsonic server and returns the response: `GET
-    /// {Url}/{endpoint}?{query}` with no forwarded headers and no body. A non-success status is
-    /// an `HttpRequestException`, as `EnsureSuccessStatusCode` made it. Takes the parameter
-    /// dictionary or, for batch endpoints whose repeated keys the dictionary cannot hold, a
-    /// list of pairs.
+    /// {Url}/{endpoint}?{query}` with no forwarded headers and no body. A non-success status is a
+    /// [`RelayError::Http`]. Takes the parameter dictionary or, for batch endpoints whose repeated
+    /// keys the dictionary cannot hold, a list of pairs.
     pub async fn relay<I, K, V>(&self, endpoint: &str, parameters: I) -> Result<RelayResponse, RelayError>
     where
         I: IntoIterator<Item = (K, V)>,
@@ -364,9 +355,9 @@ impl SubsonicProxyService {
     }
 
     /// Faithful relay: forwards the caller's HTTP method + body + content-type and returns the
-    /// upstream status verbatim (no `EnsureSuccessStatusCode`). This is what makes non-GET /
-    /// body-carrying endpoints work through Octo: e.g. Navidrome's native POST /auth/login
-    /// that some clients use to sign in. The body is read in full, as the C# buffered it.
+    /// upstream status verbatim (a failure status is not an error). This is what makes non-GET
+    /// / body-carrying endpoints work through Octo: e.g. Navidrome's native POST /auth/login
+    /// that some clients use to sign in. The body is read in full.
     pub async fn relay_raw<I, K, V>(
         &self,
         endpoint: &str,
@@ -506,9 +497,9 @@ impl SubsonicProxyService {
     {
         let parameters = owned_pairs(parameters);
         let query = self.build_query(parameters.iter().map(|(k, v)| (k, v)), false);
-        // Not checked, as the C# built it: none at all is a relative URI. A URL ending in '/'
-        // asked the C# for //rest/stream; the settings read Navidrome's address without its
-        // trailing slashes (`normalize_server_url`), so this has one slash (a port fix).
+        // Not checked: none at all is a relative URI. The settings read Navidrome's address
+        // without its trailing slashes (`normalize_server_url`), so a URL ending in '/' still
+        // gives one slash before rest/stream.
         let url = format!("{}/rest/stream?{query}", self.url_setting().unwrap_or_default());
         let target = request_url(&url)?;
         let mut request = self.shared.stream_client.get(target);
@@ -520,7 +511,7 @@ impl SubsonicProxyService {
             }
         }
 
-        // HttpClient.Timeout bounds the wait for the headers; the body then streams freely.
+        // The timeout bounds the wait for the headers; the body then streams freely.
         let response = match tokio::time::timeout(DEFAULT_TIMEOUT, request.send()).await {
             Ok(result) => result.map_err(RelayError::from_reqwest)?,
             Err(_) => return Err(RelayError::Canceled(timeout_message(DEFAULT_TIMEOUT))),
@@ -728,8 +719,8 @@ fn tolerate_early_end(
 }
 
 /// Whether a body failed only because the connection closed before the announced
-/// Content-Length was reached (.NET's `HttpRequestError.ResponseEnded`): hyper reports that as
-/// an I/O error of kind `UnexpectedEof` somewhere down the error's sources.
+/// Content-Length was reached: hyper reports that as an I/O error of kind `UnexpectedEof`
+/// somewhere down the error's sources.
 fn ended_early(error: &reqwest::Error) -> bool {
     let mut source = std::error::Error::source(error);
     while let Some(cause) = source {
@@ -760,8 +751,7 @@ where
     K: AsRef<str>,
     V: AsRef<str>,
 {
-    // Ordinal lookups by the spelling each key was first sent with, as the C# copied the
-    // collections into plain dictionaries.
+    // Ordinal lookups by the spelling each key was first sent with.
     let lookup = |source: Option<&StringValuesCollection>, key: &str| -> Option<Vec<String>> {
         source?.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_vec())
     };
@@ -789,9 +779,9 @@ where
     result
 }
 
-/// `Uri.TryCreate(url, UriKind.Absolute, out _)` as .NET on Linux answers it: an http(s) URL
-/// that parses, any other `scheme:` (`localhost:4533` is the scheme `localhost`), or a rooted
-/// path, which is an implicit `file://` URI.
+/// Whether `url` is an absolute URI: an http(s) URL that parses, any other `scheme:`
+/// (`localhost:4533` is the scheme `localhost`), or a rooted path, which is an implicit
+/// `file://` URI.
 pub fn is_absolute_uri(url: &str) -> bool {
     let url = url.trim();
     if url.starts_with('/') {
@@ -807,7 +797,7 @@ pub fn is_absolute_uri(url: &str) -> bool {
 }
 
 /// The scheme of `scheme:rest`, lower-cased, when the text starts with one. A single letter
-/// is a drive (`c:`), which .NET read as a file path.
+/// is a drive (`c:`), read as a file path.
 fn scheme_of(url: &str) -> Option<String> {
     let colon = url.find(':')?;
     let scheme = &url[..colon];
@@ -824,8 +814,8 @@ fn scheme_of(url: &str) -> Option<String> {
     Some(scheme.to_ascii_lowercase())
 }
 
-/// What `HttpClient` made of a request URI string: an absolute http(s) URL to send, or the
-/// exception it threw.
+/// A request URI string as the HTTP client takes it: an absolute http(s) URL to send, or the
+/// error for one it cannot send.
 fn request_url(url: &str) -> Result<reqwest::Url, RelayError> {
     let trimmed = url.trim();
     if trimmed.starts_with('/') {
@@ -847,8 +837,8 @@ fn not_success_message(status: StatusCode) -> String {
     crate::services::http_client_factory::status_failure_message(status)
 }
 
-/// A request header's values as one line: Kestrel kept each line as a value, and HttpClient
-/// wrote them back joined, with ", " (a space for `User-Agent`, a product list).
+/// A request header's values as one line: each line is a value, and they are joined with ", "
+/// (a space for `User-Agent`, a product list).
 fn joined_request_header(headers: &HeaderMap, name: &str) -> Option<String> {
     let values: Vec<String> = headers
         .get_all(name)
@@ -901,10 +891,9 @@ fn normalize_media_type(raw: &str) -> Option<String> {
     Some(out)
 }
 
-/// A response header's values as `HttpResponseMessage.Headers.TryGetValues` gave them: list
-/// headers (`Vary`, `Accept-Ranges`) split into their members, `Cache-Control` merged into one
-/// re-written value, `Last-Modified` re-written as an RFC 1123 date, anything else one value
-/// per line as received.
+/// A response header's values: list headers (`Vary`, `Accept-Ranges`) split into their members,
+/// `Cache-Control` merged into one re-written value, `Last-Modified` re-written as an RFC 1123
+/// date, anything else one value per line as received.
 fn response_header_values(headers: &HeaderMap, name: &str) -> Vec<String> {
     let lines: Vec<String> = headers
         .get_all(name)
@@ -951,9 +940,9 @@ fn reformat_http_date(text: &str) -> Option<String> {
     )
 }
 
-/// `CacheControlHeaderValue.ToString()` over every `Cache-Control` line: the known directives
-/// in .NET's fixed order, then the others as written. `None` when a known directive's value
-/// does not parse (the value then went through unparsed).
+/// Every `Cache-Control` line normalized into one value: the known directives in a fixed order,
+/// then the others as written. `None` when a known directive's value does not parse (the value
+/// then goes through unparsed).
 fn normalize_cache_control(lines: &[String]) -> Option<String> {
     #[derive(Default)]
     struct Directives {

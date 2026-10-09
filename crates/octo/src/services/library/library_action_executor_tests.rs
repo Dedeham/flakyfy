@@ -1,6 +1,6 @@
-//! Ports of `LibraryActionKeepTests` (the executor's part), `LibraryActionKeepIdentityTests`,
-//! `LibraryActionStarTests`, `LibraryActionOutcomeTests` and the two `NotReallyLossless` cases of
-//! `TranscodeDecisionTests`.
+//! The library action executor: Keep, which outcomes clear a request, refusing a replacement that
+//! is not really lossless, carrying a favorite over a replacement, and a replacement keeping the
+//! original's identity.
 
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
@@ -22,7 +22,7 @@ use crate::services::notifications::NotificationService;
 use octo_core::common::Clock;
 use octo_core::models::download::DownloadInfo;
 
-// ---- LibraryActionKeepTests ----------------------------------------------------------------
+// ---- Keep ----------------------------------------------------------------------------------
 //
 // Keep (#47) is an answer, not an operation: it touches no file, so it runs in rehearsal mode
 // too, and on a track Octo never asked about it is just a rating.
@@ -133,7 +133,7 @@ async fn keep_switched_off_is_not_applied() {
     );
 }
 
-// ---- LibraryActionOutcomeTests -------------------------------------------------------------
+// ---- Which outcomes clear a request --------------------------------------------------------
 
 /// A request that could not be applied must stay where it is, so fixing whatever blocked it and
 /// waiting makes it work rather than requiring the user to ask again. A rehearsal is not a
@@ -157,7 +157,7 @@ fn consumed_only_terminal_success_clears_the_request() {
     }
 }
 
-// ---- TranscodeDecisionTests (the executor's two) -------------------------------------------
+// ---- A Better quality replacement that may be a transcode ----------------------------------
 
 #[test]
 fn a_better_quality_replacement_that_is_a_transcode_is_refused() {
@@ -193,7 +193,7 @@ fn a_better_quality_replacement_the_check_cannot_judge_is_accepted() {
     );
 }
 
-// ---- LibraryActionStarTests ----------------------------------------------------------------
+// ---- A replaced favorite stays a favorite --------------------------------------------------
 //
 // #71 for library actions: a replacement asked for by rating carries the rater's own sign-in,
 // so whether they had favorited the song can be read before it is replaced. Nothing else reads.
@@ -311,11 +311,11 @@ async fn playlist_action_without_sign_in_does_not_carry() {
     assert!(calls.lock().is_empty());
 }
 
-// `RatingCarriesTheRatersSignIn` is in `library_action_rating_worker.rs`.
+// `rating_carries_the_raters_sign_in` is in `library_action_rating_worker.rs`.
 
-// ---- LibraryActionKeepIdentityTests --------------------------------------------------------
+// ---- A replacement keeps the original's identity -------------------------------------------
 //
-// W8: a replacement takes the original's folder and name, Octo checks that Navidrome kept the
+// A replacement takes the original's folder and name, Octo checks that Navidrome kept the
 // ORIGINAL id on the new file, records the answer on the action, and only when it did not,
 // favorites the new song again for the person who rated it.
 
@@ -558,7 +558,7 @@ async fn not_kept_without_a_favorite_stars_nothing() {
     assert!(calls.lock().is_empty());
 }
 
-/// `Mock<IDownloadService>` set up for exactly one acquisition: the worker must hand the
+/// A stand-in `IDownloadService` set up for exactly one acquisition: the worker must hand the
 /// download this handoff, the Soulseek source, the slow search and the permanent copy.
 struct ExpectingDownloads {
     handoff: Arc<ReplacementHandoff>,

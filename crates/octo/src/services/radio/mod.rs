@@ -1,4 +1,4 @@
-//! `Services/Radio`: radio's suggestion sources (Last.fm, YouTube Music, ListenBrainz and Sounds
+//! Radio's suggestion sources (Last.fm, YouTube Music, ListenBrainz and Sounds
 //! alike), the set that asks them together, song radio (getSimilarSongs) and what radio learns
 //! from listening (`radio-outcomes.json`). The records and the blend are `octo_core::radio`.
 

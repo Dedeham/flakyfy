@@ -1,4 +1,4 @@
-//! `ImportServiceTests.cs`: importing end to end, with Spotify, its embed pages and Navidrome all
+//! Importing end to end, with Spotify, its embed pages and Navidrome all
 //! stood in for: the sign-in and its pasted address, reading liked songs and playlists (someone
 //! else's through its public page), have and missing, the trickle queue, the playlist, and a
 //! fetched song finding its place.
@@ -594,7 +594,7 @@ fn the_redirect_says_whether_octo_finishes_itself() {
     assert!(!ImportService::octo_finishes("http://127.0.0.1/callback"));
 }
 
-// ---- The port's "Keep as playlist" fix --------------------------------------------------------
+// ---- "Keep as playlist" after a failure -------------------------------------------------------
 
 /// A playlist Navidrome would not take is tried again with a growing wait, not every pass, and
 /// never leaves another empty playlist behind.

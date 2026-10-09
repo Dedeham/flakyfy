@@ -1,6 +1,5 @@
-//! What the download base's tests share: the C# tests' subclasses of `BaseDownloadService`
-//! (`PlacementService`, `TaggingService`, `Harness`) as one test backend whose transfer lands
-//! whatever file the test says, and a builder for the service around it.
+//! What the download base's tests share: one test backend whose transfer lands whatever file
+//! the test says, and a builder for the service around it.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -1,5 +1,5 @@
-//! Port of `LyricsChoiceStore` and `LyricsChoiceService` from `Services/Lyrics/LyricsChoices.cs`:
-//! the pins on disk (`lyrics-choices.json`), and choosing lyrics by hand. The pin and the entry
+//! `LyricsChoiceStore` and `LyricsChoiceService`: the pins on disk (`lyrics-choices.json`), and
+//! choosing lyrics by hand. The pin and the entry
 //! offered are `octo_core::lyrics::{LyricsPin, LyricsChoiceCandidate}`.
 
 use std::collections::HashMap;
@@ -21,9 +21,9 @@ use super::lyrics_service::LyricsService;
 use super::memory_cache::MemoryCache;
 use crate::services::state_file;
 
-/// The pins by song id, enumerated as .NET's `Dictionary<string, LyricsPin>` enumerated them:
-/// in insertion order, except that a removed entry's slot is reused by the next one added
-/// (the most recently freed first). The file is written in that order.
+/// The pins by song id, enumerated in insertion order, except that a removed entry's slot is
+/// reused by the next one added (the most recently freed first). The file is written in that
+/// order.
 #[derive(Default)]
 struct Pins {
     slots: Vec<Option<LyricsPin>>,
@@ -104,7 +104,7 @@ impl LyricsChoiceStore {
         }
         let want = SongIdentity::match_key(artist, title);
         let pins = self.pins.lock();
-        // OrderByDescending(SetUtc).FirstOrDefault(): the newest, the first of equals.
+        // The newest by `set_utc`, the first of equals.
         let mut best: Option<&LyricsPin> = None;
         for pin in pins.values().filter(|pin| match_key(pin) == want) {
             if best.is_none_or(|best| pin.set_utc > best.set_utc) {
@@ -311,8 +311,7 @@ impl LyricsChoiceService {
         ct: &CancellationToken,
     ) -> Vec<LyricsChoiceCandidate> {
         let mut offered = Vec::new();
-        // A source never throws here: a failed or cancelled search is simply no entries, as the
-        // C# catch made of it.
+        // A source never fails here: a failed or canceled search is simply no entries.
         let search = source.search(query, ct).await;
         let mut ranked: Vec<(&LyricsCandidate, bool, i32)> = search
             .candidates
@@ -332,7 +331,7 @@ impl LyricsChoiceService {
                 )
             })
             .collect();
-        // OrderByDescending(same).ThenBy(distance): stable.
+        // The same song first, then by distance; stable.
         ranked.sort_by_key(|(_, same, distance)| (std::cmp::Reverse(*same), *distance));
 
         for (candidate, same, _) in ranked.into_iter().take(Self::PER_SOURCE) {
@@ -362,13 +361,13 @@ impl LyricsChoiceService {
         offered
     }
 
-    /// `KindOf`: "word", "line", "plain" or "instrumental".
+    /// The kind of lyrics: "word", "line", "plain" or "instrumental".
     pub fn kind_of(lyrics: &LyricsResult) -> &'static str {
         LyricsChoiceCandidate::kind_of(lyrics)
     }
 
     /// The lyrics of one candidate: from the list just shown when it is still remembered,
-    /// otherwise asked of its source again. (When `ct` runs out the C# threw; this is None.)
+    /// otherwise asked of its source again. None when `ct` runs out.
     pub async fn lyrics_of(&self, candidate_id: &str, ct: &CancellationToken) -> Option<LyricsResult> {
         if let Some(known) = self.fetched.get(candidate_id) {
             return Some(known);
@@ -440,10 +439,10 @@ impl LyricsChoiceService {
         self.store.remove(song_id)
     }
 
-    /// `Clear(songId, artist, title)`: back to automatic, the song's pin by id, and any it has
+    /// Back to automatic: removes the song's pin by id, and any it has
     /// by its artist and title, so a pin made under an older id does not come back.
     pub fn clear_song(&self, song_id: &str, artist: Option<&str>, title: Option<&str>) -> bool {
-        // Both run, as C#'s non-short-circuiting `|` did.
+        // Both run: `|` does not short-circuit.
         let by_id = self.store.remove(song_id);
         let by_name = self.store.remove_by_name(artist, title);
         by_id | by_name
@@ -480,7 +479,6 @@ mod tests {
         )
     }
 
-    /// LyricsChoiceTests.Store_PinsSurviveARestart.
     #[test]
     fn store_pins_survive_a_restart() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -532,8 +530,8 @@ mod tests {
         assert!(!state_file::temp_path(&path).exists());
     }
 
-    /// A removed pin's place is taken by the next one added, as .NET's Dictionary reused the
-    /// slot, so the file lists the pins in the order the C# store wrote them.
+    /// A removed pin's place is taken by the next one added, and the file lists the pins in that
+    /// order.
     #[test]
     fn a_removed_pins_place_goes_to_the_next_pin() {
         let store = LyricsChoiceStore::new(None);

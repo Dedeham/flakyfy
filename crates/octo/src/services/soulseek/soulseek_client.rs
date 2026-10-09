@@ -1,5 +1,5 @@
-//! Port of `Services/Soulseek/SoulseekClient.cs`: the HTTP half. The records and the readers of
-//! slskd's JSON are `octo_core::soulseek::soulseek_client`.
+//! The slskd HTTP client. The records and the readers of slskd's JSON are
+//! `octo_core::soulseek::soulseek_client`.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -25,17 +25,17 @@ pub use octo_core::soulseek::soulseek_client::{
     CANCEL_GRACE, FIRST_BYTE_WAIT, MAX_TRANSFER_TIME, OPERATION_RETRIES, WAITING_NOTE_AFTER,
 };
 
-/// What a Soulseek call that the C# let throw came to.
+/// How a Soulseek call that passes its failure to the caller failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SoulseekClientError {
-    /// The caller gave up (`OperationCanceledException` from its token).
+    /// The caller gave up through its token.
     #[error("The operation was canceled.")]
     Cancelled,
-    /// The HTTP client's own 30 second timeout (`TaskCanceledException` without the caller's
-    /// token), which the transfer wait let through.
+    /// The HTTP client's own 30 second timeout (not the caller's token), which the transfer wait
+    /// lets through.
     #[error("{0}")]
     Timeout(String),
-    /// Any other failure, with the message the C# exception carried.
+    /// Any other failure, with its message in plain words.
     #[error("{0}")]
     Failed(String),
 }
@@ -84,8 +84,8 @@ struct Jwt {
 
 struct Inner {
     http: reqwest::Client,
-    /// `IOptions<SoulseekSettings>`: the address, login and download timeout are deliberately
-    /// the values Octo started with (a restart-only setting; see RestartTracker).
+    /// The address, login and download timeout are deliberately the values Octo started with (a
+    /// restart-only setting; see RestartTracker).
     base: String,
     username: Option<String>,
     password: Option<String>,
@@ -109,16 +109,15 @@ struct Inner {
     last_search_cleanup: Mutex<Option<Shared<BoxFuture<'static, ()>>>>,
 }
 
-/// What kind of exception a failed call would have thrown, for the callers whose catch was
-/// narrower than `Exception`.
+/// What kind of failure a call met, for the callers that handle only some kinds.
 enum Fault {
-    /// `TaskCanceledException`: the HTTP client's timeout.
+    /// The HTTP client's timeout.
     Canceled,
-    /// `HttpRequestException`.
+    /// Any other HTTP failure.
     Http,
-    /// `JsonException`.
+    /// An answer that is not the expected JSON.
     Json,
-    /// Anything else (`InvalidOperationException`, `KeyNotFoundException`, ...).
+    /// Anything else.
     Other,
 }
 
@@ -136,7 +135,7 @@ fn fault_of(error: &anyhow::Error) -> Fault {
     }
 }
 
-/// The message the C# exception carried, as near as reqwest can say it.
+/// A failure's message in plain words, as near as reqwest can say it.
 fn message(error: &anyhow::Error) -> String {
     match error.downcast_ref::<reqwest::Error>() {
         Some(e) if e.is_timeout() => {
@@ -154,13 +153,13 @@ fn to_client_error(error: anyhow::Error) -> SoulseekClientError {
     }
 }
 
-/// `EnsureSuccessStatusCode()`'s failure, in plain words.
+/// The failure for a status that is not a success, in plain words.
 fn not_success(status: StatusCode) -> String {
     crate::services::http_client_factory::status_failure_message(status)
 }
 
-/// The future, unless the token is cancelled first (an already-cancelled token wins at once, as
-/// every .NET API that took one checked it before starting).
+/// The future, unless the token is canceled first (an already-canceled token wins at once,
+/// before any work starts).
 async fn cancellable<T>(
     ct: &CancellationToken,
     work: impl Future<Output = T>,
@@ -173,7 +172,7 @@ async fn cancellable<T>(
 }
 
 /// Removes a search from slskd once [`SoulseekClient::search`] is done with it, however it
-/// ends: returned, given up through the token, or dropped (the C# `finally`).
+/// ends: returned, given up through the token, or dropped.
 struct SearchCleanup {
     client: SoulseekClient,
     search_id: String,
@@ -202,13 +201,12 @@ impl SoulseekClient {
     /// The HTTP client's timeout.
     pub const TIMEOUT: Duration = Duration::from_secs(30);
 
-    /// `IOptions<SoulseekSettings>`: the settings are read once, here.
+    /// The settings are read once, here.
     pub fn new(settings: &SoulseekSettings) -> Self {
         Self::with_timings(settings, Timings::default())
     }
 
-    /// A client whose waits and clock are the given ones (the C# tests set the internal
-    /// properties).
+    /// A client whose waits and clock are the given ones (tests shorten them).
     pub fn with_timings(settings: &SoulseekSettings, timings: Timings) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Self::TIMEOUT)
@@ -565,16 +563,16 @@ impl SoulseekClient {
     /// Runs one Soulseek search through slskd and returns every file it found.
     ///
     /// slskd keeps a running search's responses in memory and saves them only when the search
-    /// ends (SearchService.cs, slskd 0.26.0), so /responses is empty until then and there is
+    /// ends (slskd 0.26.0's search service), so /responses is empty until then and there is
     /// nothing to act on early. Octo reads the search's state until slskd ends it, then reads
-    /// the responses once. A search still running at the profile's ceiling is cancelled, not
-    /// abandoned: a cancelled search still saves what it gathered. Octo used to read nothing at
+    /// the responses once. A search still running at the profile's ceiling is canceled, not
+    /// abandoned: a canceled search still saves what it gathered. Octo used to read nothing at
     /// the ceiling and delete the search, which returned zero hits and left the search running
     /// in slskd, because DELETE removes only the record.
     ///
     /// A caller who gives up still gets [`SoulseekClientError::Cancelled`], as before, so a
-    /// cancelled acquisition is not mistaken for "not on Soulseek"; the slskd search is
-    /// cancelled behind it. Dropping the future does the same.
+    /// canceled acquisition is not mistaken for "not on Soulseek"; the slskd search is
+    /// canceled behind it. Dropping the future does the same.
     pub async fn search(
         &self,
         query: &str,
@@ -595,7 +593,7 @@ impl SoulseekClient {
         let search_id = uuid::Uuid::new_v4().to_string();
         let began = self.now();
         // Set before the start goes out: a caller who gives up while it is on its way leaves a
-        // search slskd may already have taken, and cancelling one it never made does no harm.
+        // search slskd may already have taken, and canceling one it never made does no harm.
         let mut cleanup = SearchCleanup {
             client: self.clone(),
             search_id: search_id.clone(),
@@ -784,7 +782,7 @@ impl SoulseekClient {
         })
     }
 
-    /// Removes the search from slskd. One that has not ended is cancelled first: DELETE removes
+    /// Removes the search from slskd. One that has not ended is canceled first: DELETE removes
     /// only the record, and the search would carry on asking the network for nobody. The short
     /// wait after the cancel lets slskd save the ended search before its record goes, so that
     /// save does not fail in slskd's log.
@@ -792,7 +790,7 @@ impl SoulseekClient {
         if !ended {
             self.cancel_search(search_id).await;
             let grace = self.now() + wire::delta(CANCEL_GRACE);
-            // Nobody can give this up: the token is never cancelled.
+            // Nobody can give this up: the token is never canceled.
             let _ = self
                 .wait_for_end(search_id, grace, &CancellationToken::new())
                 .await;
@@ -815,7 +813,7 @@ impl SoulseekClient {
     /// its whole share). Each comes back with its full remote path, ready to enqueue, and the
     /// queue and speed of `from`, the search hit that pointed at the folder.
     /// Empty when the peer does not answer in time or will not list it. An answer with a field
-    /// of the wrong kind is an error, as it escaped the C#'s narrower catch.
+    /// of the wrong kind is an error.
     pub async fn browse_folder(
         &self,
         from: &SoulseekFileHit,
@@ -959,7 +957,7 @@ impl SoulseekClient {
     }
 
     /// Polls a download to completion. Returns Succeeded on success or Errored
-    /// on any kind of slskd-side failure (peer rejected, timed out, cancelled,
+    /// on any kind of slskd-side failure (peer rejected, timed out, canceled,
     /// or the transfer silently disappeared from slskd's active list: which
     /// happens after rejection on some slskd versions and would otherwise hang
     /// us forever). Caller decides whether to retry or escalate.
@@ -968,8 +966,7 @@ impl SoulseekClient {
     /// it. It only listens: the cadence, the deadline and the outcome are the same without it.
     ///
     /// The caller giving up through `ct` is [`SoulseekClientError::Cancelled`]; a poll that hit
-    /// the HTTP client's own timeout is [`SoulseekClientError::Timeout`], which the C# let
-    /// through as a `TaskCanceledException`.
+    /// the HTTP client's own timeout is [`SoulseekClientError::Timeout`].
     pub async fn wait_for_completion(
         &self,
         username: &str,

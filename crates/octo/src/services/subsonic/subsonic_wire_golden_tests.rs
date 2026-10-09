@@ -1,10 +1,9 @@
-//! Golden tests: the answers Octo built itself in the C# baseline recording
-//! (`parity/recordings/csharp/`), rebuilt here from the same input and compared byte for byte,
-//! with their content type and length.
+//! Golden tests: the answers Octo builds itself, as the reference recording holds them, rebuilt
+//! here from the same input and compared byte for byte, with their content type and length.
 //!
-//! The input is what the C# had at that point: the models the controller handed the builder
-//! (the catalog stub's artist, albums and songs), Navidrome's JSON or XML for the merges, and
-//! the clock for `created`. Navidrome's part of a merged answer is taken from the recording
+//! The input is what the recorded server had at that point: the models the controller handed the
+//! builder (the catalog stub's artist, albums and songs), Navidrome's JSON or XML for the merges,
+//! and the clock for `created`. Navidrome's part of a merged answer is taken from the recording
 //! itself, the library rows less what Octo added to them (`isExternal`), so a golden checks
 //! everything Octo does to a page: parsing, the row shapes, the merge, the order, escaping and
 //! layout. The external ids are minted by the real registry, so they also pin its hashing.
@@ -71,12 +70,10 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
     assert_recorded(reply, recorded(file, name), file, name);
 }
 
-/// A recorded extensions list as Octo 2026.10.05 lists the extensions the ported groups added:
-/// octoImports (H, 4008358) and octoLists (Q, f54467a) after the extensions the 2026.10.03.2
-/// recording lists, as 2026.10.05 lists them last, and octoAcquisitions at versions 1 and 2 (D,
-/// 9ac4e5a: the log, the key and Find songs). Until the groups that add the other 2026.10.05
-/// extensions land, a fresh recording would differ for their sake, so these golden tests keep the
-/// old recording and add the ported groups' entries to it.
+/// A recorded extensions list with the extensions added since the 2026.10.03.2 recording:
+/// octoImports and octoLists after the extensions it lists (Octo 2026.10.05 lists them last),
+/// and octoAcquisitions at versions 1 and 2 (the log, the key and Find songs). These golden
+/// tests keep the older recording and add those entries to it.
 fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);
     let (old, new) = if want.content_type.contains("json") {
@@ -115,10 +112,9 @@ fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
     want
 }
 
-/// A recorded answer with the outside albums' `explicitStatus` (P, 4f2aeb6), which Octo
-/// 2026.10.05 sends right after `releaseTypes` on every outside album, "" when the catalog did
-/// not say. The 2026.10.03.2 recording predates it; these inputs carry no explicit word, so the
-/// field is empty everywhere.
+/// A recorded answer with the outside albums' `explicitStatus`, which Octo 2026.10.05 sends right
+/// after `releaseTypes` on every outside album, "" when the catalog did not say. The 2026.10.03.2
+/// recording predates it; these inputs carry no explicit word, so the field is empty everywhere.
 fn recorded_with_explicit_status(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);
     if want.content_type.contains("json") {
@@ -608,8 +604,8 @@ fn info_answers_match_the_recordings() {
 
 // ---- Library albums and artists: Navidrome's JSON, answered in the format asked for --------
 
-/// getAlbum/getArtist for a library id: Navidrome's JSON read as `ConvertSubsonicJsonElement`
-/// reads it, then `CreateMergedResponse`.
+/// getAlbum/getArtist for a library id: Navidrome's JSON converted as the controller converts
+/// it, then the merged response.
 fn merged(element: &str, navidrome: &Value, format: &str) -> SubsonicReply {
     let builder = builder();
     let data = builder
@@ -726,7 +722,7 @@ fn library_artists_match_the_recordings_in_every_format() {
 
 // ---- search3 / search2: the merge -------------------------------------------------------
 
-/// The controller's envelope around merged rows (`SubSonicController.MergeSearchResults`).
+/// The controller's envelope around merged search rows.
 fn search_reply(
     builder: &SubsonicResponseBuilder,
     envelope: &str,
@@ -1108,9 +1104,8 @@ fn octo_extensions_match_the_recordings() {
             name,
         );
     }
-    // Octo 2026.10.05 (group F, 374dac8) adds "admin" after the actions and offers the six
-    // edits even while library actions are off, as the parity corpus records it; the 2026.10.03.2
-    // recording is kept and those two changes made to it.
+    // Octo 2026.10.05 adds "admin" after the actions and offers the six edits even while library
+    // actions are off; the 2026.10.03.2 recording is kept and those two changes made to it.
     let mut want = recorded("07-octo-extensions", "library-actions-json");
     want.body = want.body.replace(
         r#""actions":[],"#,

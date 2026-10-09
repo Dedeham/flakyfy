@@ -1,5 +1,5 @@
-//! Real, tiny audio files made with ffmpeg, for the tests that tag songs on disk (the C# tests'
-//! TagLib-written files). Each kind is made once per test run and copied from there.
+//! Real, tiny audio files made with ffmpeg, for the tests that tag songs on disk. Each kind is
+//! made once per test run and copied from there.
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};

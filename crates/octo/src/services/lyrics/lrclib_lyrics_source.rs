@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LrclibLyricsSource.cs`.
+//! LRCLIB as a lyrics source.
 
 use std::time::Duration;
 
@@ -187,7 +187,7 @@ impl LrclibLyricsSource {
             if !(synced || plain || instrumental) {
                 continue;
             }
-            // string.Equals(null, null) is true: no album on either side is the same album.
+            // No album on either side is the same album.
             let same_album = match (str_prop(row, "albumName")?, query.album.as_deref()) {
                 (Some(a), Some(b)) => eq_ignore_case(a, b),
                 (None, None) => true,
@@ -199,7 +199,7 @@ impl LrclibLyricsSource {
             };
             hits.push((row, (u8::from(!synced), u8::from(!same_album), distance)));
         }
-        // OrderBy/ThenBy is a stable sort.
+        // A stable sort.
         hits.sort_by(|a, b| {
             (a.1.0, a.1.1)
                 .cmp(&(b.1.0, b.1.1))
@@ -321,8 +321,7 @@ impl ILyricsSource for LrclibLyricsSource {
         if self.cooling_down() {
             return LyricsLookup::failed();
         }
-        // An answer of a shape LRCLIB never sends threw in C#, which the service caught as a
-        // failed lookup.
+        // An answer of a shape LRCLIB never sends is a failed lookup.
         self.find_inner(query, ct)
             .await
             .unwrap_or_else(|_| LyricsLookup::failed())

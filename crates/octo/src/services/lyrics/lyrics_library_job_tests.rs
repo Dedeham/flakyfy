@@ -1,6 +1,5 @@
-//! LyricsChoiceTests' library job tests (Job_*), and the store and worker around them. The C#
-//! tests wrote tags into an MP3 fixture with TagLib; here the songs' tags are held in memory
-//! ([`FakeTags`]) and the lyrics files and the run's state file are real.
+//! The library lyrics job, and the store and worker around it. The songs' tags are held in
+//! memory ([`FakeTags`]) and the lyrics files and the run's state file are real.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -167,7 +166,7 @@ async fn job_stopped_part_way_resumes_where_it_was_and_writes_the_rest() {
     assert_eq!(store.current().status, LyricsLibraryStatus::Cancelled);
     assert_eq!(store.current().cursor, 2);
     assert!(store.current().can_resume());
-    // `store.Dispose()`.
+    // The final flush at shutdown.
     store.flush();
     drop((worker, store));
 
@@ -238,7 +237,7 @@ async fn job_services_stop_answering_pauses_so_a_resume_asks_again() {
     assert_eq!(run.cursor, 0);
     assert_eq!(run.busy, 0);
     assert_eq!(run.processed, 0);
-    // Rust-only: the reason, and only the wall was asked.
+    // The reason, and only the wall was asked.
     assert_eq!(
         run.reason.as_deref(),
         Some("The lyrics services stopped answering. Resume later to carry on from here.")
@@ -274,7 +273,7 @@ async fn job_uncertain_match_goes_on_the_review_list() {
     assert_eq!(entry.path, path.to_string_lossy());
     assert_eq!(entry.candidate_id.as_deref(), Some("kugou:1.a"));
     assert_eq!(entry.reason, "lengths differ by 2 s");
-    // Rust-only: the rest of the entry.
+    // The rest of the entry.
     assert_eq!(
         (
             entry.artist.as_str(),
@@ -312,7 +311,7 @@ async fn job_by_default_only_walks_octos_downloads() {
     assert!(!library.music.join("02 Theirs.lrc").exists());
 }
 
-// ---- Rust-only: the store -------------------------------------------------------------------
+// ---- The store ------------------------------------------------------------------------------
 
 fn fixture() -> String {
     let path = concat!(
@@ -342,8 +341,8 @@ fn the_store_writes_the_fixture_back_byte_for_byte() {
     assert!(!state_file::temp_path(&state).exists());
 }
 
-/// The fixture as a run that was going: it comes back Interrupted with the C#'s reason, and
-/// everything else as it was.
+/// The fixture as a run that was going: it comes back Interrupted with the restart's reason,
+/// and everything else as it was.
 #[test]
 fn a_running_fixture_comes_back_interrupted_with_everything_else_kept() {
     let library = Library::new();
@@ -410,7 +409,7 @@ fn update_bounds_the_review_and_the_error_list() {
     assert_eq!(run.errors[0], "error 10");
 }
 
-/// An update is written by the flusher, not at once; a replace is written at once; cancelling
+/// An update is written by the flusher, not at once; a replace is written at once; canceling
 /// the flusher writes what is left.
 #[tokio::test(start_paused = true)]
 async fn updates_are_flushed_on_the_timer_and_at_shutdown() {
@@ -449,9 +448,9 @@ async fn updates_are_flushed_on_the_timer_and_at_shutdown() {
     );
 }
 
-// ---- Rust-only: the worker ------------------------------------------------------------------
+// ---- The worker -----------------------------------------------------------------------------
 
-/// The hosted loop runs what the dashboard queues, one at a time; a second request while one
+/// The worker's loop runs what the dashboard queues, one at a time; a second request while one
 /// waits or runs is refused; a step whose rows cannot be read fails the run with the message.
 #[tokio::test]
 async fn the_hosted_loop_runs_queued_requests_and_records_a_failure() {
@@ -470,7 +469,7 @@ async fn the_hosted_loop_runs_queued_requests_and_records_a_failure() {
     assert_eq!(store.current().written, 1);
     assert_eq!(store.current().scope, "WholeLibrary");
 
-    // Two rows with one id: the C# ToDictionary threw.
+    // Two rows with one id: the step fails.
     store.update(|run| {
         let row = LyricsLibraryRow {
             id: "same".into(),
@@ -496,9 +495,9 @@ async fn the_hosted_loop_runs_queued_requests_and_records_a_failure() {
     hosted.await.expect("joins").expect("the loop ends");
 }
 
-/// Shutting down mid-walk leaves the run Interrupted where it was, so it can be resumed. As in
-/// C#, the song whose lookup the shutdown cut into is counted (a cancelled lookup answers "not
-/// now", so it is busy), and the pause after it ends the run.
+/// Shutting down mid-walk leaves the run Interrupted where it was, so it can be resumed. The
+/// song whose lookup the shutdown cut into is counted (a canceled lookup answers "not now",
+/// so it is busy), and the pause after it ends the run.
 #[tokio::test]
 async fn a_shutdown_mid_walk_leaves_the_run_interrupted() {
     let library = Library::new();
@@ -526,8 +525,8 @@ async fn a_shutdown_mid_walk_leaves_the_run_interrupted() {
     assert_eq!((run.cursor, run.written), (2, 2));
     assert!(run.can_resume());
 
-    // Through the hosted loop, with the pause: the lookup cut into answers "not now", the song
-    // is counted busy, and the pause throws, which the loop records as Interrupted. (A fresh
+    // Through the worker's loop, with the pause: the lookup cut into answers "not now", the
+    // song is counted busy, and the pause fails, which the loop records as Interrupted. (A fresh
     // library: the songs above have lyrics now.)
     let library = Library::new();
     for n in 1..=3 {

@@ -1,4 +1,4 @@
-//! Port of `Services/Common/HeartAcquisitionCoordinator.cs`.
+//! The heart acquisition coordinator: which source a heart or a play is handed to.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use crate::services::lidarr::ILidarrHeartAcquisitionService;
 use crate::services::soulseek::soulseek_link::SoulseekLinkState;
 use crate::services::soulseek::{ExternalIdRegistry, ISoulseekLink};
 
-/// The coordinator's optional collaborators, each `null` by default in the C# constructor.
+/// The coordinator's optional collaborators, each `None` by default.
 #[derive(Default, Clone)]
 pub struct HeartCoordinatorExtras {
     /// The chain is the only place that knows which failure is the last, so it is the one that
@@ -38,7 +38,7 @@ pub struct HeartCoordinatorExtras {
 /// Routes explicit heart gestures, and plays when DownloadOnPlay or LidarrAlbumOnPlay ask
 /// for it.
 pub struct HeartAcquisitionCoordinator {
-    /// `IOptionsMonitor<SubsonicSettings>`: the chain is read at every heart.
+    /// The chain is read at every heart.
     settings: Arc<SettingsStore>,
     direct_queue: Arc<TrackAcquisitionQueue>,
     direct_downloads: Arc<dyn IDownloadService>,
@@ -81,8 +81,7 @@ impl HeartAcquisitionCoordinator {
     pub fn queue_track(self: &Arc<Self>, provider: &str, external_id: &str, requested_by: Option<&str>) {
         let coordinator = Arc::clone(self);
         let (provider, external_id, requested_by) = owned3(provider, external_id, requested_by);
-        // Fire and forget: a chain that stops on an error is left as it stands, as the C#
-        // discarded the task.
+        // Fire and forget: a chain that stops on an error is left as it stands.
         tokio::spawn(async move {
             let _ = coordinator
                 .acquire_track(&provider, &external_id, requested_by.as_deref(), None)
@@ -307,7 +306,7 @@ impl HeartAcquisitionCoordinator {
         });
     }
 
-    /// `ResumeAsync`'s end: a chain that failed is logged, and the entry goes either way.
+    /// The end of a resumed chain: a chain that failed is logged, and the entry goes either way.
     fn resumed(&self, held: &HeldAcquisition, chain: anyhow::Result<()>) {
         if let Err(e) = chain {
             warn!("Resumed {} failed: {e}", held.key());
@@ -317,7 +316,7 @@ impl HeartAcquisitionCoordinator {
         }
     }
 
-    /// The song chain. `Err` where the C# let an exception out: a Lidarr step that failed.
+    /// The song chain. `Err` for a Lidarr step that failed.
     pub(crate) async fn acquire_track(
         &self,
         provider: &str,
@@ -425,7 +424,7 @@ impl HeartAcquisitionCoordinator {
         Ok(())
     }
 
-    /// The album chain. `Err` where the C# let an exception out: a Lidarr step that failed.
+    /// The album chain. `Err` for a Lidarr step that failed.
     pub(crate) async fn acquire_album(
         &self,
         provider: &str,

@@ -1,5 +1,5 @@
-//! `LyricsChoiceService`, through the service rather than the Subsonic endpoints (those are
-//! 6-A's): the intent of LyricsChoiceTests' Candidates_*, Pin_* and Hide_* tests.
+//! `LyricsChoiceService`, through the service rather than the Subsonic endpoints: the
+//! candidates offered, pins and hiding.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::{LyricsChoiceService, LyricsChoiceStore};
 use crate::services::lyrics::lyrics_service::LyricsService;
 
-/// LyricsChoiceTests.ChoosableSource: a source whose search and fetch the tests control.
+/// A source whose search and fetch the tests control.
 struct ChoosableSource {
     key: String,
     entries: Vec<LyricsCandidate>,
@@ -55,7 +55,7 @@ impl ILyricsSource for ChoosableSource {
     }
 }
 
-/// LyricsChoiceTests.Kugou(): the song and its remix, listed remix first.
+/// KuGou with the song and its remix, listed remix first.
 fn kugou() -> Arc<ChoosableSource> {
     let lyrics = HashMap::from([
         (
@@ -123,7 +123,6 @@ fn none() -> CancellationToken {
     CancellationToken::new()
 }
 
-// LyricsChoiceTests.Candidates_ListEveryEntryTheSameSongFirstWithAPreview (the service's half)
 #[tokio::test]
 async fn candidates_list_every_entry_the_same_song_first_with_a_preview() {
     let (choices, _) = service(kugou());
@@ -143,7 +142,6 @@ async fn candidates_list_every_entry_the_same_song_first_with_a_preview() {
     assert_eq!(candidates[1].kind, "line");
 }
 
-// LyricsChoiceTests.Candidates_ManualSearch_JudgesByTheTitleAndArtistGiven (the service's half)
 #[tokio::test]
 async fn candidates_are_judged_by_the_title_and_artist_asked() {
     let (choices, _) = service(kugou());
@@ -159,7 +157,6 @@ async fn candidates_are_judged_by_the_title_and_artist_asked() {
     assert!(candidates[0].same_song);
 }
 
-// LyricsChoiceTests.Pin_EveryClientGetsThePinnedLyrics_AndAutoGoesBack (the service's half)
 #[tokio::test]
 async fn pin_from_the_list_just_shown_then_auto_goes_back() {
     let source = kugou();
@@ -194,7 +191,6 @@ async fn pin_from_the_list_just_shown_then_auto_goes_back() {
     assert!(!choices.clear("ext-1"));
 }
 
-// LyricsChoiceTests.Pin_WithoutAListFirst_FetchesTheCandidateFromItsSource
 #[tokio::test]
 async fn pin_without_a_list_first_fetches_the_candidate_from_its_source() {
     let (choices, _) = service(kugou());
@@ -209,7 +205,6 @@ async fn pin_without_a_list_first_fetches_the_candidate_from_its_source() {
     assert_eq!(lyrics.candidate_id.as_deref(), Some("kugou:1.a"));
 }
 
-// LyricsChoiceTests.Hide_EveryClientGetsNoLyrics_EvenNavidromesOwn (the service's half)
 #[tokio::test]
 async fn hide_pins_none() {
     let (choices, _) = service(kugou());
@@ -231,7 +226,6 @@ async fn hide_pins_none() {
 
 /// A pin made when the song had another id (its file was replaced by a better copy) still
 /// answers for it, found by artist and title, and Automatic clears it for good.
-// LyricsChoiceTests.Pin_FollowsTheSongToItsNewId_AndAutomaticClearsIt (the service's half)
 #[tokio::test]
 async fn pin_follows_the_song_to_its_new_id_and_automatic_clears_it() {
     let (choices, store) = service(kugou());

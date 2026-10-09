@@ -1,5 +1,5 @@
-//! LyricsTests (Service_*), LyricsSongSourceTests (Ranked_*) and LyricsWordTimingTests
-//! (Order_*).
+//! The lyrics service: its sources' order and what it remembers, the song's own lyrics ranked
+//! against the sources', and word timing preferred.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,9 +56,8 @@ fn source_of(lookup: &LyricsLookup) -> &str {
 const WORDS: &str = "[00:01.00]<00:01.00>word <00:01.50>by word<00:02.00>";
 const LINES: &str = "[00:01.00]line by line";
 
-// ---- LyricsTests ----------------------------------------------------------------------------
+// ---- The sources' order, and what is remembered ---------------------------------------------
 
-// LyricsTests.Service_SyncedFromALaterSource_BeatsAnEarlierPlainOne
 #[tokio::test]
 async fn service_synced_from_a_later_source_beats_an_earlier_plain_one() {
     let plain = FakeSource::new("lrclib", || found("first", None, Some("plain words")));
@@ -71,7 +70,6 @@ async fn service_synced_from_a_later_source_beats_an_earlier_plain_one() {
     assert_eq!(source_of(&lookup), "second");
 }
 
-// LyricsTests.Service_NothingSynced_KeepsThePlainOne
 #[tokio::test]
 async fn service_nothing_synced_keeps_the_plain_one() {
     let plain = FakeSource::new("lyricsovh", || found("ovh", None, Some("words")));
@@ -84,7 +82,6 @@ async fn service_nothing_synced_keeps_the_plain_one() {
     assert_eq!(source_of(&lookup), "ovh");
 }
 
-// LyricsTests.Service_SourceNotListed_IsNeverAsked
 #[tokio::test]
 async fn service_source_not_listed_is_never_asked() {
     let netease = FakeSource::new("netease", LyricsLookup::miss);
@@ -98,7 +95,6 @@ async fn service_source_not_listed_is_never_asked() {
     assert_eq!(lrclib.calls(), 1);
 }
 
-// LyricsTests.Service_BusySource_IsNotRememberedAsNoLyrics
 #[tokio::test]
 async fn service_busy_source_is_not_remembered_as_no_lyrics() {
     let busy = Arc::new(AtomicBool::new(true));
@@ -167,9 +163,8 @@ async fn enabled_lists_the_sources_that_are_on_in_their_order() {
     assert!(service.source("netease").is_none());
 }
 
-// ---- LyricsSongSourceTests ------------------------------------------------------------------
+// ---- The song's own lyrics, ranked ----------------------------------------------------------
 
-// LyricsSongSourceTests.Ranked_LineTimedOwnLyricsFirst_LoseToWordsWhenWordsArePreferred
 #[tokio::test]
 async fn ranked_line_timed_own_lyrics_first_lose_to_words_when_words_are_preferred() {
     let kugou = FakeSource::new("kugou", || found("KuGou", Some(WORDS), None));
@@ -181,7 +176,6 @@ async fn ranked_line_timed_own_lyrics_first_lose_to_words_when_words_are_preferr
     assert_eq!(source_of(&lookup), "KuGou");
 }
 
-// LyricsSongSourceTests.Ranked_LineTimedOwnLyricsFirst_StandWhenWordsAreNotPreferred
 #[tokio::test]
 async fn ranked_line_timed_own_lyrics_first_stand_when_words_are_not_preferred() {
     let kugou = FakeSource::new("kugou", || found("KuGou", Some(WORDS), None));
@@ -194,7 +188,6 @@ async fn ranked_line_timed_own_lyrics_first_stand_when_words_are_not_preferred()
     assert_eq!(kugou.calls(), 0);
 }
 
-// LyricsSongSourceTests.Ranked_WordTimedOwnLyrics_EndTheSearch
 #[tokio::test]
 async fn ranked_word_timed_own_lyrics_end_the_search() {
     let kugou = FakeSource::new("kugou", || found("KuGou", Some(WORDS), None));
@@ -207,7 +200,6 @@ async fn ranked_word_timed_own_lyrics_end_the_search() {
     assert_eq!(kugou.calls(), 0);
 }
 
-// LyricsSongSourceTests.Ranked_ASourceAboveTheSong_WinsAtTheSameTiming
 #[tokio::test]
 async fn ranked_a_source_above_the_song_wins_at_the_same_timing() {
     let lrclib = FakeSource::new("lrclib", || found("LRCLIB", Some(LINES), None));
@@ -219,7 +211,6 @@ async fn ranked_a_source_above_the_song_wins_at_the_same_timing() {
     assert_eq!(source_of(&lookup), "LRCLIB");
 }
 
-// LyricsSongSourceTests.Ranked_PlainOwnLyrics_LoseToTimedOnesBelowThem
 #[tokio::test]
 async fn ranked_plain_own_lyrics_lose_to_timed_ones_below_them() {
     let lrclib = FakeSource::new("lrclib", || found("LRCLIB", Some(LINES), None));
@@ -231,7 +222,6 @@ async fn ranked_plain_own_lyrics_lose_to_timed_ones_below_them() {
     assert_eq!(source_of(&lookup), "LRCLIB");
 }
 
-// LyricsSongSourceTests.Ranked_NothingBetterFound_TheSongsOwnStand
 #[tokio::test]
 async fn ranked_nothing_better_found_the_songs_own_stand() {
     let lrclib = FakeSource::new("lrclib", LyricsLookup::miss);
@@ -245,9 +235,8 @@ async fn ranked_nothing_better_found_the_songs_own_stand() {
     assert_eq!(result.timing(), LyricsTiming::Line);
 }
 
-// ---- LyricsWordTimingTests ------------------------------------------------------------------
+// ---- Word timing preferred ------------------------------------------------------------------
 
-// LyricsWordTimingTests.Order_PreferWordTimed_ALaterWordTimedAnswerBeatsAnEarlierLineTimedOne
 #[tokio::test]
 async fn order_prefer_word_timed_a_later_word_timed_answer_beats_an_earlier_line_timed_one() {
     let lines = FakeSource::new("lrclib", || found("LRCLIB", Some("[00:01.00]line"), None));
@@ -260,7 +249,6 @@ async fn order_prefer_word_timed_a_later_word_timed_answer_beats_an_earlier_line
     assert_eq!(source_of(&lookup), "KuGou");
 }
 
-// LyricsWordTimingTests.Order_PreferWordTimedOff_TheFirstTimedAnswerWins
 #[tokio::test]
 async fn order_prefer_word_timed_off_the_first_timed_answer_wins() {
     let lines = FakeSource::new("lrclib", || found("LRCLIB", Some("[00:01.00]line"), None));
@@ -274,7 +262,6 @@ async fn order_prefer_word_timed_off_the_first_timed_answer_wins() {
     assert_eq!(words.calls(), 0);
 }
 
-// LyricsWordTimingTests.Order_WordTimedFirst_NothingLaterIsAsked
 #[tokio::test]
 async fn order_word_timed_first_nothing_later_is_asked() {
     let words = FakeSource::new("kugou", || found("KuGou", Some("[00:01.00]<00:01.00>word"), None));
@@ -288,7 +275,6 @@ async fn order_word_timed_first_nothing_later_is_asked() {
     assert_eq!(lines.calls(), 0);
 }
 
-// LyricsWordTimingTests.Order_NoWordTimingAnywhere_KeepsTheLineTimedOne
 #[tokio::test]
 async fn order_no_word_timing_anywhere_keeps_the_line_timed_one() {
     let lines = FakeSource::new("kugou", || found("KuGou", Some("[00:01.00]line"), None));
@@ -301,7 +287,6 @@ async fn order_no_word_timing_anywhere_keeps_the_line_timed_one() {
     assert_eq!(source_of(&lookup), "KuGou");
 }
 
-// LyricsWordTimingTests.Order_KugouLeftOut_IsNeverAsked
 #[tokio::test]
 async fn order_kugou_left_out_is_never_asked() {
     let kugou = FakeSource::new("kugou", || found("KuGou", Some("[00:01.00]<00:01.00>word"), None));
@@ -314,7 +299,6 @@ async fn order_kugou_left_out_is_never_asked() {
     assert_eq!(kugou.calls(), 0);
 }
 
-// LyricsWordTimingTests.Order_OutOfTime_ReturnsTheBestFoundSoFar
 #[tokio::test]
 async fn order_out_of_time_returns_the_best_found_so_far() {
     let budget = CancellationToken::new();

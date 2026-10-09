@@ -1,9 +1,8 @@
-//! A `Dictionary<string, T>`'s enumeration order, for the stores and lists whose order shows: a
-//! state file written in that order, or a stable sort over the values. Not a C# file of Octo's;
-//! the framework type those were built on.
+//! A string-keyed dictionary with a fixed enumeration order, for the stores and lists whose
+//! order shows: a state file written in that order, or a stable sort over the values.
 //!
 //! The order is insertion order, except that an entry added after a removal takes the most
-//! recently freed slot, as `Dictionary`'s free list does.
+//! recently freed slot (a free list of removed slots, newest first).
 
 use std::collections::HashMap;
 

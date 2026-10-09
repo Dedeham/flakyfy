@@ -1,4 +1,4 @@
-//! Port of `Services/Updates/UpdateHost.cs`: the `config/update/` files shared with the host
+//! The `config/update/` files shared with the host
 //! helper (`scripts/updater/octo-updater.sh`).
 
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ impl UpdateRunStates {
 /// Why [`UpdateHost::request`] wrote nothing.
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateRequestError {
-    /// `ArgumentException`: the tag names no release.
+    /// The tag names no release.
     #[error("\"{0}\" is not a release. (Parameter 'tag')")]
     NotARelease(String),
     /// The request file could not be written.
@@ -167,7 +167,7 @@ impl UpdateHost {
         })
     }
 
-    /// The last lines of the helper's log, for a run that failed. (C#'s default is 40.)
+    /// The last lines of the helper's log, for a run that failed.
     pub fn log_tail(&self, lines: usize) -> Vec<String> {
         let path = self.log_path();
         if !path.exists() {
@@ -275,14 +275,13 @@ fn write(path: &Path, values: &[(&str, &str)]) -> std::io::Result<()> {
     state_file::write_atomic(path, text.as_bytes())
 }
 
-/// `DateTime.TryParse` with `AdjustToUniversal | AssumeUniversal`, for the ISO 8601 times the
-/// helper writes.
+/// An ISO 8601 time the helper wrote, as UTC (a time with no offset is taken as UTC already).
 fn time(text: Option<&String>) -> Option<DateTime<Utc>> {
     text.filter(|text| !text.trim().is_empty())
         .and_then(|text| parse_utc(text))
 }
 
-/// `File.GetLastWriteTimeUtc`: 1601-01-01 for a file that is not there.
+/// The file's last write time, or 1601-01-01 for a file that is not there.
 fn last_write_time_utc(path: &Path) -> DateTime<Utc> {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -314,7 +313,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("a temp dir");
-            // The C# test used a folder that did not exist yet.
+            // A folder that does not exist yet.
             let path = dir.path().join("update");
             Self {
                 _dir: dir,
@@ -558,10 +557,10 @@ mod tests {
         assert_eq!(values.len(), 2);
     }
 
-    // ---- Rust-only ------------------------------------------------------------------------
+    // ---- The helper's fixtures, the log tail and the request time --------------------------
 
-    /// The fixtures the helper wrote (state-files.md §5) read as the C# read them, and a
-    /// request is written in exactly the fixture's shape.
+    /// The fixtures the helper wrote read back, and a request is written in exactly the
+    /// fixture's shape.
     #[test]
     fn the_update_fixtures_read_and_a_request_is_written_in_their_shape() {
         let fixtures =

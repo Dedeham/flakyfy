@@ -1,9 +1,9 @@
-//! A `Dictionary<string, T>` property of a state file, as System.Text.Json wrote and read it: a
-//! JSON object in the dictionary's enumeration order. Not a C# file: the stores of 5-B
-//! (`quality-upgrade.json`'s `Attempts`, `review-sweep.json`'s `Checked`) each had one.
+//! A [`DotnetDictionary`] property of a state file: a JSON object in the dictionary's
+//! enumeration order. Used by `quality-upgrade.json`'s `Attempts` and `review-sweep.json`'s
+//! `Checked`.
 //!
-//! On read, a repeated key keeps its first place and its last value, as the converter's
-//! `dict[key] = value` did, and a JSON `null` reads as an empty dictionary.
+//! On read, a repeated key keeps its first place and its last value, and a JSON `null` reads as
+//! an empty dictionary.
 
 use std::fmt;
 use std::marker::PhantomData;

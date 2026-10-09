@@ -1,5 +1,5 @@
-//! Port of `Services/Library/LibraryActionRatingWorker.cs`: `RatingActionRequest` and the worker
-//! (singleton AND hosted: the controller enqueues into the loop the host is running).
+//! `RatingActionRequest` and the worker (one shared instance: the controller enqueues into the
+//! loop the host is running).
 
 use std::sync::Arc;
 
@@ -38,9 +38,9 @@ pub struct LibraryActionRatingWorker {
     sender: mpsc::Sender<RatingActionRequest>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<RatingActionRequest>>,
     executor: Arc<LibraryActionExecutor>,
-    /// A background `SubsonicProxyService`, as the scope the C# made for each clear gave.
+    /// A background `SubsonicProxyService`, used for each clear.
     proxy: SubsonicProxyService,
-    /// `IOptionsMonitor<LibraryActionSettings>`: read at every enqueue.
+    /// The library action settings, read at every enqueue.
     settings: Arc<SettingsStore>,
 }
 
@@ -65,8 +65,7 @@ impl LibraryActionRatingWorker {
     /// Queue a rating for action. The cheap gates run inline so a disabled feature costs one
     /// property read on the request path, and nothing that removes a file runs in the request.
     ///
-    /// The C# channel was bounded with `DropWrite`: a full queue drops the new rating and still
-    /// answers true.
+    /// The channel is bounded: a full queue drops the new rating and still answers true.
     pub fn try_enqueue(&self, request: RatingActionRequest) -> bool {
         let settings = self.settings.current();
         let settings = &settings.library_actions;
@@ -87,7 +86,7 @@ impl LibraryActionRatingWorker {
         self.sender.max_capacity() - self.sender.capacity()
     }
 
-    /// `ExecuteAsync`: applies queued ratings one at a time until shutdown.
+    /// The worker loop: applies queued ratings one at a time until shutdown.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut receiver = self.receiver.lock().await;
         loop {
@@ -264,7 +263,7 @@ mod tests {
         assert_eq!(*responder.cleared.lock(), ["nd-delete"]);
     }
 
-    /// Port of `LibraryActionStarTests.RatingCarriesTheRatersSignIn`.
+    /// The action a rating asks for carries the rater's own sign-in.
     #[test]
     fn rating_carries_the_raters_sign_in() {
         let request = LibraryActionRatingWorker::to_action_request(&RatingActionRequest {
@@ -286,7 +285,7 @@ mod tests {
         assert_eq!(parameters["s"], "salt");
     }
 
-    /// Rust-only: the cheap gates, and the full queue that drops the rating and still says yes.
+    /// The cheap gates, and the full queue that drops the rating and still says yes.
     #[tokio::test]
     async fn the_gates_run_inline_and_a_full_queue_drops_the_new_rating() {
         let settings = store(AppSettings {

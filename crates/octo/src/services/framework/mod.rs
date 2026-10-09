@@ -1,6 +1,6 @@
-//! The .NET framework pieces the ported services were built on, which have no Rust
-//! counterpart with the same behavior: `SlidingWindowRateLimiter`, a size-limited
-//! `MemoryCache`, the `Lazy<Task<T>>` single-flight pattern, and a buffered `HttpClient` call.
+//! General-purpose building blocks the services share: a sliding-window rate limiter, a
+//! size-limited memory cache, single-flight fetches, an insertion-ordered dictionary with slot
+//! reuse, and a buffered HTTP call.
 
 pub mod dotnet_dictionary;
 pub mod http;

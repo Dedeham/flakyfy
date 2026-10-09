@@ -1,5 +1,5 @@
-//! `Services/Library` in the C#: library actions, the upgrade queue, the generated mixes and the
-//! Navidrome song and playlist plumbing.
+//! Library actions, the upgrade queue, the generated mixes and the Navidrome song and playlist
+//! plumbing.
 
 pub mod album_ownership;
 pub mod chart_playlist_service;

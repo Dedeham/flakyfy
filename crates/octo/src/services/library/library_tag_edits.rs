@@ -1,8 +1,7 @@
-//! Port of `Services/Library/LibraryTagEdits.cs`: the tags an app can read and change on one
-//! library file (`SongTagFields`, `LibraryTagEdits`), and what it keeps on disk,
-//! `tag-edits.json` (`TagEditJournal`): the tag edits made from the apps (and by the explicit
-//! marking), newest last, so each can be undone and a person can see later which files were
-//! changed, by whom and how. The edits are group F's; the explicit marking's are group P's.
+//! The tags an app can read and change on one library file (`SongTagFields`, `LibraryTagEdits`),
+//! and what it keeps on disk, `tag-edits.json` (`TagEditJournal`): the tag edits made from the
+//! apps (and by the explicit marking), newest last, so each can be undone and a person can see
+//! later which files were changed, by whom and how.
 
 use std::path::{Path, PathBuf};
 
@@ -149,7 +148,7 @@ pub fn read_file(file: &TagFile) -> TagValues {
     values
 }
 
-/// `int.TryParse(value, NumberStyles.None, InvariantCulture, out var n)`: ASCII digits only.
+/// A whole number of ASCII digits only (no sign, no spaces) that fits in an `i32`.
 fn plain_number(value: &str) -> Option<i64> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -241,10 +240,8 @@ pub fn write(path: &Path, changes: &IndexMap<String, Option<String>>) -> TagEdit
 
 /// One field, written; None clears it.
 ///
-/// Fixed in the port only: C# wrote the ISRC through `TagWriterExtras.SetText`, which returns
-/// on an empty value, so clearing an ISRC (and undoing an ISRC retag) left the code in the file.
-/// Here it goes through [`extras::set_or_clear_text`], which takes a cleared field off
-/// (`docs/rust-migration/known-diffs.md`, "Clearing a tag field").
+/// The ISRC goes through [`extras::set_or_clear_text`], which takes a cleared field off, so
+/// clearing an ISRC (and undoing an ISRC retag) leaves no code in the file.
 fn set(file: &mut TagFile, field: &str, value: Option<&str>) {
     fn many(value: Option<&str>) -> Vec<String> {
         value
@@ -347,7 +344,7 @@ pub fn restore_album(path: &Path, identity: &KeptIdentity, year: Option<&str>) -
     let run = || -> Result<TagEditResult, String> {
         let before = read(path).map_err(|error| why(&error))?;
         KeptIdentityTags::apply(path, identity).map_err(|error| why(&error))?;
-        // `uint.Parse(year)`, which throws on anything but a number.
+        // A year that is not a whole number fails the edit.
         let year = match year {
             None => 0,
             Some(text) => text
@@ -459,8 +456,7 @@ pub fn why(error: &TagError) -> String {
 }
 
 /// One edit the apps made to one file, kept so it can be undone and so a person can see later
-/// which files were changed, by whom and how. The record's fields in order, then its body
-/// properties, as System.Text.Json wrote them.
+/// which files were changed, by whom and how. Its fields in the state file's order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct TagEditEntry {
@@ -599,7 +595,7 @@ impl TagEditJournal {
             .cloned()
     }
 
-    /// The newest edits first (the C# default limit is 200).
+    /// The newest edits first, at most `limit`.
     pub fn recent(&self, limit: usize) -> Vec<TagEditEntry> {
         self.entries.lock().iter().rev().take(limit).cloned().collect()
     }

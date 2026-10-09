@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/SignInThrottle.cs`.
+//! The dashboard sign-in's guard against guessing.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -36,7 +36,7 @@ impl SignInThrottle {
         }
     }
 
-    /// Reads the time from `clock` from now on (the C# `internal Func<DateTime> Clock`).
+    /// Reads the time from `clock` from now on.
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
         self
@@ -91,7 +91,7 @@ impl SignInThrottle {
     }
 }
 
-/// The key for a request: its remote address (`Connection.RemoteIpAddress`), or "unknown".
+/// The key for a request: its remote IP address, or "unknown".
 pub fn key_of(remote: Option<std::net::SocketAddr>) -> String {
     remote.map_or_else(|| "unknown".to_string(), |addr| addr.ip().to_string())
 }

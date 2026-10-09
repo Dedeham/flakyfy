@@ -1,7 +1,6 @@
-//! What the lyrics sources share, not a C# file of its own: the two named HTTP clients
-//! `Program.cs` registered for them, `Uri.EscapeDataString`, the `Retry-After` delta, and
-//! `JsonElement`'s rules for reading an answer (a property of something that is not an object
-//! threw, which the sources turned into a failed lookup).
+//! What the lyrics sources share: their two named HTTP clients, URL escaping, the
+//! `Retry-After` delta, and the rules for reading an answer (a property of something that is
+//! not an object is a [`ShapeError`], which the sources turn into a failed lookup).
 
 use std::time::Duration;
 
@@ -12,10 +11,10 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use serde_json::Value;
 
-/// `LrclibLyricsSource.ClientName`: the client LRCLIB, NetEase and lyrics.ovh share.
+/// The client LRCLIB, NetEase and lyrics.ovh share.
 pub const LYRICS_CLIENT_NAME: &str = "lyrics";
 
-/// `KugouLyricsSource.ClientName`.
+/// KuGou's own client.
 pub const KUGOU_CLIENT_NAME: &str = "kugou";
 
 /// The `lyrics` client: 8 s, Octo's user agent, and no cookies. NetEase answers a search that
@@ -32,7 +31,7 @@ pub fn kugou_http_client() -> reqwest::Client {
 }
 
 fn client(timeout: Duration) -> reqwest::Client {
-    // IHttpClientFactory's handlers did not decompress, so neither do these.
+    // No decompression.
     reqwest::Client::builder()
         .timeout(timeout)
         .user_agent(octo_core::common::octo_user_agent::value())
@@ -42,7 +41,7 @@ fn client(timeout: Duration) -> reqwest::Client {
         .expect("a plain HTTP client builds")
 }
 
-/// `Uri.EscapeDataString`: everything but the RFC 3986 unreserved characters.
+/// Percent-escapes everything but the RFC 3986 unreserved characters.
 const DATA_STRING: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
@@ -53,7 +52,7 @@ pub(crate) fn escape_data_string(text: &str) -> String {
     utf8_percent_encode(text, DATA_STRING).to_string()
 }
 
-/// `response.Headers.RetryAfter?.Delta`: a `Retry-After` given in seconds. A date, or nothing
+/// A `Retry-After` given in seconds. A date, or nothing
 /// readable, is None, and the caller's default cool-down applies.
 pub(crate) fn retry_after_delta(headers: &HeaderMap) -> Option<Duration> {
     let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
@@ -66,15 +65,14 @@ pub(crate) fn retry_after_delta(headers: &HeaderMap) -> Option<Duration> {
         .map(|seconds| Duration::from_secs(seconds as u64))
 }
 
-/// `long.TryParse(text, out n)` with the default `NumberStyles.Integer`: white space either
-/// side and a leading sign allowed.
+/// An integer, with white space either side and a leading sign allowed.
 pub(crate) fn try_parse_long(text: &str) -> Option<i64> {
     text.trim_matches(|c: char| matches!(c, '\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' '))
         .parse::<i64>()
         .ok()
 }
 
-/// `Convert.FromBase64String`: standard alphabet, padding required, white space ignored, and
+/// Base64: standard alphabet, padding required, white space ignored, and
 /// unused trailing bits not checked.
 pub(crate) fn from_base64(text: &str) -> Option<Vec<u8>> {
     const LENIENT: GeneralPurpose = GeneralPurpose::new(
@@ -90,7 +88,7 @@ pub(crate) fn from_base64(text: &str) -> Option<Vec<u8>> {
     LENIENT.decode(compact).ok()
 }
 
-/// What `JsonElement` threw for an answer of a shape the source did not expect: a property
+/// An answer of a shape the source did not expect: a property
 /// asked of something that is not an object, a string of something that is not one, or a
 /// whole number of a fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,8 +100,8 @@ impl std::fmt::Display for ShapeError {
     }
 }
 
-/// `element.TryGetProperty(name, out value)`: an error when the element is not an object.
-/// A repeated name gives the last value, as `JsonElement` did.
+/// The property `name`: an error when the element is not an object. A repeated name gives the
+/// last value.
 pub(crate) fn prop<'a>(element: &'a Value, name: &str) -> Result<Option<&'a Value>, ShapeError> {
     match element {
         Value::Object(map) => Ok(map.get(name)),
@@ -111,12 +109,12 @@ pub(crate) fn prop<'a>(element: &'a Value, name: &str) -> Result<Option<&'a Valu
     }
 }
 
-/// The sources' `Str(element, name)`: the property when it is a string, else None.
+/// The property when it is a string, else None.
 pub(crate) fn str_prop<'a>(element: &'a Value, name: &str) -> Result<Option<&'a str>, ShapeError> {
     Ok(prop(element, name)?.and_then(Value::as_str))
 }
 
-/// `value.GetString()`: None for a JSON null, an error for anything but a string.
+/// The string: None for a JSON null, an error for anything but a string.
 pub(crate) fn get_string(value: &Value) -> Result<Option<&str>, ShapeError> {
     match value {
         Value::Null => Ok(None),
@@ -125,13 +123,13 @@ pub(crate) fn get_string(value: &Value) -> Result<Option<&str>, ShapeError> {
     }
 }
 
-/// `value.GetInt64()` of a number: an error when it is not a whole number in range.
+/// A number as an i64: an error when it is not a whole number in range.
 pub(crate) fn get_i64(value: &Value) -> Result<i64, ShapeError> {
     try_get_i64(value)?.ok_or(ShapeError)
 }
 
-/// `value.TryGetInt64(out n)`: false for a number that is not a whole number in range, and an
-/// error for anything that is not a number.
+/// A number as an i64: None for a number that is not a whole number in range, and an error for
+/// anything that is not a number.
 pub(crate) fn try_get_i64(value: &Value) -> Result<Option<i64>, ShapeError> {
     match value {
         Value::Number(number) => Ok(number.as_i64()),
@@ -139,12 +137,12 @@ pub(crate) fn try_get_i64(value: &Value) -> Result<Option<i64>, ShapeError> {
     }
 }
 
-/// `value.TryGetInt32(out n)`.
+/// A number as an i32, as [`try_get_i64`] reads it.
 pub(crate) fn try_get_i32(value: &Value) -> Result<Option<i32>, ShapeError> {
     Ok(try_get_i64(value)?.and_then(|n| i32::try_from(n).ok()))
 }
 
-/// `(int)Math.Round(value)`: half to even, then the cast.
+/// Rounded half to even, then cast to an i32.
 pub(crate) fn round_to_int(value: f64) -> i32 {
     value.round_ties_even() as i32
 }
@@ -179,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn numbers_and_base64_read_as_dotnet_read_them() {
+    fn numbers_and_base64_read_leniently() {
         assert_eq!(try_parse_long(" +42 "), Some(42));
         assert_eq!(try_parse_long("4 2"), None);
         assert_eq!(try_parse_long("1.5"), None);

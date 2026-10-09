@@ -1,4 +1,4 @@
-//! Lyrics with I/O (`Services/Lyrics`): the sources, the service that ranks them, choosing by
+//! Lyrics with I/O: the sources, the service that ranks them, choosing by
 //! hand and the pins on disk, the writer that saves lyrics beside or inside songs (a queue
 //! worker too), its undo journal, what a song file has now, and the library job ("find lyrics for
 //! the library" and the lyrics page's steps) with its run on disk. The models, LRC handling and

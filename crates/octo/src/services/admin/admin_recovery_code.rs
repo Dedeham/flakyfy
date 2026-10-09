@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/AdminRecoveryCode.cs`, the code in `admin-recovery-code`.
+//! The dashboard's recovery code, kept in `admin-recovery-code`.
 
 use std::path::{Path, PathBuf};
 
@@ -109,7 +109,7 @@ fn normal(code: &str) -> String {
 }
 
 /// Four groups of five letters from [`ALPHABET`], joined with dashes, drawn by the operating
-/// system's random source (`RandomNumberGenerator.GetString`).
+/// system's random source.
 fn new_code() -> String {
     let raw: Vec<char> = (0..20)
         .map(|_| char::from(ALPHABET[rand::random_range(0..ALPHABET.len())]))
@@ -120,8 +120,8 @@ fn new_code() -> String {
         .join("-")
 }
 
-/// `CryptographicOperations.FixedTimeEquals`: false for different lengths, otherwise a compare
-/// whose time does not depend on where the bytes differ.
+/// A constant-time compare: false for different lengths, otherwise a compare whose time does not
+/// depend on where the bytes differ.
 fn fixed_time_equals(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -178,7 +178,7 @@ mod tests {
         assert!(recovery.try_use(Some("MYOWNCODE")));
     }
 
-    /// The fixture is the file as the C# wrote it: the code and a line end.
+    /// The fixture is the file as written: the code and a line end.
     #[test]
     fn the_fixture_reads_as_its_code() {
         let fixture = concat!(

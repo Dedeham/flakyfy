@@ -1,4 +1,4 @@
-//! LastFmRadioStateStoreTests, and the fixture through the store.
+//! The Last.fm radio state store, and the fixture through the store.
 
 use std::sync::Arc;
 
@@ -261,8 +261,8 @@ fn reject_track_removes_it_from_every_station_and_persists_cooldown() {
     assert!(unavailable.retry_after_utc > unavailable.failed_at_utc);
 }
 
-/// Rust-only: the store writes the document indented, in the C# order, and keeps a user's key
-/// as it was written; a hand-edited key in another case is still found.
+/// The store writes the document indented, `Version` then `Users`, and keeps a user's key as
+/// it was written; a hand-edited key in another case is still found.
 #[test]
 fn the_store_keeps_keys_and_finds_them_ignoring_case() {
     let at = Utc::now();
@@ -282,8 +282,7 @@ fn the_store_keeps_keys_and_finds_them_ignoring_case() {
     assert!(fixture.store.known_users().is_empty());
 }
 
-/// Rust-only: two keys that differ only in case made the C# re-keying throw, so the load
-/// started clean.
+/// Two keys that differ only in case fail the load, so it starts clean.
 #[test]
 fn keys_that_differ_only_in_case_start_clean() {
     let fixture = StateFixture::new(
@@ -293,7 +292,7 @@ fn keys_that_differ_only_in_case_start_clean() {
     assert!(fixture.store.known_users().is_empty());
 }
 
-/// Rust-only: a failed refresh keeps its first 500 characters, and the summaries come newest
+/// A failed refresh keeps its first 500 characters, and the summaries come newest
 /// first.
 #[test]
 fn failures_are_bounded_and_summaries_are_newest_first() {
@@ -355,7 +354,6 @@ fn the_fixture_survives_a_load_and_a_save() {
     assert_eq!(written, expected);
 }
 
-// LastFmRadioCoreTests.PlaylistSerializer_HasJsonXmlSymmetryAndReadOnlyMetadata
 #[test]
 fn playlist_serializer_has_json_xml_symmetry_and_read_only_metadata() {
     use octo_core::models::domain::Song;

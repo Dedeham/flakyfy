@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/RecentScrobbles.cs`.
-
 use std::collections::{HashSet, VecDeque};
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -17,7 +15,7 @@ use parking_lot::Mutex;
 /// listener pushes out only that listener's oldest plays.
 #[derive(Default)]
 pub struct RecentScrobbles {
-    /// Keyed by `StringComparer.OrdinalIgnoreCase`.
+    /// Keyed by listener, ignoring case.
     listeners: Mutex<IndexMap<String, Plays>>,
 }
 
@@ -74,7 +72,7 @@ impl RecentScrobbles {
     }
 }
 
-/// `nowUtc.Ticks / TimeSpan.TicksPerMinute`: minutes since 0001-01-01.
+/// Whole minutes since 0001-01-01.
 fn minute(now_utc: DateTime<Utc>) -> i64 {
     const UNIX_EPOCH_SECONDS: i64 = 62_135_596_800;
     (now_utc.timestamp() + UNIX_EPOCH_SECONDS).div_euclid(60)
@@ -162,9 +160,8 @@ mod tests {
             + TimeDelta::minutes(minutes)
     }
 
-    /// `ScrobbleRetryTests.APlayNotTakenTheFirstTime_CountsWhenTheClientSendsItAgain`, at the
-    /// store: the play withdrawn because the song could not be looked up counts on the retry,
-    /// once.
+    /// A play not taken the first time counts when the client sends it again: the play
+    /// withdrawn because the song could not be looked up counts on the retry, once.
     #[test]
     fn a_play_not_taken_the_first_time_counts_when_the_client_sends_it_again() {
         let recent = RecentScrobbles::new();
@@ -178,8 +175,8 @@ mod tests {
         assert!(!recent.first_report("bob", "local-song", time, at(0)));
     }
 
-    /// Rust-only: a repeat is one play inside the window and per listener (ignoring case); a
-    /// play without a time is its minute.
+    /// A repeat is one play inside the window and per listener (ignoring case); a play without a
+    /// time is its minute.
     #[test]
     fn repeats_are_one_play_inside_the_window() {
         let recent = RecentScrobbles::new();
@@ -195,8 +192,8 @@ mod tests {
         recent.withdraw("bob", "never", None, at(0));
     }
 
-    /// Rust-only: both bounds. A listener's 257th play pushes out their oldest, and the
-    /// 1025th listener pushes out the one heard from longest ago.
+    /// Both bounds. A listener's 257th play pushes out their oldest, and the 1025th listener pushes
+    /// out the one heard from longest ago.
     #[test]
     fn plays_and_listeners_are_bounded() {
         let recent = RecentScrobbles::new();
@@ -224,7 +221,7 @@ mod tests {
 
     #[test]
     fn minutes_count_from_year_one() {
-        // DateTime(2026, 10, 4, 12, 0, 0).Ticks / TicksPerMinute.
+        // 2026-10-04 12:00:00 in 100 ns ticks since 0001-01-01, over the ticks in a minute.
         assert_eq!(minute(at(0)), 639_267_120_000_000_000 / 600_000_000);
     }
 }

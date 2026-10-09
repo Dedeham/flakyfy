@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/CoverUpgrade.cs`: "Upgrade cover art". The run and its store
+//! "Upgrade cover art". The run and its store
 //! (`cover-upgrade.json`, and the found covers' thumbnails in `cover-upgrade-found/`), the undo
 //! journal (`cover-upgrade-journal.jsonl` and the old pictures in `cover-backups/`), and the
 //! worker, a singleton that is also a hosted queue worker.
@@ -81,7 +81,7 @@ pub struct CoverUpgradeRequest {
 }
 
 impl CoverUpgradeRequest {
-    /// `new CoverUpgradeRequest(scope, mode, folderCovers)`, with the C# defaults for the rest.
+    /// A request of this scope, mode and folder covers, with the defaults for the rest.
     pub fn new(scope: CoverUpgradeScope, mode: CoverUpgradeMode, folder_covers: bool) -> Self {
         Self {
             scope,
@@ -213,9 +213,9 @@ pub struct CoverUpgradeRun {
     /// The batch under way: what it has read and which of its albums are counted and done. A
     /// batch stopped part way runs again on a resume; its songs are read again, so their count
     /// comes off first, and the albums it had finished are not gone through again, so each
-    /// album counts once (C# 2026.10.05 counted them again: "6 of 3 albums", and a replace
-    /// counted an album it had written as kept). Not in the C# file: written only while a batch
-    /// is stopped part way, and a C# reader ignores it.
+    /// album counts once (counting them again showed "6 of 3 albums", and a replace counted an
+    /// album it had written as kept). Written only while a batch is stopped part way, and a
+    /// reader that does not know the field ignores it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch: Option<CoverUpgradeBatch>,
 }
@@ -285,11 +285,11 @@ impl CoverUpgradeRun {
         }
     }
 
-    /// One more album gone through, counted the way `AlbumsTotal` is (port fix): a picked run
-    /// counts its picked albums, a run over everything the albums Navidrome named. C# 2026.10.05
-    /// counted every album it met once any total was known, so a scan with loose folders ended
-    /// with more done than there were ("6 of 5"). Each album counts once, a batch run again
-    /// included, and never past the total.
+    /// One more album gone through, counted the way `AlbumsTotal` is: a picked run counts its
+    /// picked albums, a run over everything the albums Navidrome named. Counting every album met
+    /// once any total was known made a scan with loose folders end with more done than there
+    /// were ("6 of 5"). Each album counts once, a batch run again included, and never past the
+    /// total.
     fn count_album_done(&mut self, id: &str, in_total: bool) {
         if !in_total || self.albums_done >= self.albums_total {
             return;
@@ -338,8 +338,8 @@ impl CoverUpgradeRun {
 /// The run, kept in the config folder so it survives a restart; the genre backfill's idiom
 /// (coalesced writes every ten seconds, through a temporary file).
 ///
-/// The C# store ran its own 10 s timer and flushed once more on `Dispose`; here that is
-/// [`CoverUpgradeStore::run_flusher`], registered as a worker by the app state.
+/// The timed writes and the last one at shutdown are [`CoverUpgradeStore::run_flusher`],
+/// registered as a worker by the app state.
 pub struct CoverUpgradeStore {
     path: Option<PathBuf>,
     run: Mutex<CoverUpgradeRun>,
@@ -452,8 +452,7 @@ impl CoverUpgradeStore {
         }
     }
 
-    /// The C# flush timer and `Dispose`: flushes every [`Self::FLUSH_INTERVAL`] until
-    /// cancelled, then once more.
+    /// Flushes every [`Self::FLUSH_INTERVAL`] until canceled, then once more.
     pub async fn run_flusher(&self, stopping: CancellationToken) {
         if self.path.is_none() {
             return;
@@ -625,8 +624,8 @@ impl CoverUpgradeJournal {
         }
     }
 
-    /// Keeps only these entries (oldest first), and the backups they still need. An error is
-    /// what the C# threw.
+    /// Keeps only these entries (oldest first), and the backups they still need. An error is a
+    /// file that could not be written or removed.
     pub fn rewrite(&self, oldest_first: &[CoverUpgradeJournalEntry]) -> io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -638,7 +637,7 @@ impl CoverUpgradeJournal {
                 _ => {}
             }
         } else {
-            // File.WriteAllLines: every line ends with a newline.
+            // Every line ends with a newline, the last one included.
             let text: String = oldest_first
                 .iter()
                 .map(|entry| octo_core::json::to_string(entry) + "\n")
@@ -665,13 +664,12 @@ impl CoverUpgradeJournal {
     }
 }
 
-/// What the worker resolved from a DI scope in C#. None stands for a container without it (the
-/// C# tests' empty service provider).
+/// The services a run uses. `None` stands for a host without it (as in tests).
 #[derive(Clone, Default)]
 pub struct CoverUpgradeServices {
     pub library: Option<Arc<dyn ILocalLibraryService>>,
     pub identity: Option<Arc<NavidromeIdentityService>>,
-    /// `IHttpClientFactory.CreateClient()`.
+    /// The default client.
     pub http: Option<reqwest::Client>,
 }
 
@@ -691,14 +689,13 @@ struct SongFile {
 
 /// Why a folder's work stopped short of an answer.
 enum FolderError {
-    /// What the C# per-item catch recorded as a failure.
+    /// A failure, recorded on the run for that item.
     Failed(String),
-    /// Shutdown cut a lookup short (the `OperationCanceledException` the C# let through).
+    /// Shutdown cut a lookup short.
     Stopped,
 }
 
-/// The shutdown cut a run short mid-lookup: the loop ends with the run left as it was, as the
-/// C# `catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)` did.
+/// The shutdown cut a run short mid-lookup: the loop ends with the run left as it was.
 #[derive(Debug)]
 struct StoppedByShutdown;
 
@@ -710,16 +707,15 @@ impl std::fmt::Display for StoppedByShutdown {
 
 impl std::error::Error for StoppedByShutdown {}
 
-/// What the C# `GetRequiredService<ILocalLibraryService>()` threw when the container had none.
+/// The error a run reports when the host has no library service.
 const NO_LIBRARY_SERVICE: &str =
     "No service for type 'Octo.Services.Local.ILocalLibraryService' has been registered.";
 
 /// Goes through a library's songs and gives each album the largest cover any source has for
-/// it. Brandon's ask, 2026-10-01: "go through your artwork and grab the highest quality for
-/// each one to embed all of your songs".
+/// it, to embed in all of its songs.
 ///
-/// Three steps, Brandon's shape for it (2026-10-01): a scan reads the songs only and lists every
-/// album whose cover is smaller than asked; he picks all of them or some; a preview of the
+/// Three steps: a scan reads the songs only and lists every album whose cover is smaller than
+/// asked; the owner picks all of them or some; a preview of the
 /// picked ones looks them up, and an upgrade writes. One folder at a time, its songs grouped by
 /// album. An album is changed only when the cover found is clearly larger than the one its
 /// songs carry, and only the front cover is replaced; other pictures stay. A real run keeps
@@ -822,7 +818,7 @@ impl CoverUpgradeWorker {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// The hosted service's loop (`ExecuteAsync`): one request at a time until `stopping`.
+    /// The worker's loop: one request at a time until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut queue = self.receiver.lock().await;
         loop {
@@ -860,7 +856,7 @@ impl CoverUpgradeWorker {
         Ok(())
     }
 
-    /// One scan, preview or upgrade (`RunAsync`).
+    /// One scan, preview or upgrade.
     async fn run_request(
         &self,
         request: &CoverUpgradeRequest,
@@ -1551,7 +1547,7 @@ impl CoverUpgradeWorker {
         self.recorded(path, written)
     }
 
-    /// A write's failure goes on the run, as the C# catch put it there.
+    /// A write's failure goes on the run.
     fn recorded(&self, path: &str, written: Result<bool, String>) -> bool {
         match written {
             Ok(written) => written,
@@ -1567,7 +1563,7 @@ impl CoverUpgradeWorker {
 
     /// The cover file Navidrome would show for this folder, when it is a JPEG this run may
     /// replace. A PNG or WebP one is reported and left, since a JPEG under its name would lie
-    /// about what it is. An error is what the C# threw (a folder or file it could not read).
+    /// about what it is. An error is a folder or file it could not read.
     fn folder_cover(&self, folder: &str, quiet: bool) -> io::Result<Option<(String, i32)>> {
         for stem in ["cover", "folder", "front"] {
             let Some(file) = first_file_like(Path::new(folder), stem)? else {
@@ -1702,7 +1698,7 @@ impl CoverUpgradeWorker {
         items
     }
 
-    /// Undo (`UndoAsync`): puts back every journalled picture.
+    /// Undo: puts back every journaled picture.
     async fn undo(&self, stopping: &CancellationToken) -> anyhow::Result<()> {
         let entries = self.journal.read_all();
         self.store.replace(CoverUpgradeRun {
@@ -1775,7 +1771,7 @@ impl CoverUpgradeWorker {
         Ok(())
     }
 
-    /// The work of a run over everything in scope (`EnumerateAsync`).
+    /// The work of a run over everything in scope.
     async fn enumerate(&self, scope: CoverUpgradeScope) -> anyhow::Result<Vec<CoverUpgradeItem>> {
         let fallback = self
             .settings
@@ -1805,7 +1801,7 @@ impl CoverUpgradeWorker {
             return Ok(Vec::new());
         } else {
             let walk_root = PathBuf::from(&root);
-            // The trash is not part of the library (port fix).
+            // The trash is not part of the library.
             let trash = library_walk::trash_folder(&walk_root, &self.settings.current().library_actions);
             tokio::task::spawn_blocking(move || library_walk::all_files(&walk_root, Some(&trash)))
                 .await
@@ -1835,20 +1831,20 @@ impl CoverUpgradeWorker {
         }
     }
 
-    /// `BarcodeOf`: the album's barcode when the song carries one.
+    /// The album's barcode when the song carries one.
     pub fn barcode_of(file: &TagFile) -> Option<String> {
         octo_media::tags::tag_writer_extras::barcode_of(file)
     }
 }
 
-/// Puts one journalled picture back (the body of the C# undo loop).
+/// Puts one journaled picture back (one step of the undo).
 fn restore(journal: &CoverUpgradeJournal, entry: &CoverUpgradeJournalEntry) -> Result<(), String> {
     let before = journal.backup(entry.hash.as_deref());
     if entry.hash.is_some() && before.is_none() {
         return Err("its kept cover is missing".to_string());
     }
     if entry.kind == CoverUpgradeJournal::FOLDER_FILE {
-        // File.WriteAllBytes(path, null) threw for a folder file kept without a picture.
+        // A folder file kept without a picture cannot be put back: that entry fails.
         let before = before.ok_or_else(|| "Value cannot be null. (Parameter 'bytes')".to_string())?;
         return write_beside(&entry.path, &before).map_err(|failure| failure.to_string());
     }
@@ -1961,7 +1957,7 @@ fn folder_holds_only(folder: &str, album_paths: &[String]) -> bool {
     audio_files_in(Path::new(folder)).is_ok_and(|files| files.iter().all(|path| mine.contains(path.as_str())))
 }
 
-/// `Directory.EnumerateFiles(folder)` kept to the audio extensions.
+/// The files directly in a folder, kept to the audio extensions.
 fn audio_files_in(folder: &Path) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(folder)? {
@@ -1976,8 +1972,8 @@ fn audio_files_in(folder: &Path) -> io::Result<Vec<String>> {
     Ok(found)
 }
 
-/// `Directory.EnumerateFiles(folder, "<stem>.*").FirstOrDefault()`. The .NET pattern is
-/// case-sensitive on Linux and, being a Win32 pattern, also matches the bare stem.
+/// The first file in a folder named `<stem>.*`. The match is case-sensitive and also takes the
+/// bare stem.
 fn first_file_like(folder: &Path, stem: &str) -> io::Result<Option<String>> {
     let prefix = format!("{stem}.");
     for entry in std::fs::read_dir(folder)? {
@@ -2005,7 +2001,7 @@ fn get_extension(path: &str) -> &str {
     }
 }
 
-/// `Path.GetDirectoryName`, or "" for a bare name.
+/// The folder of a path, or "" for a bare name.
 fn directory_name(path: &str) -> String {
     Path::new(path)
         .parent()
@@ -2013,7 +2009,7 @@ fn directory_name(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The parent folder of a state file (`Path.GetDirectoryName`), "." for a bare name.
+/// The parent folder of a state file, "." for a bare name.
 fn parent_of(path: &Path) -> PathBuf {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
@@ -2025,12 +2021,12 @@ fn new_run_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
-/// A list's length or index as the run's `int` counters hold it.
+/// A list's length or index as the run's `i32` counters hold it, capped at `i32::MAX`.
 fn count(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order.
+/// Ordinal comparison in UTF-16 code unit order.
 fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
     a.encode_utf16().cmp(b.encode_utf16())
 }

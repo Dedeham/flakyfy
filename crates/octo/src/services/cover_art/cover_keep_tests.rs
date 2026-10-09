@@ -1,7 +1,7 @@
-//! Port of `CoverKeepTests` (the judgement): the cover a song arrives with is judged before the
-//! chain replaces it. The same art at 1000 px or more stays, a small, blown-up, wrong or
-//! off-square one goes, and a smaller cover of the same art stays unless the chain finds one much
-//! larger. The resolver half of the C# file is in `download_cover_resolver_tests.rs`.
+//! The cover keep judgment: the cover a song arrives with is judged before the chain replaces
+//! it. The same art at 1000 px or more stays, a small, blown-up, wrong or off-square one goes,
+//! and a smaller cover of the same art stays unless the chain finds one much larger. The
+//! resolver's side of it is tested in `download_cover_resolver_tests.rs`.
 
 use std::io::Cursor;
 
@@ -11,8 +11,8 @@ use image::{Rgb, RgbImage};
 
 use super::*;
 
-/// A small seeded generator, so the same seed draws the same picture (the C# used
-/// `System.Random`; only "same seed, same picture" matters here).
+/// A small seeded generator, so the same seed draws the same picture (only "same seed, same
+/// picture" matters here).
 struct Seeded(u64);
 
 impl Seeded {
@@ -104,7 +104,7 @@ fn judge_plain(own: &[u8], reference: Option<&[u8]>, require_square: bool) -> Ow
     judge(own, reference, require_square, false, false)
 }
 
-// ---- The judgement ----------------------------------------------------------------------
+// ---- The judgment ----------------------------------------------------------------------
 
 #[test]
 fn judge_the_same_art_at1400_is_kept() {

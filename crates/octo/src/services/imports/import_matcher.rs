@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/ImportMatcher.cs`, with `LibraryIndex`.
+//! Matches imported songs against the library, with `LibraryIndex`.
 
 use std::collections::HashMap;
 use std::sync::Arc;

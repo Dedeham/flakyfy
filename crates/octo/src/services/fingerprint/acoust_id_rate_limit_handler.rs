@@ -1,6 +1,5 @@
-//! Port of `Services/Fingerprint/AcoustIdRateLimitHandler.cs`, together with the named
-//! "acoustid" `HttpClient` it sat in (`Program.cs`: base address https://api.acoustid.org/,
-//! a 10 s timeout, gzip and deflate decompression).
+//! The AcoustID rate limit handler, together with the "acoustid" client it holds (base address
+//! https://api.acoustid.org/, a 10 s timeout, gzip and deflate decompression).
 //!
 //! As with Deezer, the client and the handler are one type, so there is no way to reach
 //! AcoustID without spending a permit.
@@ -31,7 +30,7 @@ impl AcoustIdRateLimitHandler {
 
     /// Verification sits between a finished transfer and the file joining the library.
     /// A slow AcoustID must cost seconds, never the download. It covers the wait for a permit
-    /// too, as the client's Timeout covered its whole handler chain.
+    /// too: one timeout over the whole call.
     pub const TIMEOUT: Duration = Duration::from_secs(10);
 
     pub fn new(limiter: Arc<AcoustIdRateLimiter>) -> Self {
@@ -44,7 +43,7 @@ impl AcoustIdRateLimitHandler {
     /// A client for another base address (a test's mock server). Its host is the one metered.
     pub fn with_base_url(limiter: Arc<AcoustIdRateLimiter>, base: Url) -> Self {
         // meta=...+compress asks AcoustID to gzip the body. Without decompression it arrives
-        // compressed, fails to parse, and reads as "no match" - silently accepting
+        // compressed, fails to parse, and reads as "no match", silently accepting
         // everything, which is the worst outcome this feature can have. (The workspace
         // reqwest has gzip and deflate, and they are on unless turned off.)
         let client = reqwest::Client::builder()
@@ -63,7 +62,7 @@ impl AcoustIdRateLimitHandler {
         &self.limiter
     }
 
-    /// `SendAsync`.
+    /// Sends a request, spending a permit first when it goes to AcoustID.
     pub async fn send(&self, request: reqwest::Request) -> reqwest::Result<reqwest::Response> {
         let metered = match (request.url().host_str(), self.base.host_str()) {
             (Some(host), Some(api)) => host.eq_ignore_ascii_case(api),
@@ -95,8 +94,8 @@ impl AcoustIdRateLimitHandler {
         self.client.execute(request).await
     }
 
-    /// `PostAsync(relative, new FormUrlEncodedContent(form))` through the client: the body read,
-    /// all of it inside [`Self::TIMEOUT`].
+    /// Posts a URL-encoded form through the client and reads the body, all of it inside
+    /// [`Self::TIMEOUT`].
     pub async fn post_form(&self, relative: &str, body: String) -> anyhow::Result<HttpAnswer> {
         let url = resolve(&self.base, relative)?;
         let request = self

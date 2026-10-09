@@ -1,9 +1,9 @@
-//! One running fetch per key, shared by everyone who asks for that key while it runs: the
-//! `ConcurrentDictionary<key, Lazy<Task<T>>>` pattern the C# services used for single-flight.
+//! One running fetch per key, shared by everyone who asks for that key while it runs
+//! (single-flight).
 //!
 //! The fetch runs on its own tokio task, so it finishes (and writes whatever cache it writes)
-//! even when every caller has stopped waiting, as a C# task ran on without its awaiters. The
-//! key is removed when the fetch ends, whatever its outcome.
+//! even when every caller has stopped waiting. The key is removed when the fetch ends, whatever
+//! its outcome.
 
 use std::collections::HashMap;
 use std::future::Future;

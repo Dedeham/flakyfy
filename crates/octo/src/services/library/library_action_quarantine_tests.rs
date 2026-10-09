@@ -1,5 +1,5 @@
-//! Port of `LibraryActionQuarantineTests`. There is no File.Delete anywhere in library actions
-//! except the retention sweep. These actions remove files Octo did NOT create, on one tap in a
+//! The library action trash. Nothing in library actions deletes a file except the retention
+//! sweep. These actions remove files Octo did NOT create, on one tap in a
 //! music client with no confirmation dialog, and the whole point of the feature is that the user
 //! is correcting a mistake, which means they can make one.
 
@@ -230,7 +230,7 @@ fn root_for_uses_the_configured_directory() {
     );
 }
 
-// ---- Rust-only: the manifest -------------------------------------------------------------
+// ---- The manifest ------------------------------------------------------------------------
 
 fn fixture_manifest() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -238,7 +238,7 @@ fn fixture_manifest() -> std::path::PathBuf {
     )
 }
 
-/// state-files.md §4.24: the manifest reads and writes back byte for byte.
+/// The manifest reads and writes back byte for byte.
 #[test]
 fn the_manifest_fixture_round_trips_byte_for_byte() {
     let original = std::fs::read_to_string(fixture_manifest()).expect("the fixture");
@@ -253,7 +253,7 @@ fn the_manifest_fixture_round_trips_byte_for_byte() {
 
 /// What `move_file` writes has the fixture's shape: the action by name, the time with its `Z`.
 #[test]
-fn a_move_writes_the_manifest_the_csharp_wrote() {
+fn a_move_writes_the_manifest_in_the_fixture_shape() {
     let f = Fixture::new();
     let track = f.write_track("Sigur Rós/Ágætis byrjun/02 - Svefn-g-englar.flac", 64);
     let moved = default_quarantine().move_file(&track, &f.root, LibraryAction::WrongSong, "brandon");
@@ -265,7 +265,7 @@ fn a_move_writes_the_manifest_the_csharp_wrote() {
     assert_eq!(manifest.navidrome_id, "song-id");
     assert!(written.starts_with(r#"{"OriginalPath":""#), "{written}");
     assert!(written.contains(r#"Sigur R\u00F3s"#), "{written}");
-    // 2026.10.05: the sidecars and links follow, null until group F fills them.
+    // The sidecars and links follow, both null here.
     assert!(
         written.ends_with(r#"Z","Sidecars":null,"Mappings":null}"#),
         "{written}"
@@ -287,19 +287,19 @@ fn a_restore_without_a_readable_manifest_is_refused() {
 }
 
 #[test]
-fn dates_and_relative_paths_follow_dotnet() {
+fn days_parse_strictly_and_relative_paths_climb_with_dots() {
     assert!(parse_day("2026-10-03").is_some());
     assert!(parse_day("2026-1-03").is_none());
     assert!(parse_day("not-a-day").is_none());
     assert!(parse_day("2026-13-01").is_none());
     assert_eq!(get_relative_path("/music", "/music/A/B.flac"), "A/B.flac");
     assert_eq!(get_relative_path("/music", "/other/B.flac"), "../other/B.flac");
-    // StartsWith("..") also refuses a top folder whose name starts with two dots.
+    // A `..` prefix check also refuses a top folder whose name starts with two dots.
     assert!(get_relative_path("/music", "/music/..odd/B.flac").starts_with(".."));
 }
 
-// ---- QuarantineContainmentTests (374dac8): the last check before a file leaves the library:
-// inside the music folder, not in the trash already, and a real file. -----------------------
+// ---- Containment: the last check before a file leaves the library: inside the music folder,
+// not in the trash already, and a real file. -------------------------------------------------
 
 #[test]
 fn a_folder_that_only_starts_with_the_music_folders_name_is_outside() {
@@ -364,7 +364,7 @@ fn a_song_inside_the_music_folder_goes_to_the_trash() {
     );
 }
 
-/// Rust-only: a link inside the music folder is not a song file, whatever it points at.
+/// A link inside the music folder is not a song file, whatever it points at.
 #[cfg(unix)]
 #[test]
 fn a_link_is_not_moved() {
@@ -383,7 +383,7 @@ fn a_link_is_not_moved() {
     assert!(Path::new(&link).exists());
 }
 
-/// Rust-only: the sidecars go with the song into the trash and come back with it, and a song
+/// The sidecars go with the song into the trash and come back with it, and a song
 /// with another copy beside it keeps the lyrics they share.
 #[test]
 fn sidecars_go_to_the_trash_with_the_song_and_come_back() {

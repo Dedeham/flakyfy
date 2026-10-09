@@ -1,6 +1,5 @@
-//! Port of `Services/Radio/SongRadioService.cs`: radio from one song, album or artist
-//! (getSimilarSongs): every source asked at once, their answers blended, resolved local first,
-//! and each song marked with the source it came from.
+//! Radio from one song, album or artist (getSimilarSongs): every source asked at once, their
+//! answers blended, resolved local first, and each song marked with the source it came from.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -25,11 +24,11 @@ use crate::services::sonic::SonicStore;
 /// Picks resolved beyond the count asked for, so the sound check has some to drop.
 pub const PICK_HEADROOM: f64 = 1.5;
 
-/// Song radio. Scoped in the C# over the request's resolver; here the shared parts, with the
-/// request's resolver handed to [`SongRadioService::build`].
+/// Song radio: the parts shared across requests, with each request's resolver handed to
+/// [`SongRadioService::build`].
 pub struct SongRadioService {
     sources: Arc<RadioSourceSet>,
-    /// `IOptionsMonitor<LastFmSettings>`, `<RadioSourceSettings>` and `<SubsonicSettings>`.
+    /// The Last.fm, radio source and Subsonic settings.
     settings: Arc<SettingsStore>,
     sonic: Option<Arc<SonicStore>>,
     outcomes: Option<Arc<RadioOutcomeStore>>,
@@ -169,7 +168,7 @@ impl SongRadioService {
                 for (song, score) in &mut scored {
                     *score *= fit.get(&song.id).copied().unwrap_or(1.0);
                 }
-                // A stable sort, as OrderByDescending.
+                // A stable sort, highest score first.
                 scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
         }

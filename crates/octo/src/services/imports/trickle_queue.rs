@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/TrickleQueue.cs` and its file, `imports-trickle.json`: the missing
+//! The trickle queue and its file, `imports-trickle.json`: the missing
 //! songs the trickle is working through, one job per song per person however many lists hold it,
 //! with who has paused theirs, on disk so a restart carries on where it was. A job running when
 //! Octo stopped is queued again; the library check it starts with catches one that arrived

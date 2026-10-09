@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/ImportService.cs`.
+//! The import service: every person's imported lists, their matching and their playlists.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,7 +67,7 @@ pub struct ImportService {
     rematch: Mutex<Vec<String>>,
     /// Lists whose playlist needs writing, as "owner\nid".
     dirty_playlists: Mutex<Vec<String>>,
-    /// The port's back-off for a playlist that would not write: failures so far and when to try
+    /// The back-off for a playlist that would not write: failures so far and when to try
     /// again, by "owner\nid".
     playlist_retries: Mutex<HashMap<String, (u32, DateTime<Utc>)>>,
     stopping: Mutex<CancellationToken>,
@@ -101,8 +101,8 @@ impl ImportService {
     /// Songs across one person's lists.
     pub const MAX_SONGS: usize = 250_000;
 
-    /// The port's back-off for a playlist Navidrome would not take: the first try again after a
-    /// minute, then twice as long each time, at most an hour (the C# tried every 30 seconds).
+    /// The back-off for a playlist Navidrome would not take: the first try again after a minute,
+    /// then twice as long each time, at most an hour, never every loop.
     pub const PLAYLIST_RETRY_FIRST: TimeDelta = TimeDelta::minutes(1);
     pub const PLAYLIST_RETRY_MOST: TimeDelta = TimeDelta::hours(1);
 
@@ -178,7 +178,7 @@ impl ImportService {
         })
     }
 
-    /// One person's jobs by song, oldest first, as the C# dictionary held them.
+    /// One person's jobs by song, oldest first.
     fn jobs(&self, user: &str) -> IndexMap<String, TrickleJob> {
         let mut jobs = IndexMap::new();
         for job in self.queue.snapshot(Some(user)) {
@@ -308,8 +308,8 @@ impl ImportService {
     }
 
     /// Finishes a sign-in from what Spotify sent back: the whole address, or code and state. The
-    /// state says whose it is; `user`, when given, must be the same person. `Err` where the C#
-    /// let an exception through (Spotify not reachable at all).
+    /// state says whose it is; `user`, when given, must be the same person. `Err` when Spotify
+    /// cannot be reached at all.
     pub async fn finish_spotify(
         self: &Arc<Self>,
         pasted: Option<&str>,
@@ -687,8 +687,8 @@ impl ImportService {
         }
     }
 
-    /// A public playlist or album, by its link. No sign-in needed. `Err` where the C# let an
-    /// exception through.
+    /// A public playlist or album, by its link. No sign-in needed. `Err` when the link could not
+    /// be read for a reason other than Spotify's own refusal.
     pub async fn add_link(&self, user: &str, link: &str) -> anyhow::Result<ImportActionResult> {
         let Some((kind, id)) = SpotifyLinkReader::parse(Some(link)) else {
             return Ok(ImportActionResult::failed(
@@ -1085,8 +1085,8 @@ impl ImportService {
         let result = self.playlists.sync(&list).await;
         let entry = format!("{user}\n{id}");
         if !result.ok {
-            // The port's fix: keep the id of a playlist the sync left in Navidrome (one it could
-            // neither fill nor delete), so the next try fills it rather than making another, and
+            // Keep the id of a playlist the sync left in Navidrome (one it could neither fill
+            // nor delete), so the next try fills it rather than making another, and
             // wait longer each time rather than every 30 seconds.
             if result.playlist_id != list.playlist_id {
                 self.store.update(user, id, |l| {

@@ -1,5 +1,4 @@
-//! `Services/Common/DownloadPicks.cs`: the copy someone picked in Find songs, and the picks
-//! waiting for their download to take them.
+//! The copy someone picked in Find songs, and the picks waiting for their download to take them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,8 +21,9 @@ pub const SOULSEEK_SOURCE: &str = "Soulseek";
 pub const LIDARR_SOURCE: &str = "Lidarr";
 
 /// One copy someone picked in Find songs: a Soulseek peer's file, or a Lidarr release. Kept as
-/// plain values, so an upgrade job waiting for its turn can carry it on disk. The C# class's
-/// derived `IsSoulseek` and `Release` were `[JsonIgnore]`d, so the file holds these fields only.
+/// plain values, so an upgrade job waiting for its turn can carry it on disk. What is derived
+/// from them (whether it is Soulseek's, the Lidarr release) is never written, so the file holds
+/// these fields only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct PickedCopy {
@@ -140,7 +140,7 @@ impl PickedCopy {
 /// as usual.
 ///
 /// A pick is an `Arc`, so [`DownloadPicks::forget`] can tell the very pick it was given from a
-/// newer one for the same song, as the C# compared references.
+/// newer one for the same song: picks are compared by identity, never by value.
 pub struct DownloadPicks {
     picks: Mutex<HashMap<String, (Arc<PickedCopy>, DateTime<Utc>)>>,
     clock: Clock,

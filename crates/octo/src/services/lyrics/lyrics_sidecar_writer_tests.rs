@@ -1,6 +1,6 @@
-//! LyricsTests (Writer_*), LyricsSongSourceTests (Save_*, Upgrade_*, NoUpgrade_*) and
-//! LyricsChoiceTests (Sidecar_*). The C# tests wrote real tags into an MP3 fixture with TagLib;
-//! here the tags are held in memory ([`FakeTags`]), the seam the writer reads them through.
+//! The lyrics writer: writing beside a song, saving inside it, upgrades, choices and undo, and
+//! the queue worker. The tags are held in memory ([`FakeTags`]), the seam the writer reads
+//! them through.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -64,7 +64,7 @@ impl Song {
         LyricsSidecarWriter::with_tags(lyrics, settings, self.tags.clone())
     }
 
-    /// LyricsTests.Writer(answer): LRCLIB only, saved beside.
+    /// A writer on LRCLIB only, saving beside.
     fn lrclib_writer(
         &self,
         answer: impl Fn() -> LyricsLookup + Send + Sync + 'static,
@@ -72,7 +72,7 @@ impl Song {
         self.writer("lrclib", LyricsSaveTo::BESIDE, FakeSource::new("lrclib", answer))
     }
 
-    /// LyricsSongSourceTests.Writer(saveTo, found): KuGou after the song's own.
+    /// A writer on KuGou after the song's own, saving to `save_to`.
     fn kugou_writer(&self, save_to: &str, found: LyricsResult) -> LyricsSidecarWriter {
         self.writer(
             "song,kugou",
@@ -110,9 +110,8 @@ fn none() -> CancellationToken {
     CancellationToken::new()
 }
 
-// ---- LyricsTests ----------------------------------------------------------------------------
+// ---- Writing beside the song ----------------------------------------------------------------
 
-// LyricsTests.Writer_Synced_WritesAnLrcBesideTheFile
 #[tokio::test]
 async fn writer_synced_writes_an_lrc_beside_the_file() {
     let song = Song::new();
@@ -129,7 +128,6 @@ async fn writer_synced_writes_an_lrc_beside_the_file() {
     assert!(!beside(&audio, "txt").exists());
 }
 
-// LyricsTests.Writer_PlainOnly_WritesATxt
 #[tokio::test]
 async fn writer_plain_only_writes_a_txt() {
     let song = Song::new();
@@ -143,7 +141,6 @@ async fn writer_plain_only_writes_a_txt() {
     assert_eq!(read(&beside(&audio, "txt")), "words\n");
 }
 
-// LyricsTests.Writer_Instrumental_WritesNothing
 #[tokio::test]
 async fn writer_instrumental_writes_nothing() {
     let song = Song::new();
@@ -167,7 +164,6 @@ async fn writer_instrumental_writes_nothing() {
     assert_eq!(lyrics_files, 0);
 }
 
-// LyricsTests.Writer_ExistingSidecar_IsLeftAlone
 #[tokio::test]
 async fn writer_existing_sidecar_is_left_alone() {
     let song = Song::new();
@@ -185,7 +181,6 @@ async fn writer_existing_sidecar_is_left_alone() {
     assert_eq!(read(&existing), "mine");
 }
 
-// LyricsTests.Writer_EmbeddedLyrics_AreLeftAlone
 #[tokio::test]
 async fn writer_embedded_lyrics_are_left_alone() {
     let song = Song::new();
@@ -200,7 +195,6 @@ async fn writer_embedded_lyrics_are_left_alone() {
     assert_eq!(write.outcome, LyricsWriteOutcome::AlreadyThere);
 }
 
-// LyricsTests.Writer_BusyService_RetriesAndThenGivesUp
 #[tokio::test]
 async fn writer_busy_service_retries_and_then_gives_up() {
     let song = Song::new();
@@ -225,9 +219,8 @@ async fn writer_a_song_that_is_gone_is_gone() {
     assert_eq!(write.outcome, LyricsWriteOutcome::Gone);
 }
 
-// ---- LyricsSongSourceTests ------------------------------------------------------------------
+// ---- Saving inside, and upgrades ------------------------------------------------------------
 
-// LyricsSongSourceTests.Save_Inside_WritesTheTagsMarkedAsOctos_AndNoFile
 #[tokio::test]
 async fn save_inside_writes_the_tags_marked_as_octos_and_no_file() {
     let song = Song::new();
@@ -251,7 +244,6 @@ async fn save_inside_writes_the_tags_marked_as_octos_and_no_file() {
     );
 }
 
-// LyricsSongSourceTests.Save_Both_WritesTheTagsAndAFile
 #[tokio::test]
 async fn save_both_writes_the_tags_and_a_file() {
     let song = Song::new();
@@ -269,7 +261,6 @@ async fn save_both_writes_the_tags_and_a_file() {
     assert!(read(&beside(&audio, "lrc")).starts_with(MARK));
 }
 
-// LyricsSongSourceTests.Upgrade_SomeoneElsesTagLyrics_StayAndBetterOnesGoBeside
 #[tokio::test]
 async fn upgrade_someone_elses_tag_lyrics_stay_and_better_ones_go_beside() {
     let song = Song::new();
@@ -289,7 +280,6 @@ async fn upgrade_someone_elses_tag_lyrics_stay_and_better_ones_go_beside() {
     assert_eq!(read(&beside(&audio, "lrc")), format!("{MARK}\n{WORDS}\n"));
 }
 
-// LyricsSongSourceTests.Upgrade_OctosOwnTagLyrics_AreReplacedInPlace
 #[tokio::test]
 async fn upgrade_octos_own_tag_lyrics_are_replaced_in_place() {
     let song = Song::new();
@@ -309,7 +299,6 @@ async fn upgrade_octos_own_tag_lyrics_are_replaced_in_place() {
     assert!(!beside(&audio, "lrc").exists());
 }
 
-// LyricsSongSourceTests.Upgrade_NothingBetter_LeavesTheSongAlone
 #[tokio::test]
 async fn upgrade_nothing_better_leaves_the_song_alone() {
     let song = Song::new();
@@ -328,7 +317,6 @@ async fn upgrade_nothing_better_leaves_the_song_alone() {
     assert!(!beside(&audio, "lrc").exists());
 }
 
-// LyricsSongSourceTests.Upgrade_PlainTagLyrics_GetTimedOnesBeside
 #[tokio::test]
 async fn upgrade_plain_tag_lyrics_get_timed_ones_beside() {
     let song = Song::new();
@@ -348,7 +336,6 @@ async fn upgrade_plain_tag_lyrics_get_timed_ones_beside() {
     assert!(beside(&audio, "lrc").exists());
 }
 
-// LyricsSongSourceTests.NoUpgrade_ASongWithLyrics_IsNeverLookedUp
 #[tokio::test]
 async fn no_upgrade_a_song_with_lyrics_is_never_looked_up() {
     let song = Song::new();
@@ -362,9 +349,8 @@ async fn no_upgrade_a_song_with_lyrics_is_never_looked_up() {
     assert_eq!(kugou.calls(), 0);
 }
 
-// ---- LyricsChoiceTests ----------------------------------------------------------------------
+// ---- Upgrading Octo's own sidecar -----------------------------------------------------------
 
-// LyricsChoiceTests.Sidecar_UpgradeReplacesOctosLineTimedFileButNeverTheOwners
 #[tokio::test]
 async fn sidecar_upgrade_replaces_octos_line_timed_file_but_never_the_owners() {
     let song = Song::new();

@@ -1,4 +1,4 @@
-//! GeneratedPlaylistServiceTests: the service end to end against a stand-in Navidrome:
+//! The generated playlist service end to end against a stand-in Navidrome:
 //! counting, listing, the draw a playlist read returns, and the Discovery blend.
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use super::*;
 
-/// The C# `LibraryNavidrome`.
+/// A stand-in Navidrome that records the calls it gets.
 #[derive(Clone, Default)]
 struct LibraryNavidrome {
     calls: Arc<Mutex<Vec<String>>>,
@@ -294,8 +294,8 @@ async fn blend_only_discovery_and_only_with_a_share() {
     assert_eq!(blended.iter().filter(|song| song.is_local).count(), 2);
 }
 
-/// Rust-only: the file written is the compact state document, a bad file is set aside as
-/// `.corrupt-<ticks>`, and the query keeps the caller's credentials in the C# order.
+/// The file written is the compact state document, a bad file is set aside as
+/// `.corrupt-<ticks>`, and the query keeps the caller's credentials in their order.
 #[tokio::test]
 async fn the_state_file_is_written_and_a_bad_one_is_set_aside() {
     let fixture = fixture().await;
@@ -325,7 +325,7 @@ async fn the_state_file_is_written_and_a_bad_one_is_set_aside() {
     );
 }
 
-/// GeneratedPlaylistResponseTests: what a client is told about a mix and its songs, and that a
+/// What a client is told about a mix and its songs, and that a
 /// library MP3 is an MP3.
 mod response {
     use chrono::TimeZone;

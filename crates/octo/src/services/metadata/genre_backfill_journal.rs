@@ -1,4 +1,4 @@
-//! Port of `Services/Metadata/GenreBackfillJournal.cs` (`genre-backfill-journal.jsonl`).
+//! The genre backfill's undo journal (`genre-backfill-journal.jsonl`).
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -57,7 +57,7 @@ impl GenreJournalEntry {
 /// A torn final line is skipped on read rather than failing the whole journal.
 ///
 /// What this CANNOT undo, and the UI has to say so:
-///  - TagLib's Save() rewrites the whole tag block. Anything it does not round-trip was lost
+///  - Saving a file's tags rewrites the whole tag block. Anything it does not round-trip was lost
 ///    on the first save and no amount of journal replay brings it back.
 ///  - Entries are keyed by path, so a file moved or renamed since the run stays rewritten.
 ///  - No journal, no undo. /app/config is a bind mount the user may not back up.
@@ -228,7 +228,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).expect("rewritten"), text);
     }
 
-    /// GenreBackfillJournalTests.ReadAll_ReturnsNewestFirst.
     #[test]
     fn read_all_returns_newest_first() {
         let (_dir, _path, journal) = journal();
@@ -244,7 +243,6 @@ mod tests {
         assert_eq!(entries[1].before, ["Music"]);
     }
 
-    /// GenreBackfillJournalTests.ReadAll_TornFinalLine_IsSkippedNotFatal.
     #[test]
     fn read_all_torn_final_line_is_skipped_not_fatal() {
         let (_dir, path, journal) = journal();
@@ -261,7 +259,6 @@ mod tests {
         assert_eq!(entries[0].path, "/music/a.flac");
     }
 
-    /// GenreBackfillJournalTests.Clear_RemovesTheJournalAndWithItTheUndo.
     #[test]
     fn clear_removes_the_journal_and_with_it_the_undo() {
         let (_dir, _path, journal) = journal();
@@ -273,15 +270,13 @@ mod tests {
         assert!(journal.read_all().is_empty());
     }
 
-    /// GenreBackfillJournalTests.ReadAll_NoJournal_IsEmptyRatherThanThrowing.
     #[test]
     fn read_all_no_journal_is_empty_rather_than_throwing() {
         let (_dir, _path, journal) = journal();
         assert!(journal.read_all().is_empty());
     }
 
-    /// GenreBackfillJournalTests.Entry_EmptyBefore_RoundTrips: an empty Before means the file
-    /// had no genre frame, so undo clears it.
+    /// An empty `before` means the file had no genre frame, so undo clears it.
     #[test]
     fn entry_empty_before_round_trips() {
         let (_dir, _path, journal) = journal();

@@ -1,6 +1,6 @@
-//! Port of `Services/Metadata/GenreBackfillWorker.cs`: the genre backfill, a singleton that is
-//! also a hosted queue worker. The run and its store are `genre_backfill_state`, the undo log
-//! `genre_backfill_journal`, and the rules `octo_core::metadata::GenreNormalizer`.
+//! The genre backfill, one shared service that is also a background queue worker. The run and
+//! its store are `genre_backfill_state`, the undo log `genre_backfill_journal`, and the rules
+//! `octo_core::metadata::GenreNormalizer`.
 
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet};
@@ -37,7 +37,7 @@ pub struct GenreBackfillRequest {
 }
 
 impl GenreBackfillRequest {
-    /// `new GenreBackfillRequest(scope, dryRun)`.
+    /// A walk over `scope`, a preview when `dry_run`.
     pub fn new(scope: GenreBackfillScope, dry_run: bool) -> Self {
         Self {
             scope,
@@ -46,7 +46,7 @@ impl GenreBackfillRequest {
         }
     }
 
-    /// The undo request (`new GenreBackfillRequest(WholeLibrary, DryRun: false, Undo: true)`).
+    /// The undo request: the whole library, not a preview.
     pub fn undo() -> Self {
         Self {
             scope: GenreBackfillScope::WholeLibrary,
@@ -56,21 +56,20 @@ impl GenreBackfillRequest {
     }
 }
 
-/// What the C# `GetRequiredService<ILocalLibraryService>()` threw when the container had none
-/// (the tests' empty service provider).
+/// The failure a run reports when there is no local library service to ask.
 const NO_LIBRARY_SERVICE: &str =
     "No service for type 'Octo.Services.Local.ILocalLibraryService' has been registered.";
 
 /// Re-tags genres across files that are already in the library.
 ///
-/// A BackgroundService rather than a request, because a 1,900-file walk does not fit in one
+/// A background worker rather than a request, because a 1,900-file walk does not fit in one
 /// and the shutdown budget is ten seconds. One run at a time: a second request gets 409 rather
 /// than a parallel walk over the same files.
 pub struct GenreBackfillWorker {
     store: Arc<GenreBackfillStore>,
     journal: Arc<GenreBackfillJournal>,
     settings: Arc<SettingsStore>,
-    /// Resolved from a scope in C#; None stands for a container without one (the C# tests).
+    /// None when there is no local library service (some tests run without one).
     library: Option<Arc<dyn ILocalLibraryService>>,
     cancel_requested: AtomicBool,
 
@@ -160,9 +159,9 @@ impl GenreBackfillWorker {
     /// A short, stable fingerprint of the genre settings a run is planned from.
     ///
     /// Only what decides a file's new genre and which files are walked: the failure ceiling is
-    /// how long a run keeps trying, not what it writes. The JSON is System.Text.Json's for the
-    /// C# anonymous object (PascalCase, enums as numbers, its escaping), so a run recorded by
-    /// the C# build still resumes.
+    /// how long a run keeps trying, not what it writes. The hashed JSON keeps its exact shape
+    /// (PascalCase, enums as numbers, its escaping), so a run already recorded in the state file
+    /// still resumes.
     pub fn hash_settings(settings: &GenreSettings) -> String {
         #[derive(Serialize)]
         #[serde(rename_all = "PascalCase")]
@@ -214,7 +213,7 @@ impl GenreBackfillWorker {
         self.cancel_requested.store(true, Ordering::SeqCst);
     }
 
-    /// The hosted service's loop (`ExecuteAsync`): one request at a time until `stopping`.
+    /// The worker's loop: one request at a time until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut queue = self.receiver.lock().await;
         loop {
@@ -226,7 +225,7 @@ impl GenreBackfillWorker {
                 break;
             };
             // Per-item catch is mandatory: one unhandled error here would take the worker
-            // down (in C#, BackgroundServiceExceptionBehavior.StopHost took Octo down).
+            // down.
             let result = if request.undo {
                 self.run_undo(&stopping).await
             } else {
@@ -245,7 +244,7 @@ impl GenreBackfillWorker {
         Ok(())
     }
 
-    /// One walk (`RunAsync`).
+    /// One walk.
     async fn run_request(
         &self,
         request: GenreBackfillRequest,
@@ -415,7 +414,7 @@ impl GenreBackfillWorker {
         Ok(())
     }
 
-    /// Undo (`RunUndoAsync`): puts every journalled file's genre frame back.
+    /// Undo: puts every journaled file's genre frame back.
     async fn run_undo(&self, stopping: &CancellationToken) -> anyhow::Result<()> {
         self.cancel_requested.store(false, Ordering::SeqCst);
 
@@ -546,7 +545,7 @@ impl GenreBackfillWorker {
         keep
     }
 
-    /// The files a run walks (`EnumerateAsync`), in ordinal order.
+    /// The files a run walks, in ordinal order.
     async fn enumerate(&self, scope: GenreBackfillScope) -> anyhow::Result<Vec<String>> {
         if scope == GenreBackfillScope::OctoDownloads {
             let library = self
@@ -578,7 +577,7 @@ impl GenreBackfillWorker {
 
         let walked = {
             let root = root.clone();
-            // The trash is not part of the library (port fix).
+            // The trash is not part of the library.
             let trash =
                 library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
             tokio::task::spawn_blocking(move || library_walk::all_files(Path::new(&root), Some(&trash)))
@@ -678,13 +677,13 @@ fn process_file(
     }
 }
 
-/// The C# catch clauses: a file TagLib could not make sense of is skipped, an I/O failure
-/// counts as failed, and anything else is failed with a warning.
+/// How a failed read or save ends: a file the tag reader could not make sense of is skipped, an
+/// I/O failure counts as failed, and anything else is failed with a warning.
 fn failure_outcome(path: &str, failure: TagError) -> FileOutcome {
     match failure {
         TagError::Io(_) => FileOutcome::Failed(failure.to_string()),
         TagError::Read(ref read) if is_io_failure(read) => FileOutcome::Failed(failure.to_string()),
-        // A cue sheet, a weird container, a stream TagLib does not model. Not an error.
+        // A cue sheet, a weird container, a stream the tag reader does not model. Not an error.
         TagError::Unsupported(_) | TagError::Read(_) => {
             debug!("Genre backfill skipped {path}: {failure}");
             FileOutcome::Skipped
@@ -697,8 +696,8 @@ fn failure_outcome(path: &str, failure: TagError) -> FileOutcome {
 }
 
 /// A read that failed for an I/O reason (a folder, a file gone or locked) rather than because
-/// the bytes made no sense: TagLib threw an `IOException` or `UnauthorizedAccessException` for
-/// those, and `CorruptFileException` (a short file included) for the rest.
+/// the bytes made no sense. A file cut short (an unexpected end of file) is one that made no
+/// sense.
 fn is_io_failure(read: &lofty::error::FileParseError) -> bool {
     std::error::Error::source(read)
         .and_then(|source| source.downcast_ref::<io::Error>())
@@ -709,18 +708,18 @@ fn new_run_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
-/// A list's length or index as the run's `int` counters hold it.
+/// A list's length or index as the run's `i32` counters hold it.
 fn count(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order, which differs from Rust's (code point)
+/// Ordinal order: UTF-16 code unit order, which differs from Rust's (code point)
 /// order above U+FFFF.
 fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-/// `Path.GetExtension`: from the last dot of the file name, or nothing when there is no dot or
+/// The file's extension: from the last dot of the file name, or nothing when there is no dot or
 /// the name ends in one. (Unlike Rust's, ".mp3" has the extension ".mp3".)
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);

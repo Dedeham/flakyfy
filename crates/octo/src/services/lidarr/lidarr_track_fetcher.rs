@@ -1,5 +1,5 @@
-//! Port of `Services/Lidarr/LidarrTrackFetcher.cs`. The request, the track match and the lossless
-//! test are `octo_core::lidarr::lidarr_track_fetcher`.
+//! One song fetched through Lidarr for a replacement. The request, the track match and the
+//! lossless test are `octo_core::lidarr::lidarr_track_fetcher`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,7 +39,7 @@ pub trait ILidarrTrackFetcher: Send + Sync {
     ) -> Result<String, LidarrError>;
 }
 
-/// A task several callers await, which runs whether or not any of them still is (a C# `Task`).
+/// A task several callers await, which runs whether or not any of them still is.
 type SharedTask<T> = Shared<BoxFuture<'static, Result<T, LidarrError>>>;
 
 fn spawn_shared<T: Clone + Send + Sync + 'static>(
@@ -72,13 +72,13 @@ pub struct LidarrTrackFetcher {
 
 struct Inner {
     client: Arc<LidarrClient>,
-    /// `IOptionsMonitor<LidarrSettings>` and `IConfiguration["Library:DownloadPath"]`, read at use.
+    /// The Lidarr settings and `Library:DownloadPath`, read at use.
     settings: Arc<SettingsStore>,
     nav_identity: NavidromeIdentityService,
     claims: Arc<LidarrAlbumClaims>,
     music_brainz: Option<Arc<MusicBrainzClient>>,
     poll: Mutex<Duration>,
-    /// By foreign album id, ignoring case; also the C# `_gate`.
+    /// By foreign album id, ignoring case; its lock also guards joining and leaving a session.
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
 
@@ -303,7 +303,7 @@ impl Inner {
                 let client = self.client.clone();
                 let candidate = session.candidate.clone();
                 let grab = request.release.clone();
-                // CancellationToken.None: the search is the album's, not this caller's.
+                // No caller's token: the search is the album's, not this caller's.
                 state.search = Some(spawn_shared(async move {
                     client.start_album_search(&candidate, grab.as_ref()).await
                 }));
@@ -512,8 +512,8 @@ impl Inner {
     }
 }
 
-/// The release group id TagLib read from the file's tags (`Tag.MusicBrainzReleaseGroupId`, the
-/// first tag that has one), or None when there is no file, no such tag, or it does not read.
+/// The MusicBrainz release group id in the file's tags (the first tag that has one), or None
+/// when there is no file, no such tag, or it does not read.
 async fn release_group_of(path: Option<&str>) -> Option<String> {
     let path = path.filter(|p| !p.is_empty())?.to_string();
     if !Path::new(&path).is_file() {
@@ -550,7 +550,8 @@ fn visible(track: &LidarrImportedTrack, current: &LidarrSettings, octo_root: &st
     Path::new(path).is_file().then(|| path.to_string())
 }
 
-/// `Path.GetExtension`.
+/// The extension of the file name: its last dot and what follows, or empty when the name has
+/// no dot or ends with one.
 fn get_extension(path: &str) -> &str {
     let name = &path[path.rfind('/').map_or(0, |i| i + 1)..];
     match name.rfind('.') {

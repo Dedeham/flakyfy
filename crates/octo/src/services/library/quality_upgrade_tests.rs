@@ -1,4 +1,4 @@
-//! `QualityUpgradeTests.cs`: the weekly upgrade trickles lossy songs through Better quality while
+//! The weekly upgrade trickles lossy songs through Better quality while
 //! nothing else is downloading (#70), and the download pipeline hands the upgrade search on.
 
 use std::path::PathBuf;
@@ -63,7 +63,7 @@ impl IDownloadService for UpgradeDownloads {
             source_override,
             upgrade_search,
         ));
-        // The C# mock answered only this exact call.
+        // Only this exact call is answered.
         if (
             provider,
             external_id,
@@ -397,7 +397,7 @@ fn a_running_transfer_counts_as_a_download_in_flight() {
     assert!(activity.is_busy());
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- The state file and the status -------------------------------------------------------
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -1,6 +1,6 @@
-//! `DuplicateTests.cs`: what counts as a copy (Library health's rule since 69f577f), which copy
-//! is suggested, and that a question a person settled stays settled (#53). `DuplicateSettingsTests`' two settings tests went with
-//! 1-A; its `ScanNow_WithDuplicatesOff_SaysWhatToTurnOn` is the admin controller's (6-B).
+//! Duplicates: what counts as a copy (Library health's rule), which copy is suggested, and that a
+//! question a person settled stays settled (#53). The duplicate settings are tested with the
+//! settings, and "Scan now" with the duplicates switch off with the admin controller.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -41,7 +41,7 @@ fn ids(tracks: &[LibraryTrack]) -> Vec<&str> {
     tracks.iter().map(|track| track.id.as_str()).collect()
 }
 
-// ---- DuplicateScanTests ------------------------------------------------------------------
+// ---- Finding duplicate groups and ranking their copies -----------------------------------
 
 #[test]
 fn find_groups_same_recording_same_version_is_a_group_with_the_keeper_first() {
@@ -188,7 +188,7 @@ fn rank_for_keeping_lossless_then_bitrate_then_duration() {
 
 // ---- fake lossless copies ---------------------------------------------------------------
 
-/// `SpectrumAnalyzer.EstimateFor(16900)`.
+/// The spectrum analyzer's estimate for a cutoff at 16900 Hz.
 const ABOUT_128: &str = "about 128 kbps MP3";
 
 fn fake() -> SpectrumReport {
@@ -371,7 +371,7 @@ fn parse_page_a_refusal_is_not_the_end() {
     }
 }
 
-/// The C# test's `LibraryNavidrome`: a login, and pages of `tracks` songs, the second failing
+/// A stand-in Navidrome: a login, and pages of `tracks` songs, the second failing
 /// when asked.
 struct LibraryNavidrome {
     tracks: usize,
@@ -480,7 +480,7 @@ async fn walk_a_page_that_fails_is_incomplete() {
     assert_eq!(tracks.len(), DuplicateScanWorker::PAGE_SIZE);
 }
 
-// ---- DuplicateNoticeTests ----------------------------------------------------------------
+// ---- Duplicate notices -------------------------------------------------------------------
 
 fn notice_track(id: &str, suffix: &str, bit_rate: i32) -> LibraryTrack {
     LibraryTrack::new(
@@ -747,7 +747,7 @@ fn plan_a_stale_entry_never_removes_a_track_an_open_question_still_needs() {
     assert!(plan.dismiss.is_empty());
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- Parsing and the scan request --------------------------------------------------------
 
 #[test]
 fn lossless_files_are_told_apart_by_suffix_and_an_alac_bitrate() {
@@ -763,7 +763,7 @@ fn lossless_files_are_told_apart_by_suffix_and_an_alac_bitrate() {
 }
 
 #[test]
-fn a_page_that_is_not_an_object_reads_as_the_c_sharp_threw() {
+fn a_page_that_is_not_an_object_is_an_error() {
     let root: Value =
         serde_json::from_str(r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[1]}}}"#)
             .expect("json");
@@ -791,7 +791,7 @@ fn a_scan_request_is_stored_once() {
     assert!(worker.last_result().is_none());
 }
 
-/// The activity view's reading of the worker (ca47988): "Scan now" waits until the worker picks
+/// The activity view's reading of the worker: "Scan now" waits until the worker picks
 /// it up, and no scan is walking while the switch is off.
 #[tokio::test]
 async fn a_scan_request_is_seen_until_the_worker_takes_it() {

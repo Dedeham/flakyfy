@@ -1,4 +1,4 @@
-//! Port of `Services/LastFm/LastFmScrobbleService.cs`. The records and the request signature are
+//! The Last.fm scrobbler. The records and the request signature are
 //! `octo_core::last_fm::last_fm_scrobble_service`.
 
 use std::collections::{HashMap, HashSet};
@@ -32,7 +32,7 @@ use crate::services::framework::HttpAnswer;
 use crate::services::framework::http::client_builder;
 use crate::services::http_client_factory::{connect_failure_message, timeout_message};
 
-/// What `FinishConnectAsync` threw that its caller told apart: a refusal to show as it is, or
+/// Why finishing the Connect flow failed, told apart for its caller: a refusal to show as it is, or
 /// settings.json that could not be written (corrupt, locked, read-only, or a full disk).
 #[derive(Debug, thiserror::Error)]
 pub enum LastFmConnectError {
@@ -42,7 +42,7 @@ pub enum LastFmConnectError {
     Settings(#[from] SettingsWriteError),
 }
 
-/// The waits the C# exposed as internal properties so tests could shorten them.
+/// The service's waits, which tests shorten.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrobbleTuning {
     /// First wait after a failed batch; each further failure doubles it.
@@ -66,7 +66,7 @@ impl Default for ScrobbleTuning {
 /// A wait on the service's clock: resolves once that much time has passed by it.
 pub type Sleep = Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// `TimeProvider`: the clock every pause and wait is measured on. Tests move it by hand.
+/// The clock every pause and wait is measured on. Tests move it by hand.
 #[derive(Clone)]
 pub struct ScrobbleTime {
     pub clock: Clock,
@@ -74,7 +74,7 @@ pub struct ScrobbleTime {
 }
 
 impl ScrobbleTime {
-    /// `TimeProvider.System`.
+    /// The system clock, with real sleeps.
     pub fn system() -> Self {
         Self {
             clock: Clock::system(),
@@ -83,8 +83,7 @@ impl ScrobbleTime {
     }
 }
 
-/// A `Dictionary` or `ConcurrentDictionary` built with `StringComparer.OrdinalIgnoreCase`: a key
-/// keeps the spelling it was first added with.
+/// A map keyed ignoring case: a key keeps the spelling it was first added with.
 struct IgnoreCaseMap<V> {
     entries: IndexMap<String, (String, V)>,
 }
@@ -141,7 +140,7 @@ impl<V> IgnoreCaseMap<V> {
 
 #[derive(Debug, Clone)]
 struct PendingScrobble {
-    /// The C# compared plays by reference; this is that identity.
+    /// The play's own identity, so two plays with the same fields stay apart.
     id: u64,
     track: LastFmTrack,
     played_at_utc: DateTime<Utc>,
@@ -243,7 +242,7 @@ impl Reply {
 pub struct LastFmScrobbleService {
     http: reqwest::Client,
     api_url: String,
-    /// `IOptionsMonitor<LastFmSettings>`: read at every use.
+    /// The Last.fm settings: read at every use.
     settings: Arc<SettingsStore>,
     settings_file: Arc<SettingsFileWriter>,
     tuning: ScrobbleTuning,
@@ -304,7 +303,7 @@ impl LastFmScrobbleService {
     pub const OLDEST_PLAY: TimeDelta = TimeDelta::days(14);
 
     /// The production service: the named client (10 s, no decompression), Last.fm's API, the
-    /// C# waits and the system clock.
+    /// default waits and the system clock.
     pub fn new(settings: Arc<SettingsStore>, settings_file: Arc<SettingsFileWriter>) -> Self {
         let http = client_builder()
             .timeout(Self::CLIENT_TIMEOUT)
@@ -421,7 +420,7 @@ impl LastFmScrobbleService {
     /// shorter than 30 seconds and nothing played more than two weeks ago.
     ///
     /// `chosen_by_user`: false for a play the listener did not pick, such as the next song on an
-    /// Octo radio stream. Last.fm is told so. (The C# default was true.)
+    /// Octo radio stream. Last.fm is told so.
     pub fn scrobble(
         self: &Arc<Self>,
         username: &str,
@@ -835,7 +834,7 @@ impl LastFmScrobbleService {
         }
     }
 
-    /// `Err` where the C# threw out of the method, which the drain caught.
+    /// `Err` when the batch could not be sent, which the drain catches.
     async fn send_batch(&self, user: &str, batch: &[PendingScrobble]) -> anyhow::Result<()> {
         let settings = self.last_fm();
         let session = self.saved_session(&settings, user);
@@ -878,8 +877,8 @@ impl LastFmScrobbleService {
 
         let reply = self.call_owned(parameters, settings.api_secret.trim()).await;
         if let Some(body) = &reply.body {
-            // reply.Body?["scrobbles"]?["@attr"]?["accepted"]: indexing something that is not an
-            // object threw, which the drain caught as an unexpected failure.
+            // scrobbles.@attr.accepted: indexing something that is not an object is an error,
+            // which the drain catches as an unexpected failure.
             let attributes = index(index(Some(body), "scrobbles")?, "@attr")?;
             let accepted = number(index(attributes, "accepted")?);
             let ignored = number(index(attributes, "ignored")?);
@@ -1181,7 +1180,7 @@ impl LastFmScrobbleService {
     }
 }
 
-/// The `Message` of the `HttpRequestException` or `TaskCanceledException` a failed call threw.
+/// What a failed call says: its timeout, or why the connection failed.
 fn failure_message(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         timeout_message(LastFmScrobbleService::CLIENT_TIMEOUT)
@@ -1274,8 +1273,8 @@ fn keys_for(sessions: &JsonObject, user: &str) -> Vec<String> {
         .collect()
 }
 
-/// `node?["name"]` on a `JsonNode`: null stays null, an object gives its property, and anything
-/// else throws.
+/// A property of `node`: null stays null, an object gives its property, and anything else is an
+/// error.
 fn index<'a>(node: Option<&'a Value>, name: &str) -> anyhow::Result<Option<&'a Value>> {
     match node {
         None | Some(Value::Null) => Ok(None),

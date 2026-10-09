@@ -1,5 +1,3 @@
-//! Port of `Services/Library/LibraryOwnership.cs`.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -47,7 +45,7 @@ pub struct Candidate {
 }
 
 /// Finds the library's candidates for a query ("{artist} {title}"): `Ok(None)` when Navidrome
-/// cannot be asked, `Err` where the C# threw.
+/// cannot be asked, `Err` when the search failed.
 pub type SearchFn =
     Arc<dyn Fn(String) -> BoxFuture<'static, anyhow::Result<Option<Vec<Candidate>>>> + Send + Sync>;
 
@@ -71,7 +69,7 @@ pub struct OwnershipNavidrome {
 /// its own song), and a length within 8 seconds, or, when a length is unknown, the same album, so
 /// one album's "Intro" is never taken for another's.
 pub struct LibraryOwnership {
-    /// `IOptionsMonitor<SubsonicSettings>`: the URL is read at every search.
+    /// The Subsonic settings: the URL is read at every search.
     settings: Arc<SettingsStore>,
     navidrome: Option<OwnershipNavidrome>,
     library: Arc<dyn ILocalLibraryService>,
@@ -249,7 +247,7 @@ impl LibraryOwnership {
             .iter()
             .filter(|c| Self::same_song(c, artist, title, duration, album))
             .collect();
-        // OrderByDescending(lossless).ThenByDescending(bit rate), stable.
+        // Lossless first, then the highest bit rate, stable.
         same.sort_by(|a, b| {
             is_lossless_file(&b.suffix, b.bit_rate)
                 .cmp(&is_lossless_file(&a.suffix, a.bit_rate))
@@ -322,8 +320,8 @@ impl LibraryOwnership {
     }
 }
 
-/// The songs of a search3 answer, read as `JsonElement` did: a node that is not an object where
-/// one is asked of throws, and anything missing on the way is no songs.
+/// The songs of a search3 answer: a node that is not an object where one is expected is an
+/// error, and anything missing on the way is no songs.
 fn read_search(doc: &Value) -> anyhow::Result<Vec<Candidate>> {
     fn property<'a>(element: &'a Value, name: &str) -> anyhow::Result<Option<&'a Value>> {
         match element {
@@ -371,7 +369,7 @@ fn read_search(doc: &Value) -> anyhow::Result<Vec<Candidate>> {
     Ok(candidates)
 }
 
-/// `Path.GetExtension`: the last dot of the file name and what follows, or empty when the name
+/// The extension: the last dot of the file name and what follows, or empty when the name
 /// has no dot or ends with one.
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);

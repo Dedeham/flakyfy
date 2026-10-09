@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/DeezerCoverArtLookup.cs`.
+//! Cover art from Deezer's public search.
 
 use std::sync::Arc;
 
@@ -31,8 +31,7 @@ pub struct DeezerCoverArtLookup {
     /// Through the shared Deezer client, so API calls go through the shared rate limiter. This
     /// same client also fetches the image bytes from the CDN, which the handler leaves unmetered.
     http: Arc<DeezerRateLimitHandler>,
-    /// Captured at construction (`IOptions<MetadataSettings>`), as the C# applied it to its
-    /// client once.
+    /// From the metadata settings, captured once at construction.
     accept_language: Option<String>,
     base: String,
 }

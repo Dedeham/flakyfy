@@ -1,4 +1,4 @@
-//! Port of `Services/Notifications/NotificationService.cs`: the fan-out. Rendering and the
+//! The notification fan-out. Rendering and the
 //! per-event switches are `octo_core::notifications::notification_service`.
 
 use std::panic::AssertUnwindSafe;
@@ -24,13 +24,13 @@ use crate::services::metadata::DeezerMetadataService;
 /// the same thing.
 pub struct NotificationService {
     sinks: Vec<Arc<dyn INotificationSink>>,
-    /// `IOptionsMonitor<NotificationSettings>`: read at every use.
+    /// The notification settings, read at every use.
     settings: Arc<SettingsStore>,
     deezer: Option<Arc<DeezerMetadataService>>,
 }
 
 impl NotificationService {
-    /// Named HttpClient with a short timeout: a slow notification server
+    /// The sinks' shared client, with a short timeout: a slow notification server
     /// must never be felt anywhere near the download path.
     pub const CLIENT_NAME: &'static str = "notifications";
     pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -301,8 +301,8 @@ mod tests {
         assert!(results.iter().any(|r| !r.ok && r.detail.contains("sink down")));
     }
 
-    /// Rust-only: the test button lists an unconfigured sink without calling it, and `notify`
-    /// outside a runtime does nothing rather than panic.
+    /// The test button lists an unconfigured sink without calling it, and `notify` outside a
+    /// runtime does nothing rather than panic.
     #[test]
     fn test_send_skips_unconfigured_sinks_and_notify_needs_no_runtime() {
         let off = Arc::new(RecordingSink {

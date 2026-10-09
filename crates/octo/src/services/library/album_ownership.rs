@@ -1,5 +1,5 @@
-//! Port of `Services/Library/AlbumOwnership.cs` (f49fb80): how much of an outside album the
-//! library already holds, from its songs, and the library index it is judged against.
+//! How much of an outside album the library already holds, from its songs, and the library index
+//! it is judged against.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
@@ -57,7 +57,7 @@ static LENIENT: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
 impl LibraryAlbumIndex {
     pub fn new(rows: impl IntoIterator<Item = LibrarySongRow>) -> Self {
         let mut index = LibraryAlbumIndex::default();
-        // In the order each album was first seen, as the C# dictionary enumerated.
+        // In the order each album was first seen.
         let mut by_album: IndexMap<String, Vec<Arc<LibrarySongRow>>> = IndexMap::new();
         for row in rows {
             let row = Arc::new(row);

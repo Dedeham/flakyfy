@@ -1,4 +1,4 @@
-//! `Services/Imports/SpotifyAccountStore.cs`'s file, `spotify-accounts.json`: Spotify sign-ins by
+//! The Spotify account store and its file, `spotify-accounts.json`: Spotify sign-ins by
 //! Navidrome user, in their own file beside settings.json rather than in it (the access token
 //! changes every hour, settings.json is watched and shown on the dashboard, and these must never
 //! be). Written whole each time, through a temporary file readable by its owner alone.
@@ -50,7 +50,7 @@ impl Default for SpotifyAccount {
     }
 }
 
-/// The file: each user's account, by name (the C# dictionary compared names ignoring case).
+/// The file: each user's account, by name (the store compares names ignoring case).
 pub type SpotifyAccounts = IndexMap<String, SpotifyAccount>;
 
 pub fn load(path: &Path) -> SpotifyAccounts {
@@ -81,9 +81,8 @@ pub fn save(path: &Path, accounts: &SpotifyAccounts) -> bool {
     }
 }
 
-/// `SpotifyAccountStore`: the sign-ins in memory, by name ignoring case, written whole on every
-/// change. A name already there keeps the spelling it was first saved under, as the C#
-/// dictionary's indexer did.
+/// The sign-ins in memory, by name ignoring case, written whole on every change. A name already
+/// there keeps the spelling it was first saved under.
 pub struct SpotifyAccountStore {
     path: Option<PathBuf>,
     accounts: Mutex<DotnetDictionary<(String, SpotifyAccount)>>,

@@ -1,6 +1,6 @@
-//! Port of `Services/Fingerprint/MusicBrainzClient.cs`, its HTTP half: the one-a-second gate,
-//! the cache and the named "musicbrainz" client (`Program.cs`: base address
-//! https://musicbrainz.org/ws/2/, a 10 s timeout, Octo's User-Agent). The query builders and
+//! The MusicBrainz client, its HTTP half: the one-a-second gate, the cache and the
+//! "musicbrainz" client (base address https://musicbrainz.org/ws/2/, a 10 s timeout, Octo's
+//! User-Agent). The query builders and
 //! the readers are in `octo_core::fingerprint::music_brainz_client`.
 
 use std::sync::Arc;
@@ -18,15 +18,14 @@ use url::Url;
 use crate::services::framework::http::{client_builder, parse_json, resolve};
 use crate::services::framework::{HttpAnswer, MemoryCache};
 
-/// What escaped `MusicBrainzClient` in the C#, which callers catch.
+/// The client's errors, which callers catch.
 #[derive(Debug, thiserror::Error)]
 pub enum MusicBrainzError {
-    /// The client's timeout elapsed. HttpClient reports that as a `TaskCanceledException`, an
-    /// `OperationCanceledException`, which `GetAsync`'s filter does not catch, so it reached
-    /// the caller rather than reading as "nothing to say".
+    /// The client's timeout elapsed. It reaches the caller rather than reading as "nothing to
+    /// say".
     #[error("No answer came within 10 seconds, so Octo stopped waiting.")]
     TimedOut,
-    /// A `JsonElement` accessor threw while the answer was read: a field of the wrong kind.
+    /// The answer could not be read: a field of the wrong kind.
     #[error(transparent)]
     Malformed(#[from] ElementError),
 }
@@ -50,7 +49,7 @@ enum Cached {
 pub struct MusicBrainzClient {
     client: reqwest::Client,
     base: Url,
-    /// `SemaphoreSlim(1, 1)` and `_lastCallUtc`: held across the wait and the call.
+    /// One call at a time, and when the last one was made: held across the wait and the call.
     gate: tokio::sync::Mutex<Option<Instant>>,
     /// Release lookups are remembered a day, since an album's tracks ask for the same
     /// release one by one; searches six hours. Every entry counts as one, so the limit is a count.
@@ -212,7 +211,7 @@ impl MusicBrainzClient {
 
     /// One request, spaced at least [`Self::MINIMUM_GAP`] after the last. None on any
     /// failure, which every caller reads as "MusicBrainz had nothing to say"; the timeout is
-    /// the exception, as it was in the C#.
+    /// the one error that reaches the caller.
     async fn get(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
         let mut last_call = self.gate.lock().await;
         if let Some(last) = *last_call {
@@ -248,8 +247,8 @@ impl MusicBrainzClient {
     }
 }
 
-/// The music database calls the release identifier makes. A timeout is the error the C#
-/// identifier saw thrown; every other failure is already None.
+/// The music database calls the release identifier makes. A timeout is the error the
+/// identifier sees; every other failure is already None.
 #[async_trait::async_trait]
 impl ReleaseLookup for MusicBrainzClient {
     async fn lookup_release(&self, release_id: &str) -> anyhow::Result<Option<ReleaseDetails>> {

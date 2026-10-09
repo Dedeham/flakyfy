@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/CredentialCheck.cs`.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -81,8 +79,7 @@ impl CredentialCheck {
     /// is the request's own, as with `RequestIdentity`. A caller that gives up drops the
     /// future; the call it waited on carries on for the others.
     ///
-    /// `Err` only for a failure the C# did not catch either (a URL HttpClient cannot use at
-    /// all), which reached the caller as an exception.
+    /// `Err` only for a URL the HTTP client cannot use at all.
     pub async fn check(
         &self,
         credential: Option<&SubsonicCredential>,

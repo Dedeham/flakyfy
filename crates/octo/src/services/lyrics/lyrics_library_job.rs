@@ -1,8 +1,7 @@
-//! Port of `Services/Lyrics/LyricsLibraryJob.cs`: `LyricsLibraryStore` (`lyrics-library.json`)
-//! and `LyricsLibraryWorker`, a singleton that is also a hosted queue worker, with its walk.
-//! The lyrics page's steps are `lyrics_library_steps` (the C# partial class's other file), the
-//! run's data is `octo_core::lyrics::lyrics_library_job`, and `LyricsUndoJournal`, also in that
-//! C# file, is `lyrics_undo_journal`.
+//! `LyricsLibraryStore` (`lyrics-library.json`) and `LyricsLibraryWorker`, one shared instance
+//! that is also a background queue worker, with its walk. The lyrics page's steps are
+//! `lyrics_library_steps`, the run's data is `octo_core::lyrics::lyrics_library_job`, and the
+//! undo journal is `lyrics_undo_journal`.
 
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashSet;
@@ -38,8 +37,7 @@ use crate::services::subsonic::NavidromeIdentityService;
 /// flush through a temporary file, so a long walk is not one write per song and a torn write
 /// never loses the cursor a resume depends on.
 ///
-/// The C# store ran its own 10 s timer and flushed once more on `Dispose`; here that is
-/// [`LyricsLibraryStore::run_flusher`], registered as a worker by the app state.
+/// The flushing is [`LyricsLibraryStore::run_flusher`], registered as a worker by the app state.
 pub struct LyricsLibraryStore {
     path: Option<PathBuf>,
     run: Mutex<LyricsLibraryRun>,
@@ -109,8 +107,7 @@ impl LyricsLibraryStore {
         }
     }
 
-    /// The C# flush timer and `Dispose`: flushes every [`Self::FLUSH_INTERVAL`] until
-    /// cancelled, then once more.
+    /// Flushes every [`Self::FLUSH_INTERVAL`] until canceled, then once more.
     pub async fn run_flusher(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         if self.path.is_none() {
             return Ok(());
@@ -144,8 +141,8 @@ fn load(path: &Path) -> Option<LyricsLibraryRun> {
     Some(run)
 }
 
-/// A run stopped because Octo is shutting down: the C# `OperationCanceledException` on the
-/// stopping token, which the worker's loop turns into an Interrupted run.
+/// A run stopped because Octo is shutting down: the stopping token was canceled, which the
+/// worker's loop turns into an Interrupted run.
 #[derive(Debug)]
 pub(super) struct Cancelled;
 
@@ -174,13 +171,13 @@ pub struct LyricsLibraryWorker {
     pub(super) store: Arc<LyricsLibraryStore>,
     pub(super) writer: Arc<LyricsSidecarWriter>,
     pub(super) settings: Arc<SettingsStore>,
-    /// Resolved from a scope when it is needed in C#; only asked for Octo's downloads.
+    /// Only asked for Octo's downloads.
     library: Arc<dyn ILocalLibraryService>,
     pub(super) music_root: Box<dyn Fn() -> String + Send + Sync>,
     /// For Navidrome's song list, which a scan reads instead of every file; None (the tests)
     /// reads each file.
     pub(super) identity: Option<Arc<NavidromeIdentityService>>,
-    /// `IHttpClientFactory.CreateClient()`.
+    /// The default HTTP client.
     pub(super) http: Option<reqwest::Client>,
     pub(super) journal: Arc<LyricsUndoJournal>,
     /// The pause after each song that needed a lookup ([`Self::GAP`]; the tests set none).
@@ -204,7 +201,7 @@ impl LyricsLibraryWorker {
         ".ape", ".wv", ".dsf",
     ];
 
-    /// `music_root` is `NavidromeSongPathResolver.MusicRoot`, read at each whole-library run.
+    /// `music_root` is the song path resolver's music root, read at each whole-library run.
     pub fn new(
         store: Arc<LyricsLibraryStore>,
         writer: Arc<LyricsSidecarWriter>,
@@ -233,7 +230,7 @@ impl LyricsLibraryWorker {
         }
     }
 
-    /// The pause after each looked-up song (the C# tests set the static `Gap` to zero).
+    /// The pause after each looked-up song (the tests set it to zero).
     pub fn with_gap(mut self, gap: Duration) -> Self {
         self.gap = gap;
         self
@@ -290,7 +287,7 @@ impl LyricsLibraryWorker {
             .update(|run| run.review.retain(|entry| entry.path != path));
     }
 
-    /// The hosted service's loop (`ExecuteAsync`): one request at a time until `stopping`.
+    /// The worker's loop: one request at a time until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut queue = self.receiver.lock().await;
         loop {
@@ -328,8 +325,8 @@ impl LyricsLibraryWorker {
         Ok(())
     }
 
-    /// One request (`RunAsync`): a walk here, the lyrics page's steps in `lyrics_library_steps`.
-    /// An error is what the C# threw, which the loop records as a failed run.
+    /// One request: a walk here, the lyrics page's steps in `lyrics_library_steps`. An error is
+    /// recorded by the loop as a failed run.
     pub async fn run_request(
         &self,
         request: &LyricsLibraryRequest,
@@ -498,8 +495,7 @@ impl LyricsLibraryWorker {
         Ok(())
     }
 
-    /// The pause after a looked-up song (`Task.Delay(Gap, stoppingToken)`), which a shutdown
-    /// cuts short with [`Cancelled`].
+    /// The pause after a looked-up song, which a shutdown cuts short with [`Cancelled`].
     pub(super) async fn pause(&self, stopping: &CancellationToken) -> anyhow::Result<()> {
         if self.gap.is_zero() {
             return Ok(());
@@ -529,9 +525,9 @@ impl LyricsLibraryWorker {
             ));
         };
         let attempt = job.clone().with_attempt(LyricsSidecarWriter::MAX_ATTEMPTS);
-        // A shutdown during the lookup is no error: the lyrics service answers "not now" (as the
-        // C# one did), the song is counted as busy, and the pause or the next song's check ends
-        // the run Interrupted.
+        // A shutdown during the lookup is no error: the lyrics service answers "not now", the
+        // song is counted as busy, and the pause or the next song's check ends the run
+        // Interrupted.
         match self.writer.write(&attempt, upgrade, stopping).await {
             Ok(write) => Ok((Some(write), Some(job), None)),
             Err(error) if error.chain().any(|cause| cause.is::<io::Error>()) => {
@@ -589,7 +585,7 @@ impl LyricsLibraryWorker {
         }
         let listed = {
             let root = root.clone();
-            // The trash is not part of the library (port fix).
+            // The trash is not part of the library.
             let trash =
                 library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
             tokio::task::spawn_blocking(move || audio_files(Path::new(&root), Some(&trash))).await
@@ -611,32 +607,29 @@ impl LyricsLibraryWorker {
     }
 }
 
-/// `Guid.NewGuid().ToString("N")[..12]`.
+/// A new run id: the first 12 hex digits of a random UUID.
 pub(super) fn new_run_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
-/// A list's length or index as the run's `int` counters hold it.
+/// A list's length or index as the run's `i32` counters hold it, capped at `i32::MAX`.
 pub(super) fn count(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order, which differs from Rust's (code point)
-/// order above U+FFFF.
+/// UTF-16 code unit order, which differs from Rust's (code point) order above U+FFFF.
 fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-/// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`, kept to the audio
-/// extensions.
+/// Every file under `root`, in every folder below it, kept to the audio extensions.
 fn audio_files(root: &Path, trash: Option<&Path>) -> io::Result<Vec<String>> {
     files_with(root, &LyricsLibraryWorker::AUDIO_EXTENSIONS, trash)
 }
 
-/// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`, kept to `extensions`.
-/// Symbolic links to folders are followed, and any folder that cannot be read fails the whole
-/// listing (`IgnoreInaccessible` is off for that overload).
-/// The trash folder is left out (port fix).
+/// Every file under `root`, in every folder below it, kept to `extensions`. Symbolic links to
+/// folders are followed, and any folder that cannot be read fails the whole listing. The trash
+/// folder is left out.
 pub(super) fn files_with(root: &Path, extensions: &[&str], trash: Option<&Path>) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];
@@ -664,7 +657,7 @@ pub(super) fn files_with(root: &Path, extensions: &[&str], trash: Option<&Path>)
     Ok(found)
 }
 
-/// `Path.GetExtension` of a file name: from its last dot, or nothing when there is no dot or the
+/// The extension of a file name: from its last dot, or nothing when there is no dot or the
 /// name ends in one. (Unlike Rust's, ".mp3" has the extension ".mp3".)
 pub(super) fn extension_of(name: &str) -> String {
     match name.rfind('.') {

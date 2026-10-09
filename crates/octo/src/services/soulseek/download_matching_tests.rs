@@ -1,4 +1,4 @@
-//! DownloadMatchingTests: two reports from 2026-10-04. "Songs with (Radio edit) only download
+//! Download matching, from two reported problems. "Songs with (Radio edit) only download
 //! radio edit songs": the title's version tag was read as words the file name had to carry, so
 //! "Too Close (Radio Edit)" took only files that spelled out "radio edit", and the same rule made
 //! "Take Care (feat. Rihanna)" refuse every file not naming Rihanna. And "Take Care downloaded

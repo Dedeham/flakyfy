@@ -1,6 +1,6 @@
-//! The services: `Services/**` in the C#, the parts with I/O, state or wiring: stores, clients
-//! and workers. Each submodule mirrors a C# namespace; the pure halves are in `octo_core` under
-//! the same module paths, and `framework` holds the .NET library pieces they were built on.
+//! The services: the parts with I/O, state or wiring: stores, clients and workers. The pure
+//! halves are in `octo_core` under the same module paths, and `framework` holds the general
+//! building blocks they share.
 
 pub mod admin;
 pub mod charts;

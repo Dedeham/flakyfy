@@ -1,6 +1,5 @@
-//! Port of `Services/Library/QualityUpgradeWorker.cs`: the weekly quality upgrade (#70), its
-//! memory (`<config>/quality-upgrade.json`, state-files.md §4.15), and the Navidrome song-list
-//! parser `NavidromePlaylistApi::list_songs` uses.
+//! The weekly quality upgrade (#70), its memory (`<config>/quality-upgrade.json`), and the
+//! Navidrome song-list parser `NavidromePlaylistApi::list_songs` uses.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -42,7 +41,7 @@ pub struct LibrarySongRow {
     pub artist: String,
     pub duration: Option<i32>,
     pub album: Option<String>,
-    /// The album the song is filed under, its album artist and its ISRCs (f49fb80), for album
+    /// The album the song is filed under, its album artist and its ISRCs, for album
     /// ownership.
     pub album_id: Option<String>,
     pub album_artist: Option<String>,
@@ -73,7 +72,7 @@ pub struct LibrarySongRow {
 }
 
 impl Default for LibrarySongRow {
-    /// The C# record's defaults: a song is taken to have a cover until the list says not.
+    /// A song is taken to have a cover until the list says not.
     fn default() -> Self {
         LibrarySongRow {
             id: String::new(),
@@ -208,8 +207,8 @@ impl QualityUpgradeStore {
 /// One walk of the library: the songs, and whether the walk reached the end.
 pub type ListSongsFn = Arc<dyn Fn() -> BoxFuture<'static, (Vec<LibrarySongRow>, bool)> + Send + Sync>;
 
-/// The seams the C# exposed as settable properties, "the same way SoulseekClient exposes Clock
-/// and PollInterval".
+/// The worker's seams, which tests replace, the same way `SoulseekClient` exposes its clock and
+/// poll interval.
 #[derive(Clone)]
 pub struct QualityUpgradeSeams {
     pub clock: Clock,
@@ -254,7 +253,7 @@ pub enum Tick {
 /// Trickles lossy songs through Better quality, a few a week (#70). Every safety the action has
 /// applies unchanged, because this only ever calls it: the allowlist, dry run, the quarantine,
 /// and putting the original back when the new file is not really better, and the upgraded song
-/// keeps its place in Navidrome, with its plays, favorites and playlist entries (W8).
+/// keeps its place in Navidrome, with its plays, favorites and playlist entries.
 pub struct QualityUpgradeWorker {
     store: Arc<QualityUpgradeStore>,
     settings: Arc<SettingsStore>,
@@ -302,7 +301,7 @@ impl QualityUpgradeWorker {
         Self::with_seams(store, settings, upgrades, seams)
     }
 
-    /// A worker over the given seams (the C# tests' object initializer).
+    /// A worker over the given seams (tests).
     pub fn with_seams(
         store: Arc<QualityUpgradeStore>,
         settings: Arc<SettingsStore>,
@@ -318,7 +317,7 @@ impl QualityUpgradeWorker {
         }
     }
 
-    /// Changes a seam after construction, as the C# tests set a property.
+    /// Changes a seam after construction (tests).
     pub fn configure(&self, change: impl FnOnce(&mut QualityUpgradeSeams)) {
         change(&mut self.seams.lock());
     }
@@ -557,7 +556,7 @@ impl QualityUpgradeWorker {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker loop, until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut wait = Self::FIRST_CHECK;
         while !stopping.is_cancelled() {
@@ -566,7 +565,7 @@ impl QualityUpgradeWorker {
                 _ = stopping.cancelled() => break,
             }
             wait = Self::CHECK_INTERVAL;
-            // Per-tick catch: BackgroundServiceExceptionBehavior defaults to StopHost.
+            // Per-tick catch: a tick that panics never stops the worker.
             let tick = tokio::select! {
                 tick = std::panic::AssertUnwindSafe(self.tick()).catch_unwind() => tick,
                 _ = stopping.cancelled() => break,
@@ -617,13 +616,13 @@ fn isrcs_of(song: &Value) -> Vec<String> {
     found
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order.
+/// Ordinal comparison: UTF-16 code unit order.
 pub(crate) fn compare_ordinal(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
 /// The rows of one page of Navidrome's native song list, with how many it held, or `None` when
-/// it is not a list. `Err` where the C# threw (a size or bit rate that is not a number).
+/// it is not a list. `Err` for a size or bit rate that is not a number.
 pub fn parse_songs(root: &Value) -> Result<Option<(Vec<LibrarySongRow>, usize)>, String> {
     let Value::Array(songs) = root else {
         return Ok(None);
@@ -689,8 +688,8 @@ fn text(element: &Value, name: &str) -> Option<String> {
     }
 }
 
-/// `TryGetInt32` on a member that is a number: None for anything else, a fraction or a number
-/// past an int.
+/// A member that is a whole number fitting an `i32`: None for anything else, a fraction or a
+/// number past an `i32`.
 fn int(element: &Value, name: &str) -> Option<i32> {
     match element.get(name)? {
         Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
@@ -749,8 +748,8 @@ fn participants(song: &Value, role: &str) -> Vec<String> {
     }
 }
 
-/// `DateTime.TryParse(created, InvariantCulture, AdjustToUniversal | AssumeUniversal)`: kept to
-/// .NET's 100 ns ticks, rounded, as the C# read Navidrome's nine digits.
+/// Navidrome's `created` time as UTC (a time without a zone taken as UTC), its nine fraction
+/// digits rounded to 100 ns ticks.
 fn added_utc(created: &str) -> Option<DateTime<Utc>> {
     let parsed = datetime::parse_utc(created)?;
     let nanos = (parsed.timestamp_subsec_nanos() + 50) / 100 * 100;
@@ -762,8 +761,7 @@ fn added_utc(created: &str) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp(seconds, nanos)
 }
 
-/// `TryGetInt64`/`TryGetInt32` on a member: absent is fine, a number is read, and any other
-/// kind threw `InvalidOperationException`.
+/// A numeric member: absent is fine, a number is read, and any other kind is an error.
 fn number<'a>(element: &'a Value, name: &str) -> Result<Option<&'a serde_json::Number>, String> {
     match element.get(name) {
         None => Ok(None),

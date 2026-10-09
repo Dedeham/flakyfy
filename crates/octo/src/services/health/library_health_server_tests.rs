@@ -1,7 +1,6 @@
-//! Port of `octo.Tests/LibraryHealthServerTests.cs` (69f577f, e36d823): Library health on the
-//! server, Navidrome's own song list read into what the checks need, the words and plans the app
-//! has, and the dashboard's runs of fixes and lookups. The two activity feed tests are group N's
-//! (`controllers::admin::activity`); the lookup test checks the run here.
+//! Library health on the server: Navidrome's own song list read into what the checks need, the
+//! words and plans the app has, and the dashboard's runs of fixes and lookups. The activity feed
+//! is tested in `controllers::admin::activity`; the lookup test checks the run here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -889,10 +888,10 @@ async fn what_the_page_may_do_follows_the_library_action_settings() {
     );
 }
 
-// ---- Rust-only ------------------------------------------------------------------------------
+// ---- Song order ---------------------------------------------------------------------------------
 
 /// A read that was answered from the kept report gives the songs in the order the library was
-/// read in, as the C# did (`index.Rows`), while a fresh check gives them in search order.
+/// read in (the index's rows), while a fresh check gives them in search order.
 #[tokio::test]
 async fn a_kept_report_lists_the_songs_as_the_library_read_them() {
     let (health, _, library) = service(LibraryActionSettings::default());

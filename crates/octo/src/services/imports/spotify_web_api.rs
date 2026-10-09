@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/SpotifyWebApi.cs`, with `ImportKeys`.
+//! Spotify's Web API for imports, with `ImportKeys`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -129,7 +129,7 @@ impl SpotifyWebApi {
         }
     }
 
-    /// The client `Program.cs` registered: 20 seconds.
+    /// The HTTP client: a 20 second timeout.
     pub fn client() -> reqwest::Client {
         crate::services::http_client_factory::builder()
             .timeout(Duration::from_secs(20))
@@ -492,13 +492,13 @@ pub fn track_of(row: &Value) -> Option<ImportTrack> {
     })
 }
 
-/// `duration_ms` as whole seconds (`TryGetInt64`, more than 0, `Math.Round(ms / 1000.0)`).
+/// `duration_ms` as whole seconds: a whole number of milliseconds above 0, rounded half to even.
 pub(crate) fn seconds_of(value: Option<&Value>) -> Option<i32> {
     let ms = value.and_then(Value::as_i64).filter(|ms| *ms > 0)?;
     Some(dotnet::round(ms as f64 / 1000.0, 0) as i32)
 }
 
-/// `TryGetInt32`.
+/// A whole number that fits in an `i32`, or None.
 pub(crate) fn int32(value: Option<&Value>) -> Option<i32> {
     value.and_then(Value::as_i64).and_then(|n| i32::try_from(n).ok())
 }

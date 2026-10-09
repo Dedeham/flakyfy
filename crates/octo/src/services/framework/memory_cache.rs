@@ -1,10 +1,8 @@
-//! `Microsoft.Extensions.Caching.Memory.MemoryCache` with a `SizeLimit`, as the metadata clients
-//! and the cover-art aggregator used it: every entry has a size and an absolute expiry relative
-//! to when it was set. Not a C# file of Octo's; the framework type those were built on.
+//! A size-limited memory cache, as the metadata clients and the cover-art aggregator use it:
+//! every entry has a size and an absolute expiry relative to when it was set.
 //!
-//! An entry that would take the cache over its limit is not stored, and the cache is compacted
-//! down to 95% of the limit (`CompactionPercentage` 0.05): expired entries first, then the ones
-//! read least recently. .NET compacts on a background thread; this does it in place.
+//! An entry that would take the cache over its limit is not stored, and the cache is compacted down
+//! to 95% of the limit: expired entries first, then the ones read least recently, in place.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -40,7 +38,7 @@ impl<V: Clone> MemoryCache<V> {
         }
     }
 
-    /// `TryGetValue`: the value while it has not expired.
+    /// The value while it has not expired.
     pub fn get(&self, key: &str) -> Option<V> {
         let now = Instant::now();
         let mut state = self.state.lock();
@@ -58,7 +56,7 @@ impl<V: Clone> MemoryCache<V> {
         None
     }
 
-    /// `Set` with `Size` and `AbsoluteExpirationRelativeToNow`.
+    /// Stores a value with its size and an expiry relative to now.
     pub fn set(&self, key: impl Into<String>, value: V, size: u64, ttl: Duration) {
         let key = key.into();
         let now = Instant::now();
@@ -81,7 +79,7 @@ impl<V: Clone> MemoryCache<V> {
         );
     }
 
-    /// `Clear()`.
+    /// Removes every entry.
     pub fn clear(&self) {
         let mut state = self.state.lock();
         state.entries.clear();

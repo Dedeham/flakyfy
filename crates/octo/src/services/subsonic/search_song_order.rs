@@ -1,5 +1,4 @@
-//! Port of `Services/Subsonic/SearchSongOrder.cs`: what page one of a search showed, and the
-//! cache that keeps it for the pages after.
+//! What page one of a search showed, and the cache that keeps it for the pages after.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -52,7 +51,7 @@ impl SearchSongOrder {
     }
 
     /// The order for a page one built from `built` and answered with `local_songs` (rows as
-    /// `SubsonicModelMapper.ParseSearchResponse` returns them).
+    /// `SubsonicModelMapper::parse_search_response` returns them).
     pub fn from(
         built: Arc<Vec<Song>>,
         requested_songs: i32,
@@ -211,9 +210,8 @@ impl Entry {
 mod tests {
     use super::*;
 
-    /// `SearchPagingTests.APageInsidePageOne_DoesNotBorrowItsOrder`: a page that starts inside
-    /// page one's rows is not that list's next page, even at page one's size: it used to be
-    /// placed as if it were, and repeated rows the list had.
+    /// A page that starts inside page one's rows is not that list's next page, even at page one's
+    /// size: it used to be placed as if it were, and repeated rows the list had.
     #[test]
     fn a_page_inside_page_one_does_not_borrow_its_order() {
         let cache = SearchSongOrderCache::new();

@@ -1,4 +1,4 @@
-//! Port of `Services/Common/SoulseekHoldResumer.cs`, a worker of the supervisor.
+//! The Soulseek hold resumer, a worker of the supervisor.
 
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ impl SoulseekHoldResumer {
         SoulseekHoldResumer { store, hearts }
     }
 
-    /// `ExecuteAsync`: starts every held chain again and finishes at once.
+    /// Starts every held chain again and finishes at once.
     pub async fn run(self: Arc<Self>, _stopping: CancellationToken) -> anyhow::Result<()> {
         let held = self.store.snapshot();
         if !held.is_empty() {

@@ -1,4 +1,4 @@
-//! Port of `Services/Library/GeneratedPlaylistService.cs`: `generated-playlists.json`.
+//! The generated playlists and their state file, `generated-playlists.json`.
 //!
 //! Genre and decade mixes built from the listener's own library and served like radio stations
 //! (#54): per listener, read-only, under ids that start "og" so they can never be mistaken for a
@@ -12,8 +12,8 @@
 //!
 //! The Made for you lists (New Releases, Rediscover, Deep Cuts) live here too, on by default and
 //! switched apart from the mixes: built in the same refresh, from one walk of the listener's
-//! library as they see it, and kept on disk, so opening one never waits on a build (f54467a,
-//! 452f47e). The picking is `octo_core::library::for_you_lists`.
+//! library as they see it, and kept on disk, so opening one never waits on a build. The picking
+//! is `octo_core::library::for_you_lists`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -66,16 +66,16 @@ struct Mixes {
 
 pub struct GeneratedPlaylistService {
     state_path: Option<PathBuf>,
-    /// The scope's `SubsonicProxyService`: a background one, with no request behind it.
+    /// A background `SubsonicProxyService`, with no request behind it.
     proxy: SubsonicProxyService,
-    /// `IOptionsMonitor<GeneratedPlaylistSettings>` and `IOptionsMonitor<GenreSettings>`.
+    /// The generated playlist and genre settings, read at use.
     settings: Arc<SettingsStore>,
     refreshes: SingleFlight<String, bool>,
     /// The draws, and the Discovery blend's candidates, until their period ends.
     drawn: MemoryCache<Arc<Vec<Node>>>,
     state: Mutex<Mixes>,
-    /// What New Releases needs (the C# resolved them from a scope when it built the list):
-    /// None leaves New Releases as it was, as a provider without them did.
+    /// What New Releases needs, used when it builds the list: None leaves New Releases as it
+    /// was.
     for_you: Option<ForYouServices>,
 }
 
@@ -875,8 +875,8 @@ fn until(expires: DateTime<Utc>) -> Duration {
 
 /// The caller's own parameters, whatever auth they carry (a token, a password or an API key),
 /// as the sync catalog does, minus anything that named the playlist being read.
-/// In the order the C# `Dictionary` enumerated them, freed slots reused, which is the order the
-/// query is written in.
+/// In insertion order with a removed key's slot reused by the next key added, which is the order
+/// the query is written in.
 fn parameters(auth: &IndexMap<String, String>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut parameters: DotnetDictionary<String> = DotnetDictionary::new();
     for (key, value) in auth {

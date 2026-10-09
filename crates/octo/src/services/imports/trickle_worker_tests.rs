@@ -1,4 +1,4 @@
-//! The worker half of `TrickleTests.cs`.
+//! The trickle worker.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

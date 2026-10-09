@@ -1,9 +1,8 @@
-//! Port of `Services/Lidarr/LidarrClient.cs`. Its records and the JSON readers are
+//! The Lidarr HTTP client. Its records and the JSON readers are
 //! `octo_core::lidarr::lidarr_client`.
 //!
-//! The C# methods took a `CancellationToken` that every caller but the track fetcher left at
-//! its default; here a caller that must stop early drops the future, and the track fetcher
-//! races its token against each call.
+//! The calls take no cancellation token: a caller that must stop early drops the future, and the
+//! track fetcher races its token against each call.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,16 +28,16 @@ type JsonObject = Map<String, Value>;
 /// Small, purpose-built client for the Lidarr v1 endpoints Octo needs.
 pub struct LidarrClient {
     http: reqwest::Client,
-    /// `IOptionsMonitor<LidarrSettings>`: the address and key are read at every request.
+    /// The live settings: the address and key are read at every request.
     settings: Arc<SettingsStore>,
 }
 
 impl LidarrClient {
-    /// `client.Timeout = TimeSpan.FromSeconds(20)` on the default client.
+    /// The client's timeout: 20 seconds.
     pub const TIMEOUT: Duration = Duration::from_secs(20);
 
     pub fn new(settings: Arc<SettingsStore>) -> Self {
-        // IHttpClientFactory.CreateClient(): the default client, with its timeout set to 20 s.
+        // A plain client, with its timeout set to 20 s.
         let http = reqwest::Client::builder()
             .no_gzip()
             .no_deflate()
@@ -611,17 +610,17 @@ impl LidarrClient {
     }
 }
 
-/// One request, built before it is sent (`HttpRequestMessage`).
+/// One request, built before it is sent.
 struct Request {
     method: Method,
     url: String,
     api_key: String,
     body: Option<String>,
-    /// `client.Timeout` for this request, when it is not the usual 20 s.
+    /// The timeout for this request, when it is not the usual 20 s.
     timeout: Option<Duration>,
 }
 
-/// What HttpClient threw for a request that got no answer: its timeout, or the connection.
+/// What a request that got no answer fails with: its timeout, or the connection.
 fn transport_error(error: reqwest::Error, timeout: Duration) -> LidarrError {
     if error.is_timeout() {
         LidarrError::Canceled(http_client_factory::timeout_message(timeout))

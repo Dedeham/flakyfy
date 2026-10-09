@@ -349,6 +349,14 @@ impl StreamSizeWarmer {
     /// A lookup of `song_id` ended; `answered` as [`Self::warm_one`] returned it.
     fn done(&self, song_id: &str, answered: Option<bool>) {
         self.queued.lock().remove(song_id);
+        // Played while its lookup ran: that lookup read the wish before it, so ask again.
+        if self.loudness_wanted.lock().contains(song_id) {
+            self.queued.lock().insert(song_id.to_string());
+            if self.sender.try_send(song_id.to_string()).is_err() {
+                self.queued.lock().remove(song_id);
+                self.loudness_wanted.lock().remove(song_id);
+            }
+        }
         {
             let mut tried = self.tried.lock();
             tried.insert(song_id.to_string(), Instant::now());

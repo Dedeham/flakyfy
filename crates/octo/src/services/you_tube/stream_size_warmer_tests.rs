@@ -387,3 +387,22 @@ async fn lookups_that_come_back_empty_trip_the_breaker() {
     }
     assert!(warmer.paused_for(Instant::now()).is_some());
 }
+
+#[tokio::test]
+async fn a_play_during_a_lookup_still_gets_its_loudness_asked_for() {
+    let mut shim = FakeShim::default();
+    shim.facts.insert("vid-Genesis".into(), sized(42));
+    let (registry, _shim, warmer) = warmer_over(shim);
+    let id = pinned(&registry, "Genesis");
+    assert!(warmer.want(&id, true));
+
+    let answered = warmer.warm_one(&id).await;
+    // Played while that lookup ran: the waiting entry is the one running.
+    assert!(warmer.want_loudness(&id));
+    warmer.done(&id, answered);
+
+    assert!(
+        warmer.queued.lock().contains(&id),
+        "queued again for its loudness"
+    );
+}

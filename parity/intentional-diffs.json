@@ -721,6 +721,28 @@
       ],
       "reason": "An outside song's size is the true byte count of the stream Octo relays, learned from the shim (yt-dlp's filesize, the URL's clen when that is unknown, and the bytes of a play over both), and absent until it is known. The C# native rows sent duration x bit rate as the size, an estimate that never matched the bytes; strict clients use the size to seek. Subsonic rows (search3 and the rest) gain the true size once known, so a corpus row whose stream the parity stub never sized is unchanged there. The lines need pinning against a parity run.",
       "knownDiff": "Outside songs: the true stream size"
+    },
+    {
+      "id": "duplicates-keep-marks",
+      "backlog": "base",
+      "requests": [
+        "19-health/health-*",
+        "19-health/preview-dups*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ ",
+        "Keeps the best (copy|sound) of each song",
+        "Fix these copies first checks which copy",
+        "\\.(fixMeaning|meaning|note|sound)\\b",
+        "\"sound\":"
+      ],
+      "reason": "Fixing duplicates keeps the best sound in the copy people marked: the copy whose id carries the most stars, ratings and plays (then playlist entries, then the oldest) keeps its id and path, and the best-sounding copy of the same format moves into it under its identity tags. Duplicates' fix meaning says so, a set in the list notes that Fix these copies picks the marked copy, and the preview's side by side view marks the copy whose sound moves in (\"sound\"). With the planted Harbor Lights pair (FLAC and MP3, nobody's marks) the plan itself stays the best-sound one.",
+      "knownDiff": "Duplicates keep the marked copy's id"
     }
   ]
 }

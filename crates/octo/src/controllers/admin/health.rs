@@ -29,6 +29,7 @@ use crate::services::health::health_fixes::{
     self as fixes, AlbumJoin, DuplicateFix, FixStep, TagChange, fix_actions,
 };
 use crate::services::health::health_words as words;
+use crate::services::health::keep_marks::{self, TargetPick};
 use crate::services::health::library_health::{
     self as health, DuplicateSet, HealthCheck, HealthTag, SplitAlbum,
 };
@@ -113,6 +114,9 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
         match check {
             HealthCheck::Duplicates => {
                 item.insert("fixAllLabel".into(), json!(words::fix_all_label(check, count)));
+                // The list shows the best-sound plan; the preview reads people's marks.
+                let marks_note = (can.edit && can.remove && health.keep_marks().is_some())
+                    .then_some(words::MARKS_PICKED_IN_PREVIEW);
                 let sets: Vec<Value> = report
                     .duplicates
                     .iter()
@@ -134,7 +138,7 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
                             "why": fix.why,
                             "line": fix_line(&fix, &fix.fills, fields, can.edit),
                             "fills": fills,
-                            "note": fix.note,
+                            "note": join_notes(fix.note.as_deref(), marks_note),
                         })
                     })
                     .collect();
@@ -310,13 +314,32 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
     };
     let can = health.abilities(&user);
     let report = &found.report;
-    let fields = fields_of(&found.fields);
     let keys: Option<HashSet<&str>> = request
         .keys
         .as_ref()
         .filter(|keys| !keys.is_empty())
         .map(|keys| keys.iter().map(String::as_str).collect());
     let picked = |key: &str| keys.as_ref().is_none_or(|keys| keys.contains(key));
+    // Which copy of each set keeps people's marks, read from Navidrome now, unless a person
+    // picked the copy to keep.
+    let keeping = can.edit && can.remove && check == HealthCheck::Duplicates;
+    let mut marked: HashMap<String, TargetPick> = HashMap::new();
+    if let Some(keep) = health.keep_marks().filter(|_| keeping) {
+        let sets: Vec<&DuplicateSet<Row>> = report
+            .duplicates
+            .iter()
+            .filter(|set| picked(&set_key(set)))
+            .collect();
+        if !(sets.len() == 1 && request.keep.is_some()) {
+            let uses = keep.playlist_uses().await.unwrap_or_default();
+            for set in sets {
+                if let Some(pick) = keep.pick_for(set, &uses).await {
+                    marked.insert(set_key(set), pick);
+                }
+            }
+        }
+    }
+    let fields = fields_of(&found.fields);
 
     match check {
         HealthCheck::Duplicates => {
@@ -336,7 +359,10 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
                         (Some(keep_id), true) => set.copies.iter().find(|copy| &copy.id == keep_id),
                         _ => None,
                     };
-                    let fix = fixes::duplicate_fix(set, fields, keep);
+                    let fix = match (keep, marked.get(&set_key(set))) {
+                        (None, Some(pick)) => keep_marks::plan(set, fields, Some(pick)),
+                        _ => fixes::duplicate_fix(set, fields, keep),
+                    };
                     let fills: Vec<TagChange> = if !can.edit {
                         Vec::new()
                     } else if let (true, Some(tags)) = (one, &request.fills) {
@@ -375,7 +401,10 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
                 .flat_map(|(_, fix, changes)| fixes::duplicate_steps(fix, fields, Some(changes)))
                 .map(|step| step_view(&step))
                 .collect();
-            let removing: usize = plans.iter().map(|(_, fix, _)| fix.remove.len()).sum();
+            let removing: usize = plans
+                .iter()
+                .map(|(_, fix, _)| fix.remove.len() + usize::from(fix.audio.is_some()))
+                .sum();
             let set_views: Vec<Value> = plans
                 .iter()
                 .map(|(set, fix, changes)| {
@@ -923,7 +952,11 @@ fn fix_line(
     fields: &dyn IHealthFields<Row>,
     can_fill: bool,
 ) -> String {
-    let gone = words::count_text(fix.remove.len(), "copy", "copies");
+    let gone = words::count_text(
+        fix.remove.len() + usize::from(fix.audio.is_some()),
+        "copy",
+        "copies",
+    );
     let filled = if !can_fill || fills.is_empty() {
         String::new()
     } else {
@@ -939,10 +972,25 @@ fn fix_line(
             .collect();
         format!(" Fills in {}.", names.join(", "))
     };
-    format!(
-        "Keeps {} and moves {gone} to the trash.{filled}",
-        fixes::copy_name(&fix.keep, fields)
-    )
+    match &fix.audio {
+        Some(audio) => format!(
+            "Moves the sound of {} into {}, which keeps its marks, and moves {gone} to the trash.{filled}",
+            fixes::copy_name(audio, fields),
+            fixes::copy_name(&fix.keep, fields)
+        ),
+        None => format!(
+            "Keeps {} and moves {gone} to the trash.{filled}",
+            fixes::copy_name(&fix.keep, fields)
+        ),
+    }
+}
+
+/// Two notes as one, either or both absent.
+fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first} {second}")),
+        (one, other) => one.or(other).map(str::to_string),
+    }
 }
 
 fn change_view(change: &TagChange) -> Value {
@@ -962,7 +1010,10 @@ fn step_view(step: &FixStep) -> Value {
 
 /// Every tag of every copy, side by side, and what the kept copy says after the fix.
 fn duplicate_diff(fix: &DuplicateFix<Row>, changes: &[TagChange], fields: &dyn IHealthFields<Row>) -> Value {
-    let copies: Vec<&Row> = std::iter::once(&fix.keep).chain(fix.remove.iter()).collect();
+    let copies: Vec<&Row> = std::iter::once(&fix.keep)
+        .chain(fix.audio.iter())
+        .chain(fix.remove.iter())
+        .collect();
     let values: Vec<_> = copies
         .iter()
         .map(|copy| fixes::tag_values(*copy, fields))
@@ -993,6 +1044,7 @@ fn duplicate_diff(fix: &DuplicateFix<Row>, changes: &[TagChange], fields: &dyn I
             json!({
                 "id": copy.id,
                 "kept": copy.id == fix.keep.id,
+                "sound": fix.audio.as_ref().is_some_and(|audio| audio.id == copy.id),
                 "quality": words::quality_text(*copy, fields),
             })
         })

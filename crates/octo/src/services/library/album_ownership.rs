@@ -20,6 +20,7 @@ use super::duplicate_scan_worker::is_lossless_file;
 use super::library_ownership::LibraryOwnership;
 use super::library_snapshot::LibrarySnapshot;
 use super::quality_upgrade_worker::LibrarySongRow;
+use crate::services::family::LibraryScope;
 use crate::services::metadata::DeezerMetadataService;
 use crate::services::soulseek::ExternalIdRegistry;
 
@@ -370,8 +371,10 @@ impl Standing {
 /// A tracklist read on its own task, which runs on when the request stops waiting.
 type Running = Shared<BoxFuture<'static, Option<Vec<CatalogTrack>>>>;
 
-/// `Library`: the library as it stands, or None when it cannot be read.
-pub type LibrarySource = Arc<dyn Fn() -> BoxFuture<'static, Option<Arc<LibraryAlbumIndex>>> + Send + Sync>;
+/// `Library`: the library as it stands for a scope (the shared library, or a member's view with
+/// their own songs), or None when it cannot be read.
+pub type LibrarySource =
+    Arc<dyn Fn(LibraryScope) -> BoxFuture<'static, Option<Arc<LibraryAlbumIndex>>> + Send + Sync>;
 /// `Tracklist`: an outside album's tracklist, asked for now or in the background.
 pub type TracklistSource =
     Arc<dyn Fn(Album, bool) -> BoxFuture<'static, Option<Vec<CatalogTrack>>> + Send + Sync>;
@@ -438,9 +441,9 @@ impl AlbumOwnership {
         let tracklist_id = deezer_id.clone();
         let tracklist_deezer = Arc::clone(&deezer);
         Self::new(
-            Arc::new(move || {
+            Arc::new(move |scope: LibraryScope| {
                 let snapshot = Arc::clone(&snapshot);
-                Box::pin(async move { snapshot.current().await })
+                Box::pin(async move { snapshot.current_for(&scope).await })
             }),
             Arc::new(move |album: Album, background| {
                 let deezer = Arc::clone(&tracklist_deezer);
@@ -460,7 +463,7 @@ impl AlbumOwnership {
     /// For tests: no library, no tracklists.
     pub fn empty() -> Self {
         Self::new(
-            Arc::new(|| Box::pin(async { None })),
+            Arc::new(|_| Box::pin(async { None })),
             Arc::new(|_, _| Box::pin(async { None })),
             Arc::new(|_| None),
         )
@@ -483,10 +486,16 @@ impl AlbumOwnership {
         SongIdentity::key(&text)
     }
 
-    /// What the library holds of each outside album, in the order given, waiting at most `wait`
-    /// for the library and the tracklists. Library albums pass through unjudged. Empty when the
-    /// library cannot be read in time.
+    /// [`Self::judge_in`] the shared library.
     pub async fn judge(&self, albums: &[Album], wait: Duration) -> Vec<Standing> {
+        self.judge_in(albums, wait, LibraryScope::Shared).await
+    }
+
+    /// What the library `scope` sees holds of each outside album, in the order given, waiting
+    /// at most `wait` for the library and the tracklists. A member's scope counts their own
+    /// songs too, so an album in their own library stands in for its outside version. Library
+    /// albums pass through unjudged. Empty when the library cannot be read in time.
+    pub async fn judge_in(&self, albums: &[Album], wait: Duration, scope: LibraryScope) -> Vec<Standing> {
         let outside: Vec<(usize, &Album)> = albums
             .iter()
             .enumerate()
@@ -497,7 +506,7 @@ impl AlbumOwnership {
         }
         let clock = Instant::now();
 
-        let index = match tokio::time::timeout(wait, (self.library)()).await {
+        let index = match tokio::time::timeout(wait, (self.library)(scope)).await {
             Ok(Some(index)) => index,
             Ok(None) => return Vec::new(),
             Err(_) => {
@@ -650,10 +659,19 @@ impl AlbumOwnership {
         )
     }
 
-    /// The library as it stands, waiting at most `wait`; None when it cannot be read in that
-    /// time.
+    /// The shared library as it stands, waiting at most `wait`; None when it cannot be read in
+    /// that time.
     pub async fn library(&self, wait: Duration) -> Option<Arc<LibraryAlbumIndex>> {
-        tokio::time::timeout(wait, (self.library)()).await.ok().flatten()
+        self.library_in(wait, LibraryScope::Shared).await
+    }
+
+    /// The library as `scope` sees it, waiting at most `wait`; None when it cannot be read in
+    /// that time.
+    pub async fn library_in(&self, wait: Duration, scope: LibraryScope) -> Option<Arc<LibraryAlbumIndex>> {
+        tokio::time::timeout(wait, (self.library)(scope))
+            .await
+            .ok()
+            .flatten()
     }
 
     /// One tracklist read, on a task of its own so that it runs on (and is cached) when the

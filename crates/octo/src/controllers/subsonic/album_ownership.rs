@@ -19,6 +19,7 @@ use tracing::debug;
 
 use super::action_helpers::is_failed_subsonic_body;
 use crate::app::AppState;
+use crate::services::family::{FamilyCaller, LibraryScope};
 use crate::services::library::{AlbumOwnership, CatalogTrack, Standing};
 use crate::services::subsonic::SubsonicProxyService;
 
@@ -30,13 +31,25 @@ pub(crate) const OWNERSHIP_WAIT: Duration = Duration::from_millis(1500);
 /// At most this many library albums stand in for one outside album held whole.
 const MAX_STAND_INS: usize = 3;
 
-/// What the library holds of each outside album, once they are found; empty when it cannot be
-/// told.
-pub(crate) async fn judge_albums(state: &AppState, albums: &[Album]) -> Vec<Standing> {
+/// The library a caller sees: a family member's own songs with the shared ones, anyone else the
+/// shared library.
+pub(crate) fn scope_of(caller: Option<&FamilyCaller>) -> LibraryScope {
+    match caller {
+        Some(caller) if caller.managed => LibraryScope::Viewer(caller.user.clone()),
+        _ => LibraryScope::Shared,
+    }
+}
+
+/// What the library `scope` sees holds of each outside album, once they are found; empty when
+/// it cannot be told.
+pub(crate) async fn judge_albums(state: &AppState, albums: &[Album], scope: LibraryScope) -> Vec<Standing> {
     if albums.is_empty() {
         return Vec::new();
     }
-    state.album_ownership.judge(albums, OWNERSHIP_WAIT).await
+    state
+        .album_ownership
+        .judge_in(albums, OWNERSHIP_WAIT, scope)
+        .await
 }
 
 /// A search's outside albums settled against the library: each carries how many of its songs
@@ -119,8 +132,9 @@ pub(crate) async fn settle_artist_albums(
     state: &AppState,
     outside: Vec<Album>,
     local_albums: &[Value],
+    scope: LibraryScope,
 ) -> Vec<Album> {
-    let standings = judge_albums(state, &outside).await;
+    let standings = judge_albums(state, &outside, scope).await;
     if standings.is_empty() {
         return outside;
     }
@@ -156,12 +170,13 @@ pub(crate) async fn outside_album_with_owned_songs(
     parameters: &Parameters,
     album: &mut Album,
     format: &str,
+    scope: LibraryScope,
 ) -> Option<Response> {
     if album.songs.is_empty() {
         return None;
     }
     let clock = Instant::now();
-    let index = state.album_ownership.library(OWNERSHIP_WAIT).await?;
+    let index = state.album_ownership.library_in(OWNERSHIP_WAIT, scope).await?;
 
     let rows: Vec<_> = album
         .songs

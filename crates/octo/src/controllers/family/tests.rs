@@ -1559,6 +1559,7 @@ async fn invite_member_sends_a_new_sign_in_link() {
         .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
         .await;
     assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["inviteDays"], 7);
     let link = r.json()["inviteLink"].as_str().expect("a link").to_string();
     let token = link.split("#invite=").nth(1).expect("a token");
     // The new link sets a new password: how a forgotten one is replaced.
@@ -2051,6 +2052,110 @@ async fn pair_code_flow_end_to_end() {
         .expect("kept");
     assert_eq!(device.kind, DeviceKind::SubsonicApp);
     assert_eq!(device.name, "Desktop");
+}
+
+/// Makes a device on `route` as `cookie`, ending the pairing code `replaces` names. Answers
+/// the pairing code (empty for an app password) and the device id.
+async fn add_replacing(f: &Fam, route: &str, cookie: &str, kind: &str, replaces: &str) -> (String, String) {
+    let r = f
+        .post(
+            route,
+            Some(cookie),
+            json!({ "name": "", "kind": kind, "replaces": replaces }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let added = r.json();
+    let id = added["deviceId"].as_str().expect("an id").to_string();
+    (added["pairCode"].as_str().unwrap_or_default().to_string(), id)
+}
+
+#[tokio::test]
+async fn replaces_ends_the_old_unused_code() {
+    let f = fam().await;
+    let mine = "/api/family/me/devices";
+    let (old_code, old_id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
+    let (new_code, new_id) = add_replacing(&f, mine, &f.alex(), "OctoApp", &old_id).await;
+    assert_ne!(old_id, new_id);
+    if old_code != new_code {
+        assert_eq!(
+            pair(&f, "alex", &old_code, HOME).await.subsonic()["error"]["code"],
+            40
+        );
+    }
+    // The new code pairs, and its device takes the id the code reserved.
+    let r = pair(&f, "alex", &new_code, HOME).await;
+    assert_eq!(
+        r.subsonic()["familyPair"]["deviceId"],
+        new_id.as_str(),
+        "{}",
+        r.body
+    );
+    assert!(f.state.family_store.device(&new_id).is_some());
+    assert!(f.state.family_store.device(&old_id).is_none());
+
+    // Switching to an app password ends the code the dialog showed.
+    let (code, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
+    assert!(f.state.family_store.any_live_pair_code(Utc::now()));
+    let (none, _) = add_replacing(&f, mine, &f.alex(), "SubsonicApp", &id).await;
+    assert!(none.is_empty());
+    assert!(!f.state.family_store.any_live_pair_code(Utc::now()));
+    assert_eq!(
+        pair(&f, "alex", &code, HOME).await.subsonic()["error"]["code"],
+        40
+    );
+
+    // The app's own call ends it the same way.
+    let (_, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
+    let r = f
+        .rest_as_alex("addFamilyDevice", &format!("kind=SubsonicApp&replaces={id}"))
+        .await;
+    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+    assert!(!f.state.family_store.any_live_pair_code(Utc::now()));
+}
+
+#[tokio::test]
+async fn replaces_never_touches_a_used_code() {
+    let f = fam().await;
+    let mine = "/api/family/me/devices";
+    let (code, id) = add_replacing(&f, mine, &f.alex(), "OctoApp", "").await;
+    let r = pair(&f, "alex", &code, HOME).await;
+    assert_eq!(r.subsonic()["familyPair"]["deviceId"], id.as_str(), "{}", r.body);
+    let secret = r.subsonic()["familyPair"]["secret"]
+        .as_str()
+        .expect("a secret")
+        .to_string();
+    // Naming the used code changes nothing about the device it paired.
+    let (_, next) = add_replacing(&f, mine, &f.alex(), "OctoApp", &id).await;
+    assert_ne!(next, id);
+    add_replacing(&f, mine, &f.alex(), "SubsonicApp", &id).await;
+    let device = f.state.family_store.device(&id).expect("still there");
+    assert_eq!(device.username, "alex");
+    let uri = format!("/rest/getFamily?u=alex&p={secret}&v=1.16.1&c=Octo&f=json");
+    let me = raw(&f.app, Method::GET, &uri, &[], String::new(), HOME)
+        .await
+        .subsonic();
+    assert_eq!(me["family"]["me"]["deviceId"], id.as_str());
+}
+
+#[tokio::test]
+async fn replaces_never_touches_another_members_code() {
+    let f = fam().await;
+    let (code, id) = add_replacing(&f, "/api/family/me/devices", &f.alex(), "OctoApp", "").await;
+    // Sam names Alex's code from Sam's own devices, both kinds, and as a manager for Sam.
+    add_replacing(&f, "/api/family/me/devices", &f.sam(), "SubsonicApp", &id).await;
+    add_replacing(&f, "/api/family/me/devices", &f.sam(), "OctoApp", &id).await;
+    add_replacing(
+        &f,
+        "/api/family/members/sam/devices",
+        &f.sam(),
+        "SubsonicApp",
+        &id,
+    )
+    .await;
+    let r = pair(&f, "alex", &code, HOME).await;
+    assert_eq!(r.subsonic()["status"], "ok", "{}", r.body);
+    assert_eq!(r.subsonic()["familyPair"]["deviceId"], id.as_str());
 }
 
 #[tokio::test]

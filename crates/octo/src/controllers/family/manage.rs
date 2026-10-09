@@ -114,6 +114,7 @@ pub async fn add_member(State(state): State<AppState>, web: Web, body: Bytes) ->
         Ok((member, link)) => ok(&json!({
             "member": state.family.member_full_json(&state, &member),
             "inviteLink": link,
+            "inviteDays": invite_days(&state),
         })),
         Err(e) => family_error(&e),
     }
@@ -220,6 +221,11 @@ pub async fn remove_member(
     }
 }
 
+/// How many days a new sign-in link works, as the invite answers say it.
+fn invite_days(state: &AppState) -> u32 {
+    state.settings.current().family.invite_days.max(1)
+}
+
 /// `POST /api/family/members/{name}/invite`: a new sign-in link (also how a forgotten
 /// password is set again).
 pub async fn invite_member(State(state): State<AppState>, web: Web, Path(name): Path<String>) -> Response {
@@ -227,7 +233,7 @@ pub async fn invite_member(State(state): State<AppState>, web: Web, Path(name): 
         return res;
     }
     match state.family.invite(&state, &name, &web.base(&state)) {
-        Ok(link) => ok(&json!({ "inviteLink": link })),
+        Ok(link) => ok(&json!({ "inviteLink": link, "inviteDays": invite_days(&state) })),
         Err(e) => family_error(&e),
     }
 }
@@ -253,10 +259,14 @@ pub async fn add_member_device(
     if state.family_store.member(&name).is_none() {
         return refusal(StatusCode::NOT_FOUND, &format!("{name} is not in the family."));
     }
-    match state
-        .family
-        .add_device(&state, &name, &request.name, kind, &web.base(&state))
-    {
+    match state.family.add_device(
+        &state,
+        &name,
+        &request.name,
+        kind,
+        &web.base(&state),
+        &request.replaces,
+    ) {
         Ok(added) => ok(&json!(added)),
         Err(e) => family_error(&e),
     }

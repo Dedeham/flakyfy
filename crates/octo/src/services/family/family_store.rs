@@ -136,6 +136,9 @@ pub struct PairCode {
     pub expires: DateTime<Utc>,
     #[serde(default)]
     pub tries: u32,
+    /// The id the paired device takes. Empty in files written before codes had one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
 }
 
 /// The whole file.
@@ -174,8 +177,13 @@ impl Default for FamilyFile {
 /// What trying a pairing code came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PairOutcome {
-    /// The code was right: the member and the device name it was made for. It is used up.
-    Ok { username: String, device_name: String },
+    /// The code was right: the member, the device name it was made for and the id the device
+    /// takes (empty for a code from an older file). It is used up.
+    Ok {
+        username: String,
+        device_name: String,
+        device_id: String,
+    },
     /// Not the member's live code (a wrong guess counts against it).
     Wrong,
     /// The code was right but too late.
@@ -575,8 +583,16 @@ impl FamilyStore {
         found
     }
 
-    /// Keeps a pairing code for `username`, replacing any code they had.
-    pub fn add_pair_code(&self, code: &str, username: &str, device_name: &str, expires: DateTime<Utc>) {
+    /// Keeps a pairing code for `username`, replacing any code they had. `device_id` is the id
+    /// the device paired with it takes.
+    pub fn add_pair_code(
+        &self,
+        code: &str,
+        username: &str,
+        device_name: &str,
+        expires: DateTime<Utc>,
+        device_id: &str,
+    ) {
         {
             let mut state = self.state.lock();
             state
@@ -588,9 +604,31 @@ impl FamilyStore {
                 device_name: device_name.to_string(),
                 expires,
                 tries: 0,
+                device_id: device_id.to_string(),
             });
         }
         self.save();
+    }
+
+    /// Ends `username`'s pairing code whose device would take `device_id`, while it is still
+    /// unused. A used code is already gone, and another member's code never matches. Answers
+    /// whether a code was ended.
+    pub fn end_pair_code(&self, username: &str, device_id: &str) -> bool {
+        if device_id.is_empty() {
+            return false;
+        }
+        let ended = {
+            let mut state = self.state.lock();
+            let before = state.pair_codes.len();
+            state
+                .pair_codes
+                .retain(|c| !(c.device_id == device_id && eq_ignore_case(&c.username, username)));
+            before != state.pair_codes.len()
+        };
+        if ended {
+            self.save();
+        }
+        ended
     }
 
     /// Whether any member has a pairing code that still works.
@@ -629,6 +667,7 @@ impl FamilyStore {
                     PairOutcome::Ok {
                         username: entry.username,
                         device_name: entry.device_name,
+                        device_id: entry.device_id,
                     }
                 }
             } else {
@@ -824,7 +863,7 @@ mod tests {
     #[test]
     fn pair_code_locks_after_five_tries() {
         let store = FamilyStore::in_memory();
-        store.add_pair_code("123456", "alex", "Pixel 9", now() + TimeDelta::minutes(10));
+        store.add_pair_code("123456", "alex", "Pixel 9", now() + TimeDelta::minutes(10), "");
         assert!(store.any_live_pair_code(now()));
         for _ in 0..4 {
             assert_eq!(store.take_pair_code("alex", "000000", now()), PairOutcome::Wrong);
@@ -844,17 +883,24 @@ mod tests {
     #[test]
     fn pair_code_works_once_for_its_member_only() {
         let store = FamilyStore::in_memory();
-        store.add_pair_code("123456", "alex", "Pixel 9", now() + TimeDelta::minutes(10));
+        store.add_pair_code(
+            "123456",
+            "alex",
+            "Pixel 9",
+            now() + TimeDelta::minutes(10),
+            "d_pixel",
+        );
         assert_eq!(store.take_pair_code("sam", "123456", now()), PairOutcome::Wrong);
         assert_eq!(
             store.take_pair_code("ALEX", " 123456 ", now()),
             PairOutcome::Ok {
                 username: "alex".into(),
-                device_name: "Pixel 9".into()
+                device_name: "Pixel 9".into(),
+                device_id: "d_pixel".into()
             }
         );
         assert_eq!(store.take_pair_code("alex", "123456", now()), PairOutcome::Wrong);
-        store.add_pair_code("654321", "alex", "", now() - TimeDelta::seconds(1));
+        store.add_pair_code("654321", "alex", "", now() - TimeDelta::seconds(1), "");
         assert_eq!(
             store.take_pair_code("alex", "654321", now()),
             PairOutcome::Expired

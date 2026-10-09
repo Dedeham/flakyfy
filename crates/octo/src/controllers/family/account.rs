@@ -339,6 +339,9 @@ pub async fn my_devices(State(state): State<AppState>, web: Web) -> Response {
 pub struct AddDeviceBody {
     pub name: String,
     pub kind: String,
+    /// The device id of a pairing code this one takes the place of. That code ends when it is
+    /// still unused and the same member's.
+    pub replaces: String,
 }
 
 /// Reads `OctoApp` or `SubsonicApp`.
@@ -363,10 +366,14 @@ pub async fn add_my_device(State(state): State<AppState>, web: Web, body: Bytes)
     let Some(kind) = device_kind(&request.kind) else {
         return refusal(StatusCode::BAD_REQUEST, "Choose OctoApp or SubsonicApp.");
     };
-    match state
-        .family
-        .add_device(&state, signed.user(), &request.name, kind, &web.base(&state))
-    {
+    match state.family.add_device(
+        &state,
+        signed.user(),
+        &request.name,
+        kind,
+        &web.base(&state),
+        &request.replaces,
+    ) {
         Ok(added) => ok(&json!(added)),
         Err(e) => family_error(&e),
     }

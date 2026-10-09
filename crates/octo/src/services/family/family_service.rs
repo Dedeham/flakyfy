@@ -1592,6 +1592,7 @@ impl FamilyService {
         name: &str,
         kind: DeviceKind,
         base: &str,
+        replaces: &str,
     ) -> FamilyResult<DeviceAdded> {
         let member = state
             .family_store
@@ -1603,11 +1604,20 @@ impl FamilyService {
             ));
         }
         let name = clean_device_name(name);
+        let replaces = replaces.trim();
+        if matches!(kind, DeviceKind::SubsonicApp | DeviceKind::OctoApp)
+            && state.family_store.end_pair_code(&member.username, replaces)
+        {
+            info!(
+                "FAMILY unused pairing code ended for {} ({replaces})",
+                member.username
+            );
+        }
         match kind {
             DeviceKind::SubsonicApp => {
                 let password = app_password();
                 let device =
-                    self.new_device(state, &member, &name, DeviceKind::SubsonicApp, &password, "")?;
+                    self.new_device(state, &member, &name, DeviceKind::SubsonicApp, &password, "", "")?;
                 info!(
                     "FAMILY app password made for {} ({:?})",
                     member.username, device.name
@@ -1626,11 +1636,12 @@ impl FamilyService {
                 let code = pair_code();
                 let minutes = i64::from(state.settings.current().family.pair_code_minutes.max(1));
                 let expires = Utc::now() + TimeDelta::minutes(minutes);
+                let device_id = new_device_id();
                 state
                     .family_store
-                    .add_pair_code(&code, &member.username, &name, expires);
+                    .add_pair_code(&code, &member.username, &name, expires, &device_id);
                 Ok(DeviceAdded {
-                    device_id: None,
+                    device_id: Some(device_id),
                     kind,
                     app_password: None,
                     pair_code: Some(code),
@@ -1653,13 +1664,20 @@ impl FamilyService {
         kind: DeviceKind,
         secret: &str,
         app: &str,
+        id: &str,
     ) -> FamilyResult<Device> {
         let sealed = state
             .family_vault
             .seal(secret)
             .ok_or_else(|| FamilyError::Unavailable("family.key is missing.".into()))?;
+        // A pairing code's id, unless a device has it already.
+        let id = if id.is_empty() || state.family_store.device(id).is_some() {
+            new_device_id()
+        } else {
+            id.to_string()
+        };
         let device = Device {
-            id: new_device_id(),
+            id,
             username: member.username.clone(),
             name: name.to_string(),
             kind,
@@ -1706,19 +1724,21 @@ impl FamilyService {
             }
             return Err(refused());
         }
-        let (username, code_name) = match state
-            .family_store
-            .take_pair_code(username.trim(), code.trim(), now)
-        {
-            PairOutcome::Ok {
-                username,
-                device_name,
-            } => (username, device_name),
-            _ => {
-                self.pair_guard.failed_from(address, peer, username);
-                return Err(refused());
-            }
-        };
+        let (username, code_name, code_id) =
+            match state
+                .family_store
+                .take_pair_code(username.trim(), code.trim(), now)
+            {
+                PairOutcome::Ok {
+                    username,
+                    device_name,
+                    device_id,
+                } => (username, device_name, device_id),
+                _ => {
+                    self.pair_guard.failed_from(address, peer, username);
+                    return Err(refused());
+                }
+            };
         let member = state.family_store.member(&username).ok_or_else(refused)?;
         if member.suspended {
             return Err(FamilyError::Refused(
@@ -1748,7 +1768,7 @@ impl FamilyService {
         } else {
             DeviceKind::OctoApp
         };
-        let device = self.new_device(state, &member, &name, kind, &secret, &app)?;
+        let device = self.new_device(state, &member, &name, kind, &secret, &app, &code_id)?;
         info!(
             "FAMILY device paired {} {:?} ({})",
             member.username, device.name, device.app

@@ -533,7 +533,8 @@ pub async fn sign_out_family_device(State(state): State<AppState>, req: Request)
 }
 
 /// `addFamilyDevice`: `name`, `kind` (`OctoApp` gives a pairing code, `SubsonicApp` an app
-/// password), and `username` for a manager adding a device for any member.
+/// password), `username` for a manager adding a device for any member, and `replaces`: the
+/// device id of an unused pairing code of the same member's to end first.
 pub async fn add_family_device(State(state): State<AppState>, req: Request) -> Response {
     let call = started!(state, req);
     let Some(kind) = device_kind(call.param("kind")) else {
@@ -565,10 +566,14 @@ pub async fn add_family_device(State(state): State<AppState>, req: Request) -> R
         }
     };
     let base = FamilyService::public_base(&state, &call.origin);
-    match state
-        .family
-        .add_device(&state, &user, call.param("name"), kind, &base)
-    {
+    match state.family.add_device(
+        &state,
+        &user,
+        call.param("name"),
+        kind,
+        &base,
+        call.param("replaces"),
+    ) {
         Ok(added) => octo_reply(&state, &call.format, Some(("familyDeviceAdded", &json!(added)))),
         Err(e) => family_failure(&state, &call.format, &e),
     }

@@ -13,7 +13,11 @@
 //!
 //! An approved song request downloads into the family pool, linked for the member. It is done
 //! only once the library index finds the song in the member's own library, which can take a
-//! scan or two; Octo looks for up to ten minutes. A FLAC request takes FLAC files only, and a
+//! scan or two; Octo looks for up to ten minutes. A song that lands in the shared library
+//! instead (someone wanted it there) is done ("Already in the family library") once the index
+//! finds it, for a member who sees that library; one who does not gets a copy in the pool,
+//! linked and done like their own download.
+//! A FLAC request takes FLAC files only, and a
 //! FLAC made from lossy audio does not count; without a real one it fails with "No real FLAC
 //! copy found", and the member can ask again for an MP3. A better copy of a shared song goes
 //! through the upgrade queue as the owner; an import list's missing songs go to the imports
@@ -1069,8 +1073,27 @@ impl RequestService {
                         self.failed(request, e.for_member());
                     }
                 },
-                // Someone wanted it shared, so it is in the shared library for everyone.
-                None => self.wait_done(request, &path, outcome).await,
+                // Someone wanted it shared, so it is in the shared library.
+                None => {
+                    let key = key_of(&outside.provider, &outside.external_id);
+                    match self
+                        .outside_pool_place(&user, &path, Some(&key), song.as_ref())
+                        .await
+                    {
+                        Ok((shown, true)) => {
+                            self.wait_done(request, &shown, RequestOutcome::AlreadyShared)
+                                .await
+                        }
+                        Ok((shown, false)) => self.wait_done(request, &shown, outcome).await,
+                        Err(e) => {
+                            warn!(
+                                "FAMILY request {} could not get a copy of {path}: {e}",
+                                request.id
+                            );
+                            self.failed(request, e.for_member());
+                        }
+                    }
+                }
             },
             Fetched::AlreadyThere => self.done(request, Some(RequestOutcome::AlreadyShared), None),
             Fetched::Failed(reason) => {
@@ -1093,15 +1116,55 @@ impl RequestService {
             .fetcher
             .album(&request.username, &outside.provider, &outside.external_id)
             .await;
-        let Some(first) = landed.first() else {
-            self.failed(request, "None of the album's songs could be found.");
+        let mut shown = Vec::new();
+        let mut failure = None;
+        for path in &landed {
+            if let Some(link) = self.pool().link_path(path, &request.username) {
+                shown.push(link);
+                continue;
+            }
+            match self.outside_pool_place(&request.username, path, None, None).await {
+                Ok((place, _)) => shown.push(place),
+                Err(e) => {
+                    warn!(
+                        "FAMILY request {} could not get a copy of {path}: {e}",
+                        request.id
+                    );
+                    failure.get_or_insert(e);
+                }
+            }
+        }
+        let Some(first) = shown.first() else {
+            match failure {
+                Some(e) => self.failed(request, e.for_member()),
+                None => self.failed(request, "None of the album's songs could be found."),
+            }
             return;
         };
-        let shown = self
-            .pool()
-            .link_path(first, &request.username)
-            .unwrap_or_else(|| first.clone());
-        self.wait_done(request, &shown, RequestOutcome::Downloaded).await;
+        self.wait_done(request, first, RequestOutcome::Downloaded).await;
+    }
+
+    /// Where a song that landed outside the pool shows for `user`, and whether it is the shared
+    /// library's own file. A shared file is theirs as it is when they see its shared library.
+    /// When they cannot see it they get a pool copy of it ([`FamilyPool::copy_shared_for`]), and
+    /// the answer is their link to it. A file in their own folder stays where it is.
+    async fn outside_pool_place(
+        &self,
+        user: &str,
+        path: &str,
+        outside_key: Option<&str>,
+        song: Option<&Song>,
+    ) -> Result<(String, bool), super::pool::PoolError> {
+        let pool = self.pool();
+        if !pool.is_shared_file(path) {
+            return Ok((path.to_string(), false));
+        }
+        if pool.sees_shared_file(user, path) {
+            return Ok((path.to_string(), true));
+        }
+        let link = pool.copy_shared_for(path, user, outside_key, song).await?;
+        info!("FAMILY {user} cannot see the shared library {path} is in; they get a copy");
+        Ok((link, false))
     }
 
     async fn run_upgrade(&self, request: &FamilyRequest) {

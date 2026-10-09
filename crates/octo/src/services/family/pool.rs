@@ -969,6 +969,141 @@ impl FamilyPool {
         Ok(target)
     }
 
+    /// Whether `path` is a file of the shared library: neither in the pool nor in a member's
+    /// own folder.
+    pub fn is_shared_file(&self, path: &str) -> bool {
+        let members = format!("{}/", self.members_root());
+        !path.trim().is_empty() && !path.starts_with(&members)
+    }
+
+    /// The shared library a shared file is in: the index's answer for the file, else the
+    /// library of the nearest folder above it that the index holds songs in, up to the shared
+    /// folder. None when the index cannot tell yet.
+    pub fn shared_library_of(&self, path: &str) -> Option<i64> {
+        if let Some(library) = self.index.find_by_path(path).and_then(|song| song.library_id) {
+            return Some(library);
+        }
+        let shared_root = (self.shared_root)();
+        let shared_root = shared_root.trim_end_matches('/');
+        if shared_root.is_empty() {
+            return None;
+        }
+        let inside = format!("{shared_root}/");
+        let mut folder = Path::new(path).parent();
+        while let Some(dir) = folder {
+            let text = dir.to_string_lossy();
+            if text != shared_root && !text.starts_with(&inside) {
+                return None;
+            }
+            if let Some(library) = self.index.library_of_folder(&text) {
+                return Some(library);
+            }
+            if text == shared_root {
+                return None;
+            }
+            folder = dir.parent();
+        }
+        None
+    }
+
+    /// Whether `user` sees the shared library a shared file is in. Anyone who is not a member
+    /// (the owner) sees every library.
+    pub fn sees_shared_file(&self, user: &str, path: &str) -> bool {
+        self.family
+            .member(user)
+            .is_none_or(|member| sees_shared_library(&member, self.shared_library_of(path)))
+    }
+
+    /// A shared file's place in the pool: its path under the shared folder, or its last three
+    /// parts (`Artist/Album/file`) when it is somewhere else.
+    fn pool_place_of_shared(&self, shared_path: &str) -> Option<String> {
+        let shared_root = (self.shared_root)();
+        let shared_root = shared_root.trim_end_matches('/');
+        let under_root = (!shared_root.is_empty())
+            .then(|| shared_path.strip_prefix(shared_root)?.strip_prefix('/'))
+            .flatten()
+            .map(str::to_string);
+        let relative = under_root.unwrap_or_else(|| {
+            let mut parts: Vec<&str> = shared_path.rsplit('/').take(3).collect();
+            parts.reverse();
+            parts.join("/")
+        });
+        let plain = !relative.is_empty()
+            && relative
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        plain.then(|| format!("{}/{relative}", self.pool_root_path()))
+    }
+
+    /// Gives `user`, who cannot see the shared library a shared file is in, a copy they can
+    /// play through the pool: the file, with its lyrics and its folder's cover, is copied once
+    /// into the pool at its place in the shared layout, recorded as a copy of `song`, and
+    /// linked into their library like any pool song. Another member who needs it gets a link
+    /// to that same pool file. The copy is written on a blocking thread while the pool lock is
+    /// held. Answers their link.
+    pub async fn copy_shared_for(
+        &self,
+        shared_path: &str,
+        user: &str,
+        outside_key: Option<&str>,
+        song: Option<&Song>,
+    ) -> Result<String, PoolError> {
+        let _changing = self.changes.lock().await;
+        let member = self.member_named(user)?;
+        if !Path::new(shared_path).is_file() {
+            return Err(PoolError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{shared_path} is not there"),
+            )));
+        }
+        let target = self
+            .pool_place_of_shared(shared_path)
+            .ok_or_else(|| PoolError::NotInPool(shared_path.to_string()))?;
+        if !Path::new(&target).is_file() {
+            let (from, to) = (PathBuf::from(shared_path), PathBuf::from(&target));
+            tokio::task::spawn_blocking(move || copy_with_companions(&from, &to))
+                .await
+                .unwrap_or_else(|e| Err(io::Error::other(e.to_string())))?;
+            info!(
+                "FAMILY {shared_path} was copied into the pool as {target} for {}, who cannot see its shared library",
+                member.username
+            );
+        }
+        self.record_shared_copy(&target, outside_key, song);
+        self.link_held(&target, &member.username).await
+    }
+
+    /// Records a pool copy of a shared file as a copy of `song`, or adds the outside id to the
+    /// record it already has.
+    fn record_shared_copy(&self, pool_path: &str, outside_key: Option<&str>, song: Option<&Song>) {
+        if let Some(mut file) = self.store.get(pool_path) {
+            if let Some(key) = outside_key
+                && !file.outside_ids.iter().any(|id| id == key)
+            {
+                file.outside_ids.push(key.to_string());
+                self.store.upsert(file);
+            }
+            return;
+        }
+        let format = extension_of(pool_path);
+        self.store.upsert(PoolFile {
+            path: pool_path.to_string(),
+            size: std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0),
+            transcoded_from: song
+                .and_then(|s| s.transcoded_from.clone())
+                .filter(|from| format == "flac" && !from.trim().is_empty()),
+            format,
+            outside_ids: outside_key.map(str::to_string).into_iter().collect(),
+            isrc: song
+                .and_then(|s| s.isrc.clone())
+                .filter(|isrc| !isrc.trim().is_empty()),
+            title: song.map(|s| s.title.clone()).unwrap_or_default(),
+            artist: song.map(|s| s.artist.clone()).unwrap_or_default(),
+            album: song.map(|s| s.album.clone()).unwrap_or_default(),
+            refs: Vec::new(),
+        });
+    }
+
     /// Lets go of everything a member who is leaving the family has: each of their links goes,
     /// and each pool file only they had follows `choice` (kept aside under
     /// `<members>/.kept/<user>/`, moved into the shared library, or sent to the trash). Files
@@ -1349,6 +1484,33 @@ fn replace_link_with_copy(link: &Path) -> io::Result<()> {
     if let Err(e) = std::fs::rename(&copy, link) {
         let _ = std::fs::remove_file(&copy);
         return Err(e);
+    }
+    Ok(())
+}
+
+/// Copies a song to `to`, written beside it first and then put in its place so a half-written
+/// file never stands there, then copies its lyrics files and its folder's cover beside it where
+/// nothing is there yet.
+fn copy_with_companions(from: &Path, to: &Path) -> io::Result<()> {
+    let mut name = to.as_os_str().to_owned();
+    name.push(".octo-copy");
+    let staged = PathBuf::from(name);
+    copy_file(from, &staged)?;
+    if let Err(e) = std::fs::rename(&staged, to) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+    for companion in companions(&from.to_string_lossy()) {
+        let Some(file_name) = Path::new(&companion).file_name() else {
+            continue;
+        };
+        let destination = to.with_file_name(file_name);
+        if destination.exists() {
+            continue;
+        }
+        if let Err(e) = std::fs::copy(&companion, &destination) {
+            warn!("FAMILY could not copy {companion} with its song: {e}");
+        }
     }
     Ok(())
 }

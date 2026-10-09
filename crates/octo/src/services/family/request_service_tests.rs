@@ -95,6 +95,8 @@ struct Fetcher {
     asked: Mutex<Vec<(String, String, RequestQuality)>>,
     upgrades: Mutex<Vec<(String, String)>>,
     imports: Mutex<Vec<(String, String)>>,
+    /// When set, songs land in this shared folder instead, as when someone wanted them shared.
+    lands_shared: Mutex<Option<String>>,
 }
 
 impl Fetcher {
@@ -106,6 +108,7 @@ impl Fetcher {
             asked: Mutex::new(Vec::new()),
             upgrades: Mutex::new(Vec::new()),
             imports: Mutex::new(Vec::new()),
+            lands_shared: Mutex::new(None),
         }
     }
 }
@@ -137,6 +140,13 @@ impl RequestFetcher for Fetcher {
         } else {
             "flac"
         };
+        if let Some(shared) = self.lands_shared.lock().clone() {
+            let path = format!("{shared}/Artist/Album/{external_id}.{extension}");
+            if !std::path::Path::new(&path).exists() {
+                write_file(&path, 1_000);
+            }
+            return Fetched::Landed(path);
+        }
         let path = format!(
             "{}/Artist/Album/{external_id}.{extension}",
             self.pool.pool_root_path()
@@ -946,6 +956,190 @@ async fn family_off_takes_no_requests() {
         .await
         .expect_err("refused");
     assert_eq!(refused.code, 50);
+}
+
+/// A Navidrome whose index knows shared song `n` in the shared library (1) and each listed
+/// member's own copy of it (name and library).
+async fn navidrome_with_shared(world: &World, n: &str, owners: &[(&str, i64)]) -> MockServer {
+    let relative = format!("Artist/Album/{n}.flac");
+    let mut rows = vec![song_row(
+        &format!("shared-{n}"),
+        1,
+        &world.music(),
+        &relative,
+        1_000,
+    )];
+    for (user, library) in owners {
+        rows.push(song_row(
+            &format!("{user}-{n}"),
+            *library,
+            &format!("{}/{user}", world.members()),
+            &relative,
+            1_000,
+        ));
+    }
+    navidrome_with_songs(json!(rows)).await
+}
+
+/// Makes `name` a member who sees shared library 2 only, not the shared library (1).
+fn sees_library_two_only(world: &World, name: &str, preset: Preset, library: i64) {
+    let mut only_two = member(name, preset, library);
+    only_two.shared_libraries = crate::services::family::SharedLibraries::Ids(vec![2]);
+    world.family.upsert_member(only_two);
+}
+
+/// Where a link or file ends up once every link is followed.
+fn resolved(path: &str) -> std::path::PathBuf {
+    std::fs::canonicalize(path).expect("resolves")
+}
+
+#[tokio::test]
+async fn a_member_who_cannot_see_the_shared_library_gets_a_pool_copy_when_the_owners_download_lands() {
+    let world = World::new(None);
+    let shared_only = navidrome_with_shared(&world, "40", &[]).await;
+    world.point_at(&shared_only.uri());
+    world.index.refresh().await.expect("read");
+    sees_library_two_only(&world, "alex", Preset::Member, 3);
+    let setup = setup(world);
+    *setup.fetcher.lands_shared.lock() = Some(setup.world.music());
+    setup.fetcher.in_flight.lock().insert("test:40".into());
+
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-40", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert_eq!(made.state, RequestState::Approved, "joins the download in flight");
+    let link = format!("{}/alex/Artist/Album/40.flac", setup.world.members());
+    let pooled = format!("{}/Artist/Album/40.flac", setup.world.pool.pool_root_path());
+    let shared = format!("{}/Artist/Album/40.flac", setup.world.music());
+    assert!(
+        eventually(|| std::fs::symlink_metadata(&link).is_ok()).await,
+        "Alex gets the song in their own library"
+    );
+    assert!(std::path::Path::new(&pooled).is_file(), "the pool holds a copy");
+    assert!(std::path::Path::new(&shared).is_file(), "the shared file stays");
+    assert_eq!(resolved(&link), resolved(&pooled));
+    let file = setup.world.pool.store().get(&pooled).expect("recorded");
+    assert_eq!(file.refs, vec!["alex".to_string()]);
+    assert!(file.outside_ids.contains(&key_of("test", "40")));
+    assert_eq!(file.title, "Song 40");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        state_of(&setup, &made.id),
+        RequestState::Approved,
+        "not done before it shows in Alex's own library"
+    );
+
+    let shown = navidrome_with_shared(&setup.world, "40", &[("alex", 3)]).await;
+    setup.world.point_at(&shown.uri());
+    assert!(
+        eventually(|| state_of(&setup, &made.id) == RequestState::Done).await,
+        "{:?}",
+        setup.service.get(&made.id)
+    );
+    let done = setup.service.get(&made.id).expect("kept");
+    assert_eq!(done.outcome, Some(RequestOutcome::AddedFromFamily));
+    assert_eq!(done.library_song_id.as_deref(), Some("alex-40"));
+}
+
+#[tokio::test]
+async fn a_member_who_sees_the_shared_library_is_done_without_a_copy() {
+    let world = World::new(None);
+    let navidrome = navidrome_with_shared(&world, "41", &[]).await;
+    world.point_at(&navidrome.uri());
+    world.index.refresh().await.expect("read");
+    let setup = setup(world);
+    *setup.fetcher.lands_shared.lock() = Some(setup.world.music());
+    setup.fetcher.in_flight.lock().insert("test:41".into());
+
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-41", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert!(
+        eventually(|| state_of(&setup, &made.id) == RequestState::Done).await,
+        "{:?}",
+        setup.service.get(&made.id)
+    );
+    let done = setup.service.get(&made.id).expect("kept");
+    assert_eq!(done.outcome, Some(RequestOutcome::AlreadyShared));
+    assert_eq!(done.library_song_id.as_deref(), Some("shared-41"));
+    let link = format!("{}/alex/Artist/Album/41.flac", setup.world.members());
+    assert!(std::fs::symlink_metadata(&link).is_err(), "no link of their own");
+    assert!(setup.world.pool.store().list().is_empty(), "nothing in the pool");
+    let pooled = format!("{}/Artist/Album/41.flac", setup.world.pool.pool_root_path());
+    assert!(!std::path::Path::new(&pooled).exists());
+}
+
+#[tokio::test]
+async fn two_such_members_share_one_pool_copy() {
+    let world = World::new(None);
+    let navidrome = navidrome_with_shared(&world, "42", &[("alex", 3), ("sam", 4)]).await;
+    world.point_at(&navidrome.uri());
+    world.index.refresh().await.expect("read");
+    sees_library_two_only(&world, "alex", Preset::Member, 3);
+    sees_library_two_only(&world, "sam", Preset::Listener, 4);
+    let setup = setup(world);
+    *setup.fetcher.lands_shared.lock() = Some(setup.world.music());
+    write_file(&format!("{}/Artist/Album/42.flac", setup.world.music()), 1_000);
+    setup.fetcher.in_flight.lock().insert("test:42".into());
+
+    let alexs = setup
+        .service
+        .create("alex", "ext-test-song-42", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    let sams = setup
+        .service
+        .create("sam", "ext-test-song-42", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    for made in [&alexs, &sams] {
+        assert!(
+            eventually(|| state_of(&setup, &made.id) == RequestState::Done).await,
+            "{:?}",
+            setup.service.get(&made.id)
+        );
+        let done = setup.service.get(&made.id).expect("kept");
+        assert_eq!(done.outcome, Some(RequestOutcome::AddedFromFamily));
+    }
+    assert_eq!(
+        setup
+            .service
+            .get(&alexs.id)
+            .expect("kept")
+            .library_song_id
+            .as_deref(),
+        Some("alex-42")
+    );
+    assert_eq!(
+        setup
+            .service
+            .get(&sams.id)
+            .expect("kept")
+            .library_song_id
+            .as_deref(),
+        Some("sam-42")
+    );
+
+    let files = setup.world.pool.store().list();
+    assert_eq!(files.len(), 1, "one pool file: {files:?}");
+    let mut refs = files[0].refs.clone();
+    refs.sort();
+    assert_eq!(refs, vec!["alex".to_string(), "sam".to_string()]);
+    let pooled = format!("{}/Artist/Album/42.flac", setup.world.pool.pool_root_path());
+    assert_eq!(files[0].path, pooled);
+    let members = setup.world.members();
+    assert_eq!(
+        resolved(&format!("{members}/alex/Artist/Album/42.flac")),
+        resolved(&pooled)
+    );
+    assert_eq!(
+        resolved(&format!("{members}/sam/Artist/Album/42.flac")),
+        resolved(&pooled)
+    );
 }
 
 /// [`eventually`] with room for the pool to wait its whole time twice.

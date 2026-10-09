@@ -1,7 +1,6 @@
-//! The private helpers of `SubsonicController` that 6-A2's actions call: reading a request,
-//! the success check on a Navidrome answer, the caller checks (a ping, the credential check),
-//! who a request is, and the small result helpers. Duplicates of 6-A1's copies are folded
-//! together at merge time.
+//! The private helpers the Subsonic actions call: reading a request, the success check on a
+//! Navidrome answer, the caller checks (a ping, the credential check), who a request is, and the
+//! small result helpers.
 
 use std::sync::Arc;
 
@@ -19,12 +18,12 @@ use crate::http::error::AppError;
 use crate::services::common::StarOnArrival;
 use crate::services::subsonic::{CredentialVerdict, IncomingRequest, SubsonicProxyService};
 
-/// Kestrel's `MaxRequestBodySize` default.
+/// The largest request body accepted, in bytes.
 const MAX_REQUEST_BODY: usize = 30_000_000;
 
 /// One Subsonic request as an action reads it: the client's request (for the proxy, which
-/// forwards repeated keys and headers as they came), `ExtractAllParameters()`, and the
-/// request-scoped proxy.
+/// forwards repeated keys and headers as they came), its parameters, and the request-scoped
+/// proxy.
 pub(crate) struct SubsonicCall {
     pub incoming: Arc<IncomingRequest>,
     pub parameters: Parameters,
@@ -49,17 +48,17 @@ impl SubsonicCall {
         })
     }
 
-    /// `parameters.GetValueOrDefault(key, "")`.
+    /// The parameter `key`, or "" when it was not sent.
     pub fn param(&self, key: &str) -> &str {
         self.parameters.get(key).map_or("", String::as_str)
     }
 
-    /// `parameters.GetValueOrDefault(key)`: `None` when the key was not sent.
+    /// The parameter `key`: `None` when the key was not sent.
     pub fn param_opt(&self, key: &str) -> Option<&str> {
         self.parameters.get(key).map(String::as_str)
     }
 
-    /// `parameters.GetValueOrDefault("f", "xml")`.
+    /// The response format, `f`, or "xml" when it was not sent.
     pub fn format(&self) -> String {
         self.parameters.get("f").map_or("xml", String::as_str).to_string()
     }
@@ -72,8 +71,7 @@ impl SubsonicCall {
         &self.incoming.headers
     }
 
-    /// `Request.Headers[name].ToString()`: every value of the header, comma-joined, or `None`
-    /// when it was not sent.
+    /// Every value of the header, comma-joined, or `None` when it was not sent.
     pub fn header(&self, name: &str) -> Option<String> {
         let values: Vec<String> = self
             .incoming
@@ -85,7 +83,7 @@ impl SubsonicCall {
         (!values.is_empty()).then(|| values.join(","))
     }
 
-    /// `Request.Headers[name].FirstOrDefault()`.
+    /// The header's first value.
     fn first_header(&self, name: &str) -> Option<String> {
         self.incoming
             .headers
@@ -94,7 +92,7 @@ impl SubsonicCall {
     }
 }
 
-/// `File(body, contentType)`: a `FileContentResult`, 200 with the bytes as they are.
+/// `body` as `content_type`: 200 with the bytes as they are.
 pub(crate) fn file(body: impl Into<Vec<u8>>, content_type: &str) -> Response {
     SubsonicReply::file(body.into(), content_type).into_response()
 }
@@ -118,8 +116,7 @@ pub(crate) fn is_successful_subsonic_response(body: &[u8], format: &str) -> bool
         let Ok(document) = serde_json::from_slice::<serde_json::Value>(body) else {
             return false;
         };
-        // TryGetProperty on a root that is not an object threw, and GetString on a status
-        // that is not a string threw: both read as not ok.
+        // A root that is not an object, or a status that is not a string, reads as not ok.
         return matches!(
             document
                 .as_object()
@@ -133,8 +130,7 @@ pub(crate) fn is_successful_subsonic_response(body: &[u8], format: &str) -> bool
     XElement::parse(&text).is_ok_and(|root| root.attribute("status") == Some("ok"))
 }
 
-/// `CheckCallerAsync`: `None` when Navidrome accepts the caller's credentials, or the error to
-/// send (always JSON).
+/// `None` when Navidrome accepts the caller's credentials, or the error to send (always JSON).
 pub(crate) async fn check_caller(state: &AppState, call: &SubsonicCall) -> Option<Response> {
     let mut auth = call.parameters.clone();
     auth.insert("f".into(), "json".into());
@@ -157,10 +153,9 @@ pub(crate) async fn check_caller(state: &AppState, call: &SubsonicCall) -> Optio
     None
 }
 
-/// `RefuseUnlessSignedInAsync`: `None` when Navidrome accepts the request's sign-in, else the
-/// error to answer with, in the format asked for. An outage refuses too: an outside song is
-/// Octo fetching from the internet for whoever asks, and a broken Navidrome must not make that
-/// anyone at all.
+/// `None` when Navidrome accepts the request's sign-in, else the error to answer with, in the
+/// format asked for. An outage refuses too: an outside song is Octo fetching from the internet for
+/// whoever asks, and a broken Navidrome must not make that anyone at all.
 pub(crate) async fn refuse_unless_signed_in(
     state: &AppState,
     call: &SubsonicCall,
@@ -188,8 +183,8 @@ pub(crate) async fn refuse_unless_signed_in(
     })
 }
 
-/// `SignedInUserAsync`: who an accepted request signed in as: u, or its API key's owner as
-/// Navidrome names it, else the native token's name. Ask only after the sign-in is accepted.
+/// Who an accepted request signed in as: u, or its API key's owner as Navidrome names it, else the
+/// native token's name. Ask only after the sign-in is accepted.
 pub(crate) async fn signed_in_user(state: &AppState, call: &SubsonicCall) -> Result<String, AppError> {
     match state
         .request_identity
@@ -229,8 +224,8 @@ pub(crate) fn native_username(state: &AppState, call: &SubsonicCall) -> String {
     token.as_deref().and_then(jwt_claim_name).unwrap_or_default()
 }
 
-/// The name a JWT's payload carries, as the C# read it: any failure on the way (no second
-/// segment, bad base64, bad JSON, a claim that is not a string) gives nothing.
+/// The name a JWT's payload carries: any failure on the way (no second segment, bad base64, bad
+/// JSON, a claim that is not a string) gives nothing.
 fn jwt_claim_name(token: &str) -> Option<String> {
     let payload = token.split('.').nth(1)?.replace('-', "+").replace('_', "/");
     let padded = format!("{payload}{}", "=".repeat((4 - payload.len() % 4) % 4));
@@ -244,7 +239,7 @@ fn jwt_claim_name(token: &str) -> Option<String> {
             None | Some(serde_json::Value::Null) => {}
             Some(serde_json::Value::String(found)) if !found.is_empty() => return Some(found.clone()),
             Some(serde_json::Value::String(_)) => {}
-            // GetString on anything else threw, which ended the whole lookup.
+            // Anything else ends the whole lookup.
             Some(_) => return None,
         }
     }
@@ -327,7 +322,7 @@ mod tests {
             jwt_claim_name(&token(r#"{"username":"","sub":"s"}"#)).as_deref(),
             Some("s")
         );
-        // A claim that is not a string ends the lookup, as GetString threw.
+        // A claim that is not a string ends the lookup.
         assert_eq!(jwt_claim_name(&token(r#"{"username":7,"sub":"s"}"#)), None);
         assert_eq!(jwt_claim_name("opaque"), None);
     }

@@ -1,8 +1,8 @@
-//! SimilarSongsSeedTests: a radio from a song Last.fm cannot place (#78), the songs of a library
-//! built from YouTube playlists: the artist is the uploader and the album is the playlist. The
-//! seed's own album and genre lead, and similar artists to an uploader's name stay out. Also
-//! the other sources, what radio learns and one-star bans, through the whole pipeline. (The bare
-//! server address test of that file is K's, in `stream_length_tests`.)
+//! Radio from a song Last.fm cannot place (#78), the songs of a library built from YouTube
+//! playlists: the artist is the uploader and the album is the playlist. The seed's own album and
+//! genre lead, and similar artists to an uploader's name stay out. Also the other sources, what
+//! radio learns and one-star bans, through the whole pipeline. (The bare server address test is
+//! in `stream_length_tests`.)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -419,7 +419,6 @@ async fn radio(f: &Fixture, user: &str, id: &str, count: i32) -> Vec<(String, Op
     )
 }
 
-// SimilarSongsSeedTests.UnknownUpload_LeadsWithItsPlaylistAndGenre_AndLeavesOutTheUploadersSimilarArtists
 #[tokio::test]
 async fn unknown_upload_leads_with_its_playlist_and_genre_and_leaves_out_the_uploaders_similar_artists() {
     let f = fixture(|_| {}).await;
@@ -446,7 +445,6 @@ async fn unknown_upload_leads_with_its_playlist_and_genre_and_leaves_out_the_upl
     );
 }
 
-// SimilarSongsSeedTests.KnownSong_IsLastFmsRadioAsBefore
 #[tokio::test]
 async fn known_song_is_last_fms_radio_as_before() {
     let f = fixture(|_| {}).await;
@@ -461,7 +459,6 @@ async fn known_song_is_last_fms_radio_as_before() {
     assert!(!f.calls().iter().any(|call| call.contains("rest/getAlbum")));
 }
 
-// SimilarSongsSeedTests.EveryRadioSong_SaysWhichSourceSuggestedIt
 #[tokio::test]
 async fn every_radio_song_says_which_source_suggested_it() {
     let f = fixture(|_| {}).await;
@@ -483,7 +480,6 @@ async fn every_radio_song_says_which_source_suggested_it() {
     }
 }
 
-// SimilarSongsSeedTests.TheRadioSourcesExtension_IsListedWhileRadioCanAnswer
 #[tokio::test]
 async fn the_radio_sources_extension_is_listed_while_radio_can_answer() {
     for (radio, listed) in [(true, true), (false, false)] {
@@ -493,7 +489,6 @@ async fn the_radio_sources_extension_is_listed_while_radio_can_answer() {
     }
 }
 
-// SimilarSongsSeedTests.YouTubeMusic_JoinsTheRadioOfAnUploadLastFmDoesNotKnow
 #[tokio::test]
 async fn you_tube_music_joins_the_radio_of_an_upload_last_fm_does_not_know() {
     let f = fixture(|s| s.radio_sources.you_tube_music = true).await;
@@ -510,7 +505,6 @@ async fn you_tube_music_joins_the_radio_of_an_upload_last_fm_does_not_know() {
     assert!(songs[0].0.starts_with("pl-"), "{songs:?}");
 }
 
-// SimilarSongsSeedTests.ASongLastFmAndYouTubeMusicBothSuggest_ComesFirst_AndUploadsStayOffAReleasesRadio
 #[tokio::test]
 async fn a_song_last_fm_and_you_tube_music_both_suggest_comes_first_and_uploads_stay_off_a_releases_radio() {
     let f = fixture(|s| s.radio_sources.you_tube_music = true).await;
@@ -546,7 +540,6 @@ fn sound(at: f32, title: &str) -> SonicSong {
     }
 }
 
-// SimilarSongsSeedTests.SoundsAlike_AddsLibrarySongsThatSoundLikeIt_ReadAgainWithTheListenersSignIn
 #[tokio::test]
 async fn sounds_alike_adds_library_songs_that_sound_like_it_read_again_with_the_listeners_sign_in() {
     let f = fixture(|s| s.radio_sources.sounds_alike = true).await;
@@ -573,7 +566,6 @@ async fn sounds_alike_adds_library_songs_that_sound_like_it_read_again_with_the_
     );
 }
 
-// SimilarSongsSeedTests.TheSoundCheck_PutsALibrarySongThatSoundsCloseAboveOneThatSoundsFar
 #[tokio::test]
 async fn the_sound_check_puts_a_library_song_that_sounds_close_above_one_that_sounds_far() {
     let f = fixture(|s| s.radio_sources.sounds_alike = true).await;
@@ -617,7 +609,6 @@ async fn scrobble(f: &Fixture, user: &str, id: &str, finished: bool) {
     assert!(reply.status.is_success(), "{}", reply.body);
 }
 
-// SimilarSongsSeedTests.ARadioSongPlayedThrough_CountsForTheSourceThatSuggestedIt
 #[tokio::test]
 async fn a_radio_song_played_through_counts_for_the_source_that_suggested_it() {
     let f = fixture(learning).await;
@@ -648,7 +639,6 @@ async fn a_radio_song_played_through_counts_for_the_source_that_suggested_it() {
     assert_eq!(row["keepRate"].as_f64(), Some(1.0));
 }
 
-// SimilarSongsSeedTests.AScrobbleNavidromeRefuses_TeachesNothing
 #[tokio::test]
 async fn a_scrobble_navidrome_refuses_teaches_nothing() {
     let f = fixture(learning).await;
@@ -666,7 +656,6 @@ async fn a_scrobble_navidrome_refuses_teaches_nothing() {
     assert_eq!(get_string(&f.app, "/api/admin/radio-outcomes").await.trim(), "[]");
 }
 
-// SimilarSongsSeedTests.RadioStateFiles_StayInTheHostsOwnFolder
 #[tokio::test]
 async fn radio_state_files_stay_in_the_hosts_own_folder() {
     let f = fixture(learning).await;
@@ -677,7 +666,6 @@ async fn radio_state_files_stay_in_the_hosts_own_folder() {
     assert!(f.dir.path().join("sonic-features.json").exists());
 }
 
-// SimilarSongsSeedTests.ForgettingWhatRadioLearned_NeedsTheDashboardsHeader
 #[tokio::test]
 async fn forgetting_what_radio_learned_needs_the_dashboards_header() {
     let f = fixture(learning).await;
@@ -701,7 +689,6 @@ async fn forgetting_what_radio_learned_needs_the_dashboards_header() {
     assert!(allowed.status.is_success(), "{}", allowed.body);
 }
 
-// SimilarSongsSeedTests.ASongTheListenerRatedOneStar_StaysOffTheirRadio
 #[tokio::test]
 async fn a_song_the_listener_rated_one_star_stays_off_their_radio() {
     let f = fixture(|_| {}).await;
@@ -713,7 +700,6 @@ async fn a_song_the_listener_rated_one_star_stays_off_their_radio() {
     assert!(songs.contains(&"ext-Morcheeba-Trigger Hippie".to_string()));
 }
 
-// SimilarSongsSeedTests.AThinExactAnswer_IsFilledFromTheLibrary
 #[tokio::test]
 async fn a_thin_exact_answer_is_filled_from_the_library() {
     let f = fixture(|_| {}).await;
@@ -733,7 +719,6 @@ async fn a_thin_exact_answer_is_filled_from_the_library() {
     );
 }
 
-// SimilarSongsSeedTests.NightcoreUpload_TriesTheArtistItsTitleNames_AndKeepsItsPlaylistFirst
 #[tokio::test]
 async fn nightcore_upload_tries_the_artist_its_title_names_and_keeps_its_playlist_first() {
     let f = fixture(|_| {}).await;
@@ -749,7 +734,6 @@ async fn nightcore_upload_tries_the_artist_its_title_names_and_keeps_its_playlis
     assert!(songs[0].starts_with("pl-"), "{songs:?}");
 }
 
-// SimilarSongsSeedTests.NewSongByAKnownArtist_StillGetsArtistsLikeThem
 #[tokio::test]
 async fn new_song_by_a_known_artist_still_gets_artists_like_them() {
     let f = fixture(|_| {}).await;
@@ -757,7 +741,6 @@ async fn new_song_by_a_known_artist_still_gets_artists_like_them() {
     assert_eq!(radio_ids(&f, "brand-new").await, ["ext-Future-Mask Off"]);
 }
 
-// SimilarSongsSeedTests.AlbumId_IsARadioFromItsFirstSong
 #[tokio::test]
 async fn album_id_is_a_radio_from_its_first_song() {
     let f = fixture(|_| {}).await;
@@ -768,21 +751,18 @@ async fn album_id_is_a_radio_from_its_first_song() {
     );
 }
 
-// SimilarSongsSeedTests.ArtistId_IsTheTopSongsOfArtistsLikeThem
 #[tokio::test]
 async fn artist_id_is_the_top_songs_of_artists_like_them() {
     let f = fixture(|_| {}).await;
     assert_eq!(radio_ids(&f, "artist-massive").await, ["ext-Portishead-Roads"]);
 }
 
-// SimilarSongsSeedTests.Interleave_TakesOneFromEachInTurn
 #[test]
 fn interleave_takes_one_from_each_in_turn() {
     use crate::services::last_fm::last_fm_radio_track_resolver::interleave;
     assert_eq!(interleave(&[vec![1, 2, 3], vec![10, 20]]), [1, 10, 2, 20, 3]);
 }
 
-// SimilarSongsSeedTests.NothingFromOctosSources_LetsNavidromeAnswer
 #[tokio::test]
 async fn nothing_from_octos_sources_lets_navidrome_answer() {
     let f = fixture(|s| s.last_fm.api_key = String::new()).await;

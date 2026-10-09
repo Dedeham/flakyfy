@@ -1,9 +1,9 @@
-//! The catch-all's own answers (`GenericEndpoint` L3682, endpoints.md §3.9 steps 2-10): native
-//! Radio playlists, the external-id safety net, and the Navidrome-native answers for Octo's
-//! outside songs, albums and artists, with discovery appended to native searches.
+//! The catch-all's own answers: native Radio playlists, the external-id safety net, and the
+//! Navidrome-native answers for Octo's outside songs, albums and artists, with discovery appended
+//! to native searches.
 //!
-//! `http::catch_all` runs step 1 (Octo-owned paths) before reading the request and step 11
-//! (the faithful relay) when none of these answers.
+//! `http::catch_all` answers Octo-owned paths before reading the request, and relays the
+//! request faithfully when none of these answers.
 
 use std::sync::Arc;
 
@@ -40,7 +40,8 @@ pub struct NativeRequest<'a> {
     pub proxy: &'a SubsonicProxyService,
 }
 
-/// Steps 2 to 10, in the C#'s order. `None` when the request goes on to the faithful relay.
+/// The catch-all's own answers, tried in order. `None` when the request goes on to the faithful
+/// relay.
 pub async fn answer(state: &AppState, request: &NativeRequest<'_>) -> Result<Option<Response>, AppError> {
     if let Some(radio) = try_serve_native_radio(state, request).await? {
         return Ok(Some(radio));
@@ -137,12 +138,12 @@ pub fn element_for(endpoint: &str) -> String {
     }
 }
 
-/// `_start`/`_end` as the native list read them: `int.TryParse(..) ? n : fallback`.
+/// `_start`/`_end` as the native list reads them: `None` when missing or not a number.
 fn page_number(parameters: &Parameters, name: &str) -> Option<i32> {
     parameters.get(name).and_then(|text| int_try_parse(text))
 }
 
-/// `Skip(start).Take(Math.Max(0, end - start))`.
+/// The rows from `start` up to `end`, none when `end` is not past `start`.
 fn page<T: Clone>(rows: &[T], start: i32, end: i32) -> Vec<T> {
     let take = (i64::from(end) - i64::from(start)).max(0);
     rows.iter()
@@ -152,7 +153,7 @@ fn page<T: Clone>(rows: &[T], start: i32, end: i32) -> Vec<T> {
         .collect()
 }
 
-/// `File(bytes, "application/json")` with `X-Total-Count` set beforehand.
+/// `body` as `application/json`, with `X-Total-Count` set.
 fn file_with_total(body: Vec<u8>, total: usize) -> Response {
     let mut response = file_reply(&Bytes::from(body), Some("application/json"), "json");
     response
@@ -161,7 +162,7 @@ fn file_with_total(body: Vec<u8>, total: usize) -> Response {
     response
 }
 
-/// A JSON body written to `Response.Body` with status 200 and `application/json`.
+/// A JSON body with status 200 and `content_type`, written with no length.
 fn written_json(body: Vec<u8>, extra: HeaderMap, content_type: &str) -> Response {
     let mut headers = extra;
     headers.insert(
@@ -613,7 +614,7 @@ async fn try_inject_native_album_search(state: &AppState, request: &NativeReques
     Some(written_with_upstream_headers(&raw, rows))
 }
 
-/// `JsonNode.ToString()`: a string's own text, anything else as JSON.
+/// A node's text: a string's own text, anything else as JSON.
 fn node_text(node: &Node) -> String {
     match node {
         Node::String(s) => s.clone(),

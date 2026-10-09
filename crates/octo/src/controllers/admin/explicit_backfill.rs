@@ -1,11 +1,10 @@
-//! Port of `Controllers/ExplicitBackfillController.cs`: the dashboard's "Mark explicit songs".
-//! Look the library up, then write the explicit and clean marks the preview found, and undo
-//! them. It rewrites the owner's files, so every call needs a Navidrome admin sign-in like the
-//! genre re-tag, and Apply needs the music path typed.
+//! The dashboard's "Mark explicit songs". Look the library up, then write the explicit and
+//! clean marks the preview found, and undo them. It rewrites the owner's files, so every call
+//! needs a Navidrome admin sign-in like the genre re-tag, and Apply needs the music path typed.
 //!
-//! The C# asked `UserOf`, so a recovery-code session passed; the admin gate refuses one on every
-//! library-file route (`LIBRARY_FILE_ROUTES`, `/api/admin/explicit`), so here the session is the
-//! Navidrome user's (`navidrome_user_of`), as the cover upgrade's.
+//! The admin gate refuses a recovery-code session on every library-file route
+//! (`LIBRARY_FILE_ROUTES`, `/api/admin/explicit`), and the session here is the Navidrome user's
+//! (`navidrome_user_of`), as the cover upgrade's.
 
 use std::cmp::Ordering;
 
@@ -44,7 +43,8 @@ pub const ROWS_SHOWN: usize = 400;
 
 const BUSY: &str = "Explicit marking is already running.";
 
-/// `_sessions.UserOf(cookie ?? header)`, a Navidrome user only (see the module notes).
+/// The signed-in user (the cookie, else the header), a Navidrome user only (see the module
+/// notes).
 fn user(state: &AppState, parts: &Parts) -> Option<String> {
     let token = request_cookie(&parts.headers, BROWSE_COOKIE_NAME).or_else(|| {
         parts
@@ -75,7 +75,7 @@ fn mode_name(mode: ExplicitBackfillMode) -> &'static str {
     }
 }
 
-/// `ApplyRequest(string? Confirm)`.
+/// The apply body: an optional `confirm`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ApplyRequest {
@@ -252,7 +252,7 @@ async fn undo(State(state): State<AppState>, request: Request) -> Response {
     status(StatusCode::ACCEPTED, &json!({ "started": true }))
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order.
+/// Ordinal order: by UTF-16 code unit.
 fn compare_ordinal(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }

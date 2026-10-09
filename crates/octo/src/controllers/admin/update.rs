@@ -1,4 +1,4 @@
-//! Port of `Controllers/UpdateController.cs`: the dashboard's update card. Whether a newer
+//! The dashboard's update card. Whether a newer
 //! release is out, and Update now, which hands the update to the host helper (scripts/updater).
 //! Without the helper the card shows the command.
 //!

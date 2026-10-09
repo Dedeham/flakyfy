@@ -1,11 +1,11 @@
-//! `[FromBody]` binding as `[ApiController]` did it: System.Text.Json reading the body into the
-//! action's C# record, and the 400 `ValidationProblemDetails` it answered when it could not.
+//! Reading a JSON request body into the shape an action expects, and the 400 validation problem
+//! answered when it cannot be read.
 //!
-//! The serializer read a body in one pass, token by token, so its first complaint is the first
-//! thing wrong in reading order: a broken payload (`Utf8JsonReader`'s words) or a member of the
-//! wrong type (`The JSON value could not be converted to ...`), both with the path the
-//! serializer had reached (`$.scope`, `$.keys[1]`) and where the reader stood. [`Shape`] says
-//! what each C# record held, so every endpoint answers as its own record did.
+//! A body is read in one pass, token by token, so the first complaint is the first thing wrong
+//! in reading order: a broken payload (the reader's words) or a member of the wrong type (`The
+//! JSON value could not be converted to ...`), both with the path reached (`$.scope`,
+//! `$.keys[1]`) and where the reader stood. [`Shape`] says what each action's body holds, so
+//! every endpoint answers for its own body.
 
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
@@ -15,11 +15,11 @@ use serde_json::Value;
 
 use crate::http::error::{problem, validation_problem};
 
-// ---- the C# records ---------------------------------------------------------------------------
+// ---- the body shapes --------------------------------------------------------------------------
 
-/// A C# type a body was read into: its full name as .NET writes it (`Octo.Controllers.
-/// ImportsController+OnRequest`), whether System.Text.Json filled it through its constructor (a
-/// positional record) or its setters (a class), and its members.
+/// A type a body is read into: its full name as the error messages spell it (`Octo.Controllers.
+/// ImportsController+OnRequest`), whether it is filled through its constructor (a positional
+/// record) or its setters (a class), and its members.
 #[derive(Debug)]
 pub struct Shape {
     pub name: &'static str,
@@ -27,7 +27,7 @@ pub struct Shape {
     pub members: &'static [Member],
 }
 
-/// One member of a [`Shape`]. Names are matched ignoring case, as the Web defaults did.
+/// One member of a [`Shape`]. Names are matched ignoring case.
 #[derive(Debug)]
 pub struct Member {
     pub name: &'static str,
@@ -37,23 +37,23 @@ pub struct Member {
 /// What a member holds, as far as reading it can fail.
 #[derive(Debug)]
 pub enum Kind {
-    /// `bool`.
+    /// A boolean.
     Bool,
-    /// `int` (also read from a string of digits).
+    /// A 32-bit integer (also read from a string of digits).
     Int32,
-    /// `long` (also read from a string of digits).
+    /// A 64-bit integer (also read from a string of digits).
     Int64,
-    /// `int?`.
+    /// A 32-bit integer or null.
     OptionalInt32,
-    /// `string` or `string?`.
+    /// A string, or null.
     Text,
-    /// `List<string>?`.
+    /// A list of strings, or null.
     TextList,
-    /// `Dictionary<string, string>?`.
+    /// A map of strings to strings, or null.
     TextMap,
     /// Another record or class.
     Record(&'static Shape),
-    /// `List<T>?` of another record or class.
+    /// A list of another record or class, or null.
     RecordList(&'static Shape),
 }
 
@@ -74,7 +74,7 @@ impl Kind {
     }
 }
 
-/// A Rust request body and the C# record it stands for.
+/// A request body type and the shape it is read as.
 pub trait FromBody: DeserializeOwned {
     const SHAPE: &'static Shape;
 }
@@ -107,10 +107,10 @@ pub(crate) fn is_json_content_type(headers: &HeaderMap) -> bool {
         || (media.starts_with("application/") && media.ends_with("+json"))
 }
 
-/// A `[FromBody] T name` parameter on an `[ApiController]` action: the JSON input formatter
-/// (case-insensitive names, numbers from strings), with the automatic answers it gave before
-/// the action ran. A body that is not JSON by its content type is a 415; an empty one, `null`
-/// or one System.Text.Json could not read into `T`'s record is the 400 `ValidationProblemDetails`.
+/// A required JSON body named `name` (case-insensitive member names, numbers from strings), with
+/// the automatic answers given before the action runs. A body that is not JSON by its content
+/// type is a 415; an empty one, `null` or one that cannot be read into `T`'s shape is the 400
+/// validation problem.
 #[allow(clippy::result_large_err)]
 pub fn bind_body<T: FromBody>(headers: &HeaderMap, body: &[u8], name: &str) -> Result<T, Response> {
     bind_body_as(headers, body, name, T::SHAPE)
@@ -138,7 +138,7 @@ pub fn bind_body_as<T: DeserializeOwned>(
     match read(body, shape) {
         Ok(None) => Err(validation_problem(&[(name, &[required.as_str()])])),
         Ok(Some(value)) => Ok(value),
-        // MVC listed its errors by key: the parameter's own before the serializer's `$...`.
+        // The errors are listed by key: the parameter's own before the reader's `$...`.
         Err((path, message)) => Err(validation_problem(&[
             (name, &[required.as_str()]),
             (path.as_str(), &[message.as_str()]),
@@ -146,9 +146,9 @@ pub fn bind_body_as<T: DeserializeOwned>(
     }
 }
 
-/// A `[FromBody] T? name` parameter (nullable, so `EmptyBodyBehavior.Allow`): an empty body or
-/// `null` binds as None instead of the 400, and a body that cannot be read is the 400 with the
-/// serializer's entry alone (no "field is required", since the parameter is not).
+/// An optional JSON body: an empty body or `null` reads as None instead of the 400, and a body
+/// that cannot be read is the 400 with the reader's entry alone (no "field is required", since
+/// the body is not).
 #[allow(clippy::result_large_err)]
 pub fn bind_optional_body<T: FromBody>(headers: &HeaderMap, body: &[u8]) -> Result<Option<T>, Response> {
     if body.is_empty() {
@@ -161,8 +161,8 @@ pub fn bind_optional_body<T: FromBody>(headers: &HeaderMap, body: &[u8]) -> Resu
         .map_err(|(path, message)| validation_problem(&[(path.as_str(), &[message.as_str()])]))
 }
 
-/// Reads a non-empty body into `T` as the serializer read it into `shape`: None for `null`, or
-/// the error's key and message.
+/// Reads a non-empty body into `T`, checked against `shape`: None for `null`, or the error's key
+/// and message.
 fn read<T: DeserializeOwned>(body: &[u8], shape: &Shape) -> Result<Option<T>, (String, String)> {
     let text = String::from_utf8_lossy(body);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
@@ -175,7 +175,7 @@ fn read<T: DeserializeOwned>(body: &[u8], shape: &Shape) -> Result<Option<T>, (S
         return Ok(None);
     }
     octo_core::json::web::from_value(&value).map(Some).map_err(|e| {
-        // The record check above passed, so the Rust type is stricter than the C# one was.
+        // The shape check above passed, so the Rust type is stricter than its shape.
         tracing::warn!("A request body the C# record took did not fit its Rust type: {e}");
         (
             "$".to_string(),
@@ -188,15 +188,14 @@ fn read<T: DeserializeOwned>(body: &[u8], shape: &Shape) -> Result<Option<T>, (S
     })
 }
 
-/// The body of an action that read `Request.Body` itself (`new StreamReader(Request.Body)`):
-/// UTF-8 with a BOM dropped.
+/// The body of an action that reads the raw body itself: UTF-8 with a BOM dropped.
 pub fn body_text(body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body);
     text.strip_prefix('\u{feff}').unwrap_or(&text).to_string()
 }
 
-/// `JsonNode.Parse(text)` with the reader's default options (no comments, no trailing commas):
-/// the tree, or the exception's message.
+/// Parses `text` as a [`Node`] tree with the reader's default options (no comments, no trailing
+/// commas): the tree, or the reader's message.
 pub fn parse_json_node(text: &str) -> Result<Node, String> {
     if let Some(error) = stj_parse_error(text) {
         return Err(format!("{} {}", error.message, error.position()));
@@ -204,10 +203,10 @@ pub fn parse_json_node(text: &str) -> Result<Node, String> {
     Node::parse(text)
 }
 
-// ---- Utf8JsonReader and the serializer -------------------------------------------------------
+// ---- the reader ------------------------------------------------------------------------------
 
-/// Where and why System.Text.Json refused a payload, in the words of its exception: the
-/// reader's (`JsonReaderException`) or the serializer's (a member it could not convert).
+/// Where and why a payload was refused, in the API's words: the reader's (broken JSON) or the
+/// serializer's (a member it could not convert).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StjReadError {
     pub message: String,
@@ -226,17 +225,16 @@ impl StjReadError {
     }
 }
 
-/// Reads `text` as `Utf8JsonReader` does with its default options (one value, no comments,
-/// no trailing commas, depth at most 64) and returns its first complaint, or None when it is
-/// valid JSON. The common refusals carry System.Text.Json's own messages; the rarer ones a
-/// close paraphrase.
+/// Reads `text` with the reader's default options (one value, no comments, no trailing commas,
+/// depth at most 64) and returns its first complaint, or None when it is valid JSON. The common
+/// refusals carry the reference messages word for word; the rarer ones a close paraphrase.
 pub fn stj_parse_error(text: &str) -> Option<StjReadError> {
     let mut reader = StjReader::new(text);
     reader.document(None).err()
 }
 
-/// Reads `text` into `shape` as `JsonSerializer` did and returns its first complaint, or None
-/// when it reads (`null` included).
+/// Reads `text` into `shape` and returns its first complaint, or None when it reads (`null`
+/// included).
 pub fn read_error(text: &str, shape: &Shape) -> Option<StjReadError> {
     let mut reader = StjReader::new(text);
     reader.document(Some(shape)).err()
@@ -262,8 +260,7 @@ enum Step {
     Index(usize),
 }
 
-/// `ReadStack.JsonPath`'s spelling of a name: `.name`, or `['name']` when it holds a character
-/// a path uses.
+/// A name as a path step: `.name`, or `['name']` when it holds a character a path uses.
 fn push_name(path: &mut String, name: &str) {
     const SPECIAL: &[char] = &[
         '.', ' ', '\'', '/', '"', '[', ']', '(', ')', '\t', '\n', '\r', '\u{c}', '\u{8}', '\\', '\u{85}',
@@ -854,8 +851,8 @@ enum ElementKind<'a> {
     Record(&'a Shape),
 }
 
-/// Whether an integer member takes this text: digits with an optional sign and nothing else
-/// (`Utf8Parser`), within the type's range.
+/// Whether an integer member takes this text: digits with an optional sign and nothing else,
+/// within the type's range.
 fn integer_fits(kind: &Kind, text: &str) -> bool {
     match kind {
         Kind::Int64 => text.parse::<i64>().is_ok(),
@@ -868,7 +865,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stj_messages_name_the_first_offending_byte() {
+    fn reader_messages_name_the_first_offending_byte() {
         let cases = [
             (
                 "{not json",
@@ -1003,7 +1000,7 @@ mod tests {
     fn a_broken_body_names_the_member_the_serializer_had_reached() {
         let depth = ZERO_DEPTH_AT_END;
         for (body, path, message) in [
-            // The C# recording (17-covers-explicit/covers-start-bad-json).
+            // The reference recording (17-covers-explicit/covers-start-bad-json).
             ("{\"scope\": ", "$.scope", format!("{depth} LineNumber: 0 | BytePositionInLine: 10.")),
             // A finished member is off the path again.
             ("{\"scope\": \"a\" x", "$", "'x' is invalid after a value. Expected either ',', '}', or ']'. LineNumber: 0 | BytePositionInLine: 14.".to_string()),
@@ -1025,7 +1022,7 @@ mod tests {
     fn a_member_of_the_wrong_type_is_refused_where_the_reader_stood() {
         let record = RECORD.name;
         for (body, path, message) in [
-            // As the C# answered {"on": "yes"} for an OnRequest (12-imports/fetch-bad-bool).
+            // The reference answer to {"on": "yes"} for an OnRequest (12-imports/fetch-bad-bool).
             ("{\"on\": \"yes\"}", "$.on", converted(record, 0, 12)),
             // Named as written, after a member it skipped.
             (

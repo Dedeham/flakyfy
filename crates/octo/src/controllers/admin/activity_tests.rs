@@ -1,7 +1,7 @@
-//! `ActivityTests`: the dashboard's progress toasts read every job through one shape. Each job's
-//! running, just finished and long finished states, and the gaps a page used to miss (a run
-//! accepted but not yet Running, a rescan slskd has not started yet). Then Rust-only checks of
-//! the views of the jobs groups D, E, H and R bring, and of the endpoint itself.
+//! The dashboard's progress toasts read every job through one shape. Each job's running, just
+//! finished and long finished states, and the gaps a page used to miss (a run accepted but not
+//! yet Running, a rescan slskd has not started yet). Then the views of Find songs, the Sharing
+//! card, the imports and Library health, and the endpoint itself.
 
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
@@ -377,11 +377,12 @@ fn rescan_starting_then_scanning_then_done() {
     );
 }
 
-// ---- Rust-only ----------------------------------------------------------------------------
+// ---- The job views and the endpoint ------------------------------------------------------
 
-/// The rescan's id is the request's .NET ticks, as the C# wrote it (`share-rescan:639270...`).
+/// The rescan's id is the request's time in ticks, 100-nanosecond steps since 0001-01-01
+/// (`share-rescan:639270...`).
 #[test]
-fn rescan_id_is_the_request_in_dotnet_ticks() {
+fn rescan_id_is_the_request_in_ticks() {
     let asked = Utc.with_ymd_and_hms(2026, 10, 8, 0, 35, 53).unwrap() + TimeDelta::nanoseconds(286_095_900);
     let item = rescan(&report(false, false, None, None), asked, asked);
     assert_eq!(item.id, "share-rescan:639270165532860959");
@@ -585,9 +586,9 @@ fn duplicates_running_then_its_result() {
     assert_eq!(duplicates(&DuplicateScan::default(), now()), None);
 }
 
-/// The answer's members, nulls written, in the C# record's order.
+/// The answer's members, nulls written, in a fixed order.
 #[test]
-fn an_item_is_written_as_the_csharp_record() {
+fn an_item_keeps_its_wire_shape() {
     let item = ActivityItem::new("covers:c1", "covers", "covers", "Looking for soft covers", "done")
         .counted(3, 3, "folders")
         .detail(Some("3 albums have soft covers".into()))
@@ -599,7 +600,7 @@ fn an_item_is_written_as_the_csharp_record() {
     );
 }
 
-/// With the sign-in off (the test default, and the parity's second Octo) a browser with no session
+/// With the sign-in off (the test default) a browser with no session
 /// is answered, as not signed in; with a session, or the recovery code, the jobs are listed and
 /// `signedIn` says so.
 #[tokio::test]
@@ -635,7 +636,7 @@ async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
     assert_eq!(signed.json()["signedIn"], true);
 }
 
-/// The rescan reads slskd's own scan fields off the Sharing card's report (group E), and an
+/// The rescan reads slskd's own scan fields off the Sharing card's report, and an
 /// slskd that does not answer reads as a rescan that has not started.
 #[test]
 fn a_sharing_report_is_read_as_the_rescan_saw_it() {

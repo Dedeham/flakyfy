@@ -1,6 +1,5 @@
-//! What 6-A2's controller tests share: the assembled app (the pipeline around the Subsonic
-//! routes) over a wiremock Navidrome, the C# `WebApplicationFactory` with its
-//! `IHttpClientFactory` swapped out, and fakes for the services those tests replaced.
+//! What the Subsonic controller tests share: the assembled app (the pipeline around the
+//! Subsonic routes) over a wiremock Navidrome, and fakes for the services those tests replace.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,8 +59,7 @@ impl Reply {
     }
 }
 
-/// Settings pointing Octo at `url` (the wiremock Navidrome), as the C# factories configured
-/// `Subsonic:Url`.
+/// Settings pointing Octo at `url` (the wiremock Navidrome) as `Subsonic:Url`.
 pub(crate) fn settings(url: &str) -> AppSettings {
     AppSettings {
         subsonic: SubsonicSettings {
@@ -73,9 +71,8 @@ pub(crate) fn settings(url: &str) -> AppSettings {
     }
 }
 
-/// `AppState::for_tests`, with some of its services swapped (the C# tests' `RemoveAll` +
-/// `AddSingleton`). Only the controller's own view changes: services built over the originals
-/// keep them.
+/// `AppState::for_tests`, with some of its services swapped. Only the controller's own view
+/// changes: services built over the originals keep them.
 pub(crate) fn state_with(settings: AppSettings, change: impl FnOnce(&mut AppInner)) -> AppState {
     let state = AppState::for_tests(settings);
     let Ok(mut inner) = Arc::try_unwrap(state.inner) else {
@@ -147,8 +144,8 @@ pub(crate) async fn received_paths(server: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// A Subsonic sign-in as the C# tests wrote it: `u`, the token `t` (Navidrome stand-ins accept
-/// `good`), a salt, the version and the client.
+/// A Subsonic sign-in: `u`, the token `t` (Navidrome stand-ins accept `good`), a salt, the version
+/// and the client.
 pub(crate) fn auth(user: &str, token: &str, client: &str) -> String {
     format!("u={user}&t={token}&s=salt&v=1.16.1&c={client}")
 }
@@ -160,8 +157,8 @@ pub(crate) fn auth(user: &str, token: &str, client: &str) -> String {
 /// What a [`FakeStreams`] answers for a direct stream.
 pub(crate) type StreamAnswer = Box<dyn Fn() -> Option<DirectStreamInfo> + Send + Sync>;
 
-/// `Mock<IDownloadService>` as the playback tests set it up: a direct stream (or none) for
-/// one provider and id, and a record of what was asked.
+/// A download service as the playback tests set it up: a direct stream (or none) for one
+/// provider and id, and a record of what was asked.
 #[derive(Default)]
 pub(crate) struct FakeStreams {
     /// `(provider, external id)` → the stream to answer with.
@@ -280,8 +277,8 @@ impl IDownloadService for FakeStreams {
     }
 }
 
-/// `Mock<ILocalLibraryService>`: ids it was told are external parse as such; everything else
-/// is a library id (Moq's default `(false, null, null)`).
+/// A local library service: ids it was told are external parse as such; everything else is a
+/// library id.
 #[derive(Default)]
 pub(crate) struct FakeLibrary {
     external: Mutex<HashMap<String, (String, String)>>,

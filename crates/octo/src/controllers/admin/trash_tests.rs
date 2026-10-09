@@ -1,6 +1,6 @@
-//! `AdminDownloadsTests.cs` (5d3f096), its Recently removed half: the trash and Put back on the
-//! dashboard, behind a Navidrome admin's own sign-in and the library actions gates. The download
-//! log and Find songs half is group D's (`admin_downloads_tests.rs`).
+//! Recently removed: the trash and Put back on the dashboard, behind a Navidrome admin's own
+//! sign-in and the library actions gates. The download log and Find songs are tested in
+//! `admin_downloads_tests.rs`.
 
 use std::path::{Path, PathBuf};
 

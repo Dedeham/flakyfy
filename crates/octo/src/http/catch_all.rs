@@ -1,14 +1,13 @@
-//! The catch-all `/{**endpoint}` (`SubsonicController.GenericEndpoint`, L3682; endpoints.md
-//! §3.9): every method, every path no route claims.
+//! The catch-all `/{**endpoint}`: every method, every path no route claims, in this order.
 //!
 //! - `/` has no `endpoint`: a GET or HEAD is a 302 to `app/`, Navidrome's web app (#80), and
 //!   any other method goes on with an empty endpoint;
 //! - Octo-owned paths (lower-cased path starting with `admin` (which also matches
 //!   `administrator`...) or `api/admin`, starting with `assets/`, or equal to `favicon.ico`)
-//!   get `NotFound()`, the ProblemDetails 404, and are never relayed;
-//! - steps 2-10 (native radio, the external-id safety net, the native catalog answers and the
-//!   native search injections) are `controllers::subsonic::native`;
-//! - everything else is relayed faithfully to Navidrome (step 11).
+//!   get the ProblemDetails 404 and are never relayed;
+//! - native radio, the external-id safety net, the native catalog answers and the native
+//!   search injections are `controllers::subsonic::native`;
+//! - everything else is relayed faithfully to Navidrome.
 
 use std::sync::Arc;
 
@@ -25,15 +24,14 @@ use crate::controllers::subsonic::native::{self, NativeRequest};
 use crate::services::subsonic::{IncomingRequest, RawRelayResult};
 use octo_subsonic::SubsonicResponseBuilder;
 
-/// Kestrel's `MaxRequestBodySize` default.
+/// The largest request body read for a relay: 30 MB.
 const MAX_REQUEST_BODY: usize = 30_000_000;
 
 pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response {
     let endpoint = endpoint_of(req.uri().path());
-    // The bare address binds no endpoint at all. Required by [ApiController], that null was a
-    // 400 before any of this ran, and Amperfy checks the server address before signing in
-    // (#80). Navidrome answers it with its web app, so Octo does too; relative, so a reverse
-    // proxy's path prefix is kept. Other methods go on with an empty endpoint.
+    // The bare address binds no endpoint at all, and Amperfy checks the server address before
+    // signing in (#80). Navidrome answers it with its web app, so Octo does too; relative, so a
+    // reverse proxy's path prefix is kept. Other methods go on with an empty endpoint.
     if endpoint.is_empty() && (req.method() == Method::GET || req.method() == Method::HEAD) {
         return redirect_to_app();
     }
@@ -49,7 +47,7 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
     let parameters = incoming.parameters();
     let format = parameters.get("f").map_or("xml", String::as_str).to_string();
 
-    // Steps 2-10: native radio, the external-id safety net, and the native answers.
+    // Native radio, the external-id safety net, and the native answers.
     let relay = state.subsonic_proxy.with_request(Arc::clone(&incoming));
     let native_request = NativeRequest {
         endpoint: &endpoint,
@@ -89,7 +87,7 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
     }
 }
 
-/// `Redirect("app/")`: a 302 with an empty body, to Navidrome's web app beside this address.
+/// A 302 with an empty body, to Navidrome's web app beside this address.
 fn redirect_to_app() -> Response {
     let mut res = Response::new(Body::empty());
     *res.status_mut() = StatusCode::FOUND;
@@ -98,8 +96,8 @@ fn redirect_to_app() -> Response {
     res
 }
 
-/// The route value `{**endpoint}` held: the path without its leading `/`, decoded as Kestrel
-/// decoded paths (every `%XX` but `%2F`, which stays encoded), in the client's casing.
+/// The route value `{**endpoint}` holds: the path without its leading `/`, decoded (every
+/// `%XX` but `%2F`, which stays encoded), in the client's casing.
 pub fn endpoint_of(path: &str) -> String {
     let path = path.strip_prefix('/').unwrap_or(path);
     let mut out = String::with_capacity(path.len());
@@ -118,7 +116,7 @@ fn find_encoded_slash(text: &str) -> Option<usize> {
     lower.find("%2f")
 }
 
-/// Paths Octo answers itself and never relays (step 1 of `GenericEndpoint`).
+/// Paths Octo answers itself and never relays.
 pub fn is_octo_owned(endpoint: &str) -> bool {
     let lower = octo_core::common::dotnet::to_lower_invariant(endpoint);
     lower.starts_with("admin")
@@ -127,10 +125,8 @@ pub fn is_octo_owned(endpoint: &str) -> bool {
         || lower == "favicon.ico"
 }
 
-/// What the C# wrote for a faithful relay: the upstream status, the allowlisted headers (each
-/// `Response.Headers[name] = value`, so the last value of a name wins), the upstream content
-/// type or `application/{f}`, and the body written to the response stream, which Kestrel sent
-/// chunked.
+/// The answer to a faithful relay: the upstream status, the allowlisted headers (the last value
+/// of a name wins), the upstream content type or `application/{f}`, and the body, sent chunked.
 fn write_raw_relay(raw: RawRelayResult, format: &str, builder: &SubsonicResponseBuilder) -> Response {
     let status = StatusCode::from_u16(raw.status).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = raw
@@ -147,8 +143,8 @@ fn write_raw_relay(raw: RawRelayResult, format: &str, builder: &SubsonicResponse
         }
     }
     let Ok(content_type) = HeaderValue::from_str(&content_type) else {
-        // Kestrel refused the header when the response started, inside the C#'s try: the
-        // error envelope went out with the status and headers already set.
+        // A content type that is not a valid header value: the error envelope goes out with
+        // the upstream status and headers already set.
         let mut response = builder
             .create_error(
                 format,
@@ -165,8 +161,7 @@ fn write_raw_relay(raw: RawRelayResult, format: &str, builder: &SubsonicResponse
     let body = if status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED {
         Body::empty()
     } else {
-        // A stream, so hyper frames it chunked as Kestrel did for a body written without a
-        // Content-Length.
+        // A stream, so hyper frames it chunked, without a Content-Length.
         let chunk: Result<Bytes, std::io::Error> = Ok(raw.body);
         Body::from_stream(futures::stream::iter([chunk]))
     };

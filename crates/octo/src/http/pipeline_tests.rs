@@ -1,5 +1,5 @@
-//! The assembled pipeline against the facts verified on the running C# image
-//! (endpoints.md §7, plus the static-file probes recorded in known-diffs.md).
+//! The assembled pipeline: the headers, statuses and bodies Octo's clients and dashboard
+//! depend on, static files included.
 
 use std::time::{Duration, SystemTime};
 
@@ -297,7 +297,7 @@ async fn head_on_an_admin_get_route_reaches_the_catch_all() {
 // ---- Static files ----
 
 #[tokio::test]
-async fn static_files_carry_the_asp_net_headers() {
+async fn static_files_carry_their_type_cache_and_etag_headers() {
     let a = assets();
     let css = a.get("/admin/admin.css").expect("css");
     let r = get_("/admin/admin.css", &[]).await;
@@ -563,7 +563,7 @@ async fn static_files_answer_only_get_and_head() {
 }
 
 #[tokio::test]
-async fn the_real_admin_ui_is_served_with_the_c_sharp_etags() {
+async fn the_real_admin_ui_is_served_with_content_hash_etags() {
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../octo");
     let roots = StaticRoots::resolve(None, None, None, Some(&repo));
     let assets = StaticAssets::load(&roots);
@@ -577,10 +577,9 @@ async fn the_real_admin_ui_is_served_with_the_c_sharp_etags() {
     ] {
         assert!(assets.get(url).is_some(), "{url} missing");
     }
-    // The C# image's ETag is the quoted base64 SHA-256 of the file (endpoints.md §7 probe:
-    // index.html at 2026.10.04 was "poA4o6qmdzOsdETjSBdw9ZNluURZ66GaB3+8Ch69YBo="). The
-    // dashboard files change with every release, so their ETags are worked out from the files;
-    // the logo does not, so its ETag stays pinned.
+    // The ETag is the quoted base64 SHA-256 of the file. The dashboard files change with every
+    // release, so their ETags are worked out from the files; the logo does not, so its ETag
+    // stays pinned.
     let c_sharp_etag = |file: &str| {
         use base64::Engine as _;
         use sha2::Digest as _;
@@ -636,7 +635,7 @@ async fn admin_redirects_to_the_dashboard_page() {
     }
 }
 
-/// G1 K (`4a329aa`, #80): the bare address sends to Navidrome's web app, relative, so a
+/// #80: the bare address sends to Navidrome's web app, relative, so a
 /// reverse proxy's path prefix is kept. Amperfy checks the address before signing in.
 #[tokio::test]
 async fn root_redirects_to_the_web_app() {
@@ -665,7 +664,7 @@ async fn octo_owned_paths_are_problem_404s() {
     }
 }
 
-/// endpoints.md §7: with no Navidrome URL configured, a relayed call answers 200 with the
+/// With no Navidrome URL configured, a relayed call answers 200 with the
 /// Subsonic error envelope naming the missing setting, in XML unless `f=json`.
 #[tokio::test]
 async fn everything_else_is_relayed_and_without_a_url_says_so() {

@@ -1,6 +1,6 @@
-//! The lyrics endpoints through the app: `LyricsTests.GetLyricsBySongId_*` and the endpoint half
-//! of `LyricsChoiceTests` (octoLyrics v1, and what every other client sees of a choice). The
-//! service half of those tests is in `services/lyrics/lyrics_choice_service_tests.rs`.
+//! The lyrics endpoints through the app: getLyricsBySongId, choosing a song's lyrics (octoLyrics
+//! v1), and what every other client sees of a choice. The choosing service on its own is tested
+//! in `services/lyrics/lyrics_choice_service_tests.rs`.
 
 // `&[source.clone()]` coerces each source to `Arc<dyn ILyricsSource>`, which `from_ref` cannot.
 #![allow(clippy::cloned_ref_to_slice_refs)]
@@ -32,7 +32,7 @@ use crate::services::lyrics::{LyricsChoiceService, LyricsChoiceStore, LyricsServ
 
 // ---- A source whose search and fetch the tests control ------------------------------------
 
-/// `LyricsChoiceTests.ChoosableSource`.
+/// A lyrics source whose search results and fetched lyrics a test sets.
 struct ChoosableSource {
     key: String,
     entries: Vec<LyricsCandidate>,
@@ -77,7 +77,8 @@ impl ILyricsSource for ChoosableSource {
     }
 }
 
-/// `LyricsChoiceTests.Kugou()`.
+/// KuGou with two candidates (the song and a remix), answering an automatic lookup with line
+/// lyrics.
 fn kugou() -> Arc<ChoosableSource> {
     let source = ChoosableSource {
         key: "kugou".into(),
@@ -124,7 +125,7 @@ fn kugou() -> Arc<ChoosableSource> {
     Arc::new(source)
 }
 
-/// `LyricsChoiceTests.WordTimedKugou()`.
+/// KuGou answering an automatic lookup with word-timed lyrics.
 fn word_timed_kugou() -> Arc<ChoosableSource> {
     let source = kugou();
     source.answer_with("[00:01.00]<00:01.00>kugou <00:01.50>words<00:02.00>");
@@ -174,7 +175,7 @@ impl ILyricsSource for SlowSource {
     }
 }
 
-/// A source answering every lookup the same way (`LyricsTests.FakeSource`).
+/// A source answering every lookup the same way.
 struct FixedSource {
     key: String,
     answer: LyricsLookup,
@@ -196,7 +197,7 @@ impl ILyricsSource for FixedSource {
 /// Navidrome's own answer for a library song that has line lyrics of its own.
 const LIBRARY_LYRICS_JSON: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","lyricsList":{"structuredLyrics":[{"displayArtist":"Some Artist","displayTitle":"Library Song","lang":"xxx","line":[{"start":0,"value":"navidrome's own"}],"synced":true}]}}}"#;
 
-/// `LyricsChoiceTests.FakeNavidrome`: accepts the token `good`, knows one library song `lib1`.
+/// A stand-in Navidrome: accepts the token `good`, knows one library song `lib1`.
 #[derive(Clone, Default)]
 struct FakeNavidrome {
     pings: Arc<AtomicUsize>,
@@ -263,8 +264,7 @@ impl Respond for FakeNavidrome {
     }
 }
 
-/// `LyricsChoiceTests.Factory`: the app over the fake Navidrome, with these sources and a fresh
-/// pin store.
+/// The app over the fake Navidrome, with these sources and a fresh pin store.
 struct Factory {
     _server: MockServer,
     navidrome: FakeNavidrome,
@@ -362,7 +362,7 @@ fn sources(list: &[Arc<dyn ILyricsSource>]) -> Vec<Arc<dyn ILyricsSource>> {
     list.to_vec()
 }
 
-/// `LyricsChoiceTests.Auth`: the Octo app's client name by default.
+/// Credentials sent with the Octo app's client name.
 fn octo_auth(user: &str, token: &str) -> String {
     auth(user, token, "Octo")
 }
@@ -378,9 +378,9 @@ fn first_line(response: &Value) -> String {
         .to_string()
 }
 
-// ---- LyricsTests: getLyricsBySongId -------------------------------------------------------
+// ---- getLyricsBySongId --------------------------------------------------------------------
 
-/// `LyricsTests.LyricsWebFactory`: Navidrome unreachable, one LRCLIB stand-in.
+/// The app with Navidrome unreachable and one LRCLIB stand-in.
 async fn lyrics_web_factory(fetch: bool, answer: LyricsLookup) -> Factory {
     Factory::new(
         fetch,
@@ -464,7 +464,7 @@ async fn get_lyrics_by_song_id_external_song_fetch_off_is_an_empty_list() {
     );
 }
 
-// ---- LyricsChoiceTests: getLyricsCandidates / setLyricsChoice -----------------------------
+// ---- getLyricsCandidates / setLyricsChoice ------------------------------------------------
 
 #[tokio::test]
 async fn candidates_list_every_entry_the_same_song_first_with_a_preview() {

@@ -1,4 +1,4 @@
-//! `ImportEndpointTests.cs`: the import page's endpoints. The dashboard's need its sign-in, the
+//! The import page's endpoints. The dashboard's need its sign-in, the
 //! apps' check the caller with Navidrome, both answer in the shapes the page and the apps read,
 //! and Spotify's return to Octo's own address finishes a sign-in without one.
 
@@ -345,10 +345,10 @@ async fn the_apps_are_told_imports_are_here() {
     assert!(names.contains(&"octoImports"), "{names:?}");
 }
 
-// ---- The C# binder's answers the parity corpus checks -----------------------------------------
+// ---- The binder's recorded answers ------------------------------------------------------------
 
 #[tokio::test]
-async fn a_member_of_the_wrong_type_is_refused_as_system_text_json_put_it() {
+async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
     let rig = rig("").await;
     let token = rig.sign_in("alice");
     let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];

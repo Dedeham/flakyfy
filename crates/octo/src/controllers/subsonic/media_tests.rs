@@ -1,5 +1,5 @@
-//! `stream` and `getCoverArt` through the app: `ExternalPlaybackTests`, `OutsideSongSignInTests`,
-//! `CleanCoverClientTests` and `GeneratedPlaylistControllerTests.GetCoverArt_ForAMix_IsAnImage`.
+//! `stream` and `getCoverArt` through the app: outside playback, the sign-in check in front of
+//! outside songs, plain covers for the Octo app, and a mix's cover.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,7 +47,7 @@ fn playback_settings(url: &str, wait_for_lossless: bool, download_on_play: bool)
     settings
 }
 
-// ---- ExternalPlaybackTests ---------------------------------------------------------------
+// ---- Outside playback --------------------------------------------------------------------
 
 #[tokio::test]
 async fn external_playback_uses_you_tube_regardless_of_legacy_storage_mode() {
@@ -161,8 +161,8 @@ async fn streaming_an_outside_song_queues_its_download_only_from_the_first_byte(
         .await;
 
         assert_eq!(response.status, StatusCode::OK, "{range:?}");
-        // The play is queued behind a look at slskd's login (the C# awaited it too, unawaited
-        // by the request), so give it a moment.
+        // The play is queued behind a look at slskd's login, which the request does not wait
+        // for, so give it a moment.
         for _ in 0..100 {
             if state.track_acquisition_queue.waiting_plays() == waiting && waiting > 0 {
                 break;
@@ -191,7 +191,7 @@ fn only_a_request_from_the_first_byte_is_a_play() {
     }
 }
 
-// ---- OutsideSongSignInTests --------------------------------------------------------------
+// ---- The sign-in check in front of outside songs -----------------------------------------
 
 /// Navidrome as these calls need it: a ping that accepts the token "good" or the API key
 /// "bob-key", tokenInfo for that key, and a library stream.
@@ -425,7 +425,7 @@ async fn star_from_an_api_key_is_filed_under_the_keys_owner() {
     assert_eq!(fixture.state.acquisition_tracker.for_user("bob").len(), 1);
 }
 
-// ---- CleanCoverClientTests ---------------------------------------------------------------
+// ---- Plain covers for the Octo app -------------------------------------------------------
 
 fn parameters(pairs: &[(&str, &str)]) -> octo_subsonic::Parameters {
     pairs
@@ -458,9 +458,9 @@ fn a_request_without_a_client_name_keeps_the_badge() {
     assert!(!draws_its_own_marks_in(&parameters(&[("id", "abc")])));
 }
 
-// ---- GeneratedPlaylistControllerTests: getCoverArt ----------------------------------------
+// ---- getCoverArt -------------------------------------------------------------------------
 
-/// The C# `LibraryNavidrome`: a library with 40 Rock songs, and a cover for each.
+/// A library with 40 Rock songs, and a cover for each.
 struct LibraryNavidrome;
 
 fn library_ok(inner: &str) -> String {
@@ -532,7 +532,7 @@ async fn get_cover_art_for_a_mix_is_an_image() {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    // getPlaylists lists the mixes (6-A1's route); the service is what it asks.
+    // getPlaylists lists the mixes; the service is what it asks.
     let mixes = state.generated_playlists.list("alice", &auth).await;
     let mix = mixes
         .iter()
@@ -558,10 +558,9 @@ async fn get_cover_art_for_a_mix_is_an_image() {
     assert!(image::load_from_memory(&cover.body).is_ok(), "a picture");
 }
 
-/// Rust-only: the local relay, the octo-radio and placeholder answers, and a missing id, as
-/// endpoints.md §3.4 lists them.
+/// The local relay, the octo-radio and placeholder answers, and a missing id.
 #[tokio::test]
-async fn get_cover_art_answers_each_kind_of_id_as_the_csharp_did() {
+async fn get_cover_art_answers_each_kind_of_id() {
     let navidrome = MockServer::start().await;
     Mock::given(wiremock::matchers::path("/rest/getCoverArt"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(vec![1, 2, 3], "image/png"))
@@ -599,8 +598,8 @@ async fn get_cover_art_answers_each_kind_of_id_as_the_csharp_did() {
     assert_eq!(unreachable.header("content-type"), Some("image/jpeg"));
 }
 
-/// Rust-only: a local file served for an outside id under WaitForLosslessOnPlay honors one
-/// byte range as ASP.NET's range processing did, and types the file by its extension.
+/// A local file served for an outside id under WaitForLosslessOnPlay honors one byte range,
+/// and types the file by its extension.
 #[tokio::test]
 async fn a_lossless_copy_on_disk_is_served_with_ranges() {
     let navidrome = ping_ok().await;

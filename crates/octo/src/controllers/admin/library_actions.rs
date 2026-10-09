@@ -1,4 +1,4 @@
-//! `AdminController`'s library actions, questions and checks (L1137-L1250, L1433): the action
+//! The library actions, questions and checks: the action
 //! history and its Allow downloading again, the notices, the duplicate scan, the library Review
 //! sweep, the weekly upgrade's status and the song path resolver.
 //!
@@ -42,12 +42,12 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/library/resolve", get(resolve_library_song))
 }
 
-/// `Accepted(new { ... })`.
+/// A 202 Accepted with this body.
 fn accepted(body: &Value) -> Response {
     status(StatusCode::ACCEPTED, body)
 }
 
-/// `PathSource.ToString()`.
+/// The name a path source is written with.
 pub fn path_source_name(source: PathSource) -> &'static str {
     match source {
         PathSource::NativeApi => "NativeApi",
@@ -57,7 +57,7 @@ pub fn path_source_name(source: PathSource) -> &'static str {
     }
 }
 
-/// `Path.Combine(root, relative)`: a rooted second part replaces the first.
+/// `relative` joined under `root`; a rooted `relative` (or an empty `root`) is taken as is.
 fn path_combine(root: &str, relative: &str) -> String {
     if relative.starts_with('/') || root.is_empty() {
         return relative.to_string();
@@ -112,7 +112,7 @@ async fn get_library_actions(State(state): State<AppState>, request: Request) ->
     })))
 }
 
-/// `AllowDownloadRequest(string? Key)`.
+/// The allow-download body: an optional `key`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AllowDownloadRequest {
@@ -271,7 +271,7 @@ async fn get_quality_upgrade(State(state): State<AppState>) -> Response {
 /// Ask what file a Navidrome song id resolves to, and say which leg answered.
 ///
 /// Read-only, and deliberately shipped before anything that acts on the answer: Navidrome's
-/// Subsonic `path` is synthesised from tags unless a player opts in, so on some libraries it
+/// Subsonic `path` is synthesized from tags unless a player opts in, so on some libraries it
 /// names a file that exists and is a different recording. This is how that gets checked against
 /// a real library before any of it is load-bearing.
 ///

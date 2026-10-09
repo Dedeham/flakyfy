@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/StreamLengthTests.cs` (G1 S, `67f3c93`, and the file name of `0a700c0`).
-//!
 //! A live Navidrome transcode announces an estimated Content-Length (estimateContentLength=true,
 //! which the Octo app sends on mobile data) and then sends a few percent less. Octo used to
 //! promise the client that estimate, so the copy failed after the last real byte and the
@@ -167,8 +165,7 @@ const TRANSCODE: &str = "format=mp3&maxBitRate=192&estimateContentLength=true";
 async fn fetch(navidrome: &SocketNavidrome, url: &str, range: Option<&str>) -> Reply {
     let state = state_with(settings(&navidrome.url), |_| {});
     let headers: Vec<(&str, &str)> = range.map(|r| ("Range", r)).into_iter().collect();
-    // `send` reads the body to its end; a body that fails to read fails the test there, as
-    // the C# factory's failure log did.
+    // `send` reads the body to its end; a body that fails to read fails the test there.
     send(&app(&state), Method::GET, url, &headers, Body::empty()).await
 }
 
@@ -225,7 +222,7 @@ async fn download_of_a_transcode_with_an_estimated_length_arrives_whole() {
     assert_eq!(response.status, StatusCode::OK);
     assert_eq!(response.media_type().as_deref(), Some("audio/mpeg"));
     assert_eq!(response.body.as_ref(), song().as_slice());
-    // The file keeps the name Navidrome gave it, not a nameless download (0a700c0).
+    // The file keeps the name Navidrome gave it, not a nameless download.
     assert_eq!(
         response.header("content-disposition"),
         Some("attachment; filename=\"Daft Punk - Digital Love.mp3\"")

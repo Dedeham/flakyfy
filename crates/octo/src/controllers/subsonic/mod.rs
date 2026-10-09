@@ -1,7 +1,6 @@
-//! Port of `Controllers/SubSonicController.cs`: the Subsonic API Octo answers itself
-//! (endpoints.md §3), split by area. Every action is registered at `rest/{name}` and
-//! `rest/{name}.view` for GET and POST; any other method, and every path no action claims,
-//! reaches the catch-all (`http::catch_all`, the controller's `GenericEndpoint`).
+//! The Subsonic API Octo answers itself, split by area. Every action is registered at
+//! `rest/{name}` and `rest/{name}.view` for GET and POST; any other method, and every path no
+//! action claims, reaches the catch-all (`http::catch_all`).
 pub mod action_helpers;
 pub mod info;
 pub mod internet_radio;

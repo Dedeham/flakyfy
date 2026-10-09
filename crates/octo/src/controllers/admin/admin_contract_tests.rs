@@ -1,8 +1,7 @@
-//! `AdminContractTests.cs`: the admin API's contract with the dashboard and with the Raw
-//! config editor, for the routes of task 6-B1, plus the shapes and refusals of the other
-//! 6-B1 routes as the C# baseline recorded them.
+//! The admin API's contract with the dashboard and with the Raw config editor, plus the
+//! recorded shapes and refusals of the other settings, browse, Last.fm and status routes.
 //!
-//! Two of these guard against a drift that bit the C# four times: GET settings pre-fills the
+//! Two of these guard against a drift that has bitten four times: GET settings pre-fills the
 //! forms and GET raw-config is what the Raw editor writes back WHOLESALE, so a setting missing
 //! from either is a setting the next save silently blanks or deletes. Checking every settings
 //! property (here: every field the settings structs serialize) makes the next one fail here.
@@ -18,7 +17,7 @@ use super::test_app::{Reply, admin_write, app, get, send};
 use crate::app::AppState;
 use crate::http::pipeline::App;
 
-/// The C# `AdminWebFactory`: Navidrome on a closed port, a synthetic admin password.
+/// The test app's settings: Navidrome on a closed port, a synthetic admin password.
 fn factory_settings() -> AppSettings {
     AppSettings {
         subsonic: SubsonicSettings {
@@ -47,7 +46,7 @@ fn factory_at(url: &str) -> (AppState, App) {
 }
 
 /// The settings sections and the property names each class carries, from the settings structs
-/// themselves (their serde names are the C# property names).
+/// themselves (their serde names are the property names settings.json uses).
 fn settable_properties() -> Vec<(String, Vec<String>)> {
     let value = serde_json::to_value(AppSettings::default()).expect("settings serialise");
     value
@@ -68,7 +67,7 @@ fn settable_properties() -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// The sections the C# test's `Sections` table left out: who may use the dashboard is not a
+/// The sections left out: who may use the dashboard is not a
 /// dashboard setting (it is set in .env and needs a restart), and neither GET lists it.
 const NOT_LISTED: [&str; 1] = ["Admin"];
 
@@ -160,7 +159,7 @@ async fn admin_write_without_the_header_is_refused() {
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
 }
 
-/// The C# test read `genre/presets` (6-B2's); any admin read shows the same.
+/// Any admin read shows the same.
 #[tokio::test]
 async fn admin_read_from_another_origin_carries_no_cors_headers() {
     let (_, app) = factory();
@@ -253,7 +252,7 @@ async fn tag_preview_neither_a_path_nor_a_name_is_refused() {
     );
 }
 
-// ---- Rust-only: the recorded answers of the other 6-B1 routes --------------------------------
+// ---- The recorded answers of the other routes ------------------------------------------------
 
 #[tokio::test]
 async fn tag_preview_without_a_session_is_401_and_an_empty_body_is_a_validation_problem() {
@@ -533,7 +532,7 @@ async fn settings_post_refusals_read_as_recorded() {
         assert_eq!(reply.text(), expected, "{body}");
     }
 
-    // A value of the wrong kind threw out of the validator: the global handler's 400.
+    // A value of the wrong kind is refused before validation, with the generic 400 answer.
     let reply = admin_write(
         &app,
         Method::POST,
@@ -641,7 +640,7 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     let body = get(&app, "/api/admin/config-sources").await.json();
     let rows = body["keys"].as_array().expect("rows");
     let row = |key: &str| rows.iter().find(|r| r["Key"] == key).cloned().expect(key);
-    // A port fix: one mask for every secret, so the page never tells how long one is.
+    // One mask for every secret, so the page never tells how long one is.
     assert_eq!(row("Soulseek:Password")["Value"], "\u{2022}".repeat(8));
     assert_eq!(row("Soulseek:Password")["IsSecret"], true);
     assert_eq!(row("Lidarr:ApiKey")["Value"], "\u{2022}".repeat(8));
@@ -649,14 +648,14 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan).
+    // Every settings key, GeneratedPlaylists:Charts and :ChartCountry included.
     assert_eq!(rows.len(), 179);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 
 #[tokio::test]
 async fn last_fm_and_listen_brainz_reads_have_the_recorded_shapes() {
-    // The parity stack's radio switches (compose turns them off).
+    // The recorded stack's radio switches (compose turns them off).
     let mut settings = factory_settings();
     settings.last_fm.enable_radio = false;
     settings.last_fm.enable_personalized_stations = false;

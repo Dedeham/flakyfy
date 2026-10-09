@@ -1,6 +1,6 @@
-//! `RadioBanEndpointTests`: a one-star rating keeps a song off the listener's radio, for a library
-//! song and for one Octo found online, and only for a caller Navidrome accepts. Plus
-//! `RadioProvenanceTests`' builder half: radio songs say which source suggested them.
+//! A one-star rating keeps a song off the listener's radio, for a library song and for one Octo
+//! found online, and only for a caller Navidrome accepts. Also, in the built response, radio
+//! songs say which source suggested them.
 
 use octo_core::last_fm::last_fm_radio_seed_normalizer::track_key;
 use octo_core::models::domain::Song;
@@ -54,7 +54,6 @@ fn online_song(state: &crate::app::AppState) -> String {
     })
 }
 
-// RadioBanEndpointTests.OneStarOnALibrarySong_KeepsItOffTheRadioAndAnotherRatingLiftsIt
 #[tokio::test]
 async fn one_star_on_a_library_song_keeps_it_off_the_radio_and_another_rating_lifts_it() {
     let server = navidrome(true).await;
@@ -69,7 +68,6 @@ async fn one_star_on_a_library_song_keeps_it_off_the_radio_and_another_rating_li
     assert!(!state.last_fm_radio_state.radio_ban_keys("alice").contains(&key));
 }
 
-// RadioBanEndpointTests.OneStarOnASongFoundOnline_CountsOnceNavidromeAcceptsTheCaller
 #[tokio::test]
 async fn one_star_on_a_song_found_online_counts_once_navidrome_accepts_the_caller() {
     let server = navidrome(true).await;
@@ -84,7 +82,6 @@ async fn one_star_on_a_song_found_online_counts_once_navidrome_accepts_the_calle
     );
 }
 
-// RadioBanEndpointTests.OneStarOnASongFoundOnline_FromACallerNavidromeRefuses_ChangesNothing
 #[tokio::test]
 async fn one_star_on_a_song_found_online_from_a_caller_navidrome_refuses_changes_nothing() {
     let server = navidrome(false).await;
@@ -94,7 +91,6 @@ async fn one_star_on_a_song_found_online_from_a_caller_navidrome_refuses_changes
     assert!(state.last_fm_radio_state.radio_ban_keys("alice").is_empty());
 }
 
-// RadioProvenanceTests.TheSource_GoesOutInJsonAndXml_AndOnlyWhenThereIsOne
 #[test]
 fn the_source_goes_out_in_json_and_xml_and_only_when_there_is_one() {
     use octo_subsonic::subsonic_response_builder::SUBSONIC_NAMESPACE;
@@ -133,7 +129,6 @@ fn the_source_goes_out_in_json_and_xml_and_only_when_there_is_one() {
     );
 }
 
-// RadioProvenanceTests.DisplayNames_AndBack
 #[test]
 fn display_names_and_back() {
     use octo_core::radio::radio_provider::*;

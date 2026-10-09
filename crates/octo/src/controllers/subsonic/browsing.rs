@@ -1,7 +1,5 @@
-//! `getSong`, `getArtist` and `getAlbum` (`SubsonicController.GetSong` L1655, `GetArtist`
-//! L1691, `GetAlbum` L1837; endpoints.md §3.2): an outside id is answered from the catalog, a
-//! library artist or album is Navidrome's merged with what the catalog has that the library
-//! lacks.
+//! `getSong`, `getArtist` and `getAlbum`: an outside id is answered from the catalog, a library
+//! artist or album is Navidrome's merged with what the catalog has that the library lacks.
 
 use std::collections::HashSet;
 
@@ -123,7 +121,7 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
     }
 
     // Merged from Navidrome's JSON whatever the client asked for, then answered in the
-    // client's format: see CreateMergedResponse.
+    // client's format: see `create_merged_response`.
     let Some(navidrome) = call
         .proxy
         .relay_safe("rest/getArtist", &as_json(&call.parameters))
@@ -273,10 +271,6 @@ pub async fn get_album(State(state): State<AppState>, req: Request) -> AppResult
         // Get playlist tracks
         let tracks = metadata.get_playlist_tracks(&provider, &external_id).await;
 
-        // The C# added every track to PlaylistSyncService's playlist cache here, so a played
-        // track would be known to belong to this playlist. That service was never registered
-        // (its constructor argument was always null), so nothing was ever added.
-
         // Convert to album response (playlist as album)
         return Ok(builder
             .create_playlist_as_album_response(&format, &playlist, &tracks)
@@ -310,7 +304,7 @@ pub async fn get_album(State(state): State<AppState>, req: Request) -> AppResult
     }
 
     // Merged from Navidrome's JSON whatever the client asked for, then answered in the
-    // client's format: see CreateMergedResponse.
+    // client's format: see `create_merged_response`.
     let Some(navidrome) = call
         .proxy
         .relay_safe("rest/getAlbum", &as_json(&call.parameters))
@@ -460,15 +454,13 @@ async fn relay_as_asked(
     }
 }
 
-/// `JsonDocument.Parse`: malformed JSON threw a `JsonException`, which the global handler
-/// answered as an internal error.
+/// The body as JSON: malformed JSON is an internal error.
 fn parse_json(body: &[u8]) -> Result<Value, AppError> {
     serde_json::from_slice(body)
         .map_err(|e| AppError::Internal(anyhow::Error::new(e).context("Navidrome's answer is not JSON")))
 }
 
-/// `TryGetProperty` on an element that may be absent: on anything but an object it threw an
-/// `InvalidOperationException`.
+/// A member of an element that may be absent: an error on anything but an object.
 fn property<'a>(element: Option<&'a Value>, name: &str) -> Result<Option<&'a Value>, AppError> {
     match element {
         None => Ok(None),
@@ -479,8 +471,7 @@ fn property<'a>(element: Option<&'a Value>, name: &str) -> Result<Option<&'a Val
     }
 }
 
-/// `TryGetProperty(name, out var p) ? p.GetString() ?? "" : ""`: GetString on anything but a
-/// string or a null threw.
+/// A string member, "" when it is missing or null: an error on anything but a string or a null.
 fn string_property(element: &Value, name: &str) -> Result<String, AppError> {
     match property(Some(element), name)? {
         None | Some(Value::Null) => Ok(String::new()),
@@ -491,15 +482,14 @@ fn string_property(element: &Value, name: &str) -> Result<String, AppError> {
     }
 }
 
-/// `EnumerateArray`, which threw on anything but an array.
+/// The items of an array: an error on anything but an array.
 fn enumerate_array(element: &Value) -> Result<&Vec<Value>, AppError> {
     element.as_array().ok_or_else(|| {
         AppError::InvalidOperation("The requested operation requires an element of type 'Array'.".into())
     })
 }
 
-/// `ConvertSubsonicJsonElement(element, true)`, whose `EnumerateObject` threw on anything but
-/// an object.
+/// The converted element: an error on anything but an object.
 fn convert_element(state: &AppState, element: &Value) -> Result<Value, AppError> {
     state
         .subsonic_response_builder
@@ -509,8 +499,8 @@ fn convert_element(state: &AppState, element: &Value) -> Result<Value, AppError>
         })
 }
 
-/// `object?.ToString()` for a converted value: a string as it is, a number as .NET writes it,
-/// a bool as `True`/`False`, a null as nothing.
+/// The text form of a converted value: a string as it is, a number in its shortest form, a
+/// bool as `True`/`False`, a null as nothing.
 fn to_text(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
@@ -526,8 +516,8 @@ fn to_text(value: &Value) -> Option<String> {
     }
 }
 
-/// `Convert.ToInt32(object)` over a converted JSON value: null is 0, a double is rounded to
-/// even, a string is parsed, and anything that cannot be converted threw.
+/// A converted JSON value as an `i32`: null is 0, a double is rounded to even, a string is
+/// parsed, and anything that cannot be converted is an error.
 fn convert_to_int32(value: &Value) -> Result<i32, AppError> {
     match value {
         Value::Null => Ok(0),

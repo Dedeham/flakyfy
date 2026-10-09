@@ -1,5 +1,5 @@
-//! What the admin endpoint tests share: the assembled application over a test state (the
-//! `WebApplicationFactory` of the C# tests), and a small client for it.
+//! What the admin endpoint tests share: the assembled application over a test state, and a
+//! small client for it.
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};

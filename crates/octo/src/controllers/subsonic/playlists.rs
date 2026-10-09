@@ -1,5 +1,5 @@
-//! `getPlaylists` (L357), `getPlaylist` (L426), and the playlist and internet radio
-//! mutations (L688, L710), which refuse Octo's own read-only ids.
+//! `getPlaylists`, `getPlaylist`, and the playlist and internet radio mutations, which refuse
+//! Octo's own read-only ids.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -114,8 +114,8 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     }
 }
 
-/// A chart list as a playlist row (C#'s `PopularPlaylistFields`): the keys a mix has, read-only,
-/// with its own comment and its real song count.
+/// A chart list as a playlist row: the keys a mix has, read-only, with its own comment and its real
+/// song count.
 pub(crate) fn chart_playlist_fields(
     builder: &octo_subsonic::SubsonicResponseBuilder,
     list: &GeneratedPlaylist,
@@ -142,7 +142,7 @@ fn field_attributes(fields: &serde_json::Map<String, Value>) -> Vec<(String, Str
 }
 
 /// The JSON merge: `subsonic-response.{container}.{row}` made an array if it was not one, and
-/// the rows appended. None when the body is not the object it should be (C# threw).
+/// the rows appended. None when the body is not the object it should be.
 pub(super) fn merge_json(
     body: &[u8],
     container: &str,
@@ -193,8 +193,7 @@ pub(super) fn merge_xml(
     Some(root.to_xml_string().into_bytes())
 }
 
-/// A serialized value as `JsonSerializer.SerializeToNode` made it: doubles in .NET's shortest
-/// form.
+/// A serialized value as a node: doubles in their shortest form.
 pub(super) fn to_node(value: &Value) -> Node {
     match value {
         Value::Null => Node::Null,
@@ -235,7 +234,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .create_error(format, 40, "Wrong username or password")
                 .into_response();
         }
-        // The C# let a failure here escape to the global handler.
+        // A failure here answers 500.
         let entries = match state
             .generated_playlists
             .materialize(&username, &mix, &call.parameters, &aborted.token)
@@ -250,7 +249,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
             .into_response();
     }
 
-    // A chart list (C#'s `PopularPlaylistAsync`), with the same ping first.
+    // A chart list, with the same ping first.
     if let Some(chart) = state.chart_playlists.which(&username, &id) {
         let mut auth_only = call.parameters.clone();
         auth_only.shift_remove("id");
@@ -430,8 +429,7 @@ async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, fa
             .create_error(format, 70, "Octo's generated playlists are read-only")
             .into_response();
     }
-    // `Request.Path.Value?.Split('/').LastOrDefault()?.Replace(".view", "")`: the path always
-    // has a last segment, so the C#'s fallback name was never used.
+    // The endpoint is the path's last segment, without `.view`.
     let path = call.path();
     let endpoint = path.split('/').next_back().unwrap_or("").replace(".view", "");
     match call

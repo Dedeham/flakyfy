@@ -1,8 +1,7 @@
-//! The 6-B2 admin endpoints through the assembled pipeline (`oneshot`), as the C# tests drove
-//! them through `WebApplicationFactory`: `GenreBackfillEndpointTests`, the Better quality page's
-//! tests from `UpgradeQueueTests`, `DuplicateSettingsTests.ScanNow_*`, `UpdateEndpointTests`, the
-//! genre-preset case of `AdminContractTests`, and Rust-only checks of the parity facts
-//! (sessions, model binding, the lyrics `busy` collision).
+//! The library and job endpoints through the assembled pipeline (`oneshot`): the genre
+//! backfill, the Better quality page, the duplicate scan's Scan now, the update card, the genre
+//! presets, and the recorded facts about sessions, request binding and the lyrics `busy`
+//! collision.
 
 use std::sync::Arc;
 
@@ -75,11 +74,10 @@ async fn send(app: &App, request: Request<Body>) -> Reply {
     }
 }
 
-// ---- GenreBackfillEndpointTests ---------------------------------------------------------------
+// ---- The genre backfill -----------------------------------------------------------------------
 
-/// `EveryBackfillEndpoint_RequiresABrowseSession`. /api/admin has no authentication at all, so
-/// a button that rewrites every tag in a music library cannot be the second unauthenticated
-/// destructive surface. (The `tags/preview` row is 6-B1's endpoint.)
+/// A button that rewrites every tag in a music library cannot be an unauthenticated destructive
+/// surface, so every backfill endpoint needs a browse session.
 #[tokio::test]
 async fn every_backfill_endpoint_requires_a_browse_session() {
     let state = AppState::for_tests(AppSettings::default());
@@ -107,7 +105,7 @@ async fn every_backfill_endpoint_requires_a_browse_session() {
     }
 }
 
-/// `GenrePresets_IsReadableWithoutASession`: the preset is read-only and has no destructive
+/// The preset is read-only and has no destructive
 /// surface, so it stays open the way the rest of the settings API is.
 #[tokio::test]
 async fn genre_presets_is_readable_without_a_session() {
@@ -121,8 +119,8 @@ async fn genre_presets_is_readable_without_a_session() {
     assert!(reply.body.contains("Hip-Hop"));
 }
 
-/// `GenrePresets_ComeBackInTheShapeTheSettingsApiAccepts`: posted straight back to the settings
-/// API, so exact PascalCase keys and the match mode as its NAME.
+/// The presets are posted straight back to the settings API, so exact PascalCase keys and the
+/// match mode as its NAME.
 #[tokio::test]
 async fn genre_presets_come_back_in_the_shape_the_settings_api_accepts() {
     let state = AppState::for_tests(AppSettings::default());
@@ -136,13 +134,13 @@ async fn genre_presets_come_back_in_the_shape_the_settings_api_accepts() {
         assert!(first.get(key).is_some(), "{key} must be PascalCase");
     }
     assert_eq!(first["Match"], json!("Contains"));
-    // The parity baseline's first rule, byte for byte.
+    // The recorded first rule, byte for byte.
     assert!(reply.body.starts_with(
         r#"{"broad":[{"Id":"e7575dd6a3ed6042ec3f6649","Pattern":"trap latino","Genre":"Latin","Match":"Contains","Enabled":true},"#
     ));
 }
 
-/// `AdminContractTests.AdminRead_FromAnotherOrigin_CarriesNoCorsHeaders`.
+/// An admin read from another origin carries no CORS headers.
 #[tokio::test]
 async fn admin_read_from_another_origin_carries_no_cors_headers() {
     let state = AppState::for_tests(AppSettings::default());
@@ -156,9 +154,10 @@ async fn admin_read_from_another_origin_carries_no_cors_headers() {
     assert!(reply.header("access-control-allow-origin").is_none());
 }
 
-// ---- UpgradeQueueTests: the Better quality page's endpoints ----------------------------------
+// ---- The Better quality page's endpoints -----------------------------------------------------
 
-/// `WebFactory(allowed, dryRun)`: library actions on, Better quality on, Soulseek set up.
+/// The test state for `allowed` and `dryRun`: library actions on, Better quality on, Soulseek
+/// set up.
 fn page(allowed: bool, dry_run: bool) -> AppState {
     AppState::for_tests(AppSettings {
         library_actions: LibraryActionSettings {
@@ -235,7 +234,7 @@ async fn the_page_queues_only_for_a_signed_in_admin() {
     assert_eq!(doc["gate"]["allowed"], json!(true));
 }
 
-/// `RefreshingTheListIsNeverAValidationError` ("1" and "true").
+/// Refreshing the list is never a validation error ("1" and "true").
 #[tokio::test]
 async fn refreshing_the_list_is_never_a_validation_error() {
     let state = page(true, false);
@@ -253,7 +252,7 @@ async fn refreshing_the_list_is_never_a_validation_error() {
         )
         .await;
         // The test host has no Navidrome admin credential, so the answer is that plain reason,
-        // never ASP.NET's "the value is not valid" for the parameter itself.
+        // never a "the value is not valid" for the parameter itself.
         assert!(!reply.body.contains("errors"), "{refresh}: {}", reply.body);
         assert!(
             reply.body.contains("Navidrome admin credential"),
@@ -316,8 +315,8 @@ async fn a_write_from_another_site_is_refused_even_signed_in() {
     assert!(state.upgrade_queue.snapshot().is_empty());
 }
 
-/// Rust-only: every ask names a Navidrome id (implicit `[Required]` on `UpgradeAsk.NavidromeId`),
-/// checked before the session; cancel and clear answer counts.
+/// Every ask names a Navidrome id (`UpgradeAsk.NavidromeId` is required), checked before the
+/// session; cancel and clear answer counts.
 #[tokio::test]
 async fn an_ask_without_an_id_is_a_validation_error_and_cancel_and_clear_count() {
     let state = page(true, false);
@@ -373,7 +372,7 @@ async fn an_ask_without_an_id_is_a_validation_error_and_cancel_and_clear_count()
     );
 }
 
-// ---- DuplicateSettingsTests --------------------------------------------------------------------
+// ---- The duplicate scan ------------------------------------------------------------------------
 
 #[tokio::test]
 async fn scan_now_with_duplicates_off_says_what_to_turn_on() {
@@ -387,9 +386,9 @@ async fn scan_now_with_duplicates_off_says_what_to_turn_on() {
     assert!(reply.body.contains("Duplicates"));
 }
 
-// ---- UpdateEndpointTests ----------------------------------------------------------------------
+// ---- The update card --------------------------------------------------------------------------
 
-/// `ReleaseCheckTests.Releases`: GitHub's list, apps' and draft releases included.
+/// GitHub's release list, apps' and draft releases included.
 const RELEASES: &str = r####"
 [
   { "tag_name": "desktop-v1.3.2", "name": "Octo for Windows and Linux 1.3.2", "draft": false, "prerelease": false, "body": "app", "html_url": "https://github.com/winters27/octo/releases/tag/desktop-v1.3.2", "published_at": "2026-10-03T10:42:57Z" },
@@ -644,10 +643,9 @@ async fn a_failed_run_carries_the_end_of_the_log() {
     assert_eq!(log[39], json!("line 60"));
 }
 
-/// Rust-only: the card with checks off, byte for byte (`09-admin/update`: an `ObjectResult`, so
-/// `&` and `<` go out unescaped), and the refusal it gives an update. The commands and
-/// `reinstallCommand` are the bridge release's (Octo pulled, helper version 2), so this answer
-/// differs from C# 2026.10.05's on purpose (intentional diff `update-card-pulls-octo`).
+/// The card with checks off, byte for byte (`09-admin/update`: the relaxed encoder, so `&` and
+/// `<` go out unescaped), and the refusal it gives an update. The commands and
+/// `reinstallCommand` pull Octo and install helper version 2.
 #[tokio::test]
 async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     let mut settings = AppSettings::default();
@@ -679,10 +677,10 @@ async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     );
 }
 
-// ---- Sessions, binding and the parity facts (Rust-only) ----------------------------------------
+// ---- Sessions, request binding and the recorded answers ----------------------------------------
 
-/// `BrowseUser` re-issues the cookie on AdminController's endpoints; the cover-upgrade and lyrics
-/// controllers only `Validate`, so they never set it.
+/// `browse_user` re-issues the cookie on the settings and browse endpoints; the cover-upgrade and
+/// lyrics endpoints only check `signed`, so they never set it.
 #[tokio::test]
 async fn only_admin_controller_endpoints_renew_the_cookie() {
     let state = AppState::for_tests(AppSettings::default());
@@ -726,9 +724,9 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     assert_eq!(send(&app, stale).await.status, StatusCode::UNAUTHORIZED);
 }
 
-/// The idle runs as the parity baseline has them (`09-admin/genre-backfill`, `covers-upgrade`; the
-/// genre run says whether one is `pending` since ca47988),
-/// with the music path the configuration gives.
+/// The idle runs as the reference recording has them (`09-admin/genre-backfill`,
+/// `covers-upgrade`; the genre run also says whether one is `pending`), with the music path the
+/// configuration gives.
 #[tokio::test]
 async fn the_idle_runs_answer_the_baselines_shape() {
     let state = AppState::for_tests(AppSettings::default());
@@ -739,7 +737,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
         request(Method::GET, "/api/admin/genre/backfill", Some(&token), None),
     )
     .await;
-    // The handler-test state points Library:DownloadPath at a temp folder; the baseline's
+    // The handler-test state points Library:DownloadPath at a temp folder; the recorded
     // shape is the same with that path in place of "./downloads".
     let music_path = state
         .settings
@@ -765,7 +763,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     );
 }
 
-/// `LyricsPageStatusTests.LyricsStatus_WithRowsAndABusyCount_IsWritten`: the lyrics page's
+/// The lyrics page's
 /// status is written with the run's busy count beside `running` (it once could not be written
 /// at all, two members being `busy`), and only once signed in.
 #[tokio::test]
@@ -813,8 +811,7 @@ async fn the_lyrics_status_with_rows_and_a_busy_count_is_written() {
     assert!(!reply.body.contains("secret text"));
 }
 
-/// `LyricsPageStatusTests.CoverStatus_IsWritten`: the cover page's status, as the same kind of
-/// page.
+/// The cover page's status, as the same kind of page.
 #[tokio::test]
 async fn the_cover_status_is_written() {
     let state = AppState::for_tests(AppSettings::default());
@@ -828,19 +825,18 @@ async fn the_cover_status_is_written() {
     assert_eq!(reply.status, StatusCode::OK);
 }
 
-/// Model binding runs before the action: a missing required member, a bad bool and an empty
-/// body are `[ApiController]`'s 400s whether or not anyone is signed in; a body that is not
-/// JSON is a 415.
-/// Every `[FromBody]` endpoint refuses a body as System.Text.Json read it into that endpoint's
-/// own C# record: the path it had reached, its words, where the reader stood, and the
-/// parameter's own entry first (a nullable parameter has none).
+/// Request binding runs before the action: a missing required member, a bad bool and an empty
+/// body are 400s whether or not anyone is signed in; a body that is not JSON is a 415.
+/// Every endpoint with a JSON body refuses a body as read into that endpoint's own shape: the
+/// path it had reached, its words, where the reader stood, and the parameter's own entry first
+/// (an optional body has none).
 #[tokio::test]
 async fn a_body_that_cannot_be_read_is_refused_as_each_endpoint_record_read_it() {
     let state = AppState::for_tests(AppSettings::default());
     let app = app(&state);
     let depth = "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.";
     let cases: [(&str, &str, Option<&str>, &str, String); 6] = [
-        // The C# recording (17-covers-explicit/covers-start-bad-json).
+        // The reference recording (17-covers-explicit/covers-start-bad-json).
         (
             "/api/admin/covers/upgrade",
             "{\"scope\": ",
@@ -989,10 +985,10 @@ async fn binding_failures_come_before_the_session() {
     assert_eq!(send(&app, plain).await.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
-/// The refusals the parity baseline records for a signed-in admin with everything off.
+/// The refusals the reference recording has for a signed-in admin with everything off.
 #[tokio::test]
 async fn the_refusals_match_the_baseline() {
-    // The parity stack fetches lyrics; everything else is off.
+    // The recorded stack fetches lyrics; everything else is off.
     let mut settings = AppSettings::default();
     settings.metadata.fetch_lyrics = true;
     let state = AppState::for_tests(settings);

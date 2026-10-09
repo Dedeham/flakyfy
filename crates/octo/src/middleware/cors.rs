@@ -1,9 +1,9 @@
-//! `UseCors()` with Octo's default policy: `AllowAnyOrigin`, `AllowAnyMethod`,
-//! `AllowAnyHeader`, and the exposed headers `X-Content-Duration`, `X-Total-Count`,
-//! `X-Nd-Authorization`. Subsonic web players on any origin need it.
+//! CORS with Octo's default policy: any origin, any method, any header, and the exposed
+//! headers `X-Content-Duration`, `X-Total-Count`, `X-Nd-Authorization`. Subsonic web players on
+//! any origin need it.
 //!
-//! Reproduces what ASP.NET's CORS middleware put on the wire (endpoints.md §7), which
-//! tower-http's `CorsLayer` does not do byte for byte:
+//! The headers on the wire are exactly these, which tower-http's `CorsLayer` does not write
+//! byte for byte:
 //!
 //! - A request without `Origin` is left alone.
 //! - A preflight (`OPTIONS` with `Origin` and `Access-Control-Request-Method`) is answered here
@@ -24,7 +24,7 @@ use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-/// The exposed headers, as ASP.NET joined them.
+/// The exposed headers, comma-joined without spaces.
 pub const EXPOSED_HEADERS: &str = "X-Content-Duration,X-Total-Count,X-Nd-Authorization";
 
 pub async fn cors(req: Request, next: Next) -> Response {

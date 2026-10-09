@@ -20,8 +20,7 @@ use crate::http::error::json_relaxed_response;
 
 pub const HEADER_NAME: &str = "X-Octo-Admin";
 
-/// Whether a path is `/api/admin` or below it, as `PathString.StartsWithSegments` decides:
-/// case-insensitive, and only at a segment boundary.
+/// Whether a path is `/api/admin` or below it: case-insensitive, and only at a segment boundary.
 pub fn is_admin_path(path: &str) -> bool {
     let prefix = "/api/admin";
     path.len() >= prefix.len()
@@ -43,7 +42,7 @@ pub async fn admin_request_guard(req: Request, next: Next) -> Response {
         *r.status_mut() = StatusCode::NO_CONTENT;
         r
     } else if !req.headers().contains_key(HEADER_NAME) {
-        // WriteAsJsonAsync: the relaxed encoder, so the apostrophe goes out as is.
+        // The relaxed encoder, so the apostrophe goes out as is.
         json_relaxed_response(
             StatusCode::FORBIDDEN,
             &json!({

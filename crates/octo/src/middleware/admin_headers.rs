@@ -1,4 +1,4 @@
-//! `AdminSignInGate.UseAdminSecurityHeaders`: the dashboard may be framed only by Octo itself,
+//! The admin security headers: the dashboard may be framed only by Octo itself,
 //! nothing sniffs its answers into another type, no address leaks into a referrer, and admin
 //! answers (settings among them) are never kept by a browser or proxy cache unless the endpoint
 //! says otherwise (cover thumbnails do).
@@ -10,7 +10,7 @@ use axum::response::Response;
 
 use super::admin_guard::is_admin_path;
 
-/// Whether a path is `/admin` or below it, as `PathString.StartsWithSegments` decides.
+/// Whether a path is `/admin` or below it: case-insensitive, and only at a segment boundary.
 pub fn is_dashboard_path(path: &str) -> bool {
     let prefix = "/admin";
     path.len() >= prefix.len()

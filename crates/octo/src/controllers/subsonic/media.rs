@@ -1,5 +1,4 @@
-//! `stream`, `getCoverArt` and `getTranscodeDecision` (`SubsonicController.Stream` L1451,
-//! `GetCoverArt` L2012, `GetTranscodeDecision` L3156; endpoints.md §3.4).
+//! `stream`, `getCoverArt` and `getTranscodeDecision`.
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -124,10 +123,9 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
     }
 }
 
-/// The body of the C#'s try: queue the play, wait for a lossless copy when asked to, else
-/// the preview. An error here is the 500 `{"error":"Failed to stream: ..."}`. (A client that
-/// hangs up drops this future, which is what the C#'s `OperationCanceledException` catch
-/// answered with an empty result.)
+/// Queues the play, waits for a lossless copy when asked to, else serves the preview. An error
+/// here is the 500 `{"error":"Failed to stream: ..."}`. (A client that hangs up drops this
+/// future, and gets nothing.)
 async fn play_external(
     state: &AppState,
     call: &SubsonicCall,
@@ -311,8 +309,7 @@ async fn try_direct_stream(
     Ok(Some(response))
 }
 
-/// `File(File.OpenRead(path), GetContentType(path), enableRangeProcessing: true)`: the file
-/// with ASP.NET's single-range support, and no ETag or Last-Modified.
+/// The file, typed by its extension, with single-range support and no ETag or Last-Modified.
 async fn serve_file(call: &SubsonicCall, path: &str) -> Result<Response, AppError> {
     let content_type = content_type_for_file(path);
     let mut file = tokio::fs::File::open(path).await?;
@@ -764,12 +761,9 @@ async fn catalog_image(
         .flatten()
 }
 
-/// The songs whose covers color a mix's cover: the first of this period's draw, one per
-/// album cover, four at most, read from Navidrome as the listener. A period's first draw is
-/// made only for a caller Navidrome accepts, as opening the mix would.
-/// A chart list's cover pictures (C#'s `PopularCoverSeeds`): its first songs, one per album, four
-/// at most. An outside song's picture comes from the cover sources (a chart's own artwork first),
-/// a library song's from Navidrome, asked as the listener.
+/// A chart list's cover pictures: its first songs, one per album, four at most. An outside song's
+/// picture comes from the cover sources (a chart's own artwork first), a library song's from
+/// Navidrome, asked as the listener.
 fn chart_cover_seeds(
     state: &AppState,
     proxy: &crate::services::subsonic::SubsonicProxyService,
@@ -859,6 +853,9 @@ fn chart_cover_seeds(
     seeds
 }
 
+/// The songs whose covers color a mix's cover: the first of this period's draw, one per
+/// album cover, four at most, read from Navidrome as the listener. A period's first draw is
+/// made only for a caller Navidrome accepts, as opening the mix would.
 async fn mix_cover_seeds(
     state: &AppState,
     proxy: &crate::services::subsonic::SubsonicProxyService,
@@ -901,7 +898,7 @@ async fn mix_cover_seeds(
             if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, format)) {
                 return Vec::new();
             }
-            // Not cancelled with the cover: a draw that finishes late still serves the next request.
+            // Not canceled with the cover: a draw that finishes late still serves the next request.
             let service = Arc::clone(&state.generated_playlists);
             let (user, mix, parameters) = (username.to_string(), mix.clone(), parameters.clone());
             let draw = tokio::spawn(async move {

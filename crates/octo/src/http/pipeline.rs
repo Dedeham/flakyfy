@@ -1,10 +1,10 @@
-//! The assembled application: every route, the catch-all and the middleware, in the order
-//! `Program.cs` built them (see `crate::middleware` for the order and why).
+//! The assembled application: every route, the catch-all and the middleware (see
+//! `crate::middleware` for the order and why).
 //!
-//! # Registering routes (the pattern every porter follows)
+//! # Registering routes
 //!
-//! Each feature module exposes `pub fn routes() -> RouteSet` with its templates, written as the
-//! C# templates were (axum syntax, the C# casing; matching ignores case and a trailing slash):
+//! Each feature module exposes `pub fn routes() -> RouteSet` with its templates, in axum
+//! syntax and the casing the apps use (matching ignores case and a trailing slash):
 //!
 //! ```ignore
 //! pub fn routes() -> RouteSet {
@@ -40,7 +40,7 @@ use crate::middleware::{
 /// The whole application as one service, for `axum::serve` and for tests (`oneshot`).
 pub type App = BoxCloneSyncService<Request, Response, Infallible>;
 
-/// Every route Octo answers itself. Add each ported controller's `routes()` here.
+/// Every route Octo answers itself. Add each controller's `routes()` here.
 pub fn app_routes(assets: &StaticAssets) -> RouteSet {
     RouteSet::new()
         .merge(assets.routes())
@@ -79,7 +79,7 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
         .layer(from_fn(cors::cors))
         .layer(from_fn(exception::catch_panic))
         .map_request(move |mut req: Request| {
-            // `Request.Path` as the client spelled it, which a few actions read (the relay
+            // The path as the client spelled it, which a few actions read (the relay
             // target of getSimilarSongs and the playlist mutations keeps the client's casing).
             // axum's router keeps an `OriginalUri` it finds rather than adding its own.
             let original = axum::extract::OriginalUri(req.uri().clone());
@@ -88,7 +88,7 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
             req
         })
         // axum adds `Allow` to whatever a route's method fallback answers; that fallback is
-        // the catch-all, which Kestrel reached with no such header (no Octo answer has one).
+        // the catch-all, which answers with no such header (no Octo answer has one).
         .map_response(|mut res: Response| {
             res.headers_mut().remove(axum::http::header::ALLOW);
             res

@@ -1,4 +1,4 @@
-//! `ping` (L207) and `getRandomSongs` (L242).
+//! `ping` and `getRandomSongs`.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -60,8 +60,6 @@ pub async fn ping(State(state): State<AppState>, req: Request) -> Response {
 // ---------------------------------------------------------------------
 // getRandomSongs: pure shuffle. Pass straight through to Navidrome.
 // The actual "radio from this song" feature is getSimilarSongs2.
-// (The C#'s old getRandomSongs hijack, `GetRandomSongs_DISABLED_HIJACK`, was dead code and is
-// not ported.)
 // ---------------------------------------------------------------------
 pub async fn get_random_songs(State(state): State<AppState>, req: Request) -> Result<Response, AppError> {
     let call = match SubsonicCall::read(&state, req).await {

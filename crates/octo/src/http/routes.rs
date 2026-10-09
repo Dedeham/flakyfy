@@ -1,6 +1,6 @@
-//! Route registration with ASP.NET Core's matching rules.
+//! Route registration with Octo's matching rules.
 //!
-//! Octo's controllers relied on three things axum does differently:
+//! Octo's routes rely on three things axum does differently:
 //!
 //! - literal segments match ignoring case (`/REST/Ping.VIEW` reaches `ping`) and a trailing
 //!   slash is ignored;
@@ -19,11 +19,11 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 
-/// A set of routes being built, with the templates kept for path canonicalisation.
+/// A set of routes being built, with the templates kept for path canonicalization.
 ///
-/// HEAD: axum answers HEAD with a route's GET handler, while an ASP.NET `[HttpGet]` action did
-/// not match HEAD at all, so `HEAD /api/admin/settings` reached the catch-all. [`RouteSet::route`]
-/// therefore sends HEAD to the catch-all; the few endpoints that did answer HEAD (static files,
+/// HEAD: axum answers HEAD with a route's GET handler, while a GET route of Octo's does not
+/// match HEAD at all, so `HEAD /api/admin/settings` reaches the catch-all. [`RouteSet::route`]
+/// therefore sends HEAD to the catch-all; the few endpoints that do answer HEAD (static files,
 /// `radio/stream/{token}`) register with [`RouteSet::route_with_head`]. Don't put a `.head(..)`
 /// on a router given to `route`: the catch-all's HEAD would overlap it (a panic at startup).
 pub struct RouteSet {
@@ -42,7 +42,7 @@ impl RouteSet {
     }
 
     /// One template (axum syntax: `/api/admin/genre/{id}`) and the methods it answers. HEAD
-    /// goes to the catch-all even when a GET handler is given, as with `[HttpGet]`.
+    /// goes to the catch-all even when a GET handler is given.
     pub fn route(mut self, template: &str, methods: MethodRouter<AppState>) -> Self {
         self.routes.push((template.to_string(), methods, false));
         self
@@ -55,8 +55,7 @@ impl RouteSet {
         self
     }
 
-    /// A Subsonic endpoint, at both `rest/{name}` and `rest/{name}.view`, as every
-    /// SubsonicController action was declared.
+    /// A Subsonic endpoint, at both `rest/{name}` and `rest/{name}.view`.
     pub fn subsonic(self, name: &str, methods: MethodRouter<AppState>) -> Self {
         self.route(&format!("/rest/{name}"), methods.clone())
             .route(&format!("/rest/{name}.view"), methods)
@@ -167,7 +166,7 @@ impl PathCanon {
     /// reaches the catch-all as sent).
     pub fn canonical(&self, path: &str) -> Option<String> {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        // Templates with only literals win over ones with parameters, as ASP.NET orders them.
+        // Templates with only literals win over ones with parameters.
         let literal_first = self
             .templates
             .iter()

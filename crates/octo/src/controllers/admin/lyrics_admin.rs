@@ -1,8 +1,8 @@
-//! Port of `Controllers/LyricsAdminController.cs`: the dashboard's lyrics tools. "Find lyrics for
-//! the library", its review list, and a picker that chooses, hides or resets one song's lyrics
-//! for every client, the same pins the Octo app sets through setLyricsChoice. Everything here
-//! names files or changes what every listener sees, so all of it needs a Navidrome admin
-//! sign-in, as the genre backfill does (`Validate`, which does not re-issue the cookie).
+//! The dashboard's lyrics tools. "Find lyrics for the library", its review list, and a picker
+//! that chooses, hides or resets one song's lyrics for every client, the same pins the Octo app
+//! sets through setLyricsChoice. Everything here names files or changes what every listener
+//! sees, so all of it needs a Navidrome admin sign-in, as the genre backfill does (`signed`,
+//! which does not re-issue the cookie).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -78,8 +78,7 @@ fn status_name(status: octo_core::lyrics::LyricsLibraryStatus) -> &'static str {
     }
 }
 
-/// `CancellationTokenSource.CancelAfter(budget)`: a token that cancels itself, and stops its
-/// timer when dropped.
+/// A token that cancels itself once its time is up, and stops its timer when dropped.
 struct Budget {
     token: CancellationToken,
     timer: tokio::task::JoinHandle<()>,
@@ -127,7 +126,7 @@ async fn get_library_run(State(state): State<AppState>, request: Request) -> Res
         })
         .collect();
     let mut review = run.review.clone();
-    // OrderByDescending(entry => entry.AtUtc): stable.
+    // Newest first; the sort is stable, so equal times keep their order.
     review.sort_by_key(|entry| std::cmp::Reverse(entry.at_utc));
     let review: Vec<Value> = review
         .iter()
@@ -185,9 +184,8 @@ async fn get_library_run(State(state): State<AppState>, request: Request) -> Res
     }
 }
 
-/// `LibraryStartRequest(bool Upgrade, string? Mode = null, string? Scope = null,
-/// List<string>? Picked = null)`. Upgrade is for a walk. Mode is a step of the lyrics page (Scan,
-/// Preview, Save, Undo), Scope is for a scan, Picked the rows for Preview and Save.
+/// The library start body. `upgrade` is for a walk. `mode` is a step of the lyrics page (Scan,
+/// Preview, Save, Undo), `scope` is for a scan, `picked` the rows for Preview and Save.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct LibraryStartRequest {
@@ -308,7 +306,7 @@ async fn resume_library_run(State(state): State<AppState>, request: Request) -> 
     status(StatusCode::ACCEPTED, &json!({ "resumed": true }))
 }
 
-/// `ReviewDismissRequest(string Path)`: Path is required (implicit `[Required]`).
+/// The body of a review dismissal: `Path` is required.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ReviewDismissRequest {
@@ -342,12 +340,12 @@ async fn dismiss_review(State(state): State<AppState>, request: Request) -> Resp
 
 // ---- Choosing one song's lyrics -------------------------------------------------------------
 
-/// `Str(element, name)`: a string member, or None.
+/// A string member, or None.
 fn str_of(element: &Value, name: &str) -> Option<String> {
     element.get(name).and_then(Value::as_str).map(str::to_string)
 }
 
-/// `TryGetInt32` on a number member.
+/// A whole-number member that fits in 32 bits, or None.
 fn int_of(element: &Value, name: &str) -> Option<i32> {
     element
         .get(name)
@@ -584,7 +582,7 @@ async fn candidates(State(state): State<AppState>, request: Request) -> Response
     }))
 }
 
-/// `ChoiceRequest(string? Id, string? Path, string Candidate)`: Candidate is required.
+/// The choice body: an optional `id` and `path`, and the `candidate`, which is required.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ChoiceRequest {

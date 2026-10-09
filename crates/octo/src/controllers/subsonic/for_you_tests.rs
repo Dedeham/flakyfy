@@ -1,7 +1,7 @@
-//! Port of `ForYouControllerTests` in `octo.Tests/ForYouListsTests.cs` (f54467a): getPlaylists
-//! marks each Made for you list in JSON and XML, getPlaylist serves one, and its cover is an
-//! image. The stand-in Navidrome and Deezer are `services::library::for_you_lists::tests`'.
-//! A list switched off in the dashboard is gone from the very next getPlaylists.
+//! Made for you lists through the app: getPlaylists marks each Made for you list in JSON and XML,
+//! getPlaylist serves one, and its cover is an image. The stand-in Navidrome and Deezer are
+//! `services::library::for_you_lists::tests`'. A list switched off in the dashboard is gone from
+//! the very next getPlaylists.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -115,10 +115,9 @@ async fn save(app: &App, method: Method, uri: &str, json: &str) {
     );
 }
 
-/// The parity run's `16-lists/listener-playlists-lists-off-json`: the dashboard saves a list
-/// off and the app asks for its playlists at once. The settings file is read as Octo reads
-/// /app/config/settings.json, but with no file watcher, so only the save itself can make the
-/// running settings follow the file.
+/// The dashboard saves a list off and the app asks for its playlists at once. The settings file is
+/// read as Octo reads /app/config/settings.json, but with no file watcher, so only the save itself
+/// can make the running settings follow the file.
 #[tokio::test]
 async fn a_list_switched_off_in_the_dashboard_is_gone_from_the_very_next_get_playlists() {
     let upstream = ForYouUpstream::start().await;

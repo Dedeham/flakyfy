@@ -52,7 +52,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
     if !state.song_radio.enabled() {
         debug!("Last.fm radio not configured, relaying to upstream server");
         // The path keeps its leading slash, so the upstream URL has a double slash after the
-        // server's address, as the C# relayed it.
+        // server's address.
         return match call.proxy.relay(&path, &call.parameters).await {
             Ok(result) => call.file(&result.body, result.content_type.as_deref()),
             Err(_) => builder.create_response(format, response_key).into_response(),

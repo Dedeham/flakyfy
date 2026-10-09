@@ -1,6 +1,5 @@
-//! `AcquisitionEndpointTests.cs` and `LibraryActionEndpointTests.cs`: getAcquisitions,
-//! getOpenSubsonicExtensions, getLibraryActions, getUpgrades and libraryAction as the Octo app
-//! sees them through the Subsonic API, plus the stars that feed getAcquisitions.
+//! getAcquisitions, getOpenSubsonicExtensions, getLibraryActions, getUpgrades and libraryAction as
+//! the Octo app sees them through the Subsonic API, plus the stars that feed getAcquisitions.
 
 use std::path::{Path, PathBuf};
 
@@ -114,7 +113,7 @@ fn sorted_keys(object: &Value) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------------------
-// AcquisitionEndpointTests
+// Acquisitions
 // ---------------------------------------------------------------------------------------
 
 /// Navidrome as far as these calls need it: a ping that accepts the token "good" for anyone,
@@ -771,11 +770,8 @@ async fn find_songs_an_unknown_id_is_not_found() {
     assert_eq!(envelope["error"]["code"], 70);
 }
 
-// `AdminAcquisitions_ListsEveryonesRowsWithWhoAsked` drives `/api/admin/acquisitions`
-// (AdminController): it belongs to 6-B.
-
 // ---------------------------------------------------------------------------------------
-// LibraryActionEndpointTests
+// Library actions
 // ---------------------------------------------------------------------------------------
 
 /// Navidrome as far as these calls need it: a ping that accepts the token "good" or the API

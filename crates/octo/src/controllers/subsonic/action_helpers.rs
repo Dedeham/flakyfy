@@ -1,6 +1,6 @@
-//! The controller's shared plumbing (task 6-A1's half): reading a request the way every action
-//! did (`ExtractAllParameters`), the small private helpers, and the radio helpers the playlist,
-//! internet radio, search and native radio answers share.
+//! The controller's shared plumbing: reading a request's parameters the way every action does,
+//! the small private helpers, and the radio helpers the playlist, internet radio, search and
+//! native radio answers share.
 
 use std::sync::Arc;
 
@@ -30,11 +30,11 @@ use crate::middleware::forwarded::RequestScheme;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 use crate::services::subsonic::{IncomingRequest, SubsonicProxyService};
 
-/// Kestrel's `MaxRequestBodySize` default.
+/// The largest request body accepted, in bytes.
 pub const MAX_REQUEST_BODY: usize = 30_000_000;
 
 /// One Subsonic request as an action saw it: the request itself, its parameters
-/// (`ExtractAllParameters`), the format, and the request-scoped proxy.
+/// (from the query, form and body), the format, and the request-scoped proxy.
 pub struct SubsonicCall {
     pub parts: Parts,
     pub incoming: Arc<IncomingRequest>,
@@ -44,8 +44,8 @@ pub struct SubsonicCall {
 }
 
 impl SubsonicCall {
-    /// Reads the body and the parameters. A body over Kestrel's limit is refused as Kestrel
-    /// refused it. (The refusal is a whole response, as an action's early return was.)
+    /// Reads the body and the parameters. A body over [`MAX_REQUEST_BODY`] is refused with 413.
+    /// (The refusal is a whole response, for the action to return early with.)
     #[allow(clippy::result_large_err)]
     pub async fn read(state: &AppState, req: Request) -> Result<SubsonicCall, Response> {
         let (parts, body) = req.into_parts();
@@ -65,38 +65,38 @@ impl SubsonicCall {
         })
     }
 
-    /// `parameters.GetValueOrDefault(name, fallback)`.
+    /// The parameter `name`, or `fallback` when it was not sent.
     pub fn param_or<'a>(&'a self, name: &str, fallback: &'a str) -> &'a str {
         self.parameters.get(name).map_or(fallback, String::as_str)
     }
 
-    /// `parameters.GetValueOrDefault(name)`.
+    /// The parameter `name`, if it was sent.
     pub fn param(&self, name: &str) -> Option<&str> {
         self.parameters.get(name).map(String::as_str)
     }
 
-    /// `Request.Path.Value`: the path as the client spelled it, decoded as Kestrel decoded it.
+    /// The request's path as the client spelled it.
     pub fn path(&self) -> String {
         request_path(&self.parts)
     }
 
-    /// `Request.Scheme`, after `UseForwardedHeaders`.
+    /// The request's scheme, after forwarded headers are applied.
     pub fn scheme(&self) -> String {
         request_scheme(&self.parts)
     }
 
-    /// `Request.Host`: the Host header as sent.
+    /// The Host header as sent.
     pub fn host(&self) -> String {
         request_host(&self.parts)
     }
 
-    /// `File(body, contentType ?? $"application/{format}")`.
+    /// `body` with its content type, else `application/{format}`.
     pub fn file(&self, body: &Bytes, content_type: Option<&str>) -> Response {
         file_reply(body, content_type, &self.format)
     }
 }
 
-/// `Request.Path.Value` for a request the pipeline may have re-spelled onto a route template.
+/// The request's path, for a request the pipeline may have re-spelled onto a route template.
 pub fn request_path(parts: &Parts) -> String {
     let path = parts
         .extensions
@@ -122,14 +122,13 @@ pub fn request_host(parts: &Parts) -> String {
         .unwrap_or_default()
 }
 
-/// `File(body, contentType ?? $"application/{format}")`: a `FileContentResult`, 200 with an
-/// explicit length.
+/// `body` with its content type, else `application/{format}`: 200 with an explicit length.
 pub fn file_reply(body: &Bytes, content_type: Option<&str>, format: &str) -> Response {
     let content_type = content_type.map_or_else(|| format!("application/{format}"), str::to_string);
     SubsonicReply::file(body.to_vec(), &content_type).into_response()
 }
 
-/// A body written straight to `Response.Body` with no length, which Kestrel sent chunked.
+/// A body written with no length, so it is sent chunked.
 pub fn written_body(status: StatusCode, headers: HeaderMap, body: Vec<u8>) -> Response {
     let chunk: Result<Bytes, std::io::Error> = Ok(Bytes::from(body));
     let mut response = Response::new(Body::from_stream(futures::stream::iter([chunk])));
@@ -138,10 +137,8 @@ pub fn written_body(status: StatusCode, headers: HeaderMap, body: Vec<u8>) -> Re
     response
 }
 
-/// `new ObjectResult(new { error }) { StatusCode = status }` (`NotFound(new {..})`,
-/// `StatusCode(405, new {..})`): the JSON the MVC output formatter wrote. Unlike `JsonResult`,
-/// the formatter swaps in `UnsafeRelaxedJsonEscaping` when no encoder is configured, so
-/// `Octo's` goes out with its apostrophe as is.
+/// A JSON `{"error": message}` body with `status`, escaped relaxed, so `Octo's` goes out with
+/// its apostrophe as is.
 pub fn error_object(status: StatusCode, message: &str) -> Response {
     use octo_core::json::format::{Escaping, Options, to_string_with};
     let body = to_string_with(
@@ -160,8 +157,8 @@ pub fn error_object(status: StatusCode, message: &str) -> Response {
     response
 }
 
-/// `HttpContext.RequestAborted`: cancelled when the client goes away before the action has
-/// answered (axum drops the handler), and not when it answers.
+/// Canceled when the client goes away before the action has answered (axum drops the
+/// handler), and not when it answers.
 pub struct RequestAborted {
     pub token: CancellationToken,
     guard: Option<DropGuard>,
@@ -174,7 +171,7 @@ impl RequestAborted {
         RequestAborted { token, guard }
     }
 
-    /// The action answered: the token is never cancelled by this request any more.
+    /// The action answered: the token is never canceled by this request any more.
     pub fn answered(mut self) {
         if let Some(guard) = self.guard.take() {
             guard.disarm();
@@ -188,8 +185,8 @@ impl Default for RequestAborted {
     }
 }
 
-/// `int.TryParse(s, out n)` with the invariant culture: optional leading and trailing white
-/// space (tab to carriage return, and space), an optional sign, ASCII digits, within `i32`.
+/// An integer parsed from text: optional leading and trailing white space (tab to carriage
+/// return, and space), an optional sign, ASCII digits, within `i32`.
 pub fn int_try_parse(s: &str) -> Option<i32> {
     let is_white = |c: char| c == ' ' || ('\u{9}'..='\u{D}').contains(&c);
     let trimmed = s.trim_matches(is_white);
@@ -212,7 +209,7 @@ pub fn int_try_parse(s: &str) -> Option<i32> {
     i32::try_from(value).ok()
 }
 
-/// `int.TryParse(parameters.GetValueOrDefault(name, fallbackText), out n) ? n : fallback`.
+/// The parameter `name` as an integer, or `fallback` when it is missing or does not parse.
 pub fn int_param(parameters: &Parameters, name: &str, fallback: i32) -> i32 {
     match parameters.get(name) {
         Some(text) => int_try_parse(text).unwrap_or(fallback),
@@ -303,7 +300,7 @@ pub fn extract_local_song_ids(body: Option<&[u8]>, content_type: Option<&str>) -
     ids
 }
 
-/// `Descendants(ns + "song")`, in document order.
+/// Every `song` element below `element` in the namespace `ns`, in document order.
 fn collect_song_ids(element: &XElement, ns: Option<&str>, ids: &mut Vec<String>) {
     for child in element.elements() {
         if child.is(ns, "song")
@@ -315,7 +312,7 @@ fn collect_song_ids(element: &XElement, ns: Option<&str>, ids: &mut Vec<String>)
     }
 }
 
-/// `XmlValue(object)`: a field written as an XML attribute.
+/// A field's value as an XML attribute writes it.
 pub fn xml_value(value: &Value) -> String {
     match value {
         Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
@@ -359,7 +356,7 @@ pub fn playlist_names(body: Option<&[u8]>, format: &str) -> Vec<String> {
     let mut names = Vec::new();
     for row in rows {
         match row.get("name") {
-            // GetValue<string> on anything but a string threw, and the catch gave nothing.
+            // A name that is not a string gives nothing.
             Some(Value::String(name)) if !name.is_empty() => names.push(name.clone()),
             Some(Value::String(_)) | Some(Value::Null) | None => {}
             Some(_) => return Vec::new(),
@@ -368,7 +365,7 @@ pub fn playlist_names(body: Option<&[u8]>, format: &str) -> Vec<String> {
     names
 }
 
-/// `Descendants().Where(LocalName == "playlist")`: the root itself does not count.
+/// Every `playlist` element below `element`: the root itself does not count.
 fn collect_playlist_names(element: &XElement, names: &mut Vec<String>) {
     for child in element.elements() {
         if child.name == "playlist"
@@ -453,8 +450,8 @@ pub fn queue_refresh_if_stale(state: &AppState, username: &str) {
     }
 }
 
-/// A song read from one of Navidrome's song rows for the bootstrap, as the C# read it: a
-/// field of the wrong kind threw, and the catch around the read gave nothing at all.
+/// A song read from one of Navidrome's song rows for the bootstrap: a field of the wrong kind
+/// gives nothing at all.
 fn bootstrap_song(item: &Value, id_required: bool) -> Option<Song> {
     let object = item.as_object()?;
     let text = |name: &str| -> Option<String> {
@@ -481,7 +478,7 @@ fn bootstrap_song(item: &Value, id_required: bool) -> Option<Song> {
     let duration = match object.get("duration") {
         None => None,
         Some(Value::Number(n)) => n.as_i64().and_then(|v| i32::try_from(v).ok()),
-        // TryGetInt32 on anything but a number threw.
+        // A value that is not a number gives nothing.
         Some(_) => return None,
     };
     Some(Song {
@@ -496,7 +493,7 @@ fn bootstrap_song(item: &Value, id_required: bool) -> Option<Song> {
     })
 }
 
-/// `JsonElement.EnumerateArray().Take(n)` over a `subsonic-response.{container}.song` list.
+/// The songs of a `subsonic-response.{container}.song` list.
 fn bootstrap_songs(body: &[u8], container: &str, learned: bool) -> Vec<(Song, bool)> {
     let read = || -> Option<Vec<(Song, bool)>> {
         let document: Value = serde_json::from_slice(body).ok()?;
@@ -505,7 +502,7 @@ fn bootstrap_songs(body: &[u8], container: &str, learned: bool) -> Vec<(Song, bo
             return Some(Vec::new());
         };
         let Some(values) = parent.as_object().and_then(|p| p.get("song")) else {
-            // TryGetProperty on a parent that is not an object threw.
+            // A parent that is not an object gives nothing.
             return parent.as_object().map(|_| Vec::new());
         };
         let Value::Array(values) = values else {
@@ -574,8 +571,8 @@ pub async fn bootstrap_radio_profile(
         if result.body.is_empty() {
             return Vec::new();
         }
-        // Every read below threw on a missing or mistyped field, and the catch around the whole
-        // thing gave nothing, even for the albums already read.
+        // A missing or mistyped field anywhere below gives nothing at all, even for the albums
+        // already read.
         let Some(albums) = serde_json::from_slice::<Value>(&result.body).ok().and_then(|d| {
             d.get("subsonic-response")?
                 .get("albumList2")?
@@ -788,8 +785,8 @@ pub fn native_username(state: &AppState, parameters: &Parameters, headers: &Head
     jwt_username(token.as_deref()).unwrap_or_default()
 }
 
-/// The first of the JWT payload's name claims, read as the C# read it: a claim that is not a
-/// string threw, and the catch gave no name at all.
+/// The first of the JWT payload's name claims: a claim that is not a string gives no name at
+/// all.
 fn jwt_username(token: Option<&str>) -> Option<String> {
     use base64::Engine;
     let token = token?;
@@ -820,7 +817,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn int_try_parse_reads_as_dotnet_reads() {
+    fn int_try_parse_allows_white_space_and_a_sign_within_32_bits() {
         for (text, expected) in [
             ("20", Some(20)),
             (" 7 ", Some(7)),
@@ -872,7 +869,6 @@ mod tests {
         assert_eq!(extract_local_song_ids(Some(xml), Some("text/xml")), ["x", "z"]);
     }
 
-    // LibraryActionKeepTests.PlaylistNames_ReadsXmlAsWellAsJson (deferred to 6-A by 5-A).
     #[test]
     fn playlist_names_reads_xml_as_well_as_json() {
         let json = br#"{"subsonic-response":{"status":"ok","playlists":{"playlist":[{"id":"1","name":"Octo: Remove"},{"id":"2","name":"Mine"}]}}}"#;

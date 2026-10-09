@@ -1,4 +1,4 @@
-//! `AdminController`'s Last.fm, ListenBrainz and radio actions (L171–L383): the radio's state,
+//! The Last.fm, ListenBrainz and radio actions: the radio's state,
 //! the ListenBrainz token check, the scrobbling Connect / Finish / Disconnect flow, the Last.fm
 //! credentials check, and the radio refresh and reset.
 
@@ -426,7 +426,7 @@ pub async fn refresh_last_fm_radio(
 }
 
 /// `DELETE /api/admin/lastfm/radio/history?user=`: forgets a listener's plays and stations.
-/// `user` is required: missing or empty, `[ApiController]` answered before the action ran.
+/// `user` is required: missing or empty, it is the 400 validation problem.
 pub async fn reset_last_fm_radio(State(state): State<AppState>, RawQuery(query): RawQuery) -> Response {
     let Some(user) = query_value(query.as_deref(), "user") else {
         return validation_problem(&[("user", &["The user field is required."])]);

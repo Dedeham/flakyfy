@@ -1,5 +1,5 @@
-//! SyncCatalogTests, the six walks through the app: a syncing client's empty-query search3
-//! walk gets the library, then the user's catalog, once each.
+//! Sync walks through the app: a syncing client's empty-query search3 walk gets the library,
+//! then the user's catalog, once each.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};

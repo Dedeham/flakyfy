@@ -1,4 +1,4 @@
-//! `AdminController`'s secret rules (031e563, 9210c63): no password, key, token or webhook
+//! The admin API's secret rules: no password, key, token or webhook
 //! address leaves the admin API in clear. Every one reads as [`SECRET_PLACEHOLDER`]; a save that
 //! sends the placeholder back keeps what is saved; one that types onto the end of it is refused;
 //! and a saved credential never follows a server address it was not typed again for.
@@ -44,9 +44,9 @@ pub const SECRET_MAPS: &[(&str, &str, Option<&str>)] = &[
     ("ListenBrainz", "UserTokens", None),
 ];
 
-/// A port fix: Navidrome's address is saved trimmed and without trailing slashes, so the file
-/// never holds the `http://nd:4533/` the C# relay turned into `//rest/stream` (the settings read
-/// it the same way: `octo_core::settings::normalize_server_url`).
+/// Navidrome's address is saved trimmed and without trailing slashes, so the file never holds
+/// an `http://nd:4533/` that a relay would turn into `//rest/stream` (the settings read it the
+/// same way: `octo_core::settings::normalize_server_url`).
 pub fn normalize_saved_addresses(patch: &mut JsonObject) {
     if let Some(subsonic) = child_mut(patch, "Subsonic")
         && let Some(key) = key_of(subsonic, "Url")
@@ -55,9 +55,8 @@ pub fn normalize_saved_addresses(patch: &mut JsonObject) {
         let normalized = octo_core::settings::normalize_server_url(url);
         subsonic.insert(key, Node::String(normalized));
     }
-    // A port fix: slskd's web address (the Open slskd link) is saved without the spaces it was
-    // typed with (the C# saved them, and GET settings showed them; BACKLOG, "Found while
-    // building the harness"; known-diffs.md). Only trimmed: a web address keeps its path.
+    // slskd's web address (the Open slskd link) is saved without the spaces it was typed with,
+    // so GET settings never shows them. Only trimmed: a web address keeps its path.
     if let Some(soulseek) = child_mut(patch, "Soulseek")
         && let Some(key) = key_of(soulseek, "WebUrl")
         && let Some(url) = string_value(soulseek.get(&key))
@@ -74,7 +73,7 @@ fn placeholder_text(node: Option<&Node>) -> Option<&str> {
 
 /// The words to refuse a save with when it moves a server's address while keeping the saved
 /// credential that goes to it (the placeholder sent back, or the field left out), or None.
-/// `current` reads a running value by section and key (`IConfiguration["Section:Key"]`).
+/// `current` reads a running value by section and key.
 ///
 /// The address is compared trimmed and without trailing slashes, ignoring case.
 pub fn secret_sent_elsewhere(

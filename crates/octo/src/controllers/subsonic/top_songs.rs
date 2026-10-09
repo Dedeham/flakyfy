@@ -1,6 +1,5 @@
-//! Port of `SubSonicController.TopSongs.cs`, with the charts generalized: getArtistTopSongs and
-//! getTopChart (octoTopSongs, for the Octo apps), the standard getTopSongs (every Subsonic app),
-//! and getCharts (octoTopSongs v2: the charts the server's country has).
+//! getArtistTopSongs and getTopChart (octoTopSongs, for the Octo apps), the standard getTopSongs
+//! (every Subsonic app), and getCharts (octoTopSongs v2: the charts the server's country has).
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};

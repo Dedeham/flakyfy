@@ -1,4 +1,4 @@
-//! `AdminController`'s Raw config editor and the config-sources table (L1643–L2086):
+//! The Raw config editor and the config-sources table:
 //! `GET`/`PUT /api/admin/raw-config` and `GET /api/admin/config-sources`.
 
 use axum::Extension;
@@ -306,14 +306,13 @@ fn is_secret_key(key: &str) -> bool {
         .any(|suffix| lower.ends_with(suffix))
 }
 
-/// What a set secret reads as on the config-sources page: always the same eight bullets. A port
-/// fix: the C# showed one bullet per character, up to 16, which told anyone how long a password
-/// or key was (BACKLOG, "Found while building the harness"; known-diffs.md).
+/// What a set secret reads as on the config-sources page: always the same eight bullets, so the
+/// page never tells how long a password or key is.
 pub const CONFIG_SOURCES_MASK: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
-/// `GET /api/admin/config-sources`: every config key the app effectively sees, as
-/// `IConfiguration[key]` reads it (a list reads as `""`, having no value of its own), with
-/// anything that smells like a secret masked so a screenshot of the page does not leak it.
+/// `GET /api/admin/config-sources`: every config key the app effectively sees, read by its
+/// `Section:Key` path (a list reads as `""`, having no value of its own), with anything that
+/// smells like a secret masked so a screenshot of the page does not leak it.
 pub async fn get_config_sources(State(state): State<AppState>) -> Response {
     let rows: Vec<serde_json::Value> = CONFIG_SOURCE_KEYS
         .iter()

@@ -1,7 +1,7 @@
-//! `AdminSecretTests.cs`: no credential leaves the admin API in clear, not the Discord webhook
-//! address, the ntfy token, the Lidarr key or any other. The settings types are walked (here:
-//! the settings structs as they serialize), so a credential added later fails here until it is
-//! masked too. Plus the slskd password's own tests from `AdminContractTests.cs` (9f9502d).
+//! No credential leaves the admin API in clear, not the Discord webhook address, the ntfy
+//! token, the Lidarr key or any other. The settings structs are walked as they serialize, so a
+//! credential added later fails here until it is masked too. Plus the slskd password's own
+//! tests.
 
 use std::collections::BTreeSet;
 
@@ -99,8 +99,8 @@ fn every_credential_in_the_settings_is_one_the_admin_api_masks() {
     assert!(unmasked.is_empty(), "goes out in clear: {unmasked:?}");
 }
 
-/// Every section of the settings is walked; in the C# a settings class with a credential that
-/// the test's table forgot failed here.
+/// Every section of the settings is walked, so no section with a credential can be left out of
+/// the check.
 #[test]
 fn every_settings_type_is_walked() {
     let value = serde_json::to_value(sample_settings()).expect("settings serialise");
@@ -287,7 +287,7 @@ fn raw_config_puts_back_every_credential_it_hid_and_echoes_none() {
     );
 }
 
-// ---- AdminContractTests (9f9502d): the slskd password -------------------------------------------
+// ---- The slskd password ------------------------------------------------------------------------
 
 /// slskd's web password signs in to slskd as its owner, so it never goes to a browser either.
 #[tokio::test]

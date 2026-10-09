@@ -1,5 +1,4 @@
-//! `LibraryActionKeepTests.cs`: `SetRatingScopeTests` (setRating through the app) and
-//! `PlaylistNames_ReadsXmlAsWellAsJson`.
+//! setRating through the app, and the playlist names read from XML as well as JSON.
 //!
 //! Where a star counts as a command (#47). With Review on, a star is a command only on a track
 //! Octo asked the person about; everywhere else it is just a rating, relayed and left alone.
@@ -103,7 +102,7 @@ fn playlist_names_reads_xml_as_well_as_json() {
         vec!["\u{1F6E0} Delete".to_string()]
     );
     assert!(playlist_names(Some(b"<not xml"), "xml").is_empty());
-    // Rust-only: no body, and a JSON name that is not a string (GetValue threw), give nothing.
+    // No body, and a JSON name that is not a string, give nothing.
     assert!(playlist_names(None, "json").is_empty());
     assert!(
         playlist_names(

@@ -1,5 +1,4 @@
-//! `AdminController` (`[Route("api/admin")]`): the API behind the settings dashboard at
-//! `/admin/`.
+//! The admin API (`/api/admin`): the API behind the settings dashboard at `/admin/`.
 //!
 //! Settings are persisted to settings.json, the highest-priority configuration source; once
 //! written, the store's file watcher refreshes the live settings. Some settings (URLs, things
@@ -43,7 +42,8 @@ use axum::routing::{delete, get, post};
 
 use crate::http::routes::RouteSet;
 
-/// The routes of task 6-B1. `GET /admin` stays in [`crate::http::admin_root`].
+/// The settings, sign-in, Last.fm, status and process routes. `GET /admin` stays in
+/// [`crate::http::admin_root`].
 pub fn admin_controller_routes() -> RouteSet {
     RouteSet::new()
         // Last.fm, ListenBrainz and radio.
@@ -113,7 +113,7 @@ pub fn admin_controller_routes() -> RouteSet {
         )
 }
 
-/// Every AdminController route.
+/// Every admin route.
 pub fn routes() -> RouteSet {
     admin_controller_routes()
         .merge(library_and_job_routes())
@@ -121,9 +121,10 @@ pub fn routes() -> RouteSet {
         .merge(activity_routes())
 }
 
-/// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
-/// genre normalization, and the `CoverUpgradeController`, `ExplicitBackfillController`,
-/// `LyricsAdminController` and `UpdateController` routes.
+/// The library and job routes: the library actions, questions and checks, Recently removed,
+/// Library health, the Better quality page, genre normalization, the cover upgrade, the
+/// explicit marking, the lyrics tools, the update card, the download log and Find songs, the
+/// Sharing card, and Sounds alike and radio outcomes.
 pub fn library_and_job_routes() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
@@ -140,8 +141,7 @@ pub fn library_and_job_routes() -> RouteSet {
         .merge(radio_admin::routes())
 }
 
-/// The routes of group N: the activity view behind the progress toasts, and the Afterglow
-/// light (`ActivityController`, `AmbientController`).
+/// The activity view behind the progress toasts, and the Afterglow light.
 pub fn activity_routes() -> RouteSet {
     RouteSet::new().merge(activity::routes()).merge(ambient::routes())
 }

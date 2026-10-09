@@ -1,6 +1,5 @@
-//! The catch-all's Navidrome-native answers (§3.9 steps 3-10): MergedFormatTests' NativeArtist_*
-//! and NativeAlbumSearch_* (the getAlbum/getArtist ones drive 6-A2's routes), and Rust-only
-//! checks of the external-id safety net, the native song answers and the native searches.
+//! The catch-all's Navidrome-native answers: native artists and album searches, the external-id
+//! safety net, the native song answers and the native searches.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,11 +18,11 @@ use super::{Reply, TestMetadata, app, get, query_value, send};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 
-/// MergedFormatTests' `FakeServers`: Navidrome, and Deezer under `/deezer`.
+/// The fake servers: Navidrome, and Deezer under `/deezer`.
 #[derive(Clone, Default)]
 struct FakeServers {
     deezer_calls: Arc<Mutex<Vec<String>>>,
-    /// Each catalog answer waits this long (the C# held them until both requests asked).
+    /// Each catalog answer waits this long.
     hold_catalog: Arc<Mutex<Option<Duration>>>,
 }
 
@@ -109,7 +108,7 @@ struct Fixture {
     app: App,
 }
 
-/// MergedFormatTests' `WebFactory`: the production metadata service over a fake Deezer.
+/// The app with the production metadata service over a fake Deezer.
 async fn fixture() -> Fixture {
     let servers = FakeServers::default();
     let server = MockServer::start().await;
@@ -204,8 +203,8 @@ async fn native_artist_an_outside_artist_opens_with_their_albums() {
 #[tokio::test]
 async fn native_artist_the_page_and_its_albums_at_once_ask_the_catalog_once() {
     // Feishin asks for the artist and the album list together. Each walked the catalog,
-    // album counts and all, so one page cost twice its calls. (The C# held every catalog
-    // answer until both requests had asked; here each answer is late enough that they meet.)
+    // album counts and all, so one page cost twice its calls. (Each catalog answer here is late
+    // enough that the two requests meet.)
     let fixture = fixture().await;
     let id = register_outside_artist(&fixture.state);
     *fixture.servers.hold_catalog.lock() = Some(Duration::from_millis(300));
@@ -313,7 +312,7 @@ async fn native_album_search_an_owned_album_is_not_added_again_over_an_apostroph
 }
 
 // ---------------------------------------------------------------------------------------
-// Rust-only: the safety net and the native song answers.
+// The safety net and the native song answers.
 // ---------------------------------------------------------------------------------------
 
 async fn plain_fixture(metadata: TestMetadata) -> (MockServer, AppState, App) {
@@ -433,7 +432,7 @@ async fn a_native_song_search_without_discovery_is_relayed_untouched() {
 }
 
 #[test]
-fn native_album_objects_keep_the_csharp_shape() {
+fn native_album_objects_keep_their_wire_shape() {
     let album = Album {
         id: "al".into(),
         title: "T".into(),

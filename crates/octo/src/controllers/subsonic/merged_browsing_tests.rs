@@ -1,8 +1,6 @@
-//! getAlbum and getArtist merge the outside songs and albums into Navidrome's answer
-//! (`MergedFormatTests`, the controller parts; the `NativeArtist_*` and `NativeAlbumSearch_*`
-//! tests drive the catch-all and belong to 6-A1). The merge reads JSON, and an XML client used
-//! to get Navidrome's own XML back, without the outside part: half an album. Both formats must
-//! now carry the same songs.
+//! getAlbum and getArtist merge the outside songs and albums into Navidrome's answer. The merge
+//! reads JSON, and an XML client used to get Navidrome's own XML back, without the outside part:
+//! half an album. Both formats must now carry the same songs.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -168,7 +166,7 @@ impl Respond for FakeNavidrome {
     }
 }
 
-/// The C# `WebFactory`: the app over the fake Navidrome, its catalog over the fake Deezer.
+/// The app over the fake Navidrome, its catalog over the fake Deezer.
 struct Merged {
     state: AppState,
     deezer: FakeDeezer,
@@ -533,10 +531,9 @@ async fn get_artist_every_album_says_what_kind_of_release_it_is() {
     assert_eq!(types, xml_types);
 }
 
-/// Rust-only: the answers getSong, getArtist and getAlbum give without the catalog, as
-/// endpoints.md §3.2 lists them.
+/// The answers getSong, getArtist and getAlbum give without the catalog.
 #[tokio::test]
-async fn missing_and_unknown_ids_answer_as_the_csharp_did() {
+async fn missing_and_unknown_ids_answer_without_the_catalog() {
     let fixture = Merged::new().await;
 
     for endpoint in ["getSong", "getArtist", "getAlbum"] {

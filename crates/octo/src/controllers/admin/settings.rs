@@ -1,4 +1,4 @@
-//! `AdminController`'s settings actions (L678–L1136): `GET /api/admin/settings` (the
+//! The settings actions: `GET /api/admin/settings` (the
 //! effective configuration the forms pre-fill from) and `POST /api/admin/settings` (a partial
 //! patch merged into settings.json), with the validation and the secret placeholder rules the
 //! save path applies. The effective document is shared with `GET raw-config`.
@@ -35,8 +35,7 @@ fn name<T: Debug>(value: T) -> Node {
     n_str(&format!("{value:?}"))
 }
 
-/// `JsonSerializer.SerializeToNode(genre.Mappings)`: the class as STJ wrote it, `Match` as
-/// its number.
+/// The genre mappings as a [`Node`] tree, `Match` as its number.
 fn genre_mappings_node(mappings: &[octo_core::settings::GenreMappingSettings]) -> Node {
     Node::Array(
         mappings
@@ -606,7 +605,7 @@ pub async fn get_settings(State(state): State<AppState>) -> Response {
     json_node(StatusCode::OK, &Node::Object(doc))
 }
 
-// ---- JsonNode.GetValue<T>, which threw on a node of the wrong kind ----------------------------
+// ---- Typed reads of a node, which fail on a node of the wrong kind ---------------------------
 
 fn wrong_kind(node: &Node, target: &str) -> AppError {
     let kind = match node {

@@ -1,9 +1,9 @@
-//! What an unhandled failure looks like on the wire: the port of `GlobalExceptionHandler`.
+//! What an unhandled failure looks like on the wire.
 //!
-//! In C#, any exception that escaped a controller became a Subsonic error envelope in JSON,
-//! whatever `f` asked for, on every route including the admin API, with the HTTP status and
-//! Subsonic code chosen by the exception's type. Handlers here return `Result<_, AppError>`,
-//! and `AppError`'s variants stand for those exception types so the mapping stays the same.
+//! Any failure that escapes a handler becomes a Subsonic error envelope in JSON, whatever `f`
+//! asked for, on every route including the admin API, with the HTTP status and Subsonic code
+//! chosen by the kind of failure. Handlers return `Result<_, AppError>`, and `AppError`'s
+//! variants are those kinds.
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -13,40 +13,39 @@ use serde_json::json;
 /// The Subsonic protocol version Octo reports in every envelope it builds.
 pub const SUBSONIC_VERSION: &str = "1.16.1";
 
-/// A failure that escaped a handler, named after the .NET exception it replaces.
+/// A failure that escaped a handler, by kind.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// `OctoNotConfiguredException`: no Navidrome URL. The message tells the user what to set,
-    /// so it goes out verbatim.
+    /// No Navidrome URL. The message tells the user what to set, so it goes out verbatim.
     #[error("{0}")]
     NotConfigured(String),
-    /// `FileNotFoundException`.
+    /// A missing file.
     #[error("file not found: {0}")]
     FileNotFound(String),
-    /// `DirectoryNotFoundException`.
+    /// A missing directory.
     #[error("directory not found: {0}")]
     DirectoryNotFound(String),
-    /// `UnauthorizedAccessException`.
+    /// Access refused.
     #[error("unauthorized: {0}")]
     Unauthorized(String),
-    /// `ArgumentNullException`.
+    /// A required argument missing.
     #[error("missing argument: {0}")]
     ArgumentNull(String),
-    /// `ArgumentException`.
+    /// An invalid argument.
     #[error("invalid argument: {0}")]
     Argument(String),
-    /// `FormatException`.
+    /// Input in the wrong format.
     #[error("invalid format: {0}")]
     Format(String),
-    /// `InvalidOperationException`.
+    /// An operation not valid in the current state.
     #[error("invalid operation: {0}")]
     InvalidOperation(String),
-    /// `HttpRequestException`: an upstream that could not be reached or answered with a
-    /// failure the caller chose to throw on.
+    /// An upstream that could not be reached or answered with a failure the caller chose to
+    /// fail on.
     #[error("upstream request failed: {0}")]
     Http(String),
-    /// `TimeoutException`. Note that an HttpClient timeout in .NET is a
-    /// `TaskCanceledException`, not this, and so mapped to 500; see [`AppError::from_reqwest`].
+    /// A timeout the code reports as one. An HTTP client timeout is not this: it maps to 500;
+    /// see [`AppError::from_reqwest`].
     #[error("timed out: {0}")]
     Timeout(String),
     /// Anything else.
@@ -55,7 +54,7 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// The HTTP status, Subsonic error code and message, in `MapExceptionToResponse`'s order.
+    /// The HTTP status, Subsonic error code and message for each kind.
     pub fn mapping(&self) -> (StatusCode, i32, String) {
         match self {
             AppError::NotConfigured(m) => (StatusCode::SERVICE_UNAVAILABLE, 0, m.clone()),
@@ -80,9 +79,8 @@ impl AppError {
         }
     }
 
-    /// How a failed `HttpClient` call surfaced in C#: a connection or status failure was an
-    /// `HttpRequestException` (502), while a timeout was a `TaskCanceledException`, which the
-    /// handler did not single out (500).
+    /// A failed HTTP client call: a connection or status failure is [`AppError::Http`] (502),
+    /// while a timeout is an internal error (500), not [`AppError::Timeout`].
     pub fn from_reqwest(e: reqwest::Error) -> AppError {
         if e.is_timeout() {
             AppError::Internal(anyhow::Error::new(e).context("the request timed out"))
@@ -125,12 +123,10 @@ impl IntoResponse for AppError {
                 "error": { "code": code, "message": message },
             }
         });
-        // WriteAsJsonAsync after ContentType = "application/json": ASP.NET keeps the type it was
-        // given and appends the charset. WriteAsJsonAsync uses the minimal-API JSON options,
-        // whose encoder is UnsafeRelaxedJsonEscaping (the em dash in the not-configured message
-        // goes out as is, unlike MVC's JsonResult).
+        // `application/json` with the charset appended, and the relaxed encoder (the em dash in
+        // the not-configured message goes out as is).
         let mut res = json_relaxed_response(status, &body, "application/json; charset=utf-8");
-        // ExceptionHandlerMiddleware marks the error response uncacheable.
+        // The error response is marked uncacheable.
         let headers = res.headers_mut();
         headers.insert(
             header::CACHE_CONTROL,
@@ -142,15 +138,14 @@ impl IntoResponse for AppError {
     }
 }
 
-/// The response for a handler that panicked: what `GlobalExceptionHandler` made of an
-/// exception it did not single out (500, code 0, "An internal server error occurred").
+/// The response for a handler that panicked: an unclassified failure (500, code 0, "An
+/// internal server error occurred").
 pub fn panic_response(message: &str) -> Response {
     AppError::Internal(anyhow::anyhow!("{message}")).into_response()
 }
 
-/// A JSON body as `HttpResponse.WriteAsJsonAsync` writes it: the minimal-API serializer
-/// options, whose encoder is `UnsafeRelaxedJsonEscaping` (non-ASCII and `'` `<` `>` `&` `+`
-/// left as they are).
+/// A JSON body with the relaxed encoder (non-ASCII and `'` `<` `>` `&` `+` left as they are),
+/// with an explicit content type.
 pub fn json_relaxed_response(
     status: StatusCode,
     body: &impl serde::Serialize,
@@ -166,8 +161,7 @@ pub fn json_relaxed_response(
     res
 }
 
-/// A JSON body written the way System.Text.Json writes it (default encoder escaping), with an
-/// explicit content type.
+/// A JSON body with the default encoder's escaping, with an explicit content type.
 pub fn json_response(
     status: StatusCode,
     body: &impl serde::Serialize,
@@ -179,21 +173,21 @@ pub fn json_response(
     res
 }
 
-/// `Ok(new { ... })` / `JsonResult` from a controller: STJ output, `application/json; charset=utf-8`.
+/// A 200 JSON body with the default escaping, `application/json; charset=utf-8`.
 pub fn json_ok(body: &impl serde::Serialize) -> Response {
     json_response(StatusCode::OK, body, "application/json; charset=utf-8")
 }
 
-/// A JSON body with a status, as `StatusCode(n, new { ... })` / `BadRequest(new { error })`.
+/// A JSON body with a status, with the default escaping.
 pub fn json_status(status: StatusCode, body: &impl serde::Serialize) -> Response {
     json_response(status, body, "application/json; charset=utf-8")
 }
 
-/// What `[ApiController]` turns a bodiless client-error result (`NotFound()`, `BadRequest()`,
-/// `StatusCode(4xx)`) into: an RFC 7807 problem document.
+/// What a bodiless client-error result (a 404, a 400, any 4xx) becomes: an RFC 7807 problem
+/// document.
 pub fn problem(status: StatusCode) -> Response {
-    // A status ASP.NET has no ClientErrorMapping for (502, 503, ...) gets neither a type nor a
-    // title: the factory leaves both null and STJ's ProblemDetails converter skips nulls.
+    // A status with no mapping (502, 503, ...) gets neither a type nor a title: both are left
+    // out rather than written as null.
     let body = match problem_type(status) {
         Some((kind, title)) => json!({
             "type": kind,
@@ -203,12 +197,11 @@ pub fn problem(status: StatusCode) -> Response {
         }),
         None => json!({ "status": status.as_u16(), "traceId": trace_id() }),
     };
-    // Problem documents go out through MVC's output formatter, whose encoder is relaxed.
+    // Problem documents use the relaxed encoder.
     json_relaxed_response(status, &body, "application/problem+json; charset=utf-8")
 }
 
-/// The type URI and title ASP.NET's ProblemDetailsFactory gives a status (its
-/// `ClientErrorMapping` defaults).
+/// The type URI and title of a problem document for a status.
 fn problem_type(status: StatusCode) -> Option<(&'static str, &'static str)> {
     Some(match status.as_u16() {
         400 => (
@@ -258,8 +251,8 @@ fn problem_type(status: StatusCode) -> Option<(&'static str, &'static str)> {
     })
 }
 
-/// The automatic `400` `[ApiController]` answers when model validation fails before the
-/// action runs (`ValidationProblemDetails`): `errors` maps each field to its messages.
+/// The automatic `400` when a request fails validation before the action runs (a validation
+/// problem document): `errors` maps each field to its messages.
 pub fn validation_problem(errors: &[(&str, &[&str])]) -> Response {
     let mut map = serde_json::Map::new();
     for (field, messages) in errors {
@@ -272,8 +265,7 @@ pub fn validation_problem(errors: &[(&str, &[&str])]) -> Response {
         "errors": map,
         "traceId": trace_id(),
     });
-    // Through MVC's output formatter, whose encoder is relaxed (a message quoting the input
-    // keeps its `'` as written).
+    // The relaxed encoder (a message quoting the input keeps its `'` as written).
     json_relaxed_response(
         StatusCode::BAD_REQUEST,
         &body,
@@ -281,8 +273,7 @@ pub fn validation_problem(errors: &[(&str, &[&str])]) -> Response {
     )
 }
 
-/// ASP.NET's trace id: the W3C `00-<trace>-<span>-00` form of the current activity. Values are
-/// random per request, so the parity harness treats the field as volatile.
+/// The trace id, in the W3C `00-<trace>-<span>-00` form. Values are random per request.
 fn trace_id() -> String {
     let trace: u128 = rand::random();
     let span: u64 = rand::random();

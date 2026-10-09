@@ -1,4 +1,4 @@
-//! `AdminController`'s genre normalization (L1468-L1609): the backfill over the library's tags,
+//! Genre normalization: the backfill over the library's tags,
 //! its undo, and the broad-genre preset.
 //!
 //! /api/admin has no authentication at all, so a button that rewrites every tag in a music

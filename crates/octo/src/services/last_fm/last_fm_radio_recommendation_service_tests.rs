@@ -995,3 +995,133 @@ async fn an_artist_station_asks_the_other_sources_not_last_fm_again() {
     assert!(ytm.asked.lock().iter().any(|seed| seed.title.is_empty()));
     assert!(!last_fm.asked.lock().iter().any(|seed| seed.title.is_empty()));
 }
+
+/// Last.fm for a listener of "Artist 0", "Artist 1" and "Artist 2": each of them points to new
+/// names and to one another, and the new names point one step further. `walk` false answers no
+/// similar artists at all.
+#[derive(Clone)]
+struct FrontierHandler {
+    walk: bool,
+}
+
+impl Respond for FrontierHandler {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let query = query(request);
+        let get = |name: &str| query.get(name).cloned().unwrap_or_default();
+        let artist = get("artist");
+        let similar = |names: &[(&str, f64)]| {
+            json!({"similarartists": {"artist": names.iter().map(|(name, m)| json!({
+                "name": name, "match": m
+            })).collect::<Vec<_>>()}})
+        };
+        let body = match get("method").as_str() {
+            "artist.gettoptags" => json!({"toptags": {"tag": [{"name": "rock"}]}}),
+            "artist.getsimilar" if !self.walk => json!({}),
+            "artist.getsimilar" => match artist.as_str() {
+                "Artist 0" => similar(&[("Artist 1", 1.0), ("Shared Find", 0.6), ("Solo Find", 0.5)]),
+                "Artist 1" => similar(&[("Artist 2", 1.0), ("Shared Find", 0.6)]),
+                "Artist 2" => similar(&[("Artist 0", 1.0), ("Other Find", 0.3)]),
+                _ => similar(&[("Far Find", 0.8)]),
+            },
+            "artist.gettoptracks" => json!({"toptracks": {"track": (0..3).map(|index| json!({
+                "name": format!("{artist} hit {index}")
+            })).collect::<Vec<_>>()}}),
+            "tag.gettoptracks" => json!({"tracks": {"track": (0..20).map(|index| json!({
+                "name": format!("{}-{index}", get("tag")), "duration": 180000,
+                "artist": {"name": if index < 6 { format!("Artist {}", index % 3) } else { format!("Chart Artist {index}") }}
+            })).collect::<Vec<_>>()}}),
+            _ => json!({}),
+        };
+        ResponseTemplate::new(200).set_body_string(body.to_string())
+    }
+}
+
+fn discovery_of(stations: &[LastFmRadioStation]) -> Option<&LastFmRadioStation> {
+    stations
+        .iter()
+        .find(|s| s.kind == LastFmRadioStationKind::Discovery)
+}
+
+/// Discovery Mix comes from the similar-artist walk: only artists the listener has never
+/// played, the one two favorites point to among them, the step past them too, and no more than
+/// two songs of any one artist.
+#[tokio::test]
+async fn discovery_mix_draws_artists_the_listener_does_not_know_from_the_similar_artist_walk() {
+    let fixture = fixture(
+        LastFmSettings {
+            radio_track_count: 10,
+            ..learned()
+        },
+        FrontierHandler { walk: true },
+    )
+    .await;
+    record_twelve(&fixture.state);
+
+    let stations = build(&fixture.service).await;
+    let discovery = discovery_of(&stations).expect("a Discovery Mix");
+    let artists: Vec<&str> = discovery
+        .tracks
+        .iter()
+        .chain(&discovery.reserve)
+        .map(|t| t.artist.as_str())
+        .collect();
+    assert!(!artists.is_empty());
+    assert!(artists.iter().all(|a| !a.starts_with("Artist ")), "{artists:?}");
+    for find in ["Shared Find", "Solo Find", "Other Find", "Far Find"] {
+        assert!(artists.contains(&find), "{find} missing from {artists:?}");
+    }
+    for artist in &artists {
+        assert!(
+            artists.iter().filter(|a| *a == artist).count() <= 2,
+            "{artist} more than twice in {artists:?}"
+        );
+    }
+}
+
+/// When the walk finds fewer than five songs, the listener's tag charts make Discovery Mix as
+/// before.
+#[tokio::test]
+async fn discovery_mix_falls_back_to_the_tag_charts_when_the_walk_finds_too_little() {
+    let fixture = fixture(
+        LastFmSettings {
+            radio_track_count: 10,
+            ..learned()
+        },
+        FrontierHandler { walk: false },
+    )
+    .await;
+    record_twelve(&fixture.state);
+
+    let stations = build(&fixture.service).await;
+    let discovery = discovery_of(&stations).expect("a Discovery Mix");
+    assert!(
+        discovery.tracks.iter().all(|t| t.title.starts_with("rock-")),
+        "{:?}",
+        discovery.tracks
+    );
+    assert_eq!(discovery.seeds, ["rock"]);
+}
+
+/// A genre station leads with the genre's names the listener does not know: its own artists
+/// keep a third of their weight, so with a flat draw the chart's other artists come first.
+#[tokio::test]
+async fn a_genre_station_leads_with_artists_the_listener_does_not_know() {
+    let fixture = fixture(
+        LastFmSettings {
+            radio_track_count: 10,
+            ..learned()
+        },
+        FrontierHandler { walk: true },
+    )
+    .await;
+    record_twelve(&fixture.state);
+    fixture.service.set_randomizer(flat_random());
+
+    let stations = build(&fixture.service).await;
+    let genre = stations
+        .iter()
+        .find(|s| s.kind == LastFmRadioStationKind::Genre)
+        .expect("a genre station");
+    let first: Vec<&str> = genre.tracks.iter().take(5).map(|t| t.artist.as_str()).collect();
+    assert!(first.iter().all(|a| a.starts_with("Chart Artist")), "{first:?}");
+}

@@ -17,11 +17,11 @@ use sha2::{Digest, Sha256};
 
 use crate::common::dotnet;
 use crate::common::dotnet_random::DotnetRandom;
-use crate::last_fm::SimilarTrack;
 use crate::last_fm::last_fm_radio_placement::{self, Spacing};
 use crate::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use crate::last_fm::last_fm_radio_state_store::station_id;
 use crate::last_fm::radio_filler;
+use crate::last_fm::{SimilarArtist, SimilarTrack};
 use crate::metadata::genre_normalizer::to_title_case;
 use crate::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use crate::radio::radio_provider;
@@ -745,6 +745,106 @@ pub fn score_artists(plays: &[LastFmRadioPlay], now: DateTime<Utc>) -> Vec<(Stri
     scores
 }
 
+/// Discovery Mix walks Last.fm's similar-artist graph out from the listener's
+/// [`FRONTIER_SEEDS`] strongest artists, [`FRONTIER_NEIGHBOURS`] neighbours each, then one more
+/// step from the [`SECOND_STEP_SEEDS`] best new artists at [`SECOND_STEP_WEIGHT`]. The
+/// [`FRONTIER_ARTISTS`] best new artists give [`FRONTIER_TRACKS_EACH`] top songs each, and at
+/// most [`FRONTIER_ARTIST_CAP`] of an artist's songs make the station. Under
+/// [`FRONTIER_FEWEST_SONGS`] songs, the listener's tag charts stand in.
+pub const FRONTIER_SEEDS: usize = 10;
+pub const FRONTIER_NEIGHBOURS: i32 = 30;
+pub const SECOND_STEP_SEEDS: usize = 5;
+pub const SECOND_STEP_WEIGHT: f64 = 0.5;
+pub const FRONTIER_ARTISTS: usize = 30;
+pub const FRONTIER_TRACKS_EACH: i32 = 3;
+pub const FRONTIER_ARTIST_CAP: i32 = 2;
+pub const FRONTIER_FEWEST_SONGS: usize = 5;
+
+/// Weight kept by an artist the listener already plays, among a genre station's suggestions:
+/// a genre station is for finding, and the listener's own artists would otherwise lead it.
+pub const KNOWN_ARTIST_WEIGHT: f64 = 0.3;
+
+/// Neighbours an artist station asks Last.fm for; the five it uses are the strongest after
+/// known artists keep [`KNOWN_ARTIST_WEIGHT`] of their match, so new names come first.
+pub const ARTIST_RADIO_NEIGHBOURS: i32 = 15;
+
+/// The artists the listener knows, by [`artist_key`]: everyone in their plays.
+pub fn known_artists(plays: &[LastFmRadioPlay]) -> IgnoreCaseKeys {
+    plays.iter().map(|play| artist_key(&play.artist)).collect()
+}
+
+/// Candidates by an artist the listener knows keep [`KNOWN_ARTIST_WEIGHT`] of their weight.
+pub fn discount_known(candidates: Vec<Candidate>, known: &IgnoreCaseKeys) -> Vec<Candidate> {
+    candidates
+        .into_iter()
+        .map(|mut candidate| {
+            if known.contains(&artist_key(&candidate.track.artist)) {
+                candidate.weight *= KNOWN_ARTIST_WEIGHT;
+            }
+            candidate
+        })
+        .collect()
+}
+
+/// An artist station's neighbours, strongest first once known artists keep
+/// [`KNOWN_ARTIST_WEIGHT`] of their match; equal ones in Last.fm's order.
+pub fn unknown_neighbours_first(similar: Vec<SimilarArtist>, known: &IgnoreCaseKeys) -> Vec<SimilarArtist> {
+    let mut scored: Vec<(f64, SimilarArtist)> = similar
+        .into_iter()
+        .map(|artist| {
+            let factor = if known.contains(&artist_key(&artist.name)) {
+                KNOWN_ARTIST_WEIGHT
+            } else {
+                1.0
+            };
+            (artist.r#match * factor, artist)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+    scored.into_iter().map(|(_, artist)| artist).collect()
+}
+
+/// The new artists a similar-artist walk reached, each scored by the weight of the artist that
+/// pointed to it times how similar Last.fm says they are, summed over every artist that did:
+/// an artist several favorites point to leads. Known and disliked artists never score.
+#[derive(Debug, Clone, Default)]
+pub struct FrontierScores {
+    scores: IndexMap<String, (String, f64)>,
+}
+
+impl FrontierScores {
+    pub fn add(
+        &mut self,
+        similar: &[SimilarArtist],
+        weight: f64,
+        known: &IgnoreCaseKeys,
+        disliked: &IgnoreCaseKeys,
+    ) {
+        for artist in similar {
+            let key = artist_key(&artist.name);
+            if key.is_empty() || known.contains(&key) || disliked.contains(&key) {
+                continue;
+            }
+            self.scores
+                .entry(dotnet::ordinal_ignore_case_key(&key))
+                .or_insert_with(|| (artist.name.clone(), 0.0))
+                .1 += weight * artist.r#match.max(0.05);
+        }
+    }
+
+    /// The `n` best, strongest first, equal scores in the order they were first reached.
+    pub fn top(&self, n: usize) -> Vec<(String, f64)> {
+        let mut entries: Vec<(String, f64)> = self.scores.values().cloned().collect();
+        entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        entries.truncate(n);
+        entries
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.scores.is_empty()
+    }
+}
+
 /// Tag scores, keyed ignoring case, in the order the tags were first scored.
 #[derive(Debug, Clone, Default)]
 pub struct TagScores {
@@ -1223,6 +1323,77 @@ mod tests {
                 "seed {seed}"
             );
         }
+    }
+
+    fn similar(names: &[(&str, f64)]) -> Vec<SimilarArtist> {
+        names
+            .iter()
+            .map(|(name, r#match)| SimilarArtist {
+                name: (*name).to_string(),
+                r#match: *r#match,
+            })
+            .collect()
+    }
+
+    /// An artist two favorites point to beats one only the strongest points to, and known or
+    /// disliked artists never score, however similar.
+    #[test]
+    fn the_frontier_scores_new_artists_by_who_points_to_them() {
+        let known: IgnoreCaseKeys = ["known band"].into_iter().collect();
+        let disliked: IgnoreCaseKeys = ["disliked band"].into_iter().collect();
+        let mut scores = FrontierScores::default();
+        scores.add(
+            &similar(&[
+                ("Known Band", 1.0),
+                ("Solo Pick", 0.9),
+                ("Shared Pick", 0.6),
+                ("Disliked Band", 1.0),
+            ]),
+            1.0,
+            &known,
+            &disliked,
+        );
+        scores.add(&similar(&[("shared pick", 0.6)]), 0.8, &known, &disliked);
+        let top = scores.top(10);
+        let names: Vec<&str> = top.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["Shared Pick", "Solo Pick"]);
+        assert!((top[0].1 - (0.6 + 0.48)).abs() < 1e-9);
+        assert_eq!(scores.top(1).len(), 1);
+    }
+
+    #[test]
+    fn known_artists_keep_a_third_of_their_weight_and_go_after_new_neighbours() {
+        let plays = [LastFmRadioPlay {
+            artist: "Known Band feat. Guest".into(),
+            title: "Song".into(),
+            ..Default::default()
+        }];
+        let known = known_artists(&plays);
+        let candidates = discount_known(
+            vec![
+                Candidate {
+                    track: SimilarTrack::new("KNOWN BAND", "Hit", 1.0),
+                    weight: 1.0,
+                    source: "tag:x".into(),
+                },
+                Candidate {
+                    track: SimilarTrack::new("New Band", "Hit", 1.0),
+                    weight: 1.0,
+                    source: "tag:x".into(),
+                },
+            ],
+            &known,
+        );
+        assert_eq!(candidates[0].weight, KNOWN_ARTIST_WEIGHT);
+        assert_eq!(candidates[1].weight, 1.0);
+        let order: Vec<String> = unknown_neighbours_first(
+            similar(&[("Known Band", 0.9), ("New One", 0.5), ("New Two", 0.2)]),
+            &known,
+        )
+        .into_iter()
+        .map(|artist| artist.name)
+        .collect();
+        assert_eq!(order, ["New One", "Known Band", "New Two"]);
     }
 
     #[test]

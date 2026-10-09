@@ -20,11 +20,10 @@ pub fn routes() -> RouteSet {
     )
 }
 
-/// Whether the extension is listed: while Sounds alike runs and octo-sonic has said it makes
-/// profiles.
+/// Whether the extension is listed: once octo-sonic has said it makes profiles, which it does
+/// whether or not Sounds alike is on.
 pub fn offered(state: &AppState) -> bool {
-    state.settings.current().radio_sources.sounds_alike
-        && state.sonic_worker.transitions().current_version().is_some()
+    state.sonic_worker.transitions().current_version().is_some()
 }
 
 /// The profile of the song `id` (a library id, or the id of a song from outside the library
@@ -49,13 +48,9 @@ pub async fn get_transition_profile(State(state): State<AppState>, req: Request)
 
 fn answer(state: &AppState, id: &str) -> Response {
     let store = state.sonic_worker.transitions();
-    let found = if state.settings.current().radio_sources.sounds_alike {
-        match store.lookup(&key_for(state, id)) {
-            TransitionLookup::Ready(profile) => Some(profile),
-            TransitionLookup::NotReady => None,
-        }
-    } else {
-        None
+    let found = match store.lookup(&key_for(state, id)) {
+        TransitionLookup::Ready(profile) => Some(profile),
+        TransitionLookup::NotReady => None,
     };
     state
         .subsonic_response_builder

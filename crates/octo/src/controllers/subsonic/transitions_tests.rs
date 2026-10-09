@@ -165,7 +165,7 @@ async fn only_a_signed_in_caller_gets_an_answer() {
 }
 
 #[tokio::test]
-async fn the_extension_is_listed_only_while_profiles_are_made() {
+async fn the_extension_is_listed_once_profiles_are_made() {
     let h = harness(true).await;
     let query = format!("getOpenSubsonicExtensions?{ALICE}&f=json");
     // octo-sonic has not said it makes profiles yet.
@@ -179,15 +179,19 @@ async fn the_extension_is_listed_only_while_profiles_are_made() {
         .find(|e| e["name"] == "octoTransitions")
         .cloned();
     assert_eq!(entry, Some(json!({ "name": "octoTransitions", "versions": [1] })));
+}
 
-    // Sounds alike off: octo-sonic reads nothing, so there is nothing to ask for.
+#[tokio::test]
+async fn with_sounds_alike_off_the_extension_is_listed_and_profiles_are_served() {
     let off = harness(false).await;
+    let query = format!("getOpenSubsonicExtensions?{ALICE}&f=json");
+    assert!(!extensions(&ask(&off, &query).await).contains(&"octoTransitions".to_string()));
     off.state.sonic_worker.transitions().set_current_version(1);
     off.state
         .sonic_worker
         .transitions()
         .put("nd-1", "1:1", None, &profile(1));
-    assert!(!extensions(&ask(&off, &query).await).contains(&"octoTransitions".to_string()));
+    assert!(extensions(&ask(&off, &query).await).contains(&"octoTransitions".to_string()));
     let answer = ask(&off, &format!("getTransitionProfile?{ALICE}&id=nd-1")).await;
-    assert_eq!(answer["transitionProfile"]["ready"], false);
+    assert_eq!(answer["transitionProfile"]["ready"], true);
 }

@@ -275,12 +275,10 @@ async fn probe_you_tube_shim(state: &AppState) -> ServiceProbe {
     }
 }
 
-/// octo-sonic, the Sounds alike reader; off when Sounds alike is switched off.
+/// octo-sonic, which reads every song for its transition profile and, while Sounds alike is
+/// on, for how it sounds. Probed either way: it runs for transitions with Sounds alike off.
 async fn probe_sonic(state: &AppState) -> ServiceProbe {
     let radio = state.settings.current().radio_sources.clone();
-    if !radio.sounds_alike {
-        return ServiceProbe::new(true, "Sounds alike is off").unconfigured();
-    }
     let target = format!("{}/health", radio.sonic_url.trim_end_matches('/'));
     let request = match state.http.get(&target).timeout(PROBE_TIMEOUT).build() {
         Ok(request) => request,
@@ -291,16 +289,31 @@ async fn probe_sonic(state: &AppState) -> ServiceProbe {
         Err(e) => return ServiceProbe::new(false, probe_failure(&e)),
     };
     let status = response.status();
-    if status.is_success() {
-        return ServiceProbe::new(true, "reachable");
-    }
-    // Turned off in .env (RADIO_SOUNDS_ALIKE=false): off, like the switch, not a fault.
     let body = response.bytes().await.unwrap_or_default();
-    let off = serde_json::from_slice::<serde_json::Value>(if body.is_empty() { b"{}" } else { &body })
-        .ok()
-        .and_then(|document| document.get("off").cloned())
-        == Some(serde_json::Value::Bool(true));
-    if off {
+    let document =
+        serde_json::from_slice::<serde_json::Value>(if body.is_empty() { b"{}" } else { &body }).ok();
+    let says = |name: &str| {
+        document
+            .as_ref()
+            .and_then(|d| d.get(name))
+            .and_then(serde_json::Value::as_bool)
+    };
+    if status.is_success() {
+        let sound = radio.sounds_alike && says("soundsAlike") != Some(false);
+        let profiles = document
+            .as_ref()
+            .and_then(|d| d.get("transitionVersion"))
+            .and_then(serde_json::Value::as_i64)
+            .is_some_and(|v| v > 0);
+        return match (sound, profiles) {
+            (true, _) => ServiceProbe::new(true, "reachable"),
+            (false, true) => ServiceProbe::new(true, "running for transitions; Sounds alike is off"),
+            (false, false) => ServiceProbe::new(true, "Sounds alike is off").unconfigured(),
+        };
+    }
+    // An octo-sonic from before transition profiles, turned off in .env
+    // (RADIO_SOUNDS_ALIKE=false): off, like the switch, not a fault.
+    if says("off") == Some(true) {
         return ServiceProbe::new(true, "Sounds alike is off in .env").unconfigured();
     }
     ServiceProbe::new(

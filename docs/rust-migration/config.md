@@ -416,7 +416,7 @@ Song radio (getSimilarSongs) and the stations ask every source that is on and bl
 |---|---|---|---|---|---|---|
 | `YouTubeMusic` | `RADIO_YOUTUBE_MUSIC` | bool | true / `true` / `true` | YouTube Music's radio, through the shim. | Live | yes |
 | `ListenBrainz` | `RADIO_LISTENBRAINZ` | bool | true / `true` / `true` | ListenBrainz's similar recordings, and LB Radio with a token. | Live | yes |
-| `SoundsAlike` | `RADIO_SOUNDS_ALIKE` | bool | true / `true` / `true` | Library songs that sound like the seed (octo-sonic). Off also stops the analysis, and the status page shows octo-sonic as off. | Live | yes |
+| `SoundsAlike` | `RADIO_SOUNDS_ALIKE` | bool | true / `true` / `true` | Library songs that sound like the seed (octo-sonic). Off stops reading how songs sound; octo-sonic still makes every song's transition profile, and the status page shows it running for transitions. | Live | yes |
 | `SonicUrl` | `RADIO_SONIC_URL` | string | `http://octo-sonic:8080` (all three) | The octo-sonic sidecar; the status page probes `{SonicUrl}/health`. | Live | yes |
 | `SonicPauseSeconds` | `RADIO_SONIC_PAUSE_SECONDS` | int | 2 / `2` / `2` | `Clamp(0, 600)`. | Live | yes |
 | `ListenBrainzAlgorithm` | `RADIO_LISTENBRAINZ_ALGORITHM` (compose only) | string | `session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30` (all three) | The labs similarity dataset. | Live | no |

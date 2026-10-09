@@ -15,8 +15,8 @@ pub struct RadioSourceSettings {
     /// RADIO_LISTENBRAINZ.
     pub listen_brainz: bool,
 
-    /// Library songs that sound like the seed, from octo-sonic's analysis of every file. Off also
-    /// stops the analysis. RADIO_SOUNDS_ALIKE.
+    /// Library songs that sound like the seed, from octo-sonic's analysis of every file. Off stops
+    /// reading how songs sound; their transition profiles are still made. RADIO_SOUNDS_ALIKE.
     pub sounds_alike: bool,
 
     /// The octo-sonic sidecar. RADIO_SONIC_URL.

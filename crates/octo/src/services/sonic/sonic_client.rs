@@ -20,14 +20,15 @@ pub struct SonicFeatures {
 
 /// octo-sonic is up and writes this feature version, and this transition profile version
 /// when it makes profiles; `problem` when it cannot see the music folder, so nothing it is sent
-/// could be read; `off` when Sounds alike is turned off in .env (RADIO_SOUNDS_ALIKE=false), so
-/// it reads nothing on purpose.
+/// could be read. With Sounds alike turned off in .env (RADIO_SOUNDS_ALIKE=false) it makes
+/// profiles only (`profiles_only`), or, an octo-sonic from before that, reads nothing (`off`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SonicHealth {
     pub version: i32,
     pub transition_version: Option<i32>,
     pub problem: Option<String>,
     pub off: bool,
+    pub profiles_only: bool,
 }
 
 /// What octo-sonic is asked to read of a song: how it sounds, its transition profile, or both.
@@ -164,12 +165,17 @@ impl ISonicClient for SonicClient {
         let version = int32(doc.get("featuresVersion"))?;
         // An octo-sonic from before profiles leaves it out.
         let transition_version = int32(doc.get("transitionVersion")).filter(|&v| v > 0);
+        // Without how songs sound there is nothing but profiles; an octo-sonic that leaves the
+        // field out reads both.
+        let profiles_only =
+            transition_version.is_some() && doc.get("soundsAlike") == Some(&Value::Bool(false));
         if status.is_success() {
             return Some(SonicHealth {
                 version,
                 transition_version,
                 problem: None,
                 off: false,
+                profiles_only,
             });
         }
         if doc.get("off") == Some(&Value::Bool(true)) {
@@ -178,6 +184,7 @@ impl ISonicClient for SonicClient {
                 transition_version,
                 problem: None,
                 off: true,
+                profiles_only: false,
             });
         }
         (status.as_u16() == 503).then(|| SonicHealth {
@@ -185,6 +192,7 @@ impl ISonicClient for SonicClient {
             transition_version,
             problem: Some(text(&doc, "error").unwrap_or_else(|| "cannot see the music folder".to_string())),
             off: false,
+            profiles_only,
         })
     }
 
@@ -304,6 +312,28 @@ mod tests {
                 transition_version: Some(1),
                 ..Default::default()
             })
+        );
+        assert_eq!(
+            health(
+                200,
+                r#"{"ok":true,"featuresVersion":2,"transitionVersion":1,"soundsAlike":false}"#
+            )
+            .await,
+            Some(SonicHealth {
+                version: 2,
+                transition_version: Some(1),
+                profiles_only: true,
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            health(
+                200,
+                r#"{"ok":true,"featuresVersion":2,"transitionVersion":1,"soundsAlike":true}"#
+            )
+            .await
+            .map(|h| h.profiles_only),
+            Some(false)
         );
         assert_eq!(
             health(503, r#"{"ok":false,"off":true,"featuresVersion":2}"#).await,

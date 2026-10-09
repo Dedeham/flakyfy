@@ -30,8 +30,11 @@ struct Sidecar {
     parts: Mutex<Vec<SonicParts>>,
     /// Its music folder is empty or unreadable: health answers 503.
     blind: AtomicBool,
-    /// Sounds alike is off in .env: health answers 503 with off.
+    /// Sounds alike is off in .env, on an octo-sonic from before profiles: health answers 503
+    /// with off.
     off: AtomicBool,
+    /// Sounds alike is off in .env: it makes profiles only, and refuses to read the sound.
+    profiles_only: AtomicBool,
     analysed: Mutex<Vec<String>>,
     errors: Mutex<HashMap<String, String>>,
     drops: Mutex<HashSet<String>>,
@@ -49,6 +52,7 @@ impl Default for Sidecar {
             parts: Mutex::default(),
             blind: AtomicBool::new(false),
             off: AtomicBool::new(false),
+            profiles_only: AtomicBool::new(false),
             analysed: Mutex::default(),
             errors: Mutex::default(),
             drops: Mutex::default(),
@@ -75,6 +79,7 @@ impl ISonicClient for Sidecar {
                 transition_version,
                 problem: None,
                 off: true,
+                profiles_only: false,
             });
         }
         Some(SonicHealth {
@@ -85,6 +90,7 @@ impl ISonicClient for Sidecar {
                 .load(Ordering::SeqCst)
                 .then(|| "cannot see the music folder".to_string()),
             off: false,
+            profiles_only: self.profiles_only.load(Ordering::SeqCst),
         })
     }
 
@@ -115,6 +121,9 @@ impl ISonicClient for Sidecar {
         }
         if let Some(error) = self.errors.lock().get(&name) {
             return Ok(answer(error, 422));
+        }
+        if parts.sound && self.profiles_only.load(Ordering::SeqCst) {
+            panic!("asked octo-sonic for the sound of {name} with Sounds alike off in .env");
         }
         let transition = self.transition.lock().unwrap_or(1);
         Ok(SonicAnswer {
@@ -843,4 +852,88 @@ async fn at_the_pass_end_gone_songs_lose_their_profiles() {
     t.ticks_until_done().await;
     assert!(t.transitions.entry("gone").is_none());
     assert!(profile_of(&t, "a").is_some());
+}
+
+// ---- profiles with Sounds alike off -----------------------------------------------------
+
+fn sounds_alike_off() -> RadioSourceSettings {
+    RadioSourceSettings {
+        sounds_alike: false,
+        sonic_url: "http://sonic.test".into(),
+        sonic_pause_seconds: 0,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn with_sounds_alike_off_on_the_radio_page_every_song_still_gets_its_profile() {
+    let t = make(Some(sounds_alike_off()));
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.library.add("b", "b.flac", Some(200), true);
+    t.tick().await;
+    assert_eq!(
+        t.state(),
+        ("Running".to_string(), Some(PROFILES_ONLY_RADIO_PAGE.to_string()))
+    );
+    t.ticks_until_done().await;
+    assert_eq!(t.sidecar.analysed(), ["a.flac", "b.flac"]);
+    assert!(t.sidecar.parts.lock().iter().all(|&p| p == profile_only()));
+    assert!(profile_of(&t, "a").is_some() && profile_of(&t, "b").is_some());
+    // No bliss work: not a song's sound is kept, and none is counted as failed.
+    assert!(t.store.read(|s| s.songs.is_empty() && s.failed.is_empty()));
+    let status = t.worker.status();
+    assert_eq!(
+        (status.profiled, status.analysed, status.reads_sound),
+        (2, 0, false)
+    );
+    assert_eq!(status.reason.as_deref(), Some(DONE_PROFILES));
+    assert_eq!(t.transitions.current_version(), Some(1));
+}
+
+#[tokio::test]
+async fn with_sounds_alike_off_in_env_only_profiles_are_asked_for() {
+    let t = make(None);
+    *t.sidecar.transition.lock() = Some(1);
+    t.sidecar.profiles_only.store(true, Ordering::SeqCst);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.tick().await;
+    assert_eq!(
+        t.state(),
+        ("Running".to_string(), Some(PROFILES_ONLY_IN_ENV.to_string()))
+    );
+    t.ticks_until_done().await;
+    assert_eq!(*t.sidecar.parts.lock(), [profile_only()]);
+    assert!(profile_of(&t, "a").is_some());
+    assert!(t.store.read(|s| s.songs.is_empty() && s.failed.is_empty()));
+}
+
+#[tokio::test]
+async fn with_sounds_alike_off_an_outside_song_that_lands_still_gets_its_profile() {
+    let t = make(Some(sounds_alike_off()));
+    *t.sidecar.transition.lock() = Some(1);
+    let landed = t.library.directory.join("landed.mp3");
+    std::fs::write(&landed, b"some sound").expect("writes");
+    t.worker.arrived_outside("youtube:abc", &landed.to_string_lossy());
+    t.ticks_until_done().await;
+    assert_eq!(t.sidecar.analysed(), ["landed.mp3"]);
+    assert!(profile_of(&t, "youtube:abc").is_some());
+}
+
+#[tokio::test]
+async fn turning_sounds_alike_on_reads_the_sound_of_songs_that_have_only_a_profile() {
+    let t = make(Some(sounds_alike_off()));
+    *t.sidecar.transition.lock() = Some(1);
+    t.library.add("a", "a.flac", Some(200), true);
+    t.ticks_until_done().await;
+    assert!(t.store.read(|s| s.songs.is_empty()));
+
+    let settings = t.worker.settings.clone();
+    let mut on = (*settings.current()).clone();
+    on.radio_sources.sounds_alike = true;
+    settings.set(on);
+    // Without waiting out the pass interval.
+    t.ticks_until_done().await;
+    assert_eq!(t.sidecar.parts.lock().last(), Some(&SonicParts::SOUND));
+    assert!(t.store.read(|s| s.songs.contains_key("a")));
 }

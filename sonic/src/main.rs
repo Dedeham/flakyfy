@@ -26,9 +26,9 @@ struct App {
     root: PathBuf,
     slots: Arc<Semaphore>,
     program: PathBuf,
-    /// False when Sounds alike is turned off (SONIC_ENABLED, from RADIO_SOUNDS_ALIKE): the
-    /// server still answers, so Octo can say it is off, but reads nothing.
-    enabled: bool,
+    /// False when Sounds alike is turned off (SONIC_ENABLED, from RADIO_SOUNDS_ALIKE): songs
+    /// are still read for their transition profiles, never for how they sound.
+    sounds_alike: bool,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +64,15 @@ impl Parts {
         parts
     }
 
+    /// What is left when how the song sounds is not read: the profile alone, if it was asked.
+    fn without_sound(self) -> Parts {
+        Parts { sound: false, ..self }
+    }
+
+    fn is_empty(self) -> bool {
+        !self.sound && !self.transition
+    }
+
     /// As the child takes them on its command line.
     fn arg(self) -> String {
         let mut names = Vec::new();
@@ -82,7 +91,7 @@ fn version() -> u16 {
 }
 
 /// SONIC_ENABLED as compose passes RADIO_SOUNDS_ALIKE: on unless it says false, 0, off or no.
-fn enabled(value: Option<&str>) -> bool {
+fn sounds_alike(value: Option<&str>) -> bool {
     !matches!(value.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("false" | "0" | "off" | "no"))
 }
 
@@ -98,11 +107,11 @@ async fn main() {
     let root = std::fs::canonicalize(&root).unwrap_or_else(|_| PathBuf::from(root));
     let slots = std::env::var("ANALYSE_CONCURRENCY").ok().and_then(|v| v.parse().ok()).unwrap_or(1usize).max(1);
     let program = std::env::current_exe().expect("own path");
-    let enabled = enabled(std::env::var("SONIC_ENABLED").ok().as_deref());
-    if !enabled {
-        tracing::info!("Sounds alike is off (RADIO_SOUNDS_ALIKE=false): answering, reading nothing");
+    let sounds_alike = sounds_alike(std::env::var("SONIC_ENABLED").ok().as_deref());
+    if !sounds_alike {
+        tracing::info!("Sounds alike is off (RADIO_SOUNDS_ALIKE=false): making transition profiles only");
     }
-    let app = router(App { root, slots: Arc::new(Semaphore::new(slots)), program, enabled });
+    let app = router(App { root, slots: Arc::new(Semaphore::new(slots)), program, sounds_alike });
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.expect("port 8080");
     axum::serve(listener, app)
         .with_graceful_shutdown(stopped())
@@ -164,15 +173,9 @@ fn router(app: App) -> Router {
 }
 
 /// Healthy only when the music folder is there and has something in it: a mount that failed
-/// leaves an empty folder, and every song would then look missing.
+/// leaves an empty folder, and every song would then look missing. `soundsAlike` says whether
+/// it reads how songs sound; transition profiles are made either way.
 async fn health(State(app): State<App>) -> impl IntoResponse {
-    if !app.enabled {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
-            "ok": false, "off": true, "featuresVersion": version(),
-            "transitionVersion": transition::version(),
-            "error": "Sounds alike is off (RADIO_SOUNDS_ALIKE=false)",
-        })));
-    }
     let root = app.root.clone();
     let sees = tokio::task::spawn_blocking(move || {
         std::fs::read_dir(root).map(|mut entries| entries.next().is_some()).unwrap_or(false)
@@ -182,18 +185,22 @@ async fn health(State(app): State<App>) -> impl IntoResponse {
     if sees {
         (StatusCode::OK, Json(json!({
             "ok": true, "featuresVersion": version(), "transitionVersion": transition::version(),
+            "soundsAlike": app.sounds_alike,
         })))
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
             "ok": false, "featuresVersion": version(), "transitionVersion": transition::version(),
-            "error": "cannot see the music folder",
+            "soundsAlike": app.sounds_alike, "error": "cannot see the music folder",
         })))
     }
 }
 
 async fn analyse(State(app): State<App>, Json(body): Json<Analyse>) -> impl IntoResponse {
-    if !app.enabled {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "Sounds alike is off" })));
+    // With Sounds alike off, how a song sounds is never read: only its profile, if asked.
+    let parts = Parts::of(body.parts.iter().flatten().map(String::as_str));
+    let parts = if app.sounds_alike { parts } else { parts.without_sound() };
+    if parts.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "Sounds alike is off", "off": true })));
     }
     let path = match inside(&app.root, Path::new(&body.path)) {
         Ok(path) => path,
@@ -204,7 +211,6 @@ async fn analyse(State(app): State<App>, Json(body): Json<Analyse>) -> impl Into
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "not a file" })));
     }
     let _slot = app.slots.acquire().await.expect("semaphore");
-    let parts = Parts::of(body.parts.iter().flatten().map(String::as_str));
     let child = tokio::process::Command::new(&app.program)
         .arg("read").arg(&path).arg(parts.arg())
         .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
@@ -263,19 +269,45 @@ mod tests {
         app_with(root, true)
     }
 
-    fn app_with(root: &Path, enabled: bool) -> Router {
+    fn app_with(root: &Path, sounds_alike: bool) -> Router {
+        app_running(root, sounds_alike, PathBuf::from("/nonexistent/octo-sonic"))
+    }
+
+    fn app_running(root: &Path, sounds_alike: bool, program: PathBuf) -> Router {
         router(App {
             root: std::fs::canonicalize(root).unwrap(),
             slots: Arc::new(Semaphore::new(1)),
-            program: PathBuf::from("/nonexistent/octo-sonic"),
-            enabled,
+            program,
+            sounds_alike,
         })
     }
 
     async fn post(app: Router, path: &Path) -> StatusCode {
-        let body = json!({ "path": path.to_string_lossy() }).to_string();
-        app.oneshot(Request::post("/analyse").header("content-type", "application/json")
-            .body(Body::from(body)).unwrap()).await.unwrap().status()
+        post_parts(app, path, None).await.0
+    }
+
+    async fn post_parts(app: Router, path: &Path, parts: Option<&[&str]>) -> (StatusCode, serde_json::Value) {
+        let body = match parts {
+            Some(parts) => json!({ "path": path.to_string_lossy(), "parts": parts }),
+            None => json!({ "path": path.to_string_lossy() }),
+        };
+        let res = app.oneshot(Request::post("/analyse").header("content-type", "application/json")
+            .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let status = res.status();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// A stand-in reader that answers with the parts it was started with, so a test sees what
+    /// the child was asked to read.
+    #[cfg(unix)]
+    fn echoing_reader(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let program = dir.join("echo-reader.sh");
+        std::fs::write(&program, "#!/bin/sh\nprintf '{\"parts\":\"%s\"}' \"$3\"\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        program
     }
 
     async fn health(app: Router) -> (StatusCode, serde_json::Value) {
@@ -306,26 +338,62 @@ mod tests {
     }
 
     #[test]
-    fn only_a_clear_no_turns_it_off() {
+    fn only_a_clear_no_turns_sounds_alike_off() {
         for off in ["false", "FALSE", " 0 ", "off", "no"] {
-            assert!(!enabled(Some(off)), "{off}");
+            assert!(!sounds_alike(Some(off)), "{off}");
         }
         for on in ["true", "1", "", "yes"] {
-            assert!(enabled(Some(on)), "{on}");
+            assert!(sounds_alike(Some(on)), "{on}");
         }
-        assert!(enabled(None));
+        assert!(sounds_alike(None));
+    }
+
+    #[test]
+    fn without_sounds_alike_only_the_profile_is_left() {
+        assert_eq!(Parts::of(["sound", "transition"]).without_sound(), Parts { sound: false, transition: true });
+        assert!(Parts::of(["sound"]).without_sound().is_empty());
     }
 
     #[tokio::test]
-    async fn turned_off_it_says_so_and_reads_nothing() {
+    async fn with_sounds_alike_off_it_is_healthy_and_says_so() {
         let root = std::env::temp_dir().join("octo-sonic-off");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("song.flac"), b"x").unwrap();
         let (status, value) = health(app_with(&root, false)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["ok"], json!(true));
+        assert_eq!(value["soundsAlike"], json!(false));
+        assert_eq!(value["transitionVersion"], json!(1));
+        assert_eq!(health(app(&root)).await.1["soundsAlike"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn with_sounds_alike_off_the_sound_alone_is_refused() {
+        let root = std::env::temp_dir().join("octo-sonic-off-sound");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("song.flac"), b"x").unwrap();
+        let song = root.join("song.flac");
+        assert_eq!(post(app_with(&root, false), &song).await, StatusCode::SERVICE_UNAVAILABLE);
+        let (status, value) = post_parts(app_with(&root, false), &song, Some(&["sound"])).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(value["off"], json!(true));
-        assert_eq!(value["featuresVersion"], json!(2));
-        assert_eq!(post(app_with(&root, false), &root.join("song.flac")).await, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn with_sounds_alike_off_only_the_profile_is_read() {
+        let root = std::env::temp_dir().join("octo-sonic-off-profile");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("song.flac"), b"x").unwrap();
+        let reader = echoing_reader(&std::env::temp_dir().join("octo-sonic-off-profile-reader"));
+        let song = root.join("song.flac");
+        let (status, value) =
+            post_parts(app_running(&root, false, reader.clone()), &song, Some(&["sound", "transition"])).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(value["parts"], json!("transition"));
+        let (_, value) =
+            post_parts(app_running(&root, true, reader.clone()), &song, Some(&["sound", "transition"])).await;
+        assert_eq!(value["parts"], json!("sound,transition"));
     }
 
     #[tokio::test]

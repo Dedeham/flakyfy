@@ -210,7 +210,7 @@ Every release publishes three images on GitHub's container registry, each for am
 | --- | --- |
 | `ghcr.io/winters27/octo` | Octo itself |
 | `ghcr.io/winters27/octo-yt-dlp-shim` | the yt-dlp shim beside it |
-| `ghcr.io/winters27/octo-sonic` | octo-sonic, the Sounds alike reader |
+| `ghcr.io/winters27/octo-sonic` | octo-sonic, which reads each song for Sounds alike and transition profiles |
 
 `docker-compose.yml` pulls all three, tagged with the release the folder holds, so no install compiles anything. `OCTO_IMAGE_TAG` in `.env` picks another tag for all three, such as `latest`.
 
@@ -377,7 +377,7 @@ Octo is a full refactor of [octo-radiostarr](https://github.com/winters27/octo-r
 
 ### Architecture
 
-Four Docker containers in one `docker compose` stack (the diagram leaves out octo-sonic, the Sounds alike reader beside octo):
+Four Docker containers in one `docker compose` stack (the diagram leaves out octo-sonic, the song reader for Sounds alike and transition profiles beside octo):
 
 ```
 ┌──────────────────────────┐         ┌──────────────────┐
@@ -393,7 +393,7 @@ Four Docker containers in one `docker compose` stack (the diagram leaves out oct
 
 - **`octo`** (port 5274): the proxy + admin UI, written in Rust. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Octo hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
 - **`yt-dlp-shim`** (internal): wraps `yt-dlp` behind two HTTP endpoints. Process-isolation keeps yt-dlp's frequent extractor breakage from affecting the rest of the stack.
-- **`octo-sonic`** (internal): reads each song once and says how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` leaves it idle.
+- **`octo-sonic`** (internal): reads each song once for its transition profile, which the Octo apps use to blend one song into the next, and for how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` turns Sounds alike radio off; octo-sonic keeps making transition profiles.
 - **`slskd`** (port 5030 for its web page, 50300 for other Soulseek users): Soulseek client with REST API. Octo authenticates and queues downloads, and slskd shares your library back, read-only (see [Sharing back on Soulseek](#sharing-back-on-soulseek)).
 
 Navidrome is **not** part of the stack. Octo just talks to whatever Navidrome you already have.
@@ -451,15 +451,18 @@ alike 0.4), what radio has learned, and "Forget what radio learned". `RADIO_YOUT
 `RADIO_LISTENBRAINZ`, `RADIO_SOUNDS_ALIKE` and `RADIO_LEARN_FROM_LISTENING` switch them in `.env`.
 YouTube Music and ListenBrainz receive the artist and title of the song a radio starts from.
 
-Sounds alike runs in the `octo-sonic` service (bliss-rs). It reads each song once, one at a time
+Sounds alike runs in the `octo-sonic` service (bliss-rs). The same reading makes each song's
+transition profile, which the Octo apps use to blend one song into the next, so octo-sonic runs
+whether or not Sounds alike is on. It reads each song once, one at a time
 with `RADIO_SONIC_PAUSE_SECONDS` between, only while nothing downloads, then keeps up with new
 and changed songs; a damaged file costs only that file. On a network mount the first pass takes
 a while, and the dashboard shows how far it is, with Pause and Start over. `SONIC_CPUS` (default
 1) caps the CPUs it may use; never set it above the machine's count, or Docker will not start it.
 It starts with the rest of the stack, so an update brings it without any change to `.env`. It is
 pulled already built, like the yt-dlp shim; only without access to `ghcr.io` is it compiled
-here, which takes several minutes and more memory than a small machine may have. `RADIO_SOUNDS_ALIKE=false` turns Sounds alike off: Octo stops asking, and octo-sonic
-waits without reading anything. It reads the music as `nobody` (`SONIC_USER`, e.g. `1000:1000`
+here, which takes several minutes and more memory than a small machine may have. `RADIO_SOUNDS_ALIKE=false` (or the switch on the Radio page)
+turns Sounds alike radio off: octo-sonic then makes transition profiles only, and no longer works
+out how songs sound. It reads the music as `nobody` (`SONIC_USER`, e.g. `1000:1000`
 for a folder only its owner can read), on a read-only filesystem with a 2 GB memory limit. An
 older `.env` with `COMPOSE_PROFILES=sonic` keeps working; the profile is no longer needed.
 
@@ -974,7 +977,7 @@ Project layout:
 | `octo/wwwroot/admin/` | the admin UI (vanilla JS, hand-rolled CSS, no build step) |
 | `parity/` | the harness that compares the Rust server's answers with the C# one's |
 | `yt-dlp-shim/` | Python/Flask sidecar (~200 lines) |
-| `sonic/` | octo-sonic, the Sounds alike reader (Rust) |
+| `sonic/` | octo-sonic, the Sounds alike and transition profile reader (Rust) |
 
 </details>
 

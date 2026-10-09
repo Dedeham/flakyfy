@@ -23,6 +23,8 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use octo_core::common::Clock;
 use octo_core::settings::{AppSettings, RestartTracker, SettingsFileWriter, SettingsStore};
@@ -52,6 +54,9 @@ use octo_media::cover::CoverArtService;
 use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
+use crate::services::family::{
+    FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault, RequestStore, SavedStore,
+};
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
     MusicBrainzClient,
@@ -470,6 +475,21 @@ pub struct AppInner {
     /// `imports-trickle.json`, `spotify-accounts.json`), the Spotify sign-in and the trickle
     /// (`TrickleWorker`, also hosted): the "ImportService" and "TrickleWorker" workers.
     pub imports: Arc<crate::services::imports::ImportService>,
+    /// `family.key`: seals members' device secrets and hidden Navidrome passwords, and signs
+    /// their browser tokens.
+    pub family_vault: Arc<FamilyVault>,
+    /// `family.json`: the owner, members, devices, invites and pairing codes.
+    pub family_store: Arc<FamilyStore>,
+    /// `family-requests.json`: members' requests for a copy.
+    pub family_requests: Arc<RequestStore>,
+    /// `family-saved.json`: outside songs and albums members saved.
+    pub family_saved: Arc<SavedStore>,
+    /// `family-playlists.json`: playlists every member can add to.
+    pub family_playlists: Arc<FamilyPlaylistStore>,
+    /// `family-pool.json`: the one copy of each member download and who links it.
+    pub family_pool: Arc<FamilyPoolStore>,
+    /// Whether Family's background work has been started (see [`AppInner::start_family`]).
+    family_started: AtomicBool,
 }
 
 /// Library health for the dashboard (`Program.cs`, 69f577f): the app's checks over the library
@@ -990,6 +1010,12 @@ struct Stores {
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
+    family_vault: Arc<FamilyVault>,
+    family_store: Arc<FamilyStore>,
+    family_requests: Arc<RequestStore>,
+    family_saved: Arc<SavedStore>,
+    family_playlists: Arc<FamilyPlaylistStore>,
+    family_pool: Arc<FamilyPoolStore>,
 }
 
 impl Stores {
@@ -1050,6 +1076,14 @@ impl Stores {
             ))),
             notice_queue: Arc::new(NoticeQueue::with_path(Some(config_dir.join("notice-queue.json")))),
             review_sweep_store: Arc::new(ReviewSweepStore::new(Some(config_dir.join("review-sweep.json")))),
+            family_vault: Arc::new(FamilyVault::open(config_dir)),
+            family_store: Arc::new(FamilyStore::new(Some(config_dir.join("family.json")))),
+            family_requests: Arc::new(RequestStore::new(Some(config_dir.join("family-requests.json")))),
+            family_saved: Arc::new(SavedStore::new(Some(config_dir.join("family-saved.json")))),
+            family_playlists: Arc::new(FamilyPlaylistStore::new(Some(
+                config_dir.join("family-playlists.json"),
+            ))),
+            family_pool: Arc::new(FamilyPoolStore::new(Some(config_dir.join("family-pool.json")))),
         }
     }
 
@@ -1972,6 +2006,32 @@ impl AppInner {
     pub fn stop_application(&self) {
         self.lifetime.cancel();
     }
+
+    /// Starts Family's background work once Family is on: makes `family.key` when there is
+    /// none and nothing sealed is waiting for an old one, and writes devices' last-seen details
+    /// every 30 seconds (and once more on the way out). Does nothing while Family is off, so an
+    /// install that never turns it on runs no extra worker; turning it on later calls this
+    /// again, and only the first call after that does anything.
+    pub fn start_family(&self) {
+        if !self.settings.current().family.enabled || self.family_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if !self.family_vault.has_key()
+            && !self.family_store.has_sealed_secrets()
+            && let Err(e) = self.family_vault.create_key_if_missing()
+        {
+            tracing::warn!("FAMILY family.key could not be made: {e}");
+        }
+        let store = self.family_store.clone();
+        self.workers.register("FamilyStore", move |token| {
+            let store = store.clone();
+            crate::services::state_file::flush_every(
+                Duration::from_secs(30),
+                token,
+                Arc::new(move || store.flush_if_dirty()),
+            )
+        });
+    }
 }
 
 impl AppState {
@@ -2272,7 +2332,15 @@ impl AppState {
             library_edits,
             library_health,
             imports: imports.service,
+            family_vault: stores.family_vault,
+            family_store: stores.family_store,
+            family_requests: stores.family_requests,
+            family_saved: stores.family_saved,
+            family_playlists: stores.family_playlists,
+            family_pool: stores.family_pool,
+            family_started: AtomicBool::new(false),
         };
+        inner.start_family();
         AppState {
             inner: Arc::new(inner),
         }
@@ -2582,6 +2650,13 @@ impl AppState {
             library_edits,
             library_health,
             imports: imports.service,
+            family_vault: stores.family_vault,
+            family_store: stores.family_store,
+            family_requests: stores.family_requests,
+            family_saved: stores.family_saved,
+            family_playlists: stores.family_playlists,
+            family_pool: stores.family_pool,
+            family_started: AtomicBool::new(false),
         };
         AppState {
             inner: Arc::new(inner),
@@ -2913,6 +2988,59 @@ mod tests {
         use crate::services::library::IReviewSweepVerifier;
         assert!(!state.fingerprint_sweep_verifier.is_ready());
         assert_eq!(state.upgrade_worker.running(), 0);
+    }
+
+    /// With Family off nothing of it runs: no worker, no key file, no family file written.
+    #[test]
+    fn family_off_starts_nothing() {
+        let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
+        let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
+        assert!(!names.iter().any(|n| n == "FamilyStore"), "{names:?}");
+
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let state = AppState::for_tests_with(
+            AppSettings::default(),
+            TestServices {
+                config_dir: Some(dir.path().to_path_buf()),
+                ..Default::default()
+            },
+        );
+        state.start_family();
+        assert!(state.workers.status().is_empty());
+        assert!(!state.family_vault.has_key());
+        assert!(!dir.path().join("family.key").exists());
+        assert!(!dir.path().join("family.json").exists());
+    }
+
+    /// Turning Family on makes the key and the store's flush worker, once.
+    #[test]
+    fn family_on_makes_the_key_and_the_flush_worker_once() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut settings = AppSettings::default();
+        settings.family.enabled = true;
+        let state = AppState::for_tests_with(
+            settings,
+            TestServices {
+                config_dir: Some(dir.path().to_path_buf()),
+                ..Default::default()
+            },
+        );
+        state.start_family();
+        state.start_family();
+        let flushers = state
+            .workers
+            .status()
+            .into_iter()
+            .filter(|s| s.name == "FamilyStore")
+            .count();
+        assert_eq!(flushers, 1);
+        assert!(state.family_vault.has_key());
+        assert_eq!(
+            std::fs::read(dir.path().join("family.key")).expect("made").len(),
+            64
+        );
+        let sealed = state.family_vault.seal("hidden").expect("a key");
+        assert_eq!(state.family_vault.open_sealed(&sealed).as_deref(), Some("hidden"));
     }
 
     #[test]

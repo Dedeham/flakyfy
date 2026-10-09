@@ -7181,18 +7181,23 @@ function renderHealthRun(run) {
   const lookup = run.kind === 'lookup';
   const unit = lookup ? 'songs' : 'changes';
   const found = lookup ? (run.lookups || []).filter(entry => entry.state === 'found' && entry.changes.length).length : 0;
-  list.innerHTML = `<div class="acq-card">
-    <div class="acq-art">${icon(run.kind === 'lookup' ? 'i-magnifying-glass' : 'i-wrench')}</div>
+  // One full-width row: what runs and how far on the left, Stop on the right, so the button
+  // never stacks against the bar.
+  const where = [
+    run.current ? `Now: ${esc(run.current)}` : '',
+    lookup ? (found ? `changes found for ${esc(healthPlural(found, 'song'))} so far` : 'no changes found yet') : '',
+  ].filter(Boolean).join(' <span class="dl-dash">·</span> ');
+  list.innerHTML = `<div class="acq-card health-run-card">
+    <div class="acq-art">${icon(lookup ? 'i-magnifying-glass' : 'i-wrench')}</div>
     <div class="dl-main">
-      <div class="acq-head">
+      <div class="health-run-head">
         <div class="dl-title">${esc(run.label)}</div>
         <span class="dl-badge state">${run.done.toLocaleString()} of ${run.total.toLocaleString()} ${unit}</span>
       </div>
-      ${run.current ? `<div class="dl-sub">Now: ${esc(run.current)}</div>` : ''}
-      ${lookup ? `<div class="dl-sub">${found ? `Found changes for ${esc(healthPlural(found, 'song'))} so far.` : 'Nothing to change found yet.'}</div>` : ''}
       <div class="acq-bar" role="progressbar" aria-label="${esc(run.label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
-      <div class="health-actions health-run-actions"><button class="btn btn-ghost btn-sm" type="button" id="health-stop">${lookup ? 'Stop and look over what was found' : 'Stop after this song'}</button></div>
+      ${where ? `<div class="dl-sub">${where}</div>` : ''}
     </div>
+    <button class="btn btn-ghost health-run-stop" type="button" id="health-stop">${lookup ? 'Stop and review' : 'Stop after this song'}</button>
   </div>`;
 }
 

@@ -1774,8 +1774,18 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .health-choice .btn[aria-pressed="true"] { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent); }
 .health-preview-actions { margin: 0; padding: 0; border: 0; background: none; justify-content: flex-end; }
 .health-foot { margin-top: var(--s-section); }
-/* The run's Stop sits clear of the bar above it. */
-.health-run-actions { margin-top: var(--s-l); justify-content: flex-start; }
+/* A health run is one full-width row: the art, then what runs with its bar, then Stop. */
+.health-run-card { grid-column: 1 / -1; gap: var(--s-xl); padding: var(--s-l) var(--s-xl) var(--s-l) var(--s-l); }
+.health-run-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-s) var(--s-m); }
+.health-run-head .dl-title { white-space: normal; overflow-wrap: anywhere; }
+.health-run-card .acq-bar { margin-top: var(--s-m); }
+.health-run-card .acq-bar > span { min-width: 6px; }
+.health-run-stop { flex-shrink: 0; }
+@media (max-width: 760px) {
+  .health-run-card { flex-wrap: wrap; padding: var(--s-l); gap: var(--s-l); }
+  .health-run-card .dl-main { flex-basis: calc(100% - 56px - var(--s-l)); }
+  .health-run-stop { width: 100%; }
+}
 .health-pick-all { justify-content: flex-start; }
 
 /* One finding at a time: a menu of the checks with their counts beside the one picked. The

@@ -357,7 +357,12 @@ impl LibraryIndex {
         }
     }
 
+    /// Reads the index and logs how that went. While Family is off nothing is read: the index
+    /// keeps what it last read and Navidrome is left alone until Family is on again.
     async fn refresh_logged(&self) {
+        if !self.settings.current().family.enabled {
+            return;
+        }
         match self.refresh().await {
             Ok(count) => info!("FAMILY library index read: {count} songs"),
             Err(e) => warn!("FAMILY library index could not be read: {e}"),
@@ -706,11 +711,18 @@ mod tests {
             .count()
     }
 
+    fn turn_family(settings: &SettingsStore, enabled: bool) {
+        let mut changed = settings.current().as_ref().clone();
+        changed.family.enabled = enabled;
+        settings.set(changed);
+    }
+
     #[tokio::test]
     async fn the_index_is_read_again_after_a_scan_octo_starts() {
         let server = navidrome().await;
         mount_songs(&server, json!([])).await;
-        let (index, _) = index_for(&server.uri());
+        let (index, settings) = index_for(&server.uri());
+        turn_family(&settings, true);
         let index = Arc::new(
             Arc::into_inner(index)
                 .expect("one owner")
@@ -732,10 +744,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_index_stays_quiet_while_family_is_off() {
+        let server = navidrome().await;
+        mount_songs(&server, json!([])).await;
+        let (index, settings) = index_for(&server.uri());
+        let index = Arc::new(Arc::into_inner(index).expect("one owner").with_timing(fast()));
+        let token = CancellationToken::new();
+        let library: Arc<dyn ILocalLibraryService> = Arc::new(FakeLocalLibrary::default());
+        let running = tokio::spawn(Arc::clone(&index).run(token.clone(), library));
+        index.scan_notice().notify_one();
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert_eq!(
+            song_reads(&server).await,
+            0,
+            "Navidrome is not read while Family is off"
+        );
+        turn_family(&settings, true);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        token.cancel();
+        running.await.expect("joins").expect("stops cleanly");
+        assert!(song_reads(&server).await >= 1, "read again once Family is on");
+    }
+
+    #[tokio::test]
     async fn the_index_is_read_again_on_its_timer() {
         let server = navidrome().await;
         mount_songs(&server, json!([])).await;
-        let (index, _) = index_for(&server.uri());
+        let (index, settings) = index_for(&server.uri());
+        turn_family(&settings, true);
         let index = Arc::new(Arc::into_inner(index).expect("one owner").with_timing(fast()));
         let token = CancellationToken::new();
         let library: Arc<dyn ILocalLibraryService> = Arc::new(FakeLocalLibrary::default());

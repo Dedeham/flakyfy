@@ -65,9 +65,45 @@ impl SignInThrottle {
             tries.pop_front();
         }
         tries.push_back(now);
+        while tries.len() > Self::MAX_FAILURES * 2 {
+            tries.pop_front();
+        }
         if failures.len() > Self::MAX_ADDRESSES {
             failures.retain(|_, tries| tries.back().is_some_and(|last| now - *last < Self::WINDOW));
+            trim_oldest(&mut failures, Self::MAX_ADDRESSES, |tries| tries.back().copied());
         }
+    }
+
+    /// How many keys the throttle holds now.
+    pub fn len(&self) -> usize {
+        self.failures.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Counts one try for this key now, before it is checked, unless the key has to wait: then
+    /// answers how long, and counts nothing. Checking and counting happen under one lock, so
+    /// tries sent all at once cannot all slip under the limit. A right try is cleared with
+    /// [`SignInThrottle::succeeded`].
+    pub fn attempt(&self, key: &str) -> Option<TimeDelta> {
+        let now = self.clock.now();
+        let mut failures = self.failures.lock();
+        if let Some(tries) = failures.get_mut(key) {
+            while tries.front().is_some_and(|first| now - *first >= Self::WINDOW) {
+                tries.pop_front();
+            }
+            if tries.len() >= Self::MAX_FAILURES {
+                return tries.front().map(|first| *first + Self::WINDOW - now);
+            }
+        }
+        failures.entry(key.to_string()).or_default().push_back(now);
+        if failures.len() > Self::MAX_ADDRESSES {
+            failures.retain(|_, tries| tries.back().is_some_and(|last| now - *last < Self::WINDOW));
+            trim_oldest(&mut failures, Self::MAX_ADDRESSES, |tries| tries.back().copied());
+        }
+        None
     }
 
     pub fn succeeded(&self, key: &str) {
@@ -88,6 +124,27 @@ impl SignInThrottle {
     /// `Retry-After` in whole seconds, rounded up, as the sign-in endpoints send it.
     pub fn retry_after_seconds(wait: TimeDelta) -> i64 {
         (wait.num_milliseconds() as f64 / 1000.0).ceil() as i64
+    }
+}
+
+/// Drops entries of `map` until at most `keep` are left, the ones whose `newest` is oldest (or
+/// None) first. A table of tries or log times stays bounded however many keys a flood brings.
+pub fn trim_oldest<K, V, T>(map: &mut HashMap<K, V>, keep: usize, newest: impl Fn(&V) -> Option<T>)
+where
+    K: Clone + Eq + std::hash::Hash,
+    T: Ord,
+{
+    if map.len() <= keep {
+        return;
+    }
+    let mut ages: Vec<(Option<T>, K)> = map
+        .iter()
+        .map(|(key, value)| (newest(value), key.clone()))
+        .collect();
+    ages.sort_by(|a, b| a.0.cmp(&b.0));
+    let extra = map.len() - keep;
+    for (_, key) in ages.into_iter().take(extra) {
+        map.remove(&key);
     }
 }
 
@@ -131,6 +188,62 @@ mod tests {
         throttle.failed("10.0.0.7");
         throttle.succeeded("10.0.0.7");
         assert!(throttle.failures.lock().get("10.0.0.7").is_none());
+    }
+
+    #[test]
+    fn an_attempt_counts_before_the_check_and_waits_once_the_tries_are_used_up() {
+        let throttle = SignInThrottle::new();
+        for _ in 0..SignInThrottle::MAX_FAILURES {
+            assert_eq!(throttle.attempt("10.0.0.5|sam"), None);
+        }
+        assert!(throttle.attempt("10.0.0.5|sam").is_some());
+        assert!(throttle.retry_after("10.0.0.5|sam").is_some());
+        assert_eq!(throttle.attempt("10.0.0.5|alex"), None, "another account may try");
+        throttle.succeeded("10.0.0.5|alex");
+        assert!(
+            throttle.retry_after("10.0.0.5|sam").is_some(),
+            "only that account is cleared"
+        );
+    }
+
+    #[test]
+    fn the_table_stays_bounded_under_a_flood() {
+        let throttle = SignInThrottle::new();
+        for n in 0..(SignInThrottle::MAX_ADDRESSES + 50) {
+            throttle.failed(&format!("10.{}.{}.1", n / 256, n % 256));
+        }
+        assert!(
+            throttle.len() <= SignInThrottle::MAX_ADDRESSES + 1,
+            "{}",
+            throttle.len()
+        );
+        for n in 0..(SignInThrottle::MAX_ADDRESSES + 50) {
+            let _ = throttle.attempt(&format!("11.{}.{}.1", n / 256, n % 256));
+        }
+        assert!(
+            throttle.len() <= SignInThrottle::MAX_ADDRESSES,
+            "{}",
+            throttle.len()
+        );
+        for _ in 0..100 {
+            throttle.failed("12.0.0.1");
+        }
+        assert!(throttle.failures.lock()["12.0.0.1"].len() <= SignInThrottle::MAX_FAILURES * 2);
+    }
+
+    #[test]
+    fn trimming_keeps_the_newest() {
+        let mut map: HashMap<&str, Option<u32>> = HashMap::new();
+        map.insert("old", Some(1));
+        map.insert("none", None);
+        map.insert("new", Some(9));
+        map.insert("mid", Some(5));
+        trim_oldest(&mut map, 2, |at| *at);
+        let mut kept: Vec<&str> = map.keys().copied().collect();
+        kept.sort_unstable();
+        assert_eq!(kept, ["mid", "new"]);
+        trim_oldest(&mut map, 5, |at| *at);
+        assert_eq!(map.len(), 2);
     }
 
     #[test]

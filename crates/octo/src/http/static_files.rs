@@ -306,14 +306,35 @@ impl StaticAssets {
     pub fn routes(&self) -> RouteSet {
         let mut set = RouteSet::new();
         for asset in &self.assets {
-            set = set.route_with_head(&asset.url_path.clone(), Self::serving(asset.clone()));
+            let route = if FAMILY_PAGES.iter().any(|(_, file)| *file == asset.url_path) {
+                Self::serving_family_page(asset.clone())
+            } else {
+                Self::serving(asset.clone())
+            };
+            set = set.route_with_head(&asset.url_path.clone(), route);
         }
         for (url, file) in FAMILY_PAGES {
             if let Some(asset) = self.assets.iter().find(|a| a.url_path == *file) {
-                set = set.route_with_head(url, Self::serving(asset.clone()));
+                set = set.route_with_head(url, Self::serving_family_page(asset.clone()));
             }
         }
         set
+    }
+
+    /// A Family page, or while Family is off a plain page that says so.
+    fn serving_family_page(asset: Arc<StaticAsset>) -> axum::routing::MethodRouter<crate::app::AppState> {
+        get(
+            move |axum::extract::State(state): axum::extract::State<crate::app::AppState>, req: Request| {
+                let asset = asset.clone();
+                async move {
+                    if state.settings.current().family.enabled {
+                        serve(&asset, req.method(), req.headers())
+                    } else {
+                        family_off_page(req.method())
+                    }
+                }
+            },
+        )
     }
 
     fn serving(asset: Arc<StaticAsset>) -> axum::routing::MethodRouter<crate::app::AppState> {
@@ -322,6 +343,39 @@ impl StaticAssets {
             async move { serve(&asset, req.method(), req.headers()) }
         })
     }
+}
+
+/// What the Family pages say while Family is off.
+pub const FAMILY_OFF_PAGE: &str = "<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<title>Octo Family</title>
+<style>body{font-family:system-ui,sans-serif;margin:0;padding:48px 16px;text-align:center;color:#1f2328;background:#fff}@media (prefers-color-scheme: dark){body{color:#e6edf3;background:#0d1117}}</style>
+</head>
+<body>
+<p>Family is off on this server.</p>
+</body>
+</html>
+";
+
+/// The plain page for a Family page while Family is off: 404, never cached.
+fn family_off_page(method: &Method) -> Response {
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from(FAMILY_OFF_PAGE)
+    };
+    let mut response = Response::new(body);
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {

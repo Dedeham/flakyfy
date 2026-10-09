@@ -491,6 +491,7 @@ impl FamilyStore {
                 false
             }
             None => {
+                let app = app_label_kept(app);
                 state.detected.push(Device {
                     id: id.to_string(),
                     username: username.to_string(),
@@ -499,9 +500,9 @@ impl FamilyStore {
                     secret: String::new(),
                     created: now,
                     last_seen: Some(now),
-                    app: app.to_string(),
+                    app: app.clone(),
                     place,
-                    seen_apps: vec![app.to_string()],
+                    seen_apps: vec![app],
                     navidrome_jwt: None,
                     quality: DeviceQualityMode::Account,
                 });
@@ -639,14 +640,27 @@ impl FamilyStore {
     }
 }
 
+/// The most characters an app label keeps. Labels come from what clients send.
+pub const APP_LABEL_LIMIT: usize = 64;
+/// The most apps one device remembers; the oldest go first.
+pub const SEEN_APPS_LIMIT: usize = 16;
+
+/// An app label cut to [`APP_LABEL_LIMIT`] characters.
+pub fn app_label_kept(app: &str) -> String {
+    app.chars().take(APP_LABEL_LIMIT).collect()
+}
+
 fn touch(device: &mut Device, app: &str, place: NetworkPlace, now: DateTime<Utc>) {
     device.last_seen = Some(now);
     device.place = place;
+    let app = app_label_kept(app);
     if !app.is_empty() {
-        device.app = app.to_string();
-        if !device.seen_apps.iter().any(|a| a == app) {
-            device.seen_apps.push(app.to_string());
+        if !device.seen_apps.contains(&app) {
+            device.seen_apps.push(app.clone());
         }
+        let extra = device.seen_apps.len().saturating_sub(SEEN_APPS_LIMIT);
+        device.seen_apps.drain(..extra);
+        device.app = app;
     }
 }
 
@@ -866,6 +880,28 @@ mod tests {
         std::fs::remove_file(&path).expect("removes");
         store.flush_if_dirty();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_device_keeps_a_bounded_app_label_and_list_of_apps() {
+        let store = FamilyStore::in_memory();
+        store.add_device(device("d_1", "alex"));
+        for n in 0..(SEEN_APPS_LIMIT * 3) {
+            assert!(store.touch_device("d_1", &format!("App {n}"), NetworkPlace::Home, now()));
+        }
+        let long = "x".repeat(APP_LABEL_LIMIT * 10);
+        assert!(store.touch_device("d_1", &long, NetworkPlace::Home, now()));
+        let kept = store.device("d_1").expect("there");
+        assert_eq!(kept.app.chars().count(), APP_LABEL_LIMIT);
+        assert_eq!(kept.seen_apps.len(), SEEN_APPS_LIMIT);
+        assert_eq!(kept.seen_apps.last(), Some(&kept.app), "the newest app stays");
+        assert!(store.note_detected("x_1", "winters", &long, NetworkPlace::Home, None, now()));
+        let detected = store
+            .detected()
+            .into_iter()
+            .find(|d| d.id == "x_1")
+            .expect("there");
+        assert_eq!(detected.app.chars().count(), APP_LABEL_LIMIT);
     }
 
     #[test]

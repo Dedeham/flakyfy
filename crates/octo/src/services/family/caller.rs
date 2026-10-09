@@ -30,6 +30,11 @@ pub struct FamilyCaller {
     pub quality: QualityPreference,
     /// Whether this device follows the account's quality or lets its app decide.
     pub device_quality: DeviceQualityMode,
+    /// Whether the sign-in was checked before the request went on: a member's by Octo (there
+    /// is never a member caller otherwise), an API key's by Navidrome. A caller that is not
+    /// checked only names who the request says it is from; anything that acts on it has
+    /// Navidrome check the sign-in first.
+    pub checked: bool,
 }
 
 impl FamilyCaller {
@@ -45,7 +50,14 @@ impl FamilyCaller {
             address: IpAddr::from([0, 0, 0, 0]),
             quality: QualityPreference::default(),
             device_quality: DeviceQualityMode::Account,
+            checked: false,
         }
+    }
+
+    /// The same caller, its sign-in checked.
+    pub fn checked(mut self) -> Self {
+        self.checked = true;
+        self
     }
 
     /// A member Octo manages, with their abilities.
@@ -98,5 +110,13 @@ mod tests {
         let owner = FamilyCaller::unmanaged("winters", true);
         assert_eq!(owner.role, Role::Owner);
         assert!(!owner.managed);
+    }
+
+    #[test]
+    fn a_caller_is_unchecked_until_its_sign_in_is_checked() {
+        let member = FamilyCaller::member("alex", Preset::Listener, Abilities::preset(Preset::Listener));
+        assert!(!member.checked);
+        assert!(member.checked().checked);
+        assert!(!FamilyCaller::unmanaged("winters", true).checked);
     }
 }

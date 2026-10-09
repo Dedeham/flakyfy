@@ -52,6 +52,9 @@ pub const SHARES_OFF: &str = "Share links are off for this account.";
 pub const OFFLINE_OFF: &str = "Offline copies are off for this account.";
 pub const NOT_ON_PROFILE: &str = "Not available on this profile.";
 pub const PAUSED: &str = "This account is paused by the family owner.";
+pub const AUDIO_BODY_REFUSED: &str =
+    "Send the parameters of this request in the address, a url-encoded form or JSON.";
+pub const ONE_SONG_AT_A_TIME: &str = "Ask for one song at a time.";
 
 /// How long what Octo learned about a song (its explicit mark, its bitrate) is kept.
 const FACTS_FOR: Duration = Duration::from_secs(60 * 60);
@@ -61,6 +64,8 @@ const FACTS_KEPT: usize = 4096;
 const RADIO_KEPT: usize = 4096;
 /// How often one refused unknown endpoint is logged.
 const LOG_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How many log keys are kept at most; the names of unknown endpoints come from clients.
+const LOG_KEYS: usize = 1024;
 /// The bitrate assumed for a song outside the library (the source sends lossy audio).
 const OUTSIDE_KBPS: u32 = 160;
 /// The bitrate assumed for a library song whose own is not known.
@@ -162,8 +167,14 @@ impl AudioGate {
         if logged.contains_key(key) {
             return false;
         }
+        crate::services::admin::sign_in_throttle::trim_oldest(&mut logged, LOG_KEYS - 1, |at| Some(*at));
         logged.insert(key.to_string(), now);
         true
+    }
+
+    /// How many log keys are kept now.
+    pub fn logged_len(&self) -> usize {
+        self.logged.lock().len()
     }
 
     /// The radio streams Octo plays at once: 8, or two (by default) per person in the family
@@ -604,6 +615,136 @@ fn stream_refusal(message: &str) -> Response {
     response
 }
 
+/// An audio request as it was sent: its query and its body, so every value of a parameter can
+/// be read wherever it was put.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sent<'a> {
+    pub query: Option<&'a str>,
+    pub content_type: Option<&'a str>,
+    pub body: &'a [u8],
+}
+
+impl Sent<'_> {
+    fn media_type(&self) -> String {
+        self.content_type
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+    }
+
+    /// Whether the body carries anything other than a url-encoded form or a JSON object, the
+    /// two body kinds Octo rewrites: parameters in a multipart form or anything else could slip
+    /// past the rewrite.
+    pub fn has_other_body(&self) -> bool {
+        if self.body.iter().all(u8::is_ascii_whitespace) {
+            return false;
+        }
+        let media_type = self.media_type();
+        media_type != "application/x-www-form-urlencoded" && !is_json_media_type(&media_type)
+    }
+
+    /// Every value of `name`, in any case, from the query and the body (a form of either kind,
+    /// or a JSON object), blank ones left out.
+    pub fn values(&self, name: &str) -> Vec<String> {
+        use octo_subsonic::subsonic_request_parser::{parse_query, parse_query_helpers, read_form};
+        let mut values: Vec<String> = Vec::new();
+        let mut take = |found: &[String]| {
+            values.extend(
+                found
+                    .iter()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty()),
+            );
+        };
+        if let Some(found) = parse_query(self.query.unwrap_or("")).get(name) {
+            take(found);
+        }
+        let media_type = self.media_type();
+        if media_type == "application/x-www-form-urlencoded" || media_type == "multipart/form-data" {
+            let form = read_form(self.content_type.unwrap_or(""), self.body)
+                .unwrap_or_else(|_| parse_query_helpers(&String::from_utf8_lossy(self.body)));
+            if let Some(found) = form.get(name) {
+                take(found);
+            }
+        } else if let Some(pairs) = octo_subsonic::subsonic_request_parser::json_parameters(self.body) {
+            let found: Vec<String> = pairs
+                .into_iter()
+                .filter(|(key, _)| eq_ignore_case(key, name))
+                .map(|(_, value)| value)
+                .collect();
+            take(&found);
+        }
+        values
+    }
+}
+
+/// Whether a media type is JSON (`application/json`, or a `+json` type).
+fn is_json_media_type(media_type: &str) -> bool {
+    media_type == "application/json" || media_type.ends_with("+json")
+}
+
+/// A JSON object body without the members `rewrite` sets (any case), every other member kept
+/// as written. None when the body is not a JSON object or has none of them.
+fn json_without(rewrite: &ParamRewrite, body: &[u8]) -> Option<Vec<u8>> {
+    let members: IndexMap<String, Box<serde_json::value::RawValue>> = serde_json::from_slice(body).ok()?;
+    if !members.keys().any(|key| rewrite.removes(key)) {
+        return None;
+    }
+    let kept: IndexMap<String, Box<serde_json::value::RawValue>> = members
+        .into_iter()
+        .filter(|(key, _)| !rewrite.removes(key))
+        .collect();
+    serde_json::to_vec(&kept).ok()
+}
+
+/// The parameter that names the song of an audio request, as Navidrome reads it.
+fn song_key(endpoint: &str) -> &'static str {
+    if eq_ignore_case(endpoint, "getTranscodeStream") {
+        "mediaId"
+    } else {
+        "id"
+    }
+}
+
+/// Every distinct song an audio request names, wherever and however often it names one.
+pub fn songs_named(endpoint: &str, sent: &Sent<'_>) -> Vec<String> {
+    let mut songs: Vec<String> = Vec::new();
+    for value in sent.values(song_key(endpoint)) {
+        if !songs.contains(&value) {
+            songs.push(value);
+        }
+    }
+    songs
+}
+
+/// The quality an audio request was given, kept on the request so a handler that reads its
+/// parameters again (query, form or JSON) still finds these values last.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QualityLock(pub ParamRewrite);
+
+/// Sets the locked quality on parameters read from a request, when the gate locked one.
+pub fn hold_quality(extensions: &axum::http::Extensions, parameters: &mut Parameters) {
+    if let Some(QualityLock(rewrite)) = extensions.get::<QualityLock>() {
+        rewrite.apply_to(parameters);
+    }
+}
+
+/// Whether a stream marked `X-Octo-Purpose: offline` comes from one of the caller's own paired
+/// Octo apps, the only devices that make offline copies.
+fn from_paired_octo_app(state: &AppState, caller: &FamilyCaller) -> bool {
+    caller
+        .device_id
+        .as_deref()
+        .and_then(|id| state.family_store.device(id))
+        .is_some_and(|device| {
+            device.kind == octo_core::family::device::DeviceKind::OctoApp
+                && eq_ignore_case(&device.username, &caller.user)
+        })
+}
+
 /// What the gate does with an audio request that may go on.
 #[derive(Debug, Clone, Default)]
 pub struct AudioPlan {
@@ -617,13 +758,15 @@ impl AudioPlan {
         &self.rewrite
     }
 
-    /// The request with its quality set in its query (and taken out of a url-encoded
-    /// body, so the query's value is the one read).
+    /// The request with its quality set in its query (and taken out of a url-encoded form or
+    /// a JSON object body, so the query's value is the one read), and locked on the request for
+    /// handlers that read its parameters again.
     pub async fn apply(&self, req: Request) -> Request {
         if self.rewrite.is_empty() {
             return req;
         }
         let (mut parts, body) = req.into_parts();
+        parts.extensions.insert(QualityLock(self.rewrite.clone()));
         let query = self.rewrite.query(parts.uri.query().unwrap_or(""));
         let with_query = |uri: &Uri| -> Option<Uri> {
             let mut uri_parts = uri.clone().into_parts();
@@ -638,26 +781,29 @@ impl AudioPlan {
         {
             parts.extensions.insert(OriginalUri(uri));
         }
-        let form = parts
+        let media_type = parts
             .headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| {
-                ct.trim()
-                    .to_ascii_lowercase()
-                    .starts_with("application/x-www-form-urlencoded")
-            });
-        if !form {
+            .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let form = media_type == "application/x-www-form-urlencoded";
+        if !form && !is_json_media_type(&media_type) {
             return Request::from_parts(parts, body);
         }
         let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
             return Request::from_parts(parts, Body::empty());
         };
-        let text = String::from_utf8_lossy(&bytes);
-        let stripped = self.rewrite.strip(&text);
-        if stripped == text {
+        let stripped = if form {
+            let text = String::from_utf8_lossy(&bytes);
+            let stripped = self.rewrite.strip(&text);
+            (stripped != text).then(|| stripped.into_bytes())
+        } else {
+            json_without(&self.rewrite, &bytes)
+        };
+        let Some(stripped) = stripped else {
             return Request::from_parts(parts, Body::from(bytes));
-        }
+        };
         parts.headers.remove(header::TRANSFER_ENCODING);
         parts
             .headers
@@ -735,6 +881,7 @@ fn name_outside_song(state: &AppState, song_id: &str) {
 /// Checks one `/rest` request from `caller` and answers its [`AudioPlan`]. A request that
 /// hands out no audio goes on as it came.
 #[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
+#[allow(clippy::too_many_arguments)]
 pub async fn admit(
     state: &AppState,
     caller: &FamilyCaller,
@@ -742,20 +889,34 @@ pub async fn admit(
     endpoint: &str,
     parameters: &Parameters,
     headers: &HeaderMap,
+    sent: &Sent<'_>,
 ) -> Result<AudioPlan, Response> {
     if !serves_audio(endpoint) {
         return Ok(AudioPlan::default());
     }
     let gate = &state.family_audio;
+    let refuse = |code: i32, message: &str| subsonic_refusal(state, parameters, code, message);
+    // Only a member's own paired Octo app makes offline copies; from anything else the mark
+    // is ignored and the audio counts as playing.
     let offline = headers
         .get("x-octo-purpose")
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|purpose| purpose.trim().eq_ignore_ascii_case("offline"));
-    let song_id = parameter(parameters, "id")
-        .or_else(|| parameter(parameters, "mediaId"))
-        .unwrap_or("")
-        .to_string();
-    let refuse = |code: i32, message: &str| subsonic_refusal(state, parameters, code, message);
+        .is_some_and(|purpose| purpose.trim().eq_ignore_ascii_case("offline"))
+        && (!caller.managed || from_paired_octo_app(state, caller));
+    let songs = songs_named(endpoint, sent);
+    if caller.managed {
+        // The quality and the song are read from the query, a url-encoded form and a JSON
+        // object, which Octo rewrites; parameters in a body of any other kind (a multipart
+        // form) could slip past both.
+        if sent.has_other_body() {
+            return Err(refuse(0, AUDIO_BODY_REFUSED));
+        }
+        // Clients and Navidrome may each read a different one of several songs.
+        if songs.len() > 1 {
+            return Err(refuse(0, ONE_SONG_AT_A_TIME));
+        }
+    }
+    let song_id = songs.into_iter().next().unwrap_or_default();
     let playing = plays(endpoint) && !offline;
     let abilities = &caller.abilities;
     if caller.managed {
@@ -933,6 +1094,97 @@ mod tests {
     use super::*;
     use octo_core::family::abilities::{Abilities, Preset, StreamCap};
     use octo_core::family::quality::{DeviceQualityMode, QualityPreference, StreamQuality};
+
+    #[test]
+    fn the_log_of_unknown_endpoints_stays_bounded() {
+        let settings = Arc::new(SettingsStore::for_tests(Default::default()));
+        let store = Arc::new(FamilyStore::in_memory());
+        let index = Arc::new(LibraryIndex::new(
+            crate::services::subsonic::NavidromeIdentityService::new(
+                settings.clone(),
+                crate::services::http_client_factory::default_client(),
+            ),
+            crate::services::http_client_factory::default_client(),
+            settings.clone(),
+            Arc::new(tokio::sync::Notify::new()),
+        ));
+        let gate = AudioGate::new(settings, store, index);
+        for n in 0..(LOG_KEYS * 3) {
+            assert!(gate.may_log(&format!("unknown|getthing{n}")));
+        }
+        assert!(gate.logged_len() <= LOG_KEYS, "{}", gate.logged_len());
+        assert!(!gate.may_log(&format!("unknown|getthing{}", LOG_KEYS * 3 - 1)));
+    }
+
+    #[test]
+    fn every_value_of_a_parameter_is_read_wherever_it_was_put() {
+        let sent = Sent {
+            query: Some("id=a&ID=b"),
+            content_type: Some("application/x-www-form-urlencoded"),
+            body: b"iD=c&other=x",
+        };
+        assert_eq!(sent.values("id"), ["a", "b", "c"]);
+        assert!(!sent.has_other_body());
+        let json = Sent {
+            query: Some("id=a"),
+            content_type: Some("application/json; charset=utf-8"),
+            body: br#"{"Id":"d","format":"raw"}"#,
+        };
+        assert_eq!(json.values("id"), ["a", "d"]);
+        assert!(!json.has_other_body());
+        let multipart = Sent {
+            query: None,
+            content_type: Some("multipart/form-data; boundary=XyZ"),
+            body: b"--XyZ\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\ne\r\n--XyZ--\r\n",
+        };
+        assert_eq!(multipart.values("id"), ["e"]);
+        assert!(multipart.has_other_body());
+        assert!(
+            !Sent {
+                body: b"  ",
+                ..multipart
+            }
+            .has_other_body()
+        );
+        assert_eq!(
+            songs_named(
+                "getTranscodeStream",
+                &Sent {
+                    query: Some("id=a&mediaId=m&MEDIAID=m"),
+                    ..Default::default()
+                }
+            ),
+            ["m"]
+        );
+        assert_eq!(
+            songs_named(
+                "stream",
+                &Sent {
+                    query: Some("id=a&mediaId=m"),
+                    ..Default::default()
+                }
+            ),
+            ["a"]
+        );
+    }
+
+    #[test]
+    fn a_json_body_loses_only_the_rewritten_members() {
+        let rewrite = ParamRewrite {
+            set: vec![
+                ("format".into(), "opus".into()),
+                ("maxBitRate".into(), "192".into()),
+            ],
+        };
+        let out = json_without(
+            &rewrite,
+            br#"{"FORMAT":"raw","id":"x","MaxBitRate":0,"n":[1, 2]}"#,
+        )
+        .expect("rewritten");
+        assert_eq!(String::from_utf8(out).unwrap(), r#"{"id":"x","n":[1, 2]}"#);
+        assert!(json_without(&rewrite, br#"{"id":"x"}"#).is_none());
+        assert!(json_without(&rewrite, b"not json").is_none());
+    }
 
     fn params(pairs: &[(&str, &str)]) -> Parameters {
         pairs

@@ -1284,3 +1284,179 @@ async fn navidrome_web_device_is_reused() {
     let device = f.state.family_store.device(&did(&first)).expect("there");
     assert_eq!(device.name, "Navidrome in a browser");
 }
+
+// ------------------------------------------------------------------------------------------
+// Answers in a coding
+// ------------------------------------------------------------------------------------------
+
+fn encoded(coding: &str, plain: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    match coding {
+        "gzip" => {
+            let mut out = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            out.write_all(plain).expect("written");
+            out.finish().expect("finished")
+        }
+        "deflate" => {
+            let mut out = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            out.write_all(plain).expect("written");
+            out.finish().expect("finished")
+        }
+        "br" => {
+            let mut out = Vec::new();
+            {
+                let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 5, 22);
+                writer.write_all(plain).expect("written");
+            }
+            out
+        }
+        other => panic!("no encoder for {other}"),
+    }
+}
+
+fn now_playing_answer(body: Vec<u8>, coding: Option<&str>) -> Response {
+    let mut response = Response::new(Body::from(body));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    if let Some(coding) = coding {
+        response.headers_mut().insert(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_str(coding).expect("a value"),
+        );
+    }
+    response
+}
+
+#[tokio::test]
+async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
+    let f = family(true).await;
+    let alex = FamilyCaller::member(
+        "alex",
+        Preset::Listener,
+        octo_core::family::abilities::Abilities::preset(Preset::Listener),
+    )
+    .checked();
+    let plain = json!({"subsonic-response": {"status": "ok", "nowPlaying": {"entry": [
+        {"username": "alex", "id": "1"}, {"username": "sam", "id": "2"}
+    ]}}})
+    .to_string();
+    let mut parameters = Parameters::new();
+    parameters.insert("f".into(), "json".into());
+    for coding in ["gzip", "deflate", "br"] {
+        let answer = now_playing_answer(encoded(coding, plain.as_bytes()), Some(coding));
+        let out = apply_answer_rules(
+            &f.state,
+            answer,
+            &alex,
+            "getNowPlaying",
+            "/rest/getNowPlaying",
+            &parameters,
+        )
+        .await;
+        assert_eq!(out.status(), StatusCode::OK, "{coding}");
+        assert!(out.headers().get(header::CONTENT_ENCODING).is_none(), "{coding}");
+        let body = out.into_body().collect().await.expect("a body").to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("\"alex\""), "{coding}: {text}");
+        assert!(
+            !text.contains("\"sam\""),
+            "{coding}: the rule did not run: {text}"
+        );
+    }
+    // A coding Octo cannot open never goes out unread.
+    let answer = now_playing_answer(plain.clone().into_bytes(), Some("zstd"));
+    let out = apply_answer_rules(
+        &f.state,
+        answer,
+        &alex,
+        "getNowPlaying",
+        "/rest/getNowPlaying",
+        &parameters,
+    )
+    .await;
+    assert_eq!(out.status(), StatusCode::BAD_GATEWAY);
+    // Nor does a broken one.
+    let answer = now_playing_answer(b"not gzip at all".to_vec(), Some("gzip"));
+    let out = apply_answer_rules(
+        &f.state,
+        answer,
+        &alex,
+        "getNowPlaying",
+        "/rest/getNowPlaying",
+        &parameters,
+    )
+    .await;
+    assert_eq!(out.status(), StatusCode::BAD_GATEWAY);
+    // "identity" is no coding at all.
+    let answer = now_playing_answer(plain.into_bytes(), Some("identity"));
+    let out = apply_answer_rules(
+        &f.state,
+        answer,
+        &alex,
+        "getNowPlaying",
+        "/rest/getNowPlaying",
+        &parameters,
+    )
+    .await;
+    let body = out.into_body().collect().await.expect("a body").to_bytes();
+    assert!(!String::from_utf8_lossy(&body).contains("\"sam\""));
+}
+
+#[test]
+fn an_answer_that_opens_too_large_is_not_opened() {
+    // A small gzip body that would open past the limit.
+    let huge = vec![b' '; ANSWER_LIMIT + 10];
+    let packed = encoded("gzip", &huge);
+    assert!(packed.len() < 1024 * 1024);
+    assert!(decoded("gzip", &packed).is_none());
+    assert_eq!(
+        decoded("gzip", &encoded("gzip", b"small")).as_deref(),
+        Some(&b"small"[..])
+    );
+}
+
+#[test]
+fn answer_outcomes_are_read_in_both_formats() {
+    let refused = br#"{"subsonic-response":{"status":"failed","error":{"code":40,"message":"Wrong"}}}"#;
+    assert_eq!(outcome_of(refused), Outcome::Refused);
+    let xml = br#"<subsonic-response status="failed"><error code="40" message="Wrong"/></subsonic-response>"#;
+    assert_eq!(outcome_of(xml), Outcome::Refused);
+    let other = br#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"Not found"}}}"#;
+    assert_eq!(outcome_of(other), Outcome::Failed);
+    let code_400 = br#"{"subsonic-response":{"status":"failed","error":{"code":400}}}"#;
+    assert_eq!(outcome_of(code_400), Outcome::Failed);
+    assert_eq!(
+        outcome_of(br#"{"subsonic-response":{"status":"ok"}}"#),
+        Outcome::Fine
+    );
+}
+
+#[tokio::test]
+async fn web_player_sign_ins_sent_all_at_once_count_before_they_are_checked() {
+    let f = family(true).await;
+    let guesses: Vec<String> = (0..(member_bridge::MAX_FAILURES + 5))
+        .map(|n| format!("wrong-{n}"))
+        .collect();
+    let replies = futures::future::join_all(guesses.iter().map(|guess| web_login(&f, guess))).await;
+    assert!(replies.iter().all(|r| r.status == StatusCode::UNAUTHORIZED));
+    let key = FailureThrottle::key(&IpAddr::V4(Ipv4Addr::UNSPECIFIED), "alex");
+    assert_eq!(
+        f.state.family_bridge.throttle.tries(&key),
+        member_bridge::MAX_FAILURES,
+        "only the tries that were let through were checked and counted"
+    );
+    // The right password waits too, until the tries age out.
+    let r = web_login(&f, ACCOUNT_PASSWORD).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_right_web_player_sign_in_is_not_held_against_the_member() {
+    let f = family(true).await;
+    login_mock(&f, HIDDEN, &navidrome_jwt("real")).await;
+    let r = web_login(&f, ACCOUNT_PASSWORD).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let key = FailureThrottle::key(&IpAddr::V4(Ipv4Addr::UNSPECIFIED), "alex");
+    assert_eq!(f.state.family_bridge.throttle.tries(&key), 0);
+}

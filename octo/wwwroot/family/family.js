@@ -773,6 +773,9 @@
     if (session.links === 'Copy' && session.linksMessage) {
       parts.push(el('div', { class: 'fam-banner', role: 'status' }, el('p', null, session.linksMessage)));
     }
+    if (session.proxyWarning) {
+      parts.push(el('div', { class: 'fam-banner', role: 'alert' }, el('p', null, session.proxyWarning)));
+    }
     var unrated = replies[1].ok ? replies[1].data : null;
     if (unrated && unrated.count > 0) {
       var mark = el('button', { class: 'fam-btn', type: 'button', onclick: async function () {

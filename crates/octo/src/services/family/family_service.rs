@@ -497,6 +497,8 @@ pub const PAIR_CAP_WINDOW: TimeDelta = TimeDelta::minutes(10);
 /// Wrong pairing codes from one address in [`PAIR_ADDRESS_WINDOW`] before it waits.
 pub const PAIR_ADDRESS_FAILURES: usize = 10;
 pub const PAIR_ADDRESS_WINDOW: TimeDelta = TimeDelta::minutes(15);
+/// Addresses whose wrong pairing codes are kept at most.
+const PAIR_ADDRESSES: usize = 10_000;
 
 /// The words for every refused pairing code, so a wrong, used, expired or locked code read
 /// alike.
@@ -549,8 +551,11 @@ impl PairGuard {
         let now = self.now();
         {
             let mut map = self.by_address.lock();
-            if map.len() > 10_000 {
+            if map.len() > PAIR_ADDRESSES {
                 map.retain(|_, list| list.back().is_some_and(|at| now - *at < PAIR_ADDRESS_WINDOW));
+                crate::services::admin::sign_in_throttle::trim_oldest(&mut map, PAIR_ADDRESSES, |list| {
+                    list.back().copied()
+                });
             }
             map.entry(address.to_string()).or_default().push_back(now);
         }
@@ -1466,10 +1471,7 @@ impl FamilyService {
             ));
         }
         self.join_throttle.succeeded(address);
-        let password = password.to_string();
-        member.account_password = tokio::task::spawn_blocking(move || passwords::hash(&password))
-            .await
-            .map_err(|e| FamilyError::Unavailable(e.to_string()))?;
+        member.account_password = hashed(password).await?;
         if let Some(name) = display_name.map(str::trim).filter(|n| !n.is_empty()) {
             member.display_name = name.chars().take(64).collect();
         }
@@ -1484,10 +1486,7 @@ impl FamilyService {
         if member.account_password.is_empty() {
             return false;
         }
-        let (password, hash) = (password.to_string(), member.account_password.clone());
-        tokio::task::spawn_blocking(move || passwords::verify(&password, &hash))
-            .await
-            .unwrap_or(false)
+        passwords::verify_async(password, &member.account_password).await
     }
 
     /// Changes a member's account password after checking the current one.
@@ -1506,10 +1505,7 @@ impl FamilyService {
             return Err(FamilyError::Refused("Your current password is not right.".into()));
         }
         passwords::acceptable(next).map_err(|e| FamilyError::Invalid(e.into()))?;
-        let next = next.to_string();
-        member.account_password = tokio::task::spawn_blocking(move || passwords::hash(&next))
-            .await
-            .map_err(|e| FamilyError::Unavailable(e.to_string()))?;
+        member.account_password = hashed(next).await?;
         state.family_store.upsert_member(member);
         Ok(())
     }
@@ -2002,6 +1998,17 @@ fn api_edits(edits: &Map<String, Value>) -> Map<String, Value> {
             (key, value.clone())
         })
         .collect()
+}
+
+/// An account password's hash, made when a hashing slot is free.
+async fn hashed(password: &str) -> FamilyResult<String> {
+    let hash = passwords::hash_async(password).await;
+    if hash.is_empty() {
+        return Err(FamilyError::Unavailable(
+            "Octo could not save the password. Try again.".into(),
+        ));
+    }
+    Ok(hash)
 }
 
 /// Saves `Family:Enabled` in settings.json and makes it the running value.

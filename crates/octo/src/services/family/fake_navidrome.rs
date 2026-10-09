@@ -36,6 +36,9 @@ pub(crate) struct FakeNavidromeState {
     pub playlists: Mutex<Vec<(String, String, String)>>,
     /// The query of every `stream` and `download` call.
     pub audio: Mutex<Vec<String>>,
+    /// Subsonic passwords by user. A user listed here is signed in only with theirs (`p`,
+    /// plain or `enc:` hex, or `t` and `s`); anyone else is taken at their word.
+    pub passwords: Mutex<std::collections::HashMap<String, String>>,
     pub scans: AtomicI64,
     next: AtomicI64,
 }
@@ -69,6 +72,9 @@ impl FakeNavidromeState {
         10 + self.next.fetch_add(1, Ordering::SeqCst)
     }
 }
+
+/// The browser token the fake's sign-in hands out, the only one it takes back.
+const ISSUED_TOKEN: &str = "jwt-admin";
 
 const AUDIO: [&str; 6] = ["flac", "mp3", "m4a", "ogg", "opus", "wav"];
 
@@ -220,7 +226,7 @@ impl Respond for Responder {
                         .iter()
                         .any(|(_, name, admin)| name == user && *admin);
                 return ResponseTemplate::new(200).set_body_json(json!({
-                    "id": format!("u-{user}"), "token": "jwt-admin", "isAdmin": admin,
+                    "id": format!("u-{user}"), "token": ISSUED_TOKEN, "isAdmin": admin,
                     "username": user, "subsonicToken": "tok", "subsonicSalt": "salt"
                 }));
             }
@@ -298,6 +304,31 @@ impl Respond for Responder {
         };
         let endpoint = endpoint.trim_end_matches(".view");
         let user = query(request, "u").unwrap_or_default();
+        // It checks the tokens it signs: only the one its sign-in hands out is good, and it
+        // hands out no API keys.
+        if query(request, "jwt").is_some_and(|token| token != ISSUED_TOKEN)
+            || query(request, "apiKey").is_some()
+        {
+            return subsonic_error(40, "Wrong username or password");
+        }
+        if let Some(expected) = state.passwords.lock().get(&user).cloned() {
+            let right = match (query(request, "p"), query(request, "t"), query(request, "s")) {
+                (Some(sent), _, _) => {
+                    let sent = match sent.strip_prefix("enc:").and_then(|hex| hex::decode(hex).ok()) {
+                        Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        None => sent,
+                    };
+                    sent == expected
+                }
+                (None, Some(token), Some(salt)) => {
+                    token.eq_ignore_ascii_case(&octo_core::family::codes::subsonic_token(&expected, &salt))
+                }
+                _ => false,
+            };
+            if !right {
+                return subsonic_error(40, "Wrong username or password");
+            }
+        }
         match endpoint {
             "startScan" => {
                 state.rescan();

@@ -28,7 +28,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use octo_core::family::abilities::Role;
-use octo_core::family::device::{NetworkPlace, client_address, place_of};
+use octo_core::family::device::{NetworkPlace, client_origin};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
@@ -182,6 +182,9 @@ pub struct Web {
     pub headers: HeaderMap,
     pub address: IpAddr,
     pub place: NetworkPlace,
+    /// A reverse proxy on a home network that Octo does not trust, when the request came
+    /// through one (everyone then counts as away until it is listed).
+    pub untrusted_proxy: Option<IpAddr>,
     pub https: bool,
     /// `scheme://host` as the browser reached Octo.
     pub origin: String,
@@ -340,8 +343,13 @@ impl FromRequestParts<AppState> for Web {
             .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
             .collect();
         let forwarded = (!forwarded.is_empty()).then(|| forwarded.join(","));
-        let address = client_address(peer, forwarded.as_deref(), &settings.family.trusted_proxy_list());
-        let place = place_of(address, &settings.family.home_network_list());
+        let origin = client_origin(
+            peer,
+            forwarded.as_deref(),
+            &settings.family.trusted_proxy_list(),
+            &settings.family.home_network_list(),
+        );
+        let (address, place) = (origin.address, origin.place);
         let https = parts
             .extensions
             .get::<RequestScheme>()
@@ -362,6 +370,7 @@ impl FromRequestParts<AppState> for Web {
             headers: parts.headers.clone(),
             address,
             place,
+            untrusted_proxy: origin.untrusted_proxy,
             https,
             origin: format!("{}://{host}", if https { "https" } else { "http" }),
             signed_call,

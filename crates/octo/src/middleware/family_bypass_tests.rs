@@ -296,6 +296,40 @@ fn capped() -> Alex {
     Alex::with(json!({ "streamCap": 192 }))
 }
 
+/// The browser token a member's Navidrome web player holds: one Octo signed for Alex's web
+/// device `d_web`, which keeps the real Navidrome token.
+fn octo_web_token(f: &Family) -> String {
+    use crate::services::family::web_session::{WebClaims, mint};
+    f.state.family_store.add_device(Device {
+        id: "d_web".into(),
+        username: "alex".into(),
+        name: "Navidrome in a browser".into(),
+        kind: DeviceKind::NavidromeWeb,
+        secret: f.state.family_vault.seal("web-secret").expect("sealed"),
+        created: Utc::now(),
+        last_seen: None,
+        app: String::new(),
+        place: NetworkPlace::Home,
+        seen_apps: Vec::new(),
+        navidrome_jwt: f.state.family_vault.seal(&navidrome_jwt("alex")),
+        quality: Default::default(),
+    });
+    let key = f.state.family_vault.jwt_key().expect("a key");
+    let now = Utc::now().timestamp();
+    mint(
+        &key,
+        &WebClaims {
+            iss: "ND".into(),
+            sub: "alex".into(),
+            uid: "u-alex".into(),
+            adm: false,
+            iat: now,
+            exp: now + 3600,
+            did: "d_web".into(),
+        },
+    )
+}
+
 // ---------------------------------------------------------------------------------------
 // The paths
 // ---------------------------------------------------------------------------------------
@@ -463,7 +497,7 @@ async fn create_share_is_refused_when_shares_are_off() {
         assert!(f.asked(&format!("/rest/{endpoint}")).await.is_empty());
     }
     // A share write through Navidrome's own API is refused too.
-    let jwt = navidrome_jwt("alex");
+    let jwt = octo_web_token(&f);
     let r = send(
         &f,
         Method::POST,
@@ -478,7 +512,7 @@ async fn create_share_is_refused_when_shares_are_off() {
 #[tokio::test]
 async fn native_player_write_is_refused() {
     let f = family(true, Alex::listener(), |_| {}).await;
-    let jwt = format!("Bearer {}", navidrome_jwt("alex"));
+    let jwt = format!("Bearer {}", octo_web_token(&f));
     let r = send(
         &f,
         Method::PUT,
@@ -547,7 +581,7 @@ async fn unknown_rest_endpoint_is_refused_for_strict_members() {
 #[tokio::test]
 async fn quickconnect_authorize_is_refused() {
     let f = family(true, Alex::listener(), |_| {}).await;
-    let jwt = format!("Bearer {}", navidrome_jwt("alex"));
+    let jwt = format!("Bearer {}", octo_web_token(&f));
     let r = send(
         &f,
         Method::POST,
@@ -879,19 +913,14 @@ async fn the_newest_device_wins_and_the_other_is_told() {
 #[tokio::test]
 async fn offline_purpose_never_counts() {
     let f = family(true, Alex::with(json!({ "devicesAtOnce": 1 })), |_| {}).await;
-    let _phone = open_stream(&f, &format!("{ALEX}&id=lib-1"), &[]).await;
-    let _copy = open_stream(
-        &f,
-        &format!("{ALEX_SUB}&id=lib-2"),
-        &[("X-Octo-Purpose", "offline")],
-    )
-    .await;
-    // The phone keeps playing next to the copy.
+    let _pixel = open_stream(&f, &format!("{ALEX_SUB}&id=lib-1"), &[]).await;
+    let _copy = open_stream(&f, &format!("{ALEX}&id=lib-2"), &[("X-Octo-Purpose", "offline")]).await;
+    // The Pixel keeps playing next to the Octo app's offline copy.
     let live = f.state.family_audio.tracker().live();
     let devices: Vec<Option<&str>> = live.iter().map(|s| s.device_id.as_deref()).collect();
-    assert_eq!(devices, [Some("d_app"), Some("d_sub")]);
+    assert_eq!(devices, [Some("d_sub"), Some("d_app")]);
     assert_eq!(
-        f.state.family_audio.tracker().bumped_by("alex", Some("d_app")),
+        f.state.family_audio.tracker().bumped_by("alex", Some("d_sub")),
         None
     );
     // Without offline copies the copy is refused.
@@ -927,4 +956,417 @@ async fn radio_streams_count_on_the_device_that_opened_them() {
         Some("d_sub")
     );
     assert!(f.state.family_audio.radio_refusal("alex", &token).is_none());
+}
+
+// ---------------------------------------------------------------------------------------
+// Tokens Octo did not sign
+// ---------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_navidrome_token_naming_a_member_is_refused_on_rest() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let jwt = navidrome_jwt("alex");
+    for endpoint in ["getFamily", "stream", "getAlbumList2"] {
+        let r = get(
+            &f,
+            &format!("/rest/{endpoint}?jwt={jwt}&v=1.16.1&c=x&f=json&id=lib-1"),
+            HOME,
+        )
+        .await;
+        assert_eq!(r.error_code(), Some(40), "{endpoint}: {}", r.body);
+        assert!(
+            f.asked(&format!("/rest/{endpoint}")).await.is_empty(),
+            "{endpoint}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_navidrome_token_naming_a_member_is_refused_on_the_native_api() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let jwt = navidrome_jwt("alex");
+    let bearer = format!("Bearer {jwt}");
+    for headers in [
+        vec![("X-Nd-Authorization", bearer.as_str())],
+        vec![("Authorization", bearer.as_str())],
+    ] {
+        let r = send(&f, Method::GET, "/api/song", &headers, HOME).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{headers:?}: {}", r.body);
+    }
+    let r = get(&f, &format!("/api/song?jwt={jwt}"), HOME).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    assert!(f.asked("/api/song").await.is_empty());
+    // The member's own web token still works.
+    let own = format!("Bearer {}", octo_web_token(&f));
+    let r = send(
+        &f,
+        Method::GET,
+        "/api/song",
+        &[("X-Nd-Authorization", &own)],
+        HOME,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+// ---------------------------------------------------------------------------------------
+// Parameters wherever a request puts them
+// ---------------------------------------------------------------------------------------
+
+async fn send_body(f: &Family, uri: &str, content_type: &str, body: &str) -> Reply {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", content_type)
+        .body(Body::from(body.to_string()))
+        .expect("request");
+    let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+    req.extensions_mut().insert(ConnectInfo(address));
+    let res = f.app.clone().oneshot(req).await.expect("infallible");
+    let status = res.status();
+    let body = res.into_body().collect().await.expect("body").to_bytes();
+    Reply {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+const BOUNDARY: &str = "multipart/form-data; boundary=XyZ";
+
+fn multipart(name: &str, value: &str) -> String {
+    format!("--XyZ\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n--XyZ--\r\n")
+}
+
+/// What Navidrome was sent for each `stream`: its query and its body.
+async fn relayed_streams(f: &Family) -> Vec<(Vec<(String, String)>, String)> {
+    f.asked("/rest/stream")
+        .await
+        .iter()
+        .map(|r| {
+            (
+                pairs(r.url.query().unwrap_or("")),
+                String::from_utf8_lossy(&r.body).into_owned(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_capped_member_cannot_ask_for_the_original_in_a_json_body() {
+    let f = family(true, capped(), |_| {}).await;
+    let _ = send_body(
+        &f,
+        &format!("/rest/stream?{ALEX}&id=lib-1"),
+        "application/json",
+        r#"{"format":"raw","maxBitRate":"0"}"#,
+    )
+    .await;
+    let relayed = relayed_streams(&f).await;
+    assert_eq!(relayed.len(), 1, "{relayed:?}");
+    let (sent, body) = &relayed[0];
+    assert_eq!(value(sent, "format"), Some("opus"), "{relayed:?}");
+    assert_eq!(value(sent, "maxBitRate"), Some("192"), "{relayed:?}");
+    assert!(!body.contains("raw"), "{body}");
+}
+
+#[tokio::test]
+async fn a_capped_member_cannot_ask_for_the_original_in_a_form_body_in_any_case() {
+    let f = family(true, capped(), |_| {}).await;
+    let _ = send_body(
+        &f,
+        &format!("/rest/stream?{ALEX}&id=lib-1"),
+        "application/x-www-form-urlencoded",
+        "Format=raw&MAXBITRATE=0",
+    )
+    .await;
+    let relayed = relayed_streams(&f).await;
+    assert_eq!(relayed.len(), 1, "{relayed:?}");
+    let (sent, body) = &relayed[0];
+    assert_eq!(value(sent, "format"), Some("opus"), "{relayed:?}");
+    assert_eq!(value(sent, "maxBitRate"), Some("192"), "{relayed:?}");
+    assert!(!body.to_ascii_lowercase().contains("raw"), "{body}");
+}
+
+#[tokio::test]
+async fn a_capped_member_gets_the_family_limit_whatever_the_body_type() {
+    // In the address.
+    let f = family(true, capped(), |_| {}).await;
+    let _ = get(
+        &f,
+        &format!("/rest/stream?{ALEX}&id=lib-1&format=raw&maxBitRate=0"),
+        HOME,
+    )
+    .await;
+    let sent = f.streamed().await;
+    assert_eq!(value(&sent, "format"), Some("opus"));
+    assert_eq!(value(&sent, "maxBitRate"), Some("192"));
+    // In a JSON body whose type has a charset, and in a form body next to the song.
+    for (content_type, body) in [
+        (
+            "application/json; charset=utf-8",
+            r#"{"FORMAT":"raw","maxbitrate":0}"#,
+        ),
+        (
+            "application/x-www-form-urlencoded",
+            "id=lib-1&format=raw&maxBitRate=0",
+        ),
+    ] {
+        let f = family(true, capped(), |_| {}).await;
+        let _ = send_body(&f, &format!("/rest/stream?{ALEX}&id=lib-1"), content_type, body).await;
+        let relayed = relayed_streams(&f).await;
+        assert_eq!(relayed.len(), 1, "{content_type}: {relayed:?}");
+        assert_eq!(value(&relayed[0].0, "format"), Some("opus"), "{content_type}");
+        assert_eq!(value(&relayed[0].0, "maxBitRate"), Some("192"), "{content_type}");
+    }
+    // In a multipart form, which Octo cannot rewrite: refused, nothing relayed.
+    let f = family(true, capped(), |_| {}).await;
+    let r = send_body(
+        &f,
+        &format!("/rest/stream?{ALEX}&id=lib-1"),
+        BOUNDARY,
+        &multipart("format", "raw"),
+    )
+    .await;
+    assert_eq!(r.error_code(), Some(0), "{}", r.body);
+    assert!(f.asked("/rest/stream").await.is_empty());
+}
+
+async fn kid() -> Family {
+    let f = family(
+        true,
+        Alex {
+            preset: Preset::Kid,
+            edits: json!({}),
+        },
+        |_| {},
+    )
+    .await;
+    Mock::given(path("/rest/getSong"))
+        .and(query_param("id", "lib-x"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "subsonic-response": {"status": "ok", "song": {"id": "lib-x", "explicitStatus": "explicit", "bitRate": 320}}
+        })))
+        .with_priority(1)
+        .mount(&f.server)
+        .await;
+    f
+}
+
+#[tokio::test]
+async fn kid_transcode_stream_reads_only_the_media_id() {
+    let f = kid().await;
+    let r = get(
+        &f,
+        &format!("/rest/getTranscodeStream?{ALEX}&mediaId=lib-x&mediaType=song&transcodeParams=tp&id=lib-1"),
+        HOME,
+    )
+    .await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(f.asked("/rest/getTranscodeStream").await.is_empty());
+}
+
+#[tokio::test]
+async fn kid_transcode_stream_with_the_media_id_twice_is_refused() {
+    let f = kid().await;
+    let r = get(
+        &f,
+        &format!(
+            "/rest/getTranscodeStream?{ALEX}&mediaId=lib-x&mediaId=lib-x&mediaType=song&transcodeParams=tp"
+        ),
+        HOME,
+    )
+    .await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(f.asked("/rest/getTranscodeStream").await.is_empty());
+}
+
+#[tokio::test]
+async fn kid_stream_with_the_id_repeated_in_any_case_is_refused() {
+    let f = kid().await;
+    let r = get(&f, &format!("/rest/stream?{ALEX}&id=lib-x&ID=lib-x"), HOME).await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(f.asked("/rest/stream").await.is_empty());
+    // Two different songs at once are refused, whichever one is clean.
+    let r = get(&f, &format!("/rest/stream?{ALEX}&id=lib-1&id=lib-x"), HOME).await;
+    assert_eq!(r.error_code(), Some(0), "{}", r.body);
+    assert!(f.asked("/rest/stream").await.is_empty());
+}
+
+#[tokio::test]
+async fn kid_rules_hold_for_a_song_named_in_any_body() {
+    let f = kid().await;
+    let stream = format!("/rest/stream?{ALEX}");
+    let clean_in_query = format!("/rest/stream?{ALEX}&id=lib-1");
+    for (uri, content_type, body, code) in [
+        (
+            stream.as_str(),
+            "application/x-www-form-urlencoded",
+            "id=lib-x".to_string(),
+            50,
+        ),
+        (
+            stream.as_str(),
+            "application/x-www-form-urlencoded",
+            "iD=lib-x".to_string(),
+            50,
+        ),
+        (
+            stream.as_str(),
+            "application/json",
+            r#"{"id":"lib-x"}"#.to_string(),
+            50,
+        ),
+        (
+            stream.as_str(),
+            "application/json",
+            r#"{"Id":"lib-x"}"#.to_string(),
+            50,
+        ),
+        (stream.as_str(), BOUNDARY, multipart("id", "lib-x"), 0),
+        (
+            clean_in_query.as_str(),
+            "application/x-www-form-urlencoded",
+            "id=lib-x".to_string(),
+            0,
+        ),
+        (
+            clean_in_query.as_str(),
+            "application/json",
+            r#"{"id":"lib-x"}"#.to_string(),
+            0,
+        ),
+    ] {
+        let r = send_body(&f, uri, content_type, &body).await;
+        assert_eq!(
+            r.error_code(),
+            Some(code),
+            "{uri} {content_type} {body}: {}",
+            r.body
+        );
+        assert!(f.asked("/rest/stream").await.is_empty(), "{content_type} {body}");
+    }
+    // A clean song named in a form body plays.
+    let _ = send_body(&f, &stream, "application/x-www-form-urlencoded", "id=lib-1").await;
+    assert_eq!(f.asked("/rest/stream").await.len(), 1);
+}
+
+// ---------------------------------------------------------------------------------------
+// Offline copies
+// ---------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn offline_purpose_counts_only_from_a_paired_octo_app() {
+    let f = family(true, Alex::with(json!({ "devicesAtOnce": 1 })), |_| {}).await;
+    let _phone = open_stream(&f, &format!("{ALEX}&id=lib-1"), &[]).await;
+    // Another app saying "offline" is playing like any other, so the newest device wins.
+    let _pixel = open_stream(
+        &f,
+        &format!("{ALEX_SUB}&id=lib-2"),
+        &[("X-Octo-Purpose", "offline")],
+    )
+    .await;
+    assert_eq!(
+        f.state
+            .family_audio
+            .tracker()
+            .bumped_by("alex", Some("d_app"))
+            .as_deref(),
+        Some("Pixel 9")
+    );
+    let live = f.state.family_audio.tracker().live();
+    let pixel = live
+        .iter()
+        .find(|s| s.device_id.as_deref() == Some("d_sub"))
+        .expect("the Pixel plays");
+    assert_eq!(
+        pixel.purpose,
+        crate::services::family::stream_tracker::StreamPurpose::Play
+    );
+    // And the offline switch does not apply to it, since it is not an offline copy.
+    let f = family(true, Alex::with(json!({ "offlineCopies": false })), |_| {}).await;
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/stream?{ALEX_SUB}&id=lib-1"),
+        &[("X-Octo-Purpose", "offline")],
+        HOME,
+    )
+    .await;
+    assert_eq!(r.body, LIBRARY_AUDIO);
+}
+
+// ---------------------------------------------------------------------------------------
+// A reverse proxy Octo does not trust
+// ---------------------------------------------------------------------------------------
+
+const BRIDGE: &str = "172.18.0.5";
+
+#[tokio::test]
+async fn an_untrusted_proxy_at_home_makes_everyone_away() {
+    let f = family(true, Alex::with(json!({ "away": false })), |_| {}).await;
+    let through = |client: &'static str| vec![("X-Forwarded-For", client)];
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/stream?{ALEX}&id=lib-1"),
+        &through("192.168.1.9"),
+        BRIDGE,
+    )
+    .await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(r.body.contains("away from home"), "{}", r.body);
+    // The same address with no proxy header is a person at home.
+    let r = get(&f, &format!("/rest/stream?{ALEX}&id=lib-1"), BRIDGE).await;
+    assert_eq!(r.body, LIBRARY_AUDIO);
+    // Once the proxy is trusted, the person it names is home again.
+    let f = family(true, Alex::with(json!({ "away": false })), |s| {
+        s.family.trusted_proxies = format!("127.0.0.0/8, ::1/128, {BRIDGE}");
+    })
+    .await;
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/stream?{ALEX}&id=lib-1"),
+        &through("192.168.1.9"),
+        BRIDGE,
+    )
+    .await;
+    assert_eq!(r.body, LIBRARY_AUDIO);
+}
+
+#[tokio::test]
+async fn wrong_tries_behind_an_untrusted_proxy_count_per_client() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let wrong = "u=alex&p=wrong-secret&v=1.16.1&c=x&f=json";
+    for _ in 0..crate::services::family::member_bridge::MAX_FAILURES {
+        let r = send(
+            &f,
+            Method::GET,
+            &format!("/rest/ping?{wrong}"),
+            &[("X-Forwarded-For", "198.51.100.7")],
+            BRIDGE,
+        )
+        .await;
+        assert_eq!(r.error_code(), Some(40));
+    }
+    // That client now waits, even with the right secret.
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/ping?{ALEX}"),
+        &[("X-Forwarded-For", "198.51.100.7")],
+        BRIDGE,
+    )
+    .await;
+    assert_eq!(r.error_code(), Some(40), "{}", r.body);
+    // Another client behind the same proxy does not.
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/ping?{ALEX}"),
+        &[("X-Forwarded-For", "198.51.100.8")],
+        BRIDGE,
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
 }

@@ -96,15 +96,20 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         return refusal(StatusCode::UNAUTHORIZED, "Type your username and password.");
     }
     let throttle = &state.family.sign_in_throttle;
-    let key = web.throttle_key();
-    if let Some(wait) = throttle.retry_after(&key) {
-        return family_error(&crate::services::family::FamilyError::Throttled(
+    // Tries count per address and account, so signing in to one account never clears the
+    // wrong tries at another.
+    let key = format!("{}|{}", web.throttle_key(), username.to_lowercase());
+    let throttled = |wait| {
+        family_error(&crate::services::family::FamilyError::Throttled(
             format!(
                 "Too many wrong sign-ins. Try again in {}.",
                 SignInThrottle::minutes(wait)
             ),
             wait,
-        ));
+        ))
+    };
+    if let Some(wait) = throttle.retry_after(&key) {
+        return throttled(wait);
     }
     let enabled = state.settings.current().family.enabled;
     if let Some(member) = state.family_store.member(&username) {
@@ -117,12 +122,16 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
                 "Open your invite link to set your password first.",
             );
         }
+        // The try counts before the password is checked, so tries sent all at once cannot each
+        // pass the throttle while the others are still being checked.
+        if let Some(wait) = throttle.attempt(&key) {
+            return throttled(wait);
+        }
         if !state
             .family
             .check_member_password(&member, &request.password)
             .await
         {
-            throttle.failed(&key);
             return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password.");
         }
         if member.suspended {
@@ -202,6 +211,11 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
     let approver = settings.family.enabled && FamilyService::may_approve(&state, &signed.actor);
     let links = state.family.link_status(&state);
     let members_path = settings.family.effective_members_path();
+    // Only the people who can change the server's settings are told how.
+    let proxy_warning = web
+        .untrusted_proxy
+        .filter(|_| manager || signed.actor.is_owner())
+        .map(|proxy| settings.family.untrusted_proxy_fix(proxy));
     ok(&json!({
         "username": member.as_ref().map_or(signed.user().to_string(), |m| m.username.clone()),
         "role": signed.actor.role,
@@ -217,6 +231,7 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
         "links": links.as_ref().map(|status| status.links),
         "linksMessage": links.as_ref().and_then(|status| status.message.clone()),
         "linksFix": links.as_ref().and_then(|status| status.fix.clone()),
+        "proxyWarning": proxy_warning,
         "server": web.base(&state),
     }))
 }

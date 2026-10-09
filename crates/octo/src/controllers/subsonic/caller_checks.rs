@@ -40,7 +40,8 @@ impl SubsonicCall {
             .await
             .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
         let incoming = Arc::new(IncomingRequest::from_parts(&parts, body));
-        let parameters = incoming.parameters();
+        let mut parameters = incoming.parameters();
+        crate::services::family::audio_gate::hold_quality(&parts.extensions, &mut parameters);
         let proxy = state.subsonic_proxy.with_request(Arc::clone(&incoming));
         Ok(SubsonicCall {
             incoming,

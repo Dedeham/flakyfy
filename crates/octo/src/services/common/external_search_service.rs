@@ -135,7 +135,7 @@ impl ExternalSearchService {
                 query,
                 move |token: CancellationToken| async move {
                     tokio::select! {
-                        albums = metadata.search_albums(&query_text, limit) => Ok(Arc::new(albums)),
+                        albums = metadata.search_album_rows(&query_text, limit) => Ok(Arc::new(albums)),
                         () = token.cancelled() => Err(anyhow::anyhow!("The operation was canceled.")),
                     }
                 },

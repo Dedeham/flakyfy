@@ -813,6 +813,78 @@ async fn get_artist_albums_async_one_title_is_one_row_the_album_kept() {
 }
 
 #[tokio::test]
+async fn get_artist_albums_async_repeat_editions_are_one_row() {
+    // The catalog lists a record once per edition. The page shows it once, the edition with
+    // the most songs; a live or remix album is another record and keeps its row, and a single
+    // stays a single after the records.
+    let json = r#"{"data":[
+        {"id":1,"title":"Take Care","record_type":"album","release_date":"2011-11-15","nb_tracks":17,"explicit_lyrics":true},
+        {"id":2,"title":"Take Care (Deluxe)","record_type":"album","release_date":"2011-11-15","nb_tracks":19,"explicit_lyrics":true},
+        {"id":3,"title":"Take Care - Remastered 2021","record_type":"album","release_date":"2021-01-01","nb_tracks":17,"explicit_lyrics":true},
+        {"id":4,"title":"Take Care (Live)","record_type":"album","release_date":"2012-06-01","nb_tracks":12},
+        {"id":5,"title":"Take Care (Remixes)","record_type":"album","release_date":"2012-02-01","nb_tracks":6},
+        {"id":6,"title":"Take Care (FOMO)","record_type":"album","release_date":"2013-02-01","nb_tracks":4},
+        {"id":7,"title":"Headlines","record_type":"single","release_date":"2011-08-01","nb_tracks":1},
+        {"id":8,"title":"Headlines (Explicit)","record_type":"single","release_date":"2011-08-01","nb_tracks":1}
+    ]}"#;
+    let h = Harness::new(vec![("/artist/9/albums", json)]).await;
+
+    let hits = h.service.get_artist_albums("9", "Drake").await;
+
+    assert_eq!(
+        hits.iter().map(|h| h.title.as_str()).collect::<Vec<_>>(),
+        [
+            "Take Care (FOMO)",
+            "Take Care (Live)",
+            "Take Care (Remixes)",
+            "Take Care (Deluxe)",
+            "Headlines",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn get_artist_albums_on_more_pages_keeps_every_edition() {
+    // New Releases reads the catalog's own listing: a new deluxe edition is news there.
+    let json = r#"{"data":[
+        {"id":1,"title":"Take Care","record_type":"album","release_date":"2011-11-15","nb_tracks":17},
+        {"id":2,"title":"Take Care (Deluxe)","record_type":"album","release_date":"2024-11-15","nb_tracks":19}
+    ]}"#;
+    let h = Harness::new(vec![("/artist/9/albums", json)]).await;
+
+    let hits = h.service.get_artist_albums_on("9", "Drake", true, 3).await;
+
+    assert_eq!(hits.len(), 2);
+}
+
+#[test]
+fn fold_editions_keeps_a_clean_copy_beside_its_explicit_record_when_asked() {
+    let hit = |id: &str, title: &str, tracks: i32, explicit: Option<bool>| AlbumHit {
+        deezer_id: id.into(),
+        title: title.into(),
+        artist: "Drake".into(),
+        cover_url: None,
+        year: None,
+        track_count: tracks,
+        record_type: Some("album".into()),
+        release_date: None,
+        explicit_lyrics: explicit,
+    };
+    let hits = vec![
+        hit("1", "Views", 20, Some(true)),
+        hit("2", "Views", 20, Some(false)),
+        hit("3", "Views (Deluxe Edition)", 22, Some(true)),
+        hit("4", "Nothing Was the Same", 13, Some(true)),
+        hit("5", "Nothing Was the Same (Deluxe)", 15, None),
+    ];
+
+    let ids = |folded: Vec<AlbumHit>| folded.into_iter().map(|h| h.deezer_id).collect::<Vec<_>>();
+    // Search keeps the clean copy, the one of the record's own title, after the record.
+    assert_eq!(ids(fold_editions(hits.clone(), true)), ["3", "2", "4"]);
+    // An artist page lists one copy of each record.
+    assert_eq!(ids(fold_editions(hits, false)), ["3", "4"]);
+}
+#[tokio::test]
 async fn get_artist_albums_async_says_so_when_the_catalog_has_more_than_the_listing() {
     let json = r#"{"total":250,"data":[
         {"id":1,"title":"Newest","record_type":"album","release_date":"2024-01-01"}]}"#;

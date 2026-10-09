@@ -28,6 +28,7 @@ use crate::services::cover_art::CoverArtAggregator;
 use crate::services::framework::InFlight;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::metadata::DeezerMetadataService;
+use crate::services::metadata::deezer_metadata_service::fold_editions;
 use crate::services::you_tube::YouTubeResolver;
 
 /// The two members of `LastFmService` the length lookup uses: whether it has an API key, and
@@ -380,6 +381,63 @@ pub(crate) fn clean_copies(hits: &[AlbumHit]) -> HashSet<String> {
 }
 
 impl Inner {
+    /// Album search rows, each registered so it opens, plays and stars like any outside
+    /// album. With `fold`, repeat editions of one record are one row (see `fold_editions`).
+    async fn album_search(&self, query: &str, limit: i32, fold: bool) -> Vec<Album> {
+        if dotnet::is_blank(query) || limit <= 0 {
+            return Vec::new();
+        }
+        let hits = self.deezer.search_albums(query, limit, false).await;
+        let hits = if fold { fold_editions(hits, true) } else { hits };
+        let mut albums = Vec::with_capacity(hits.len());
+        let clean_copies = clean_copies(&hits);
+
+        for hit in hits {
+            // The registry id is the external id everywhere: getAlbum, getCoverArt and
+            // star all round-trip through it. The Deezer id rides along on the routing
+            // so album detail can fetch the exact tracklist without a name lookup. A clean copy
+            // listed beside its explicit original gets an id of its own, or the two rows would
+            // open the same album.
+            let words = if clean_copies.contains(hit.deezer_id.as_str()) {
+                Some(explicit_status::CLEAN)
+            } else {
+                (hit.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT)
+            };
+            let album_id = self.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Album,
+                artist: Some(hit.artist.clone()),
+                album: Some(hit.title.clone()),
+                external_album_id: Some(hit.deezer_id.clone()),
+                explicit_content: words,
+                version: explicit_status::version_of(words),
+                ..Default::default()
+            });
+            let artist_id = self.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Artist,
+                artist: Some(hit.artist.clone()),
+                ..Default::default()
+            });
+
+            albums.push(Album {
+                id: album_id.clone(),
+                title: hit.title.clone(),
+                artist: hit.artist.clone(),
+                artist_id: Some(artist_id),
+                year: hit.year,
+                song_count: Some(hit.track_count),
+                cover_art_url: hit.cover_url.clone(),
+                release_types: release_type_list(hit.record_type.as_deref()),
+                explicit_content_lyrics: words,
+                is_local: false,
+                external_provider: Some(SoulseekMetadataService::PROVIDER_NAME.to_string()),
+                external_id: Some(album_id),
+                ..Default::default()
+            });
+        }
+
+        albums
+    }
+
     fn lookup(&self, id: &str) -> Option<SharedRouting> {
         self.id_registry.lookup(id)
     }
@@ -1146,58 +1204,11 @@ impl IMusicMetadataService for SoulseekMetadataService {
     }
 
     async fn search_albums(&self, query: &str, limit: i32) -> Vec<Album> {
-        if dotnet::is_blank(query) || limit <= 0 {
-            return Vec::new();
-        }
-        let inner = &self.inner;
-        let hits = inner.deezer.search_albums(query, limit, false).await;
-        let mut albums = Vec::with_capacity(hits.len());
-        let clean_copies = clean_copies(&hits);
+        self.inner.album_search(query, limit, false).await
+    }
 
-        for hit in hits {
-            // The registry id is the external id everywhere: getAlbum, getCoverArt and
-            // star all round-trip through it. The Deezer id rides along on the routing
-            // so album detail can fetch the exact tracklist without a name lookup. A clean copy
-            // listed beside its explicit original gets an id of its own, or the two rows would
-            // open the same album.
-            let words = if clean_copies.contains(hit.deezer_id.as_str()) {
-                Some(explicit_status::CLEAN)
-            } else {
-                (hit.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT)
-            };
-            let album_id = inner.id_registry.register(SoulseekRouting {
-                kind: RoutingKind::Album,
-                artist: Some(hit.artist.clone()),
-                album: Some(hit.title.clone()),
-                external_album_id: Some(hit.deezer_id.clone()),
-                explicit_content: words,
-                version: explicit_status::version_of(words),
-                ..Default::default()
-            });
-            let artist_id = inner.id_registry.register(SoulseekRouting {
-                kind: RoutingKind::Artist,
-                artist: Some(hit.artist.clone()),
-                ..Default::default()
-            });
-
-            albums.push(Album {
-                id: album_id.clone(),
-                title: hit.title.clone(),
-                artist: hit.artist.clone(),
-                artist_id: Some(artist_id),
-                year: hit.year,
-                song_count: Some(hit.track_count),
-                cover_art_url: hit.cover_url.clone(),
-                release_types: release_type_list(hit.record_type.as_deref()),
-                explicit_content_lyrics: words,
-                is_local: false,
-                external_provider: Some(Self::PROVIDER_NAME.to_string()),
-                external_id: Some(album_id),
-                ..Default::default()
-            });
-        }
-
-        albums
+    async fn search_album_rows(&self, query: &str, limit: i32) -> Vec<Album> {
+        self.inner.album_search(query, limit, true).await
     }
 
     async fn search_artists(&self, query: &str, limit: i32) -> Vec<Artist> {

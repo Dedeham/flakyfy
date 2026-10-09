@@ -163,6 +163,28 @@ async fn search_albums_returns_albums_with_registry_ids() {
 }
 
 #[tokio::test]
+async fn search_album_rows_fold_repeat_editions_and_search_albums_keeps_them() {
+    let h = build_service(vec![(
+        "/search/album",
+        r#"{"data":[
+            {"id":1,"title":"Take Care","record_type":"album","nb_tracks":17,"artist":{"name":"Drake"}},
+            {"id":2,"title":"Take Care (Deluxe)","record_type":"album","nb_tracks":19,"artist":{"name":"Drake"}},
+            {"id":3,"title":"Take Care (Live)","record_type":"album","nb_tracks":12,"artist":{"name":"Drake"}}
+        ]}"#,
+    )])
+    .await;
+
+    let rows = h.service.search_album_rows("take care", 10).await;
+    let every = h.service.search_albums("take care", 10).await;
+
+    assert_eq!(
+        rows.iter().map(|a| a.title.as_str()).collect::<Vec<_>>(),
+        ["Take Care (Deluxe)", "Take Care (Live)"]
+    );
+    assert_eq!(every.len(), 3);
+}
+
+#[tokio::test]
 async fn get_album_populates_songs_with_album_id_and_registry_ids() {
     let h = build_service(full_album_routes()).await;
     let album_id = only_album_id(&h).await;

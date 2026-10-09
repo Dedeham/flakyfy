@@ -1,7 +1,7 @@
 //! Port of `Services/Metadata/DeezerMetadataService.cs`. The records it answers with are in
 //! `octo_core::metadata::deezer_metadata_service`.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use octo_core::common::SongIdentity;
@@ -11,6 +11,7 @@ use octo_core::json::element::{
     try_get_property,
 };
 use octo_core::metadata::accept_language_header;
+use octo_core::metadata::deezer_metadata_service::normalized_record_type;
 pub use octo_core::metadata::deezer_metadata_service::{
     AlbumAnswer, AlbumDetail, AlbumHit, AlbumLookup, AlbumTrack, ArtistHit, ArtistMeta, CatalogCandidates,
     FullTrackMeta, TrackMeta, release_rank, release_types,
@@ -18,11 +19,13 @@ pub use octo_core::metadata::deezer_metadata_service::{
 use octo_core::models::domain::explicit_status;
 use octo_core::settings::SettingsStore;
 use octo_core::tagging::CatalogLookup;
+use regex::Regex;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use super::deezer_rate_limit_handler::DeezerRateLimitHandler;
 use crate::services::framework::{InFlight, MemoryCache};
+use crate::services::library::album_ownership::AlbumOwnership;
 
 const MAX_CACHE: u64 = 4096;
 
@@ -749,17 +752,24 @@ impl DeezerMetadataService {
     /// Two releases of one title would also open as one, since an outside album's id is made
     /// from the artist and title, and the second would take over the first's. Singles used to
     /// be left out unless there was nothing else, which hid half of a career that is mostly
-    /// singles; grouped after the records, they no longer bury them. The artist's name is not
-    /// on this listing, so every hit carries the one given.
+    /// singles; grouped after the records, they no longer bury them. Repeat editions of one
+    /// record (deluxe, remastered, explicit and clean copies) are one row (see
+    /// [`fold_editions`]). The artist's name is not on this listing, so every hit carries the
+    /// one given.
     pub async fn get_artist_albums(&self, deezer_artist_id: &str, artist_name: &str) -> Vec<AlbumHit> {
-        self.get_artist_albums_on(deezer_artist_id, artist_name, false, 1)
-            .await
+        let releases = self
+            .get_artist_albums_on(deezer_artist_id, artist_name, false, 1)
+            .await;
+        let mut hits = fold_editions(releases, false);
+        sort_releases(&mut hits);
+        hits
     }
 
     /// [`Self::get_artist_albums`] on the catalog's background lane when `background`, reading
     /// up to `pages` of the catalog's pages of 100 for a long career. The catalog lists albums
     /// before singles, so a new single of an artist with more than a page of releases is on a
-    /// later page; New Releases reads up to three.
+    /// later page; New Releases reads up to three. Every edition the catalog lists is kept: a
+    /// new deluxe edition is news there.
     pub async fn get_artist_albums_on(
         &self,
         deezer_artist_id: &str,
@@ -900,11 +910,7 @@ impl DeezerMetadataService {
         }
 
         let mut hits = releases;
-        hits.sort_by(|a, b| {
-            release_rank(a.record_type.as_deref())
-                .cmp(&release_rank(b.record_type.as_deref()))
-                .then_with(|| b.year.unwrap_or(0).cmp(&a.year.unwrap_or(0)))
-        });
+        sort_releases(&mut hits);
         let ttl = if partial {
             PARTIAL_TTL
         } else if hits.is_empty() {
@@ -1485,6 +1491,135 @@ impl CatalogLookup for DeezerMetadataService {
     }
 }
 
+/// Words that make a bracket or a dash tail on an album title another edition of the same
+/// record: "Take Care (Deluxe)", "Views - Remastered 2021", "Nevermind [30th Anniversary]".
+static EDITION_WORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:deluxe|edition|remaster(?:ed)?|expanded|anniversary|explicit|clean|bonus|special|collector'?s|reissue|super|platinum|complete|single|ep)\b",
+    )
+    .expect("a valid pattern")
+});
+
+/// Words that make it another record, whatever edition words sit beside them: a live album, a
+/// remix album, an instrumental or acoustic take.
+static OTHER_RECORD_WORDS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:live|remix(?:es|ed)?|rmx|mix(?:es)?|instrumentals?|acoustic|unplugged|karaoke|demos?)\b",
+    )
+    .expect("a valid pattern")
+});
+
+/// "(...)" or "[...]" at the end of an album title.
+static EDITION_BRACKET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*[(\[]([^()\[\]]*)[)\]]\s*$").expect("a valid pattern"));
+
+/// The tail after the last " - " of an album title.
+static EDITION_DASH_TAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+[-–—]\s+([^-–—]*)$").expect("a valid pattern"));
+
+/// `title` with its trailing edition markers taken off, and whether nothing but edition markers
+/// was left trailing (so the record's own name is all that remains).
+fn without_editions(title: &str) -> (String, bool) {
+    let mut text = title.trim().to_string();
+    loop {
+        let mut stripped = false;
+        for pattern in [&*EDITION_BRACKET, &*EDITION_DASH_TAIL] {
+            let Some(found) = pattern.captures(&text) else {
+                continue;
+            };
+            let whole = found.get(0).expect("a match has its whole text");
+            let inner = found.get(1).map_or("", |m| m.as_str());
+            if whole.start() > 0 && EDITION_WORDS.is_match(inner) && !OTHER_RECORD_WORDS.is_match(inner) {
+                text = text[..whole.start()].trim_end().to_string();
+                stripped = true;
+                break;
+            }
+        }
+        if !stripped {
+            break;
+        }
+    }
+    let only_editions = !EDITION_BRACKET.is_match(&text);
+    (text, only_editions)
+}
+
+/// The record an album hit is an edition of: the artist, the record type, and the title without
+/// its edition markers, read as `AlbumOwnership::base_key` reads album names when only edition
+/// markers trail it. A title that keeps a bracket of another kind ("HABIBTI (FOMO)") is its own
+/// record, and so is a live or remix album.
+fn edition_key(hit: &AlbumHit) -> String {
+    let (record, only_editions) = without_editions(&hit.title);
+    let title_key = if only_editions {
+        AlbumOwnership::base_key(Some(&record))
+    } else {
+        SongIdentity::key(&record)
+    };
+    format!(
+        "{}|{}|{}",
+        SongIdentity::key(&hit.artist),
+        normalized_record_type(hit.record_type.as_deref()).unwrap_or_default(),
+        title_key
+    )
+}
+
+/// Repeat editions of one record (deluxe, remastered, anniversary, explicit and clean copies)
+/// folded into one row, at the place of the first listed. The row is the edition the listing
+/// ranks best: the better record type, then an explicit copy, then the one with the most songs,
+/// then the first listed. Different record types never fold, so a single stays listed beside the
+/// album it comes from. With `keep_clean_copies`, a record whose row is an explicit copy also
+/// keeps one clean copy right after it, the one of the row's own title when there is one: a
+/// search lists both, an artist's page one.
+pub fn fold_editions(hits: Vec<AlbumHit>, keep_clean_copies: bool) -> Vec<AlbumHit> {
+    let mut groups: Vec<Vec<AlbumHit>> = Vec::new();
+    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for hit in hits {
+        let key = edition_key(&hit);
+        match at.get(&key) {
+            Some(&group) => groups[group].push(hit),
+            None => {
+                at.insert(key, groups.len());
+                groups.push(vec![hit]);
+            }
+        }
+    }
+
+    let rank = |hit: &AlbumHit| {
+        (
+            release_rank(hit.record_type.as_deref()),
+            hit.explicit_lyrics != Some(true),
+            std::cmp::Reverse(hit.track_count),
+        )
+    };
+    let mut folded = Vec::new();
+    for mut group in groups {
+        let best = (0..group.len())
+            .min_by_key(|&i| rank(&group[i]))
+            .expect("a group has a member");
+        let row = group.remove(best);
+        let clean = (keep_clean_copies && row.explicit_lyrics == Some(true))
+            .then(|| {
+                let own_title = SongIdentity::key(&row.title);
+                (0..group.len())
+                    .filter(|&i| group[i].explicit_lyrics == Some(false))
+                    .min_by_key(|&i| (SongIdentity::key(&group[i].title) != own_title, rank(&group[i])))
+            })
+            .flatten();
+        let clean = clean.map(|i| group.remove(i));
+        folded.push(row);
+        folded.extend(clean);
+    }
+    folded
+}
+
+/// An artist's releases in page order: albums, EPs, singles, compilations, newest first within
+/// each.
+fn sort_releases(hits: &mut [AlbumHit]) {
+    hits.sort_by(|a, b| {
+        release_rank(a.record_type.as_deref())
+            .cmp(&release_rank(b.record_type.as_deref()))
+            .then_with(|| b.year.unwrap_or(0).cmp(&a.year.unwrap_or(0)))
+    });
+}
 /// Deezer no longer supports field-qualified search on the track endpoints. A query
 /// like artist:"X" track:"Y" is now read as free text, so the literal words "artist"
 /// and "track" have to appear in the record and nothing ever matches. Plain terms are

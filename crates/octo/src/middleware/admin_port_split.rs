@@ -64,7 +64,8 @@ pub async fn admin_port_split(State(admin_port): State<u16>, req: Request, next:
 
 /// The addresses to listen on when the dashboard gets a port of its own: the ones Octo already
 /// uses (ASPNETCORE_URLS as `urls`, else ASPNETCORE_HTTP_PORTS as `http_ports`, else
-/// `http://localhost:5000`) plus the admin port. None when the admin port is off or is already a main port.
+/// `http://localhost:5000`) plus the admin port. None when the admin port is off or is already a
+/// main port.
 pub fn listen_urls(urls: Option<&str>, http_ports: Option<&str>, admin_port: i32) -> Option<String> {
     if admin_port <= 0 {
         return None;

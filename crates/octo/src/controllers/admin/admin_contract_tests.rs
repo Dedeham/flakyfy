@@ -67,8 +67,8 @@ fn settable_properties() -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// The sections left out: who may use the dashboard is not a
-/// dashboard setting (it is set in .env and needs a restart), and neither GET lists it.
+/// The sections left out: who may use the dashboard is not a dashboard setting (it is set in .env
+/// and needs a restart), and neither GET lists it.
 const NOT_LISTED: [&str; 1] = ["Admin"];
 
 fn missing_from(document: &Value) -> Vec<String> {

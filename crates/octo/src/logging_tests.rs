@@ -1,5 +1,5 @@
-//! Subsonic credentials never reach the log. The request-line
-//! tests live with the pipeline (`http/pipeline_tests.rs`), where requests flow.
+//! Subsonic credentials never reach the log. The request-line tests live with the pipeline
+//! (`http/pipeline_tests.rs`), where requests flow.
 
 use super::*;
 use std::borrow::Cow;

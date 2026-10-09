@@ -114,8 +114,8 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     }
 }
 
-/// A chart list as a playlist row: the keys a mix has, read-only, with its own comment and its real
-/// song count.
+/// A chart list as a playlist row: the keys a mix has, read-only, with its own comment and its
+/// real song count.
 pub(crate) fn chart_playlist_fields(
     builder: &octo_subsonic::SubsonicResponseBuilder,
     list: &GeneratedPlaylist,

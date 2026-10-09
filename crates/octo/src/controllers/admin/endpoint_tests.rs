@@ -105,8 +105,8 @@ async fn every_backfill_endpoint_requires_a_browse_session() {
     }
 }
 
-/// The preset is read-only and has no destructive
-/// surface, so it stays open the way the rest of the settings API is.
+/// The preset is read-only and has no destructive surface, so it stays open the way the rest of
+/// the settings API is.
 #[tokio::test]
 async fn genre_presets_is_readable_without_a_session() {
     let state = AppState::for_tests(AppSettings::default());
@@ -644,8 +644,8 @@ async fn a_failed_run_carries_the_end_of_the_log() {
 }
 
 /// The card with checks off, byte for byte (`09-admin/update`: the relaxed encoder, so `&` and
-/// `<` go out unescaped), and the refusal it gives an update. The commands and
-/// `reinstallCommand` pull Octo and install helper version 2.
+/// `<` go out unescaped), and the refusal it gives an update. The commands and `reinstallCommand`
+/// pull Octo and install helper version 2.
 #[tokio::test]
 async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     let mut settings = AppSettings::default();
@@ -763,9 +763,8 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     );
 }
 
-/// The lyrics page's
-/// status is written with the run's busy count beside `running` (it once could not be written
-/// at all, two members being `busy`), and only once signed in.
+/// The lyrics page's status is written with the run's busy count beside `running` (it once could
+/// not be written at all, two members being `busy`), and only once signed in.
 #[tokio::test]
 async fn the_lyrics_status_with_rows_and_a_busy_count_is_written() {
     let state = AppState::for_tests(AppSettings::default());

@@ -10,9 +10,9 @@
 //! 2. Construct it in [`AppState::build`] (production) **and** in [`AppState::for_tests`]
 //!    (handler tests), in dependency order: a service is built after everything it holds.
 //!    Every service is built eagerly here, which is fine unless its constructor does I/O.
-//! 3. A service that also runs in the background is one `Arc` field plus a worker:
-//!    register its loop with `state.workers.register("Name", ...)` in [`AppState::build`],
-//!    capturing a clone of the `Arc`. Never start work from a constructor.
+//! 3. A service that also runs in the background is one `Arc` field plus a worker: register its
+//!    loop with `state.workers.register("Name", ...)` in [`AppState::build`], capturing a clone
+//!    of the `Arc`. Never start work from a constructor.
 //! 4. Settings: services read `state.settings.current()` at the point of use (they follow
 //!    changes live), or copy a value out in their constructor and say so (it applies on
 //!    restart).
@@ -169,8 +169,8 @@ pub struct AppInner {
     pub lyrics_sidecar_writer: Arc<LyricsSidecarWriter>,
     /// `LyricsUndoJournal`: what the lyrics page's Save wrote over, `<config>/lyrics-undo.jsonl`.
     pub lyrics_undo_journal: Arc<LyricsUndoJournal>,
-    /// `LyricsLibraryStore`: the "find lyrics for the library" run, `<config>/lyrics-library.json`.
-    /// Its coalescing flush is the "LyricsLibraryStore" worker.
+    /// `LyricsLibraryStore`: the "find lyrics for the library" run,
+    /// `<config>/lyrics-library.json`. Its coalescing flush is the "LyricsLibraryStore" worker.
     pub lyrics_library_store: Arc<LyricsLibraryStore>,
     /// `LyricsLibraryWorker`: its queue is the "LyricsLibraryWorker" worker.
     pub lyrics_library_worker: Arc<LyricsLibraryWorker>,
@@ -184,8 +184,8 @@ pub struct AppInner {
     /// `AlbumCoverFinder`: the largest cover of an album.
     pub album_cover_finder: Arc<dyn IAlbumCoverFinder>,
     /// `CoverUpgradeStore`: the cover upgrade run, `<config>/cover-upgrade.json`, and the found
-    /// covers in `<config>/cover-upgrade-found/`. Its coalescing flush is the
-    /// "CoverUpgradeStore" worker.
+    /// covers in `<config>/cover-upgrade-found/`. Its coalescing flush is the "CoverUpgradeStore"
+    /// worker.
     pub cover_upgrade_store: Arc<CoverUpgradeStore>,
     /// `CoverUpgradeJournal`: the cover undo log, `<config>/cover-upgrade-journal.jsonl`, with the
     /// old pictures in `<config>/cover-backups/`.
@@ -227,8 +227,8 @@ pub struct AppInner {
     pub library_snapshot: Arc<LibrarySnapshot>,
     /// `AlbumOwnership`: how much of an outside album the library holds.
     pub album_ownership: Arc<AlbumOwnership>,
-    /// `StartupValidationOrchestrator` over the `IStartupValidator`s
-    /// (`SubsonicStartupValidator`, then `SoulseekStartupValidator`). Run by
+    /// `StartupValidationOrchestrator` over the `IStartupValidator`s (`SubsonicStartupValidator`,
+    /// then `SoulseekStartupValidator`). Run by
     /// [`crate::host::run`] before the listener binds.
     pub startup_validation: Arc<StartupValidationOrchestrator>,
 
@@ -257,8 +257,8 @@ pub struct AppInner {
     /// `<config>/covers` replace the generated cover of the playlist they are named after.
     /// Warmed in the background at startup by the "CoverArtService" worker.
     pub cover_art_service: Arc<CoverArtService>,
-    /// `AmbientPaletteService` ("ambient-palette" client, 6 s): the colors of the
-    /// fetched songs' covers, the dashboard's light.
+    /// `AmbientPaletteService` ("ambient-palette" client, 6 s): the colors of the fetched songs'
+    /// covers, the dashboard's light.
     pub ambient_palettes: Arc<crate::services::admin::AmbientPaletteService>,
     /// `DownloadHistoryService`: the fetched-songs log, `downloads-history.json` beside settings.json.
     pub download_history: Arc<DownloadHistoryService>,
@@ -306,8 +306,8 @@ pub struct AppInner {
     /// `RecentScrobbles`: completed plays reported lately, so one sent twice is learned from once.
     pub recent_scrobbles: Arc<RecentScrobbles>,
     /// `SubsonicResponseBuilder`: every Subsonic answer Octo writes itself, over the external id
-    /// registry, with `Subsonic:WaitForLosslessOnPlay` captured at startup.
-    /// The app-type answers come with `services::subsonic::SubsonicResponseBuilderExt`.
+    /// registry, with `Subsonic:WaitForLosslessOnPlay` captured at startup. The app-type answers
+    /// come with `services::subsonic::SubsonicResponseBuilderExt`.
     pub subsonic_response_builder: Arc<SubsonicResponseBuilder>,
     /// `SoulseekClient`: slskd's REST client (a cheap handle), its address and login captured
     /// at startup.
@@ -416,8 +416,8 @@ pub struct AppInner {
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
     /// `LibraryActionExecutor`: the only code in library actions that touches a file.
     pub library_action_executor: Arc<LibraryActionExecutor>,
-    /// `LibraryActionRatingWorker`: the controller enqueues into the
-    /// "LibraryActionRatingWorker" worker. (`LibraryActionPlaylistWorker` is a worker only, and
+    /// `LibraryActionRatingWorker`: the controller enqueues into the "LibraryActionRatingWorker"
+    /// worker. (`LibraryActionPlaylistWorker` is a worker only, and
     /// `LibraryActionPlaylistProvisioner` is built per request over its proxy.)
     pub library_action_rating_worker: Arc<LibraryActionRatingWorker>,
     /// `NoticeQueue`: what Octo asked each person, `notice-queue.json`. Its 5-second flush is
@@ -455,8 +455,8 @@ pub struct AppInner {
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
     /// `LibraryRescan`: one normal Navidrome scan a few seconds after a run of library changes.
     pub library_rescan: Arc<LibraryRescan>,
-    /// `LibraryEditService`: the apps' Library health fixes, tags written in place,
-    /// albums joined, covers added, and a removed song put back.
+    /// `LibraryEditService`: the apps' Library health fixes, tags written in place, albums
+    /// joined, covers added, and a removed song put back.
     pub library_edits: Arc<LibraryEditService>,
     /// `LibraryHealthService`: Library health for the dashboard, the app's checks and fixes run
     /// on the server.
@@ -490,8 +490,8 @@ fn library_health(
     ))
 }
 
-/// The apps' Library health fixes: the rescan and the edit service, over
-/// the resolver, the quarantine, both journals and the services a lookup and a cover ask.
+/// The apps' Library health fixes: the rescan and the edit service, over the resolver, the
+/// quarantine, both journals and the services a lookup and a cover ask.
 fn library_edits(
     settings: &Arc<SettingsStore>,
     stores: &Stores,
@@ -575,8 +575,8 @@ impl Tagging {
     }
 }
 
-/// What the download service is built over beyond the acquisition pipeline's own
-/// services: the tagging and verification services, the lyrics writer and slskd's client.
+/// What the download service is built over beyond the acquisition pipeline's own services: the
+/// tagging and verification services, the lyrics writer and slskd's client.
 struct DownloadDeps<'a> {
     tagging: &'a Tagging,
     lyrics: &'a Arc<LyricsSidecarWriter>,
@@ -833,8 +833,8 @@ impl Acquisition {
     }
 }
 
-/// The Last.fm, ListenBrainz and notification services. None runs in the background
-/// until it is used: the scrobble queue drains on a task of its own while plays wait.
+/// The Last.fm, ListenBrainz and notification services. None runs in the background until it is
+/// used: the scrobble queue drains on a task of its own while plays wait.
 struct Integrations {
     last_fm: Arc<LastFmService>,
     last_fm_scrobbles: Arc<LastFmScrobbleService>,
@@ -1115,8 +1115,8 @@ impl MetadataClients {
         // The cover sources take their settings once: captured here, at construction.
         let current = settings.current();
         let itunes_cover_art = Arc::new(ITunesCoverArtLookup::new(itunes_cache));
-        // Cover-art sources, in fallback order. The aggregator queries them
-        // sequentially; adding or removing a source is a one-line change here.
+        // Cover-art sources, in fallback order. The aggregator queries them sequentially; adding
+        // or removing a source is a one-line change here.
         let artwork_hints = Arc::new(ArtworkHints::new());
         let sources: Vec<Arc<dyn ICoverArtSource>> = vec![
             // A chart's own artwork first: it names the cover exactly; the rest search by name.
@@ -1144,8 +1144,8 @@ impl MetadataClients {
     }
 }
 
-/// The lyrics services. `config_dir` None keeps the pins and the undo journal in
-/// memory (handler tests).
+/// The lyrics services. `config_dir` None keeps the pins and the undo journal in memory (handler
+/// tests).
 struct Lyrics {
     choice_store: Arc<LyricsChoiceStore>,
     service: Arc<LyricsService>,
@@ -1187,8 +1187,8 @@ impl Lyrics {
         });
     }
 
-    /// The library job, over the library service and the music folder, which exist
-    /// only once Navidrome's services are built. `config_dir` None keeps the run in memory.
+    /// The library job, over the library service and the music folder, which exist only once
+    /// Navidrome's services are built. `config_dir` None keeps the run in memory.
     fn library_job(
         &self,
         settings: &Arc<SettingsStore>,
@@ -1238,8 +1238,8 @@ impl LyricsLibraryJob {
     }
 }
 
-/// The genre backfill and the cover upgrade. `config_dir` None keeps their runs and
-/// journals in memory (handler tests).
+/// The genre backfill and the cover upgrade. `config_dir` None keeps their runs and journals in
+/// memory (handler tests).
 struct GenreAndCoverJobs {
     genre_backfill_store: Arc<GenreBackfillStore>,
     genre_backfill_journal: Arc<GenreBackfillJournal>,
@@ -2358,7 +2358,8 @@ impl AppState {
             soulseek.link.clone(),
             tagging.spectrum_analyzer.clone(),
         );
-        // The queues and sweeps keep their files in the test's config directory; no worker is run.
+        // The queues and sweeps keep their files in the test's config directory; no worker is
+        // run.
         let library_jobs = LibraryJobs::build(
             &settings,
             &stores,

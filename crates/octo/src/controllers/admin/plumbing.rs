@@ -113,10 +113,10 @@ fn escape_cookie_value(value: &str) -> String {
     octo_core::common::dotnet::escape_data_string(value)
 }
 
-/// The Navidrome admin this request is signed in as, with the cookie to send
-/// back. Cookie first (how the admin UI signs in), header second so the endpoints stay usable
-/// from curl. A live cookie is renewed: [`BrowseUser::finish`] adds it to the answer. A
-/// recovery-code session is not one: it cannot reach the endpoints that touch library files.
+/// The Navidrome admin this request is signed in as, with the cookie to send back. Cookie first
+/// (how the admin UI signs in), header second so the endpoints stay usable from curl. A live
+/// cookie is renewed: [`BrowseUser::finish`] adds it to the answer. A recovery-code session is
+/// not one: it cannot reach the endpoints that touch library files.
 pub struct BrowseUser {
     pub user: Option<String>,
     renew: Option<HeaderValue>,

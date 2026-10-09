@@ -172,7 +172,8 @@ impl Respond for FakeNavidrome {
     }
 }
 
-/// The app over both fakes, with the library snapshot read from the drake library (or not at all).
+/// The app over both fakes, with the library snapshot read from the drake library (or not at
+/// all).
 struct Web {
     state: AppState,
     _servers: (MockServer, MockServer),

@@ -1,10 +1,9 @@
-//! The dashboard's Library
-//! health, what the Octo app's Library health finds, worked out on the server, and its fixes, for
-//! people on other Subsonic clients. Admins only: behind the dashboard sign-in like every admin
-//! endpoint, every call needs a Navidrome admin (the recovery code is not one, and the gate's
-//! `LIBRARY_FILE_ROUTES` refuses it first), and the writes act as that admin, refused unless they
-//! are on the library actions allowed list, exactly as the app's libraryAction is. Writes carry
-//! X-Octo-Admin, as every dashboard write does.
+//! The dashboard's Library health, what the Octo app's Library health finds, worked out on the
+//! server, and its fixes, for people on other Subsonic clients. Admins only: behind the dashboard
+//! sign-in like every admin endpoint, every call needs a Navidrome admin (the recovery code is
+//! not one, and the gate's `LIBRARY_FILE_ROUTES` refuses it first), and the writes act as that
+//! admin, refused unless they are on the library actions allowed list, exactly as the app's
+//! libraryAction is. Writes carry X-Octo-Admin, as every dashboard write does.
 
 use std::collections::{HashMap, HashSet};
 

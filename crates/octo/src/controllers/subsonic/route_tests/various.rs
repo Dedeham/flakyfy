@@ -314,8 +314,8 @@ async fn a_playlist_mutation_is_relayed_under_the_clients_spelling() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Song lengths: what a client actually receives, search3 and a station's
-// getPlaylist, through the real metadata service, with Navidrome owning none of the songs.
+// Song lengths: what a client actually receives, search3 and a station's getPlaylist, through the
+// real metadata service, with Navidrome owning none of the songs.
 // ---------------------------------------------------------------------------------------
 
 /// Navidrome with an empty library, Last.fm's track.search and track.getInfo (under `/2.0/`),

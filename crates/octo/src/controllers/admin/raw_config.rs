@@ -1,5 +1,5 @@
-//! The Raw config editor and the config-sources table:
-//! `GET`/`PUT /api/admin/raw-config` and `GET /api/admin/config-sources`.
+//! The Raw config editor and the config-sources table: `GET`/`PUT /api/admin/raw-config` and
+//! `GET /api/admin/config-sources`.
 
 use axum::Extension;
 use axum::body::Bytes;

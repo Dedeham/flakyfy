@@ -1,7 +1,7 @@
-//! The process and status actions: the service health dots (`status`), the
-//! library path chain (`library-status`), server discovery, Lidarr's choices and connection
-//! test, the restart, the test notification, the fetched-songs log, the hearted downloads, and
-//! the two recovery levers (clear rejected peers, clear the metadata caches).
+//! The process and status actions: the service health dots (`status`), the library path chain
+//! (`library-status`), server discovery, Lidarr's choices and connection test, the restart, the
+//! test notification, the fetched-songs log, the hearted downloads, and the two recovery levers
+//! (clear rejected peers, clear the metadata caches).
 
 use std::time::Duration;
 

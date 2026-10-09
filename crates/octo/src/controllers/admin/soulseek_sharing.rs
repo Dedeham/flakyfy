@@ -1,8 +1,8 @@
 //! `api/admin/soulseek/sharing`: the Sharing card on the dashboard's Soulseek page: what this
 //! server gives back to the Soulseek network, read from slskd through Octo's own slskd sign-in,
 //! and the switch that turns sharing on and off. Only counts, folder names and states come back;
-//! slskd's login stays inside Octo.
-//! Behind the same guard as the rest of /api/admin, so the writes need X-Octo-Admin.
+//! slskd's login stays inside Octo. Behind the same guard as the rest of /api/admin, so the
+//! writes need X-Octo-Admin.
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -157,8 +157,8 @@ mod tests {
         assert!(rescan.text().contains("cannot reach slskd"), "{}", rescan.text());
     }
 
-    // The switch is saved to settings.json, and with slskd out of reach the answer says so instead of
-    // pretending.
+    // The switch is saved to settings.json, and with slskd out of reach the answer says so
+    // instead of pretending.
     #[tokio::test]
     async fn share_endpoint_saves_the_choice_and_reports_what_slskd_did() {
         let dir = tempfile::tempdir().expect("a folder");

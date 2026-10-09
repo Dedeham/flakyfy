@@ -600,9 +600,8 @@ fn an_item_keeps_its_wire_shape() {
     );
 }
 
-/// With the sign-in off (the test default) a browser with no session
-/// is answered, as not signed in; with a session, or the recovery code, the jobs are listed and
-/// `signedIn` says so.
+/// With the sign-in off (the test default) a browser with no session is answered, as not signed
+/// in; with a session, or the recovery code, the jobs are listed and `signedIn` says so.
 #[tokio::test]
 async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
     let state = AppState::for_tests(AppSettings::default());
@@ -636,8 +635,8 @@ async fn the_endpoint_lists_jobs_for_a_signed_in_browser() {
     assert_eq!(signed.json()["signedIn"], true);
 }
 
-/// The rescan reads slskd's own scan fields off the Sharing card's report, and an
-/// slskd that does not answer reads as a rescan that has not started.
+/// The rescan reads slskd's own scan fields off the Sharing card's report, and an slskd that does
+/// not answer reads as a rescan that has not started.
 #[test]
 fn a_sharing_report_is_read_as_the_rescan_saw_it() {
     use octo_core::soulseek::soulseek_sharing::build;

@@ -1,7 +1,7 @@
-//! The settings actions: `GET /api/admin/settings` (the
-//! effective configuration the forms pre-fill from) and `POST /api/admin/settings` (a partial
-//! patch merged into settings.json), with the validation and the secret placeholder rules the
-//! save path applies. The effective document is shared with `GET raw-config`.
+//! The settings actions: `GET /api/admin/settings` (the effective configuration the forms
+//! pre-fill from) and `POST /api/admin/settings` (a partial patch merged into settings.json),
+//! with the validation and the secret placeholder rules the save path applies. The effective
+//! document is shared with `GET raw-config`.
 
 use std::fmt::Debug;
 

@@ -1,5 +1,5 @@
-//! The dashboard's Last.fm scrobbling Connect, Finish and
-//! Disconnect, and what the admin API shows of them.
+//! The dashboard's Last.fm scrobbling Connect, Finish and Disconnect, and what the admin API
+//! shows of them.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -439,8 +439,8 @@ async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
     assert_eq!(password(&factory).as_deref(), Some("slskd-secret"));
 }
 
-/// Navidrome's address is saved without its trailing slash (and the spaces it was
-/// typed with), so the stream relay never asks for `//rest/stream`; the Raw config save the same.
+/// Navidrome's address is saved without its trailing slash (and the spaces it was typed with), so
+/// the stream relay never asks for `//rest/stream`; the Raw config save the same.
 #[tokio::test]
 async fn navidromes_address_is_saved_without_a_trailing_slash() {
     let factory = ScrobbleAdminFactory::new("{}").await;

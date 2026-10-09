@@ -115,9 +115,9 @@ async fn save(app: &App, method: Method, uri: &str, json: &str) {
     );
 }
 
-/// The dashboard saves a list off and the app asks for its playlists at once. The settings file is
-/// read as Octo reads /app/config/settings.json, but with no file watcher, so only the save itself
-/// can make the running settings follow the file.
+/// The dashboard saves a list off and the app asks for its playlists at once. The settings file
+/// is read as Octo reads /app/config/settings.json, but with no file watcher, so only the save
+/// itself can make the running settings follow the file.
 #[tokio::test]
 async fn a_list_switched_off_in_the_dashboard_is_gone_from_the_very_next_get_playlists() {
     let upstream = ForYouUpstream::start().await;

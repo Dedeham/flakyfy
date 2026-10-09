@@ -3,11 +3,11 @@
 //!
 //! Levels come from `RUST_LOG` when it is set. Otherwise the `Logging__LogLevel__Default` and
 //! `Logging__LogLevel__<Category>` variables are honored, with their level names (Trace, Debug,
-//! Information, Warning, Error, Critical, None). With neither, Octo's own lines
-//! log at Information and [`QUIET_BY_DEFAULT`] leaves out the two lines for every request and
-//! the HTTP client's: they were most of the log, and writing them cost CPU. A variable for one
-//! of those categories (docker-compose.yml passes `LOG_LEVEL_ASPNETCORE` and
-//! `LOG_LEVEL_HTTPCLIENT`) brings it back.
+//! Information, Warning, Error, Critical, None). With neither, Octo's own lines log at
+//! Information and [`QUIET_BY_DEFAULT`] leaves out the two lines for every request and the HTTP
+//! client's: they were most of the log, and writing them cost CPU. A variable for one of those
+//! categories (docker-compose.yml passes `LOG_LEVEL_ASPNETCORE` and `LOG_LEVEL_HTTPCLIENT`)
+//! brings it back.
 //!
 //! Redaction happens on the formatted line, so it covers the message, every field and every
 //! span field, whatever level an operator turns them up to.

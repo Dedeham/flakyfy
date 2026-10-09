@@ -1,6 +1,5 @@
-//! The Better quality page: the library's lossy songs and the
-//! upgrade queue, which acts as the Navidrome admin signed in on the page, who must be on the
-//! library actions allowed list.
+//! The Better quality page: the library's lossy songs and the upgrade queue, which acts as the
+//! Navidrome admin signed in on the page, who must be on the library actions allowed list.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;

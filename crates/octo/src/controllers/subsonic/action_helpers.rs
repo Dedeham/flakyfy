@@ -33,8 +33,8 @@ use crate::services::subsonic::{IncomingRequest, SubsonicProxyService};
 /// The largest request body accepted, in bytes.
 pub const MAX_REQUEST_BODY: usize = 30_000_000;
 
-/// One Subsonic request as an action saw it: the request itself, its parameters
-/// (from the query, form and body), the format, and the request-scoped proxy.
+/// One Subsonic request as an action saw it: the request itself, its parameters (from the query,
+/// form and body), the format, and the request-scoped proxy.
 pub struct SubsonicCall {
     pub parts: Parts,
     pub incoming: Arc<IncomingRequest>,

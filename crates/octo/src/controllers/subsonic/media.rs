@@ -898,7 +898,8 @@ async fn mix_cover_seeds(
             if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, format)) {
                 return Vec::new();
             }
-            // Not canceled with the cover: a draw that finishes late still serves the next request.
+            // Not canceled with the cover: a draw that finishes late still serves the next
+            // request.
             let service = Arc::clone(&state.generated_playlists);
             let (user, mix, parameters) = (username.to_string(), mix.clone(), parameters.clone());
             let draw = tokio::spawn(async move {

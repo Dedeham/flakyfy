@@ -1,6 +1,6 @@
-//! The import page's endpoints. The dashboard's need its sign-in, the
-//! apps' check the caller with Navidrome, both answer in the shapes the page and the apps read,
-//! and Spotify's return to Octo's own address finishes a sign-in without one.
+//! The import page's endpoints. The dashboard's need its sign-in, the apps' check the caller with
+//! Navidrome, both answer in the shapes the page and the apps read, and Spotify's return to
+//! Octo's own address finishes a sign-in without one.
 
 use axum::body::Body;
 use axum::http::{Method, Request};

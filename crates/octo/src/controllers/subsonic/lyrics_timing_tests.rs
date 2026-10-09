@@ -1,4 +1,5 @@
-//! The lyrics actions' statics: reading how Navidrome's lyrics are timed, and taking the cues out.
+//! The lyrics actions' statics: reading how Navidrome's lyrics are timed, and taking the cues
+//! out.
 
 use super::*;
 

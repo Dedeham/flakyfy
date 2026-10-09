@@ -1,5 +1,5 @@
-//! getAcquisitions, getOpenSubsonicExtensions, getLibraryActions, getUpgrades and libraryAction as
-//! the Octo app sees them through the Subsonic API, plus the stars that feed getAcquisitions.
+//! getAcquisitions, getOpenSubsonicExtensions, getLibraryActions, getUpgrades and libraryAction
+//! as the Octo app sees them through the Subsonic API, plus the stars that feed getAcquisitions.
 
 use std::path::{Path, PathBuf};
 

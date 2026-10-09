@@ -4,9 +4,9 @@
 //! Octo app signs the calls in [`APP_CALL_ENDPOINTS`] with its own Subsonic sign-in.
 //!
 //! One layer in front of every admin route, denying by default. axum has no endpoint attributes
-//! to read, so the open and app routes are named here, by method and template, and everything else, routes
-//! added later and paths no route knows included, asks for a sign-in. A test walks every
-//! registered admin route to prove it (`admin_sign_in_tests.rs`).
+//! to read, so the open and app routes are named here, by method and template, and everything
+//! else, routes added later and paths no route knows included, asks for a sign-in. A test walks
+//! every registered admin route to prove it (`admin_sign_in_tests.rs`).
 //!
 //! Runs after the request guard (`admin_guard`): that stops other websites, this stops people.
 //! Both are needed: a page on a sibling subdomain or another port of the same host is same-site,
@@ -36,8 +36,8 @@ use crate::services::admin::sign_in_throttle::key_of;
 use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore};
 use crate::services::subsonic::{CredentialVerdict, IncomingRequest, navidrome_admin_role};
 
-/// The admin endpoints that answer without a sign-in: signing in and out, who is
-/// signed in, and a bare status for `install.sh` and the app's Octo check.
+/// The admin endpoints that answer without a sign-in: signing in and out, who is signed in, and a
+/// bare status for `install.sh` and the app's Octo check.
 pub const OPEN_ENDPOINTS: &[(Method, &str)] = &[
     (Method::POST, "/api/admin/auth/recovery"),
     (Method::POST, "/api/admin/browse/auth"),

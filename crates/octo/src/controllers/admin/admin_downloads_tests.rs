@@ -1,7 +1,7 @@
-//! The download log and Find songs routes (the Recently removed ones, and
-//! the activity card asserts, are the library edits' and the activity view's): every route needs
-//! a Navidrome admin's own sign-in, the log route reads the saved log or the live one, and Find
-//! songs runs as the signed-in admin.
+//! The download log and Find songs routes (the Recently removed ones, and the activity card
+//! asserts, are the library edits' and the activity view's): every route needs a Navidrome
+//! admin's own sign-in, the log route reads the saved log or the live one, and Find songs runs as
+//! the signed-in admin.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,7 +1,6 @@
-//! The dashboard's light, the newest songs in the
-//! fetched-songs log with the colors of their covers. The Status page shows them as Latest
-//! fetched, and every page takes its light from the one chosen. Behind the same guard as the rest
-//! of `/api/admin`.
+//! The dashboard's light, the newest songs in the fetched-songs log with the colors of their
+//! covers. The Status page shows them as Latest fetched, and every page takes its light from the
+//! one chosen. Behind the same guard as the rest of `/api/admin`.
 
 use std::collections::HashSet;
 

@@ -1,7 +1,7 @@
-//! The admin security headers: the dashboard may be framed only by Octo itself,
-//! nothing sniffs its answers into another type, no address leaks into a referrer, and admin
-//! answers (settings among them) are never kept by a browser or proxy cache unless the endpoint
-//! says otherwise (cover thumbnails do).
+//! The admin security headers: the dashboard may be framed only by Octo itself, nothing sniffs
+//! its answers into another type, no address leaks into a referrer, and admin answers (settings
+//! among them) are never kept by a browser or proxy cache unless the endpoint says otherwise
+//! (cover thumbnails do).
 
 use axum::extract::Request;
 use axum::http::{HeaderValue, header};

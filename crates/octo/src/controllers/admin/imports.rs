@@ -1,8 +1,7 @@
-//! The dashboard's Spotify import page. Connect a
-//! Spotify account, add a public link or an exported file, see what the library has and what it
-//! is missing, keep a list as a playlist, and the trickle that fetches the rest. Lists belong to
-//! the Navidrome user signed in on the page, the same person an Octo app signed in as sees them,
-//! so it needs the dashboard's sign-in.
+//! The dashboard's Spotify import page. Connect a Spotify account, add a public link or an
+//! exported file, see what the library has and what it is missing, keep a list as a playlist, and
+//! the trickle that fetches the rest. Lists belong to the Navidrome user signed in on the page,
+//! the same person an Octo app signed in as sees them, so it needs the dashboard's sign-in.
 //!
 //! Also the page Spotify sends the browser back to when the redirect URI is Octo's own address.
 

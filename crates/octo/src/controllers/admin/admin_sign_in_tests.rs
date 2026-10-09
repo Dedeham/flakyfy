@@ -1,7 +1,7 @@
-//! The dashboard sign-in. Everything here runs with it ON (the rest of the suite turns it
-//! off), against a fake Navidrome that knows these
-//! people: admin and listener sign in with "pw"; demoted lost the admin role; gone no longer
-//! exists; admin2 is an admin until a test demotes them.
+//! The dashboard sign-in. Everything here runs with it ON (the rest of the suite turns it off),
+//! against a fake Navidrome that knows these people: admin and listener sign in with "pw";
+//! demoted lost the admin role; gone no longer exists; admin2 is an admin until a test demotes
+//! them.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

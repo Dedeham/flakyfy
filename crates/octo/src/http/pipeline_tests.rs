@@ -664,8 +664,8 @@ async fn octo_owned_paths_are_problem_404s() {
     }
 }
 
-/// With no Navidrome URL configured, a relayed call answers 200 with the
-/// Subsonic error envelope naming the missing setting, in XML unless `f=json`.
+/// With no Navidrome URL configured, a relayed call answers 200 with the Subsonic error envelope
+/// naming the missing setting, in XML unless `f=json`.
 #[tokio::test]
 async fn everything_else_is_relayed_and_without_a_url_says_so() {
     let r = get_("/rest/getArtists.view?u=a", &[]).await;

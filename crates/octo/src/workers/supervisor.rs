@@ -21,8 +21,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-/// How long shutdown waits for the workers (and the server's
-/// in-flight requests) before giving up on them.
+/// How long shutdown waits for the workers (and the server's in-flight requests) before giving up
+/// on them.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The body of a worker: called once per start, with a token that is canceled on shutdown.
@@ -145,8 +145,8 @@ impl WorkerSupervisor {
         }
     }
 
-    /// Registers a worker. Registering after [`WorkerSupervisor::start`]
-    /// starts it at once. Must be called from within a tokio runtime once started.
+    /// Registers a worker. Registering after [`WorkerSupervisor::start`] starts it at once. Must
+    /// be called from within a tokio runtime once started.
     pub fn register<F, Fut>(&self, name: impl Into<String>, run: F)
     where
         F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,

@@ -1,7 +1,7 @@
 //! Outside albums the library already holds. A search, an artist page and an outside album's own
-//! page used to judge an outside album by its id or its exact name only, so "HABIBTI", whose eleven
-//! songs all sit in the library's "HABIBTI (FOMO)", was listed as not in the library, and its page
-//! showed none of them owned. See `services::library::AlbumOwnership`.
+//! page used to judge an outside album by its id or its exact name only, so "HABIBTI", whose
+//! eleven songs all sit in the library's "HABIBTI (FOMO)", was listed as not in the library, and
+//! its page showed none of them owned. See `services::library::AlbumOwnership`.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};

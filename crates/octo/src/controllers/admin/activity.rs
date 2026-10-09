@@ -1,8 +1,7 @@
-//! Everything Octo is working on, in one shape, for
-//! the dashboard's progress toasts: a library re-tag, a covers or lyrics run, better copies,
-//! hearted downloads, a Spotify read, a duplicate scan, an slskd rescan and Navidrome's own scan.
-//! The dashboard asks often while something runs and seldom while nothing does, so one cheap read
-//! replaces a poller per page.
+//! Everything Octo is working on, in one shape, for the dashboard's progress toasts: a library
+//! re-tag, a covers or lyrics run, better copies, hearted downloads, a Spotify read, a duplicate
+//! scan, an slskd rescan and Navidrome's own scan. The dashboard asks often while something runs
+//! and seldom while nothing does, so one cheap read replaces a poller per page.
 //!
 //! A job that needs the Navidrome sign-in on its own page is listed only for a signed-in
 //! browser. A job just finished stays listed for [`RECENT_WINDOW`], so a toast can say how it

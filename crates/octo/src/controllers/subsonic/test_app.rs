@@ -144,8 +144,8 @@ pub(crate) async fn received_paths(server: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// A Subsonic sign-in: `u`, the token `t` (Navidrome stand-ins accept `good`), a salt, the version
-/// and the client.
+/// A Subsonic sign-in: `u`, the token `t` (Navidrome stand-ins accept `good`), a salt, the
+/// version and the client.
 pub(crate) fn auth(user: &str, token: &str, client: &str) -> String {
     format!("u={user}&t={token}&s=salt&v=1.16.1&c={client}")
 }

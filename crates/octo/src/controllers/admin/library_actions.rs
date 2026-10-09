@@ -1,6 +1,6 @@
-//! The library actions, questions and checks: the action
-//! history and its Allow downloading again, the notices, the duplicate scan, the library Review
-//! sweep, the weekly upgrade's status and the song path resolver.
+//! The library actions, questions and checks: the action history and its Allow downloading again,
+//! the notices, the duplicate scan, the library Review sweep, the weekly upgrade's status and the
+//! song path resolver.
 //!
 //! Session-gated, because these list filenames and usernames. Every /api/admin endpoint sits
 //! behind the dashboard sign-in, and the rule for anything that changes library files on demand

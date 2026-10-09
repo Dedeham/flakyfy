@@ -154,8 +154,8 @@ pub(crate) async fn check_caller(state: &AppState, call: &SubsonicCall) -> Optio
 }
 
 /// `None` when Navidrome accepts the request's sign-in, else the error to answer with, in the
-/// format asked for. An outage refuses too: an outside song is Octo fetching from the internet for
-/// whoever asks, and a broken Navidrome must not make that anyone at all.
+/// format asked for. An outage refuses too: an outside song is Octo fetching from the internet
+/// for whoever asks, and a broken Navidrome must not make that anyone at all.
 pub(crate) async fn refuse_unless_signed_in(
     state: &AppState,
     call: &SubsonicCall,
@@ -183,8 +183,8 @@ pub(crate) async fn refuse_unless_signed_in(
     })
 }
 
-/// Who an accepted request signed in as: u, or its API key's owner as Navidrome names it, else the
-/// native token's name. Ask only after the sign-in is accepted.
+/// Who an accepted request signed in as: u, or its API key's owner as Navidrome names it, else
+/// the native token's name. Ask only after the sign-in is accepted.
 pub(crate) async fn signed_in_user(state: &AppState, call: &SubsonicCall) -> Result<String, AppError> {
     match state
         .request_identity

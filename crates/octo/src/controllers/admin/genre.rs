@@ -1,5 +1,5 @@
-//! Genre normalization: the backfill over the library's tags,
-//! its undo, and the broad-genre preset.
+//! Genre normalization: the backfill over the library's tags, its undo, and the broad-genre
+//! preset.
 //!
 //! /api/admin has no authentication at all, so a button that rewrites every tag in a music
 //! library cannot be the second unauthenticated destructive surface: every backfill endpoint is

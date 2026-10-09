@@ -1,6 +1,6 @@
-//! The Last.fm, ListenBrainz and radio actions: the radio's state,
-//! the ListenBrainz token check, the scrobbling Connect / Finish / Disconnect flow, the Last.fm
-//! credentials check, and the radio refresh and reset.
+//! The Last.fm, ListenBrainz and radio actions: the radio's state, the ListenBrainz token check,
+//! the scrobbling Connect / Finish / Disconnect flow, the Last.fm credentials check, and the
+//! radio refresh and reset.
 
 use axum::body::Bytes;
 use axum::extract::{RawQuery, State};

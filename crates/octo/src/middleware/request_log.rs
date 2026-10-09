@@ -1,5 +1,5 @@
-//! The two request lines the hosting layer writes at Information for every request
-//! (category `Microsoft.AspNetCore.Hosting.Diagnostics`):
+//! The two request lines the hosting layer writes at Information for every request (category
+//! `Microsoft.AspNetCore.Hosting.Diagnostics`):
 //!
 //! ```text
 //! Request starting HTTP/1.1 GET http://host/rest/ping.view?u=a&t=*** - - -

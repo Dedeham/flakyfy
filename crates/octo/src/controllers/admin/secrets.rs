@@ -1,7 +1,7 @@
-//! The admin API's secret rules: no password, key, token or webhook
-//! address leaves the admin API in clear. Every one reads as [`SECRET_PLACEHOLDER`]; a save that
-//! sends the placeholder back keeps what is saved; one that types onto the end of it is refused;
-//! and a saved credential never follows a server address it was not typed again for.
+//! The admin API's secret rules: no password, key, token or webhook address leaves the admin API
+//! in clear. Every one reads as [`SECRET_PLACEHOLDER`]; a save that sends the placeholder back
+//! keeps what is saved; one that types onto the end of it is refused; and a saved credential
+//! never follows a server address it was not typed again for.
 
 use indexmap::IndexMap;
 use octo_core::common::dotnet::eq_ignore_case;

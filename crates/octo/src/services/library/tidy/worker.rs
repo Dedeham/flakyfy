@@ -56,6 +56,8 @@ pub struct TidyRequest {
     pub ticked: Vec<String>,
     /// Folders under the music folder to leave out (a preview).
     pub excluded: Vec<String>,
+    /// Undo every run the journal holds, not only the last.
+    pub all_runs: bool,
 }
 
 /// Navidrome's song list by full path, for the check after the moves.
@@ -259,6 +261,7 @@ impl TidyWorker {
         match request.mode {
             TidyMode::Preview => self.preview(&request, stopping).await,
             TidyMode::Apply => self.apply(&request, stopping).await,
+            TidyMode::Undo => self.undo(&request, stopping).await,
         }
         if self.store.current().status == TidyStatus::Running {
             self.finish_with(
@@ -1500,6 +1503,375 @@ fn relative_to(folder: &Path, target: &Path) -> String {
     parts.extend(to[common..].iter().cloned());
     let joined: PathBuf = parts.iter().collect();
     joined.to_string_lossy().into_owned()
+}
+
+// ---- undo -----------------------------------------------------------------------------------
+
+impl TidyWorker {
+    /// Puts back what the journal holds for the last run (or every run): folders moved back
+    /// first, newest first, each only where the old path is free and the songs are as Navidrome
+    /// last saw them; the playlists; then a scan that saw the folders back; then the tags, each
+    /// only on a file that still has the tags the tidy wrote. What cannot be put back stays in
+    /// the journal for another Undo.
+    async fn undo(&self, request: &TidyRequest, stopping: &CancellationToken) {
+        let entries = self.journal.read_all();
+        let runs: HashSet<String> = if request.all_runs {
+            entries.iter().map(|entry| entry.run().to_string()).collect()
+        } else {
+            self.journal.last_run().into_iter().collect()
+        };
+        self.start(TidyMode::Undo, TidyScope::WholeLibrary, "Checking Navidrome");
+        if runs.is_empty() {
+            self.finish_with(TidyStatus::Failed, "There is no tidy to undo.".to_string());
+            return;
+        }
+        let gate = self.check_navidrome(true).await;
+        if !gate.apply_allowed {
+            self.finish_with(TidyStatus::Failed, gate.reason.unwrap_or_default());
+            return;
+        }
+        let Some(library) = self.services.library.clone() else {
+            self.finish_with(
+                TidyStatus::Failed,
+                "Octo has no library service to ask Navidrome for scans.".to_string(),
+            );
+            return;
+        };
+        let _job = match self.write_gate.begin_job(Self::JOB_NAME).await {
+            Ok(job) => job,
+            Err(holder) => {
+                self.finish_with(TidyStatus::Failed, LibraryWriteGate::busy_message(&holder));
+                return;
+            }
+        };
+        let root = self.music_root();
+        let chosen: Vec<usize> = (0..entries.len())
+            .rev()
+            .filter(|at| runs.contains(entries[*at].run()))
+            .collect();
+        self.store.update(|run| {
+            run.planned_moves = chosen
+                .iter()
+                .filter(|at| matches!(entries[**at], TidyJournalEntry::Move { .. }))
+                .count();
+            run.planned_retags = chosen
+                .iter()
+                .filter(|at| matches!(entries[**at], TidyJournalEntry::Tags { .. }))
+                .count();
+        });
+        info!("Library tidy undo started: {} journal entries", chosen.len());
+
+        let hold = library.scan_hold().map(|hold| hold.hold());
+        let mut done: HashSet<usize> = HashSet::new();
+        let stopped = self
+            .put_back(&root, &entries, &chosen, &mut done, library.as_ref(), stopping)
+            .await;
+
+        let remaining = remaining(&entries, &done);
+        if let Err(failure) = self.journal.rewrite(&remaining) {
+            self.store.update(|run| {
+                run.errors
+                    .push(format!("The journal could not be updated: {failure}"))
+            });
+        }
+        if let Some(mut plan) = self.store.plan()
+            && plan.work.take().is_some()
+            && let Err(failure) = self.store.save_plan(plan)
+        {
+            warn!("Library tidy could not forget the undone work: {failure}");
+        }
+        let wanted = hold.map(|hold| hold.release()).unwrap_or(false);
+        let changed = {
+            let run = self.store.current();
+            run.moved > 0 || run.retagged > 0
+        };
+        if changed || wanted {
+            library.start_scan().await;
+        }
+        if let Some(stop) = stopped {
+            self.stopped(Some(stop));
+            return;
+        }
+        let run = self.store.current();
+        let mut summary = format!(
+            "Moved {} album folder(s) back and restored the tags on {} file(s).",
+            run.moved, run.retagged
+        );
+        if !remaining.iter().all(|entry| !runs.contains(entry.run())) {
+            summary.push_str(
+                " Some changes could not be undone yet (the old path is taken, the files changed, or Navidrome had not scanned them); they stay in the journal, so Undo again later.",
+            );
+        }
+        self.finish_with(TidyStatus::Completed, summary);
+    }
+
+    async fn put_back(
+        &self,
+        root: &str,
+        entries: &[TidyJournalEntry],
+        chosen: &[usize],
+        done: &mut HashSet<usize>,
+        library: &dyn ILocalLibraryService,
+        stopping: &CancellationToken,
+    ) -> Option<Stop> {
+        self.store
+            .update(|run| run.phase = "Waiting for Navidrome to finish scanning".to_string());
+        if !scan_wait::wait_while_scanning(library, self.timing, stopping).await {
+            if let Some(stop) = self.should_stop(stopping) {
+                return Some(stop);
+            }
+            self.finish_with(
+                TidyStatus::Failed,
+                "Navidrome kept scanning, or did not answer, so nothing was put back. Undo again later."
+                    .to_string(),
+            );
+            return None;
+        }
+        let Some(scan_start) = library
+            .get_scan_status()
+            .await
+            .and_then(|status| status.last_scan_started_at())
+        else {
+            self.finish_with(TidyStatus::Failed, NO_STATUS.to_string());
+            return None;
+        };
+
+        // ---- folders back, newest first ----
+        self.store
+            .update(|run| run.phase = "Moving files back".to_string());
+        let mut moved_back: Vec<(String, String)> = Vec::new();
+        for at in chosen {
+            let TidyJournalEntry::Move { from, to, .. } = &entries[*at] else {
+                continue;
+            };
+            if let Some(stop) = self.should_stop(stopping) {
+                return Some(stop);
+            }
+            let back = TidyMove {
+                from: to.clone(),
+                to: from.clone(),
+                row: String::new(),
+                files: Vec::new(),
+            };
+            let outcome = tokio::task::spawn_blocking(move || move_back(&back, scan_start))
+                .await
+                .unwrap_or_else(|panic| Outcome::Failed(panic.to_string()));
+            match outcome {
+                Outcome::Done => {
+                    done.insert(*at);
+                    self.follow(library, to, from).await;
+                    let parent = Path::new(to).parent().map(|p| p.to_string_lossy().into_owned());
+                    BaseDownloadService::try_remove_empty_parents(parent.as_deref(), root);
+                    moved_back.push((to.clone(), from.clone()));
+                    self.store.update(|run| run.moved += 1);
+                }
+                Outcome::AlreadyDone => {
+                    done.insert(*at);
+                }
+                Outcome::Held(why) => self.hold(root, to, why),
+                Outcome::Failed(why) | Outcome::JournalFailed(why) => self.fail(to, &why),
+            }
+        }
+
+        // ---- the playlists ----
+        let moves_of_run: Vec<(String, String)> = chosen
+            .iter()
+            .filter_map(|at| match &entries[*at] {
+                TidyJournalEntry::Move { from, to, .. } => Some((from.clone(), to.clone())),
+                _ => None,
+            })
+            .collect();
+        for at in chosen {
+            let TidyJournalEntry::Playlist { path, before, .. } = &entries[*at] else {
+                continue;
+            };
+            let now = std::fs::read_to_string(path).ok();
+            let wrote = rewrite_playlist(path, before, &moves_of_run);
+            if now.is_some() && now == wrote {
+                match std::fs::write(path, before) {
+                    Ok(()) => {
+                        done.insert(*at);
+                    }
+                    Err(failure) => self.fail(path, &failure.to_string()),
+                }
+            } else if now.as_deref() == Some(before.as_str()) {
+                done.insert(*at);
+            } else {
+                self.hold(
+                    root,
+                    path,
+                    "This playlist changed since the tidy updated it, so it is left as it is.".to_string(),
+                );
+            }
+        }
+
+        // ---- the scan between, then the tags ----
+        let tags: Vec<usize> = chosen
+            .iter()
+            .copied()
+            .filter(|at| matches!(entries[*at], TidyJournalEntry::Tags { .. }))
+            .collect();
+        if tags.is_empty() {
+            return None;
+        }
+        if !moved_back.is_empty() {
+            self.store
+                .update(|run| run.phase = "Waiting for Navidrome to scan".to_string());
+            let after = Utc::now();
+            if !library.start_scan().await {
+                self.finish_with(
+                    TidyStatus::Failed,
+                    "Navidrome would not start a scan, so the tags were not restored. Undo again later."
+                        .to_string(),
+                );
+                return None;
+            }
+            match scan_wait::wait_for_scan(library, after, self.timing, stopping).await {
+                Ok(_) => {}
+                Err(ScanWaitError::Cancelled) => {
+                    return self.should_stop(stopping).or(Some(Stop::Cancelled));
+                }
+                Err(_) => {
+                    self.finish_with(
+                        TidyStatus::Failed,
+                        "Navidrome did not finish a scan after the folders moved back, so the tags were not restored yet. Undo again once it has scanned."
+                            .to_string(),
+                    );
+                    return None;
+                }
+            }
+        }
+        self.store.update(|run| run.phase = "Restoring tags".to_string());
+        for at in tags {
+            if let Some(stop) = self.should_stop(stopping) {
+                return Some(stop);
+            }
+            let TidyJournalEntry::Tags {
+                path, before, after, ..
+            } = entries[at].clone()
+            else {
+                continue;
+            };
+            let shown = path.clone();
+            let outcome = tokio::task::spawn_blocking(move || restore_tags(&path, &before, &after))
+                .await
+                .unwrap_or_else(|panic| Outcome::Failed(panic.to_string()));
+            match outcome {
+                Outcome::Done => {
+                    done.insert(at);
+                    self.store.update(|run| run.retagged += 1);
+                }
+                Outcome::AlreadyDone => {
+                    done.insert(at);
+                }
+                Outcome::Held(why) => self.hold(root, &shown, why),
+                Outcome::Failed(why) | Outcome::JournalFailed(why) => self.fail(&shown, &why),
+            }
+        }
+        None
+    }
+}
+
+/// Moves a folder back, only where the old path is free and its songs are as Navidrome last
+/// saw them.
+fn move_back(back: &TidyMove, scan_start: DateTime<Utc>) -> Outcome {
+    let (from, to) = (Path::new(&back.from), Path::new(&back.to));
+    let from_there = std::fs::symlink_metadata(from).is_ok();
+    let to_there = std::fs::symlink_metadata(to).is_ok();
+    if !from_there && to_there {
+        return Outcome::AlreadyDone;
+    }
+    if !from_there {
+        return Outcome::Held(format!("It is no longer at {}.", back.from));
+    }
+    if to_there {
+        return Outcome::Held("Something else is at its old path now, so it stays where it is.".to_string());
+    }
+    let contents = match walk_all(from) {
+        Ok(contents) => contents,
+        Err(failure) => return Outcome::Failed(failure.to_string()),
+    };
+    if contents.links {
+        return Outcome::Held("It holds a link, and the tidy never moves one.".to_string());
+    }
+    for file in &contents.audio {
+        match stamp_of(file) {
+            Some((_, modified)) if modified < scan_start => {}
+            _ => {
+                return Outcome::Held(
+                    "A song in it changed after Navidrome's last scan began. Undo again once Navidrome has scanned."
+                        .to_string(),
+                );
+            }
+        }
+    }
+    let Some(parent) = to.parent() else {
+        return Outcome::Failed("The old folder has no parent.".to_string());
+    };
+    if let Err(failure) = std::fs::create_dir_all(parent).and_then(|()| std::fs::rename(from, to)) {
+        return Outcome::Failed(failure.to_string());
+    }
+    Outcome::Done
+}
+
+/// Puts a file's artist tags back, only while they are still the ones the tidy wrote: a
+/// different file now at that path, or tags someone edited since, are never overwritten.
+fn restore_tags(path: &str, before: &TidyTags, after: &TidyTags) -> Outcome {
+    let mut file = match TagFile::open(path) {
+        Ok(file) => file,
+        Err(_) if !Path::new(path).exists() => {
+            return Outcome::Held("It is not at the path it was re-tagged at.".to_string());
+        }
+        Err(failure) => return Outcome::Failed(failure.to_string()),
+    };
+    let now = read_tags(&file);
+    if now == *before {
+        return Outcome::AlreadyDone;
+    }
+    if now != *after {
+        return Outcome::Held(
+            "Its artist tags are not the ones the tidy wrote, so they are left as they are.".to_string(),
+        );
+    }
+    write_tags(&mut file, after, before);
+    match file.save() {
+        Ok(()) => Outcome::Done,
+        Err(failure) => Outcome::Failed(failure.to_string()),
+    }
+}
+
+/// The journal entries an undo did not put back, oldest first. A tag restore supersedes every
+/// NEWER tag entry for the same file: the older entry's before is the original, and keeping a
+/// newer one would put an in-between value back next time. A stamp goes with its file's tags.
+pub(crate) fn remaining(oldest_first: &[TidyJournalEntry], done: &HashSet<usize>) -> Vec<TidyJournalEntry> {
+    let restored: Vec<(usize, &str)> = done
+        .iter()
+        .filter_map(|at| match &oldest_first[*at] {
+            TidyJournalEntry::Tags { path, .. } => Some((*at, path.as_str())),
+            _ => None,
+        })
+        .collect();
+    let superseded = |at: usize, path: &str| {
+        restored
+            .iter()
+            .any(|(restored_at, restored_path)| *restored_at <= at && *restored_path == path)
+    };
+    oldest_first
+        .iter()
+        .enumerate()
+        .filter(|(at, entry)| {
+            if done.contains(at) {
+                return false;
+            }
+            match entry {
+                TidyJournalEntry::Tags { path, .. } | TidyJournalEntry::Stamp { path, .. } => {
+                    !superseded(*at, path)
+                }
+                _ => true,
+            }
+        })
+        .map(|(_, entry)| entry.clone())
+        .collect()
 }
 
 #[cfg(test)]

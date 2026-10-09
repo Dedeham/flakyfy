@@ -72,6 +72,7 @@ pub enum TidyMode {
     #[default]
     Preview,
     Apply,
+    Undo,
 }
 
 impl TidyMode {
@@ -79,6 +80,7 @@ impl TidyMode {
         match self {
             TidyMode::Preview => "Preview",
             TidyMode::Apply => "Apply",
+            TidyMode::Undo => "Undo",
         }
     }
 }

@@ -879,3 +879,144 @@ fn a_case_sensitive_folder_is_told_apart_without_writing() {
     assert_eq!(before, after);
     assert_eq!(insensitive, dir.path().join("ARTIST").exists());
 }
+
+// ---- undo -----------------------------------------------------------------------------------
+
+impl Rig {
+    async fn undo(&self, all_runs: bool) {
+        self.run(TidyRequest {
+            mode: TidyMode::Undo,
+            all_runs,
+            ..TidyRequest::default()
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn undo_puts_the_folder_back_then_its_tags() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    let source = rig.collab();
+    let before = tags(&source);
+    rig.navidrome.own(&source);
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+    let target = rig.at("Bizarrap/Album/01 - Session.flac");
+    assert!(exists(&target));
+    let starts = rig.navidrome.starts();
+    let seen: Arc<Mutex<Vec<(bool, bool)>>> = Arc::default();
+    {
+        let (seen, source) = (seen.clone(), source.clone());
+        *rig.navidrome.on_start.lock() = Some(Box::new(move || {
+            let still_new = exists(&source) && tags(&source).artists.contains(&"Guest".to_string());
+            seen.lock().push((exists(&source), still_new));
+        }));
+    }
+
+    rig.undo(false).await;
+
+    let run = rig.run_state();
+    assert_eq!(run.status, TidyStatus::Completed, "{:?}", run.reason);
+    assert!(exists(&source));
+    assert!(!exists(&target));
+    assert_eq!(tags(&source), before);
+    // The scan that saw the folder back came before the tags changed.
+    assert_eq!(seen.lock().first(), Some(&(true, true)));
+    assert_eq!(rig.navidrome.mappings.lock()[0].local_path, source);
+    assert!(!rig.worker.journal().exists());
+    assert!(rig.navidrome.starts() >= starts + 2);
+}
+
+#[tokio::test]
+async fn undo_never_moves_onto_a_taken_path_and_keeps_the_entry() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    let source = rig.song("Beyonce/A/01 - S.flac", "Beyonc\u{e9}", &[], "S");
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+    let target = rig.at("Beyonc\u{e9}/A/01 - S.flac");
+    assert!(exists(&target));
+    // Something new lands at the old path.
+    std::fs::create_dir_all(Path::new(&source).parent().expect("a folder")).expect("made");
+    std::fs::write(&source, b"a newcomer").expect("written");
+
+    rig.undo(false).await;
+
+    assert!(exists(&target));
+    assert_eq!(std::fs::read(&source).expect("read"), b"a newcomer");
+    assert!(rig.worker.journal().read_all().iter().any(|entry| matches!(
+        entry,
+        TidyJournalEntry::Move { to, .. } if *to == rig.at("Beyonc\u{e9}/A")
+    )));
+    assert!(
+        rig.run_state()
+            .held_rows
+            .iter()
+            .any(|row| row.evidence.contains("Something else is at its old path"))
+    );
+}
+
+#[tokio::test]
+async fn undo_covers_the_last_run_by_default() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    let first = rig.song("Beyonce/A/01 - S.flac", "Beyonc\u{e9}", &[], "S");
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+    let second = rig.song("Adele/B/01 - T.flac", "Adele", &[], "T (feat. Guest)");
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+    assert_eq!(tags(&second).artists, ["Adele", "Guest"]);
+
+    rig.undo(false).await;
+    assert!(tags(&second).artists.is_empty());
+    assert!(
+        exists(&rig.at("Beyonc\u{e9}/A/01 - S.flac")),
+        "the first run stays"
+    );
+    assert!(rig.worker.journal().exists());
+
+    rig.undo(false).await;
+    assert!(exists(&first));
+    assert!(!rig.worker.journal().exists());
+}
+
+#[tokio::test]
+async fn undo_leaves_tags_someone_edited_since() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    let song = rig.song("Adele/B/01 - T.flac", "Adele", &[], "T (feat. Guest)");
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+    let mut file = TagFile::open(&song).expect("opens");
+    extras::set_multi_value(
+        &mut file,
+        "ARTISTS",
+        &["Adele".to_string(), "Someone".to_string()],
+    );
+    file.save().expect("saved");
+
+    rig.undo(false).await;
+
+    assert_eq!(tags(&song).artists, ["Adele", "Someone"]);
+    assert!(rig.worker.journal().exists());
+}
+
+#[test]
+fn remaining_a_restored_tag_entry_supersedes_newer_ones() {
+    let tags_of = |run: &str| TidyJournalEntry::Tags {
+        path: "/m/a.flac".into(),
+        before: TidyTags::default(),
+        after: TidyTags::default(),
+        run: run.into(),
+        at: Utc::now(),
+    };
+    let movement = TidyJournalEntry::Move {
+        from: "/m/B".into(),
+        to: "/m/C".into(),
+        run: "r2".into(),
+        at: Utc::now(),
+    };
+    let oldest_first = vec![tags_of("r1"), movement.clone(), tags_of("r2")];
+
+    let left = remaining(&oldest_first, &[0].into());
+
+    assert_eq!(left, [movement]);
+}

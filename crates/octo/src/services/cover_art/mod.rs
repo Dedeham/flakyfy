@@ -14,14 +14,16 @@ pub mod i_cover_art_source;
 pub mod itunes_cover_art_lookup;
 pub mod last_fm_cover_art_lookup;
 
-pub use album_cover_finder::{AlbumCoverFinder, AlbumCoverQuery, FoundCover, IAlbumCoverFinder};
+pub use album_cover_finder::{
+    AlbumCoverFinder, AlbumCoverQuery, FoundCover, IAlbumCoverFinder, RejectedCovers,
+};
 pub use artwork_hints::{ArtworkHints, HintedArtwork};
 pub use cover_art_aggregator::CoverArtAggregator;
 pub use cover_art_archive_lookup::CoverArtArchiveLookup;
 pub use cover_upgrade::{
-    CoverUpgradeChange, CoverUpgradeItem, CoverUpgradeJournal, CoverUpgradeJournalEntry, CoverUpgradeMode,
-    CoverUpgradeRequest, CoverUpgradeRun, CoverUpgradeScope, CoverUpgradeServices, CoverUpgradeStatus,
-    CoverUpgradeStore, CoverUpgradeWorker,
+    AlbumCoverReplaced, AlbumOnDisk, CoverUpgradeChange, CoverUpgradeItem, CoverUpgradeJournal,
+    CoverUpgradeJournalEntry, CoverUpgradeMode, CoverUpgradeRequest, CoverUpgradeRun, CoverUpgradeScope,
+    CoverUpgradeServices, CoverUpgradeStatus, CoverUpgradeStore, CoverUpgradeWorker,
 };
 pub use deezer_cover_art_lookup::DeezerCoverArtLookup;
 pub use download_cover_resolver::{CoverChoice, CoversOnHand, DownloadCoverResolver};

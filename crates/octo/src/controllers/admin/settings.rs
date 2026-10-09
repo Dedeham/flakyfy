@@ -13,7 +13,8 @@ use axum::response::Response;
 use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
-    GenreMatchMode, JsonObject, LastFmUserSession, LibraryActionSettings, LyricsSaveTo, SettingsWriteError,
+    GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction, LibraryActionSettings, LyricsSaveTo,
+    SettingsWriteError,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -708,8 +709,11 @@ pub fn validate_library_actions(
     }
 
     if let Some(Node::Array(definitions)) = actions.get("Actions") {
-        if definitions.len() > 5 {
-            return Ok(Some("There are only five library actions".into()));
+        if definitions.len() > LibraryAction::ALL.len() {
+            return Ok(Some(format!(
+                "There are only {} library actions",
+                LibraryAction::ALL.len()
+            )));
         }
         let mut ratings = HashSet::new();
         for node in definitions {
@@ -1180,9 +1184,10 @@ mod tests {
         );
     }
 
-    /// Keep made five actions. A sixth is still a config that does not mean anything.
+    /// Wrong lyrics and Wrong cover made seven actions. An eighth is a config that does not mean
+    /// anything.
     #[test]
-    fn validate_library_actions_accepts_five_refuses_six() {
+    fn validate_library_actions_accepts_seven_refuses_eight() {
         fn with_actions(count: usize) -> JsonObject {
             let actions = (0..count)
                 .map(|i| n_obj([("Name", n_str(&format!("a{i}"))), ("Rating", n_num(0))]))
@@ -1193,14 +1198,14 @@ mod tests {
         }
         let current = LibraryActionSettings::default();
         assert_eq!(
-            validate_library_actions(&with_actions(5), &current).unwrap(),
+            validate_library_actions(&with_actions(7), &current).unwrap(),
             None
         );
         assert_eq!(
-            validate_library_actions(&with_actions(6), &current)
+            validate_library_actions(&with_actions(8), &current)
                 .unwrap()
                 .as_deref(),
-            Some("There are only five library actions")
+            Some("There are only 7 library actions")
         );
     }
 

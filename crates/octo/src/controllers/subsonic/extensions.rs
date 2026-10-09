@@ -13,8 +13,8 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet::{self, is_blank};
 use octo_core::settings::LibraryAction;
 use octo_subsonic::subsonic_response_builder::{
-    COVER_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LOOKUP_ACTION, REMOVE_ACTION, RETAG_ACTION, UNDO_ACTION,
-    UPGRADE_ACTION,
+    COVER_ACTION, COVER_SWAP_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LOOKUP_ACTION, LYRICS_ACTION,
+    REMOVE_ACTION, RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
 };
 use serde_json::Value;
 use tracing::info;
@@ -256,13 +256,22 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
     {
         return Ok(apply_library_edit(&state, &call, &id, edit).await);
     }
+    if let Some((answer, name)) = [
+        (LibraryAction::WrongLyrics, LYRICS_ACTION),
+        (LibraryAction::WrongCover, COVER_SWAP_ACTION),
+    ]
+    .into_iter()
+    .find(|(_, name)| dotnet::eq_ignore_case(name, &action))
+    {
+        return apply_song_answer(&state, &call, &id, answer, name).await;
+    }
     if !dotnet::eq_ignore_case(&action, REMOVE_ACTION) {
         return Ok(builder
             .create_error(
                 FORMAT,
                 0,
                 &format!(
-                    "Unknown action \"{action}\"; this server knows remove, upgrade, {}",
+                    "Unknown action \"{action}\"; this server knows remove, upgrade, {LYRICS_ACTION}, {COVER_SWAP_ACTION}, {}",
                     EDIT_ACTIONS.join(", ")
                 ),
             )
@@ -322,6 +331,49 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
     }
     Ok(builder
         .create_library_action_outcome_response(&id, &outcome, REMOVE_ACTION)
+        .into_response())
+}
+
+/// Wrong lyrics or Wrong cover for one song, exactly as its action playlist or star does. The
+/// executor applies every gate: the master switch, the allowlist, the action being on and the
+/// dry run. Neither touches the song's audio.
+async fn apply_song_answer(
+    state: &AppState,
+    call: &SubsonicCall,
+    id: &str,
+    answer: LibraryAction,
+    name: &str,
+) -> AppResult {
+    let builder = &state.subsonic_response_builder;
+    let Some(username) = call.param_opt("u").filter(|u| !is_blank(u)).map(str::to_string) else {
+        return Ok(builder
+            .create_library_action_outcome_response(
+                id,
+                &LibraryActionOutcome::new(
+                    LibraryActionState::Skipped,
+                    Some(
+                        "Sign in with a username for this; an API key alone does not say who is asking."
+                            .into(),
+                    ),
+                ),
+                name,
+            )
+            .into_response());
+    };
+    // Not tied to the request: a client that hangs up must not stop a write halfway.
+    let executor = Arc::clone(&state.library_action_executor);
+    let request = LibraryActionRequest::new(answer, id.to_string(), username.clone());
+    let outcome = tokio::spawn(async move { executor.apply(request).await })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::Error::new(e)))?
+        .map_err(AppError::Internal)?;
+    info!(
+        "Library action {answer:?} for {id} by {username} from the app: {} - {}",
+        outcome.state.name(),
+        outcome.detail.as_deref().unwrap_or("")
+    );
+    Ok(builder
+        .create_library_action_outcome_response(id, &outcome, name)
         .into_response())
 }
 

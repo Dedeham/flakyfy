@@ -2141,6 +2141,8 @@ const libraryActionLabels = {
   WrongVersion: 'Wrong version: find the plain recording instead',
   BetterQuality: 'Better quality: upgrade only to a larger lossless copy',
   Keep: 'Keep: the track is right, so stop asking. Removes nothing',
+  WrongLyrics: 'Wrong lyrics: look for other lyrics, and never show these again',
+  WrongCover: 'Wrong cover: look for another cover, and never use this one again',
 };
 
 function normalizeLibraryAction(action = {}) {

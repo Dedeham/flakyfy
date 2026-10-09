@@ -166,6 +166,78 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
     Ok(group_id)
 }
 
+/// The relative URL of one artist by MusicBrainz id, or None for a blank id.
+pub fn artist_lookup_url(mbid: &str) -> Option<String> {
+    if dotnet::is_blank(mbid) {
+        return None;
+    }
+    Some(format!(
+        "artist/{}?fmt=json",
+        dotnet::escape_data_string(mbid.trim())
+    ))
+}
+
+/// The relative URL of the search for an artist by name or alias: the best three, or None for
+/// a name with nothing to search by.
+pub fn artist_search_url(name: &str) -> Option<String> {
+    if SongIdentity::key(name).is_empty() {
+        return None;
+    }
+    let escaped = escape_query(name.trim());
+    let query = format!("artist:\"{escaped}\" OR alias:\"{escaped}\"");
+    Some(format!(
+        "artist/?query={}&limit=3&fmt=json",
+        dotnet::escape_data_string(&query)
+    ))
+}
+
+/// Where one artist is from, as a known two-letter country: `country`, else the first of
+/// `area.iso-3166-1-codes`. Empty when MusicBrainz names no country, or names a region that is
+/// not one ("XW", "XE").
+pub fn artist_country(artist: &Value) -> String {
+    let own = artist.get("country").and_then(Value::as_str);
+    let area = artist
+        .get("area")
+        .and_then(|area| area.get("iso-3166-1-codes"))
+        .and_then(Value::as_array)
+        .and_then(|codes| codes.first())
+        .and_then(Value::as_str);
+    own.and_then(crate::common::countries::normalize)
+        .or_else(|| area.and_then(crate::common::countries::normalize))
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The country of the artist a name search found: the first result scoring at least 90 whose
+/// name, or one of whose aliases, is the same name as `name` ([`SongIdentity::key`]). Empty
+/// when no result is that artist: a near name is another artist, and a wrong country is worse
+/// than none.
+pub fn searched_artist_country(root: &Value, name: &str) -> String {
+    let wanted = SongIdentity::key(name);
+    let Some(artists) = root.get("artists").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let same = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .is_some_and(|text| SongIdentity::key(text) == wanted)
+    };
+    for artist in artists {
+        let score = artist.get("score").and_then(Value::as_i64).unwrap_or(0);
+        if score < 90 {
+            continue;
+        }
+        let aliased = artist
+            .get("aliases")
+            .and_then(Value::as_array)
+            .is_some_and(|aliases| aliases.iter().any(|alias| same(alias.get("name"))));
+        if same(artist.get("name")) || aliased {
+            return artist_country(artist);
+        }
+    }
+    String::new()
+}
+
 /// The "isrcs" list of a recording lookup, each one normalized; invalid ones dropped.
 pub fn parse_isrcs(root: &Value) -> ElementResult<Vec<String>> {
     let mut codes: Vec<String> = Vec::new();

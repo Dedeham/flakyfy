@@ -130,13 +130,29 @@ pub fn kinds_of(settings: &GeneratedPlaylistSettings, explicit_filter: ExplicitF
     if settings.rediscover {
         kinds.push_str(&format!(",m{}", settings.effective_rediscover_months()));
     }
+    if mixes && settings.country_mixes {
+        kinds.push_str(&format!(",country:{}", settings.country_codes().join("+")));
+    }
     kinds
 }
 
-/// The genre and decade mixes are on: the switch, and one of the two kinds.
+/// The mixes are on: the switch, and one of the kinds (genre, decade, country).
 pub fn mixes_on(settings: &GeneratedPlaylistSettings) -> bool {
-    settings.enabled && (settings.genres || settings.decades)
+    settings.enabled && (settings.genres || settings.decades || settings.country_mixes)
 }
+
+/// The country mixes are on: the mixes switch and the country switch.
+pub fn country_mixes_on(settings: &GeneratedPlaylistSettings) -> bool {
+    settings.enabled && settings.country_mixes
+}
+
+/// The key of a country's mix: "country:ES".
+pub fn country_key(code: &str) -> String {
+    format!("{COUNTRY_PREFIX}{code}")
+}
+
+/// What starts a country mix's key.
+pub const COUNTRY_PREFIX: &str = "country:";
 
 /// Whether this Made for you list is switched on.
 pub fn for_you_on(settings: &GeneratedPlaylistSettings, kind: &str) -> bool {
@@ -160,8 +176,13 @@ pub fn is_stale(
         || state.kinds != kinds_of(settings, explicit_filter)
 }
 
-/// ("decade", "1990s") for "decade:1990", ("genre", "Rock") for "genre:Rock".
+/// ("decade", "1990s") for "decade:1990", ("genre", "Rock") for "genre:Rock", ("country",
+/// "Spain") for "country:ES".
 pub fn describe(key: &str) -> (String, String) {
+    if let Some(code) = key.strip_prefix(COUNTRY_PREFIX) {
+        let name = crate::common::countries::english_name(code).unwrap_or(code);
+        return ("country".to_string(), name.to_string());
+    }
     match key.strip_prefix("decade:") {
         Some(decade) => ("decade".to_string(), format!("{decade}s")),
         None => (
@@ -233,6 +254,55 @@ pub fn apply_hysteresis(
         .take(max.max(0) as usize)
         .map(|(key, _)| key.clone())
         .collect()
+}
+
+/// Which mixes a listener has: genres and decades by [`apply_hysteresis`] up to MaxPlaylists,
+/// then countries by the same thresholds up to MaxCountryPlaylists, so a country never takes a
+/// genre's place.
+pub fn active_mixes(
+    counts: &IndexMap<String, i32>,
+    previously_active: &[String],
+    settings: &GeneratedPlaylistSettings,
+) -> Vec<String> {
+    let (countries, others): (IndexMap<String, i32>, IndexMap<String, i32>) = counts
+        .iter()
+        .map(|(key, count)| (key.clone(), *count))
+        .partition(|(key, _)| key.starts_with(COUNTRY_PREFIX));
+    let create_at = settings.effective_create_at();
+    let remove_below = settings.effective_remove_below();
+    let mut active = apply_hysteresis(
+        &others,
+        previously_active,
+        create_at,
+        remove_below,
+        settings.effective_max_playlists(),
+    );
+    if !countries.is_empty() {
+        active.extend(apply_hysteresis(
+            &countries,
+            previously_active,
+            create_at,
+            remove_below,
+            settings.effective_max_country_playlists(),
+        ));
+    }
+    active
+}
+
+/// Songs per country mix: each song counted under its artist's country when that is known
+/// and, when `allowed` names any, one of them.
+pub fn count_countries<'a>(
+    countries: impl IntoIterator<Item = Option<&'a str>>,
+    allowed: &[&str],
+) -> IndexMap<String, i32> {
+    let mut counts: IndexMap<String, i32> = IndexMap::new();
+    for code in countries.into_iter().flatten() {
+        if code.is_empty() || (!allowed.is_empty() && !allowed.contains(&code)) {
+            continue;
+        }
+        *counts.entry(country_key(code)).or_default() += 1;
+    }
+    counts
 }
 
 /// A shuffled draw of up to `count` songs, never more than `max_per_artist` by one artist, with

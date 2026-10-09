@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Liked Songs' name unless one is set.
+pub const LIKED_SONGS_NAME: &str = "Liked Songs";
+
 /// Genre and decade mixes Octo builds from the library and serves like radio stations: per
 /// listener, read-only, drawn again on a schedule (#54). Nothing is written to Navidrome, so a
 /// rescan cannot empty them and a listener cannot edit one by accident.
@@ -47,9 +50,26 @@ pub struct GeneratedPlaylistSettings {
     /// How recently added a track still counts as new. Environment variable: MIX_NEW_DAYS
     pub new_days: i32,
 
-    /// How a mix is named; "{0}" is the genre or decade. Empty means "{0} Mix".
+    /// How a mix is named; "{0}" is the genre, decade or country. Empty means "{0} Mix".
     /// Environment variable: MIX_NAME_FORMAT
     pub name_format: String,
+
+    /// A mix per country the library's artists are from, as MusicBrainz knows them. Off by
+    /// default: learning the countries takes MusicBrainz lookups in the background.
+    /// Environment variable: COUNTRY_MIXES
+    pub country_mixes: bool,
+
+    /// Which countries get a mix: two-letter codes such as "ES,JP". Empty: any country that
+    /// reaches CreateAt songs. Environment variable: MIX_COUNTRIES
+    pub countries: String,
+
+    /// Most country mixes shown, largest first, on top of MaxPlaylists, so countries never
+    /// take the place of a genre. Environment variable: MIX_MAX_COUNTRY_PLAYLISTS
+    pub max_country_playlists: i32,
+
+    /// The most artists looked up on MusicBrainz in one pass; the rest wait for the next pass.
+    /// Environment variable: COUNTRY_LOOKUPS_PER_REFRESH
+    pub country_lookups_per_refresh: i32,
 
     // ---- Made for you: three lists per listener, on whether or not the genre and decade mixes
     // are. Each is rebuilt once a RefreshHours period from that listener's own plays.
@@ -75,6 +95,16 @@ pub struct GeneratedPlaylistSettings {
     /// How long since a loved song was last played before Rediscover brings it back.
     /// Environment variable: REDISCOVER_MONTHS
     pub rediscover_months: i32,
+
+    /// Liked Songs: every listener's hearted songs as a read-only playlist, newest heart first,
+    /// listed before every other playlist. Environment variable: LIKED_SONGS
+    pub liked_songs: bool,
+
+    /// What Liked Songs is called. Environment variable: LIKED_SONGS_NAME
+    pub liked_songs_name: String,
+
+    /// The most songs Liked Songs holds, the newest hearts. Environment variable: LIKED_SONGS_MAX
+    pub liked_songs_max: i32,
 
     /// "Popular right now": the chart of the moment as a read-only playlist for every listener,
     /// in every app, on whether or not the mixes are. Songs a listener has are their library's
@@ -108,12 +138,19 @@ impl Default for GeneratedPlaylistSettings {
             new_share: 0,
             new_days: 30,
             name_format: "{0} Mix".to_string(),
+            country_mixes: false,
+            countries: String::new(),
+            max_country_playlists: 5,
+            country_lookups_per_refresh: 200,
             new_releases: true,
             rediscover: true,
             deep_cuts: true,
             new_release_weeks: 8,
             new_release_artists: 50,
             rediscover_months: 6,
+            liked_songs: true,
+            liked_songs_name: LIKED_SONGS_NAME.to_string(),
+            liked_songs_max: 500,
             popular_now: true,
             charts: "new,trending,18,14,6".to_string(),
             chart_country: "auto".to_string(),
@@ -128,6 +165,21 @@ impl GeneratedPlaylistSettings {
 
     pub fn effective_new_release_artists(&self) -> i32 {
         self.new_release_artists.clamp(10, 200)
+    }
+
+    /// The name, trimmed and at most 80 characters; blank is "Liked Songs".
+    pub fn effective_liked_songs_name(&self) -> String {
+        let name: String = self.liked_songs_name.trim().chars().take(80).collect();
+        let name = name.trim();
+        if name.is_empty() {
+            LIKED_SONGS_NAME.to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
+    pub fn effective_liked_songs_max(&self) -> i32 {
+        self.liked_songs_max.clamp(50, 5000)
     }
 
     pub fn effective_rediscover_months(&self) -> i32 {
@@ -167,6 +219,30 @@ impl GeneratedPlaylistSettings {
 
     pub fn effective_max_playlists(&self) -> i32 {
         self.max_playlists.clamp(1, 100)
+    }
+
+    pub fn effective_max_country_playlists(&self) -> i32 {
+        self.max_country_playlists.clamp(1, 100)
+    }
+
+    pub fn effective_country_lookups_per_refresh(&self) -> i32 {
+        self.country_lookups_per_refresh.clamp(0, 2000)
+    }
+
+    /// The countries named in [`Self::countries`], upper case, in order, each once; codes that
+    /// are not countries are left out. Empty: every country.
+    pub fn country_codes(&self) -> Vec<&'static str> {
+        let mut codes: Vec<&'static str> = Vec::new();
+        for code in self
+            .countries
+            .split([',', ';', ' '])
+            .filter_map(crate::common::countries::normalize)
+        {
+            if !codes.contains(&code) {
+                codes.push(code);
+            }
+        }
+        codes
     }
 
     pub fn effective_refresh_hours(&self) -> i32 {
@@ -399,5 +475,53 @@ mod tests {
         assert_eq!(s.effective_new_release_artists(), 200);
         assert_eq!(s.effective_rediscover_months(), 3);
         assert!(!s.any_for_you());
+    }
+
+    #[test]
+    fn country_mixes_are_off_by_default_and_read_their_country_list() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert!(!defaults.country_mixes);
+        assert!(defaults.country_codes().is_empty());
+        assert_eq!(defaults.effective_max_country_playlists(), 5);
+        assert_eq!(defaults.effective_country_lookups_per_refresh(), 200);
+
+        let set = GeneratedPlaylistSettings {
+            countries: " es, jp;XX ES  gb".into(),
+            max_country_playlists: 0,
+            country_lookups_per_refresh: 99_999,
+            ..Default::default()
+        };
+        assert_eq!(set.country_codes(), ["ES", "JP", "GB"]);
+        assert_eq!(set.effective_max_country_playlists(), 1);
+        assert_eq!(set.effective_country_lookups_per_refresh(), 2000);
+    }
+
+    #[test]
+    fn liked_songs_is_on_and_named_liked_songs_unless_set() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert!(defaults.liked_songs);
+        assert_eq!(defaults.effective_liked_songs_name(), "Liked Songs");
+        assert_eq!(defaults.effective_liked_songs_max(), 500);
+
+        let set = GeneratedPlaylistSettings {
+            liked_songs_name: "  * Liked Songs  ".into(),
+            liked_songs_max: 1,
+            ..Default::default()
+        };
+        assert_eq!(set.effective_liked_songs_name(), "* Liked Songs");
+        assert_eq!(set.effective_liked_songs_max(), 50);
+
+        let blank = GeneratedPlaylistSettings {
+            liked_songs_name: "   ".into(),
+            liked_songs_max: 99_999,
+            ..Default::default()
+        };
+        assert_eq!(blank.effective_liked_songs_name(), "Liked Songs");
+        assert_eq!(blank.effective_liked_songs_max(), 5000);
+        let long = GeneratedPlaylistSettings {
+            liked_songs_name: "x".repeat(200),
+            ..Default::default()
+        };
+        assert_eq!(long.effective_liked_songs_name().chars().count(), 80);
     }
 }

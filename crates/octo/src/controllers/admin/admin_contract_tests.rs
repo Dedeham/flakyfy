@@ -649,8 +649,13 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan).
-    assert_eq!(rows.len(), 179);
+    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, and Liked Songs'
+    // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, and the
+    // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
+    // :CountryLookupsPerRefresh.
+    assert_eq!(rows.len(), 186);
+    assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
+    assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 

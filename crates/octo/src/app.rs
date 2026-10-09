@@ -68,6 +68,7 @@ use crate::services::last_fm::{
 };
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
 use crate::services::library::ChartPlaylistService;
+use crate::services::library::artist_country::{self, ArtistCountryLookup, CountryLibrary};
 use crate::services::library::explicit_backfill::{
     ExplicitBackfill, ExplicitBackfillServices, ExplicitBackfillStore,
 };
@@ -1517,6 +1518,7 @@ impl Radio {
         overrides: &TestServices,
         deezer: &Arc<DeezerMetadataService>,
         acquisition: &Acquisition,
+        music_brainz: &Arc<MusicBrainzClient>,
     ) -> Radio {
         // Where radio's state files go: Octo:StateDirectory when set (tests point it at their own
         // folder), else beside the settings.
@@ -1629,6 +1631,30 @@ impl Radio {
             Arc::clone(deezer),
             stores.external_id_registry.clone(),
         ));
+        // Country mixes: one walk of the library as the Navidrome admin, shared by every
+        // listener, and where its artists are from, learned from MusicBrainz in the background.
+        let identity = navidrome.navidrome_identity.clone();
+        let country_library = Arc::new(CountryLibrary::new(
+            Arc::new(ArtistCountryLookup::new(
+                Arc::clone(music_brainz) as Arc<dyn artist_country::CountrySource>,
+                Some(config_dir.join(artist_country::STORE_FILE)),
+            )),
+            navidrome.subsonic_proxy.clone(),
+            Arc::new(move || {
+                identity.get_scan_auth().map(|(user, token, salt)| {
+                    [
+                        ("u", user),
+                        ("t", token),
+                        ("s", salt),
+                        ("v", "1.16.1".to_string()),
+                        ("c", "octo".to_string()),
+                    ]
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value))
+                    .collect()
+                })
+            }),
+        ));
         let generated_playlists = Arc::new(
             GeneratedPlaylistService::new(
                 Some(config_dir.join("generated-playlists.json")),
@@ -1638,7 +1664,8 @@ impl Radio {
             .with_for_you(ForYouServices {
                 builder: new_releases,
                 responses: stores.subsonic_response_builder.clone(),
-            }),
+            })
+            .with_countries(country_library),
         );
         Radio {
             state,
@@ -2082,6 +2109,7 @@ impl AppState {
             &TestServices::default(),
             &clients.deezer_metadata,
             &acquisition,
+            &clients.music_brainz,
         );
         radio.register_workers(&workers);
         let charts = Charts::build(
@@ -2381,6 +2409,7 @@ impl AppState {
             &overrides,
             &clients.deezer_metadata,
             &acquisition,
+            &clients.music_brainz,
         );
         // Apple's pages from the test's mock server, else an address that refuses at once (a
         // port the system handed out and let go: never port 1, which WSL's mirrored networking

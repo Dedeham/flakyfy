@@ -208,6 +208,11 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         Ok(result) => {
             if is_successful_subsonic_response(&result.body, &format)
                 && let Some(username) = call.param_opt("u").filter(|u| !u.is_empty())
+            {
+                state.generated_playlists.forget_marks(username);
+            }
+            if is_successful_subsonic_response(&result.body, &format)
+                && let Some(username) = call.param_opt("u").filter(|u| !u.is_empty())
                 && !item_id.is_empty()
                 && let Some(song) = resolver(&state, &call)
                     .resolve_scrobble(&item_id, &call.parameters)
@@ -298,6 +303,7 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         && let Some(rater) = call.param_opt("u").filter(|u| !u.is_empty())
         && !item_id.is_empty()
     {
+        state.generated_playlists.rated(rater, &item_id, i64::from(stars));
         record_radio_ban(&state, &call, rater, &item_id, stars).await;
     }
 

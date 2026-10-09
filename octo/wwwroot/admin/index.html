@@ -1383,6 +1383,14 @@
               <div class="set-info"><div class="set-info-t">Deep Cuts</div><div class="set-info-d">Songs played once or never, from the artists each listener plays most.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.DeepCuts" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Liked Songs</div><div class="set-info-d">Every song each listener hearted, newest first, listed before their other playlists.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.LikedSongs" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Liked Songs name</div><div class="set-info-d">What the list is called in every app.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.LikedSongsName" type="text" maxlength="80" placeholder="Liked Songs" />
+            </div>
             <details class="set-more">
               <summary>How far back</summary>
               <div class="set-row stack">
@@ -1418,8 +1426,16 @@
               <div class="set-info"><div class="set-info-t">A mix per decade</div><div class="set-info-d">The 1950s onward, from the year your files carry.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Decades" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Country mixes</div><div class="set-info-d">A mix per country your artists are from, such as Spain Mix, as MusicBrainz knows them.</div><div class="set-info-more">Octo looks the artists up in the background, a few hundred every six hours, so the first country mixes take a while. Downloads being checked always go first.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.CountryMixes" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre or decade</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
+              <div class="set-info"><div class="set-info-t">Countries <span class="set-opt">two-letter codes</span></div><div class="set-info-d">Only these countries get a mix, such as ES, JP. Empty means any country with enough songs.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.Countries" type="text" maxlength="200" placeholder="Any country" />
+            </div>
+            <div class="set-row stack">
+              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre, decade or country</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
               <input class="set-input" name="GeneratedPlaylists.NameFormat" maxlength="60" placeholder="{0} Mix" />
             </div>
             <details class="set-more">
@@ -1434,6 +1450,10 @@
               <div class="set-row">
                 <div class="set-info"><div class="set-info-t">At most <span class="set-opt">mixes</span></div><div class="set-info-d">The largest first.</div></div>
                 <input class="set-input" name="GeneratedPlaylists.MaxPlaylists" type="number" min="1" max="100" data-number="true" />
+              </div>
+              <div class="set-row">
+                <div class="set-info"><div class="set-info-t">At most <span class="set-opt">country mixes</span></div><div class="set-info-d">The largest first, on top of the genre and decade mixes, so a country never takes a genre's place.</div></div>
+                <input class="set-input" name="GeneratedPlaylists.MaxCountryPlaylists" type="number" min="1" max="100" data-number="true" />
               </div>
             </details>
           </form>

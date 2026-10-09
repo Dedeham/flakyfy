@@ -377,6 +377,126 @@ fn kinds_and_staleness_follow_the_settings() {
 }
 
 #[test]
+fn a_country_key_describes_itself_by_the_countrys_english_name() {
+    assert_eq!(
+        describe("country:ES"),
+        ("country".to_string(), "Spain".to_string())
+    );
+    assert_eq!(
+        describe("country:KR"),
+        ("country".to_string(), "South Korea".to_string())
+    );
+    assert_eq!(country_key("JP"), "country:JP");
+}
+
+#[test]
+fn country_mixes_are_part_of_the_kinds_only_when_on() {
+    let all = ExplicitFilter::All;
+    let mixes = GeneratedPlaylistSettings {
+        enabled: true,
+        new_releases: false,
+        rediscover: false,
+        deep_cuts: false,
+        ..Default::default()
+    };
+    assert_eq!(kinds_of(&mixes, all), "genre,decade,");
+    let countries = GeneratedPlaylistSettings {
+        country_mixes: true,
+        ..mixes.clone()
+    };
+    assert_eq!(kinds_of(&countries, all), "genre,decade,,country:");
+    let some = GeneratedPlaylistSettings {
+        countries: "es,jp".into(),
+        ..countries.clone()
+    };
+    assert_eq!(kinds_of(&some, all), "genre,decade,,country:ES+JP");
+    // Only countries is still mixes; the country switch without the mixes switch is nothing.
+    let only = GeneratedPlaylistSettings {
+        genres: false,
+        decades: false,
+        ..countries.clone()
+    };
+    assert!(mixes_on(&only) && country_mixes_on(&only));
+    let off = GeneratedPlaylistSettings {
+        enabled: false,
+        ..countries
+    };
+    assert!(!mixes_on(&off) && !country_mixes_on(&off));
+    assert_eq!(kinds_of(&off, all), ",,");
+}
+
+#[test]
+fn countries_share_the_genre_thresholds_and_never_crowd_out_a_genre() {
+    let settings = GeneratedPlaylistSettings {
+        max_playlists: 2,
+        max_country_playlists: 1,
+        ..Default::default()
+    };
+    let counts: IndexMap<String, i32> = [
+        ("country:US", 500),
+        ("genre:Rock", 40),
+        ("country:ES", 25),
+        ("genre:Pop", 30),
+        ("genre:Jazz", 21),
+        ("country:FR", 12),
+    ]
+    .into_iter()
+    .map(|(key, count)| (key.to_string(), count))
+    .collect();
+
+    assert_eq!(
+        active_mixes(&counts, &[], &settings),
+        ["genre:Rock", "genre:Pop", "country:US"]
+    );
+    // A country already shown stays down to RemoveBelow, as a genre does; one that never was
+    // needs CreateAt.
+    let wide = GeneratedPlaylistSettings {
+        max_country_playlists: 5,
+        ..settings.clone()
+    };
+    assert_eq!(
+        active_mixes(&counts, &[], &wide),
+        ["genre:Rock", "genre:Pop", "country:US", "country:ES"]
+    );
+    assert_eq!(
+        active_mixes(&counts, &["country:FR".to_string()], &wide),
+        [
+            "genre:Rock",
+            "genre:Pop",
+            "country:US",
+            "country:ES",
+            "country:FR"
+        ]
+    );
+    // Without countries the genres are what they always were.
+    let genres: IndexMap<String, i32> = counts
+        .iter()
+        .filter(|(key, _)| key.starts_with("genre:"))
+        .map(|(key, count)| (key.clone(), *count))
+        .collect();
+    assert_eq!(
+        active_mixes(&genres, &[], &settings),
+        apply_hysteresis(&genres, &[], 20, 10, 2)
+    );
+}
+
+#[test]
+fn songs_count_under_known_countries_and_only_the_ones_asked_for() {
+    let songs = [Some("ES"), Some("ES"), Some(""), None, Some("JP"), Some("US")];
+    let any = count_countries(songs, &[]);
+    assert_eq!(
+        any.into_iter().collect::<Vec<_>>(),
+        [
+            ("country:ES".to_string(), 2),
+            ("country:JP".to_string(), 1),
+            ("country:US".to_string(), 1)
+        ]
+    );
+    let some = count_countries(songs, &["JP", "ES"]);
+    assert_eq!(some.keys().collect::<Vec<_>>(), ["country:ES", "country:JP"]);
+}
+
+#[test]
 fn numbers_read_as_json_node_reads_them() {
     let node = Node::parse(r#"{"a":5,"b":5.9,"c":1e3,"d":"5","e":null,"f":99999999999}"#).unwrap();
     assert_eq!(nullable_int_of(&node, "a"), Some(5));

@@ -8,6 +8,7 @@ use regex::Regex;
 
 use super::cover_book::CoverBook;
 use super::cover_colors::{self, CoverMusic};
+use super::cover_glyph::CoverGlyph;
 use super::text::{eq_ignore_case, is_letter, is_white_space};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +98,8 @@ pub struct CoverSpec {
     pub line: Option<String>,
     pub footer: Option<String>,
     pub music: Option<CoverMusic>,
+    /// A glyph in place of every word.
+    pub glyph: Option<CoverGlyph>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

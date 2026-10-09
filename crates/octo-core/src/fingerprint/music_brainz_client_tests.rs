@@ -220,3 +220,86 @@ fn pick_answers_only_when_exactly_one_recording_fits() {
         None
     );
 }
+
+// ---- Where an artist is from ----------------------------------------------------------------
+
+fn json(text: &str) -> Value {
+    serde_json::from_str(text).expect("test JSON parses")
+}
+
+#[test]
+fn an_artist_lookup_reads_the_country_then_the_area_and_never_a_region() {
+    assert_eq!(
+        artist_country(&json(
+            r#"{"id":"a","name":"Rosalía","country":"ES","area":{"iso-3166-1-codes":["ES"]}}"#
+        )),
+        "ES"
+    );
+    assert_eq!(
+        artist_country(&json(
+            r#"{"id":"a","name":"X","country":null,"area":{"iso-3166-1-codes":["jp"]}}"#
+        )),
+        "JP"
+    );
+    assert_eq!(
+        artist_country(&json(
+            r#"{"id":"a","name":"X","country":"XW","area":{"name":"Worldwide"}}"#
+        )),
+        ""
+    );
+    assert_eq!(artist_country(&json(r#"{"id":"a","name":"X"}"#)), "");
+    assert_eq!(
+        artist_lookup_url(" 5e5c5a1c-b4fc-4ba2-9d1e-5f0e1bd1b9a2 ").as_deref(),
+        Some("artist/5e5c5a1c-b4fc-4ba2-9d1e-5f0e1bd1b9a2?fmt=json")
+    );
+    assert_eq!(artist_lookup_url("  "), None);
+}
+
+#[test]
+fn a_name_search_takes_only_the_same_name_scoring_90_or_more() {
+    let answer = json(
+        r#"{"artists":[
+            {"id":"m","name":"The Marías","score":100,"country":"US"},
+            {"id":"r","name":"Rosalía","score":95,"country":"ES"}
+        ]}"#,
+    );
+    // An exact 95 is taken; the fuzzy 100 is another artist.
+    assert_eq!(searched_artist_country(&answer, "ROSALIA"), "ES");
+    assert_eq!(searched_artist_country(&answer, "Marias"), "");
+    // The same name below 90 is not taken either.
+    let low = json(r#"{"artists":[{"id":"r","name":"Rosalía","score":89,"country":"ES"}]}"#);
+    assert_eq!(searched_artist_country(&low, "Rosalía"), "");
+    // An alias with the same name counts as the artist.
+    let alias = json(
+        r#"{"artists":[{"id":"k","name":"Kanye West","score":92,"country":"US",
+            "aliases":[{"name":"Ye"},{"name":"Yeezy"}]}]}"#,
+    );
+    assert_eq!(searched_artist_country(&alias, "Ye"), "US");
+    assert_eq!(searched_artist_country(&json(r#"{"artists":[]}"#), "Ye"), "");
+    assert_eq!(
+        artist_search_url("AC/DC").as_deref(),
+        Some("artist/?query=artist%3A%22AC%5C%2FDC%22%20OR%20alias%3A%22AC%5C%2FDC%22&limit=3&fmt=json")
+    );
+    assert_eq!(artist_search_url("  "), None);
+}
+
+#[test]
+fn a_name_search_takes_an_artist_found_only_by_an_alias_of_the_same_name() {
+    let answer = json(
+        r#"{"artists":[
+            {"id":"p","name":"Puff Daddy & The Family","score":91,"country":"GB"},
+            {"id":"s","name":"Sean Combs","score":90,"country":"US",
+             "aliases":[{"name":"Puff Daddy"},{"name":"P. Diddy"}]}
+        ]}"#,
+    );
+    assert_eq!(searched_artist_country(&answer, "puff daddy"), "US");
+}
+
+#[test]
+fn a_name_search_refuses_another_artist_whose_alias_is_only_close() {
+    let answer = json(
+        r#"{"artists":[{"id":"m","name":"The Marías","score":100,"country":"US",
+            "aliases":[{"name":"Marías, The"},{"name":"The Marias Band"}]}]}"#,
+    );
+    assert_eq!(searched_artist_country(&answer, "Marias"), "");
+}

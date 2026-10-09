@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 use image::RgbImage;
 
 use super::cover_book::{CoverBook, VeilNumbers, VeilYellow};
+use super::cover_glyph::GlyphDrawing;
 use super::cover_layout::{CoverAlign, CoverWords, WordsRole};
 
 /// One block of words' region: its box in pixels, how far its reach eases out, and its rule.
@@ -119,6 +120,25 @@ pub fn regions(book: &CoverBook, words: &[CoverWords], side: i32) -> Vec<Region>
         });
     }
     regions
+}
+
+/// The region under a glyph: its box grown by the design's share about its centre, darkened
+/// as under a title.
+pub fn glyph_region(book: &CoverBook, drawing: &GlyphDrawing) -> Region {
+    let veil = &book.veil;
+    let v = &veil.title;
+    let [left, top, size] = drawing.box_.map(f64::from);
+    let grow = size * book.glyphs.veil_grow / 2.0;
+    Region {
+        x0: left - grow,
+        y0: top - grow,
+        x1: left + size + grow,
+        y1: top + size + grow,
+        falloff: falloff(&v.falloff),
+        aim: limit_for(v.aim_contrast, 1.0) * (1.0 - veil.margin),
+        least: limit_for(v.min_contrast, 1.0) * (1.0 - veil.margin),
+        max_drop: v.max_drop,
+    }
 }
 
 /// The most a background's luminance may be for white words at `opacity`, laid over it in sRGB

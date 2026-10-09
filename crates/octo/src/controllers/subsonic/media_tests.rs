@@ -648,3 +648,71 @@ async fn a_lossless_copy_on_disk_is_served_with_ranges() {
         assert_eq!(reply.body.len(), length, "{range}");
     }
 }
+
+/// One picture, the same every time it is asked.
+struct OnePicture;
+
+#[async_trait::async_trait]
+impl crate::services::cover_art::ICoverArtSource for OnePicture {
+    fn name(&self) -> &str {
+        "one"
+    }
+
+    async fn try_fetch(&self, _: &SoulseekRouting, _: bool) -> Option<bytes::Bytes> {
+        let mut picture = Vec::new();
+        image::DynamicImage::new_rgb8(64, 64)
+            .write_to(&mut std::io::Cursor::new(&mut picture), image::ImageFormat::Jpeg)
+            .ok()?;
+        Some(picture.into())
+    }
+}
+
+/// A badged outside cover is kept by id, size and cover design and served from memory the next
+/// time; the Octo app's plain covers are never the badged ones.
+#[tokio::test]
+async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
+    let navidrome = MockServer::start().await;
+    let state = state_with(settings(&navidrome.uri()), |inner| {
+        inner.cover_art_aggregator = Arc::new(crate::services::cover_art::CoverArtAggregator::new(vec![
+            Arc::new(OnePicture),
+        ]));
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Artist".into()),
+        title: Some("Title".into()),
+        ..Default::default()
+    });
+    let app = app(&state);
+    let key = state.cover_art_service.badged_key(&id, Some(300));
+
+    let first = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(
+        state.cover_art_service.kept_badged(&key).as_deref(),
+        Some(first.body.as_ref())
+    );
+
+    // What is kept is what the next request gets.
+    state.cover_art_service.keep_badged(key.clone(), b"kept");
+    let second = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
+    assert_eq!(second.body.as_ref(), b"kept");
+    // Another size is its own.
+    let other = get(&app, &format!("/rest/getCoverArt?id={id}&size=600")).await;
+    assert_ne!(other.body.as_ref(), b"kept");
+    // The Octo app gets the plain picture, never the badged one.
+    let plain = get(&app, &format!("/rest/getCoverArt?id={id}&size=300&c=Octo")).await;
+    assert_ne!(plain.body.as_ref(), b"kept");
+}
+
+#[test]
+fn a_badged_cover_is_kept_by_design_version_size_and_id() {
+    let service = octo_media::cover::CoverArtService::new(None);
+    let version = octo_media::cover::CoverBook::shipped().version;
+
+    assert_eq!(
+        service.badged_key("ext-1", Some(300)),
+        format!("{version}|300|ext-1")
+    );
+    assert_eq!(service.badged_key("ext-1", None), format!("{version}||ext-1"));
+}

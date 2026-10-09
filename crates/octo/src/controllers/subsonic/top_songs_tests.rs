@@ -58,6 +58,13 @@ async fn navidrome() -> MockServer {
                         )
                     }
                 }
+                // Alice hearted Quebec after the chart was made.
+                "/rest/getStarred2" | "/rest/getStarred2.view" => navidrome_json(
+                    &json!({"subsonic-response": {"status": "ok", "version": "1.16.1", "starred2": {"song": [
+                        {"id": "nd-quebec", "title": "Quebec", "artist": "Drake", "starred": "2026-10-09T10:00:00Z", "userRating": 4}
+                    ]}}})
+                    .to_string(),
+                ),
                 "/rest/getTopSongs" | "/rest/getTopSongs.view" => navidrome_json(
                     r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","topSongs":{}}}"#,
                 ),
@@ -292,13 +299,18 @@ async fn get_playlists_lists_the_chart_lists_read_only() {
 
     let rows = answer["playlists"]["playlist"].as_array().unwrap();
     let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
-    assert_eq!(names, vec!["Popular right now", "Best New Songs"]);
+    // Alice has hearted a song, so her Liked Songs comes first.
+    assert_eq!(names, vec!["Liked Songs", "Popular right now", "Best New Songs"]);
+    let rows = &rows[1..];
     let popular = &rows[0];
     assert_eq!(popular["id"], popular_id().as_str());
     assert_eq!(popular["readonly"], true);
     assert_eq!(popular["public"], false);
     assert_eq!(popular["songCount"], 5);
     assert_eq!(popular["coverArt"], popular_id().as_str());
+    // The Octo apps put "Popular" on its cover; the other charts keep their names.
+    assert_eq!(popular["octoCoverTitle"], "Popular");
+    assert!(rows[1].get("octoCoverTitle").is_none());
     assert_eq!(
         popular["comment"],
         octo_subsonic::subsonic_response_builder::POPULAR_COMMENT
@@ -322,6 +334,7 @@ async fn get_playlists_xml_lists_them_too() {
 
     assert!(xml.contains("name=\"Popular right now\""), "{xml}");
     assert!(xml.contains("readonly=\"true\""), "{xml}");
+    assert!(xml.contains("octoCoverTitle=\"Popular\""), "{xml}");
 }
 
 #[tokio::test]
@@ -338,6 +351,10 @@ async fn get_playlist_library_songs_are_the_listeners_own_the_rest_outside() {
     assert_eq!(entries[1]["id"], "nd-quebec");
     assert_eq!(entries[0]["title"], "Solar Eclipse");
     assert_eq!(entries[0]["isExternal"], true);
+    // The listener's hearts and ratings as they are now, on library songs only.
+    assert_eq!(entries[1]["starred"], "2026-10-09T10:00:00Z");
+    assert_eq!(entries[1]["userRating"], 4);
+    assert!(entries[0].get("starred").is_none());
 }
 
 #[tokio::test]

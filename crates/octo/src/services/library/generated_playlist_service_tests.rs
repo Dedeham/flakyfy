@@ -76,6 +76,26 @@ impl Respond for LibraryNavidrome {
                 None => ok(&format!(r#""randomSongs":{{"song":[{}]}}"#, songs(30, 3000, 0))),
                 Some(_) => ok(r#""randomSongs":{"song":[]}"#),
             },
+            // The whole library, only to the admin: 30 songs by an artist Navidrome has a
+            // MusicBrainz id for, 25 by one it has none for, 5 by one nobody knows.
+            "rest/search3" if query.get("u").map(String::as_str) == Some("admin") => {
+                let rows: Vec<String> = (0..60)
+                    .map(|i| {
+                        let (artist, id) = match i {
+                            0..30 => ("Rosalía", "arES"),
+                            30..55 => ("Bad Bunny", "arPR"),
+                            _ => ("Nobody Knows", "arXX"),
+                        };
+                        format!(
+                            r#"{{"id":"c{i}","title":"Song {i}","artist":"{artist}","artistId":"{id}","playCount":9,"starred":"2026-01-01T00:00:00Z"}}"#
+                        )
+                    })
+                    .collect();
+                ok(&format!(r#""searchResult3":{{"song":[{}]}}"#, rows.join(",")))
+            }
+            "rest/getArtists" => ok(
+                r#""artists":{"index":[{"name":"B","artist":[{"id":"arPR","name":"Bad Bunny","musicBrainzId":""}]},{"name":"R","artist":[{"id":"arES","name":"Rosalía","musicBrainzId":"mb-es"}]}]}"#,
+            ),
             _ => ok(""),
         };
         ResponseTemplate::new(200)
@@ -450,4 +470,252 @@ mod response {
         assert_eq!(unknown["suffix"], "flac");
         assert_eq!(unknown["bitRate"], 1411);
     }
+}
+
+// ---- Marks put on drawn lists ----------------------------------------------------------------
+
+fn song_node(text: &str) -> Node {
+    Node::parse(text).expect("JSON")
+}
+
+#[tokio::test]
+async fn the_overlay_puts_hearts_on_library_songs_and_leaves_outside_songs_alone() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    let mut songs = vec![
+        song_node(r#"{"id":"a","title":"A","starred":"2026-01-01T00:00:00Z","userRating":2}"#),
+        song_node(r#"{"id":"b","title":"B"}"#),
+        song_node(r#"{"id":"x","title":"X","isExternal":true,"starred":"2026-02-02T00:00:00Z"}"#),
+    ];
+    let marks: MarksById = [(
+        "b".to_string(),
+        Marks {
+            starred: Some("2026-10-09T10:00:00Z".into()),
+            rating: Some(5),
+        },
+    )]
+    .into_iter()
+    .collect();
+
+    lists.overlay("alice", &mut songs, &marks);
+
+    // Unhearted since: the heart goes, and a rating nobody knows is left as drawn.
+    assert!(songs[0].get("starred").is_none());
+    assert_eq!(songs[0].get("userRating").and_then(node_i64), Some(2));
+    assert_eq!(
+        songs[1].get("starred").and_then(Node::as_str),
+        Some("2026-10-09T10:00:00Z")
+    );
+    assert_eq!(songs[1].get("userRating").and_then(node_i64), Some(5));
+    // Navidrome does not hold Octo's own hearts on outside songs.
+    assert_eq!(
+        songs[2].get("starred").and_then(Node::as_str),
+        Some("2026-02-02T00:00:00Z")
+    );
+}
+
+#[tokio::test]
+async fn a_rating_set_through_octo_reaches_unhearted_songs_and_zero_clears_it() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    let mut songs = vec![
+        song_node(r#"{"id":"a","userRating":2}"#),
+        song_node(r#"{"id":"b"}"#),
+    ];
+
+    lists.rated("alice", "a", 0);
+    lists.rated("alice", "b", 3);
+    lists.overlay("alice", &mut songs, &MarksById::new());
+
+    assert!(songs[0].get("userRating").is_none());
+    assert_eq!(songs[1].get("userRating").and_then(node_i64), Some(3));
+    // Someone else's ratings are theirs.
+    let mut bobs = vec![song_node(r#"{"id":"b"}"#)];
+    lists.overlay("bob", &mut bobs, &MarksById::new());
+    assert!(bobs[0].get("userRating").is_none());
+}
+
+// ---- Country mixes ---------------------------------------------------------------------------
+
+/// MusicBrainz as a table, counting what it is asked.
+#[derive(Default)]
+struct Countries {
+    asked: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl super::super::artist_country::CountrySource for Countries {
+    async fn by_mbid(&self, mbid: &str) -> Option<String> {
+        self.asked.lock().push(format!("id {mbid}"));
+        Some(if mbid == "mb-es" { "ES" } else { "" }.to_string())
+    }
+
+    async fn by_name(&self, name: &str) -> Option<String> {
+        self.asked.lock().push(format!("name {name}"));
+        Some(if name == "Bad Bunny" { "PR" } else { "" }.to_string())
+    }
+}
+
+fn country_service(
+    fixture: &Fixture,
+    settings: GeneratedPlaylistSettings,
+    source: &Arc<Countries>,
+) -> Arc<GeneratedPlaylistService> {
+    use super::super::artist_country::{ArtistCountryLookup, CountryLibrary, CountrySource, STORE_FILE};
+    let store = Arc::new(SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            url: Some(fixture.server.uri()),
+            ..Default::default()
+        },
+        generated_playlists: settings,
+        ..Default::default()
+    }));
+    let library = Arc::new(CountryLibrary::new(
+        Arc::new(ArtistCountryLookup::new(
+            Arc::clone(source) as Arc<dyn CountrySource>,
+            Some(fixture.dir.path().join(STORE_FILE)),
+        )),
+        SubsonicProxyService::new(store.clone()),
+        Arc::new(|| {
+            Some(
+                [
+                    ("u", "admin"),
+                    ("t", "t"),
+                    ("s", "s"),
+                    ("v", "1.16.1"),
+                    ("c", "octo"),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            )
+        }),
+    ));
+    Arc::new(
+        GeneratedPlaylistService::new(
+            Some(fixture.dir.path().join("generated-playlists.json")),
+            SubsonicProxyService::new(store.clone()),
+            store,
+        )
+        .with_countries(library),
+    )
+}
+
+fn countries_only() -> GeneratedPlaylistSettings {
+    GeneratedPlaylistSettings {
+        enabled: true,
+        genres: false,
+        decades: false,
+        country_mixes: true,
+        new_releases: false,
+        rediscover: false,
+        deep_cuts: false,
+        track_count: 10,
+        max_per_artist: 3,
+        ..Default::default()
+    }
+}
+
+/// The listener's mix names, once a background pass has made them (or after five seconds).
+async fn names_once_counted(service: &Arc<GeneratedPlaylistService>) -> Vec<String> {
+    for _ in 0..100 {
+        let names: Vec<String> = service
+            .list("alice", &auth())
+            .await
+            .into_iter()
+            .map(|mix| mix.name)
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Vec::new()
+}
+
+#[tokio::test]
+async fn country_mixes_come_from_where_the_artists_are_from_and_keep_the_artist_cap() {
+    let fixture = fixture().await;
+    let source = Arc::new(Countries::default());
+    let service = country_service(&fixture, countries_only(), &source);
+
+    let names = names_once_counted(&service).await;
+
+    assert_eq!(names, ["Spain Mix", "Puerto Rico Mix"]);
+    // Rosalía by her id, Bad Bunny and the unknown artist by name; each once.
+    let mut asked = source.asked.lock().clone();
+    asked.sort();
+    assert_eq!(asked, ["id mb-es", "name Bad Bunny", "name Nobody Knows"]);
+    // One walk as the admin, whoever asked.
+    let calls = fixture.navidrome.calls.lock().clone();
+    let walked: Vec<&String> = calls
+        .iter()
+        .filter(|call| call.starts_with("rest/search3"))
+        .collect();
+    assert_eq!(walked.len(), 1);
+    assert!(walked[0].contains("u=admin"));
+
+    let spain = service
+        .find("alice", &playlist_id("alice", "country:ES"))
+        .expect("Spain Mix");
+    assert_eq!(
+        (spain.kind.as_str(), spain.label.as_str(), spain.pool_size),
+        ("country", "Spain", 30)
+    );
+    let songs = service
+        .materialize("alice", &spain, &auth(), &CancellationToken::new())
+        .await
+        .expect("drawn");
+    // Every song is Rosalía's, so the artist cap of 3 is the mix.
+    assert_eq!(songs.len(), 3);
+    assert!(songs.iter().all(|song| str_of(song, "artist") == Some("Rosalía")));
+    // The admin's own plays and hearts never reach a listener.
+    assert!(
+        songs
+            .iter()
+            .all(|song| song.get("starred").is_none() && song.get("playCount").is_none())
+    );
+}
+
+#[tokio::test]
+async fn only_the_countries_asked_for_get_a_mix() {
+    let fixture = fixture().await;
+    let source = Arc::new(Countries::default());
+    let service = country_service(
+        &fixture,
+        GeneratedPlaylistSettings {
+            countries: "pr".into(),
+            ..countries_only()
+        },
+        &source,
+    );
+
+    assert_eq!(names_once_counted(&service).await, ["Puerto Rico Mix"]);
+}
+
+#[tokio::test]
+async fn with_country_mixes_off_the_library_is_never_walked_and_musicbrainz_never_asked() {
+    let fixture = fixture().await;
+    let source = Arc::new(Countries::default());
+    let service = country_service(&fixture, enabled(), &source);
+
+    let names: Vec<String> = service
+        .list("alice", &auth())
+        .await
+        .into_iter()
+        .map(|mix| mix.name)
+        .collect();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert_eq!(names, ["Rock Mix", "1990s Mix"]);
+    assert!(source.asked.lock().is_empty());
+    assert!(
+        !fixture
+            .navidrome
+            .calls
+            .lock()
+            .iter()
+            .any(|call| call.contains("u=admin") || call.starts_with("rest/getArtists"))
+    );
+    assert!(!fixture.dir.path().join("artist-countries.json").exists());
 }

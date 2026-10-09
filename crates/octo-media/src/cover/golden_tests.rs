@@ -76,6 +76,7 @@ fn compose(golden: &Value) -> CoverArt {
         line: text(golden, "line"),
         footer: text(golden, "footer"),
         music: None,
+        glyph: None,
     };
     let index = background_index(golden["background"].as_str().expect("a background"));
     CoverArt {
@@ -83,6 +84,7 @@ fn compose(golden: &Value) -> CoverArt {
         background: index,
         orientation: 0,
         words: cover_layout::words(&spec, side, &CoverTypesetter, book()),
+        glyph: None,
     }
 }
 
@@ -300,6 +302,7 @@ fn reference_spec(layout: &Value) -> CoverSpec {
         line: text(layout, "line"),
         footer: text(layout, "footer"),
         music: reference_music(layout),
+        glyph: None,
     }
 }
 
@@ -324,6 +327,7 @@ fn reference_art(layout: &Value) -> CoverArt {
         background,
         orientation,
         words: cover_layout::words(&spec, side, &CoverTypesetter, book()),
+        glyph: None,
     }
 }
 
@@ -730,6 +734,7 @@ fn served_cover_looks_like_the_csharp_one() {
     let service = super::CoverArtService::new(None);
     let spec = super::CoverArtService::spec(
         "Rock Radio",
+        None,
         Some(super::list_kinds::RADIO),
         None,
         service.fallback_music("Rock Radio", "Rock Radio"),

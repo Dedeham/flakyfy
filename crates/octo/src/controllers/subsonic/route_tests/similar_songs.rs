@@ -911,3 +911,26 @@ async fn nothing_from_octos_sources_lets_navidrome_answer() {
     let f = fixture(|s| s.last_fm.api_key = String::new()).await;
     assert_eq!(radio_ids(&f, "teardrop").await, ["nd-1"]);
 }
+
+// An outside artist (an artist row of a search) is a radio of the artists like them, as a
+// library artist is, instead of an empty answer; asked again, Last.fm is not asked again.
+#[tokio::test]
+async fn an_outside_artist_is_the_top_songs_of_artists_like_them() {
+    use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+    let f = fixture(|_| {}).await;
+    let id = f.state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Artist,
+        artist: Some("Massive Attack".into()),
+        ..Default::default()
+    });
+
+    assert_eq!(radio_ids(&f, &id).await, ["ext-Portishead-Roads"]);
+    assert_eq!(radio_ids(&f, &id).await, ["ext-Portishead-Roads"]);
+
+    let asked = f
+        .calls()
+        .iter()
+        .filter(|call| call.contains("method=artist.getsimilar") && call.contains("Massive"))
+        .count();
+    assert_eq!(asked, 1, "{:?}", f.calls());
+}

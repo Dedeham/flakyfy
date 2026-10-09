@@ -445,10 +445,32 @@ impl LastFmService {
         .await
     }
 
-    /// Top songs of the artists Last.fm counts as like one artist: a radio for an artist.
+    /// Top songs of the artists Last.fm counts as like one artist: a radio for an artist. An
+    /// answer is kept as long as the radio cache keeps answers; a failed one is not kept.
     pub async fn get_similar_artist_tracks(&self, artist: &str, limit: i32) -> Vec<SimilarTrack> {
         let name = SongIdentity::known_name(artist).unwrap_or_else(|| artist.to_string());
-        self.top_tracks_from_similar_artists(&name, limit).await
+        let key = dotnet::to_lower_invariant(&format!("similar-artist-tracks|{name}|{limit}"));
+        let hit = self
+            .radio_cache
+            .lock()
+            .get(&key)
+            .filter(|(expiry, _)| *expiry > Utc::now())
+            .and_then(|(_, value)| Vec::<SimilarTrack>::unwrap(value));
+        if let Some(tracks) = hit {
+            return tracks;
+        }
+        match self.top_tracks_from_similar_artists_inner(&name, limit).await {
+            Ok(tracks) => {
+                self.radio_cache
+                    .lock()
+                    .insert(key, (self.cache_expiry(), tracks.clone().wrap()));
+                tracks
+            }
+            Err(e) => {
+                error!(error = %e, "Error fetching top tracks from similar artists for {name}");
+                Vec::new()
+            }
+        }
     }
 
     /// One track.getsimilar request, read into tracks.

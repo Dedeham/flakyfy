@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use octo_core::common::dotnet;
 use octo_core::models::domain::Song;
 use octo_core::radio::RadioSeed;
+use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
 use octo_subsonic::SubsonicReply;
 use octo_subsonic::subsonic_response_builder::{SUBSONIC_NAMESPACE, SUBSONIC_VERSION};
 use octo_subsonic::xml::XElement;
@@ -86,7 +87,18 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         state.external_id_registry.clone(),
     );
     let (is_external, provider, external_id) = state.local_library.parse_song_id(&id);
-    if is_external {
+    // An outside artist (an artist row of a search or a chart) is a radio of the artists like
+    // them, as a library artist is: the seed is the artist alone.
+    let outside_artist = is_external
+        .then(|| state.external_id_registry.lookup(&id))
+        .flatten()
+        .map(|routing| routing.snapshot())
+        .filter(|routing| routing.kind == RoutingKind::Artist)
+        .and_then(|routing| routing.artist)
+        .filter(|artist| !dotnet::is_blank(artist));
+    if let Some(artist) = &outside_artist {
+        artist_name = artist.clone();
+    } else if is_external {
         // External song - get metadata from our service
         if let Some(song) = state
             .metadata_service
@@ -121,7 +133,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         artist_name = seed.artist;
     }
 
-    if artist_name.is_empty() || (track_title.is_empty() && is_external) {
+    if artist_name.is_empty() || (track_title.is_empty() && is_external && outside_artist.is_none()) {
         warn!("Could not get artist/title for song {id}");
         return builder.create_response(format, response_key).into_response();
     }

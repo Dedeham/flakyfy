@@ -1,6 +1,7 @@
 //! The star queue's turns per person, and whose library a request is for.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use octo_core::settings::DownloadSource;
 use tokio_util::sync::CancellationToken;
@@ -32,9 +33,14 @@ async fn order(queue: &TrackAcquisitionQueue, count: usize) -> Vec<String> {
     taken
 }
 
+/// A queue whose stars take turns per person, as while Family is on.
+fn fair_queue() -> TrackAcquisitionQueue {
+    TrackAcquisitionQueue::new().with_fair_turns(Arc::new(|| true))
+}
+
 #[tokio::test]
 async fn one_member_cannot_starve_another() {
-    let queue = TrackAcquisitionQueue::new();
+    let queue = fair_queue();
     for n in 1..=5 {
         star(&queue, &format!("a{n}"), "alex");
     }
@@ -213,4 +219,55 @@ fn a_real_flac_ask_is_its_own_job() {
         .cloned()
         .expect("in flight");
     assert!(request.place().flac_only);
+}
+
+#[tokio::test]
+async fn family_off_stars_keep_arrival_order() {
+    let queue = TrackAcquisitionQueue::new();
+    for n in 1..=3 {
+        star(&queue, &format!("a{n}"), "alice");
+    }
+    star(&queue, "b1", "bob");
+    assert_eq!(order(&queue, 4).await, ["a1", "a2", "a3", "b1"]);
+}
+
+#[tokio::test]
+async fn turning_family_on_or_off_changes_the_order_of_stars_already_waiting() {
+    let fair = Arc::new(AtomicBool::new(false));
+    let switch = Arc::clone(&fair);
+    let queue = TrackAcquisitionQueue::new().with_fair_turns(Arc::new(move || switch.load(Ordering::SeqCst)));
+    for n in 1..=3 {
+        star(&queue, &format!("a{n}"), "alice");
+    }
+    star(&queue, "b1", "bob");
+    star(&queue, "a4", "alice");
+    assert_eq!(order(&queue, 1).await, ["a1"]);
+    fair.store(true, Ordering::SeqCst);
+    assert_eq!(order(&queue, 2).await, ["a2", "b1"]);
+    fair.store(false, Ordering::SeqCst);
+    assert_eq!(order(&queue, 2).await, ["a3", "a4"]);
+}
+
+#[tokio::test]
+async fn stars_lined_up_count_toward_the_bound() {
+    let queue = TrackAcquisitionQueue::new();
+    let token = CancellationToken::new();
+    for n in 0..TrackAcquisitionQueue::STAR_CAPACITY {
+        star(&queue, &format!("s{n}"), "alice");
+    }
+    // One taken: the rest move from the channel into the lines, where they still count.
+    let first = queue.dequeue(&token).await.expect("a request");
+    queue.release(&first);
+    star(&queue, "room-for-one", "bob");
+    let over = star(&queue, "one-too-many", "bob");
+    assert!(over.is_completed(), "refused at once");
+    assert!(over.wait().await.is_err());
+    let mut taken = 0;
+    while let Ok(Some(request)) =
+        tokio::time::timeout(std::time::Duration::from_millis(50), queue.dequeue(&token)).await
+    {
+        assert_ne!(request.external_id, "one-too-many");
+        taken += 1;
+    }
+    assert_eq!(taken, TrackAcquisitionQueue::STAR_CAPACITY);
 }

@@ -1122,12 +1122,19 @@
     load.queue.forEach(function (q) {
       queue.appendChild(el('li', { class: 'fam-row' }, el('div', { class: 'fam-row-main' }, el('div', { class: 'fam-row-title' }, q.username)), el('div', { class: 'fam-row-side' }, badge(q.waiting + ' waiting'))));
     });
+    // The helper's slots, or a plain note when it did not answer (never zeros it did not say).
+    var shim = load.shim;
+    var helper = shim
+      ? [
+        el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, String(shim.active)), el('span', { class: 'fam-sub' }, 'Outside songs streaming')),
+        el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, shim.limit ? shim.ytdlpRunning + ' of ' + shim.limit : String(shim.ytdlpRunning)), el('span', { class: 'fam-sub' }, 'Lookups running'))
+      ]
+      : el('div', { class: 'fam-stat' }, el('strong', null, 'The YouTube helper did not answer'), el('span', { class: 'fam-sub' }, 'Outside songs and lookups'));
     F.clear(main);
     F.append(main, title('Load', 'How busy the server is right now.'));
     F.append(main, card(el('div', { class: 'fam-stats' },
       el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, String(load.streams.length)), el('span', { class: 'fam-sub' }, 'Streams playing')),
-      el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, load.shim.limit ? load.shim.active + ' of ' + load.shim.limit : String(load.shim.active)), el('span', { class: 'fam-sub' }, 'Outside songs streaming')),
-      el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, String(load.shim.ytdlpRunning)), el('span', { class: 'fam-sub' }, 'Lookups running')),
+      helper,
       el('div', { class: 'fam-stat' }, el('span', { class: 'fam-stat-n' }, load.uploadKbps + ' kbps'), el('span', { class: 'fam-sub' }, 'Sent out now')))));
     F.append(main, el('div', { class: 'fam-grid two', style: 'margin-top:16px' },
       card(cardHead('Playing now'), streams),

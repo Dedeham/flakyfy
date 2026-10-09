@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Web, body_as, family_error, no_content, ok, refusal, require_on};
 use crate::app::AppState;
-use crate::services::family::family_service::{AddMember, EditMember, FilesChoice};
+use crate::services::family::family_service::{AddMember, EditMember, FilesChoice, ShimLoad};
 use crate::services::family::{FamilyService, SharedLibraries};
 
 /// Reads a preset by name, any case.
@@ -476,12 +476,15 @@ pub async fn delete_playlist(State(state): State<AppState>, web: Web, Path(id): 
     }
 }
 
-/// `GET /api/family/load`.
+/// `GET /api/family/load`: the live streams and queue, with the outside-song helper's slots
+/// read from its health (`shim` is null when the helper did not answer).
 pub async fn load(State(state): State<AppState>, web: Web) -> Response {
     if let Err(res) = web.manager(&state).await {
         return res;
     }
-    ok(&json!(state.family.hooks(&state).streams.load()))
+    let mut report = state.family.hooks(&state).streams.load();
+    report.shim = state.you_tube_resolver.busy().await.map(ShimLoad::from);
+    ok(&json!(report))
 }
 
 #[derive(Debug, Default, Deserialize)]

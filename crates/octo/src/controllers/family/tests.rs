@@ -443,6 +443,11 @@ async fn fam() -> Fam {
 /// The family `winters` owns: the listener `alex` (an Octo app and an app password, a request
 /// waiting) and the co-admin `sam`. `sign_in` is the dashboard's `Admin:SignIn`.
 async fn fam_with(change: impl FnOnce(&mut AppSettings), sign_in: Option<&str>) -> Fam {
+    fam_on(change, sign_in, None).await
+}
+
+/// [`fam_with`] with the YouTube helper at `shim` (None: an address that refuses at once).
+async fn fam_on(change: impl FnOnce(&mut AppSettings), sign_in: Option<&str>, shim: Option<&str>) -> Fam {
     let nd = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/ping"))
@@ -507,7 +512,10 @@ async fn fam_with(change: impl FnOnce(&mut AppSettings), sign_in: Option<&str>) 
             config_dir: Some(dir.path().to_path_buf()),
             sign_in: sign_in.map(str::to_string),
             raw_settings: vec![
-                ("YouTube:ShimUrl".into(), closed.clone()),
+                (
+                    "YouTube:ShimUrl".into(),
+                    shim.map_or_else(|| closed.clone(), str::to_string),
+                ),
                 ("Soulseek:BaseUrl".into(), closed),
             ],
             ..Default::default()
@@ -1791,7 +1799,7 @@ async fn load_is_for_managers() {
         r.json(),
         json!({
             "streams": [{ "username": "alex", "device": "Pixel 9", "songTitle": "Hyperballad", "kbps": 160, "place": "Away" }],
-            "shim": { "active": 0, "limit": 0, "ytdlpRunning": 0 },
+            "shim": null,
             "queue": [],
             "uploadKbps": 160,
         })
@@ -1800,6 +1808,43 @@ async fn load_is_for_managers() {
         f.get("/api/family/load", Some(&f.alex())).await.status,
         StatusCode::FORBIDDEN
     );
+}
+
+#[tokio::test]
+async fn load_reads_the_helper_slots_from_its_health() {
+    let shim = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true, "active_streams": 4, "ytdlp_running": 3, "ytdlp_limit": 128,
+        })))
+        .mount(&shim)
+        .await;
+    let f = fam_on(|_| {}, None, Some(&shim.uri())).await;
+    let r = f.get("/api/family/load", Some(&f.owner_cookie())).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        r.json()["shim"],
+        json!({ "active": 4, "limit": 128, "ytdlpRunning": 3 })
+    );
+    // A second look within the cache window reads the same answer without asking again.
+    let again = f.get("/api/family/load", Some(&f.owner_cookie())).await;
+    assert_eq!(again.json()["shim"], r.json()["shim"]);
+    assert_eq!(shim.received_requests().await.expect("recorded").len(), 1);
+}
+
+#[tokio::test]
+async fn load_says_null_for_the_helper_when_it_does_not_answer() {
+    let shim = MockServer::start().await;
+    Mock::given(path("/health"))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&shim)
+        .await;
+    let f = fam_on(|_| {}, None, Some(&shim.uri())).await;
+    let r = f.get("/api/family/load", Some(&f.owner_cookie())).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["shim"], Value::Null, "{}", r.body);
+    assert_eq!(r.json()["uploadKbps"], 160);
 }
 
 #[tokio::test]

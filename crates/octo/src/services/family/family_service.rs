@@ -36,6 +36,7 @@ use super::passwords;
 use super::request_service::FamilyEvent;
 use crate::app::AppState;
 use crate::services::admin::SignInThrottle;
+use crate::services::you_tube::ShimBusy;
 
 // ------------------------------------------------------------------------------------------
 // Errors
@@ -304,13 +305,26 @@ pub struct LoadStream {
     pub place: NetworkPlace,
 }
 
-/// The outside-song helper's slots.
+/// The outside-song helper's slots, from its health.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ShimLoad {
+    /// Outside songs streaming now.
     pub active: u32,
+    /// How many yt-dlp lookups may run at once.
     pub limit: u32,
+    /// yt-dlp lookups running now.
     pub ytdlp_running: u32,
+}
+
+impl From<ShimBusy> for ShimLoad {
+    fn from(busy: ShimBusy) -> Self {
+        ShimLoad {
+            active: busy.active_streams,
+            limit: busy.ytdlp_limit,
+            ytdlp_running: busy.ytdlp_running,
+        }
+    }
 }
 
 /// Downloads waiting, per member.
@@ -326,7 +340,8 @@ pub struct QueueLoad {
 #[serde(rename_all = "camelCase")]
 pub struct LoadReport {
     pub streams: Vec<LoadStream>,
-    pub shim: ShimLoad,
+    /// None when the helper did not answer.
+    pub shim: Option<ShimLoad>,
     pub queue: Vec<QueueLoad>,
     pub upload_kbps: u32,
 }

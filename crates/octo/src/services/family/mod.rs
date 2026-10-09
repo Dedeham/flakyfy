@@ -28,6 +28,7 @@ pub mod personal_library;
 pub mod personal_marks;
 pub mod player_caps;
 pub mod pool;
+pub mod public_address;
 pub mod request_service;
 pub mod request_store;
 pub mod rules;

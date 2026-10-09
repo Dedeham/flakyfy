@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 use super::{Web, body_as, family_error, no_content, ok, refusal, require_on};
 use crate::app::AppState;
 use crate::services::family::family_service::{AddMember, EditMember, FilesChoice, ShimLoad};
+use crate::services::family::public_address;
 use crate::services::family::{FamilyService, SharedLibraries};
 
 /// Reads a preset by name, any case.
@@ -63,6 +64,8 @@ pub struct AddMemberBody {
     pub preset: Option<String>,
     pub shared_libraries: Option<Value>,
     pub adopt: bool,
+    /// May they listen away from home (on by default).
+    pub away: Option<bool>,
 }
 
 /// `POST /api/family/members`: answers the member and their invite link.
@@ -105,17 +108,19 @@ pub async fn add_member(State(state): State<AppState>, web: Web, body: Bytes) ->
         preset,
         shared_libraries: shared,
         adopt: request.adopt,
+        away: request.away,
     };
     match state
         .family
         .add_member(&state, &signed.actor, add, &web.base(&state))
         .await
     {
-        Ok((member, link)) => ok(&json!({
-            "member": state.family.member_full_json(&state, &member),
-            "inviteLink": link,
-            "inviteDays": invite_days(&state),
-        })),
+        Ok((member, link)) => {
+            let bases = web.link_bases(&state, &member.username);
+            let mut answer = public_address::invite_answer(&link, &bases, invite_days(&state));
+            answer["member"] = state.family.member_full_json(&state, &member);
+            ok(&answer)
+        }
         Err(e) => family_error(&e),
     }
 }
@@ -233,7 +238,11 @@ pub async fn invite_member(State(state): State<AppState>, web: Web, Path(name): 
         return res;
     }
     match state.family.invite(&state, &name, &web.base(&state)) {
-        Ok(link) => ok(&json!({ "inviteLink": link, "inviteDays": invite_days(&state) })),
+        Ok(link) => ok(&public_address::invite_answer(
+            &link,
+            &web.link_bases(&state, &name),
+            invite_days(&state),
+        )),
         Err(e) => family_error(&e),
     }
 }
@@ -259,15 +268,16 @@ pub async fn add_member_device(
     if state.family_store.member(&name).is_none() {
         return refusal(StatusCode::NOT_FOUND, &format!("{name} is not in the family."));
     }
+    let bases = web.link_bases(&state, &name);
     match state.family.add_device(
         &state,
         &name,
         &request.name,
         kind,
-        &web.base(&state),
+        bases.default_base(),
         &request.replaces,
     ) {
-        Ok(added) => ok(&json!(added)),
+        Ok(added) => ok(&public_address::device_answer(&added, &bases)),
         Err(e) => family_error(&e),
     }
 }

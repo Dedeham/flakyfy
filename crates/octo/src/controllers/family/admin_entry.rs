@@ -16,13 +16,14 @@ use super::{body_as, family_error, ok, refusal};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
-use crate::services::admin::{AdminCallerKind, BrowseSessionStore};
+use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore};
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/family", get(summary))
         .route("/api/admin/family/enable", post(enable))
         .route("/api/admin/family/notifications", put(notifications))
+        .route("/api/admin/family/open", post(open))
 }
 
 /// `GET /api/admin/family`: what the dashboard's Family entry shows.
@@ -66,6 +67,8 @@ pub async fn summary(State(state): State<AppState>, caller: Caller) -> Response 
         "notifyDevices": settings.notifications.notify_family_devices,
         "familyPage": "/family/",
         "loadWarning": state.family_store.load_warning(),
+        "publicUrl": crate::services::family::public_address::public_url(&state),
+        "suggestedPublicUrl": state.family.suggested_public_url(),
     }))
 }
 
@@ -162,4 +165,26 @@ pub async fn notifications(State(state): State<AppState>, caller: Caller, body: 
         "notifyRequests": state.settings.current().notifications.notify_family_requests,
         "notifyDevices": state.settings.current().notifications.notify_family_devices,
     }))
+}
+
+/// `POST /api/admin/family/open`: a single-use token (60 seconds) that signs this dashboard's
+/// admin in on the Family page, which reads it from `/family/#handoff=<token>`. Only a
+/// dashboard session signed in as a Navidrome admin gets one.
+pub async fn open(State(state): State<AppState>, caller: Caller) -> Response {
+    let user = match caller_of(&caller) {
+        Some(AdminCaller {
+            kind: AdminCallerKind::Dashboard,
+            user: Some(user),
+        }) if user != BrowseSessionStore::RECOVERY_USER => user.clone(),
+        _ => {
+            return refusal(
+                StatusCode::FORBIDDEN,
+                "Sign in to the dashboard with your Navidrome admin account to open Family signed in.",
+            );
+        }
+    };
+    let token = state
+        .family
+        .mint_handoff(&user, crate::services::family::family_service::HANDOFF_TTL);
+    ok(&json!({ "token": token, "familyPage": "/family/" }))
 }

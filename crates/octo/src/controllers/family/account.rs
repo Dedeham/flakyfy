@@ -250,6 +250,14 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
         "linksFix": links.as_ref().and_then(|status| status.fix.clone()),
         "proxyWarning": proxy_warning,
         "server": web.base(&state),
+        "publicUrl": crate::services::family::public_address::public_url(&state),
+        "homeOnly": web.link_bases(&state, signed.user()).home_only,
+        // Only the owner saves the outside address, so only the owner is offered one.
+        "suggestedPublicUrl": signed
+            .actor
+            .is_owner()
+            .then(|| state.family.suggested_public_url())
+            .flatten(),
     }))
 }
 
@@ -366,15 +374,18 @@ pub async fn add_my_device(State(state): State<AppState>, web: Web, body: Bytes)
     let Some(kind) = device_kind(&request.kind) else {
         return refusal(StatusCode::BAD_REQUEST, "Choose OctoApp or SubsonicApp.");
     };
+    let bases = web.link_bases(&state, signed.user());
     match state.family.add_device(
         &state,
         signed.user(),
         &request.name,
         kind,
-        &web.base(&state),
+        bases.default_base(),
         &request.replaces,
     ) {
-        Ok(added) => ok(&json!(added)),
+        Ok(added) => ok(&crate::services::family::public_address::device_answer(
+            &added, &bases,
+        )),
         Err(e) => family_error(&e),
     }
 }

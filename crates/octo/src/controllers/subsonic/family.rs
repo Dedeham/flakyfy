@@ -9,6 +9,7 @@
 //! has a secret. Wrong codes count per address, per peer, per account, against the member's
 //! live code (five burn it), and for everyone together.
 
+use crate::services::family::public_address::{self, LinkBases};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::extract::{ConnectInfo, Request, State};
@@ -565,16 +566,23 @@ pub async fn add_family_device(State(state): State<AppState>, req: Request) -> R
             }
         }
     };
-    let base = FamilyService::public_base(&state, &call.origin);
+    let bases = LinkBases::new(&state, &call.origin, public_address::away_allowed(&state, &user));
     match state.family.add_device(
         &state,
         &user,
         call.param("name"),
         kind,
-        &base,
+        bases.default_base(),
         call.param("replaces"),
     ) {
-        Ok(added) => octo_reply(&state, &call.format, Some(("familyDeviceAdded", &json!(added)))),
+        Ok(added) => octo_reply(
+            &state,
+            &call.format,
+            Some((
+                "familyDeviceAdded",
+                &public_address::device_answer(&added, &bases),
+            )),
+        ),
         Err(e) => family_failure(&state, &call.format, &e),
     }
 }

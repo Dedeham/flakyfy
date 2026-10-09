@@ -648,6 +648,8 @@ pub struct AddMember {
     pub shared_libraries: Option<SharedLibraries>,
     /// Bring an existing Navidrome account into the family (its old sign-ins stop).
     pub adopt: bool,
+    /// Whether they may listen away from home; `Some(false)` turns the preset's `away` off.
+    pub away: Option<bool>,
 }
 
 /// Changes to a member.
@@ -719,6 +721,24 @@ pub struct FamilyService {
     links: RwLock<Option<LinkMode>>,
     /// The library ids each member was last given, so a change is sent only once.
     applied_libraries: Mutex<HashMap<String, Vec<i64>>>,
+    /// This running Octo's id, which `/family/hello` answers so a reachability check can tell
+    /// this server from another.
+    instance: String,
+    /// The last public address a trusted reverse proxy named, offered to the owner.
+    seen_public: RwLock<Option<String>>,
+    /// The last home address a request came in on.
+    seen_home: RwLock<Option<String>>,
+    /// Dashboard-to-Family-page sign-in handoffs: token hash to (user, expiry).
+    handoffs: Mutex<HashMap<String, (String, DateTime<Utc>)>>,
+}
+
+/// How long a dashboard-to-Family-page handoff token works.
+pub const HANDOFF_TTL: TimeDelta = TimeDelta::seconds(60);
+
+/// What a handoff token is kept as.
+fn handoff_hash(token: &str) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(token.as_bytes()))
 }
 
 impl Default for FamilyService {
@@ -776,7 +796,57 @@ impl FamilyService {
             pair_guard: PairGuard::new(clock),
             links: RwLock::new(None),
             applied_libraries: Mutex::new(HashMap::new()),
+            instance: hex::encode(rand::random::<[u8; 12]>()),
+            seen_public: RwLock::new(None),
+            seen_home: RwLock::new(None),
+            handoffs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// This running Octo's id.
+    pub fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// Keeps where a request came in: its own origin when that is a home address, and the
+    /// public origin a trusted proxy named (from [`super::public_address::forwarded_origin`]).
+    pub fn note_origin(&self, origin: &str, forwarded: Option<String>) {
+        let origin = origin.trim_end_matches('/');
+        if super::public_address::is_home_only(origin) && self.seen_home.read().as_deref() != Some(origin) {
+            *self.seen_home.write() = Some(origin.to_string());
+        }
+        if let Some(public) = forwarded
+            && self.seen_public.read().as_deref() != Some(public.as_str())
+        {
+            *self.seen_public.write() = Some(public);
+        }
+    }
+
+    /// The public address a trusted proxy last named, to offer the owner.
+    pub fn suggested_public_url(&self) -> Option<String> {
+        self.seen_public.read().clone()
+    }
+
+    /// The home address requests last came in on.
+    pub fn home_seen(&self) -> Option<String> {
+        self.seen_home.read().clone()
+    }
+
+    /// A single-use token that signs `user` in on the Family page for `ttl`. Only its hash is
+    /// kept, and it is never logged.
+    pub fn mint_handoff(&self, user: &str, ttl: TimeDelta) -> String {
+        let token = token();
+        let now = Utc::now();
+        let mut handoffs = self.handoffs.lock();
+        handoffs.retain(|_, (_, expires)| *expires > now);
+        handoffs.insert(handoff_hash(&token), (user.to_string(), now + ttl));
+        token
+    }
+
+    /// The user a handoff token signs in, once, while it works.
+    pub fn take_handoff(&self, token: &str) -> Option<String> {
+        let (user, expires) = self.handoffs.lock().remove(&handoff_hash(token.trim()))?;
+        (expires > Utc::now()).then_some(user)
     }
 
     /// The hooks in use: the ones installed, or the standard ones for `state`.
@@ -820,15 +890,10 @@ impl FamilyService {
         mode
     }
 
-    /// The address members' apps and links use: `Server:PublicUrl`, else `origin`.
+    /// The address members' apps and links use: `Server:PublicUrl` (normalized as the
+    /// dashboard shows it), else `origin`.
     pub fn public_base(state: &AppState, origin: &str) -> String {
-        let configured = state.settings.current().server.public_url.trim().to_string();
-        let base = if configured.is_empty() {
-            origin.to_string()
-        } else {
-            configured
-        };
-        base.trim_end_matches('/').to_string()
+        super::public_address::public_url(state).unwrap_or_else(|| origin.trim_end_matches('/').to_string())
     }
 
     // --- who is who ----------------------------------------------------------------------
@@ -1225,7 +1290,10 @@ impl FamilyService {
             username: existing.map_or(username.clone(), |u| u.user_name().to_string()),
             display_name,
             preset,
-            edits: Map::new(),
+            edits: match add.away {
+                Some(false) => Map::from_iter([(stored_edit_key("away"), Value::Bool(false))]),
+                _ => Map::new(),
+            },
             navidrome_user_id: user_id.clone(),
             navidrome_password: sealed,
             personal_library_id: Some(library_id),

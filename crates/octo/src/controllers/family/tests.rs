@@ -3,6 +3,7 @@
 //! requests, storage, the personal library, live streams and the explicit marks are fakes
 //! installed as hooks; a wiremock Navidrome answers sign-ins and pings.
 
+use crate::services::family::family_service::HANDOFF_TTL;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -3208,4 +3209,528 @@ fn pair_guard_counts_per_peer_and_per_username_across_addresses() {
         "the peer waits, whatever hop it names"
     );
     assert!(!guard.blocked("198.51.100.1", "192.168.1.6", "someone"));
+}
+
+// ------------------------------------------------------------------------------------------
+// The outside address, links for anywhere and for home, and the dashboard's handoff
+// ------------------------------------------------------------------------------------------
+
+/// A write on the Family page's API from `from`, with `host` as the Host header and any
+/// other headers given.
+async fn write_from(
+    f: &Fam,
+    method: Method,
+    uri: &str,
+    cookie: &str,
+    body: Value,
+    host: &str,
+    extra: &[(&str, String)],
+    from: &str,
+) -> Reply {
+    let mut headers = vec![
+        ("cookie", cookie.to_string()),
+        ("x-octo-family", "1".to_string()),
+        ("content-type", "application/json".to_string()),
+        ("host", host.to_string()),
+    ];
+    headers.extend(extra.iter().cloned());
+    raw(&f.app, method, uri, &headers, body.to_string(), from).await
+}
+
+async fn alex_code_from(f: &Fam, host: &str) -> Value {
+    let r = write_from(
+        f,
+        Method::POST,
+        "/api/family/me/devices",
+        &f.alex(),
+        json!({ "name": "", "kind": "OctoApp" }),
+        host,
+        &[],
+        HOME,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.json()
+}
+
+async fn session_from(f: &Fam, cookie: &str, host: &str, extra: &[(&str, String)], from: &str) -> Value {
+    let mut headers = vec![("cookie", cookie.to_string()), ("host", host.to_string())];
+    headers.extend(extra.iter().cloned());
+    let r = raw(
+        &f.app,
+        Method::GET,
+        "/api/family/session",
+        &headers,
+        String::new(),
+        from,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    r.json()
+}
+
+#[tokio::test]
+async fn home_only_when_public_url_unset_and_lan() {
+    let f = fam().await;
+    let added = alex_code_from(&f, "192.168.50.119:5274").await;
+    assert_eq!(added["homeOnly"], true, "{added}");
+    assert_eq!(added["publicUrl"], Value::Null);
+    assert_eq!(added["server"], "http://192.168.50.119:5274");
+    let code = added["pairCode"].as_str().expect("a code");
+    assert_eq!(
+        added["links"]["home"],
+        format!("http://192.168.50.119:5274/family/join#u=alex&c={code}")
+    );
+    assert_eq!(added["links"]["anywhere"], Value::Null);
+    let session = session_from(&f, &f.owner_cookie(), "octo.lan:5274", &[], HOME).await;
+    assert_eq!(session["homeOnly"], true);
+    // A name the outside world can reach is not home only, even without an outside address.
+    let added = alex_code_from(&f, "music.example.com").await;
+    assert_eq!(added["homeOnly"], false, "{added}");
+    // With an outside address set, nothing is home only.
+    let set = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let added = alex_code_from(&set, "192.168.50.119:5274").await;
+    assert_eq!(added["homeOnly"], false, "{added}");
+    let session = session_from(&set, &set.owner_cookie(), "192.168.50.119:5274", &[], HOME).await;
+    assert_eq!(session["homeOnly"], false);
+    assert_eq!(session["publicUrl"], "https://music.example.com");
+}
+
+#[tokio::test]
+async fn suggested_public_url_only_from_trusted_proxy() {
+    let f = fam().await;
+    let through = [
+        ("x-forwarded-host", "music.example.com".to_string()),
+        ("x-forwarded-proto", "https".to_string()),
+    ];
+    // From a peer that is not a trusted proxy the headers mean nothing.
+    let session = session_from(&f, &f.owner_cookie(), "192.168.1.20:5274", &through, HOME).await;
+    assert_eq!(session["suggestedPublicUrl"], Value::Null);
+    // Through the trusted proxy (127.0.0.0/8 by default) the address is offered to the owner.
+    let session = session_from(&f, &f.owner_cookie(), "octo:5274", &through, "127.0.0.1").await;
+    assert_eq!(session["suggestedPublicUrl"], "https://music.example.com");
+    let admin = f.get("/api/admin/family", None).await.json();
+    assert_eq!(admin["suggestedPublicUrl"], "https://music.example.com");
+    assert_eq!(admin["publicUrl"], Value::Null);
+    // Members are never offered it, and it is never applied on its own.
+    let alex = session_from(&f, &f.alex(), "192.168.1.20:5274", &[], HOME).await;
+    assert_eq!(alex["suggestedPublicUrl"], Value::Null);
+    assert_eq!(f.state.settings.current().server.public_url, "");
+    assert_eq!(alex_code_from(&f, "192.168.1.20:5274").await["homeOnly"], true);
+    // A home address through the proxy is never suggested over it.
+    let lan = [("x-forwarded-host", "192.168.1.2:5274".to_string())];
+    session_from(&f, &f.owner_cookie(), "octo:5274", &lan, "127.0.0.1").await;
+    assert_eq!(
+        f.state.family.suggested_public_url().as_deref(),
+        Some("https://music.example.com")
+    );
+}
+
+#[tokio::test]
+async fn public_address_save_validates() {
+    let f = fam().await;
+    let put = |cookie: String, url: &'static str| {
+        let f = &f;
+        async move {
+            f.put("/api/family/public-address", Some(&cookie), json!({ "url": url }))
+                .await
+        }
+    };
+    assert_eq!(
+        put(f.alex(), "https://music.example.com").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        put(f.sam(), "https://music.example.com").await.status,
+        StatusCode::FORBIDDEN
+    );
+    for bad in [
+        "ftp://music.example.com",
+        "https://me:secret@music.example.com",
+        "https://music.example.com/?x=1",
+        "https://",
+    ] {
+        let r = put(f.owner_cookie(), bad).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}: {}", r.body);
+    }
+    assert_eq!(f.state.settings.current().server.public_url, "");
+    let r = put(f.owner_cookie(), "  music.example.com/octo/ ").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.json()["publicUrl"], "https://music.example.com/octo");
+    let r = put(f.owner_cookie(), "").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.json()["publicUrl"], Value::Null);
+    assert_eq!(f.state.settings.current().server.public_url, "");
+}
+
+#[tokio::test]
+async fn public_address_put_writes_the_status_page_setting() {
+    let f = fam().await;
+    let r = f
+        .put(
+            "/api/family/public-address",
+            Some(&f.owner_cookie()),
+            json!({ "url": "music.example.com/" }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // The one setting the dashboard's Status page shows, normalized as it shows it.
+    assert_eq!(
+        f.state.settings.current().server.public_url,
+        "https://music.example.com"
+    );
+    let settings = f.get("/api/admin/settings", None).await;
+    assert_eq!(settings.status, StatusCode::OK, "{}", settings.body);
+    assert_eq!(
+        settings.json()["Server"]["PublicUrl"],
+        "https://music.example.com",
+        "{}",
+        settings.body
+    );
+    // Links use it from now on.
+    let added = alex_code_from(&f, "192.168.1.20:5274").await;
+    assert_eq!(added["server"], "https://music.example.com");
+}
+
+#[tokio::test]
+async fn check_reports_reachable() {
+    let f = fam().await;
+    // GET /family/hello answers this Octo's id to anyone, even with Family off.
+    let hello = f.get("/family/hello", None).await;
+    assert_eq!(hello.status, StatusCode::OK, "{}", hello.body);
+    assert_eq!(hello.json()["instance"], f.state.family.instance());
+    let off = fam_with(|s| s.family.enabled = false, Some("required")).await;
+    assert_eq!(off.get("/family/hello", None).await.status, StatusCode::OK);
+
+    let this = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/octo/family/hello"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "octo": "family", "instance": f.state.family.instance() })),
+        )
+        .mount(&this)
+        .await;
+    let other = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/family/hello"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "octo": "family", "instance": "another" })),
+        )
+        .mount(&other)
+        .await;
+    let check = |url: String| {
+        let f = &f;
+        async move {
+            f.post(
+                "/api/family/public-address/check",
+                Some(&f.owner_cookie()),
+                json!({ "url": url }),
+            )
+            .await
+        }
+    };
+    let r = check(format!("{}/octo/", this.uri())).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.json()["result"], "Reachable", "{}", r.body);
+    assert_eq!(r.json()["reachable"], true);
+    let r = check(other.uri()).await;
+    assert_eq!(r.json()["result"], "NotThisServer", "{}", r.body);
+    let closed = format!("http://{}", crate::services::test_support::refused_address());
+    let r = check(closed).await;
+    assert_eq!(r.json()["result"], "CouldNotReach", "{}", r.body);
+    assert!(
+        r.json()["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("mobile data")),
+        "{}",
+        r.body
+    );
+    // Only the owner checks.
+    let r = f
+        .post(
+            "/api/family/public-address/check",
+            Some(&f.alex()),
+            json!({ "url": other.uri() }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn links_carry_home_when_public_differs() {
+    let f = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let added = alex_code_from(&f, "192.168.1.5:5274").await;
+    let code = added["pairCode"].as_str().expect("a code");
+    assert_eq!(
+        added["links"]["anywhere"],
+        format!("https://music.example.com/family/join#u=alex&c={code}&home=http%3A%2F%2F192.168.1.5%3A5274")
+    );
+    assert_eq!(
+        added["links"]["home"],
+        format!("http://192.168.1.5:5274/family/join#u=alex&c={code}")
+    );
+    let invite = write_from(
+        &f,
+        Method::POST,
+        "/api/family/members/alex/invite",
+        &f.sam(),
+        json!({}),
+        "192.168.1.5:5274",
+        &[],
+        HOME,
+    )
+    .await
+    .json();
+    let link = invite["inviteLink"].as_str().expect("a link");
+    assert!(
+        link.starts_with("https://music.example.com/family/join#invite="),
+        "{link}"
+    );
+    assert!(link.ends_with("&home=http%3A%2F%2F192.168.1.5%3A5274"), "{link}");
+    // Through the outside address, home is still the home address seen last.
+    let added = alex_code_from(&f, "music.example.com").await;
+    assert_eq!(added["servers"]["home"], "http://192.168.1.5:5274", "{added}");
+    // When the outside address is where the request came from and no home was seen, the
+    // anywhere link names no home.
+    let fresh = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let added = alex_code_from(&fresh, "music.example.com").await;
+    let anywhere = added["links"]["anywhere"].as_str().expect("a link");
+    assert!(!anywhere.contains("home="), "{anywhere}");
+}
+
+#[tokio::test]
+async fn subpath_public_url_links() {
+    let f = fam_with(|s| s.server.public_url = "example.com/octo/".into(), None).await;
+    let added = alex_code_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(added["server"], "https://example.com/octo");
+    let code = added["pairCode"].as_str().expect("a code");
+    let anywhere = added["links"]["anywhere"].as_str().expect("a link");
+    assert!(
+        anywhere.starts_with(&format!(
+            "https://example.com/octo/family/join#u=alex&c={code}&home="
+        )),
+        "{anywhere}"
+    );
+    let invite = f
+        .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
+        .await
+        .json();
+    let link = invite["inviteLink"].as_str().expect("a link");
+    assert!(
+        link.starts_with("https://example.com/octo/family/join#invite="),
+        "{link}"
+    );
+    // An app password's server is the prefixed address too.
+    let r = f
+        .post(
+            "/api/family/me/devices",
+            Some(&f.alex()),
+            json!({ "name": "", "kind": "SubsonicApp" }),
+        )
+        .await
+        .json();
+    assert_eq!(r["server"], "https://example.com/octo");
+    assert_eq!(r["servers"]["anywhere"], "https://example.com/octo");
+}
+
+#[tokio::test]
+async fn links_offer_anywhere_and_home() {
+    let f = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let added = alex_code_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(added["anywhereAvailable"], true, "{added}");
+    assert_eq!(added["awayAllowed"], true);
+    assert_eq!(added["homeOnly"], false);
+    // The old single field is the default choice: anywhere.
+    assert_eq!(added["server"], "https://music.example.com");
+    assert_eq!(added["servers"]["anywhere"], "https://music.example.com");
+    assert_eq!(added["servers"]["home"], "http://192.168.1.5:5274");
+    // Both links carry the one code.
+    let code = added["pairCode"].as_str().expect("a code");
+    for which in ["anywhere", "home"] {
+        let link = added["links"][which].as_str().expect("a link");
+        assert!(link.contains(&format!("#u=alex&c={code}")), "{link}");
+    }
+    // An app password gives servers, not join links.
+    let r = write_from(
+        &f,
+        Method::POST,
+        "/api/family/me/devices",
+        &f.alex(),
+        json!({ "name": "", "kind": "SubsonicApp" }),
+        "192.168.1.5:5274",
+        &[],
+        HOME,
+    )
+    .await
+    .json();
+    assert_eq!(r["links"], Value::Null);
+    assert_eq!(r["servers"]["home"], "http://192.168.1.5:5274");
+    // The apps' call answers the same shape.
+    let r = f.rest_as_alex("addFamilyDevice", "kind=OctoApp").await.subsonic();
+    let added = &r["familyDeviceAdded"];
+    assert_eq!(added["anywhereAvailable"], true, "{r}");
+    assert!(added["links"]["anywhere"].is_string(), "{r}");
+    assert!(added["links"]["home"].is_string(), "{r}");
+    // So does an invite.
+    let invite = f
+        .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
+        .await
+        .json();
+    assert_eq!(invite["anywhereAvailable"], true);
+    assert_eq!(invite["inviteLink"], invite["links"]["anywhere"]);
+    assert!(
+        invite["links"]["home"]
+            .as_str()
+            .is_some_and(|l| l.starts_with("http://localhost/family/join#invite=")),
+        "{invite}"
+    );
+}
+
+#[tokio::test]
+async fn anywhere_unavailable_without_public_url() {
+    let f = fam().await;
+    let added = alex_code_from(&f, "192.168.1.5:5274").await;
+    assert_eq!(added["anywhereAvailable"], false);
+    assert_eq!(added["awayAllowed"], true);
+    assert_eq!(added["links"]["anywhere"], Value::Null);
+    assert_eq!(added["servers"]["anywhere"], Value::Null);
+    assert_eq!(added["server"], "http://192.168.1.5:5274");
+    let invite = f
+        .post("/api/family/members/alex/invite", Some(&f.sam()), json!({}))
+        .await
+        .json();
+    assert_eq!(invite["anywhereAvailable"], false);
+    assert_eq!(invite["links"]["anywhere"], Value::Null);
+    assert_eq!(invite["inviteLink"], invite["links"]["home"]);
+    let r = f.rest_as_alex("addFamilyDevice", "kind=OctoApp").await.subsonic();
+    assert_eq!(r["familyDeviceAdded"]["anywhereAvailable"], false, "{r}");
+}
+
+#[tokio::test]
+async fn member_without_away_defaults_home() {
+    let f = fam_with(|s| s.server.public_url = "https://music.example.com".into(), None).await;
+    let added = write_from(
+        &f,
+        Method::POST,
+        "/api/family/members",
+        &f.owner_cookie(),
+        json!({ "username": "kim", "displayName": "Kim", "preset": "Member", "away": false }),
+        "192.168.1.5:5274",
+        &[],
+        HOME,
+    )
+    .await;
+    assert_eq!(added.status, StatusCode::OK, "{}", added.body);
+    let added = added.json();
+    assert_eq!(added["awayAllowed"], false);
+    assert_eq!(added["anywhereAvailable"], false);
+    assert_eq!(added["links"]["anywhere"], Value::Null);
+    let link = added["inviteLink"].as_str().expect("a link");
+    assert!(
+        link.starts_with("http://192.168.1.5:5274/family/join#invite="),
+        "{link}"
+    );
+    let kim = f.state.family_store.member("kim").expect("added");
+    assert!(!kim.abilities().away);
+    // A device a manager adds for kim defaults home too.
+    let device = write_from(
+        &f,
+        Method::POST,
+        "/api/family/members/kim/devices",
+        &f.owner_cookie(),
+        json!({ "name": "", "kind": "OctoApp" }),
+        "192.168.1.5:5274",
+        &[],
+        HOME,
+    )
+    .await
+    .json();
+    assert_eq!(device["anywhereAvailable"], false, "{device}");
+    assert_eq!(device["server"], "http://192.168.1.5:5274");
+    // Left on (the default), a new member's links default to anywhere.
+    let lee = f
+        .post(
+            "/api/family/members",
+            Some(&f.owner_cookie()),
+            json!({ "username": "lee", "displayName": "Lee", "preset": "Member" }),
+        )
+        .await
+        .json();
+    assert_eq!(lee["anywhereAvailable"], true, "{lee}");
+    assert!(
+        f.state
+            .family_store
+            .member("lee")
+            .expect("added")
+            .abilities()
+            .away
+    );
+}
+
+#[tokio::test]
+async fn handoff_signs_the_owner_in_once() {
+    let f = fam_with(|_| {}, Some("required")).await;
+    let admin = format!("octo_browse={}", f.state.browse_sessions.create("winters"));
+    let open = f.post("/api/admin/family/open", Some(&admin), json!({})).await;
+    assert_eq!(open.status, StatusCode::OK, "{}", open.body);
+    let token = open.json()["token"].as_str().expect("a token").to_string();
+    let r = f
+        .post("/api/family/handoff", None, json!({ "token": token }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.json()["username"], "winters");
+    let cookie = format!("octo_family={}", r.cookie_token());
+    let session = f.get("/api/family/session", Some(&cookie)).await.json();
+    assert_eq!(session["owner"], true, "{session}");
+    assert_eq!(session["username"], "winters");
+    // Once only.
+    let again = f
+        .post("/api/family/handoff", None, json!({ "token": token }))
+        .await;
+    assert_eq!(again.status, StatusCode::UNAUTHORIZED);
+    assert!(again.headers.get("set-cookie").is_none());
+}
+
+#[tokio::test]
+async fn handoff_token_expires() {
+    let f = fam().await;
+    let token = f
+        .state
+        .family
+        .mint_handoff("winters", chrono::TimeDelta::seconds(-1));
+    let r = f
+        .post("/api/family/handoff", None, json!({ "token": token }))
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = f
+        .post("/api/family/handoff", None, json!({ "token": "made-up" }))
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // A live one works for 60 seconds.
+    assert_eq!(HANDOFF_TTL, chrono::TimeDelta::seconds(60));
+}
+
+#[tokio::test]
+async fn handoff_refused_for_non_admin_sessions() {
+    let f = fam_with(|_| {}, Some("required")).await;
+    assert_eq!(
+        f.post("/api/admin/family/open", None, json!({})).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let member = format!(
+        "octo_browse={}",
+        f.state.browse_sessions.create_family("alex", SessionKind::Member)
+    );
+    let r = f.post("/api/admin/family/open", Some(&member), json!({})).await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.body);
+    // A Family page sign-in is not a dashboard session.
+    let r = f
+        .post("/api/admin/family/open", Some(&f.owner_cookie()), json!({}))
+        .await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.body);
+    // With the dashboard's sign-in off nobody is known, so there is no one to hand off.
+    let open = fam().await;
+    let r = open.post("/api/admin/family/open", None, json!({})).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
 }

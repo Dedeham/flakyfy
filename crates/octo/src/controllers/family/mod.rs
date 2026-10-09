@@ -11,6 +11,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod account;
+pub mod address;
 pub mod admin_entry;
 pub mod manage;
 
@@ -19,6 +20,7 @@ mod tests;
 #[cfg(test)]
 mod wiring_tests;
 
+use crate::services::family::public_address::{self, LinkBases};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::body::{Body, Bytes};
@@ -67,6 +69,16 @@ pub fn routes() -> RouteSet {
             post(sign_in).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
         )
         .route("/api/family/session", get(session))
+        .route(
+            "/api/family/handoff",
+            post(address::handoff).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
+        )
+        .route("/api/family/public-address", put(address::put_public_address))
+        .route(
+            "/api/family/public-address/check",
+            post(address::check_public_address),
+        )
+        .route("/family/hello", get(address::hello))
         .route("/api/family/signout", post(sign_out))
         .route(
             "/api/family/join",
@@ -379,6 +391,7 @@ impl FromRequestParts<AppState> for Web {
             .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
             .collect();
         let forwarded = (!forwarded.is_empty()).then(|| forwarded.join(","));
+        let socket_peer = peer;
         let origin = client_origin(
             peer,
             forwarded.as_deref(),
@@ -398,6 +411,16 @@ impl FromRequestParts<AppState> for Web {
             .filter(|h| !h.is_empty())
             .unwrap_or("localhost")
             .to_string();
+        let request_origin = format!("{}://{host}", if https { "https" } else { "http" });
+        state.family.note_origin(
+            &request_origin,
+            public_address::forwarded_origin(
+                socket_peer,
+                &parts.headers,
+                https,
+                &settings.family.trusted_proxy_list(),
+            ),
+        );
         let signed_call = match (signed, reading.as_ref()) {
             (true, Some(reading)) => Some(check_signed_call(state, reading, address, peer).await?),
             _ => None,
@@ -409,7 +432,7 @@ impl FromRequestParts<AppState> for Web {
             place,
             untrusted_proxy: origin.untrusted_proxy,
             https,
-            origin: format!("{}://{host}", if https { "https" } else { "http" }),
+            origin: request_origin,
             signed_call,
         })
     }
@@ -446,6 +469,11 @@ impl Web {
     /// The address members' apps and links use.
     pub fn base(&self, state: &AppState) -> String {
         FamilyService::public_base(state, &self.origin)
+    }
+
+    /// The bases for links made for `user`.
+    pub fn link_bases(&self, state: &AppState, user: &str) -> LinkBases {
+        LinkBases::new(state, &self.origin, public_address::away_allowed(state, user))
     }
 
     /// The cookie that keeps `token` for the Family page's API.

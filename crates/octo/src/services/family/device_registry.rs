@@ -76,12 +76,20 @@ pub fn detected_device_id(user: &str, sighting: &Sighting) -> String {
 pub const NOTICES_PER_WINDOW: usize = 5;
 pub const NOTICE_WINDOW: Duration = Duration::from_secs(60 * 60);
 
+/// How long a device noted after a checked sign-in counts as noted lately: within it, another
+/// unchecked sign-in from it is not checked again only to note it.
+pub const NOTED_LATELY: Duration = Duration::from_secs(60);
+/// Devices remembered as noted lately, at most.
+const NOTED_KEPT: usize = 10_000;
+
 /// The device registry over `family.json`.
 pub struct DeviceRegistry {
     store: Arc<FamilyStore>,
     events: broadcast::Sender<NewDevice>,
     /// Person to when their recent new-device notices went out.
     notices: Mutex<HashMap<String, VecDeque<Instant>>>,
+    /// Device to when it was last noted.
+    noted: Mutex<HashMap<String, Instant>>,
 }
 
 impl DeviceRegistry {
@@ -91,7 +99,26 @@ impl DeviceRegistry {
             store,
             events,
             notices: Mutex::new(HashMap::new()),
+            noted: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether this device was noted less than [`NOTED_LATELY`] ago.
+    pub fn noted_lately(&self, device_id: &str) -> bool {
+        self.noted
+            .lock()
+            .get(device_id)
+            .is_some_and(|at| at.elapsed() < NOTED_LATELY)
+    }
+
+    fn mark_noted(&self, device_id: &str) {
+        let now = Instant::now();
+        let mut noted = self.noted.lock();
+        if noted.len() >= NOTED_KEPT && !noted.contains_key(device_id) {
+            noted.retain(|_, at| now.duration_since(*at) < NOTED_LATELY);
+            crate::services::admin::sign_in_throttle::trim_oldest(&mut noted, NOTED_KEPT - 1, |at| Some(*at));
+        }
+        noted.insert(device_id.to_string(), now);
     }
 
     /// Whether another new-device notice about `user` may go out now, counting it if so.
@@ -126,6 +153,7 @@ impl DeviceRegistry {
         let Some(device_id) = caller.device_id.as_deref() else {
             return;
         };
+        self.mark_noted(device_id);
         // A request that names no app leaves the app Octo last saw as it was.
         let app = if sighting.client.trim().is_empty() && sighting.user_agent.trim().is_empty() {
             String::new()

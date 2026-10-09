@@ -1,12 +1,13 @@
 //! `octoFamily` v1: Octo Family for the apps, on `/rest`, signed like any Subsonic call. The
 //! family gate has already signed members in; the owner and accounts outside the family are
-//! checked with Navidrome here. Every answer is a normal `subsonic-response` with
+//! checked here through the gate's reading, which has Navidrome check exactly the sign-in the
+//! gate read. Every answer is a normal `subsonic-response` with
 //! `"type":"octo"`, JSON or XML (XML writes scalars as attributes and lists as elements).
 //! While Family is off these calls reach Navidrome as any unknown call would.
 //!
 //! `octoFamilyPair` is open: an app pairs with a member's username and 6-digit code before it
-//! has a secret. Wrong codes count per address, against the member's live code (five burn it),
-//! and for everyone together.
+//! has a secret. Wrong codes count per address, per peer, per account, against the member's
+//! live code (five burn it), and for everyone together.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -16,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::RequestQuality;
-use octo_core::family::device::{DeviceKind, NetworkPlace, client_origin};
+use octo_core::family::device::{ClientOrigin, DeviceKind, NetworkPlace, client_origin};
 use octo_core::family::request::RequestKind;
 use octo_subsonic::subsonic_response_builder::{
     SUBSONIC_NAMESPACE, SUBSONIC_VERSION, SubsonicReply, json_shape_to_xml,
@@ -24,14 +25,15 @@ use octo_subsonic::subsonic_response_builder::{
 use octo_subsonic::xml::XElement;
 use serde_json::{Value, json};
 
-use super::caller_checks::{SubsonicCall, is_successful_subsonic_response};
+use super::caller_checks::SubsonicCall;
 use crate::app::AppState;
 use crate::controllers::family::account::{device_kind, quality_choice, quality_mode, set_preference};
 use crate::controllers::family::manage::request_state;
 use crate::http::routes::RouteSet;
+use crate::middleware::family_gate::{GateReading, Unverified};
 use crate::middleware::forwarded::RequestScheme;
 use crate::services::family::family_service::{Actor, FamilyError, NewRequest, quality_json};
-use crate::services::family::{FamilyCaller, FamilyService, family_caller};
+use crate::services::family::{FamilyCaller, FamilyService};
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -223,45 +225,33 @@ async fn begin(state: &AppState, req: Request) -> Result<FamilyCall, Response> {
     if !state.settings.current().family.enabled {
         return Err(crate::http::catch_all::catch_all(State(state.clone()), req).await);
     }
-    let caller = family_caller(req.extensions()).cloned();
+    let reading = GateReading::of(req.extensions()).cloned();
     let origin = origin_of(&req);
     let call = SubsonicCall::read(state, req).await?;
     let format = format_of(&call);
-    let Some(mut caller) = caller else {
-        return Err(if call.param_opt("u").is_none_or(|u| u.trim().is_empty()) {
-            error(state, &format, 10, "Required parameter is missing: u")
-        } else {
-            error(state, &format, 40, "Wrong username or password")
-        });
+    // Only the gate checks who is asking, with exactly the sign-in it read: a member's against
+    // their devices, anyone else's with Navidrome (which notes their device when it checks out).
+    let verified = match reading {
+        Some(reading) => reading.verify(state).await,
+        None => Err(Unverified::Missing),
     };
-    if caller.managed && !caller.checked {
-        // A member's sign-in is always checked by the gate; one that was not is no sign-in.
-        return Err(error(state, &format, 40, "Wrong username or password"));
-    }
-    if !caller.managed {
-        // The gate passes the owner and accounts outside the family on as they came, so
-        // Navidrome says whether the sign-in is right.
-        let mut auth = call.parameters.clone();
-        auth.insert("f".into(), "json".into());
-        let Some(check) = call.proxy.relay_safe("rest/ping", &auth).await else {
+    let caller = match verified {
+        Ok(verified) => verified.caller().clone(),
+        Err(Unverified::Missing) => {
+            return Err(error(state, &format, 10, "Required parameter is missing: u"));
+        }
+        Err(Unverified::Refused) => {
+            return Err(error(state, &format, 40, "Wrong username or password"));
+        }
+        Err(Unverified::Unreachable) => {
             return Err(error(
                 state,
                 &format,
                 0,
                 "Octo can't reach Navidrome to check who is asking",
             ));
-        };
-        if !is_successful_subsonic_response(&check.body, "json") {
-            return Err(error(state, &format, 40, "Wrong username or password"));
         }
-        if !caller.checked {
-            // The sign-in checks out now, so the device it came from is noted before the call
-            // reads the device list.
-            caller.checked = true;
-            let seen = crate::middleware::family_gate::sighting(call.headers(), &call.parameters);
-            state.family_devices.seen(&caller, &seen);
-        }
-    }
+    };
     Ok(FamilyCall {
         call,
         caller,
@@ -661,8 +651,8 @@ pub async fn create_family_playlist(State(state): State<AppState>, req: Request)
     }
 }
 
-/// The client address of a request the gate did not look at.
-fn address_of(state: &AppState, req: &Request) -> IpAddr {
+/// Where a request comes from: the client address, and the peer Octo can vouch for.
+fn origin_of_client(state: &AppState, req: &Request) -> ClientOrigin {
     let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -682,7 +672,6 @@ fn address_of(state: &AppState, req: &Request) -> IpAddr {
         &settings.family.trusted_proxy_list(),
         &settings.family.home_network_list(),
     )
-    .address
 }
 
 /// `octoFamilyPair` (open, GET or form POST): `username`, `code`, `deviceName`, `platform`.
@@ -691,7 +680,7 @@ pub async fn octo_family_pair(State(state): State<AppState>, req: Request) -> Re
     if !state.settings.current().family.enabled {
         return crate::http::catch_all::catch_all(State(state.clone()), req).await;
     }
-    let address = address_of(&state, &req);
+    let from = origin_of_client(&state, &req);
     let origin = origin_of(&req);
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
@@ -715,7 +704,8 @@ pub async fn octo_family_pair(State(state): State<AppState>, req: Request) -> Re
     let base = FamilyService::public_base(&state, &origin);
     match state.family.pair(
         &state,
-        &address.to_string(),
+        &from.address.to_string(),
+        &from.peer.to_string(),
         username,
         code,
         &device_name,

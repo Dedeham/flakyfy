@@ -22,7 +22,7 @@ mod wiring_tests;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::body::{Body, Bytes};
-use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -38,12 +38,16 @@ use crate::http::routes::RouteSet;
 use crate::middleware::forwarded::RequestScheme;
 use crate::services::admin::SessionKind;
 use crate::services::family::family_service::{Actor, FamilyError};
+use crate::services::family::member_bridge::SignIn;
 use crate::services::family::{FamilyService, Member};
+use octo_subsonic::subsonic_request_parser::{RequestParts, RequestReading, read_request};
 
 /// The Family page's sign-in cookie.
 pub const COOKIE: &str = "octo_family";
 /// The header every write carries.
 pub const WRITE_HEADER: &str = "X-Octo-Family";
+/// The largest body a sign-in, a join or a password change may carry.
+pub const SIGN_IN_BODY: usize = 16 * 1024;
 
 const SIGN_IN_FIRST: &str = "Sign in first.";
 const FAMILY_OFF: &str = "Family is off on this server.";
@@ -58,10 +62,16 @@ pub fn routes() -> RouteSet {
     use account::*;
     use manage::*;
     RouteSet::new()
-        .route("/api/family/auth", post(sign_in))
+        .route(
+            "/api/family/auth",
+            post(sign_in).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
+        )
         .route("/api/family/session", get(session))
         .route("/api/family/signout", post(sign_out))
-        .route("/api/family/join", post(join))
+        .route(
+            "/api/family/join",
+            post(join).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
+        )
         .route("/api/family/me", get(me))
         .route("/api/family/me/devices", get(my_devices).post(add_my_device))
         .route(
@@ -74,7 +84,10 @@ pub fn routes() -> RouteSet {
         .route("/api/family/me/saved/{id}", delete(forget_saved))
         .route("/api/family/me/library", get(my_library))
         .route("/api/family/me/library/{id}", delete(remove_from_my_library))
-        .route("/api/family/me/password", put(change_password))
+        .route(
+            "/api/family/me/password",
+            put(change_password).layer(DefaultBodyLimit::max(SIGN_IN_BODY)),
+        )
         .route("/api/family/me/quality", put(set_quality))
         .route("/api/family/me/ntfy", put(set_ntfy))
         .route("/api/family/me/lastfm", get(my_last_fm))
@@ -181,6 +194,8 @@ pub fn body_as<T: DeserializeOwned + Default>(body: &Bytes) -> Result<T, Respons
 pub struct Web {
     pub headers: HeaderMap,
     pub address: IpAddr,
+    /// The address Octo can vouch for, whatever hops the request names.
+    pub peer: IpAddr,
     pub place: NetworkPlace,
     /// A reverse proxy on a home network that Octo does not trust, when the request came
     /// through one (everyone then counts as away until it is listed).
@@ -192,14 +207,19 @@ pub struct Web {
     pub signed_call: Option<Signed>,
 }
 
-/// Whether a query carries a Subsonic sign-in: `u` with `p`, or with `t` and `s`.
-pub fn has_subsonic_sign_in(query: &str) -> bool {
-    let keys: Vec<String> = url::form_urlencoded::parse(query.as_bytes())
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(k, _)| k.to_ascii_lowercase())
-        .collect();
-    let has = |key: &str| keys.iter().any(|k| k == key);
-    has("u") && (has("p") || (has("t") && has("s")))
+/// A query read once, as the family gate reads one.
+fn read_query(query: &str) -> RequestReading {
+    read_request(&RequestParts {
+        query: Some(query),
+        ..Default::default()
+    })
+}
+
+/// Whether a query read once carries a Subsonic sign-in: `u` with `p`, or with `t` and `s`.
+fn carries_sign_in(reading: &RequestReading) -> bool {
+    let sign_in = SignIn::of(reading, None);
+    !sign_in.users.is_empty()
+        && (!sign_in.passwords.is_empty() || (!sign_in.tokens.is_empty() && !sign_in.salts.is_empty()))
 }
 
 fn wrong_sign_in() -> Response {
@@ -210,19 +230,25 @@ fn wrong_sign_in() -> Response {
 }
 
 /// Checks a Subsonic sign-in on a Family API call: a member's against their devices (as the
-/// family gate does on `/rest`), anyone else's with Navidrome.
-async fn check_signed_call(state: &AppState, query: &str, address: IpAddr) -> Result<Signed, Response> {
-    use crate::services::family::member_bridge::{self, DeviceSecret, FailureThrottle, SignIn, Verdict};
-    let sign_in = SignIn::read(Some(query), None, b"");
+/// family gate does on `/rest`), anyone else's with Navidrome, with exactly the sign-in read
+/// from the query once. Wrong ones count against the address, the peer and the account.
+async fn check_signed_call(
+    state: &AppState,
+    reading: &RequestReading,
+    address: IpAddr,
+    peer: IpAddr,
+) -> Result<Signed, Response> {
+    use crate::services::family::member_bridge::{self, DeviceSecret, MAX_FAILURES, TryKeys, Verdict};
+    let sign_in = SignIn::of(reading, None);
     let users = sign_in.named_users();
     let [user] = users.as_slice() else {
         return Err(wrong_sign_in());
     };
     let user = user.to_string();
+    let throttle = &state.family_bridge.throttle;
     if let Some(member) = state.family_store.member(&user) {
-        let key = FailureThrottle::key(&address, &member.username);
-        let throttle = &state.family_bridge.throttle;
-        if throttle.blocked(&key) {
+        let keys = TryKeys::new(&address, &peer, &member.username, MAX_FAILURES);
+        if throttle.blocked_by(&keys) {
             return Err(wrong_sign_in());
         }
         let devices: Vec<DeviceSecret> = state
@@ -241,7 +267,7 @@ async fn check_signed_call(state: &AppState, query: &str, address: IpAddr) -> Re
             Verdict::Verified { device_id } => device_id,
             Verdict::Missing => return Err(wrong_sign_in()),
             Verdict::Refused => {
-                throttle.failed(&key);
+                throttle.failed_by(&keys);
                 return Err(wrong_sign_in());
             }
         };
@@ -258,43 +284,47 @@ async fn check_signed_call(state: &AppState, query: &str, address: IpAddr) -> Re
             device_id: Some(device_id),
         });
     }
-    // Navidrome says whether the owner's (or anyone else's) sign-in is right.
-    let url = state
+    let keys = TryKeys::new(&address, &peer, &user, MAX_FAILURES);
+    if throttle.blocked_by(&keys) {
+        return Err(wrong_sign_in());
+    }
+    // Navidrome says whether the owner's (or anyone else's) sign-in is right: exactly the one
+    // read here, so the account checked is the account named.
+    let configured = state
         .settings
         .current()
         .subsonic
         .url
-        .clone()
-        .unwrap_or_default()
-        .trim_end_matches('/')
-        .to_string();
-    if url.is_empty() {
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty());
+    if !configured {
         return Err(refusal(
             StatusCode::SERVICE_UNAVAILABLE,
             "Navidrome's address is not set yet.",
         ));
     }
-    let auth: String = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(url::form_urlencoded::parse(query.as_bytes()).filter(|(k, _)| {
-            ["u", "p", "t", "s", "v", "c"]
-                .iter()
-                .any(|n| k.eq_ignore_ascii_case(n))
-        }))
-        .append_pair("f", "json")
-        .finish();
-    let ok = match state.http.get(format!("{url}/rest/ping?{auth}")).send().await {
-        Ok(response) => response.bytes().await.is_ok_and(|body| {
-            crate::controllers::subsonic::caller_checks::is_successful_subsonic_response(&body, "json")
-        }),
-        Err(_) => {
+    let parameters = reading.parameters();
+    let Some(credential) = crate::middleware::family_gate::credential_of(reading, &parameters, Some(&user))
+    else {
+        throttle.failed_by(&keys);
+        return Err(wrong_sign_in());
+    };
+    match state
+        .credential_check
+        .check(Some(&credential), &state.subsonic_proxy)
+        .await
+    {
+        Ok(crate::services::subsonic::CredentialVerdict::Accepted) => {}
+        Ok(crate::services::subsonic::CredentialVerdict::Refused) => {
+            throttle.failed_by(&keys);
+            return Err(wrong_sign_in());
+        }
+        _ => {
             return Err(refusal(
                 StatusCode::BAD_GATEWAY,
                 "Octo could not reach Navidrome to check who is asking.",
             ));
         }
-    };
-    if !ok {
-        return Err(wrong_sign_in());
     }
     let owner = state.family_store.is_owner(&user);
     Ok(Signed {
@@ -322,8 +352,10 @@ impl FromRequestParts<AppState> for Web {
             .get(WRITE_HEADER)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.trim() == "1");
-        // A Subsonic-signed call cannot be made by another website, so it needs no header.
-        let signed = parts.uri.query().is_some_and(has_subsonic_sign_in);
+        // A Subsonic-signed call cannot be made by another website, so it needs no header. The
+        // query is read once, for this and for checking the sign-in.
+        let reading = parts.uri.query().map(read_query);
+        let signed = reading.as_ref().is_some_and(carries_sign_in);
         if write && !marked && !signed {
             return Err(refusal(
                 StatusCode::FORBIDDEN,
@@ -349,7 +381,7 @@ impl FromRequestParts<AppState> for Web {
             &settings.family.trusted_proxy_list(),
             &settings.family.home_network_list(),
         );
-        let (address, place) = (origin.address, origin.place);
+        let (address, place, peer) = (origin.address, origin.place, origin.peer);
         let https = parts
             .extensions
             .get::<RequestScheme>()
@@ -362,13 +394,14 @@ impl FromRequestParts<AppState> for Web {
             .filter(|h| !h.is_empty())
             .unwrap_or("localhost")
             .to_string();
-        let signed_call = match (signed, parts.uri.query()) {
-            (true, Some(query)) => Some(check_signed_call(state, query, address).await?),
+        let signed_call = match (signed, reading.as_ref()) {
+            (true, Some(reading)) => Some(check_signed_call(state, reading, address, peer).await?),
             _ => None,
         };
         Ok(Web {
             headers: parts.headers.clone(),
             address,
+            peer,
             place,
             untrusted_proxy: origin.untrusted_proxy,
             https,

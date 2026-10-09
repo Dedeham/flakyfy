@@ -32,7 +32,8 @@ pub(crate) struct SubsonicCall {
 }
 
 impl SubsonicCall {
-    /// Reads the body and the parameters (query, then form or JSON body).
+    /// Reads the body and the parameters (query, then form or JSON body); while Family is on,
+    /// the parameters are the ones the family gate read.
     #[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
     pub async fn read(state: &AppState, req: Request) -> Result<SubsonicCall, Response> {
         let (parts, body) = req.into_parts();
@@ -40,8 +41,7 @@ impl SubsonicCall {
             .await
             .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
         let incoming = Arc::new(IncomingRequest::from_parts(&parts, body));
-        let mut parameters = incoming.parameters();
-        crate::services::family::audio_gate::hold_quality(&parts.extensions, &mut parameters);
+        let parameters = incoming.parameters();
         let proxy = state.subsonic_proxy.with_request(Arc::clone(&incoming));
         Ok(SubsonicCall {
             incoming,

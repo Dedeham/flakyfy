@@ -391,23 +391,31 @@ fn form_parameters(content_type: &str, body: &[u8]) -> StringValuesCollection {
 /// `JsonSerializerOptions.MaxDepth`'s default.
 const MAX_JSON_DEPTH: usize = 64;
 
-/// `ExtractJsonParametersAsync`: a top-level object's members as `JsonElement.ToString()`
-/// gives them, or `None` when the body is not one (which the C# ignored).
-pub fn json_parameters(body: &[u8]) -> Option<Vec<(String, String)>> {
-    // StreamReader: UTF-8 with replacement characters, a byte order mark dropped.
+/// A JSON object body's members, each as its raw JSON text, read the way the parameters read
+/// one: UTF-8 with replacement characters, a byte order mark dropped, at most 64 levels deep.
+/// `None` when the body is not one such object.
+pub fn json_object(body: &[u8]) -> Option<IndexMap<String, Box<serde_json::value::RawValue>>> {
     let text = String::from_utf8_lossy(body);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     if text.is_empty() {
         return None;
     }
     let members: IndexMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(text).ok()?;
+    // The object itself is one level.
+    if members.values().any(|raw| depth(raw.get()) + 1 > MAX_JSON_DEPTH) {
+        return None;
+    }
+    Some(members)
+}
+
+/// `ExtractJsonParametersAsync`: a top-level object's members as `JsonElement.ToString()`
+/// gives them, or `None` when the body is not one (which the C# ignored).
+pub fn json_parameters(body: &[u8]) -> Option<Vec<(String, String)>> {
+    // StreamReader: UTF-8 with replacement characters, a byte order mark dropped.
+    let members = json_object(body)?;
     let mut out = Vec::with_capacity(members.len());
     for (key, raw) in members {
         let raw = raw.get();
-        // The object itself is one level.
-        if depth(raw) + 1 > MAX_JSON_DEPTH {
-            return None;
-        }
         let value = match raw.as_bytes().first() {
             Some(b'"') => serde_json::from_str::<String>(raw).ok()?,
             Some(b't') => "True".to_string(),
@@ -495,6 +503,153 @@ pub fn extract_parameter_values(request: &RequestParts<'_>, name: &str) -> Vec<S
         values.extend(body.iter().filter(keep).cloned());
     }
     values
+}
+
+/// What a request's body came to, read strictly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyReading {
+    /// Nothing to read: no body, or a body of a kind the parameters never read.
+    Nothing,
+    /// A url-encoded or multipart form's text fields.
+    Form(StringValuesCollection),
+    /// A JSON object's members, as [`json_parameters`] gives them.
+    Json(Vec<(String, String)>),
+    /// A form or JSON body that could not be read. [`extract_all_parameters`] would fall back
+    /// to guessing at it, or leave it out.
+    Unreadable,
+}
+
+/// A request read once, query and body: everything its parameters and its sign-in come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestReading {
+    pub query: StringValuesCollection,
+    pub body: BodyReading,
+}
+
+/// Reads a request's query and body once. A readable body comes to the same parameters as
+/// [`extract_all_parameters`]; a form or JSON body that cannot be read is
+/// [`BodyReading::Unreadable`] instead of a guess.
+pub fn read_request(request: &RequestParts<'_>) -> RequestReading {
+    let query = parse_query(request.query.unwrap_or(""));
+    let considered = request.content_length.is_some_and(|l| l > 0) || request.content_type.is_some();
+    let body = if !considered {
+        BodyReading::Nothing
+    } else if has_form_content_type(request.content_type) {
+        match read_form(request.content_type.unwrap_or(""), request.body) {
+            Ok(form) => BodyReading::Form(form),
+            Err(_) if request.body.is_empty() => BodyReading::Nothing,
+            Err(_) => BodyReading::Unreadable,
+        }
+    } else if request
+        .content_type
+        .is_some_and(|ct| ct.contains("application/json"))
+    {
+        match json_parameters(request.body) {
+            Some(members) => BodyReading::Json(members),
+            None if request.body.iter().all(u8::is_ascii_whitespace) => BodyReading::Nothing,
+            None => BodyReading::Unreadable,
+        }
+    } else {
+        BodyReading::Nothing
+    };
+    RequestReading { query, body }
+}
+
+impl RequestReading {
+    /// Whether the body could not be read.
+    pub fn unreadable(&self) -> bool {
+        self.body == BodyReading::Unreadable
+    }
+
+    /// The form fields, when the body was a form.
+    pub fn form(&self) -> Option<&StringValuesCollection> {
+        match &self.body {
+            BodyReading::Form(form) => Some(form),
+            _ => None,
+        }
+    }
+
+    /// The parameter dictionary, as [`extract_all_parameters`] builds it: query values first,
+    /// then the body's, which override them.
+    pub fn parameters(&self) -> Parameters {
+        let mut parameters = Parameters::new();
+        for (key, values) in self.query.iter() {
+            parameters.insert(key.to_string(), join_values(values));
+        }
+        match &self.body {
+            BodyReading::Form(form) => {
+                for (key, values) in form.iter() {
+                    parameters.insert(key.to_string(), join_values(values));
+                }
+            }
+            BodyReading::Json(members) => {
+                for (key, value) in members {
+                    parameters.insert(key.clone(), value.clone());
+                }
+            }
+            BodyReading::Nothing | BodyReading::Unreadable => {}
+        }
+        parameters
+    }
+
+    /// Every occurrence of a parameter from the query and then a form, blank ones skipped, as
+    /// [`extract_parameter_values`] reads them.
+    pub fn parameter_values(&self, name: &str) -> Vec<String> {
+        let keep = |v: &&String| !dotnet::is_blank(v);
+        let mut values = Vec::new();
+        if let Some(query) = self.query.get(name) {
+            values.extend(query.iter().filter(keep).cloned());
+        }
+        if let Some(body) = self.form().and_then(|form| form.get(name)) {
+            values.extend(body.iter().filter(keep).cloned());
+        }
+        values
+    }
+
+    /// Every value of `name` in any case, from the query and the body of either kind, each
+    /// trimmed, blank ones left out.
+    pub fn every_value(&self, name: &str) -> Vec<String> {
+        let mut values: Vec<String> = Vec::new();
+        let mut take = |found: &mut dyn Iterator<Item = &String>| {
+            values.extend(found.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()));
+        };
+        if let Some(found) = self.query.get(name) {
+            take(&mut found.iter());
+        }
+        match &self.body {
+            BodyReading::Form(form) => {
+                if let Some(found) = form.get(name) {
+                    take(&mut found.iter());
+                }
+            }
+            BodyReading::Json(members) => {
+                take(
+                    &mut members
+                        .iter()
+                        .filter(|(key, _)| dotnet::eq_ignore_case(key, name))
+                        .map(|(_, value)| value),
+                );
+            }
+            BodyReading::Nothing | BodyReading::Unreadable => {}
+        }
+        values
+    }
+
+    /// The body's values as one collection, keys matched ignoring case: a form's fields, or a
+    /// JSON object's members.
+    pub fn body_values(&self) -> Option<StringValuesCollection> {
+        match &self.body {
+            BodyReading::Form(form) => Some(form.clone()),
+            BodyReading::Json(members) => {
+                let mut values = StringValuesCollection::new();
+                for (key, value) in members {
+                    values.append(key.clone(), value.clone());
+                }
+                Some(values)
+            }
+            BodyReading::Nothing | BodyReading::Unreadable => None,
+        }
+    }
 }
 
 #[cfg(test)]

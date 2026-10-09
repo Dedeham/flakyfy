@@ -1370,3 +1370,439 @@ async fn wrong_tries_behind_an_untrusted_proxy_count_per_client() {
     .await;
     assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
 }
+
+// ---------------------------------------------------------------------------------------
+// One reading of every request
+// ---------------------------------------------------------------------------------------
+
+/// A POST whose body is raw bytes, from the home address.
+async fn send_bytes(f: &Family, uri: &str, content_type: &str, body: Vec<u8>) -> Reply {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", content_type)
+        .body(Body::from(body))
+        .expect("request");
+    let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+    req.extensions_mut().insert(ConnectInfo(address));
+    let res = f.app.clone().oneshot(req).await.expect("infallible");
+    let status = res.status();
+    let body = res.into_body().collect().await.expect("body").to_bytes();
+    Reply {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+/// Navidrome takes only the guest's sign-in.
+async fn only_guest_signs_in(f: &Family) {
+    Mock::given(path("/rest/ping"))
+        .and(query_param("u", "guest"))
+        .and(query_param("p", "guest-pw"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#,
+            "application/json",
+        ))
+        .with_priority(1)
+        .mount(&f.server)
+        .await;
+    Mock::given(path("/rest/ping"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"#,
+            "application/json",
+        ))
+        .with_priority(2)
+        .mount(&f.server)
+        .await;
+}
+
+/// The gate's refusal of a body it cannot read.
+fn assert_unreadable(r: &Reply) {
+    assert_eq!(r.error_code(), Some(0), "{}", r.body);
+    assert!(
+        r.json()["subsonic-response"]["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("could not read")),
+        "{}",
+        r.body
+    );
+}
+
+/// A multipart form with no boundary cannot be read; the handlers once fell back to reading it
+/// as a query, so a guest's sign-in in it went to Navidrome while the gate saw the owner named
+/// in the address.
+#[tokio::test]
+async fn an_owner_named_in_the_address_with_a_guest_sign_in_in_a_boundaryless_form_is_refused() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    only_guest_signs_in(&f).await;
+    let devices_before = f.state.family_store.devices_of("alex").len();
+    let r = send_bytes(
+        &f,
+        "/rest/addFamilyDevice?u=winters&v=1.16.1&c=x&f=json&kind=SubsonicApp&name=x&username=alex",
+        "multipart/form-data",
+        b"u=guest&p=guest-pw".to_vec(),
+    )
+    .await;
+    assert!(
+        !r.body.contains("appPassword"),
+        "an app password for alex went out: {}",
+        r.body
+    );
+    assert_eq!(f.state.family_store.devices_of("alex").len(), devices_before);
+    assert_unreadable(&r);
+    assert!(f.asked("/rest/ping").await.is_empty(), "nothing was checked");
+}
+
+/// The same with a boundary longer than the form reader takes (over 70 characters).
+#[tokio::test]
+async fn an_owner_named_in_the_address_with_a_guest_sign_in_behind_a_long_boundary_is_refused() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    only_guest_signs_in(&f).await;
+    let boundary = "b".repeat(80);
+    let r = send_bytes(
+        &f,
+        "/rest/getFamilyDevices?u=winters&v=1.16.1&c=x&f=json&all=true",
+        &format!("multipart/form-data; boundary={boundary}"),
+        b"u=guest&p=guest-pw".to_vec(),
+    )
+    .await;
+    assert!(
+        !r.body.contains("d_app"),
+        "every member's devices went out: {}",
+        r.body
+    );
+    assert_unreadable(&r);
+}
+
+/// The owner named in the address and a guest in a readable form body name two people, so
+/// nobody is checked and the family call is refused.
+#[tokio::test]
+async fn an_owner_in_the_address_and_a_guest_in_a_form_body_is_refused() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    only_guest_signs_in(&f).await;
+    let r = send_bytes(
+        &f,
+        "/rest/getFamilyDevices?u=winters&v=1.16.1&c=x&f=json&all=true",
+        "application/x-www-form-urlencoded",
+        b"u=guest&p=guest-pw".to_vec(),
+    )
+    .await;
+    assert!(!r.body.contains("d_app"), "{}", r.body);
+    assert_eq!(r.error_code(), Some(40), "{}", r.body);
+}
+
+/// The owner's sign-in split between the address and a form body is checked whole, as it was
+/// read: Navidrome is asked with exactly that `u` and `p`.
+#[tokio::test]
+async fn the_owner_is_checked_with_exactly_the_sign_in_the_gate_read() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    Mock::given(path("/rest/ping"))
+        .and(query_param("u", "winters"))
+        .and(query_param("p", "owner-pw"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#,
+            "application/json",
+        ))
+        .with_priority(1)
+        .mount(&f.server)
+        .await;
+    Mock::given(path("/rest/ping"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"#,
+            "application/json",
+        ))
+        .with_priority(2)
+        .mount(&f.server)
+        .await;
+    let r = send_bytes(
+        &f,
+        "/rest/getFamilyDevices?u=winters&v=1.16.1&c=x&f=json&all=true",
+        "application/x-www-form-urlencoded",
+        b"p=owner-pw".to_vec(),
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+    let pinged = f.asked("/rest/ping").await;
+    assert_eq!(pinged.len(), 1, "one check, kept for the next call");
+    let sent = pairs(pinged[0].url.query().unwrap_or(""));
+    assert_eq!(value(&sent, "u"), Some("winters"));
+    assert_eq!(value(&sent, "p"), Some("owner-pw"));
+    assert!(
+        value(&sent, "all").is_none(),
+        "only the sign-in is sent: {sent:?}"
+    );
+}
+
+/// A family playlist change with a body the gate cannot read never reaches the playlist code.
+#[tokio::test]
+async fn a_playlist_change_with_a_body_the_gate_cannot_read_is_refused() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    only_guest_signs_in(&f).await;
+    let r = send_bytes(
+        &f,
+        "/rest/updatePlaylist?u=winters&v=1.16.1&c=x&f=json&playlistId=fp_1&name=x",
+        "multipart/form-data",
+        b"u=guest&p=guest-pw".to_vec(),
+    )
+    .await;
+    assert_unreadable(&r);
+}
+
+/// A JSON body that is not one object cannot be read either.
+#[tokio::test]
+async fn a_json_body_that_is_not_an_object_is_refused() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let r = send_bytes(
+        &f,
+        &format!("/rest/getFamily?{OWNER}"),
+        "application/json",
+        b"[\"u\",\"guest\"]".to_vec(),
+    )
+    .await;
+    assert_unreadable(&r);
+    // An empty one is nothing to read, and goes on.
+    let r = send_bytes(&f, &format!("/rest/ping?{OWNER}"), "application/json", Vec::new()).await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+}
+
+/// `download` goes through the catch-all. A JSON body with a byte order mark, or bytes that are
+/// not UTF-8, is read as the parameters read it, so the family limit holds wherever it is read.
+#[tokio::test]
+async fn a_capped_download_with_a_json_body_read_loosely_never_asks_for_the_original() {
+    for body in [
+        "\u{feff}{\"format\":\"raw\",\"bitrate\":\"0\"}"
+            .as_bytes()
+            .to_vec(),
+        b"{\"format\":\"raw\",\"bitrate\":\"0\",\"x\":\"\xff\"}".to_vec(),
+    ] {
+        let f = family(
+            true,
+            Alex::with(json!({ "downloadFiles": true, "streamCap": 192 })),
+            |_| {},
+        )
+        .await;
+        let _ = send_bytes(
+            &f,
+            &format!("/rest/download?{ALEX}&id=lib-1"),
+            "application/json",
+            body.clone(),
+        )
+        .await;
+        let asked = f.asked("/rest/download").await;
+        assert_eq!(asked.len(), 1, "one download relayed");
+        let sent = pairs(asked[0].url.query().unwrap_or(""));
+        let formats: Vec<&str> = sent
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("format"))
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert!(
+            !formats.contains(&"raw"),
+            "Navidrome was asked for the original: {sent:?} (body {:?})",
+            String::from_utf8_lossy(&body)
+        );
+        assert!(
+            !String::from_utf8_lossy(&asked[0].body).contains("raw"),
+            "the body still asks for the original: {:?}",
+            String::from_utf8_lossy(&asked[0].body)
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Throttles across addresses
+// ---------------------------------------------------------------------------------------
+
+/// A phone on the home network, talking to Octo directly, names a new X-Forwarded-For hop on
+/// every try: the tries still count against the address that connected and against the
+/// account, so a member secret cannot be guessed without end.
+#[tokio::test]
+async fn a_home_device_naming_new_forwarded_hops_is_still_throttled() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let wrong = "u=alex&p=wrong-secret&v=1.16.1&c=x&f=json";
+    for n in 0..120 {
+        let hop = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        let r = send(
+            &f,
+            Method::GET,
+            &format!("/rest/ping?{wrong}"),
+            &[("X-Forwarded-For", hop.as_str())],
+            HOME,
+        )
+        .await;
+        assert_eq!(r.error_code(), Some(40));
+    }
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/ping?{ALEX}"),
+        &[("X-Forwarded-For", "198.51.100.200")],
+        HOME,
+    )
+    .await;
+    assert_eq!(
+        r.error_code(),
+        Some(40),
+        "120 wrong tries from one device, and a sign-in still goes through: {}",
+        r.body
+    );
+}
+
+/// Wrong tries for one account from many addresses count together.
+#[tokio::test]
+async fn wrong_tries_for_one_account_from_many_addresses_count_together() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let wrong = "u=alex&p=wrong-secret&v=1.16.1&c=x&f=json";
+    for n in 0..crate::services::family::member_bridge::ACCOUNT_FAILURES {
+        let from = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        let r = get(&f, &format!("/rest/ping?{wrong}"), &from).await;
+        assert_eq!(r.error_code(), Some(40));
+    }
+    let r = get(&f, &format!("/rest/ping?{ALEX}"), "198.51.100.9").await;
+    assert_eq!(r.error_code(), Some(40), "{}", r.body);
+    // Anyone else is not held back.
+    let r = get(&f, &format!("/rest/ping?{OWNER}"), "198.51.100.9").await;
+    assert_eq!(r.json()["subsonic-response"]["status"], "ok", "{}", r.body);
+}
+
+/// The web player's sign-in counts against the address that connected however many hops it
+/// names.
+#[tokio::test]
+async fn web_player_sign_ins_naming_new_hops_are_still_throttled() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let sign_in = |password: &str, hop: String| {
+        let mut req = Request::builder()
+            .method(Method::POST)
+            .uri("/auth/login")
+            .header("content-type", "application/json")
+            .header("X-Forwarded-For", hop)
+            .body(Body::from(
+                json!({ "username": "alex", "password": password }).to_string(),
+            ))
+            .expect("request");
+        let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+        req.extensions_mut().insert(ConnectInfo(address));
+        f.app.clone().oneshot(req)
+    };
+    for n in 0..crate::services::family::member_bridge::PEER_FAILURES {
+        let res = sign_in("wrong-guess", format!("203.0.{}.{}", n / 200, n % 200 + 1))
+            .await
+            .expect("infallible");
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+    // The right secret now waits too.
+    let res = sign_in(APP_SECRET, "198.51.100.77".into())
+        .await
+        .expect("infallible");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The web player's sign-in takes a small body only.
+#[tokio::test]
+async fn a_huge_web_player_sign_in_is_refused_unread() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let password = "x".repeat(64 * 1024);
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "username": "alex", "password": password }).to_string(),
+        ))
+        .expect("request");
+    let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+    req.extensions_mut().insert(ConnectInfo(address));
+    let res = f.app.clone().oneshot(req).await.expect("infallible");
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+// ---------------------------------------------------------------------------------------
+// Clean-only downloads and device notes
+// ---------------------------------------------------------------------------------------
+
+/// A clean-only member allowed to download asks `download` for an album id: Navidrome would
+/// send a zip of every track, explicit ones too, so only a song the index knows goes through.
+#[tokio::test]
+async fn a_clean_only_download_of_an_album_id_is_refused() {
+    let f = family(
+        true,
+        Alex {
+            preset: Preset::Kid,
+            edits: json!({ "downloadFiles": true }),
+        },
+        |_| {},
+    )
+    .await;
+    let r = get(&f, &format!("/rest/download?{ALEX}&id=al-explicit-album"), HOME).await;
+    assert!(
+        f.asked("/rest/download").await.is_empty(),
+        "the album went to Navidrome for a zip: {}",
+        r.body
+    );
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    // A song the index does not know is refused the same way.
+    let r = get(&f, &format!("/rest/download?{ALEX}&id=lib-unknown"), HOME).await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(f.asked("/rest/download").await.is_empty());
+    // A song the index knows, with no mark, downloads.
+    f.index_song(false).await;
+    let r = get(&f, &format!("/rest/download?{ALEX}&id=lib-9"), HOME).await;
+    assert_eq!(f.asked("/rest/download").await.len(), 1, "{}", r.body);
+}
+
+/// A wrong owner password beside an outside song id: the catch-all answers an outside id with
+/// a plain ok and never asks Navidrome, so a device is noted only once Navidrome itself takes
+/// the sign-in.
+#[tokio::test]
+async fn a_wrong_owner_password_beside_an_outside_id_notes_no_device() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    only_guest_signs_in(&f).await;
+    let before = f.state.family_store.detected().len();
+    for n in 0..5 {
+        let device = format!("spoofed-{n}");
+        let r = send(
+            &f,
+            Method::GET,
+            "/rest/getSomethingNew?u=winters&p=wrong&v=1.16.1&c=Spoof&f=json&id=ext-deezer-song-1",
+            &[("X-Octo-Device-Id", device.as_str())],
+            HOME,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    assert_eq!(
+        f.state.family_store.detected().len(),
+        before,
+        "devices noted for a sign-in nobody checked: {:?}",
+        f.state.family_store.detected()
+    );
+}
+
+/// The owner's right sign-in still notes the device it came from, once Navidrome takes it.
+#[tokio::test]
+async fn a_right_owner_sign_in_notes_its_device_once_navidrome_takes_it() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let r = send(
+        &f,
+        Method::GET,
+        &format!("/rest/getSomethingNew?{OWNER}&id=ext-deezer-song-1"),
+        &[("X-Octo-Device-Id", "owner-phone")],
+        HOME,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let detected = f.state.family_store.detected();
+    assert_eq!(detected.len(), 1, "{detected:?}");
+    assert_eq!(detected[0].username, "winters");
+    assert_eq!(f.asked("/rest/ping").await.len(), 1, "checked once");
+    // The same device again within a minute is not checked again only to be noted.
+    let _ = send(
+        &f,
+        Method::GET,
+        &format!("/rest/getSomethingNew?{OWNER}&id=ext-deezer-song-1"),
+        &[("X-Octo-Device-Id", "owner-phone")],
+        HOME,
+    )
+    .await;
+    assert_eq!(f.asked("/rest/ping").await.len(), 1);
+}

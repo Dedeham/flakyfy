@@ -268,6 +268,10 @@ pub struct ClientOrigin {
     /// A peer on a home network that named a client in `X-Forwarded-For` without being a
     /// trusted proxy: a reverse proxy beside Octo that `Family:TrustedProxies` does not list.
     pub untrusted_proxy: Option<IpAddr>,
+    /// The address Octo can vouch for: the client behind trusted proxies, else the peer that
+    /// connected, whatever headers it sent. Throttles count on it with a higher ceiling, since
+    /// `address` may be a hop an untrusted peer named.
+    pub peer: IpAddr,
 }
 
 /// Where a request comes from: [`client_address`] and its place, except behind a reverse proxy
@@ -295,6 +299,7 @@ pub fn client_origin(
             address: named.unwrap_or(canonical_peer),
             place: NetworkPlace::Away,
             untrusted_proxy: Some(canonical_peer),
+            peer: canonical_peer,
         };
     }
     let address = client_address(peer, x_forwarded_for, trusted);
@@ -302,6 +307,7 @@ pub fn client_origin(
         address,
         place: place_of(address, home),
         untrusted_proxy: None,
+        peer: address,
     }
 }
 

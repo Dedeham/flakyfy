@@ -497,6 +497,12 @@ pub const PAIR_CAP_WINDOW: TimeDelta = TimeDelta::minutes(10);
 /// Wrong pairing codes from one address in [`PAIR_ADDRESS_WINDOW`] before it waits.
 pub const PAIR_ADDRESS_FAILURES: usize = 10;
 pub const PAIR_ADDRESS_WINDOW: TimeDelta = TimeDelta::minutes(15);
+/// Wrong pairing codes from one peer Octo can vouch for (whatever hops it names) in
+/// [`PAIR_ADDRESS_WINDOW`] before it waits. A peer may stand for several people, so it is higher.
+pub const PAIR_PEER_FAILURES: usize = 50;
+/// Wrong pairing codes for one username, from every address together, in
+/// [`PAIR_ADDRESS_WINDOW`] before it waits.
+pub const PAIR_ACCOUNT_FAILURES: usize = 20;
 /// Addresses whose wrong pairing codes are kept at most.
 const PAIR_ADDRESSES: usize = 10_000;
 
@@ -504,7 +510,7 @@ const PAIR_ADDRESSES: usize = 10_000;
 /// alike.
 pub const PAIR_REFUSED: &str = "That code did not work. Ask for a new one.";
 
-/// Counts wrong pairing codes per address and for everyone together.
+/// Counts wrong pairing codes per address, per peer, per username and for everyone together.
 pub struct PairGuard {
     clock: Clock,
     by_address: Mutex<HashMap<String, VecDeque<DateTime<Utc>>>>,
@@ -537,6 +543,37 @@ impl PairGuard {
         list.len() >= PAIR_ADDRESS_FAILURES
     }
 
+    /// Whether a pairing from `address` behind `peer` for `username` has to wait: too many wrong
+    /// codes from that address, that peer, or for that username lately.
+    pub fn blocked(&self, address: &str, peer: &str, username: &str) -> bool {
+        let now = self.now();
+        let mut map = self.by_address.lock();
+        pair_keys(address, peer, username)
+            .into_iter()
+            .any(|(key, ceiling)| {
+                let Some(list) = map.get_mut(&key) else {
+                    return false;
+                };
+                while list.front().is_some_and(|at| now - *at >= PAIR_ADDRESS_WINDOW) {
+                    list.pop_front();
+                }
+                list.len() >= ceiling
+            })
+    }
+
+    /// One more wrong code from `address` behind `peer` for `username`.
+    pub fn failed_from(&self, address: &str, peer: &str, username: &str) {
+        let keys = pair_keys(address, peer, username);
+        let now = self.now();
+        {
+            let mut map = self.by_address.lock();
+            for (key, _) in &keys[1..] {
+                map.entry(key.clone()).or_default().push_back(now);
+            }
+        }
+        self.failed(&keys[0].0);
+    }
+
     /// Whether everyone together has had [`PAIR_CAP`] wrong codes in the window.
     pub fn capped(&self) -> bool {
         let now = self.now();
@@ -565,6 +602,18 @@ impl PairGuard {
             everyone.pop_front();
         }
     }
+}
+
+/// The keys a pairing try counts under, each with its ceiling; the address comes first.
+fn pair_keys(address: &str, peer: &str, username: &str) -> [(String, usize); 3] {
+    [
+        (address.to_string(), PAIR_ADDRESS_FAILURES),
+        (format!("peer|{peer}"), PAIR_PEER_FAILURES),
+        (
+            format!("account|{}", username.trim().to_lowercase()),
+            PAIR_ACCOUNT_FAILURES,
+        ),
+    ]
 }
 
 // ------------------------------------------------------------------------------------------
@@ -1488,10 +1537,15 @@ impl FamilyService {
         Ok(member.username)
     }
 
-    /// Checks a member's account password. Answers the member when it is right.
-    pub async fn check_member_password(&self, member: &Member, password: &str) -> bool {
+    /// Checks a member's account password: whether it is right, or [`passwords::Busy`] when
+    /// no hashing slot came free in time.
+    pub async fn check_member_password(
+        &self,
+        member: &Member,
+        password: &str,
+    ) -> Result<bool, passwords::Busy> {
         if member.account_password.is_empty() {
-            return false;
+            return Ok(false);
         }
         passwords::verify_async(password, &member.account_password).await
     }
@@ -1508,8 +1562,12 @@ impl FamilyService {
             .family_store
             .member(user)
             .ok_or_else(|| FamilyError::NotFound("This account is not in the family.".into()))?;
-        if !self.check_member_password(&member, current).await {
-            return Err(FamilyError::Refused("Your current password is not right.".into()));
+        match self.check_member_password(&member, current).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(FamilyError::Refused("Your current password is not right.".into()));
+            }
+            Err(passwords::Busy) => return Err(busy()),
         }
         passwords::acceptable(next).map_err(|e| FamilyError::Invalid(e.into()))?;
         member.account_password = hashed(next).await?;
@@ -1623,6 +1681,7 @@ impl FamilyService {
         &self,
         state: &AppState,
         address: &str,
+        peer: &str,
         username: &str,
         code: &str,
         device_name: &str,
@@ -1632,7 +1691,7 @@ impl FamilyService {
     ) -> FamilyResult<Paired> {
         let refused = || FamilyError::Refused(PAIR_REFUSED.into());
         let now = Utc::now();
-        if self.pair_guard.address_blocked(address) {
+        if self.pair_guard.blocked(address, peer, username) {
             return Err(refused());
         }
         if self.pair_guard.capped() && state.family_store.any_live_pair_code(now) {
@@ -1650,7 +1709,7 @@ impl FamilyService {
                 device_name,
             } => (username, device_name),
             _ => {
-                self.pair_guard.failed(address);
+                self.pair_guard.failed_from(address, peer, username);
                 return Err(refused());
             }
         };
@@ -2011,9 +2070,14 @@ fn api_edits(edits: &Map<String, Value>) -> Map<String, Value> {
         .collect()
 }
 
+/// Every hashing slot stayed busy: the person tries again shortly.
+pub fn busy() -> FamilyError {
+    FamilyError::Throttled(passwords::BUSY.into(), TimeDelta::seconds(5))
+}
+
 /// An account password's hash, made when a hashing slot is free.
 async fn hashed(password: &str) -> FamilyResult<String> {
-    let hash = passwords::hash_async(password).await;
+    let hash = passwords::hash_async(password).await.map_err(|_| busy())?;
     if hash.is_empty() {
         return Err(FamilyError::Unavailable(
             "Octo could not save the password. Try again.".into(),

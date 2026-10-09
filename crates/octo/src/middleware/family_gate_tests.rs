@@ -27,6 +27,7 @@ use crate::http::pipeline::{App, build_with};
 use crate::http::routes::RouteSet;
 use crate::services::family::family_caller;
 use crate::services::family::family_store::SharedLibraries;
+use crate::services::family::member_bridge::FailureThrottle;
 
 const APP_SECRET: &str = "app-secret-1";
 const APP_PASSWORD: &str = "ABCD-EFGH-JKMN-PQRS";
@@ -85,7 +86,7 @@ struct Family {
     _dir: tempfile::TempDir,
 }
 
-/// What the echo route saw.
+/// What the echo route saw, the parameters a handler reads included.
 async fn echo(req: Request) -> Response {
     let caller = family_caller(req.extensions()).cloned();
     let length = req
@@ -95,10 +96,17 @@ async fn echo(req: Request) -> Response {
         .map(str::to_string);
     let query = req.uri().query().map(str::to_string);
     let path = req.uri().path().to_string();
-    let body = axum::body::to_bytes(req.into_body(), 1 << 20)
-        .await
-        .expect("a body");
+    let (parts, body) = req.into_parts();
+    let body = axum::body::to_bytes(body, 1 << 20).await.expect("a body");
+    let read_by_gate = GateReading::of(&parts.extensions).is_some();
+    let parameters: Vec<Value> = IncomingRequest::from_parts(&parts, body.clone())
+        .parameters()
+        .iter()
+        .map(|(k, v)| json!([k, v]))
+        .collect();
     axum::Json(json!({
+        "gate": read_by_gate,
+        "parameters": parameters,
         "user": caller.as_ref().map(|c| c.user.clone()),
         "managed": caller.as_ref().map(|c| c.managed),
         "role": caller.as_ref().map(|c| format!("{:?}", c.role)),
@@ -496,7 +504,13 @@ async fn owner_passes_untouched() {
     ok_relay(&f).await;
     let query = "u=winters&t=abc&s=def&id=A&id=B&c=Feishin";
     send(&f.app, Method::GET, &format!("/rest/getThing?{query}"), &[], "").await;
-    assert_eq!(f.rest_requests().await[0].url.query(), Some(query));
+    let relayed: Vec<_> = f
+        .rest_requests()
+        .await
+        .into_iter()
+        .filter(|r| r.url.path() == "/rest/getThing")
+        .collect();
+    assert_eq!(relayed[0].url.query(), Some(query));
     // The owner is named, unmanaged, with a detected device.
     let r = send(
         &f.app,
@@ -954,7 +968,15 @@ async fn utf8_device_name_is_decoded() {
         f.state.family_store.device("d_app").expect("there").name,
         "Sam\u{2019}s Caf\u{e9}"
     );
-    // A name far too long, or not even UTF-8, is cut or patched, never refused.
+    // A name far too long, or not even UTF-8, is cut or patched, never refused. The owner's
+    // device is noted once Navidrome takes the sign-in.
+    Mock::given(path("/rest/ping"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#,
+            "application/json",
+        ))
+        .mount(&f.server)
+        .await;
     let long = "%C3%A9".repeat(200);
     let r = send(
         &f.app,
@@ -1197,7 +1219,8 @@ async fn native_paths_skip_the_family_pages_and_name_the_owner() {
     assert_eq!(r.json()["user"], Value::Null);
     assert!(skipped("/api/family/me"));
     assert!(skipped("/family/join"));
-    assert!(skipped("/rest/octoFamilyPair.view"));
+    // Pairing is read by the gate like any `/rest` call, though nobody is named on it.
+    assert!(!skipped("/rest/octoFamilyPair.view"));
     assert!(!skipped("/radio/stream/abc"));
     // A Navidrome token of the owner names the owner and goes on untouched.
     Mock::given(method("GET"))
@@ -1215,7 +1238,14 @@ async fn native_paths_skip_the_family_pages_and_name_the_owner() {
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
-    let sent = f.server.received_requests().await.unwrap_or_default();
+    let sent: Vec<_> = f
+        .server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path() == "/api/queue")
+        .collect();
     assert_eq!(
         sent[0]
             .headers
@@ -1335,8 +1365,7 @@ async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
         "alex",
         Preset::Listener,
         octo_core::family::abilities::Abilities::preset(Preset::Listener),
-    )
-    .checked();
+    );
     let plain = json!({"subsonic-response": {"status": "ok", "nowPlaying": {"entry": [
         {"username": "alex", "id": "1"}, {"username": "sam", "id": "2"}
     ]}}})
@@ -1459,4 +1488,224 @@ async fn a_right_web_player_sign_in_is_not_held_against_the_member() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let key = FailureThrottle::key(&IpAddr::V4(Ipv4Addr::UNSPECIFIED), "alex");
     assert_eq!(f.state.family_bridge.throttle.tries(&key), 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// One reading of every request
+// ---------------------------------------------------------------------------------------
+
+/// The same call with each kind of body: the query alone, a url-encoded form, JSON, multipart
+/// with a boundary, and multipart with none.
+fn body_kinds() -> Vec<(&'static str, Method, String, Option<&'static str>, &'static str)> {
+    vec![
+        (
+            "query",
+            Method::GET,
+            "u=winters&p=pw&id=A&id=B&v=1.16.1&c=App&f=json".into(),
+            None,
+            "",
+        ),
+        (
+            "form",
+            Method::POST,
+            "f=json&id=Q".into(),
+            Some("application/x-www-form-urlencoded"),
+            "u=winters&p=pw&id=1&id=2&format=raw",
+        ),
+        (
+            "json",
+            Method::POST,
+            "u=winters&p=pw&f=json".into(),
+            Some("application/json"),
+            r#"{"id":"9","format":"raw","n":[1, 2]}"#,
+        ),
+        (
+            "multipart",
+            Method::POST,
+            "u=winters&p=pw&f=json".into(),
+            Some("multipart/form-data; boundary=XyZ"),
+            "--XyZ\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\n5\r\n--XyZ--\r\n",
+        ),
+        (
+            "boundaryless",
+            Method::POST,
+            "u=winters&f=json".into(),
+            Some("multipart/form-data"),
+            "u=guest&p=guest-pw&id=7",
+        ),
+    ]
+}
+
+/// What a handler read and what Navidrome was sent, for each kind of body, with Family off.
+/// These are the values Octo gave before the family gate read requests at all.
+#[tokio::test]
+async fn family_off_reads_and_relays_every_kind_of_body_as_before() {
+    let f = family(false).await;
+    ok_relay(&f).await;
+    let mut seen = Vec::new();
+    for (kind, method, query, content_type, body) in body_kinds() {
+        let headers: Vec<(&str, &str)> = content_type.iter().map(|ct| ("Content-Type", *ct)).collect();
+        let echo = send(
+            &f.app,
+            method.clone(),
+            &format!("/rest/testEcho?{query}"),
+            &headers,
+            body,
+        )
+        .await
+        .json();
+        assert_eq!(
+            echo["gate"], false,
+            "{kind}: the gate never reads with Family off"
+        );
+        assert_eq!(echo["user"], Value::Null, "{kind}");
+        assert_eq!(echo["query"], json!(query), "{kind}");
+        assert_eq!(echo["body"], json!(body), "{kind}");
+        send(&f.app, method, &format!("/rest/getThing?{query}"), &headers, body).await;
+        seen.push((kind, echo["parameters"].clone()));
+    }
+    let expected = [
+        (
+            "query",
+            json!([
+                ["u", "winters"],
+                ["p", "pw"],
+                ["id", "A,B"],
+                ["v", "1.16.1"],
+                ["c", "App"],
+                ["f", "json"]
+            ]),
+        ),
+        (
+            "form",
+            json!([
+                ["f", "json"],
+                ["id", "1,2"],
+                ["u", "winters"],
+                ["p", "pw"],
+                ["format", "raw"]
+            ]),
+        ),
+        (
+            "json",
+            json!([
+                ["u", "winters"],
+                ["p", "pw"],
+                ["f", "json"],
+                ["id", "9"],
+                ["format", "raw"],
+                ["n", "[1, 2]"]
+            ]),
+        ),
+        (
+            "multipart",
+            json!([["u", "winters"], ["p", "pw"], ["f", "json"], ["id", "5"]]),
+        ),
+        (
+            "boundaryless",
+            json!([["u", "guest"], ["f", "json"], ["p", "guest-pw"], ["id", "7"]]),
+        ),
+    ];
+    for ((kind, parameters), (want_kind, want)) in seen.iter().zip(expected.iter()) {
+        assert_eq!(kind, want_kind);
+        assert_eq!(parameters, want, "{kind}");
+    }
+    let relayed: Vec<(String, Option<String>, String)> = f
+        .rest_requests()
+        .await
+        .into_iter()
+        .filter(|r| r.url.path() == "/rest/getThing")
+        .map(|r| {
+            (
+                r.method.to_string(),
+                r.url.query().map(str::to_string),
+                String::from_utf8_lossy(&r.body).into_owned(),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, Option<String>, String)> = vec![
+        (
+            "GET".into(),
+            Some("u=winters&p=pw&id=A&id=B&v=1.16.1&c=App&f=json".into()),
+            String::new(),
+        ),
+        (
+            "POST".into(),
+            Some("f=json".into()),
+            "u=winters&p=pw&id=1&id=2&format=raw".into(),
+        ),
+        (
+            "POST".into(),
+            Some("u=winters&p=pw&f=json&id=9&format=raw&n=%5B1%2C%202%5D".into()),
+            r#"{"id":"9","format":"raw","n":[1, 2]}"#.into(),
+        ),
+        (
+            "POST".into(),
+            Some("u=winters&p=pw&f=json&id=5".into()),
+            "--XyZ\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\n5\r\n--XyZ--\r\n".into(),
+        ),
+        (
+            "POST".into(),
+            Some("u=guest&f=json&p=guest-pw&id=7".into()),
+            "u=guest&p=guest-pw&id=7".into(),
+        ),
+    ];
+    assert_eq!(relayed, expected);
+}
+
+/// With Family on, a handler reads the parameters the gate read: for a member the hidden
+/// sign-in in place of the device secret, whatever kind of body carried the call.
+#[tokio::test]
+async fn handlers_read_the_parameters_the_gate_read() {
+    let f = family(true).await;
+    for (content_type, body) in [
+        ("application/x-www-form-urlencoded", "id=1&id=2"),
+        ("application/json", r#"{"id":"9"}"#),
+        (
+            "multipart/form-data; boundary=XyZ",
+            "--XyZ\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\n5\r\n--XyZ--\r\n",
+        ),
+    ] {
+        let r = send(
+            &f.app,
+            Method::POST,
+            &format!("/rest/testEcho?u=alex&p={APP_SECRET}&f=json"),
+            &[("Content-Type", content_type)],
+            body,
+        )
+        .await;
+        let seen = r.json();
+        assert_eq!(seen["gate"], true, "{content_type}");
+        assert_eq!(seen["user"], "alex", "{content_type}");
+        let parameters: Vec<(String, String)> = seen["parameters"]
+            .as_array()
+            .expect("parameters")
+            .iter()
+            .map(|pair| {
+                (
+                    pair[0].as_str().unwrap_or("").to_string(),
+                    pair[1].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        assert!(signed_with(&parameters, HIDDEN), "{content_type}: {parameters:?}");
+        assert!(
+            value(&parameters, "p").is_none(),
+            "{content_type}: {parameters:?}"
+        );
+        assert!(
+            value(&parameters, "id").is_some(),
+            "{content_type}: {parameters:?}"
+        );
+    }
+    // A body the gate cannot read never reaches a handler.
+    let r = send(
+        &f.app,
+        Method::POST,
+        "/rest/testEcho?u=winters&f=json",
+        &[("Content-Type", "multipart/form-data")],
+        "u=guest&p=guest-pw",
+    )
+    .await;
+    assert_eq!(r.json()["subsonic-response"]["error"]["code"], 0, "{}", r.body);
 }

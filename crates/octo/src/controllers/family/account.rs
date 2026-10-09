@@ -19,6 +19,7 @@ use crate::app::AppState;
 use crate::services::admin::{SessionKind, SignInThrottle};
 use crate::services::family::FamilyService;
 use crate::services::family::family_service::{NewRequest, quality_json};
+use crate::services::family::member_bridge::TryKeys;
 use crate::services::last_fm::LastFmConnectError;
 use crate::services::notifications::notification_service::is_member_topic;
 
@@ -96,9 +97,10 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         return refusal(StatusCode::UNAUTHORIZED, "Type your username and password.");
     }
     let throttle = &state.family.sign_in_throttle;
-    // Tries count per address and account, so signing in to one account never clears the
-    // wrong tries at another.
-    let key = format!("{}|{}", web.throttle_key(), username.to_lowercase());
+    // Tries count per address and account (so signing in to one account never clears the
+    // wrong tries at another), per peer Octo can vouch for, and per account from everywhere.
+    let keys = TryKeys::new(&web.address, &web.peer, &username, SignInThrottle::MAX_FAILURES);
+    let keys = keys.keys();
     let throttled = |wait| {
         family_error(&crate::services::family::FamilyError::Throttled(
             format!(
@@ -108,7 +110,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
             wait,
         ))
     };
-    if let Some(wait) = throttle.retry_after(&key) {
+    if let Some(wait) = throttle.retry_after_any(keys) {
         return throttled(wait);
     }
     let enabled = state.settings.current().family.enabled;
@@ -124,15 +126,21 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
         }
         // The try counts before the password is checked, so tries sent all at once cannot each
         // pass the throttle while the others are still being checked.
-        if let Some(wait) = throttle.attempt(&key) {
+        if let Some(wait) = throttle.attempt_all(keys) {
             return throttled(wait);
         }
-        if !state
+        match state
             .family
             .check_member_password(&member, &request.password)
             .await
         {
-            return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password.");
+            Ok(true) => {}
+            Ok(false) => return refusal(StatusCode::UNAUTHORIZED, "Wrong username or password."),
+            Err(_) => {
+                // Not checked at all, so the try is not held against anyone.
+                throttle.forgive_all(keys);
+                return family_error(&crate::services::family::family_service::busy());
+            }
         }
         if member.suspended {
             return refusal(
@@ -140,7 +148,10 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
                 "This account is paused by the family owner.",
             );
         }
-        throttle.succeeded(&key);
+        // This try was right: it is taken back everywhere, and the address's wrong tries at
+        // this account are cleared.
+        throttle.forgive_all(keys);
+        throttle.succeeded(&keys[0].0);
         let token = state
             .browse_sessions
             .create_family(&member.username, SessionKind::Member);
@@ -164,14 +175,14 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
             "Navidrome is limiting sign-ins right now. Wait half a minute and try again.",
         ),
         NavidromeSignIn::Wrong => {
-            throttle.failed(&key);
+            throttle.failed_all(keys);
             refusal(StatusCode::UNAUTHORIZED, "Wrong username or password.")
         }
         NavidromeSignIn::NotAdmin if !enabled => {
             refusal(StatusCode::NOT_FOUND, "Family is off on this server.")
         }
         NavidromeSignIn::NotAdmin => {
-            throttle.succeeded(&key);
+            throttle.succeeded(&keys[0].0);
             let token = state
                 .browse_sessions
                 .create_family(&username, SessionKind::FamilyGuest);
@@ -182,7 +193,7 @@ pub async fn sign_in(State(state): State<AppState>, web: Web, body: Bytes) -> Re
             )
         }
         NavidromeSignIn::Admin(login) => {
-            throttle.succeeded(&key);
+            throttle.succeeded(&keys[0].0);
             state.navidrome_identity.capture_login(&login);
             let owner = state.family_store.owner();
             let role = if owner.is_empty() || eq_ignore_case(&owner, &username) {

@@ -297,14 +297,20 @@ impl PrivacyCache {
             songs: index.len(),
             libraries: personal_libraries,
         };
-        let mut cached = self.cached.lock();
-        if let Some((held, view)) = cached.as_ref()
+        self.view_for(key, |libraries| PrivateView::build(index, libraries))
+    }
+
+    /// The cached view for `key`, or one `build` makes. The lock is held only to look and to
+    /// keep: a view is built (a walk of every song) with the lock free, so other requests read
+    /// the cache meanwhile. Two requests that miss at once may both build; either view is right.
+    fn view_for(&self, key: ViewKey, build: impl FnOnce(&[i64]) -> PrivateView) -> Arc<PrivateView> {
+        if let Some((held, view)) = self.cached.lock().as_ref()
             && *held == key
         {
             return Arc::clone(view);
         }
-        let view = Arc::new(PrivateView::build(index, &key.libraries));
-        *cached = Some((key, Arc::clone(&view)));
+        let view = Arc::new(build(&key.libraries));
+        *self.cached.lock() = Some((key, Arc::clone(&view)));
         view
     }
 }
@@ -365,6 +371,29 @@ mod tests {
         assert!(out.contains(">Jazz</genre>"), "{out}");
         let untouched = br#"<subsonic-response status="ok"><genres><genre songCount="2" albumCount="1">Jazz</genre></genres></subsonic-response>"#;
         assert_eq!(genres_answer(untouched, &view), None);
+    }
+
+    #[test]
+    fn the_privacy_view_is_built_with_the_cache_free() {
+        let cache = PrivacyCache::default();
+        let key = ViewKey {
+            refreshed: None,
+            songs: 3,
+            libraries: vec![3],
+        };
+        let built = cache.view_for(key.clone(), |libraries| {
+            assert!(
+                cache.cached.try_lock().is_some(),
+                "the cache is free while a view is built"
+            );
+            PrivateView {
+                libraries: libraries.iter().copied().collect(),
+                ..PrivateView::default()
+            }
+        });
+        assert!(built.hides_song(Some(3)));
+        let again = cache.view_for(key, |_| panic!("kept, not built again"));
+        assert!(Arc::ptr_eq(&built, &again));
     }
 
     #[test]

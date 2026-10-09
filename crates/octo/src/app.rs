@@ -996,6 +996,8 @@ impl NavidromeServices {
             Arc::clone(settings),
             Arc::new(tokio::sync::Notify::new()),
         ));
+        let family_store = Arc::clone(&stores.family_store);
+        library_index.keep_reading_while(move || family_store.has_personal_libraries());
         let library_scope = ScopeResolver::new(
             Arc::clone(settings),
             Arc::clone(&stores.family_store),

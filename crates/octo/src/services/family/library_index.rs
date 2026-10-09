@@ -94,6 +94,8 @@ pub struct LibraryIndex {
     reading: tokio::sync::Mutex<()>,
     scan_notice: Arc<Notify>,
     timing: IndexTiming,
+    /// Whether to keep reading while Family is off (members still have libraries of their own).
+    keep_reading: RwLock<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
 }
 
 /// One song's JSON from `/api/song`, as the index keeps it.
@@ -191,6 +193,7 @@ impl LibraryIndex {
             reading: tokio::sync::Mutex::new(()),
             scan_notice,
             timing: IndexTiming::default(),
+            keep_reading: RwLock::new(None),
         }
     }
 
@@ -198,6 +201,18 @@ impl LibraryIndex {
     pub fn with_timing(mut self, timing: IndexTiming) -> Self {
         self.timing = timing;
         self
+    }
+
+    /// Keeps the index read while Family is off for as long as `needed` answers true, so
+    /// library-wide work can still tell members' own songs from the shared library.
+    pub fn keep_reading_while(&self, needed: impl Fn() -> bool + Send + Sync + 'static) {
+        *self.keep_reading.write() = Some(Arc::new(needed));
+    }
+
+    /// Whether the index should be read now.
+    fn wanted(&self) -> bool {
+        self.settings.current().family.enabled
+            || self.keep_reading.read().as_ref().is_some_and(|needed| needed())
     }
 
     /// What the library service notifies when Octo starts a scan.
@@ -369,10 +384,11 @@ impl LibraryIndex {
         }
     }
 
-    /// Reads the index and logs how that went. While Family is off nothing is read: the index
-    /// keeps what it last read and Navidrome is left alone until Family is on again.
+    /// Reads the index and logs how that went. While Family is off and no member has a library
+    /// of their own, nothing is read: the index keeps what it last read and Navidrome is left
+    /// alone.
     async fn refresh_logged(&self) {
-        if !self.settings.current().family.enabled {
+        if !self.wanted() {
             return;
         }
         match self.refresh().await {

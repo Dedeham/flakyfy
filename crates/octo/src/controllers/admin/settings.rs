@@ -289,6 +289,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("MetadataProfileId", n_num(lidarr.metadata_profile_id)),
             ("CompletionMode", name(lidarr.completion_mode)),
             ("ImportTimeoutSeconds", n_num(lidarr.import_timeout_seconds)),
+            (
+                "WebhookSecret",
+                n_str(&mask_secret(lidarr.webhook_secret.as_deref())),
+            ),
         ]),
     );
     doc.insert(

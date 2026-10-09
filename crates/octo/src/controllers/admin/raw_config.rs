@@ -209,6 +209,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Lidarr:MetadataProfileId",
     "Lidarr:CompletionMode",
     "Lidarr:ImportTimeoutSeconds",
+    "Lidarr:WebhookSecret",
     "YouTube:ShimUrl",
     "LastFm:ApiKey",
     "LastFm:ApiSecret",

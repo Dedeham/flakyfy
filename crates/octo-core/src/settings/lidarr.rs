@@ -23,6 +23,8 @@ pub struct LidarrSettings {
     pub metadata_profile_id: i32,
     pub completion_mode: LidarrCompletionMode,
     pub import_timeout_seconds: i32,
+    /// The password Lidarr's Webhook connection sends; the webhook is off while it is blank.
+    pub webhook_secret: Option<String>,
 }
 
 impl Default for LidarrSettings {
@@ -35,6 +37,7 @@ impl Default for LidarrSettings {
             metadata_profile_id: 0,
             completion_mode: LidarrCompletionMode::Accepted,
             import_timeout_seconds: 1800,
+            webhook_secret: None,
         }
     }
 }

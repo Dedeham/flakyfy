@@ -4677,9 +4677,17 @@ function localOctoAddress() {
   return `${here.protocol}//${here.hostname}:${here.port || '5274'}`;
 }
 
+// Where Lidarr's Webhook connection posts. Lidarr usually runs beside Octo, so the address on
+// this network is the one to paste.
+function lidarrWebhookAddress() {
+  return `${localOctoAddress()}/api/lidarr/webhook`;
+}
+
 function renderOctoAddresses() {
   const el = document.getElementById('octo-address');
   if (el) el.textContent = localOctoAddress();
+  const webhook = document.getElementById('lidarr-webhook-address');
+  if (webhook) webhook.textContent = lidarrWebhookAddress();
 
   const row = document.getElementById('octo-public-address-row');
   const code = document.getElementById('octo-public-address');
@@ -4690,6 +4698,7 @@ function renderOctoAddresses() {
 }
 
 bindCopy('copy-octo-address', localOctoAddress);
+bindCopy('copy-lidarr-webhook-address', lidarrWebhookAddress);
 bindCopy('copy-octo-public-address',
   () => normalizeAddress(currentSettings?.Server?.PublicUrl));
 renderOctoAddresses();

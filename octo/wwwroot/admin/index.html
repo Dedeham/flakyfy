@@ -2535,6 +2535,19 @@
               <input class="set-input" id="f-lidarr-timeout" name="Lidarr.ImportTimeoutSeconds" type="number" min="60" step="60" />
             </div>
             <div class="set-row stack">
+              <div class="set-info">
+                <label class="set-info-t" for="f-lidarr-webhook">Webhook password <span class="set-opt">optional</span></label>
+                <div class="set-info-d">Lets Lidarr tell Octo the moment it imports an album. Leave it blank to keep the webhook off.</div>
+                <div class="set-info-more">In Lidarr, open Settings, then Connect, and add a Webhook. Paste the address below as its URL, keep the method POST, type any user name and this password, and turn on On Release Import. A heart then hears about the import at once, and an album Lidarr imports after Octo stopped waiting for it is still added to your library.</div>
+              </div>
+              <input class="set-input" id="f-lidarr-webhook" name="Lidarr.WebhookSecret" type="password" autocomplete="new-password" />
+              <div class="callout-address">
+                <span class="callout-address-label">Webhook address</span>
+                <code id="lidarr-webhook-address">http://this-host:5274/api/lidarr/webhook</code>
+                <button type="button" class="btn btn-ghost" id="copy-lidarr-webhook-address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+            <div class="set-row stack">
               <div class="set-info-d" id="lidarr-options-status" role="status" aria-live="polite"></div>
             </div>
           </form>

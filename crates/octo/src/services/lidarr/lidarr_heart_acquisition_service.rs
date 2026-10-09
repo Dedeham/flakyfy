@@ -7,6 +7,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use chrono::Utc;
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use octo_core::common::SongIdentity;
@@ -19,11 +20,12 @@ use octo_core::notifications::{NotificationEvent, NotificationEventType};
 use octo_core::settings::{DownloadSource, LidarrCompletionMode, LidarrSettings, SettingsStore};
 use octo_core::soulseek::{RoutingKind, SoulseekRouting};
 use parking_lot::Mutex;
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::{LidarrAlbumClaims, LidarrClient, LidarrImportHandoff};
+use super::{LidarrAlbumClaims, LidarrClient, LidarrImportHandoff, LidarrPendingAlbums, PendingAlbum};
 use crate::services::common::AcquisitionTracker;
 use crate::services::fingerprint::MusicBrainzClient;
 use crate::services::i_download_service::IDownloadService;
@@ -59,6 +61,37 @@ pub trait ILidarrHeartAcquisitionService: Send + Sync {
         notify_failure: bool,
         requested_by: Option<&str>,
     ) -> anyhow::Result<bool>;
+
+    /// Lidarr says it imported files of an album. A heart waiting on that album looks at once;
+    /// an album Octo asked for whose heart stopped waiting (or that Octo restarted since) has
+    /// its new files taken through the download pipeline; any other album is left alone.
+    async fn lidarr_imported(&self, _event: LidarrImportEvent) -> LidarrImportOutcome {
+        LidarrImportOutcome::NotOurs
+    }
+}
+
+/// What Lidarr's webhook says it imported.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LidarrImportEvent {
+    /// The album's MusicBrainz release group id.
+    pub foreign_album_id: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// The imported files, as Lidarr sees them.
+    pub paths: Vec<String>,
+    /// The files replaced files Lidarr already had.
+    pub is_upgrade: bool,
+}
+
+/// What became of a webhook's import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LidarrImportOutcome {
+    /// A heart was waiting on the album and looks now.
+    Woke,
+    /// An album Octo asked for earlier: its new files go through the pipeline.
+    Late,
+    /// Not an album Octo is waiting for.
+    NotOurs,
 }
 
 /// What the C# constructor took as optional, or resolved later from the `IServiceProvider`.
@@ -79,6 +112,8 @@ pub struct LidarrHeartExtras {
     pub journal: Option<Arc<LibraryActionJournal>>,
     pub ownership: Option<Arc<LibraryOwnership>>,
     pub upgrades: Option<Arc<UpgradeQueue>>,
+    /// The albums asked for whose files have not all come in, for imports that come late.
+    pub pending: Option<Arc<LidarrPendingAlbums>>,
 }
 
 /// Hearts through Lidarr. Lidarr only fetches whole albums, so a heart becomes an album search;
@@ -113,6 +148,7 @@ struct Inner {
     journal: Option<Arc<LibraryActionJournal>>,
     ownership: Option<Arc<LibraryOwnership>>,
     upgrades: Option<Arc<UpgradeQueue>>,
+    pending: Option<Arc<LidarrPendingAlbums>>,
 
     /// By foreign album id, ignoring case.
     jobs: Mutex<HashMap<String, Arc<AlbumJob>>>,
@@ -145,6 +181,8 @@ struct AlbumJob {
     ended: watch::Sender<Option<Landed>>,
     /// Why a hearted song did not land, by its key, for the progress list.
     missed: Mutex<HashMap<String, String>>,
+    /// Lidarr said it imported something: look now rather than at the next poll.
+    wake: Notify,
 }
 
 #[derive(Default)]
@@ -164,6 +202,7 @@ impl AlbumJob {
             submitted: OnceLock::new(),
             ended: watch::channel(None).0,
             missed: Mutex::new(HashMap::new()),
+            wake: Notify::new(),
         }
     }
 
@@ -306,6 +345,7 @@ impl LidarrHeartAcquisitionService {
                 journal: extras.journal,
                 ownership: extras.ownership,
                 upgrades: extras.upgrades,
+                pending: extras.pending,
                 jobs: Mutex::new(HashMap::new()),
                 timing: Mutex::new(Timing {
                     claim_poll: Duration::from_secs(10),
@@ -341,6 +381,10 @@ impl LidarrHeartAcquisitionService {
 
 #[async_trait]
 impl ILidarrHeartAcquisitionService for LidarrHeartAcquisitionService {
+    async fn lidarr_imported(&self, event: LidarrImportEvent) -> LidarrImportOutcome {
+        self.inner.clone().lidarr_imported(event)
+    }
+
     async fn try_acquire_track(
         &self,
         provider: &str,
@@ -653,15 +697,35 @@ impl Inner {
             }
         }
 
+        if let Some(pending) = &self.pending {
+            let mut files_before: Vec<i32> = before.iter().copied().collect();
+            files_before.sort_unstable();
+            pending.remember(PendingAlbum {
+                foreign_album_id: key.clone(),
+                lidarr_album_id: started.album_id,
+                artist: album.artist.clone(),
+                title: album.title.clone(),
+                year: album.year,
+                files_before,
+                requested_by: job.asked_by().unwrap_or_default(),
+                asked_at: Utc::now(),
+            });
+        }
+
         let this = self.clone();
         let before = Arc::new(before);
         tokio::spawn(async move {
             let landed: Landed = Arc::default();
             let album = &job.album;
-            if let Err(e) = this
+            let reconciled = this
                 .reconcile_imports(&job, started.album_id, &snapshot, &before, &landed)
-                .await
-            {
+                .await;
+            // Every track dealt with: nothing can come late. A timeout or an error keeps the
+            // album listed for Lidarr's webhook.
+            if let (Ok(true), Some(pending)) = (&reconciled, &this.pending) {
+                pending.forget(&key);
+            }
+            if let Err(e) = reconciled {
                 error!(
                     "Lidarr import reconciliation failed for '{} - {}': {e:#}",
                     album.artist, album.title
@@ -721,7 +785,7 @@ impl Inner {
         settings: &LidarrSettings,
         before: &Arc<HashSet<i32>>,
         landed: &Landed,
-    ) -> Result<(), LidarrError> {
+    ) -> Result<bool, LidarrError> {
         let timeout = Duration::from_secs(settings.import_timeout_seconds.max(1) as u64);
         let poll = self.timing.lock().poll_override.unwrap_or_else(|| {
             Duration::from_secs((settings.import_timeout_seconds / 30).clamp(1, 10) as u64)
@@ -766,48 +830,9 @@ impl Inner {
                     continue;
                 }
                 handled.insert(track.id);
-                let album = job.view();
-                let song = match_song(&album, track, job.match_by_number()).cloned();
-                if let Some(drop) = self
-                    .should_drop(&album, track, song.as_ref(), &imported_path, job)
-                    .await
-                {
-                    self.drop_import(track, &imported_path, before, &drop.reason)
-                        .await;
-                    // Already in the library: in, as far as the heart is concerned, and its row
-                    // closes on the library's own copy.
-                    if let Some(owned) = drop.owned {
-                        add_keys(landed, song.as_ref(), track, &album);
-                        if let (Some(song), Some(tracker)) = (&song, &self.tracker)
-                            && let (Some(provider), Some(id)) =
-                                (song.external_provider.as_deref(), song.external_id.as_deref())
-                            && !provider.is_empty()
-                            && !id.is_empty()
-                        {
-                            tracker.imported(
-                                provider,
-                                id,
-                                Some(&song.artist),
-                                Some(&song.title),
-                                Some(&owned.absolute_path),
-                            );
-                        }
-                    } else if let Some(song) = &song {
-                        job.missed
-                            .lock()
-                            .insert(key_of(song), format!("Not taken: {}.", drop.reason));
-                    }
-                    continue;
+                if let Some(handoff) = self.take_import(job, track, imported_path, before, landed).await {
+                    handed.push(handoff);
                 }
-                handed.push(tokio::spawn(self.clone().hand_to_pipeline(
-                    job.clone(),
-                    track.clone(),
-                    song,
-                    album,
-                    imported_path,
-                    before.clone(),
-                    landed.clone(),
-                )));
             }
 
             if expected > 0 && handled.len() as i64 >= i64::from(expected) {
@@ -818,7 +843,10 @@ impl Inner {
                 timed_out = true;
                 break;
             }
-            tokio::time::sleep(poll).await;
+            tokio::select! {
+                () = tokio::time::sleep(poll) => {}
+                () = job.wake.notified() => {}
+            }
         }
 
         // The pipeline runs each song's checks and tagging; the job ends when the last is done.
@@ -853,7 +881,7 @@ impl Inner {
                     ..NotificationEvent::new(NotificationEventType::DownloadFailed)
                 });
             }
-            return Ok(());
+            return Ok(false);
         }
         let in_library = landed.lock().iter().filter(|key| key.starts_with("t:")).count() as i32;
         if job.album_heart() || settings.completion_mode == LidarrCompletionMode::Imported {
@@ -867,7 +895,181 @@ impl Inner {
                 ..NotificationEvent::new(NotificationEventType::AlbumCompleted)
             });
         }
-        Ok(())
+        Ok(true)
+    }
+
+    /// One file Lidarr imported for a job: dropped when the library must not take it, else
+    /// handed to the pipeline, whose work is returned.
+    async fn take_import(
+        self: &Arc<Self>,
+        job: &Arc<AlbumJob>,
+        track: &LidarrImportedTrack,
+        imported_path: String,
+        before: &Arc<HashSet<i32>>,
+        landed: &Landed,
+    ) -> Option<JoinHandle<()>> {
+        let album = job.view();
+        let song = match_song(&album, track, job.match_by_number()).cloned();
+        if let Some(drop) = self
+            .should_drop(&album, track, song.as_ref(), &imported_path, job)
+            .await
+        {
+            self.drop_import(track, &imported_path, before, &drop.reason)
+                .await;
+            // Already in the library: in, as far as the heart is concerned, and its row
+            // closes on the library's own copy.
+            if let Some(owned) = drop.owned {
+                add_keys(landed, song.as_ref(), track, &album);
+                if let (Some(song), Some(tracker)) = (&song, &self.tracker)
+                    && let (Some(provider), Some(id)) =
+                        (song.external_provider.as_deref(), song.external_id.as_deref())
+                    && !provider.is_empty()
+                    && !id.is_empty()
+                {
+                    tracker.imported(
+                        provider,
+                        id,
+                        Some(&song.artist),
+                        Some(&song.title),
+                        Some(&owned.absolute_path),
+                    );
+                }
+            } else if let Some(song) = &song {
+                job.missed
+                    .lock()
+                    .insert(key_of(song), format!("Not taken: {}.", drop.reason));
+            }
+            return None;
+        }
+        Some(tokio::spawn(self.clone().hand_to_pipeline(
+            job.clone(),
+            track.clone(),
+            song,
+            album,
+            imported_path,
+            before.clone(),
+            landed.clone(),
+        )))
+    }
+
+    /// Lidarr's webhook named an album it imported files of.
+    fn lidarr_imported(self: Arc<Self>, event: LidarrImportEvent) -> LidarrImportOutcome {
+        let key = event.foreign_album_id.trim().to_string();
+        if key.is_empty() {
+            return LidarrImportOutcome::NotOurs;
+        }
+        let running = self
+            .jobs
+            .lock()
+            .get(&dotnet::ordinal_ignore_case_key(&key))
+            .cloned();
+        if let Some(job) = running {
+            job.wake.notify_one();
+            return LidarrImportOutcome::Woke;
+        }
+        let Some(pending) = self.pending.as_ref().and_then(|pending| pending.get(&key)) else {
+            return LidarrImportOutcome::NotOurs;
+        };
+        // An upgrade borrowing the album deletes what its own search brings in; those files are
+        // not this heart's.
+        if self
+            .claims
+            .as_ref()
+            .is_some_and(|claims| claims.upgrade_busy(&key) || claims.heart_busy(&key))
+        {
+            return LidarrImportOutcome::NotOurs;
+        }
+        if let Some(claims) = &self.claims {
+            claims.heart_started(&key);
+        }
+        tokio::spawn(async move {
+            let album = format!("{} - {}", pending.artist, pending.title);
+            match self.take_late_import(&pending, &event.paths).await {
+                Ok(taken) => info!("Lidarr imported '{album}' late; {taken} file(s) handed to the pipeline"),
+                Err(e) => warn!("Lidarr's late import of '{album}' was not taken: {e}"),
+            }
+            if let Some(claims) = &self.claims {
+                claims.heart_ended(&key);
+            }
+        });
+        LidarrImportOutcome::Late
+    }
+
+    /// The files of a late import that Lidarr names and that are new since Octo's search,
+    /// each through the pipeline as an album track nobody is waiting on. The album then leaves
+    /// the pending list. Answers how many files were handed on.
+    async fn take_late_import(
+        self: &Arc<Self>,
+        pending: &PendingAlbum,
+        paths: &[String],
+    ) -> Result<usize, LidarrError> {
+        let settings = self.settings.current().lidarr.clone();
+        let octo_root = self.nav_identity.effective_download_path(
+            &self
+                .settings
+                .raw("Library:DownloadPath")
+                .unwrap_or_else(|| "/music".to_string()),
+        );
+        let album = Album {
+            title: pending.title.clone(),
+            artist: pending.artist.clone(),
+            year: pending.year,
+            ..Default::default()
+        };
+        let candidate = LidarrAlbumCandidate {
+            id: pending.lidarr_album_id,
+            foreign_album_id: pending.foreign_album_id.clone(),
+            title: pending.title.clone(),
+            artist: pending.artist.clone(),
+            year: pending.year,
+            resource: Default::default(),
+        };
+        let job = Arc::new(AlbumJob::new(candidate, album));
+        for name in &pending.requested_by {
+            job.join(&[], false, false, Some(name));
+        }
+        let before: Arc<HashSet<i32>> = Arc::new(pending.files_before.iter().copied().collect());
+        let landed: Landed = Arc::default();
+
+        let tracks = self.client.get_album_tracks(pending.lidarr_album_id).await?;
+        let mut seen_paths: HashSet<String> = HashSet::new();
+        let mut handed = Vec::new();
+        for track in &tracks {
+            if !track.has_file || track.track_file_id <= 0 || before.contains(&track.track_file_id) {
+                continue;
+            }
+            let Some(path) = track
+                .path
+                .as_deref()
+                .filter(|p| !dotnet::is_null_or_white_space(Some(p)))
+            else {
+                continue;
+            };
+            if !paths.iter().any(|named| same_path(named, path))
+                || !seen_paths.insert(dotnet::ordinal_ignore_case_key(path))
+            {
+                continue;
+            }
+            let imported_path =
+                translate_imported_path(path, settings.root_folder_path.as_deref(), &octo_root)?;
+            if !Path::new(&imported_path).is_file() {
+                continue;
+            }
+            if let Some(handoff) = self
+                .take_import(&job, track, imported_path, &before, &landed)
+                .await
+            {
+                handed.push(handoff);
+            }
+        }
+        let taken = handed.len();
+        for handoff in handed {
+            let _ = handoff.await;
+        }
+        if let Some(pending_albums) = &self.pending {
+            pending_albums.forget(&pending.foreign_album_id);
+        }
+        Ok(taken)
     }
 
     /// One imported file through the download pipeline, as the song it is: a hearted song by its

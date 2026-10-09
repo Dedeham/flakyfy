@@ -43,6 +43,8 @@ use crate::services::family::{Member, SharedLibraries};
 const HOME: &str = "192.168.1.20";
 const OUTSIDE: &str = "ext-deezer-song-77";
 const OUTSIDE_TOO: &str = "ext-deezer-song-78";
+/// The owner's Navidrome password.
+const OWNER_PASSWORD: &str = "right-password";
 
 /// The app password of each member's Subsonic app.
 fn app_password(user: &str) -> String {
@@ -134,6 +136,11 @@ async fn wired(family_on: bool) -> Wired {
     ] {
         nd.add_user(id, name, admin);
     }
+    // The owner signs in to Navidrome with their own password; a wrong one is refused there.
+    nd.state
+        .passwords
+        .lock()
+        .insert("winters".into(), OWNER_PASSWORD.into());
     nd.add_library(1, "Music", &music.to_string_lossy());
     for (id, name) in [(3, "alex"), (4, "sam"), (5, "dee")] {
         nd.add_library(
@@ -1187,10 +1194,6 @@ async fn signing_in_to_one_account_never_clears_wrong_tries_at_another() {
 async fn wrong_sign_ins_make_no_devices_or_notices() {
     let w = wired(true).await;
     w.start_family_work().await;
-    w.nd.state
-        .passwords
-        .lock()
-        .insert("winters".into(), "right-password".into());
     let before = w.state.family_store.detected().len();
     let ping = |password: &str, device: String| {
         let mut req = Request::builder()
@@ -1224,7 +1227,7 @@ async fn wrong_sign_ins_make_no_devices_or_notices() {
         "{notices:?}"
     );
     // The owner's right sign-in from a new app is noted, once Navidrome took it.
-    let res = ping("right-password", "real-device".into())
+    let res = ping(OWNER_PASSWORD, "real-device".into())
         .await
         .expect("infallible");
     let _ = res.into_body().collect().await;
@@ -1260,10 +1263,6 @@ async fn sign_ins_sent_all_at_once_count_before_they_are_checked() {
 #[tokio::test]
 async fn a_wrong_owner_password_cannot_change_a_family_playlist() {
     let w = wired(true).await;
-    w.nd.state
-        .passwords
-        .lock()
-        .insert("winters".into(), "right-password".into());
     let made = w
         .page(
             Method::POST,
@@ -1292,7 +1291,7 @@ async fn a_wrong_owner_password_cannot_change_a_family_playlist() {
     let r = w
         .send(
             Method::GET,
-            &as_owner("right-password", format!("deletePlaylist?id={id}")),
+            &as_owner(OWNER_PASSWORD, format!("deletePlaylist?id={id}")),
             None,
             None,
         )

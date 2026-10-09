@@ -37,7 +37,7 @@ pub(crate) struct FakeNavidromeState {
     /// The query of every `stream` and `download` call.
     pub audio: Mutex<Vec<String>>,
     /// Subsonic passwords by user. A user listed here is signed in only with theirs (`p`,
-    /// plain or `enc:` hex); anyone else is taken at their word.
+    /// plain or `enc:` hex, or `t` and `s`); anyone else is taken at their word.
     pub passwords: Mutex<std::collections::HashMap<String, String>>,
     pub scans: AtomicI64,
     next: AtomicI64,
@@ -312,12 +312,20 @@ impl Respond for Responder {
             return subsonic_error(40, "Wrong username or password");
         }
         if let Some(expected) = state.passwords.lock().get(&user).cloned() {
-            let sent = query(request, "p").unwrap_or_default();
-            let sent = match sent.strip_prefix("enc:").and_then(|hex| hex::decode(hex).ok()) {
-                Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                None => sent,
+            let right = match (query(request, "p"), query(request, "t"), query(request, "s")) {
+                (Some(sent), _, _) => {
+                    let sent = match sent.strip_prefix("enc:").and_then(|hex| hex::decode(hex).ok()) {
+                        Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        None => sent,
+                    };
+                    sent == expected
+                }
+                (None, Some(token), Some(salt)) => {
+                    token.eq_ignore_ascii_case(&octo_core::family::codes::subsonic_token(&expected, &salt))
+                }
+                _ => false,
             };
-            if sent != expected {
+            if !right {
                 return subsonic_error(40, "Wrong username or password");
             }
         }

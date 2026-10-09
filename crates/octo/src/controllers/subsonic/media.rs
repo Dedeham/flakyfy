@@ -15,8 +15,9 @@ use futures::FutureExt;
 use octo_core::common::dotnet::{self, is_blank};
 use octo_core::common::{SongIdentity, playlist_id_helper};
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind};
+use octo_core::settings::NoticeKind;
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
-use octo_media::cover::{CoverSeed, ListCover, list_kinds};
+use octo_media::cover::{CoverGlyph, CoverSeed, ListCover, list_kinds};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
@@ -403,6 +404,30 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(serve_placeholder(&state, true).await);
     }
 
+    // Review and Duplicates: Octo's painted cover with the notice's glyph, picked by the
+    // notice's title. getPlaylists hands these ids out for the listener's notice playlists.
+    if let Some(kind) = id
+        .strip_prefix(super::playlists::NOTICE_COVER_PREFIX)
+        .and_then(super::playlists::notice_kind)
+    {
+        let title = state.settings.current().library_actions.notice_title(kind);
+        let glyph = match kind {
+            NoticeKind::Review => CoverGlyph::Magnifier,
+            NoticeKind::Duplicates => CoverGlyph::Copies,
+        };
+        let service = Arc::clone(&state.cover_art_service);
+        let size = requested_cover_size(&call);
+        let bytes = tokio::task::spawn_blocking(move || {
+            service.get_glyph_cover(&title, list_kinds::NOTICE, glyph, size)
+        })
+        .await
+        .unwrap_or_default();
+        if bytes.is_empty() {
+            return Ok(serve_placeholder(&state, false).await);
+        }
+        return Ok(file(bytes, "image/jpeg"));
+    }
+
     // Generated radio IDs already resolve through the per-user state store,
     // so station artwork follows the current station name without creating
     // a parallel metadata record or exposing that name in the cover ID.
@@ -418,6 +443,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
             })),
             song_count: Some(i32::try_from(station.tracks.len()).unwrap_or(i32::MAX)),
             cover_title: None,
+            glyph: None,
         };
         let bytes = state
             .cover_art_service
@@ -452,6 +478,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
             })),
             song_count,
             cover_title: None,
+            glyph: None,
         };
         let bytes = state
             .cover_art_service
@@ -480,6 +507,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
             })),
             song_count,
             cover_title: chart_cover_title(&chart.chart).map(str::to_string),
+            glyph: None,
         };
         let bytes = state
             .cover_art_service

@@ -542,6 +542,7 @@ fn list(name: &str, label: Option<&str>, kind: &str) -> ListCover {
         seeds: None,
         song_count: None,
         cover_title: None,
+        glyph: None,
     }
 }
 
@@ -1481,4 +1482,56 @@ fn a_cover_draws_quickly() {
     );
     assert!(small.0 < 150.0, "600 px took {:.1} ms", small.0);
     assert!(large.0 < 450.0, "1200 px took {:.1} ms", large.0);
+}
+
+// ------------------------------------------------------------ glyph covers
+
+#[test]
+fn a_glyph_cover_has_no_words_and_carries_its_glyph() {
+    let service = service_with(None);
+    let mut spec = CoverArtService::spec("Liked Songs", None, Some(list_kinds::LIKED), Some(50), None);
+    spec.glyph = Some(CoverGlyph::Heart);
+
+    let art = service.compose(&spec, 600);
+
+    assert!(art.words.is_empty());
+    assert_eq!(Some(CoverGlyph::Heart), art.glyph);
+    // The design is still the name's own.
+    let plain = service.compose(
+        &CoverArtService::spec("Liked Songs", None, Some(list_kinds::LIKED), Some(50), None),
+        600,
+    );
+    assert_eq!(
+        (plain.background, plain.orientation),
+        (art.background, art.orientation)
+    );
+}
+
+#[test]
+fn a_glyph_cover_is_white_in_the_middle_and_veiled_under_its_glyph() {
+    let service = service_with(None);
+    let mut spec = CoverArtService::spec("Liked Songs", None, Some(list_kinds::LIKED), None, None);
+    spec.glyph = Some(CoverGlyph::Heart);
+    let veiled_only = service.paint(&spec, 600, false).expect("painted");
+    let drawn = service.paint(&spec, 600, true).expect("painted");
+
+    let middle = drawn.get_pixel(300, 300).0;
+    assert!(middle.iter().all(|c| *c >= 245), "the heart is white: {middle:?}");
+    // Outside the glyph the veiled background is what shows.
+    assert_eq!(veiled_only.get_pixel(5, 5), drawn.get_pixel(5, 5));
+}
+
+#[test]
+fn every_glyph_cover_is_served_as_a_picture() {
+    let service = service_with(None);
+    for (name, glyph) in [
+        ("Liked Songs", CoverGlyph::Heart),
+        ("▸ Review", CoverGlyph::Magnifier),
+        ("▸ Duplicates", CoverGlyph::Copies),
+    ] {
+        let bytes = service.get_glyph_cover(name, list_kinds::NOTICE, glyph, Some(600));
+        assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "{name} is a JPEG");
+        let plain = service.get_named_cover(name, None, Some(600), list_kinds::NOTICE);
+        assert_ne!(bytes, plain, "{name}'s glyph cover is not its worded one");
+    }
 }

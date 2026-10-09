@@ -1,5 +1,6 @@
 //! Paints a composed cover: its painted background at the cover's size, turned as the cover
-//! says, the color-keeping veil under the words, then the words in white at their lines' baselines.
+//! says, the color-keeping veil under the words, then the words in white at their lines'
+//! baselines, or a glyph in white in the middle in place of words.
 
 use anyhow::anyhow;
 use image::RgbImage;
@@ -8,20 +9,24 @@ use super::cover_backgrounds;
 use super::cover_book::CoverBook;
 use super::cover_colors;
 use super::cover_fonts::CoverTypesetter;
+use super::cover_glyph::{self, CoverGlyph};
 use super::cover_layout::CoverWords;
 use super::cover_veil;
 
 /// A cover ready to paint: its side in pixels, its background (an index into the library), how
-/// that background is turned (0 to 7: quarter turns clockwise, then a mirror from 4 up), and its words.
+/// that background is turned (0 to 7: quarter turns clockwise, then a mirror from 4 up), its
+/// words, and the glyph it carries in place of words.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoverArt {
     pub side: i32,
     pub background: usize,
     pub orientation: i32,
     pub words: Vec<CoverWords>,
+    pub glyph: Option<CoverGlyph>,
 }
 
-/// Paints the cover. With `draw_words` false, the veiled background alone.
+/// Paints the cover. With `draw_words` false, the veiled background alone. A glyph is drawn at
+/// every size, with the veil under it as under a title.
 pub fn paint(
     book: &CoverBook,
     art: &CoverArt,
@@ -30,11 +35,14 @@ pub fn paint(
 ) -> anyhow::Result<RgbImage> {
     let mut image = cover_backgrounds::load(book, art.background, art.side)?;
     cover_backgrounds::turn(&mut image, art.orientation);
-    cover_veil::apply(
-        &mut image,
-        &cover_veil::regions(book, &art.words, art.side),
-        &book.veil,
-    );
+    let glyph = art
+        .glyph
+        .map(|glyph| cover_glyph::drawing(glyph, art.side, &book.glyphs));
+    let mut regions = cover_veil::regions(book, &art.words, art.side);
+    if let Some(drawing) = &glyph {
+        regions.push(cover_veil::glyph_region(book, drawing));
+    }
+    cover_veil::apply(&mut image, &regions, &book.veil);
     if !draw_words {
         return Ok(image);
     }
@@ -51,7 +59,7 @@ pub fn paint(
         .iter()
         .filter_map(|(placed, ink)| setter.outline(placed).map(|path| (path, *ink)))
         .collect();
-    if outlines.is_empty() {
+    if outlines.is_empty() && glyph.is_none() {
         return Ok(image);
     }
 
@@ -76,6 +84,9 @@ pub fn paint(
             tiny_skia::Transform::identity(),
             None,
         );
+    }
+    if let Some(drawing) = &glyph {
+        cover_glyph::paint(&mut pixmap, drawing);
     }
     // The background is opaque, so the premultiplied colors are the colors.
     let rgb: Vec<u8> = pixmap

@@ -20,6 +20,7 @@ use super::cover_backgrounds;
 use super::cover_book::CoverBook;
 use super::cover_colors::{self, CoverMusic, Swatch};
 use super::cover_fonts::{self, CoverTypesetter};
+use super::cover_glyph::CoverGlyph;
 use super::cover_image;
 use super::cover_layout::{self, CoverSpec};
 use super::cover_painter::{self, CoverArt};
@@ -35,6 +36,10 @@ pub mod list_kinds {
     pub const NEW_SONGS: &str = "new-songs";
     /// Trending Songs.
     pub const TRENDING: &str = "trending";
+    /// Review and Duplicates: the lists Octo fills with songs to look at.
+    pub const NOTICE: &str = "notice";
+    /// Liked Songs.
+    pub const LIKED: &str = "liked";
 }
 
 /// A boxed future, as the seed callbacks return them.
@@ -58,6 +63,8 @@ pub struct ListCover {
     /// The words the cover shows in place of the name, when they differ from it. The design is
     /// still picked by the name.
     pub cover_title: Option<String>,
+    /// A glyph in place of the words: the cover of a list Octo marks for what it is.
+    pub glyph: Option<CoverGlyph>,
 }
 
 impl ListCover {
@@ -69,6 +76,7 @@ impl ListCover {
             seeds: None,
             song_count: None,
             cover_title: None,
+            glyph: None,
         }
     }
 }
@@ -262,14 +270,39 @@ impl CoverArtService {
 
     /// A list's cover from its name alone: its genre's or decade's color, or its design's own.
     pub fn get_named_cover(&self, name: &str, label: Option<&str>, size: Option<i32>, kind: &str) -> Vec<u8> {
-        let list = ListCover {
-            name: name.to_string(),
-            label: label.map(str::to_string),
-            kind: kind.to_string(),
-            seeds: None,
-            song_count: None,
-            cover_title: None,
-        };
+        self.named(
+            ListCover {
+                name: name.to_string(),
+                label: label.map(str::to_string),
+                kind: kind.to_string(),
+                seeds: None,
+                song_count: None,
+                cover_title: None,
+                glyph: None,
+            },
+            size,
+        )
+    }
+
+    /// A marked list's cover: a painted background picked by its name, with one white glyph in
+    /// the middle and no words. A picture in the covers folder named after it still wins.
+    pub fn get_glyph_cover(&self, name: &str, kind: &str, glyph: CoverGlyph, size: Option<i32>) -> Vec<u8> {
+        self.named(
+            ListCover {
+                name: name.to_string(),
+                label: None,
+                kind: kind.to_string(),
+                seeds: None,
+                song_count: None,
+                cover_title: None,
+                glyph: Some(glyph),
+            },
+            size,
+        )
+    }
+
+    /// A list's cover from what it says of itself, with no seed songs.
+    fn named(&self, list: ListCover, size: Option<i32>) -> Vec<u8> {
         let (size, shown, lookup) = Self::names(&list, size);
         if let Some(custom) = self.override_cover(&shown, &lookup, size) {
             return custom;
@@ -338,21 +371,23 @@ impl CoverArtService {
         seeded: Option<CoverMusic>,
     ) -> Vec<u8> {
         let music = seeded.or_else(|| self.fallback_music(shown, lookup));
-        let spec = Self::spec(
+        let mut spec = Self::spec(
             shown,
             list.cover_title.as_deref(),
             Some(&list.kind),
             list.song_count,
             music,
         );
+        spec.glyph = list.glyph;
         let background = cover_backgrounds::choose(self.book, spec.music.as_ref(), &spec.id);
         let key = format!(
-            "{}\n{}\n{}\n{}\n{}\n{background}\n{size}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{background}\n{size}",
             self.book.version,
             spec.id,
             spec.name,
             spec.line.as_deref().unwrap_or(""),
-            spec.footer.as_deref().unwrap_or("")
+            spec.footer.as_deref().unwrap_or(""),
+            spec.glyph.map_or("", CoverGlyph::name)
         );
         if let Some(drawn) = self.named_covers.lock().get(&key) {
             return drawn.clone();
@@ -441,6 +476,7 @@ impl CoverArtService {
             },
             footer: Self::footer(song_count),
             music,
+            glyph: None,
         }
     }
 
@@ -474,7 +510,13 @@ impl CoverArtService {
             side: size,
             background: cover_backgrounds::choose(self.book, spec.music.as_ref(), &spec.id),
             orientation: cover_backgrounds::orientation(self.book, &spec.id),
-            words: cover_layout::words(spec, size, &self.setter, self.book),
+            // A glyph stands in for every word.
+            words: if spec.glyph.is_some() {
+                Vec::new()
+            } else {
+                cover_layout::words(spec, size, &self.setter, self.book)
+            },
+            glyph: spec.glyph,
         }
     }
 

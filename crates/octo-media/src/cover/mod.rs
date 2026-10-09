@@ -8,6 +8,7 @@ pub mod cover_book;
 pub mod cover_colors;
 pub mod cover_files;
 pub mod cover_fonts;
+pub mod cover_glyph;
 pub mod cover_image;
 pub mod cover_layout;
 pub mod cover_painter;
@@ -20,6 +21,7 @@ pub use cover_art_service::{CoverArtService, CoverSeed, ListCover, list_kinds};
 pub use cover_book::CoverBook;
 pub use cover_colors::{CoverMusic, Lch, Swatch};
 pub use cover_fonts::CoverTypesetter;
+pub use cover_glyph::CoverGlyph;
 pub use cover_layout::{
     CoverAlign, CoverScript, CoverSpec, CoverType, CoverWords, ICoverTypesetter, Measured, WordsRole,
 };

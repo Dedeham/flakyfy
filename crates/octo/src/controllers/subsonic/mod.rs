@@ -39,6 +39,8 @@ mod library_edit_tests;
 #[cfg(test)]
 mod lyrics_endpoint_tests;
 #[cfg(test)]
+mod marked_lists_tests;
+#[cfg(test)]
 mod media_tests;
 #[cfg(test)]
 mod merged_browsing_tests;

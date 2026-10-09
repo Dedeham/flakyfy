@@ -6,10 +6,13 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
+use indexmap::IndexMap;
 use octo_core::charts::chart_settings;
+use octo_core::common::dotnet;
 use octo_core::json::dom::Node;
 use octo_core::radio::radio_provider;
 use octo_core::settings::GeneratedPlaylistSettings;
+use octo_core::settings::NoticeKind;
 use octo_subsonic::SubsonicReply;
 use octo_subsonic::subsonic_response_builder::chart_playlist_comment;
 use octo_subsonic::xml::XElement;
@@ -48,6 +51,13 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     };
 
     let username = call.param_or("u", "").to_string();
+
+    // This listener's Review and Duplicates playlists carry Octo's glyph cover.
+    let notices = notice_titles(&state, &username);
+    let mut relay = relay;
+    if let Some(body) = mark_notice_rows(&relay.body, &format, &username, &notices) {
+        relay.body = body.into();
+    }
 
     // Navidrome answered ok above, so `u` is authenticated. Ensure this user's action
     // playlists exist, using the body we already have so the common case costs no extra
@@ -135,6 +145,136 @@ pub(crate) fn chart_playlist_fields(
         fields.insert("octoCoverTitle".into(), title.into());
     }
     fields
+}
+
+/// Where a notice playlist's cover is drawn: `getCoverArt` paints it with the notice's glyph.
+pub(crate) const NOTICE_COVER_PREFIX: &str = "oc-notice-";
+
+/// The notice kinds a playlist row can be marked with, as `octoNotice` names them.
+pub(crate) const NOTICE_REVIEW: &str = "review";
+pub(crate) const NOTICE_DUPLICATES: &str = "duplicates";
+
+/// The kind's word as rows and cover ids carry it.
+pub(crate) fn notice_word(kind: NoticeKind) -> &'static str {
+    match kind {
+        NoticeKind::Review => NOTICE_REVIEW,
+        NoticeKind::Duplicates => NOTICE_DUPLICATES,
+    }
+}
+
+/// The notice kind a word names.
+pub(crate) fn notice_kind(word: &str) -> Option<NoticeKind> {
+    match word {
+        NOTICE_REVIEW => Some(NoticeKind::Review),
+        NOTICE_DUPLICATES => Some(NoticeKind::Duplicates),
+        _ => None,
+    }
+}
+
+/// The notice playlists that are on, by title, with their kind's word. Empty for no listener.
+fn notice_titles(state: &AppState, username: &str) -> Vec<(String, &'static str)> {
+    if username.trim().is_empty() {
+        return Vec::new();
+    }
+    let settings = state.settings.current().library_actions.clone();
+    settings
+        .enabled_notice_kinds()
+        .into_iter()
+        .map(|kind| (settings.notice_title(kind), notice_word(kind)))
+        .collect()
+}
+
+/// The notice word for a playlist row: the listener's own playlist named like a notice that is on.
+fn notice_of(
+    owner: Option<&str>,
+    name: Option<&str>,
+    username: &str,
+    notices: &[(String, &'static str)],
+) -> Option<&'static str> {
+    let (owner, name) = (owner?, name?);
+    if !dotnet::eq_ignore_case(owner, username) {
+        return None;
+    }
+    notices
+        .iter()
+        .find(|(title, _)| dotnet::eq_ignore_case(title, name))
+        .map(|(_, word)| *word)
+}
+
+/// Marks the listener's notice playlists in a getPlaylists or getPlaylist answer: `coverArt`
+/// becomes the notice's painted cover and `octoNotice` names the notice, so every client shows
+/// the glyph and the Octo apps know which list it is. A playlist of anyone else, or one named
+/// like a notice that is off, is left as Navidrome sent it. None when nothing was marked, or the
+/// body is not one this reads.
+pub(super) fn mark_notice_rows(
+    body: &[u8],
+    format: &str,
+    username: &str,
+    notices: &[(String, &'static str)],
+) -> Option<Vec<u8>> {
+    if notices.is_empty() {
+        return None;
+    }
+    if format.eq_ignore_ascii_case("json") {
+        let mut root = Node::parse(std::str::from_utf8(body).ok()?).ok()?;
+        let response = root
+            .as_object_mut()?
+            .get_mut("subsonic-response")?
+            .as_object_mut()?;
+        let mut rows: Vec<&mut IndexMap<String, Node>> = Vec::new();
+        for (key, value) in response.iter_mut() {
+            match (key.as_str(), value) {
+                ("playlists", Node::Object(holder)) => match holder.get_mut("playlist") {
+                    Some(Node::Array(list)) => rows.extend(list.iter_mut().filter_map(Node::as_object_mut)),
+                    Some(Node::Object(one)) => rows.push(one),
+                    _ => {}
+                },
+                ("playlist", Node::Object(one)) => rows.push(one),
+                _ => {}
+            }
+        }
+        let mut marked = false;
+        for row in rows {
+            let word = notice_of(
+                row.get("owner").and_then(Node::as_str),
+                row.get("name").and_then(Node::as_str),
+                username,
+                notices,
+            );
+            if let Some(word) = word {
+                row.insert(
+                    "coverArt".into(),
+                    Node::String(format!("{NOTICE_COVER_PREFIX}{word}")),
+                );
+                row.insert("octoNotice".into(), Node::String(word.to_string()));
+                marked = true;
+            }
+        }
+        return marked.then(|| root.to_json_string(false).into_bytes());
+    }
+    if !format.eq_ignore_ascii_case("xml") {
+        return None;
+    }
+    let mut root = XElement::parse(&String::from_utf8_lossy(body)).ok()?;
+    let mut marked = false;
+    let mut mark = |row: &mut XElement| {
+        let word = notice_of(row.attribute("owner"), row.attribute("name"), username, notices);
+        if let Some(word) = word {
+            row.set_attr("coverArt", format!("{NOTICE_COVER_PREFIX}{word}"));
+            row.set_attr("octoNotice", word.to_string());
+            marked = true;
+        }
+    };
+    for element in root.elements_mut() {
+        if element.name == "playlists" {
+            for row in element.elements_mut().filter(|row| row.name == "playlist") {
+                mark(row);
+            }
+        } else if element.name == "playlist" {
+            mark(element);
+        }
+    }
+    marked.then(|| root.to_xml_string().into_bytes())
 }
 
 /// A row's fields as XML attributes (`XmlValue`).
@@ -308,6 +448,13 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
         .find(|item| item.id == id)
     else {
         return match call.proxy.relay_safe("rest/getPlaylist", &call.parameters).await {
+            Some(relay) if is_successful_subsonic_response(&relay.body, format) => {
+                let notices = notice_titles(state, &username);
+                match mark_notice_rows(&relay.body, format, &username, &notices) {
+                    Some(body) => call.file(&body.into(), relay.content_type.as_deref()),
+                    None => call.file(&relay.body, relay.content_type.as_deref()),
+                }
+            }
             Some(relay) => call.file(&relay.body, relay.content_type.as_deref()),
             None => builder
                 .create_error(format, 0, "Playlist not found")

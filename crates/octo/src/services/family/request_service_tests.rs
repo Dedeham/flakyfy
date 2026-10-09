@@ -97,6 +97,8 @@ struct Fetcher {
     imports: Mutex<Vec<(String, String)>>,
     /// When set, songs land in this shared folder instead, as when someone wanted them shared.
     lands_shared: Mutex<Option<String>>,
+    /// How long a song takes to land.
+    delay: Mutex<Duration>,
 }
 
 impl Fetcher {
@@ -109,6 +111,7 @@ impl Fetcher {
             upgrades: Mutex::new(Vec::new()),
             imports: Mutex::new(Vec::new()),
             lands_shared: Mutex::new(None),
+            delay: Mutex::new(Duration::ZERO),
         }
     }
 }
@@ -132,6 +135,10 @@ impl RequestFetcher for Fetcher {
         self.asked
             .lock()
             .push((user.to_string(), external_id.to_string(), quality));
+        let delay = *self.delay.lock();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         if quality == RequestQuality::Flac && *self.no_flac.lock() {
             return Fetched::Failed("No Soulseek FLAC found".into());
         }
@@ -464,6 +471,146 @@ async fn a_copy_navidrome_shows_where_it_never_showed_the_link_is_done() {
         LinkMode::Symlink,
         "once is not enough to give up on links"
     );
+}
+
+#[tokio::test]
+async fn a_link_missed_while_navidrome_is_still_scanning_never_counts_toward_copies() {
+    let world = World::new(None);
+    let members = world.members();
+    let rows = json!([song_row(
+        "alex-32",
+        3,
+        &format!("{members}/alex"),
+        "Artist/Album/32.flac",
+        1_000
+    )]);
+    let shows_files = navidrome_with_songs(rows).await;
+    let shows_nothing = navidrome_knowing(&world, &[]).await;
+    world.point_at(&shows_nothing.uri());
+    // Navidrome is still scanning when Octo gives up waiting for the link.
+    world
+        .library
+        .scanning
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let setup = setup(world);
+    let link = format!("{members}/alex/Artist/Album/32.flac");
+    let watcher = {
+        let (settings, link) = (setup.world.settings.clone(), link.clone());
+        let url = shows_files.uri();
+        tokio::spawn(async move {
+            loop {
+                let is_file = std::fs::symlink_metadata(&link).is_ok_and(|m| m.file_type().is_file());
+                if is_file {
+                    let mut now = settings.current().as_ref().clone();
+                    now.subsonic.url = Some(url);
+                    settings.set(now);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+    };
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-32", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert!(eventually_long(|| state_of(&setup, &made.id) == RequestState::Done).await);
+    watcher.await.expect("joins");
+    assert_eq!(
+        setup.world.pool.store().link_state().unshown,
+        0,
+        "a scan still running proves nothing about links"
+    );
+    assert_eq!(setup.world.pool.mode(), LinkMode::Symlink);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asks_for_different_songs_at_once_never_pass_the_weekly_limit() {
+    let world = World::new(None);
+    let mut limited = member("alex", Preset::Member, 3);
+    limited.edits.insert("WeeklyRequestLimit".into(), json!(3));
+    limited.edits.insert("AutoApprove".into(), json!(true));
+    world.family.upsert_member(limited);
+    let setup = setup(world);
+    *setup.catalog.delay.lock() = Duration::from_millis(50);
+    let asks: Vec<_> = (0..8)
+        .map(|n| {
+            let service = setup.service.clone();
+            tokio::spawn(async move {
+                service
+                    .create("alex", &format!("ext-test-song-7{n}"), RequestQuality::Best, None)
+                    .await
+            })
+        })
+        .collect();
+    let mut made = 0;
+    for ask in asks {
+        match ask.await.expect("joins") {
+            Ok(_) => made += 1,
+            Err(e) => assert!(e.message.contains("all 3 of your requests"), "{}", e.message),
+        }
+    }
+    assert_eq!(made, 3, "three slots a week");
+    assert_eq!(setup.service.quota_used("alex"), 3);
+}
+
+#[tokio::test]
+async fn a_member_who_leaves_while_their_download_is_on_its_way_leaves_nothing_behind() {
+    let world = World::new(None);
+    let navidrome = navidrome_knowing(&world, &[]).await;
+    world.point_at(&navidrome.uri());
+    let setup = setup(world);
+    *setup.fetcher.delay.lock() = Duration::from_millis(300);
+    let made = setup
+        .service
+        .create("alex", "ext-test-song-60", RequestQuality::Best, None)
+        .await
+        .expect("made");
+    assert_eq!(made.state, RequestState::Approved);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Alex leaves the family as removing a member does it: gone, then their requests closed.
+    setup.world.family.remove_member("alex");
+    assert_eq!(setup.service.close_member("alex"), 1);
+    assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
+    let pooled = format!("{}/Artist/Album/60.flac", setup.world.pool.pool_root_path());
+    let trash = format!("{}/.octo-trash", setup.world.members());
+    let trashed = || walk(&trash).iter().any(|path| path.ends_with("/60.flac"));
+    assert!(
+        eventually(trashed).await,
+        "the download that landed went to the trash"
+    );
+    assert!(!std::path::Path::new(&pooled).exists());
+    assert!(
+        setup.world.pool.store().list().is_empty(),
+        "nothing in the pool for nobody"
+    );
+    assert_eq!(state_of(&setup, &made.id), RequestState::Cancelled);
+    assert_eq!(
+        setup.service.resume_approved(),
+        0,
+        "a restart starts nothing again"
+    );
+}
+
+/// Every file under `root`.
+fn walk(root: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(root)];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    found
 }
 
 #[tokio::test]

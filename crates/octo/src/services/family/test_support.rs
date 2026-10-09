@@ -5,11 +5,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, TimeDelta, Utc};
+use octo_core::common::Clock;
 use octo_core::family::abilities::Preset;
 use octo_core::models::domain::Song;
 use octo_core::models::subsonic::ScanStatus;
@@ -35,7 +36,8 @@ use crate::services::local::{ILocalLibraryService, LocalSongMapping};
 use crate::services::subsonic::NavidromeIdentityService;
 use octo_core::family::abilities::RequestQuality;
 
-/// A library service that remembers what it was asked.
+/// A library service that remembers what it was asked. Its Navidrome says it is scanning
+/// while `scanning` is set, and that its scan is finished otherwise.
 #[derive(Default)]
 pub(crate) struct RecordingLibrary {
     /// `provider:id` to the path Octo downloaded it to.
@@ -44,6 +46,7 @@ pub(crate) struct RecordingLibrary {
     pub full_scans: AtomicUsize,
     pub forgotten: Mutex<Vec<String>>,
     pub restored: Mutex<Vec<String>>,
+    pub scanning: AtomicBool,
 }
 
 impl RecordingLibrary {
@@ -125,7 +128,10 @@ impl ILocalLibraryService for RecordingLibrary {
     }
 
     async fn get_scan_status(&self) -> Option<ScanStatus> {
-        None
+        Some(ScanStatus {
+            scanning: self.scanning.load(Ordering::SeqCst),
+            count: None,
+        })
     }
 }
 
@@ -177,7 +183,9 @@ pub(crate) fn member(name: &str, preset: Preset, library: i64) -> Member {
 }
 
 /// A members folder, a shared music folder and a pool over them, with Alex (a Member, library
-/// 3) and Sam (a Listener, library 4). The index reads `navidrome` when one is given.
+/// 3) and Sam (a Listener, library 4). The index reads `navidrome` when one is given. The pool
+/// folder holds its marker file, as when Family was turned on, and the pool reads the time
+/// from a clock the test moves along ([`World::later`]).
 pub(crate) struct World {
     pub dir: tempfile::TempDir,
     pub settings: Arc<SettingsStore>,
@@ -187,6 +195,7 @@ pub(crate) struct World {
     pub stars: Arc<RecordingStars>,
     pub playlists: Arc<FamilyPlaylistStore>,
     pub pool: Arc<FamilyPool>,
+    pub now: Arc<Mutex<DateTime<Utc>>>,
 }
 
 impl World {
@@ -245,6 +254,13 @@ impl World {
                 max_wait: Duration::from_millis(600),
             },
         );
+        pool.mark_pool_root().expect("the pool's marker file");
+        let now = Arc::new(Mutex::new(Utc::now()));
+        let clock = {
+            let now = now.clone();
+            Clock::new(move || *now.lock())
+        };
+        pool.set_clock(clock);
         World {
             dir,
             settings,
@@ -254,7 +270,13 @@ impl World {
             stars,
             playlists,
             pool,
+            now,
         }
+    }
+
+    /// Moves the pool's clock `minutes` on.
+    pub fn later(&self, minutes: i64) {
+        *self.now.lock() += TimeDelta::minutes(minutes);
     }
 
     /// Points Octo at a Navidrome started after the world was made.

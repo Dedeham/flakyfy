@@ -189,10 +189,9 @@ impl SavedStore {
     }
 
     fn save(&self) {
-        let Some(path) = &self.path else { return };
-        let _saving = self.save_lock.lock();
-        let saved = self.saved.lock().clone();
-        store_file::save(Some(path), &saved);
+        store_file::save_with(self.path.as_deref(), &self.save_lock, || {
+            self.saved.lock().clone()
+        });
     }
 }
 

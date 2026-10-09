@@ -15,19 +15,26 @@
 //! the link) is kept in `family-pool.json`, so a restart does not forget it.
 //!
 //! Every change to the pool (a link, an unlink, a better copy, a move into the shared library,
-//! a member let go, a sweep) holds one lock for its whole run, so no change reads the record
-//! while another is halfway through it.
+//! a member let go, a sweep) claims the pool files it works on for its whole run, so two
+//! changes to one file never overlap, while changes to different files go on side by side. The
+//! pool's lock is held only while a change reads and writes the record and decides what to do,
+//! never across a copy, a move or a call to Navidrome, and every file operation runs on a
+//! blocking thread.
+//!
+//! Octo writes a marker file ([`POOL_MARKER`]) in the pool folder when Family is turned on. A
+//! pool folder without it is taken for an empty mount point where the members disk should be:
+//! no record is forgotten and no member download is placed there until it is back.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::common::dotnet::eq_ignore_case;
-use octo_core::common::{PathHelper, SongIdentity};
+use octo_core::common::{Clock, PathHelper, SongIdentity};
 use octo_core::models::domain::Song;
 use octo_core::settings::{LibraryAction, SettingsStore};
 use parking_lot::{Mutex, RwLock};
@@ -35,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use super::family_playlist_store::FamilyPlaylistStore;
-use super::family_pool_store::{FamilyPoolStore, PoolFile};
+use super::family_pool_store::{FamilyPoolStore, MISSED_KEPT, PoolFile};
 use super::family_service::valid_username;
 use super::family_store::{FamilyStore, Member, SharedLibraries};
 use super::library_index::{IndexedSong, LibraryIndex};
@@ -51,6 +58,23 @@ pub const POOL_FOLDER: &str = ".pool";
 /// Where a removed member's files are kept aside, under the members folder. The dot keeps it
 /// out of every library.
 pub const KEPT_FOLDER: &str = ".kept";
+
+/// The file Octo writes in the pool folder when Family is turned on. A pool folder without it
+/// is not swept and takes no new member downloads.
+pub const POOL_MARKER: &str = ".octo-pool";
+
+/// What the marker file says, for anyone who finds it.
+const POOL_MARKER_TEXT: &str =
+    "Octo keeps the family's downloads in this folder. Leave this file here; without it Octo takes the folder for a disk that is not mounted.
+";
+
+/// What a member reads when their download cannot be placed because the pool folder lacks its
+/// marker file.
+pub const POOL_NOT_READY: &str = "The family library's disk is not ready. Try again later.";
+
+/// Sweeps for pool files deleted by hand run at most this often, and a file goes only when it
+/// has been missing at least this long.
+pub const SWEEP_SPACING: Duration = Duration::from_secs(10 * 60);
 
 /// What becomes of the files only a removed member had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,8 +184,9 @@ impl PoolError {
     }
 }
 
-/// How many times a link Navidrome did not show had to become a copy that it then showed,
-/// with no link ever shown, before every member gets copies.
+/// How many songs had a link a finished scan did not show, and a copy in its place that
+/// Navidrome then showed, with no link ever shown, before Octo probes the members folder again
+/// to decide whether every member gets copies.
 pub const UNSHOWN_LINKS_FOR_COPIES: u32 = 2;
 
 /// How patiently a moved or new file is waited for in the library index.
@@ -246,15 +271,23 @@ impl MemberStars for NavidromeMemberStars {
 pub trait FamilyPlacement: Send + Sync {
     /// Where member downloads are placed (the pool folder); None while Family is off.
     fn pool_root(&self) -> Option<String>;
+    /// Whether a member's download may be placed in the pool now: the pool folder holds Octo's
+    /// marker file ([`POOL_MARKER`]). Always true while Family is off.
+    async fn placement_ready(&self) -> bool;
     /// Whether a path is a file in the pool.
     fn is_pool_path(&self, path: &str) -> bool;
     /// A file in the pool holding this song: by its outside id, then its ISRC, then its artist
     /// and title.
-    fn find_song(&self, provider: &str, external_id: &str, song: &Song) -> Option<PoolFile>;
+    async fn find_song(&self, provider: &str, external_id: &str, song: &Song) -> Option<PoolFile>;
     /// Whether a pool file is a FLAC the spectrum check found was made from lossy audio.
     fn made_from_lossy(&self, path: &str) -> bool;
     /// The path the first member's link has, for a file about to be linked.
     fn link_path_for(&self, pool_path: &str, user: &str) -> Option<String>;
+    /// The owner's copy of a song recorded at `path`: a file in the pool (with Family on or
+    /// off) moves into the shared library, still one file, and the answer is where it is now;
+    /// any other file is the answer as it is. None when a pool file could not be moved, so the
+    /// owner's copy is fetched as usual: the pool is never the owner's copy.
+    async fn for_owner(&self, path: &str) -> Option<String>;
     /// Records a file just placed in the pool and links it for `members`. A copy of the same
     /// song already in the pool that this one betters is replaced for everyone. Answers the
     /// first member's link.
@@ -304,6 +337,98 @@ struct Remap {
     scope: String,
 }
 
+/// A member's star on a song, read before its file moves.
+struct StarBefore {
+    user: String,
+    old_id: Option<String>,
+    starred: bool,
+}
+
+/// What a finished Navidrome scan showed of a file in a member's library.
+#[derive(Debug, Clone)]
+pub enum ScanCheck {
+    /// The index finds it.
+    Shown(IndexedSong),
+    /// Navidrome says its scan is finished, and the index read after that still does not find it.
+    Missed,
+    /// Navidrome is still scanning, or cannot say.
+    Unsure,
+}
+
+/// Pool files that changes are working on now, each held by one change at a time.
+#[derive(Default)]
+struct Claims {
+    held: Mutex<HashSet<String>>,
+    freed: tokio::sync::Notify,
+}
+
+/// A change's hold on pool files: while it lasts, no other change touches them. Let go when
+/// dropped, however the change ends.
+struct Claim<'a> {
+    claims: &'a Claims,
+    paths: Vec<String>,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        {
+            let mut held = self.claims.held.lock();
+            for path in &self.paths {
+                held.remove(path);
+            }
+        }
+        self.claims.freed.notify_waiters();
+    }
+}
+
+impl Claims {
+    /// Waits until none of `paths` is held, then holds them all at once (so two changes that
+    /// each want two files never wait on each other).
+    async fn claim(&self, paths: &[&str]) -> Claim<'_> {
+        let mut paths: Vec<String> = paths.iter().map(|path| path.to_string()).collect();
+        paths.sort();
+        paths.dedup();
+        loop {
+            let freed = self.freed.notified();
+            tokio::pin!(freed);
+            freed.as_mut().enable();
+            {
+                let mut held = self.held.lock();
+                if paths.iter().all(|path| !held.contains(path)) {
+                    held.extend(paths.iter().cloned());
+                    return Claim { claims: self, paths };
+                }
+            }
+            freed.await;
+        }
+    }
+}
+
+/// The members folder and the pool folder as one change reads them, for the file work it does
+/// on a blocking thread.
+#[derive(Debug, Clone)]
+struct Places {
+    members: String,
+    pool: String,
+}
+
+impl Places {
+    /// A pool file's path inside the pool.
+    fn relative(&self, path: &str) -> Option<String> {
+        relative_under(&self.pool, path)
+    }
+
+    /// A member's own folder.
+    fn member_root(&self, name: &str) -> String {
+        format!("{}/{name}", self.members)
+    }
+
+    /// Where `name`'s library has the pool file at `relative`.
+    fn under(&self, name: &str, relative: &str) -> String {
+        format!("{}/{name}/{relative}", self.members)
+    }
+}
+
 /// The family pool. See the module comment.
 pub struct FamilyPool {
     me: Weak<FamilyPool>,
@@ -314,16 +439,25 @@ pub struct FamilyPool {
     library: Arc<dyn ILocalLibraryService>,
     playlists: Arc<FamilyPlaylistStore>,
     stars: Arc<dyn MemberStars>,
-    quarantine: LibraryActionQuarantine,
+    quarantine: Arc<LibraryActionQuarantine>,
     /// The shared library's folder, read at use (it follows Navidrome's detected folder).
     shared_root: Box<dyn Fn() -> String + Send + Sync>,
     mode: RwLock<LinkMode>,
-    /// Held for the whole of every change to the pool.
-    changes: tokio::sync::Mutex<()>,
-    /// Pool files the last sweep found missing; a file goes only when the next sweep finds it
-    /// missing again.
-    missing_once: Mutex<HashSet<String>>,
+    /// Held while a change reads and writes the records and decides what to do; never across a
+    /// copy, a move or a call to Navidrome.
+    records: Mutex<()>,
+    /// The pool files changes are working on.
+    claims: Claims,
+    /// When the last sweep ran.
+    last_sweep: Mutex<Option<DateTime<Utc>>>,
+    /// Pool files sweeps found missing, with when they were first found missing; a file goes
+    /// only when a sweep at least [`SWEEP_SPACING`] later finds it missing still.
+    misses: Mutex<HashMap<String, DateTime<Utc>>>,
+    clock: RwLock<Clock>,
     timing: PoolTiming,
+    /// How long each copy waits before it starts (tests make copies slow with it).
+    #[cfg(test)]
+    copy_pause: Mutex<Duration>,
 }
 
 /// The services a [`FamilyPool`] works with.
@@ -345,7 +479,7 @@ impl FamilyPool {
 
     /// The same pool, waiting for the index on another schedule (tests).
     pub fn with_timing(parts: PoolParts, timing: PoolTiming) -> Arc<Self> {
-        let quarantine = LibraryActionQuarantine::new(Arc::clone(&parts.settings));
+        let quarantine = Arc::new(LibraryActionQuarantine::new(Arc::clone(&parts.settings)));
         let mode = if parts.store.link_state().copies {
             LinkMode::Copy
         } else {
@@ -363,14 +497,44 @@ impl FamilyPool {
             quarantine,
             shared_root: parts.shared_root,
             mode: RwLock::new(mode),
-            changes: tokio::sync::Mutex::new(()),
-            missing_once: Mutex::new(HashSet::new()),
+            records: Mutex::new(()),
+            claims: Claims::default(),
+            last_sweep: Mutex::new(None),
+            misses: Mutex::new(HashMap::new()),
+            clock: RwLock::new(Clock::system()),
             timing,
+            #[cfg(test)]
+            copy_pause: Mutex::new(Duration::ZERO),
         })
     }
 
     fn arc(&self) -> Option<Arc<FamilyPool>> {
         self.me.upgrade()
+    }
+
+    /// Reads the time from `clock` from now on (tests move it along).
+    pub fn set_clock(&self, clock: Clock) {
+        *self.clock.write() = clock;
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        self.clock.read().now()
+    }
+
+    /// Makes every copy wait `pause` before it starts.
+    #[cfg(test)]
+    pub(crate) fn slow_copies(&self, pause: Duration) {
+        *self.copy_pause.lock() = pause;
+    }
+
+    #[cfg(test)]
+    fn copy_pause(&self) -> Duration {
+        *self.copy_pause.lock()
+    }
+
+    #[cfg(not(test))]
+    fn copy_pause(&self) -> Duration {
+        Duration::ZERO
     }
 
     /// Whether Family is on.
@@ -400,20 +564,28 @@ impl FamilyPool {
         format!("{}/{POOL_FOLDER}", self.members_root())
     }
 
-    /// A member's own folder, `<members>/<user>` (their name as Octo keeps it).
-    pub fn member_root(&self, user: &str) -> String {
-        let name = self
-            .family
+    fn places(&self) -> Places {
+        let members = self.members_root();
+        let pool = format!("{members}/{POOL_FOLDER}");
+        Places { members, pool }
+    }
+
+    /// A member's name as Octo keeps it (anyone else's as given).
+    fn member_name(&self, user: &str) -> String {
+        self.family
             .member(user)
             .map(|m| m.username)
-            .unwrap_or_else(|| user.trim().to_string());
-        format!("{}/{name}", self.members_root())
+            .unwrap_or_else(|| user.trim().to_string())
+    }
+
+    /// A member's own folder, `<members>/<user>` (their name as Octo keeps it).
+    pub fn member_root(&self, user: &str) -> String {
+        format!("{}/{}", self.members_root(), self.member_name(user))
     }
 
     /// A pool file's path inside the pool (`Artist/Album/01 Song.flac`).
     pub fn relative_in_pool(&self, path: &str) -> Option<String> {
-        let rest = path.strip_prefix(&self.pool_root_path())?.strip_prefix('/')?;
-        (!rest.is_empty() && !rest.split('/').any(|part| part == "..")).then(|| rest.to_string())
+        relative_under(&self.pool_root_path(), path)
     }
 
     /// Where `user`'s link to a pool file is.
@@ -453,6 +625,55 @@ impl FamilyPool {
         self.link_status()
     }
 
+    /// Whether the pool folder holds Octo's marker file ([`POOL_MARKER`]): it is the disk Octo
+    /// placed members' downloads on, and not an empty mount point where that disk should be.
+    pub fn pool_ready(&self) -> bool {
+        Path::new(&self.pool_root_path()).join(POOL_MARKER).is_file()
+    }
+
+    /// Writes the marker file in the pool folder, making the folder first. Done when Family is
+    /// turned on.
+    pub fn mark_pool_root(&self) -> io::Result<()> {
+        let root = PathBuf::from(self.pool_root_path());
+        make_dirs(&root)?;
+        let marker = root.join(POOL_MARKER);
+        if marker.is_file() {
+            return Ok(());
+        }
+        std::fs::write(&marker, POOL_MARKER_TEXT)
+    }
+
+    /// Writes the marker file when the pool folder plainly is the pool: nothing is recorded yet
+    /// (so nothing could be forgotten by mistake), or a recorded file is there. A folder with
+    /// records but none of their files is left without one: it is most likely an empty mount
+    /// point, and members' downloads wait until the disk is back. Answers whether the marker is
+    /// there now.
+    pub fn keep_marker(&self) -> bool {
+        if self.pool_ready() {
+            return true;
+        }
+        let recorded = self.store.list();
+        let ours = recorded.is_empty() || recorded.iter().any(|file| Path::new(&file.path).is_file());
+        if !ours {
+            warn!(
+                "FAMILY {} has no {POOL_MARKER} file and none of the {} pool files Octo recorded; its disk may not be mounted, so no member download is placed there until it is",
+                self.pool_root_path(),
+                recorded.len()
+            );
+            return false;
+        }
+        match self.mark_pool_root() {
+            Ok(()) => true,
+            Err(e) => {
+                warn!(
+                    "FAMILY could not write {POOL_MARKER} in {}: {e}",
+                    self.pool_root_path()
+                );
+                false
+            }
+        }
+    }
+
     /// Whether Navidrome has shown a linked song in a member's library yet.
     pub fn links_seen(&self) -> bool {
         self.mode() == LinkMode::Copy || self.store.link_state().seen
@@ -469,20 +690,33 @@ impl FamilyPool {
     /// for it. Nothing changes once a link has ever been shown, or for anything but a link.
     /// Answers whether the link became a copy.
     pub async fn copy_unshown_link(&self, user: &str, link: &str) -> bool {
-        if self.links_seen() || !is_symlink(link) {
+        if self.links_seen() {
             return false;
         }
-        let _changing = self.changes.lock().await;
-        let path = PathBuf::from(link);
-        let copied = tokio::task::spawn_blocking(move || replace_link_with_copy(&path))
-            .await
-            .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
-        if let Err(e) = copied {
-            warn!("FAMILY could not make a copy of {link} for {user}: {e}");
-            return false;
-        }
+        let pool_path = self
+            .pool_path_of_link(user, link)
+            .unwrap_or_else(|| link.to_string());
+        let _claim = self.claims.claim(&[&pool_path]).await;
+        let (path, pause) = (PathBuf::from(link), self.copy_pause());
+        let copied = on_disk(move || -> io::Result<Option<u64>> {
+            if !is_symlink(&path) {
+                return Ok(None);
+            }
+            wait_before_copy(pause);
+            copy_staged(&path, &path)?;
+            Ok(Some(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)))
+        })
+        .await
+        .and_then(|copied| copied);
+        let size = match copied {
+            Ok(Some(size)) => size,
+            Ok(None) => return false,
+            Err(e) => {
+                warn!("FAMILY could not make a copy of {link} for {user}: {e}");
+                return false;
+            }
+        };
         if let Some(library_id) = self.family.member(user).and_then(|m| m.personal_library_id) {
-            let size = std::fs::metadata(link).map(|m| m.len()).unwrap_or(0);
             self.index.note_placed(library_id, link, size);
             self.library.trigger_library_scan_of(library_id).await;
         }
@@ -490,90 +724,145 @@ impl FamilyPool {
         true
     }
 
-    /// Navidrome showed a copy where it never showed the link before it. Once that has
-    /// happened [`UNSHOWN_LINKS_FOR_COPIES`] times with no link ever shown, every member gets
-    /// copies from now on ([`Self::fall_back_to_copies`]). Answers whether that happened now.
-    pub async fn copy_shown_where_link_was_not(&self) -> bool {
+    /// What a finished scan shows of `path` (in `library` when given): Navidrome is asked
+    /// whether it is still scanning, and once it says it is not, the index is read again.
+    pub async fn after_finished_scan(&self, path: &str, library: Option<i64>) -> ScanCheck {
+        match self.library.get_scan_status().await {
+            Some(status) if !status.scanning => {}
+            _ => return ScanCheck::Unsure,
+        }
+        if let Err(e) = self.index.refresh().await {
+            warn!("FAMILY could not read the library index: {e}");
+            return ScanCheck::Unsure;
+        }
+        match self.shown_at(path, library).await {
+            Some(song) => ScanCheck::Shown(song),
+            None => ScanCheck::Missed,
+        }
+    }
+
+    /// A finished scan did not show the link to the pool file `song`, and Navidrome then showed
+    /// the copy that took the link's place. Each song counts once. Once
+    /// [`UNSHOWN_LINKS_FOR_COPIES`] songs have, with no link ever shown, the members folder is
+    /// probed for links again, and only when that probe fails does every member get copies from
+    /// now on ([`Self::fall_back_to_copies`]). Answers whether that happened now.
+    pub async fn copy_shown_where_link_was_not(&self, song: &str) -> bool {
         if self.links_seen() {
             return false;
         }
-        self.store
-            .set_link_state(|links| links.unshown = links.unshown.saturating_add(1));
-        if self.store.link_state().unshown < UNSHOWN_LINKS_FOR_COPIES {
+        let counted = {
+            let _records = self.records.lock();
+            let mut counted = false;
+            self.store.set_link_state(|links| {
+                if links.missed.iter().any(|missed| missed == song) {
+                    return;
+                }
+                links.missed.push(song.to_string());
+                if links.missed.len() > MISSED_KEPT {
+                    links.missed.remove(0);
+                }
+                links.unshown = links.unshown.saturating_add(1);
+                counted = true;
+            });
+            counted
+        };
+        let unshown = self.store.link_state().unshown;
+        if !counted || unshown < UNSHOWN_LINKS_FOR_COPIES {
+            return false;
+        }
+        let root = PathBuf::from(self.members_root());
+        if on_disk(move || probe(&root)).await.unwrap_or(true) {
+            warn!(
+                "FAMILY Navidrome showed copies of {unshown} songs where it did not show their links, but links work in the members folder; members keep getting links"
+            );
             return false;
         }
         self.fall_back_to_copies().await;
         true
     }
 
-    /// Links do not work for Navidrome here: every member gets real copies from now on (kept
-    /// across restarts), and every link made so far becomes a copy, written beside the link
-    /// before it takes the link's place. Answers how many links were replaced.
+    /// Links do not work here: every member gets real copies from now on (kept across
+    /// restarts), and every link made so far becomes a copy, written beside the link before it
+    /// takes the link's place. Answers how many links were replaced.
     pub async fn fall_back_to_copies(&self) -> usize {
-        let _changing = self.changes.lock().await;
-        *self.mode.write() = LinkMode::Copy;
-        self.store.set_link_state(|links| links.copies = true);
-        warn!("FAMILY Navidrome did not show linked songs; members get copies from now on");
-        let mut links = Vec::new();
-        for file in self.store.list() {
-            for user in &file.refs {
-                if let Some(link) = self.link_path(&file.path, user) {
-                    links.push(PathBuf::from(link));
-                }
-            }
+        {
+            let _records = self.records.lock();
+            *self.mode.write() = LinkMode::Copy;
+            self.store.set_link_state(|links| links.copies = true);
         }
-        tokio::task::spawn_blocking(move || {
-            links
+        warn!("FAMILY links do not work for Navidrome here; members get copies from now on");
+        let mut replaced = 0;
+        for listed in self.store.list() {
+            let _claim = self.claims.claim(&[&listed.path]).await;
+            let Some(file) = self.store.get(&listed.path) else {
+                continue;
+            };
+            let links: Vec<PathBuf> = file
+                .refs
                 .iter()
-                .filter(|link| is_symlink(&link.to_string_lossy()))
-                .filter(|link| match replace_link_with_copy(link) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        warn!("FAMILY could not make a copy of {}: {e}", link.display());
-                        false
-                    }
-                })
-                .count()
-        })
-        .await
-        .unwrap_or(0)
+                .filter_map(|user| self.link_path(&file.path, user))
+                .map(PathBuf::from)
+                .collect();
+            let pause = self.copy_pause();
+            replaced += on_disk(move || {
+                links
+                    .iter()
+                    .filter(|link| is_symlink(link))
+                    .filter(|link| {
+                        wait_before_copy(pause);
+                        match copy_staged(link, link) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                warn!("FAMILY could not make a copy of {}: {e}", link.display());
+                                false
+                            }
+                        }
+                    })
+                    .count()
+            })
+            .await
+            .unwrap_or(0);
+        }
+        replaced
     }
 
     /// A pool file holding this song: its outside id, then its ISRC, then its artist and title
     /// (one version: a live take is its own song). Only files still on disk count.
-    pub fn find(
+    pub async fn find(
         &self,
         outside_key: Option<&str>,
         isrc: Option<&str>,
         artist: &str,
         title: &str,
     ) -> Option<PoolFile> {
-        let on_disk = |file: &PoolFile| Path::new(&file.path).is_file();
-        if let Some(found) = outside_key
-            .and_then(|key| self.store.find_by_outside_id(key))
-            .filter(on_disk)
-        {
-            return Some(found);
-        }
-        if let Some(found) = isrc
-            .and_then(|isrc| self.store.find_by_isrc(isrc))
-            .filter(on_disk)
-        {
-            return Some(found);
-        }
+        let mut candidates = Vec::new();
+        candidates.extend(outside_key.and_then(|key| self.store.find_by_outside_id(key)));
+        candidates.extend(isrc.and_then(|isrc| self.store.find_by_isrc(isrc)));
         let wanted = SongIdentity::match_key(artist, title);
-        if wanted.is_empty() {
+        if !wanted.is_empty() {
+            candidates.extend(
+                self.store
+                    .list()
+                    .into_iter()
+                    .filter(|file| SongIdentity::match_key(&file.artist, &file.title) == wanted),
+            );
+        }
+        if candidates.is_empty() {
             return None;
         }
-        self.store
-            .list()
-            .into_iter()
-            .filter(on_disk)
-            .find(|file| SongIdentity::match_key(&file.artist, &file.title) == wanted)
+        on_disk(move || {
+            candidates
+                .into_iter()
+                .find(|file| Path::new(&file.path).is_file())
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     /// Records a file in the pool (or updates its record).
     pub fn record(&self, file: PoolFile) {
+        let _records = self.records.lock();
         self.store.upsert(file);
     }
 
@@ -592,33 +881,46 @@ impl FamilyPool {
     /// index the file is there, and starts a scan of their library. Doing it twice changes
     /// nothing. Answers the link's path.
     pub async fn link(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
-        let _changing = self.changes.lock().await;
-        self.link_held(pool_path, user).await
+        let _claim = self.claims.claim(&[pool_path]).await;
+        self.link_claimed(pool_path, user).await
     }
 
-    /// [`Self::link`] for a change that holds the lock already.
-    async fn link_held(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
+    /// [`Self::link`] for a change that holds the file's claim already.
+    async fn link_claimed(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
         let member = self.member_named(user)?;
-        let relative = self
-            .relative_in_pool(pool_path)
-            .filter(|_| Path::new(pool_path).is_file())
+        let places = self.places();
+        let relative = places
+            .relative(pool_path)
             .ok_or_else(|| PoolError::NotInPool(pool_path.to_string()))?;
-        let link = format!("{}/{relative}", self.member_root(&member.username));
-        self.make_link(pool_path, &link, &relative)?;
-        for companion in companions(pool_path) {
-            let Some(companion_relative) = self.relative_in_pool(&companion) else {
-                continue;
-            };
-            let companion_link = format!("{}/{companion_relative}", self.member_root(&member.username));
-            if let Err(e) = self.make_link(&companion, &companion_link, &companion_relative) {
-                warn!("FAMILY could not give {} {companion}: {e}", member.username);
+        let link = places.under(&member.username, &relative);
+        let mode = self.mode();
+        let size = {
+            let (name, path, link) = (member.username.clone(), pool_path.to_string(), link.clone());
+            on_disk(move || -> Result<u64, PoolError> {
+                if !Path::new(&path).is_file() {
+                    return Err(PoolError::NotInPool(path));
+                }
+                make_link(mode, &path, &link, &relative)?;
+                for companion in companions(&path) {
+                    let Some(companion_relative) = places.relative(&companion) else {
+                        continue;
+                    };
+                    let companion_link = places.under(&name, &companion_relative);
+                    if let Err(e) = make_link(mode, &companion, &companion_link, &companion_relative) {
+                        warn!("FAMILY could not give {name} {companion}: {e}");
+                    }
+                }
+                Ok(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0))
+            })
+            .await??
+        };
+        {
+            let _records = self.records.lock();
+            if self.store.get(pool_path).is_none() {
+                self.store.upsert(unrecorded_file(pool_path, size, Vec::new()));
             }
+            self.store.add_ref(pool_path, &member.username);
         }
-        let size = std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0);
-        if self.store.get(pool_path).is_none() {
-            self.store.upsert(unrecorded_file(pool_path, size, Vec::new()));
-        }
-        self.store.add_ref(pool_path, &member.username);
         if let Some(library_id) = member.personal_library_id {
             self.index.note_placed(library_id, &link, size);
             self.library.trigger_library_scan_of(library_id).await;
@@ -629,12 +931,15 @@ impl FamilyPool {
     /// Takes a pool file out of `user`'s library and drops their reference; the file goes to
     /// the trash once nobody has it.
     pub async fn unlink(&self, pool_path: &str, user: &str) -> Result<(), PoolError> {
-        let _changing = self.changes.lock().await;
         let member = self.member_named(user)?;
-        self.remove_link(pool_path, &member.username, &companions(pool_path));
-        let left = self.store.remove_ref(pool_path, &member.username);
+        let _claim = self.claims.claim(&[pool_path]).await;
+        self.remove_link_claimed(pool_path, &member.username).await;
+        let left = {
+            let _records = self.records.lock();
+            self.store.remove_ref(pool_path, &member.username)
+        };
         if left.is_none_or(|left| left == 0) {
-            self.gc_held(pool_path).await;
+            self.gc_claimed(pool_path).await;
         }
         if let Some(library_id) = member.personal_library_id {
             self.library.trigger_library_scan_of(library_id).await;
@@ -642,65 +947,136 @@ impl FamilyPool {
         Ok(())
     }
 
-    /// Forgets pool files that are no longer on disk (someone deleted one by hand): each
-    /// member's link to it goes, and their library is scanned. A file goes only when two sweeps
-    /// in a row find it missing, and nothing goes while the pool folder cannot be read or is
-    /// empty (a members disk that is not mounted looks like every file gone). Answers how many
-    /// files went.
-    pub async fn sweep_dangling(&self) -> usize {
-        let _changing = self.changes.lock().await;
-        self.sweep_held().await
+    /// Lets go of a download that landed for `user` after they stopped wanting it (their
+    /// request was closed while it was on its way, as they left the family): their link and
+    /// their reference go, and the file goes to the trash when nobody else has it. Whether or
+    /// not they are still a member.
+    pub async fn let_go(&self, pool_path: &str, user: &str) {
+        if self.relative_in_pool(pool_path).is_none() {
+            return;
+        }
+        let name = self.member_name(user);
+        let _claim = self.claims.claim(&[pool_path]).await;
+        if valid_username(&name) {
+            self.remove_link_claimed(pool_path, &name).await;
+        }
+        let left = {
+            let _records = self.records.lock();
+            self.store.remove_ref(pool_path, &name)
+        };
+        if left.is_none_or(|left| left == 0) {
+            self.gc_claimed(pool_path).await;
+        }
+        info!("FAMILY {name} no longer wanted {pool_path} when it landed; let go of it");
     }
 
-    /// [`Self::sweep_dangling`] for a change that holds the lock already.
-    async fn sweep_held(&self) -> usize {
+    /// Removes `name`'s link to a pool file (with its companions' links and any folders left
+    /// empty), on a blocking thread.
+    async fn remove_link_claimed(&self, pool_path: &str, name: &str) {
+        let (places, name, path) = (self.places(), name.to_string(), pool_path.to_string());
+        let removed = on_disk(move || {
+            let companions = companions(&path);
+            remove_member_link(&places, &name, &path, &companions);
+        })
+        .await;
+        if let Err(e) = removed {
+            warn!("FAMILY could not remove a link to {pool_path}: {e}");
+        }
+    }
+
+    /// Forgets pool files that are no longer on disk (someone deleted one by hand): each
+    /// member's link to it goes, and their library is scanned. Sweeps run at most every
+    /// [`SWEEP_SPACING`], and a file goes only when a sweep at least that long after the one
+    /// that first missed it misses it still. Nothing goes while the pool folder lacks Octo's
+    /// marker file (a members disk that is not mounted looks like every file gone, and a
+    /// download onto its empty mount point makes the folder look alive). Answers how many
+    /// files went.
+    pub async fn sweep_dangling(&self) -> usize {
+        let now = self.now();
+        let spacing = sweep_spacing();
+        {
+            let mut last = self.last_sweep.lock();
+            if last.is_some_and(|at| now - at < spacing) {
+                return 0;
+            }
+            *last = Some(now);
+        }
         let recorded = self.store.list();
         if recorded.is_empty() {
-            self.missing_once.lock().clear();
+            self.misses.lock().clear();
             return 0;
         }
         let root = self.pool_root_path();
-        let readable = std::fs::read_dir(&root).is_ok_and(|mut entries| entries.next().is_some());
-        if !readable {
+        let paths: Vec<String> = recorded.into_iter().map(|file| file.path).collect();
+        let checked = {
+            let root = root.clone();
+            on_disk(move || {
+                Path::new(&root).join(POOL_MARKER).is_file().then(|| {
+                    paths
+                        .into_iter()
+                        .filter(|path| !Path::new(path).exists())
+                        .collect::<HashSet<String>>()
+                })
+            })
+            .await
+        };
+        let Ok(Some(missing)) = checked else {
             warn!(
-                "FAMILY the pool folder {root} cannot be read or is empty; its records are kept as they are"
+                "FAMILY the pool folder {root} has no {POOL_MARKER} file (its disk may not be mounted); its records are kept as they are"
             );
-            self.missing_once.lock().clear();
+            self.misses.lock().clear();
             return 0;
-        }
-        let missing: Vec<PoolFile> = recorded
-            .into_iter()
-            .filter(|file| !Path::new(&file.path).exists())
-            .collect();
-        let gone: Vec<PoolFile> = {
-            let mut once = self.missing_once.lock();
-            let now: HashSet<String> = missing.iter().map(|file| file.path.clone()).collect();
-            let gone = missing
-                .into_iter()
-                .filter(|file| once.contains(&file.path))
-                .collect();
-            *once = now;
+        };
+        let gone: Vec<String> = {
+            let mut misses = self.misses.lock();
+            misses.retain(|path, _| missing.contains(path));
+            let mut gone = Vec::new();
+            for path in missing {
+                match misses.get(&path) {
+                    Some(first) if now - *first >= spacing => gone.push(path),
+                    Some(_) => {}
+                    None => {
+                        misses.insert(path, now);
+                    }
+                }
+            }
             gone
         };
-        for file in &gone {
+        let mut count = 0;
+        for path in gone {
+            let _claim = self.claims.claim(&[&path]).await;
+            self.misses.lock().remove(&path);
+            let Some(file) = self.store.get(&path) else {
+                continue;
+            };
+            let still_missing = {
+                let path = path.clone();
+                on_disk(move || !Path::new(&path).exists()).await.unwrap_or(false)
+            };
+            if !still_missing {
+                continue;
+            }
             for user in &file.refs {
-                self.remove_link(&file.path, user, &[]);
+                let (places, name, pool_path) = (self.places(), self.member_name(user), path.clone());
+                let _ = on_disk(move || remove_member_link(&places, &name, &pool_path, &[])).await;
                 if let Some(library_id) = self.family.member(user).and_then(|m| m.personal_library_id) {
                     self.library.trigger_library_scan_of(library_id).await;
                 }
             }
-            self.store.remove(&file.path);
-            self.missing_once.lock().remove(&file.path);
-            if let Err(e) = self.library.forget_mapping(&file.path).await {
-                warn!("FAMILY could not forget {}'s mapping: {e}", file.path);
+            {
+                let _records = self.records.lock();
+                self.store.remove(&path);
+            }
+            if let Err(e) = self.library.forget_mapping(&path).await {
+                warn!("FAMILY could not forget {path}'s mapping: {e}");
             }
             warn!(
-                "FAMILY {} is gone from the pool; removed the links of {}",
-                file.path,
+                "FAMILY {path} is gone from the pool; removed the links of {}",
                 file.refs.join(", ")
             );
+            count += 1;
         }
-        gone.len()
+        count
     }
 
     /// Sends a pool file nobody links any more to the trash (kept as long as library actions
@@ -708,12 +1084,12 @@ impl FamilyPool {
     /// disk is never trashed, whatever the record says: the record learns of them again.
     /// True when it went.
     pub async fn gc(&self, pool_path: &str) -> bool {
-        let _changing = self.changes.lock().await;
-        self.gc_held(pool_path).await
+        let _claim = self.claims.claim(&[pool_path]).await;
+        self.gc_claimed(pool_path).await
     }
 
-    /// [`Self::gc`] for a change that holds the lock already.
-    async fn gc_held(&self, pool_path: &str) -> bool {
+    /// [`Self::gc`] for a change that holds the file's claim already.
+    async fn gc_claimed(&self, pool_path: &str) -> bool {
         if self
             .store
             .get(pool_path)
@@ -721,83 +1097,48 @@ impl FamilyPool {
         {
             return false;
         }
-        let holders = self.linked_on_disk(pool_path);
-        if !holders.is_empty() {
-            self.restore_refs(pool_path, &holders);
-            warn!(
-                "FAMILY {pool_path} had no record of who has it, but {} still do; it stays",
-                holders.join(", ")
-            );
-            return false;
-        }
-        let members_root = self.members_root();
-        let mut gone = !Path::new(pool_path).exists();
-        if !gone {
-            let size = std::fs::metadata(pool_path).map(|m| m.len() as i64).unwrap_or(0);
-            let file = ResolvedSongFile {
-                navidrome_id: String::new(),
-                absolute_path: pool_path.to_string(),
-                size_bytes: size,
-                title: String::new(),
-                artist: String::new(),
-                album: String::new(),
-                suffix: extension_of(pool_path),
-                duration_seconds: None,
-                source: PathSource::LocalMappings,
-                album_artist: None,
-            };
-            let moved = self.quarantine.move_file_with_sidecars(
-                &file,
-                &members_root,
-                LibraryAction::Delete,
-                "family",
-                true,
-            );
-            if moved.moved {
-                info!("FAMILY nobody has {pool_path} any more; it went to the trash");
-                gone = true;
-            } else {
-                warn!(
-                    "FAMILY could not move {pool_path} to the trash: {}",
-                    moved.error.unwrap_or_default()
-                );
-            }
-        }
-        if !gone {
-            return false;
-        }
-        if let Some(folder) = Path::new(pool_path).parent() {
-            remove_lonely_covers(folder);
-            prune_empty(folder, Path::new(&self.pool_root_path()));
-        }
-        self.store.remove(pool_path);
-        if let Err(e) = self.library.forget_mapping(pool_path).await {
-            warn!("FAMILY could not forget {pool_path}'s mapping: {e}");
-        }
-        self.quarantine.sweep(&members_root);
-        true
-    }
-
-    /// The members whose own library has something (a link, or a copy) at this pool file's
-    /// place.
-    fn linked_on_disk(&self, pool_path: &str) -> Vec<String> {
-        let Some(relative) = self.relative_in_pool(pool_path) else {
-            return Vec::new();
-        };
-        let root = self.members_root();
-        self.family
+        let names: Vec<String> = self
+            .family
             .members()
             .into_iter()
             .map(|member| member.username)
             .filter(|name| valid_username(name))
-            .filter(|name| std::fs::symlink_metadata(format!("{root}/{name}/{relative}")).is_ok())
-            .collect()
+            .collect();
+        let (places, path, quarantine) = (self.places(), pool_path.to_string(), Arc::clone(&self.quarantine));
+        let outcome = on_disk(move || trash_unless_linked(&places, &names, &path, &quarantine)).await;
+        match outcome {
+            Ok(Trashing::Held { holders, size }) => {
+                {
+                    let _records = self.records.lock();
+                    self.restore_refs(pool_path, &holders, size);
+                }
+                warn!(
+                    "FAMILY {pool_path} had no record of who has it, but {} still do; it stays",
+                    holders.join(", ")
+                );
+                false
+            }
+            Ok(Trashing::Gone) => {
+                {
+                    let _records = self.records.lock();
+                    self.store.remove(pool_path);
+                }
+                if let Err(e) = self.library.forget_mapping(pool_path).await {
+                    warn!("FAMILY could not forget {pool_path}'s mapping: {e}");
+                }
+                true
+            }
+            Ok(Trashing::Stayed) => false,
+            Err(e) => {
+                warn!("FAMILY could not tidy {pool_path} away: {e}");
+                false
+            }
+        }
     }
 
     /// Records `holders` as linking a pool file, recording the file first when it is not.
-    fn restore_refs(&self, pool_path: &str, holders: &[String]) {
+    fn restore_refs(&self, pool_path: &str, holders: &[String], size: u64) {
         if self.store.get(pool_path).is_none() {
-            let size = std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0);
             self.store
                 .upsert(unrecorded_file(pool_path, size, holders.to_vec()));
             return;
@@ -807,16 +1148,38 @@ impl FamilyPool {
         }
     }
 
+    /// Reads, from Navidrome, whether each of `users` has starred the song their own copy at
+    /// `pool_path` is in their library.
+    async fn stars_before(&self, pool_path: &str, users: &[String]) -> Vec<StarBefore> {
+        let mut read = Vec::new();
+        for user in users {
+            let Some(link) = self.link_path(pool_path, user) else {
+                continue;
+            };
+            let old_id = self.index.find_by_path(&link).map(|s| s.id);
+            let starred = match &old_id {
+                Some(id) => self.stars.is_starred(user, id).await,
+                None => false,
+            };
+            read.push(StarBefore {
+                user: user.clone(),
+                old_id,
+                starred,
+            });
+        }
+        read
+    }
+
     /// A better copy of a song replaces `old_path` for everyone who has it: each member's link
     /// moves to `new_path`, the old file goes to the trash, and their stars and family playlist
     /// entries follow the song once the index finds it again. Answers the members moved.
     pub async fn repoint(&self, old_path: &str, new_path: &str) -> Vec<String> {
-        let _changing = self.changes.lock().await;
-        self.repoint_held(old_path, new_path).await
+        let _claim = self.claims.claim(&[old_path, new_path]).await;
+        self.repoint_claimed(old_path, new_path).await
     }
 
-    /// [`Self::repoint`] for a change that holds the lock already.
-    async fn repoint_held(&self, old_path: &str, new_path: &str) -> Vec<String> {
+    /// [`Self::repoint`] for a change that holds both files' claims already.
+    async fn repoint_claimed(&self, old_path: &str, new_path: &str) -> Vec<String> {
         if old_path == new_path {
             return Vec::new();
         }
@@ -825,46 +1188,49 @@ impl FamilyPool {
         };
         let mut remaps = Vec::new();
         let mut moved = Vec::new();
-        for user in &old.refs {
-            let (Some(old_link), Some(new_link)) =
-                (self.link_path(old_path, user), self.link_path(new_path, user))
-            else {
+        for before in self.stars_before(old_path, &old.refs).await {
+            let Some(new_link) = self.link_path(new_path, &before.user) else {
                 continue;
             };
-            let old_id = self.index.find_by_path(&old_link).map(|s| s.id);
-            let starred = match &old_id {
-                Some(id) => self.stars.is_starred(user, id).await,
-                None => false,
-            };
-            match self.link_held(new_path, user).await {
+            match self.link_claimed(new_path, &before.user).await {
                 Ok(_) => {
-                    self.remove_link(old_path, user, &companions(old_path));
-                    self.store.remove_ref(old_path, user);
+                    let name = self.member_name(&before.user);
+                    self.remove_link_claimed(old_path, &name).await;
+                    {
+                        let _records = self.records.lock();
+                        self.store.remove_ref(old_path, &before.user);
+                    }
+                    moved.push(before.user.clone());
                     remaps.push(Remap {
-                        user: user.clone(),
-                        old_id,
-                        starred,
+                        scope: format!("Personal:{}", before.user),
+                        user: before.user,
+                        old_id: before.old_id,
+                        starred: before.starred,
                         new_path: new_link,
-                        scope: format!("Personal:{user}"),
                     });
-                    moved.push(user.clone());
                 }
-                Err(e) => warn!("FAMILY could not move {user} to the better copy {new_path}: {e}"),
+                Err(e) => warn!(
+                    "FAMILY could not move {} to the better copy {new_path}: {e}",
+                    before.user
+                ),
             }
         }
         // Whoever bettered the copy is recorded too, so the store follows the outside ids.
-        if let Some(mut better) = self.store.get(new_path) {
-            for id in old.outside_ids {
-                if !better.outside_ids.contains(&id) {
-                    better.outside_ids.push(id);
+        {
+            let _records = self.records.lock();
+            if let Some(mut better) = self.store.get(new_path) {
+                for id in old.outside_ids {
+                    if !better.outside_ids.contains(&id) {
+                        better.outside_ids.push(id);
+                    }
                 }
+                if better.isrc.is_none() {
+                    better.isrc = old.isrc;
+                }
+                self.store.upsert(better);
             }
-            if better.isrc.is_none() {
-                better.isrc = old.isrc;
-            }
-            self.store.upsert(better);
         }
-        self.gc_held(old_path).await;
+        self.gc_claimed(old_path).await;
         info!(
             "FAMILY {} moved from {old_path} to the better copy {new_path}",
             moved.join(", ")
@@ -879,25 +1245,45 @@ impl FamilyPool {
     /// keeps their link, and the pool keeps the file for them: then the shared library gets a
     /// copy. Answers its new path.
     pub async fn promote(&self, pool_path: &str) -> Result<String, PoolError> {
-        let _changing = self.changes.lock().await;
-        self.promote_held(pool_path, None).await
+        let _claim = self.claims.claim(&[pool_path]).await;
+        self.promote_claimed(pool_path, None).await
     }
 
-    /// [`Self::promote`] for a change that holds the lock already. `leaving` (a member being let
-    /// go) never keeps the file in the pool, whatever they can see.
-    async fn promote_held(&self, pool_path: &str, leaving: Option<&str>) -> Result<String, PoolError> {
-        let relative = self
-            .relative_in_pool(pool_path)
-            .filter(|_| Path::new(pool_path).is_file())
-            .ok_or_else(|| PoolError::NotInPool(pool_path.to_string()))?;
-        let shared_root = (self.shared_root)();
-        let shared_root = shared_root.trim_end_matches('/');
-        let mut target = format!("{shared_root}/{relative}");
-        if Path::new(&target).exists() {
-            target = PathHelper::resolve_unique_path(&target);
+    /// A song the owner already has a copy of at `path`, as the owner may have it: a pool file
+    /// (with Family on or off) moves into the shared library like [`Self::promote`], still one
+    /// file, and the answer is where it is now; any other file is the answer as it is. None
+    /// when a pool file could not be moved: the pool is never the owner's copy.
+    pub async fn for_owner(&self, path: &str) -> Option<String> {
+        if self.relative_in_pool(path).is_none() {
+            return Some(path.to_string());
         }
+        let _claim = self.claims.claim(&[path]).await;
+        match self.promote_claimed(path, None).await {
+            Ok(moved) => Some(moved),
+            Err(e) => {
+                warn!("FAMILY could not move {path} into the shared library for the owner: {e}");
+                None
+            }
+        }
+    }
+
+    /// [`Self::promote`] for a change that holds the file's claim already. `leaving` (a member
+    /// being let go) never keeps the file in the pool, whatever they can see.
+    async fn promote_claimed(&self, pool_path: &str, leaving: Option<&str>) -> Result<String, PoolError> {
+        let places = self.places();
+        let relative = places
+            .relative(pool_path)
+            .ok_or_else(|| PoolError::NotInPool(pool_path.to_string()))?;
+        let there = {
+            let path = pool_path.to_string();
+            on_disk(move || Path::new(&path).is_file()).await?
+        };
+        if !there {
+            return Err(PoolError::NotInPool(pool_path.to_string()));
+        }
+        let shared_root = (self.shared_root)().trim_end_matches('/').to_string();
         let refs = self.store.get(pool_path).map(|f| f.refs).unwrap_or_default();
-        let shared_library = self.index.library_of_folder(shared_root);
+        let shared_library = self.index.library_of_folder(&shared_root);
         let (seers, keepers): (Vec<String>, Vec<String>) = refs.into_iter().partition(|user| {
             leaving.is_some_and(|leaving| eq_ignore_case(leaving, user))
                 || self
@@ -905,64 +1291,42 @@ impl FamilyPool {
                     .member(user)
                     .is_none_or(|member| sees_shared_library(&member, shared_library))
         });
-        let mut remaps = Vec::new();
-        for user in &seers {
-            let Some(link) = self.link_path(pool_path, user) else {
-                continue;
-            };
-            let old_id = self.index.find_by_path(&link).map(|s| s.id);
-            let starred = match &old_id {
-                Some(id) => self.stars.is_starred(user, id).await,
-                None => false,
-            };
-            remaps.push(Remap {
-                user: user.clone(),
-                old_id,
-                starred,
-                new_path: target.clone(),
-                scope: "Shared".to_string(),
-            });
-        }
+        let stars = self.stars_before(pool_path, &seers).await;
 
         let stays_pooled = !keepers.is_empty();
-        let companions = companions(pool_path);
-        if stays_pooled {
-            copy_file(Path::new(pool_path), Path::new(&target))?;
-        } else {
-            move_file(Path::new(pool_path), Path::new(&target))?;
-        }
-        for companion in &companions {
-            let Some(name) = Path::new(companion).file_name() else {
-                continue;
-            };
-            let destination = Path::new(&target).with_file_name(name);
-            if destination.exists() {
-                continue;
+        let seer_names: Vec<String> = seers.iter().map(|user| self.member_name(user)).collect();
+        let (path, pause) = (pool_path.to_string(), self.copy_pause());
+        let target = on_disk(move || -> io::Result<String> {
+            let mut target = format!("{shared_root}/{relative}");
+            if Path::new(&target).exists() {
+                target = PathHelper::resolve_unique_path(&target);
             }
-            let is_cover = COVER_FILES
-                .iter()
-                .any(|cover| eq_ignore_case(cover, &name.to_string_lossy()));
-            let result = if is_cover || stays_pooled {
-                std::fs::copy(companion, &destination).map(|_| ())
+            let companions = companions(&path);
+            wait_before_copy(pause);
+            if stays_pooled {
+                copy_staged(Path::new(&path), Path::new(&target))?;
             } else {
-                move_file(Path::new(companion), &destination)
-            };
-            if let Err(e) = result {
-                warn!("FAMILY could not move {companion} with its song: {e}");
+                move_file(Path::new(&path), Path::new(&target))?;
             }
-        }
-        for user in &seers {
-            self.remove_link(pool_path, user, &companions);
-        }
-        if stays_pooled {
-            for user in &seers {
-                self.store.remove_ref(pool_path, user);
+            carry_companions(&companions, Path::new(&target), stays_pooled);
+            for name in &seer_names {
+                remove_member_link(&places, name, &path, &companions);
             }
-        } else {
-            self.store.remove(pool_path);
-            if let Some(folder) = Path::new(pool_path).parent() {
+            if !stays_pooled && let Some(folder) = Path::new(&path).parent() {
                 remove_lonely_covers(folder);
-                prune_empty(folder, Path::new(&self.pool_root_path()));
+                prune_empty(folder, Path::new(&places.pool));
+            }
+            Ok(target)
+        })
+        .await??;
+        {
+            let _records = self.records.lock();
+            if stays_pooled {
+                for user in &seers {
+                    self.store.remove_ref(pool_path, user);
+                }
+            } else {
+                self.store.remove(pool_path);
             }
         }
         match self.library.forget_mapping(pool_path).await {
@@ -987,6 +1351,16 @@ impl FamilyPool {
         } else {
             info!("FAMILY {pool_path} moved into the shared library as {target}");
         }
+        let remaps = stars
+            .into_iter()
+            .map(|before| Remap {
+                user: before.user,
+                old_id: before.old_id,
+                starred: before.starred,
+                new_path: target.clone(),
+                scope: "Shared".to_string(),
+            })
+            .collect();
         self.carry_over(remaps);
         Ok(target)
     }
@@ -1061,8 +1435,8 @@ impl FamilyPool {
     /// play through the pool: the file, with its lyrics and its folder's cover, is copied once
     /// into the pool at its place in the shared layout, recorded as a copy of `song`, and
     /// linked into their library like any pool song. Another member who needs it gets a link
-    /// to that same pool file. The copy is written on a blocking thread while the pool lock is
-    /// held. Answers their link.
+    /// to that same pool file. The copy is written on a blocking thread while only that pool
+    /// file is claimed, so other changes to the pool go on beside it. Answers their link.
     pub async fn copy_shared_for(
         &self,
         shared_path: &str,
@@ -1070,45 +1444,47 @@ impl FamilyPool {
         outside_key: Option<&str>,
         song: Option<&Song>,
     ) -> Result<String, PoolError> {
-        let _changing = self.changes.lock().await;
-        self.copy_shared_held(shared_path, user, outside_key, song).await
-    }
-
-    /// [`Self::copy_shared_for`] for a change that holds the lock already.
-    async fn copy_shared_held(
-        &self,
-        shared_path: &str,
-        user: &str,
-        outside_key: Option<&str>,
-        song: Option<&Song>,
-    ) -> Result<String, PoolError> {
         let member = self.member_named(user)?;
-        if !Path::new(shared_path).is_file() {
-            return Err(PoolError::Io(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("{shared_path} is not there"),
-            )));
-        }
         let target = self
             .pool_place_of_shared(shared_path)
             .ok_or_else(|| PoolError::NotInPool(shared_path.to_string()))?;
-        if !Path::new(&target).is_file() {
-            let (from, to) = (PathBuf::from(shared_path), PathBuf::from(&target));
-            tokio::task::spawn_blocking(move || copy_with_companions(&from, &to))
-                .await
-                .unwrap_or_else(|e| Err(io::Error::other(e.to_string())))?;
+        let _claim = self.claims.claim(&[&target]).await;
+        let (from, to, pause) = (
+            PathBuf::from(shared_path),
+            PathBuf::from(&target),
+            self.copy_pause(),
+        );
+        let (copied, size) = on_disk(move || -> io::Result<(bool, u64)> {
+            if !from.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} is not there", from.display()),
+                ));
+            }
+            let copied = !to.is_file();
+            if copied {
+                wait_before_copy(pause);
+                copy_with_companions(&from, &to)?;
+            }
+            Ok((copied, std::fs::metadata(&to).map(|m| m.len()).unwrap_or(0)))
+        })
+        .await??;
+        if copied {
             info!(
                 "FAMILY {shared_path} was copied into the pool as {target} for {}, who cannot see its shared library",
                 member.username
             );
         }
-        self.record_shared_copy(&target, outside_key, song);
-        self.link_held(&target, &member.username).await
+        {
+            let _records = self.records.lock();
+            self.record_shared_copy(&target, size, outside_key, song);
+        }
+        self.link_claimed(&target, &member.username).await
     }
 
     /// Records a pool copy of a shared file as a copy of `song`. A record it already has gains
     /// the outside id, and whatever titles and ISRC it was missing.
-    fn record_shared_copy(&self, pool_path: &str, outside_key: Option<&str>, song: Option<&Song>) {
+    fn record_shared_copy(&self, pool_path: &str, size: u64, outside_key: Option<&str>, song: Option<&Song>) {
         if let Some(mut file) = self.store.get(pool_path) {
             let mut changed = false;
             if let Some(key) = outside_key
@@ -1143,7 +1519,7 @@ impl FamilyPool {
         let format = extension_of(pool_path);
         self.store.upsert(PoolFile {
             path: pool_path.to_string(),
-            size: std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0),
+            size,
             transcoded_from: song
                 .and_then(|s| s.transcoded_from.clone())
                 .filter(|from| format == "flac" && !from.trim().is_empty()),
@@ -1165,43 +1541,67 @@ impl FamilyPool {
     /// another member still has stay where they are. A file that cannot be kept aside or moved
     /// stays exactly as it was, linked and recorded for the member, and the first such failure
     /// is the answer once every other file is done, so nothing is left behind without a record.
-    /// Answers what became of the files.
+    /// Each file is claimed in turn, so changes to other files go on meanwhile. Answers what
+    /// became of the files.
     pub async fn release_member(&self, user: &str, choice: FilesChoice) -> Result<Released, PoolError> {
-        let _changing = self.changes.lock().await;
         let member = self.member_named(user)?;
         let name = member.username.clone();
         let mut released = Released::default();
         let mut failure: Option<PoolError> = None;
-        for file in self.store.refs_of(&name) {
-            let companions = companions(&file.path);
+        for listed in self.store.refs_of(&name) {
+            let _claim = self.claims.claim(&[&listed.path]).await;
+            // The record as it is now that this change holds the file.
+            let Some(file) = self
+                .store
+                .get(&listed.path)
+                .filter(|file| file.refs.iter().any(|r| eq_ignore_case(r, &name)))
+            else {
+                continue;
+            };
             let only_theirs = file.refs.iter().all(|r| eq_ignore_case(r, &name));
             if !only_theirs {
-                self.remove_link(&file.path, &name, &companions);
-                self.store.remove_ref(&file.path, &name);
+                self.remove_link_claimed(&file.path, &name).await;
+                {
+                    let _records = self.records.lock();
+                    self.store.remove_ref(&file.path, &name);
+                }
                 released.shared += 1;
                 continue;
             }
-            if !Path::new(&file.path).is_file() {
-                self.remove_link(&file.path, &name, &companions);
-                self.store.remove(&file.path);
+            let there = {
+                let path = file.path.clone();
+                on_disk(move || Path::new(&path).is_file()).await.unwrap_or(false)
+            };
+            if !there {
+                self.remove_link_claimed(&file.path, &name).await;
+                {
+                    let _records = self.records.lock();
+                    self.store.remove(&file.path);
+                }
                 continue;
             }
             let outcome = match choice {
-                FilesChoice::Keep => self.keep_aside(&file.path, &name, &companions).await.map(|()| {
-                    self.remove_link(&file.path, &name, &companions);
-                    released.kept += 1;
-                }),
+                FilesChoice::Keep => self
+                    .keep_aside_claimed(&file.path, &name)
+                    .await
+                    .map(|()| released.kept += 1),
                 FilesChoice::Promote => self
-                    .promote_held(&file.path, Some(&name))
+                    .promote_claimed(&file.path, Some(&name))
                     .await
                     .map(|_| released.promoted += 1),
                 FilesChoice::Delete => {
-                    self.remove_link(&file.path, &name, &companions);
-                    self.store.remove_ref(&file.path, &name);
-                    if self.gc_held(&file.path).await {
+                    self.remove_link_claimed(&file.path, &name).await;
+                    {
+                        let _records = self.records.lock();
+                        self.store.remove_ref(&file.path, &name);
+                    }
+                    if self.gc_claimed(&file.path).await {
                         released.trashed += 1;
-                    } else if Path::new(&file.path).exists() {
-                        released.shared += 1;
+                    } else {
+                        let path = file.path.clone();
+                        if on_disk(move || Path::new(&path).exists()).await.unwrap_or(true) {
+                            released.shared += 1;
+                        }
                     }
                     Ok(())
                 }
@@ -1216,7 +1616,7 @@ impl FamilyPool {
         }
         // Whatever is left of their folder is empty folders and covers.
         let root = PathBuf::from(self.member_root(&name));
-        prune_folder_tree(&root);
+        let _ = on_disk(move || prune_folder_tree(&root)).await;
         info!(
             "FAMILY released {name}'s files ({choice:?}): {} kept, {} promoted, {} trashed, {} still with others",
             released.kept, released.promoted, released.trashed, released.shared
@@ -1224,46 +1624,60 @@ impl FamilyPool {
         Ok(released)
     }
 
-    /// Moves a pool file only `user` had to `<members>/.kept/<user>/<layout>`, with its lyrics
-    /// and cover, out of every library. Nothing changes when the song itself cannot be moved.
-    async fn keep_aside(&self, pool_path: &str, user: &str, companions: &[String]) -> Result<(), PoolError> {
-        let relative = self
-            .relative_in_pool(pool_path)
+    /// Moves a pool file only `name` had to `<members>/.kept/<name>/<layout>`, with its lyrics
+    /// and cover, out of every library, and removes their link to it. Nothing changes when the
+    /// song itself cannot be moved. For a change that holds the file's claim already.
+    async fn keep_aside_claimed(&self, pool_path: &str, name: &str) -> Result<(), PoolError> {
+        let places = self.places();
+        let relative = places
+            .relative(pool_path)
             .ok_or_else(|| PoolError::NotInPool(pool_path.to_string()))?;
-        let mut target = format!("{}/{KEPT_FOLDER}/{user}/{relative}", self.members_root());
-        if Path::new(&target).exists() {
-            target = PathHelper::resolve_unique_path(&target);
-        }
-        move_file(Path::new(pool_path), Path::new(&target))?;
-        for companion in companions {
-            let Some(name) = Path::new(companion).file_name() else {
-                continue;
-            };
-            let destination = Path::new(&target).with_file_name(name);
-            if destination.exists() {
-                continue;
-            }
-            let is_cover = COVER_FILES
-                .iter()
-                .any(|cover| eq_ignore_case(cover, &name.to_string_lossy()));
-            let result = if is_cover {
-                std::fs::copy(companion, &destination).map(|_| ())
+        let target = format!("{}/{KEPT_FOLDER}/{name}/{relative}", places.members);
+        let (path, name) = (pool_path.to_string(), name.to_string());
+        on_disk(move || -> io::Result<()> {
+            let target = if Path::new(&target).exists() {
+                PathHelper::resolve_unique_path(&target)
             } else {
-                move_file(Path::new(companion), &destination)
+                target
             };
-            if let Err(e) = result {
-                warn!("FAMILY could not keep {companion} with its song: {e}");
+            let companions = companions(&path);
+            move_file(Path::new(&path), Path::new(&target))?;
+            carry_companions(&companions, Path::new(&target), false);
+            remove_member_link(&places, &name, &path, &companions);
+            if let Some(folder) = Path::new(&path).parent() {
+                remove_lonely_covers(folder);
+                prune_empty(folder, Path::new(&places.pool));
             }
-        }
-        self.store.remove(pool_path);
-        if let Some(folder) = Path::new(pool_path).parent() {
-            remove_lonely_covers(folder);
-            prune_empty(folder, Path::new(&self.pool_root_path()));
+            Ok(())
+        })
+        .await??;
+        {
+            let _records = self.records.lock();
+            self.store.remove(pool_path);
         }
         if let Err(e) = self.library.forget_mapping(pool_path).await {
             warn!("FAMILY could not forget {pool_path}'s mapping: {e}");
         }
         Ok(())
+    }
+
+    /// The index's song at `path` (in `library` when given). A member's link the index finds
+    /// tells Octo that Navidrome shows links.
+    async fn shown_at(&self, path: &str, library: Option<i64>) -> Option<IndexedSong> {
+        let song = self
+            .index
+            .find_by_path(path)
+            .filter(|song| library.is_none() || song.library_id == library)?;
+        if library.is_some() {
+            let path = path.to_string();
+            if on_disk(move || is_symlink(Path::new(&path)))
+                .await
+                .unwrap_or(false)
+            {
+                self.confirm_links_seen();
+            }
+        }
+        Some(song)
     }
 
     /// Waits until the library index finds a file at `path` (in `library_id` when given),
@@ -1272,16 +1686,7 @@ impl FamilyPool {
     pub async fn wait_for_path(&self, path: &str, library_id: Option<i64>) -> Option<IndexedSong> {
         let started = tokio::time::Instant::now();
         loop {
-            if let Some(song) = self
-                .index
-                .find_by_path(path)
-                .filter(|song| library_id.is_none() || song.library_id == library_id)
-            {
-                if library_id.is_some()
-                    && std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
-                {
-                    self.confirm_links_seen();
-                }
+            if let Some(song) = self.shown_at(path, library_id).await {
                 return Some(song);
             }
             if started.elapsed() >= self.timing.max_wait {
@@ -1343,55 +1748,6 @@ impl FamilyPool {
             }
         }
     }
-
-    /// Makes `link` stand for `pool_path`: a relative link, or a copy in copy mode (and when the
-    /// disk refuses the link). Nothing changes when something is there already.
-    fn make_link(&self, pool_path: &str, link: &str, relative: &str) -> io::Result<()> {
-        let link_path = Path::new(link);
-        if std::fs::symlink_metadata(link_path).is_ok() {
-            return Ok(());
-        }
-        if let Some(parent) = link_path.parent() {
-            make_dirs(parent)?;
-        }
-        if self.mode() == LinkMode::Symlink {
-            match symlink(&relative_target(relative), link_path) {
-                Ok(()) => return Ok(()),
-                Err(e) => warn!("FAMILY could not link {link}: {e}; copying it instead"),
-            }
-        }
-        std::fs::copy(pool_path, link_path).map(|_| ())
-    }
-
-    /// Removes `user`'s link to a pool file, the links to its `companions` (read before the
-    /// pool file moved), and their album folder's cover link and folders once nothing else is
-    /// in them.
-    fn remove_link(&self, pool_path: &str, user: &str, companions: &[String]) {
-        let Some(link) = self.link_path(pool_path, user) else {
-            return;
-        };
-        let link_path = Path::new(&link);
-        if std::fs::symlink_metadata(link_path).is_ok()
-            && let Err(e) = std::fs::remove_file(link_path)
-        {
-            warn!("FAMILY could not remove {link}: {e}");
-        }
-        for companion in companions {
-            if COVER_FILES
-                .iter()
-                .any(|cover| companion.to_lowercase().ends_with(&format!("/{cover}")))
-            {
-                continue;
-            }
-            if let Some(companion_link) = self.link_path(companion, user) {
-                let _ = std::fs::remove_file(companion_link);
-            }
-        }
-        if let Some(folder) = link_path.parent() {
-            remove_lonely_covers(folder);
-            prune_empty(folder, Path::new(&self.member_root(user)));
-        }
-    }
 }
 
 #[async_trait]
@@ -1400,16 +1756,32 @@ impl FamilyPlacement for FamilyPool {
         self.active().then(|| self.pool_root_path())
     }
 
+    async fn placement_ready(&self) -> bool {
+        if !self.active() {
+            return true;
+        }
+        let marker = Path::new(&self.pool_root_path()).join(POOL_MARKER);
+        let ready = on_disk(move || marker.is_file()).await.unwrap_or(false);
+        if !ready {
+            warn!(
+                "FAMILY the pool folder {} has no {POOL_MARKER} file (its disk may not be mounted); a member's download waits until it does",
+                self.pool_root_path()
+            );
+        }
+        ready
+    }
+
     fn is_pool_path(&self, path: &str) -> bool {
         self.active() && self.relative_in_pool(path).is_some()
     }
 
-    fn find_song(&self, provider: &str, external_id: &str, song: &Song) -> Option<PoolFile> {
+    async fn find_song(&self, provider: &str, external_id: &str, song: &Song) -> Option<PoolFile> {
         if !self.active() {
             return None;
         }
         let key = key_of(provider, external_id);
         self.find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)
+            .await
     }
 
     fn made_from_lossy(&self, path: &str) -> bool {
@@ -1422,6 +1794,10 @@ impl FamilyPlacement for FamilyPool {
         self.link_path(pool_path, user)
     }
 
+    async fn for_owner(&self, path: &str) -> Option<String> {
+        FamilyPool::for_owner(self, path).await
+    }
+
     async fn placed(
         &self,
         path: &str,
@@ -1430,17 +1806,27 @@ impl FamilyPlacement for FamilyPool {
         external_id: &str,
         members: &[String],
     ) -> Option<String> {
-        let _changing = self.changes.lock().await;
         // Each new pool file is a moment to let go of any that went missing by hand.
-        self.sweep_held().await;
+        self.sweep_dangling().await;
         let key = key_of(provider, external_id);
         let older = self
             .find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)
+            .await
             .filter(|file| file.path != path);
+        let older_path = older.as_ref().map(|file| file.path.clone());
+        let mut claimed = vec![path];
+        claimed.extend(older_path.as_deref());
+        let _claim = self.claims.claim(&claimed).await;
+        let size = {
+            let path = path.to_string();
+            on_disk(move || std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0))
+                .await
+                .unwrap_or(0)
+        };
         let format = extension_of(path);
         let placed = PoolFile {
             path: path.to_string(),
-            size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+            size,
             transcoded_from: song
                 .transcoded_from
                 .clone()
@@ -1457,7 +1843,7 @@ impl FamilyPlacement for FamilyPool {
         self.record(placed);
         let mut first = None;
         for member in members {
-            match self.link_held(path, member).await {
+            match self.link_claimed(path, member).await {
                 Ok(link) => {
                     first.get_or_insert(link);
                 }
@@ -1465,7 +1851,7 @@ impl FamilyPlacement for FamilyPool {
             }
         }
         if let Some(older) = bettered {
-            self.repoint_held(&older.path, path).await;
+            self.repoint_claimed(&older.path, path).await;
         }
         first
     }
@@ -1479,41 +1865,35 @@ impl FamilyPlacement for FamilyPool {
     ) -> String {
         if !self.is_pool_path(path) {
             if self.active() && !members.is_empty() && self.is_shared_file(path) {
-                let _changing = self.changes.lock().await;
                 for member in members {
                     if self.sees_shared_file(member, path) {
                         continue;
                     }
-                    if let Err(e) = self.copy_shared_held(path, member, outside_key, None).await {
+                    if let Err(e) = self.copy_shared_for(path, member, outside_key, None).await {
                         warn!("FAMILY could not give {member} a copy of {path}: {e}");
                     }
                 }
             }
             return path.to_string();
         }
-        let _changing = self.changes.lock().await;
-        if wants_shared {
-            // Members who joined after the file was placed are linked first, so the move keeps
-            // it in the pool for any of them who cannot see the shared library.
-            for member in members {
-                if let Err(e) = self.link_held(path, member).await {
-                    warn!("FAMILY could not give {member} {path}: {e}");
-                }
-            }
-            return match self.promote_held(path, None).await {
-                Ok(moved) => moved,
-                Err(e) => {
-                    warn!("FAMILY could not move {path} into the shared library: {e}");
-                    path.to_string()
-                }
-            };
-        }
+        let _claim = self.claims.claim(&[path]).await;
+        // Members who joined after the file was placed are linked first, so a move keeps it in
+        // the pool for any of them who cannot see the shared library.
         for member in members {
-            if let Err(e) = self.link_held(path, member).await {
+            if let Err(e) = self.link_claimed(path, member).await {
                 warn!("FAMILY could not give {member} {path}: {e}");
             }
         }
-        path.to_string()
+        if !wants_shared {
+            return path.to_string();
+        }
+        match self.promote_claimed(path, None).await {
+            Ok(moved) => moved,
+            Err(e) => {
+                warn!("FAMILY could not move {path} into the shared library: {e}");
+                path.to_string()
+            }
+        }
     }
 }
 
@@ -1589,29 +1969,199 @@ fn unrecorded_file(pool_path: &str, size: u64, refs: Vec<String>) -> PoolFile {
     }
 }
 
+/// How far apart sweeps are, as a time difference.
+fn sweep_spacing() -> TimeDelta {
+    TimeDelta::seconds(SWEEP_SPACING.as_secs() as i64)
+}
+
+/// Runs file work on a blocking thread, so a slow disk never holds up the async workers.
+async fn on_disk<R, F>(work: F) -> io::Result<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))
+}
+
+/// Waits `pause` before a copy starts (none outside tests).
+fn wait_before_copy(pause: Duration) {
+    if !pause.is_zero() {
+        std::thread::sleep(pause);
+    }
+}
+
+/// `path`'s place under `root`, when it is a file under it and never climbs out of it.
+fn relative_under(root: &str, path: &str) -> Option<String> {
+    let rest = path.strip_prefix(root)?.strip_prefix('/')?;
+    (!rest.is_empty() && !rest.split('/').any(|part| part == "..")).then(|| rest.to_string())
+}
+
 /// Whether `path` is a link (not following it).
-fn is_symlink(path: &str) -> bool {
+fn is_symlink(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
-/// Puts a real copy of what the link at `link` points to in its place: the copy is written
-/// beside the link first, then renamed over it, so the member never has neither.
-fn replace_link_with_copy(link: &Path) -> io::Result<()> {
-    let mut name = link.as_os_str().to_owned();
-    name.push(".octo-copy");
-    let copy = PathBuf::from(name);
-    copy_file(link, &copy)?;
-    if let Err(e) = std::fs::rename(&copy, link) {
-        let _ = std::fs::remove_file(&copy);
-        return Err(e);
-    }
-    Ok(())
+/// What became of a pool file on its way to the trash.
+enum Trashing {
+    /// Members' libraries still have it on disk, so it stays: these members, and its size.
+    Held { holders: Vec<String>, size: u64 },
+    /// It is in the trash, or was gone already.
+    Gone,
+    /// It could not be moved to the trash.
+    Stayed,
 }
 
-/// Copies a song to `to`, written beside it first and then put in its place so a half-written
-/// file never stands there, then copies its lyrics files and its folder's cover beside it where
-/// nothing is there yet.
-fn copy_with_companions(from: &Path, to: &Path) -> io::Result<()> {
+/// Sends a pool file to the trash unless one of `names` (members) still has something at its
+/// place in their library, then tidies its folder away when nothing else is in it.
+fn trash_unless_linked(
+    places: &Places,
+    names: &[String],
+    pool_path: &str,
+    quarantine: &LibraryActionQuarantine,
+) -> Trashing {
+    let holders: Vec<String> = match places.relative(pool_path) {
+        Some(relative) => names
+            .iter()
+            .filter(|name| std::fs::symlink_metadata(places.under(name, &relative)).is_ok())
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+    if !holders.is_empty() {
+        let size = std::fs::metadata(pool_path).map(|m| m.len()).unwrap_or(0);
+        return Trashing::Held { holders, size };
+    }
+    if Path::new(pool_path).exists() {
+        let size = std::fs::metadata(pool_path).map(|m| m.len() as i64).unwrap_or(0);
+        let file = ResolvedSongFile {
+            navidrome_id: String::new(),
+            absolute_path: pool_path.to_string(),
+            size_bytes: size,
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            suffix: extension_of(pool_path),
+            duration_seconds: None,
+            source: PathSource::LocalMappings,
+            album_artist: None,
+        };
+        let moved =
+            quarantine.move_file_with_sidecars(&file, &places.members, LibraryAction::Delete, "family", true);
+        if !moved.moved {
+            warn!(
+                "FAMILY could not move {pool_path} to the trash: {}",
+                moved.error.unwrap_or_default()
+            );
+            return Trashing::Stayed;
+        }
+        info!("FAMILY nobody has {pool_path} any more; it went to the trash");
+    }
+    if let Some(folder) = Path::new(pool_path).parent() {
+        remove_lonely_covers(folder);
+        prune_empty(folder, Path::new(&places.pool));
+    }
+    quarantine.sweep(&places.members);
+    Trashing::Gone
+}
+
+/// Makes `link` stand for `pool_path`: a relative link in link mode, or a copy (in copy mode,
+/// and when the disk refuses the link). Nothing changes when something is there already. A
+/// folder another change tidied away in the meantime is made again.
+fn make_link(mode: LinkMode, pool_path: &str, link: &str, relative: &str) -> io::Result<()> {
+    let link_path = Path::new(link);
+    for _ in 0..3 {
+        if std::fs::symlink_metadata(link_path).is_ok() {
+            return Ok(());
+        }
+        if let Some(parent) = link_path.parent() {
+            make_dirs(parent)?;
+        }
+        let made = match mode {
+            LinkMode::Symlink => match symlink(&relative_target(relative), link_path) {
+                Ok(()) => Ok(()),
+                Err(e) if matches!(e.kind(), io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound) => {
+                    Err(e)
+                }
+                Err(e) => {
+                    warn!("FAMILY could not link {link}: {e}; copying it instead");
+                    copy_staged(Path::new(pool_path), link_path)
+                }
+            },
+            LinkMode::Copy => copy_staged(Path::new(pool_path), link_path),
+        };
+        match made {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && Path::new(pool_path).exists() => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::other(format!("the folder of {link} kept going away")))
+}
+
+/// Removes `name`'s link to a pool file, their links to its `companions` (read before the pool
+/// file moved; never the folder's cover, which the album shares), and their album folder's cover
+/// link and folders once nothing else is in them.
+fn remove_member_link(places: &Places, name: &str, pool_path: &str, companions: &[String]) {
+    let Some(relative) = places.relative(pool_path) else {
+        return;
+    };
+    let link = places.under(name, &relative);
+    let link_path = Path::new(&link);
+    if std::fs::symlink_metadata(link_path).is_ok()
+        && let Err(e) = std::fs::remove_file(link_path)
+    {
+        warn!("FAMILY could not remove {link}: {e}");
+    }
+    for companion in companions {
+        if COVER_FILES
+            .iter()
+            .any(|cover| companion.to_lowercase().ends_with(&format!("/{cover}")))
+        {
+            continue;
+        }
+        if let Some(companion_relative) = places.relative(companion) {
+            let _ = std::fs::remove_file(places.under(name, &companion_relative));
+        }
+    }
+    if let Some(folder) = link_path.parent() {
+        remove_lonely_covers(folder);
+        prune_empty(folder, Path::new(&places.member_root(name)));
+    }
+}
+
+/// Takes a song's `companions` along to `target`'s folder where nothing is there yet: covers
+/// are always copied (the album folder keeps its own), lyrics files copied when `copy` and
+/// moved otherwise.
+fn carry_companions(companions: &[String], target: &Path, copy: bool) {
+    for companion in companions {
+        let Some(name) = Path::new(companion).file_name() else {
+            continue;
+        };
+        let destination = target.with_file_name(name);
+        if destination.exists() {
+            continue;
+        }
+        let is_cover = COVER_FILES
+            .iter()
+            .any(|cover| eq_ignore_case(cover, &name.to_string_lossy()));
+        let result = if is_cover || copy {
+            std::fs::copy(companion, &destination).map(|_| ())
+        } else {
+            move_file(Path::new(companion), &destination)
+        };
+        if let Err(e) = result {
+            warn!("FAMILY could not move {companion} with its song: {e}");
+        }
+    }
+}
+
+/// Copies `from` to `to` (through a link at `from`, when it is one), written beside `to` first
+/// and then put in its place, so a half-written file never stands there. With `from` and `to`
+/// the same link, the link becomes a real copy of what it points to.
+fn copy_staged(from: &Path, to: &Path) -> io::Result<()> {
     let mut name = to.as_os_str().to_owned();
     name.push(".octo-copy");
     let staged = PathBuf::from(name);
@@ -1620,6 +2170,13 @@ fn copy_with_companions(from: &Path, to: &Path) -> io::Result<()> {
         let _ = std::fs::remove_file(&staged);
         return Err(e);
     }
+    Ok(())
+}
+
+/// Copies a song to `to` ([`copy_staged`]), then copies its lyrics files and its folder's cover
+/// beside it where nothing is there yet.
+fn copy_with_companions(from: &Path, to: &Path) -> io::Result<()> {
+    copy_staged(from, to)?;
     for companion in companions(&from.to_string_lossy()) {
         let Some(file_name) = Path::new(&companion).file_name() else {
             continue;

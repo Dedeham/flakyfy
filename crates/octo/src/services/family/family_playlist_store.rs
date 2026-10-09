@@ -222,10 +222,9 @@ impl FamilyPlaylistStore {
     }
 
     fn save(&self) {
-        let Some(path) = &self.path else { return };
-        let _saving = self.save_lock.lock();
-        let playlists = self.playlists.lock().clone();
-        store_file::save(Some(path), &playlists);
+        store_file::save_with(self.path.as_deref(), &self.save_lock, || {
+            self.playlists.lock().clone()
+        });
     }
 }
 

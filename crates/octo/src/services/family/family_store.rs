@@ -650,12 +650,11 @@ impl FamilyStore {
     }
 
     fn save(&self) {
-        let Some(path) = &self.path else { return };
-        let _saving = self.save_lock.lock();
-        // Whatever is in memory now goes out, so a pending last-seen change is written too.
-        self.dirty.store(false, Ordering::Release);
-        let file = self.state.lock().clone();
-        store_file::save(Some(path), &file);
+        store_file::save_with(self.path.as_deref(), &self.save_lock, || {
+            // Whatever is in memory now goes out, so a pending last-seen change is written too.
+            self.dirty.store(false, Ordering::Release);
+            self.state.lock().clone()
+        });
     }
 }
 

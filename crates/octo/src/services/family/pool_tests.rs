@@ -178,15 +178,38 @@ async fn a_slow_scan_never_turns_everyones_links_into_copies() {
     assert_eq!(std::fs::read(&alex).expect("a copy").len(), 10);
     assert!(is_link(&sam), "Sam's link is left alone");
     assert_eq!(world.pool.mode(), LinkMode::Symlink);
-    // Navidrome showed the copy: once is not enough to give up on links.
-    assert!(!world.pool.copy_shown_where_link_was_not().await);
+    // Navidrome showed the copy: once is not enough to give up on links, and the same song
+    // missed again still counts once.
+    assert!(!world.pool.copy_shown_where_link_was_not(&first).await);
+    assert!(!world.pool.copy_shown_where_link_was_not(&first).await);
+    assert_eq!(world.pool.store().link_state().unshown, 1);
     assert_eq!(world.pool.mode(), LinkMode::Symlink);
     assert!(is_link(&sam));
 
-    // A second time, with no link ever shown, every member gets copies.
+    // A second song, with no link ever shown: links still work in the members folder, so
+    // nobody's links become copies.
     assert!(world.pool.copy_unshown_link("sam", &sam).await);
-    assert!(world.pool.copy_shown_where_link_was_not().await);
+    assert!(!world.pool.copy_shown_where_link_was_not(&second).await);
+    assert_eq!(world.pool.store().link_state().unshown, 2);
+    assert_eq!(world.pool.mode(), LinkMode::Symlink);
+    assert!(!world.pool.store().link_state().copies);
+}
+
+#[tokio::test]
+async fn everyone_gets_copies_only_when_the_members_folder_fails_a_links_probe() {
+    let world = World::new(None);
+    let first = world.pool_file(SONG, 10);
+    let second = world.pool_file("Artist/Album/02 Other.mp3", 5);
+    assert!(!world.pool.copy_shown_where_link_was_not(&first).await);
+    // The members folder can no longer take links: a file is in the way of it.
+    let blocked = world.dir.path().join("blocked");
+    std::fs::write(&blocked, b"x").expect("a file");
+    let mut settings = world.settings.current().as_ref().clone();
+    settings.family.members_path = blocked.join("members").to_string_lossy().into_owned();
+    world.settings.set(settings);
+    assert!(world.pool.copy_shown_where_link_was_not(&second).await);
     assert_eq!(world.pool.mode(), LinkMode::Copy);
+    assert!(world.pool.store().link_state().copies);
 }
 
 #[tokio::test]
@@ -201,7 +224,7 @@ async fn links_once_shown_are_never_given_up_and_that_survives_a_restart() {
     pool.confirm_links_seen();
     assert!(!pool.copy_unshown_link("alex", &link).await, "a slow scan");
     assert!(is_link(&link));
-    assert!(!pool.copy_shown_where_link_was_not().await);
+    assert!(!pool.copy_shown_where_link_was_not(&pooled).await);
 
     let restarted = pool_over(&world, std::sync::Arc::new(FamilyPoolStore::new(Some(&file))));
     assert!(restarted.links_seen());
@@ -385,6 +408,7 @@ async fn songs_are_found_by_outside_id_isrc_or_name() {
         world
             .pool
             .find_song("test", "1", &Song::default())
+            .await
             .map(|f| f.path),
         Some(pooled.clone())
     );
@@ -392,19 +416,19 @@ async fn songs_are_found_by_outside_id_isrc_or_name() {
         isrc: Some("usum71703861".into()),
         ..Default::default()
     };
-    assert!(world.pool.find_song("test", "2", &by_isrc).is_some());
+    assert!(world.pool.find_song("test", "2", &by_isrc).await.is_some());
     let by_name = Song {
         artist: "artist".into(),
         title: "SONG".into(),
         ..Default::default()
     };
-    assert!(world.pool.find_song("test", "3", &by_name).is_some());
+    assert!(world.pool.find_song("test", "3", &by_name).await.is_some());
     let live = Song {
         artist: "Artist".into(),
         title: "Song (Live)".into(),
         ..Default::default()
     };
-    assert!(world.pool.find_song("test", "4", &live).is_none());
+    assert!(world.pool.find_song("test", "4", &live).await.is_none());
 }
 
 #[tokio::test]
@@ -416,7 +440,7 @@ async fn family_off_places_nothing() {
             .pool
             .is_pool_path(&format!("{}/.pool/{SONG}", world.members()))
     );
-    assert!(world.pool.find_song("test", "1", &song()).is_none());
+    assert!(world.pool.find_song("test", "1", &song()).await.is_none());
 }
 
 /// Every file and link under `root`.
@@ -452,14 +476,80 @@ async fn a_pool_file_deleted_by_hand_takes_its_links_with_it() {
     std::fs::remove_file(&pooled).expect("deleted by hand");
     assert_eq!(world.pool.sweep_dangling().await, 0, "missing once is not enough");
     assert!(world.pool.store().get(&pooled).is_some());
-    assert_eq!(world.pool.sweep_dangling().await, 1, "missing twice in a row");
+    world.later(11);
+    assert_eq!(world.pool.sweep_dangling().await, 1, "missing ten minutes apart");
     assert!(
         std::fs::symlink_metadata(&link).is_err(),
         "the dangling link went"
     );
     assert!(world.pool.store().list().is_empty());
     assert_eq!(world.library.forgotten.lock().as_slice(), [pooled]);
+    world.later(11);
     assert_eq!(world.pool.sweep_dangling().await, 0);
+}
+
+#[tokio::test]
+async fn sweeps_run_at_most_every_ten_minutes_and_a_file_goes_only_after_ten_minutes_missing() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    world.pool_file("Other/Album/01 Other.mp3", 5);
+    world.pool.link(&pooled, "alex").await.expect("linked");
+    std::fs::remove_file(&pooled).expect("deleted by hand");
+    // Placements come seconds apart: only the first one sweeps.
+    assert_eq!(world.pool.sweep_dangling().await, 0, "the first miss");
+    world.later(1);
+    assert_eq!(world.pool.sweep_dangling().await, 0, "no sweep a minute later");
+    world.later(8);
+    assert_eq!(world.pool.sweep_dangling().await, 0, "no sweep nine minutes in");
+    assert_eq!(world.pool.store().get(&pooled).expect("kept").refs, ["alex"]);
+    world.later(2);
+    assert_eq!(
+        world.pool.sweep_dangling().await,
+        1,
+        "missing eleven minutes apart"
+    );
+    assert!(world.pool.store().get(&pooled).is_none());
+}
+
+#[tokio::test]
+async fn a_pool_folder_without_its_marker_is_never_swept_and_takes_no_member_download() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    world.pool.link(&pooled, "alex").await.expect("linked");
+    assert!(world.pool.pool_ready());
+    assert!(world.pool.placement_ready().await);
+    let marker = format!("{}/{POOL_MARKER}", world.pool.pool_root_path());
+    std::fs::remove_file(&marker).expect("the marker went");
+    assert!(
+        !world.pool.placement_ready().await,
+        "no member download lands here"
+    );
+    std::fs::remove_file(&pooled).expect("gone");
+    for _ in 0..3 {
+        assert_eq!(world.pool.sweep_dangling().await, 0);
+        world.later(11);
+    }
+    assert_eq!(world.pool.store().get(&pooled).expect("kept").refs, ["alex"]);
+    // Records with none of their files there: the marker is not written back.
+    assert!(!world.pool.keep_marker());
+    assert!(!Path::new(&marker).exists());
+    // A recorded file is there: the folder is the pool, and the marker is written back.
+    world.pool_file(SONG, 10);
+    assert!(world.pool.keep_marker());
+    assert!(Path::new(&marker).is_file());
+    assert!(world.pool.placement_ready().await);
+}
+
+#[tokio::test]
+async fn a_pool_with_no_records_gets_its_marker_and_family_off_is_always_ready() {
+    let world = World::new(None);
+    let marker = format!("{}/{POOL_MARKER}", world.pool.pool_root_path());
+    std::fs::remove_file(&marker).expect("the marker went");
+    assert!(world.pool.keep_marker(), "nothing recorded, nothing to forget");
+    assert!(Path::new(&marker).is_file());
+    let off = World::with_family(None, false);
+    std::fs::remove_file(format!("{}/{POOL_MARKER}", off.pool.pool_root_path())).expect("gone");
+    assert!(off.pool.placement_ready().await);
 }
 
 #[tokio::test]
@@ -472,7 +562,9 @@ async fn a_file_back_before_the_second_sweep_is_kept() {
     std::fs::rename(&pooled, &aside).expect("gone for a moment");
     assert_eq!(world.pool.sweep_dangling().await, 0);
     std::fs::rename(&aside, &pooled).expect("back");
+    world.later(11);
     assert_eq!(world.pool.sweep_dangling().await, 0);
+    world.later(11);
     assert_eq!(world.pool.sweep_dangling().await, 0);
     assert_eq!(world.pool.store().get(&pooled).expect("kept").refs, ["alex"]);
 }
@@ -487,11 +579,13 @@ async fn a_members_disk_that_is_gone_wipes_no_pool_records() {
     std::fs::rename(world.pool.pool_root_path(), &moved).expect("moved away");
     for _ in 0..3 {
         assert_eq!(world.pool.sweep_dangling().await, 0);
+        world.later(11);
     }
     // The mount point is there but empty.
     std::fs::create_dir_all(world.pool.pool_root_path()).expect("an empty mount point");
     for _ in 0..3 {
         assert_eq!(world.pool.sweep_dangling().await, 0);
+        world.later(11);
     }
     assert_eq!(world.pool.store().get(&pooled).expect("kept").refs, ["alex"]);
     assert!(std::fs::symlink_metadata(&link).is_ok(), "Alex's link is kept");
@@ -633,4 +727,148 @@ async fn a_failed_promote_while_letting_a_member_go_leaves_their_file_as_it_was(
     for file in world.pool.store().list() {
         assert!(!file.refs.is_empty(), "{} has nobody", file.path);
     }
+}
+
+/// The members disk is not mounted, and a download lands on its empty mount point: the pool
+/// folder can be read and is not empty, but it has no marker file, so no sweep forgets the
+/// files on the real disk, however far apart the sweeps are.
+#[tokio::test]
+async fn a_download_onto_an_unmounted_members_disk_keeps_the_pool_records() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    world.pool.link(&pooled, "alex").await.expect("linked");
+    let moved = world.dir.path().join("unmounted");
+    std::fs::rename(world.pool.pool_root_path(), &moved).expect("moved away");
+    // A new download lands on the mount point.
+    world.pool_file("New/Album/01 New.mp3", 5);
+    world.pool.sweep_dangling().await;
+    world.later(11);
+    world.pool.sweep_dangling().await;
+    assert_eq!(
+        world.pool.store().get(&pooled).map(|f| f.refs),
+        Some(vec!["alex".to_string()]),
+        "the record of a file on the unmounted disk went"
+    );
+}
+
+/// A shared file outside the pool, for a member who cannot see its library to get a copy of.
+fn shared_file(world: &World, relative: &str, bytes: usize) -> String {
+    let path = format!("{}/{relative}", world.music());
+    write_file(&path, bytes);
+    path
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_copy_does_not_block_another_members_link() {
+    let world = World::new(None);
+    let shared = shared_file(&world, "Shared/Album/01 Shared.mp3", 10);
+    let pooled = world.pool_file(SONG, 10);
+    world.pool.slow_copies(std::time::Duration::from_millis(800));
+    let copying = {
+        let (pool, shared) = (world.pool.clone(), shared.clone());
+        tokio::spawn(async move { pool.copy_shared_for(&shared, "sam", None, None).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let started = std::time::Instant::now();
+    let link = world.pool.link(&pooled, "alex").await.expect("linked");
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(400),
+        "Alex's link waited {took:?} for Sam's copy"
+    );
+    assert!(!copying.is_finished(), "the copy was still going");
+    assert!(is_link(&link));
+    let copy = copying.await.expect("joins").expect("copied");
+    assert_eq!(std::fs::read(&copy).expect("Sam's copy").len(), 10);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_promote_and_a_link_on_different_files_run_side_by_side() {
+    let world = World::new(None);
+    let promoted = world.pool_file(SONG, 10);
+    let other = world.pool_file("Other/Album/01 Other.mp3", 5);
+    world.pool.link(&promoted, "alex").await.expect("linked");
+    // Sam cannot see the shared library, so the promote copies the file, slowly.
+    let mut sam = world.family.member("sam").expect("sam");
+    sam.shared_libraries = crate::services::family::SharedLibraries::Ids(vec![2]);
+    world.family.upsert_member(sam);
+    world.pool.link(&promoted, "sam").await.expect("linked");
+    world.pool.slow_copies(std::time::Duration::from_millis(800));
+    let promoting = {
+        let (pool, promoted) = (world.pool.clone(), promoted.clone());
+        tokio::spawn(async move { pool.promote(&promoted).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let started = std::time::Instant::now();
+    let link = world.pool.link(&other, "alex").await.expect("linked");
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(400),
+        "a link to another file waited {took:?} for the promote"
+    );
+    assert!(!promoting.is_finished(), "the promote was still copying");
+    assert!(is_link(&link));
+    let shared = promoting.await.expect("joins").expect("promoted");
+    assert_eq!(std::fs::read(&shared).expect("in the shared library").len(), 10);
+    assert_eq!(world.pool.store().get(&promoted).expect("kept").refs, ["sam"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_promote_and_a_remove_on_the_same_file_take_turns() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    world.pool.link(&pooled, "alex").await.expect("linked");
+    let mut sam = world.family.member("sam").expect("sam");
+    sam.shared_libraries = crate::services::family::SharedLibraries::Ids(vec![2]);
+    world.family.upsert_member(sam);
+    let sam_link = world.pool.link(&pooled, "sam").await.expect("linked");
+    // The promote copies the file into the shared library for Alex and keeps it for Sam,
+    // slowly; Sam lets it go meanwhile.
+    world.pool.slow_copies(std::time::Duration::from_millis(500));
+    let promoting = {
+        let (pool, pooled) = (world.pool.clone(), pooled.clone());
+        tokio::spawn(async move { pool.promote(&pooled).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let removing = {
+        let (pool, pooled) = (world.pool.clone(), pooled.clone());
+        tokio::spawn(async move { pool.unlink(&pooled, "sam").await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!removing.is_finished(), "the remove waits for the promote");
+    let shared = promoting.await.expect("joins").expect("promoted");
+    removing.await.expect("joins").expect("unlinked");
+    // The promote finished first: the shared library has the song, and Sam's remove then
+    // found the pool file only Sam had and sent it to the trash.
+    assert_eq!(std::fs::read(&shared).expect("in the shared library").len(), 10);
+    assert!(!Path::new(&pooled).exists(), "nobody has the pool file");
+    assert!(std::fs::symlink_metadata(&sam_link).is_err());
+    assert!(!Path::new(&format!("{}/alex/{SONG}", world.members())).exists());
+    assert!(world.pool.store().list().is_empty());
+}
+
+#[tokio::test]
+async fn a_download_that_lands_for_a_member_who_left_is_let_go_of() {
+    let world = World::new(None);
+    let pooled = world.pool_file(SONG, 10);
+    // Alex left the family while the download was on its way, so the placement links nobody.
+    world.family.remove_member("alex");
+    assert_eq!(
+        world
+            .pool
+            .placed(&pooled, &song(), "test", "1", &["alex".to_string()])
+            .await,
+        None
+    );
+    assert!(world.pool.store().get(&pooled).expect("recorded").refs.is_empty());
+    world.pool.let_go(&pooled, "alex").await;
+    assert!(!Path::new(&pooled).exists(), "in the trash");
+    assert!(world.pool.store().list().is_empty());
+
+    // Someone else still has another song: letting go of it for Alex leaves it for Sam.
+    let shared = world.pool_file("Other/Album/01 Other.mp3", 5);
+    world.pool.link(&shared, "sam").await.expect("linked");
+    world.pool.let_go(&shared, "alex").await;
+    assert!(Path::new(&shared).is_file());
+    assert_eq!(world.pool.store().get(&shared).expect("kept").refs, ["sam"]);
 }

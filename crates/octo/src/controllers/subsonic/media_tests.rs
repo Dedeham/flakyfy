@@ -648,3 +648,83 @@ async fn a_lossless_copy_on_disk_is_served_with_ranges() {
         assert_eq!(reply.body.len(), length, "{range}");
     }
 }
+
+// ---- An outside stream that cannot play, or a range past its end ---------------------------
+
+#[tokio::test]
+async fn an_unplayable_outside_stream_is_a_404_with_the_subsonic_error() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::with_external(
+        "external-track",
+        "soulseek",
+        "track-id",
+    ));
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let app = app(&state);
+
+    let response = get(
+        &app,
+        "/rest/stream?id=external-track&f=json&u=alice&t=good&s=salt&v=1.16.1&c=test",
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+    let body: serde_json::Value = serde_json::from_slice(&response.body).expect("JSON");
+    assert_eq!(body["subsonic-response"]["status"], "failed");
+    assert_eq!(body["subsonic-response"]["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn a_range_past_the_end_of_a_known_stream_is_a_416_with_its_size() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::default());
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Daft Punk".into()),
+        title: Some("Emotion".into()),
+        ..Default::default()
+    });
+    state.external_id_registry.set_you_tube_id(&id, "vid-a");
+    state.external_id_registry.remember_stream(
+        &id,
+        "vid-a",
+        &octo_core::soulseek::StreamFacts {
+            size: Some(1000),
+            ..Default::default()
+        },
+    );
+    library.add_external("external-track", "soulseek", &id);
+    let app = app(&state);
+
+    let past = send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=1000-")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), Some("bytes */1000"));
+    assert!(downloads.stream_calls().is_empty(), "nothing relayed");
+
+    // A range inside the stream is relayed as before.
+    send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=999-")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(downloads.stream_calls().len(), 1);
+}

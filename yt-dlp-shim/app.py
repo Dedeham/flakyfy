@@ -945,6 +945,18 @@ def stream():
                 url = _resolve_url(video_id)
                 upstream = _open_upstream(url, upstream_headers, video_id) if url else None
 
+    # A range past the end is the caller's mistake, not an upstream failure: pass the 416 and
+    # its `bytes */<size>` back, which is how a player probing the end learns the length.
+    if upstream is not None and upstream.status_code == 416:
+        total = stream_info.total_from_content_range(upstream.headers.get("Content-Range"))
+        upstream.close()
+        if total is not None:
+            _facts_put(video_id, {"size": total})
+        headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-store", "Content-Length": "0"}
+        if total is not None:
+            headers["Content-Range"] = f"bytes */{total}"
+        return Response(b"", status=416, headers=headers)
+
     if upstream is None or upstream.status_code not in (200, 206):
         code = upstream.status_code if upstream is not None else "n/a"
         if upstream is not None:

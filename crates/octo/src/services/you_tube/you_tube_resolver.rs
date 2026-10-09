@@ -234,10 +234,11 @@ impl YouTubeResolver {
                 return None;
             }
         };
-        // Accept 200 (full body) and 206 (partial content). Anything else
-        // means the upstream/shim couldn't satisfy the request.
+        // Accept 200 (full body), 206 (partial content) and 416 (a range past the end, whose
+        // `bytes */<size>` is the client's answer). Anything else means the upstream/shim
+        // couldn't satisfy the request.
         let status = resp.status().as_u16();
-        if status != 200 && status != 206 {
+        if !matches!(status, 200 | 206 | 416) {
             warn!("shim /stream HTTP {status} for {video_id}");
             return None;
         }
@@ -593,6 +594,23 @@ mod tests {
         );
         assert!(resolver.open_stream("gone", None).await.is_none());
         assert!(resolver.open_stream(" ", None).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn open_stream_hands_back_a_range_past_the_end_with_the_size() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/stream"))
+            .and(query_param("id", "abc"))
+            .respond_with(ResponseTemplate::new(416).insert_header("content-range", "bytes */1000"))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let stream = resolver
+            .open_stream("abc", Some("bytes=5000-"))
+            .await
+            .expect("the refusal is an answer");
+        assert_eq!(stream.status_code, 416);
+        assert_eq!(stream.content_range.as_deref(), Some("bytes */1000"));
     }
 
     #[tokio::test]

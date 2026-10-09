@@ -487,6 +487,8 @@ pub struct AppInner {
     pub family_saved: Arc<SavedStore>,
     /// `family-playlists.json`: playlists every member can add to.
     pub family_playlists: Arc<FamilyPlaylistStore>,
+    /// Where family playlist additions that wait for approval are reported.
+    pub family_playlist_requests: crate::services::family::family_playlists::PlaylistAddHook,
     /// `family-pool.json`: the one copy of each member download and who links it.
     pub family_pool: Arc<FamilyPoolStore>,
     /// Octo's admin calls to Navidrome for the family (accounts, libraries, players, scans).
@@ -1645,12 +1647,15 @@ impl Radio {
             settings.clone(),
             Some(outcomes.clone()),
         ));
-        let song_radio = Arc::new(SongRadioService::new(
-            sources.clone(),
-            settings.clone(),
-            Some(sonic_store.clone()),
-            Some(outcomes.clone()),
-        ));
+        let song_radio = Arc::new(
+            SongRadioService::new(
+                sources.clone(),
+                settings.clone(),
+                Some(sonic_store.clone()),
+                Some(outcomes.clone()),
+            )
+            .with_family(stores.family_store.clone()),
+        );
         let state = Arc::new(LastFmRadioStateStore::new(
             config_dir.join("lastfm-radio-state.json"),
             settings.clone(),
@@ -1714,7 +1719,8 @@ impl Radio {
             .with_for_you(ForYouServices {
                 builder: new_releases,
                 responses: stores.subsonic_response_builder.clone(),
-            }),
+            })
+            .with_family(stores.family_store.clone()),
         );
         Radio {
             state,
@@ -1869,7 +1875,8 @@ impl Charts {
             navidrome.subsonic_proxy.clone(),
             settings.clone(),
             Clock::system(),
-        );
+        )
+        .with_family(stores.family_store.clone());
         let warm = Arc::new(ChartsWarmWorker::new(
             top_songs.clone(),
             playlists.clone(),
@@ -2434,6 +2441,7 @@ impl AppState {
             family_requests: stores.family_requests,
             family_saved: stores.family_saved,
             family_playlists: stores.family_playlists,
+            family_playlist_requests: Default::default(),
             family_pool: stores.family_pool,
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,
@@ -2767,6 +2775,7 @@ impl AppState {
             family_requests: stores.family_requests,
             family_saved: stores.family_saved,
             family_playlists: stores.family_playlists,
+            family_playlist_requests: Default::default(),
             family_pool: stores.family_pool,
             navidrome_admin: family_navidrome.0,
             library_index: family_navidrome.1,

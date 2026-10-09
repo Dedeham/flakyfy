@@ -562,3 +562,52 @@ async fn get_server_info_reads_the_ping_envelope() {
     let not_subsonic = Fixture::answering("<html>not here</html>").await;
     assert!(not_subsonic.service.get_server_info().await.is_none());
 }
+
+/// A 200 whose envelope says "failed" (a sign-in Navidrome refused) started no scan.
+#[tokio::test]
+async fn a_scan_answer_that_failed_is_no_scan() {
+    let f = Fixture::answering(r#"{"subsonic-response":{"status":"failed","error":{"code":40}}}"#).await;
+    assert!(!f.service.trigger_library_scan(true).await);
+    let not_json = Fixture::answering("<html>ok</html>").await;
+    assert!(!not_json.service.trigger_library_scan(true).await);
+}
+
+/// Navidrome's last scan time and length, which say when that scan started.
+#[tokio::test]
+async fn scan_status_reads_when_the_last_scan_ran() {
+    let f = Fixture::answering(
+        r#"{"subsonic-response":{"status":"ok","scanStatus":{"scanning":false,"count":12,"folderCount":3,"lastScan":"2026-10-09T10:15:30+02:00","elapsedTime":30000000000}}}"#,
+    )
+    .await;
+    let status = f.service.get_scan_status().await.expect("a status");
+    assert_eq!(status.count, Some(12));
+    assert_eq!(status.folder_count, Some(3));
+    assert_eq!(status.elapsed_time, Some(30_000_000_000));
+    assert_eq!(
+        status.last_scan_started_at().expect("a start").to_rfc3339(),
+        "2026-10-09T08:15:00+00:00"
+    );
+}
+
+/// While the tidy holds scans, Octo's own triggers wait; the holder's own scan goes, and the
+/// last release says a held one is owed.
+#[tokio::test]
+async fn held_scans_wait_and_the_holder_still_scans() {
+    async fn starts(f: &Fixture) -> usize {
+        crate::services::test_support::received(&f.server)
+            .await
+            .iter()
+            .filter(|r| r.url.path() == "/rest/startScan")
+            .count()
+    }
+    let f = Fixture::new().await;
+    let hold = f.service.scan_hold().expect("a hold").hold();
+
+    assert!(f.service.trigger_library_scan(true).await);
+    assert_eq!(starts(&f).await, 0);
+    assert!(f.service.start_scan().await);
+    assert_eq!(starts(&f).await, 1);
+    assert!(hold.release());
+    assert!(f.service.trigger_library_scan(true).await);
+    assert_eq!(starts(&f).await, 2);
+}

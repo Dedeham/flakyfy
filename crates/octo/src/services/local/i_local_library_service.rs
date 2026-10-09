@@ -5,6 +5,7 @@ use octo_core::models::domain::Song;
 use octo_core::models::subsonic::ScanStatus;
 
 use super::LocalSongMapping;
+use super::scan_wait::ScanHold;
 use crate::services::subsonic::navidrome_version::ServerInfo;
 
 /// What [`ILocalLibraryService::parse_song_id`] answers: whether the id is external, its
@@ -84,6 +85,16 @@ pub trait ILocalLibraryService: Send + Sync {
 
     /// Gets the current scan status
     async fn get_scan_status(&self) -> Option<ScanStatus>;
+
+    /// Starts a scan now, past any hold on Octo's own triggers: the scan the holder itself needs.
+    async fn start_scan(&self) -> bool {
+        self.trigger_library_scan(true).await
+    }
+
+    /// The hold on Octo's own scan triggers, when this library has one.
+    fn scan_hold(&self) -> Option<ScanHold> {
+        None
+    }
 
     /// Which server answers a ping: its type and version. None when nothing answered.
     async fn get_server_info(&self) -> Option<ServerInfo> {

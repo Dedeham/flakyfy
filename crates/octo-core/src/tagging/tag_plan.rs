@@ -1,6 +1,6 @@
-//! The chooser's decision, how it is applied to a song, and the report
-//! `downloads-history.json` carries (`TagReport`, `TagReportCandidate` and `FieldDecision`
-//! round-trip that file byte for byte).
+//! The chooser's decision, how it is applied to a song, and the report `downloads-history.json`
+//! carries (`TagReport`, `TagReportCandidate` and `FieldDecision` round-trip that file byte for
+//! byte).
 
 use std::fmt;
 

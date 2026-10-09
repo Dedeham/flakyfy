@@ -1,5 +1,5 @@
-//! The pure half of the Lidarr heart acquisition service: which of a heart's songs
-//! an imported track is. The service is `octo::services::lidarr::lidarr_heart_acquisition_service`.
+//! The pure half of the Lidarr heart acquisition service: which of a heart's songs an imported
+//! track is. The service is `octo::services::lidarr::lidarr_heart_acquisition_service`.
 
 use super::LidarrImportedTrack;
 use crate::common::SongIdentity;

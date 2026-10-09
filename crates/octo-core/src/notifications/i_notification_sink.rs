@@ -1,5 +1,5 @@
-//! The notification sinks' records. The sink trait itself is async
-//! and lives with the transports in `octo::services::notifications::i_notification_sink`.
+//! The notification sinks' records. The sink trait itself is async and lives with the transports
+//! in `octo::services::notifications::i_notification_sink`.
 
 use serde::Serialize;
 

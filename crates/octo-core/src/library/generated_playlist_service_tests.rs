@@ -1,6 +1,6 @@
-//! Genre and decade mixes (#54). The draw is what a listener
-//! hears, so its rules are tested directly: it holds still for a period, never breaks the artist
-//! cap, and keeps its share for new tracks only when asked to.
+//! Genre and decade mixes (#54). The draw is what a listener hears, so its rules are tested
+//! directly: it holds still for a period, never breaks the artist cap, and keeps its share for
+//! new tracks only when asked to.
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use indexmap::IndexMap;
@@ -348,8 +348,8 @@ fn kinds_and_staleness_follow_the_settings() {
         now() + TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
     ));
     assert!(is_stale(&UserMixes::default(), &settings, all, now()));
-    // Made for you: on by default whatever the mixes switch says, and what
-    // decides each list is part of the kinds, the explicit filter too.
+    // Made for you: on by default whatever the mixes switch says, and what decides each list is
+    // part of the kinds, the explicit filter too.
     let defaults = GeneratedPlaylistSettings::default();
     assert_eq!(
         kinds_of(&defaults, all),

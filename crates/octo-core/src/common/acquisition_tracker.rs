@@ -1,6 +1,6 @@
-//! The pure half of the acquisition tracker: a transfer's progress from slskd's
-//! figures, and the short, path-free error a phone is shown. The tracker itself (the live list
-//! behind the download ring) is `octo::services::common::acquisition_tracker`.
+//! The pure half of the acquisition tracker: a transfer's progress from slskd's figures, and the
+//! short, path-free error a phone is shown. The tracker itself (the live list behind the download
+//! ring) is `octo::services::common::acquisition_tracker`.
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 
@@ -56,10 +56,10 @@ fn is_letter_or_number_utf16(c: char) -> bool {
     dotnet::is_letter_utf16(c) || is_number_utf16(c)
 }
 
-/// Where the first sentence ends, by the pattern
-/// `(?<=[\p{L}\p{N}'"\)]{4})\.\s+(?=\p{Lu})`. A sentence ends at a full stop after a word of
-/// four or more characters and before a capital, so "Mr. Brightside" and "St. Vincent" stay
-/// whole. The byte index of the full stop, which the match began with.
+/// Where the first sentence ends, by the pattern `(?<=[\p{L}\p{N}'"\)]{4})\.\s+(?=\p{Lu})`. A
+/// sentence ends at a full stop after a word of four or more characters and before a capital, so
+/// "Mr. Brightside" and "St. Vincent" stay whole. The byte index of the full stop, which the
+/// match began with.
 fn sentence_end(text: &str) -> Option<usize> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let word = |c: char| is_letter_or_number_utf16(c) || matches!(c, '\'' | '"' | ')');

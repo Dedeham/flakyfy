@@ -282,9 +282,9 @@ fn is_year_like_empty_is_not_a_year() {
     assert!(!GenreNormalizer::is_year_like(""));
 }
 
-/// A Turkish-locale container turns "I" into a dotless "ı" when lower- and title-casing,
-/// which silently stops "Indie" matching "indie". Rust has no process culture: the
-/// normalizer is invariant by construction, which this pins.
+/// A Turkish-locale container turns "I" into a dotless "ı" when lower- and title-casing, which
+/// silently stops "Indie" matching "indie". Rust has no process culture: the normalizer is
+/// invariant by construction, which this pins.
 #[test]
 fn normalize_is_culture_invariant() {
     assert_eq!(primary("indie", &shipped()).as_deref(), Some("Indie"));

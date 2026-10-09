@@ -283,8 +283,7 @@ fn file_exists(path: &str) -> bool {
     !path.is_empty() && Path::new(path).is_file()
 }
 
-/// Joins two paths: `b` when it is rooted or `a` is empty, else the two joined by
-/// one `/`.
+/// Joins two paths: `b` when it is rooted or `a` is empty, else the two joined by one `/`.
 fn combine(a: &str, b: &str) -> String {
     if b.is_empty() {
         return a.to_string();
@@ -316,8 +315,8 @@ fn file_name(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
-/// The directory of a path that names a file: everything before the last
-/// `/` ("/" itself for a file in the root), or empty when there is none.
+/// The directory of a path that names a file: everything before the last `/` ("/" itself for a
+/// file in the root), or empty when there is none.
 fn directory_name(path: &str) -> String {
     match path.rfind('/') {
         Some(0) => "/".to_string(),

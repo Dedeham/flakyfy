@@ -7,9 +7,9 @@
 //! of tasks that outlives its usefulness, which on arbitrary user input becomes a
 //! user-triggerable leak.
 //!
-//! The work is hot: [`SingleFlight::run`] registers the caller (or starts
-//! the work on a tokio task) before it returns, and the work runs to the end even if the
-//! caller drops the returned future. Only awaiting the answer is lazy.
+//! The work is hot: [`SingleFlight::run`] registers the caller (or starts the work on a tokio
+//! task) before it returns, and the work runs to the end even if the caller drops the returned
+//! future. Only awaiting the answer is lazy.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -32,10 +32,10 @@ type Outcome<V> = Option<Result<V, SharedError>>;
 struct Entry<V> {
     outcome: watch::Receiver<Outcome<V>>,
 
-    /// Callers currently sharing this execution, including the owner. A supersession
-    /// policy (see [`SupersedableBuildCoordinator`](super::supersedable_build_coordinator::SupersedableBuildCoordinator))
-    /// reads this to decide whether canceling this key would only hurt its own caller or
-    /// would also take a joined caller down with it.
+    /// Callers currently sharing this execution, including the owner. A supersession policy (see
+    /// [`SupersedableBuildCoordinator`](super::supersedable_build_coordinator::SupersedableBuildCoordinator))
+    /// reads this to decide whether canceling this key would only hurt its own caller or would
+    /// also take a joined caller down with it.
     joins: AtomicUsize,
 }
 

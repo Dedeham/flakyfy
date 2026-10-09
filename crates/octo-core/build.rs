@@ -4,9 +4,9 @@
 //! `OCTO_VERSION` in the build's environment wins (a CI or Docker build can stamp a release
 //! without editing a file). Otherwise the repository's `VERSION` file holds the release number
 //! (docker.yml checks a tag against it, and docker-compose.yml's image tags with it). A tree
-//! without one falls back to `InformationalVersion` in `octo/octo.csproj`.
-//! `CARGO_PKG_VERSION` cannot carry the tag: semver drops the leading
-//! zero of `05`, and the dashboard compares the tag name verbatim.
+//! without one falls back to `InformationalVersion` in `octo/octo.csproj`. `CARGO_PKG_VERSION`
+//! cannot carry the tag: semver drops the leading zero of `05`, and the dashboard compares the
+//! tag name verbatim.
 
 use std::path::Path;
 

@@ -257,8 +257,8 @@ pub(crate) fn str_of(element: &Value, name: &str) -> Option<String> {
     element.get(name).and_then(Value::as_str).map(str::to_string)
 }
 
-/// The property when it is a JSON number that fits an `i32`: no fraction or
-/// exponent, within range.
+/// The property when it is a JSON number that fits an `i32`: no fraction or exponent, within
+/// range.
 pub(crate) fn int_of(element: &Value, name: &str) -> Option<i32> {
     element
         .get(name)

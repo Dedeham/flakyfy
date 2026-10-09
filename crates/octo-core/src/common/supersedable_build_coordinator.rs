@@ -3,11 +3,11 @@
 //! that extends it (or vice versa) arrives, since the shorter one's result is about to be
 //! replaced in the client's own UI anyway.
 //!
-//! This exists because Amperfy (and most Subsonic clients' type-ahead) fires one search3
-//! call per keystroke, uncancelled. Each partial-word build competed for the same
-//! rate-limited external lane as the query the user actually meant, and the real query
-//! could blow its own timeout waiting behind three stale ones. Canceling a superseded
-//! build frees that lane immediately instead of waiting out its own timeout.
+//! This exists because Amperfy (and most Subsonic clients' type-ahead) fires one search3 call per
+//! keystroke, uncancelled. Each partial-word build competed for the same rate-limited external
+//! lane as the query the user actually meant, and the real query could blow its own timeout
+//! waiting behind three stale ones. Canceling a superseded build frees that lane immediately
+//! instead of waiting out its own timeout.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -57,8 +57,8 @@ where
     /// Run `factory` for `query`, canceling any still-running build for a shorter or longer
     /// query that shares a prefix with this one, then join or start this query's own build.
     ///
-    /// `fallback` is returned if the build fails or times out, instead of an error.
-    /// `on_failure` is invoked with the query and error on failure, for logging.
+    /// `fallback` is returned if the build fails or times out, instead of an error. `on_failure`
+    /// is invoked with the query and error on failure, for logging.
     ///
     /// The supersession and the join happen synchronously, before this returns its future.
     pub fn run<F, Fut, OnFailure>(

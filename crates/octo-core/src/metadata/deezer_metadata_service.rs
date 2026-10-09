@@ -1,5 +1,5 @@
-//! The data half of the Deezer metadata service: the records it answers with
-//! and the record-type words. The service itself (HTTP, caches, matching) is
+//! The data half of the Deezer metadata service: the records it answers with and the record-type
+//! words. The service itself (HTTP, caches, matching) is
 //! `octo::services::metadata::deezer_metadata_service`.
 
 use crate::common::dotnet;

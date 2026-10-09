@@ -6,8 +6,8 @@ use super::lyrics_models::LyricsTiming;
 use super::lyrics_text::LyricsText;
 use crate::common::dotnet::is_null_or_white_space;
 
-/// The first line of every lyrics file Octo writes, and of the
-/// lyrics it writes inside a song's tags. Octo replaces only lyrics that start with it.
+/// The first line of every lyrics file Octo writes, and of the lyrics it writes inside a song's
+/// tags. Octo replaces only lyrics that start with it.
 pub const OCTO_MARK: &str = "[re:Octo]";
 
 /// Where a song's lyrics are: nowhere, in a file beside it, or in its own tags.

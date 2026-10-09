@@ -1,7 +1,7 @@
-//! The pure half of the top songs service: how a catalog's list and
-//! Last.fm's play counts are merged into one ranked list, what the library is searched with
-//! for a row, and which library hit stands for which row. Fetching and the library searches
-//! are `octo::services::common::top_songs_service`.
+//! The pure half of the top songs service: how a catalog's list and Last.fm's play counts are
+//! merged into one ranked list, what the library is searched with for a row, and which library
+//! hit stands for which row. Fetching and the library searches are
+//! `octo::services::common::top_songs_service`.
 
 use serde_json::Value;
 

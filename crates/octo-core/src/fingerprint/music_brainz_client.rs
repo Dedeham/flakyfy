@@ -1,5 +1,5 @@
-//! The pure half of the MusicBrainz client: the query builders and the
-//! readers of its answers. The HTTP half (the one-a-second gate and the cache) is
+//! The pure half of the MusicBrainz client: the query builders and the readers of its answers.
+//! The HTTP half (the one-a-second gate and the cache) is
 //! `octo::services::fingerprint::music_brainz_client`.
 
 use serde_json::Value;

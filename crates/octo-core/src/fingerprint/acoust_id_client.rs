@@ -32,7 +32,7 @@ impl AcoustIdCredit {
 }
 
 /// The release a recording was matched on. It supplies what names the album, numbers the
-/// track and finds the cover, and it is chosen per recording by [`pick_release`].
+/// track and finds the cover, and it is chosen per recording by `pick_release`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AcoustIdRelease {
     pub release_id: Option<String>,
@@ -230,11 +230,11 @@ pub struct AcoustIdSubmission {
 /// why the HTTP client decompresses responses).
 ///
 /// SPACE separated, and that is not cosmetic. The form encoding ([`encode_form`]) writes a
-/// literal '+' as %2B, so writing these joined by '+' sends AcoustID one unknown token rather than four
-/// fields. It answers 200 with a perfectly good score and NO metadata at all, every result
-/// then has zero recordings, and the verdict is permanently Inconclusive: the feature
-/// accepts every file forever while looking like it is working. Verified against the live
-/// API on 2026-09-18, one track, both spellings.
+/// literal '+' as %2B, so writing these joined by '+' sends AcoustID one unknown token rather
+/// than four fields. It answers 200 with a perfectly good score and NO metadata at all, every
+/// result then has zero recordings, and the verdict is permanently Inconclusive: the feature
+/// accepts every file forever while looking like it is working. Verified against the live API on
+/// 2026-09-18, one track, both spellings.
 ///
 /// tracks adds each release's mediums and the track's position on them, which is what numbers
 /// a file named from its match (#48). It only takes effect beside releases.

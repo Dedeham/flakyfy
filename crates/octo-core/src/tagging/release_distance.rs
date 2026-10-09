@@ -250,11 +250,11 @@ impl ReleaseDistance {
     }
 
     /// The same title is 0. A title that reads the same once stylized characters are letters, or
-    /// agrees by the looser readings, is 0.1; one that holds the other is 0.3; another title is 1.
-    /// A version the request never asked for (a remix, a live take) is 1 whatever the core says. A
-    /// version the request asked for and the candidate's title lacks is 0.8, unless the release's
-    /// kind carries it (a live album, a remix release): the music database writes "live" in a
-    /// recording's disambiguation and the release's kind, not always in its title.
+    /// agrees by the looser readings, is 0.1; one that holds the other is 0.3; another title
+    /// is 1. A version the request never asked for (a remix, a live take) is 1 whatever the core
+    /// says. A version the request asked for and the candidate's title lacks is 0.8, unless the
+    /// release's kind carries it (a live album, a remix release): the music database writes
+    /// "live" in a recording's disambiguation and the release's kind, not always in its title.
     ///
     /// `request_markers` is unused: the title's own markers are read again here.
     pub fn title_penalty(

@@ -1,7 +1,7 @@
-//! The pure half of the generated playlist service: the mix record, the state
-//! file's shape (`generated-playlists.json`), and the rules the tests pin: which mixes exist
-//! (hysteresis over counts), what a mix holds for a period (a seeded draw with an artist cap and
-//! a share for new songs), and the Discovery blend. The service that asks Navidrome is
+//! The pure half of the generated playlist service: the mix record, the state file's shape
+//! (`generated-playlists.json`), and the rules the tests pin: which mixes exist (hysteresis over
+//! counts), what a mix holds for a period (a seeded draw with an artist cap and a share for new
+//! songs), and the Discovery blend. The service that asks Navidrome is
 //! `octo::services::library::generated_playlist_service`.
 
 use std::cmp::Ordering;
@@ -98,9 +98,10 @@ pub fn dotnet_ticks(value: DateTime<Utc>) -> i64 {
 }
 
 /// Which kinds the counts and lists were made for: "genre,decade" for the mixes (each only when
-/// the mixes are on), then the Made for you lists that are on ("newReleases+rediscover+deepCuts"),
-/// and what decides their contents: New Releases' weeks, artists and the server's explicit
-/// filter, Rediscover's months. A change to any of them makes the lists again.
+/// the mixes are on), then the Made for you lists that are on
+/// ("newReleases+rediscover+deepCuts"), and what decides their contents: New Releases' weeks,
+/// artists and the server's explicit filter, Rediscover's months. A change to any of them makes
+/// the lists again.
 pub fn kinds_of(settings: &GeneratedPlaylistSettings, explicit_filter: ExplicitFilter) -> String {
     let mixes = mixes_on(settings);
     let for_you: Vec<&str> = crate::library::for_you_lists::KINDS

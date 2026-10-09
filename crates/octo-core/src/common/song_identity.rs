@@ -355,8 +355,8 @@ fn fold_mixed_script_words(text: &str) -> String {
 }
 
 /// Replaces every match of `pattern` with what the evaluator returns, matched in a view of the
-/// text (see [`word_boundary_view`]) and replaced in the text itself. The evaluator sees the view's
-/// captures, which only differ from the text in characters these patterns never capture.
+/// text (see [`word_boundary_view`]) and replaced in the text itself. The evaluator sees the
+/// view's captures, which only differ from the text in characters these patterns never capture.
 fn replace_in_view(
     text: &str,
     view: &str,
@@ -894,8 +894,8 @@ fn strip_channel_suffix(text: &str) -> &str {
     if let Some(found) = CHANNEL_SPACED_VEVO.find(text) {
         return &text[..found.start()];
     }
-    // (?<=\p{Ll})vevo$: ignoring case widens \p{Ll} to every cased letter (Lu, Ll,
-    // Lt) in one UTF-16 unit, so "DRAKEVEVO" loses its suffix too; a CJK name does not.
+    // (?<=\p{Ll})vevo$: ignoring case widens \p{Ll} to every cased letter (Lu, Ll, Lt) in one
+    // UTF-16 unit, so "DRAKEVEVO" loses its suffix too; a CJK name does not.
     let cut = text.len().wrapping_sub(4);
     if text.len() >= 4
         && text.is_char_boundary(cut)

@@ -334,9 +334,9 @@ fn cd_quality_outranks_hi_res() {
     assert!(cd48 < hi_res, "hi-res sorts last");
 }
 
-/// Most peers report neither field. Treating unknown as hi-res would bury the
-/// majority of a normal search; treating it as CD would let an unlabeled 24/96
-/// outrank a labeled 16/44.1. It sits between the two on purpose.
+/// Most peers report neither field. Treating unknown as hi-res would bury the majority of a
+/// normal search; treating it as CD would let an unlabeled 24/96 outrank a labeled 16/44.1. It
+/// sits between the two on purpose.
 #[test]
 fn unknown_quality_sits_between_cd_and_hi_res() {
     let unknown = quality_penalty(&hit(None, None));

@@ -7,9 +7,9 @@
 //!   them; the plain ones test the whole code point. Rust's `char::is_alphabetic` tests the
 //!   Alphabetic property instead, which also takes letter numbers and many marks.
 //! - **Casing.** One character maps to one character (simple case mapping), there is no
-//!   final-sigma rule, and U+0130 (İ) and U+0131 (ı) are left alone. Rust's
-//!   `str::to_lowercase` does all three differently. Case-insensitive comparison has its own
-//!   table. These were checked for every cased code point.
+//!   final-sigma rule, and U+0130 (İ) and U+0131 (ı) are left alone. Rust's `str::to_lowercase`
+//!   does all three differently. Case-insensitive comparison has its own table. These were
+//!   checked for every cased code point.
 //! - **Whitespace.** Rust's `char::is_whitespace` is the Unicode White_Space set, so trimming
 //!   is `str::trim` and needs nothing here.
 
@@ -57,8 +57,8 @@ pub fn is_lower(c: char) -> bool {
     get_general_category(c) == GeneralCategory::LowercaseLetter
 }
 
-/// A letter in one UTF-16 code unit: a supplementary-plane character arrives as two
-/// surrogates, and neither is a letter.
+/// A letter in one UTF-16 code unit: a supplementary-plane character arrives as two surrogates,
+/// and neither is a letter.
 pub fn is_letter_utf16(c: char) -> bool {
     is_bmp(c) && is_letter(c)
 }
@@ -143,8 +143,8 @@ fn view(text: &str, swap: impl Fn(char) -> bool) -> Cow<'_, str> {
 
 /// The text as a Rust regex with `\b` must see it for boundaries to fall by [`is_word_char`]:
 /// every character that is not a word character there, but that Rust's `\w` might take, swapped
-/// for a placeholder of the same UTF-8 length. Byte offsets into the view are offsets into the text, so match
-/// there and slice the original.
+/// for a placeholder of the same UTF-8 length. Byte offsets into the view are offsets into the
+/// text, so match there and slice the original.
 pub fn word_boundary_view(text: &str) -> Cow<'_, str> {
     view(text, |c| !c.is_ascii() && !c.is_whitespace() && !is_word_char(c))
 }

@@ -1,6 +1,6 @@
-//! The pure half of Soulseek sharing: the Sharing card's records and the
-//! readers of slskd's answers it is built from. The service that asks slskd, and Soulseek's port
-//! test, are `octo::services::soulseek::soulseek_sharing`.
+//! The pure half of Soulseek sharing: the Sharing card's records and the readers of slskd's
+//! answers it is built from. The service that asks slskd, and Soulseek's port test, are
+//! `octo::services::soulseek::soulseek_sharing`.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;

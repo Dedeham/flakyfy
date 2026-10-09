@@ -179,8 +179,8 @@ impl SettingsStore {
         self.inner.current.load_full()
     }
 
-    /// The merged value at a `Section:Key` path, ignoring case.
-    /// None when absent or null (an empty object or array in a JSON layer).
+    /// The merged value at a `Section:Key` path, ignoring case. None when absent or null (an
+    /// empty object or array in a JSON layer).
     pub fn raw(&self, key: &str) -> Option<String> {
         self.inner.tree.load().raw(key)
     }
@@ -205,8 +205,7 @@ impl SettingsStore {
         self.inner.tx.subscribe()
     }
 
-    /// Replaces the snapshot and tells subscribers. The merged
-    /// configuration is left as it was.
+    /// Replaces the snapshot and tells subscribers. The merged configuration is left as it was.
     pub fn set(&self, settings: AppSettings) {
         let settings = Arc::new(settings);
         self.inner.current.store(settings.clone());

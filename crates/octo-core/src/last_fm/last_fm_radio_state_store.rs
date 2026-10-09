@@ -1,5 +1,5 @@
-//! The pure half of the radio state store: the station ids and the
-//! constants the store prunes by. The store itself is `octo::services::last_fm`.
+//! The pure half of the radio state store: the station ids and the constants the store prunes by.
+//! The store itself is `octo::services::last_fm`.
 
 use chrono::TimeDelta;
 use sha2::{Digest, Sha256};

@@ -251,9 +251,9 @@ impl Formatter for StjFormatter {
     }
 }
 
-/// A double as the shortest digits that round-trip, in fixed notation while the
-/// decimal point sits between 3 places left of the first digit and 17 places right of it,
-/// otherwise `d.dddE+XX` with a signed, at least two-digit exponent.
+/// A double as the shortest digits that round-trip, in fixed notation while the decimal point
+/// sits between 3 places left of the first digit and 17 places right of it, otherwise `d.dddE+XX`
+/// with a signed, at least two-digit exponent.
 pub fn format_double(value: f64) -> String {
     format_shortest(
         value.is_nan(),
@@ -264,8 +264,8 @@ pub fn format_double(value: f64) -> String {
     )
 }
 
-/// A float written as [`format_double`] writes a double, with the switch to
-/// exponent notation past 9 digits.
+/// A float written as [`format_double`] writes a double, with the switch to exponent notation
+/// past 9 digits.
 pub fn format_single(value: f32) -> String {
     format_shortest(
         value.is_nan(),

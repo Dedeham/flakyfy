@@ -1,7 +1,6 @@
-//! The pure half of the radio recommendation service: how candidates are
-//! weighed, drawn and shaped into a station, and how a listener's plays become seeds, artists
-//! and tags. The service that asks Last.fm is
-//! `octo::services::last_fm::last_fm_radio_recommendation_service`.
+//! The pure half of the radio recommendation service: how candidates are weighed, drawn and
+//! shaped into a station, and how a listener's plays become seeds, artists and tags. The service
+//! that asks Last.fm is `octo::services::last_fm::last_fm_radio_recommendation_service`.
 //!
 //! Which candidates make the cut is a weighted draw rather than a fixed top-N, so two refreshes
 //! of the same profile give two different stations; the previous snapshot is demoted so a
@@ -58,8 +57,8 @@ pub const HEARD_LATELY: TimeDelta = TimeDelta::days(8);
 
 /// How many songs apart one artist must be, and one title (a cover counts). Never more than the
 /// station's candidates can give. The artist gap must stay at least the stream's flow window
-/// (`last_fm_radio_stream_service::FLOW_WINDOW`): the stream may reorder within that window, and the
-/// gap is what keeps an artist from landing back to back after it.
+/// (`last_fm_radio_stream_service::FLOW_WINDOW`): the stream may reorder within that window, and
+/// the gap is what keeps an artist from landing back to back after it.
 pub const ARTIST_GAP: i32 = 4;
 pub const TITLE_GAP: usize = 8;
 
@@ -80,8 +79,7 @@ impl RadioRandom for DotnetRandom {
     }
 }
 
-/// A fresh draw source per build. Tests replace it with a seeded one so a build
-/// repeats exactly.
+/// A fresh draw source per build. Tests replace it with a seeded one so a build repeats exactly.
 pub type Randomizer = Arc<dyn Fn() -> Box<dyn RadioRandom> + Send + Sync>;
 
 /// An unseeded draw, different every build.

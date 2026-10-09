@@ -27,8 +27,8 @@ pub fn is_filler(title: Option<&str>, duration_seconds: Option<i32>) -> bool {
 }
 
 /// Whether one of the words stands in the text with no letter or number touching either end.
-/// `\p{L}` and `\p{N}` test one UTF-16 code unit, so a character outside the Basic
-/// Multilingual Plane (two surrogates) never counts as touching.
+/// `\p{L}` and `\p{N}` test one UTF-16 code unit, so a character outside the Basic Multilingual
+/// Plane (two surrogates) never counts as touching.
 fn has_word(text: &str, words: &[&str]) -> bool {
     // ASCII lower-casing keeps every byte offset, so a match in it is a match in the text.
     let lower = text.to_ascii_lowercase();
@@ -80,8 +80,8 @@ mod tests {
         }
     }
 
-    /// The edges are letters and numbers of any script, a digit counts, and a
-    /// character outside the Basic Multilingual Plane never touches the word.
+    /// The edges are letters and numbers of any script, a digit counts, and a character outside
+    /// the Basic Multilingual Plane never touches the word.
     #[test]
     fn the_word_edges_are_letters_and_numbers() {
         assert!(!is_filler(Some("Intro2"), Some(60)));

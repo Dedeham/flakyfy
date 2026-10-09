@@ -126,8 +126,8 @@ fn number_length(input: &[char], start: usize) -> usize {
     current - start
 }
 
-/// One trimmed segment, without commas, parsed: the whole of it must be one
-/// `token [; q=number]` with the quality between 0 and 1.
+/// One trimmed segment, without commas, parsed: the whole of it must be one `token [; q=number]`
+/// with the quality between 0 and 1.
 fn parse(segment: &str) -> Option<StringWithQuality> {
     let input: Vec<char> = segment.chars().collect();
     let token_length = input.iter().take_while(|c| is_token_char(**c)).count();

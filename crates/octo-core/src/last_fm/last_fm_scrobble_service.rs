@@ -1,5 +1,5 @@
-//! The records and the request signature of the Last.fm scrobble service. The
-//! queue, the Connect flow and the calls are `octo::services::last_fm::last_fm_scrobble_service`.
+//! The records and the request signature of the Last.fm scrobble service. The queue, the Connect
+//! flow and the calls are `octo::services::last_fm::last_fm_scrobble_service`.
 
 use chrono::{DateTime, Utc};
 use md5::{Digest, Md5};

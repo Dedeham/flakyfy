@@ -1,5 +1,5 @@
-//! The pure half of the Soulseek link: slskd's login state, one reading of
-//! it, and the dashboard's words for it. The link itself (the cached read and the wait) is
+//! The pure half of the Soulseek link: slskd's login state, one reading of it, and the
+//! dashboard's words for it. The link itself (the cached read and the wait) is
 //! `octo::services::soulseek::soulseek_link`.
 
 use std::time::Duration;

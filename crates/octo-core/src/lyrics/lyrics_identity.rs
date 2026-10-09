@@ -88,10 +88,10 @@ impl LyricsIdentity {
     /// The searches a lyrics source tries for a song, the first as asked, then cleaned, with
     /// stylized characters read as letters, and by the primary artist alone, from
     /// [`SongIdentity::query_variants`]. Each has an artist: a lyrics search by title
-    /// alone returns every song of that name, and the sources that need one have their own way
-    /// to look past a renamed artist. At most `max`: at three, a miss costs a source three
-    /// requests. Whatever they find is still held to [`LyricsIdentity::same_song`]
-    /// against the song as asked.
+    /// alone returns every song of that name, and the sources that need one have their own way to
+    /// look past a renamed artist. At most `max`: at three, a miss costs a source three requests.
+    /// Whatever they find is still held to [`LyricsIdentity::same_song`] against the song as
+    /// asked.
     pub fn searches(query: &LyricsQuery, max: usize) -> Vec<SongQuery> {
         let searches: Vec<SongQuery> = SongIdentity::query_variants(&query.title, &query.artist)
             .into_iter()

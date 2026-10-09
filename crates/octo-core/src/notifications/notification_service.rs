@@ -1,6 +1,5 @@
-//! The rendering half of the notification service: which events are
-//! switched on, and the text every transport carries. The fan-out is
-//! `octo::services::notifications::notification_service`.
+//! The rendering half of the notification service: which events are switched on, and the text
+//! every transport carries. The fan-out is `octo::services::notifications::notification_service`.
 
 use super::i_notification_sink::NotificationMessage;
 use super::notification_event::{NotificationEvent, NotificationEventType};

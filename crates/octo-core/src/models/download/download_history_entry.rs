@@ -59,9 +59,9 @@ pub struct DownloadHistoryEntry {
     pub key: Option<String>,
 
     /// The download's log, saved when it ended so the dashboard can show it after the live list
-    /// forgets it (three hours). Trimmed to stay small (`DownloadHistoryService::attach_log`). None
-    /// for entries written before this existed, and for older entries whose log was let go to
-    /// keep the file small.
+    /// forgets it (three hours). Trimmed to stay small (`DownloadHistoryService::attach_log`).
+    /// None for entries written before this existed, and for older entries whose log was let go
+    /// to keep the file small.
     pub log: Option<Vec<super::acquisition_event::AcquisitionEvent>>,
 }
 

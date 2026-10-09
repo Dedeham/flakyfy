@@ -142,8 +142,8 @@ pub const PICK_GONE_TEXT: &str =
 pub const PICK_REFUSED_TEXT: &str =
     "Lidarr would not take the release you picked. Search again and pick another.";
 
-/// Whether a release is the picked one in a newer listing: the same indexer and title, and the same
-/// size when both say.
+/// Whether a release is the picked one in a newer listing: the same indexer and title, and the
+/// same size when both say.
 pub fn same_release(release: &LidarrRelease, pick: &LidarrReleasePick) -> bool {
     release.indexer_id == pick.indexer_id
         && pick.title.as_deref().is_some_and(|title| {
@@ -289,8 +289,7 @@ pub fn map_options(
     })
 }
 
-/// One row of an album lookup, its year from the first four characters of its
-/// release date.
+/// One row of an album lookup, its year from the first four characters of its release date.
 pub fn parse_album(row: &Map<String, Value>) -> Result<LidarrAlbumCandidate, LidarrError> {
     let artist = object(row, "artist");
     let date = nullable_str(row, "releaseDate")?;

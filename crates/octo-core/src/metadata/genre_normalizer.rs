@@ -148,8 +148,8 @@ impl GenreNormalizer {
         }
     }
 
-    /// The pipeline, and the ORDER is the design:
-    /// split, canonicalize, blocklist, map, case, dedupe, cap.
+    /// The pipeline, and the ORDER is the design: split, canonicalize, blocklist, map, case,
+    /// dedupe, cap.
     pub fn normalize<'a>(
         raw: impl IntoIterator<Item = Option<&'a str>>,
         settings: &GenreSettings,
@@ -302,9 +302,9 @@ fn contains_ignore_case(text: &str, value: &str) -> bool {
 /// already been lowercased, so asking whether it is all-caps always answers no and EDM,
 /// IDM and UKG all come back as Edm, Idm and Ukg.
 ///
-/// Invariant culture throughout, because under a Turkish locale title casing turns "indie"
-/// into something that no longer matches "Indie", and a container's locale is not
-/// something a user thinks of as a genre setting.
+/// Invariant culture throughout, because under a Turkish locale title casing turns "indie" into
+/// something that no longer matches "Indie", and a container's locale is not something a user
+/// thinks of as a genre setting.
 fn title_case_genre(key: &str, original: &str) -> String {
     let trimmed = strip_numeric_genre(original);
     if trimmed.is_empty() {
@@ -342,9 +342,8 @@ fn is_letter_category(category: GeneralCategory) -> bool {
     )
 }
 
-/// The categories title casing ends a word on: spaces, controls, format characters,
-/// punctuation and symbols. Letters, marks, numbers, private use and unassigned characters
-/// continue it.
+/// The categories title casing ends a word on: spaces, controls, format characters, punctuation
+/// and symbols. Letters, marks, numbers, private use and unassigned characters continue it.
 fn is_word_separator(category: GeneralCategory) -> bool {
     matches!(
         category,
@@ -367,8 +366,8 @@ fn is_word_separator(category: GeneralCategory) -> bool {
     )
 }
 
-/// The first letter of a word as title casing writes it: the titlecase forms of the
-/// Latin digraphs, otherwise the invariant upper case.
+/// The first letter of a word as title casing writes it: the titlecase forms of the Latin
+/// digraphs, otherwise the invariant upper case.
 fn title_letter(c: char) -> char {
     match c {
         '\u{01C4}' | '\u{01C5}' | '\u{01C6}' => '\u{01C5}',
@@ -379,10 +378,9 @@ fn title_letter(c: char) -> char {
     }
 }
 
-/// Invariant-culture title casing: each word's first letter upper-cased
-/// and the rest of it lower-cased, unless the word has no lower-case letter (an acronym), which
-/// is left as it is. An apostrophe inside a word starts a new stretch that is lower-cased
-/// ("Rock'n'roll").
+/// Invariant-culture title casing: each word's first letter upper-cased and the rest of it
+/// lower-cased, unless the word has no lower-case letter (an acronym), which is left as it is. An
+/// apostrophe inside a word starts a new stretch that is lower-cased ("Rock'n'roll").
 pub fn to_title_case(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut result = String::with_capacity(text.len());

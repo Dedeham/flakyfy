@@ -1,7 +1,7 @@
-//! The Soulseek download service's candidate matching: the pure functions that decide which
-//! peer file answers a request (the searches to run, the filename, length and version checks,
-//! the quality ranking). The service itself, and the deny-list seam that needs the
-//! rejected-peer store, are `octo::services::soulseek::soulseek_download_service`.
+//! The Soulseek download service's candidate matching: the pure functions that decide which peer
+//! file answers a request (the searches to run, the filename, length and version checks, the
+//! quality ranking). The service itself, and the deny-list seam that needs the rejected-peer
+//! store, are `octo::services::soulseek::soulseek_download_service`.
 //!
 //! The regexes run over the views `common::dotnet` provides where the wanted character classes
 //! differ from Rust's: [`dotnet::word_boundary_view`] for `\b`, [`dotnet::utf16_class_view`]
@@ -351,9 +351,9 @@ pub fn size_sort_key(size: i64, preferred_extension: Option<&str>) -> i64 {
 /// longer over Soulseek. Hi-res is ranked down rather than rejected, because sometimes
 /// it is the only copy a peer has.
 ///
-/// Unknown sits deliberately between the two. Most peers report neither field, so
-/// treating unknown as hi-res would bury the majority of a normal search, and treating
-/// it as CD would let an unlabeled 24/96 outrank a labeled 16/44.1.
+/// Unknown sits deliberately between the two. Most peers report neither field, so treating
+/// unknown as hi-res would bury the majority of a normal search, and treating it as CD would let
+/// an unlabeled 24/96 outrank a labeled 16/44.1.
 pub fn quality_penalty(h: &SoulseekFileHit) -> i32 {
     let bit_depth_penalty = match h.bit_depth {
         Some(16) => 0,

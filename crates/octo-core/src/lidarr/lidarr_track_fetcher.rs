@@ -1,5 +1,5 @@
-//! The pure half of the Lidarr track fetcher: the request, which of the album's
-//! tracks is the song, and whether a file is lossless. The fetcher is
+//! The pure half of the Lidarr track fetcher: the request, which of the album's tracks is the
+//! song, and whether a file is lossless. The fetcher is
 //! `octo::services::lidarr::lidarr_track_fetcher`.
 
 use std::fmt;

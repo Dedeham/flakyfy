@@ -1,6 +1,6 @@
-//! The pure half of the Soulseek client: the records slskd's answers become,
-//! the request bodies, and the readers of slskd's JSON. The HTTP client itself (auth, the
-//! operation gate, the search and transfer waits) is `octo::services::soulseek::soulseek_client`.
+//! The pure half of the Soulseek client: the records slskd's answers become, the request bodies,
+//! and the readers of slskd's JSON. The HTTP client itself (auth, the operation gate, the search
+//! and transfer waits) is `octo::services::soulseek::soulseek_client`.
 //!
 //! The readers are strict where serde_json would quietly answer `None` (a string read from a
 //! number, an int read from `3.5`, a property read from an array), so they return an
@@ -34,8 +34,8 @@ pub const FIRST_BYTE_WAIT: Duration = Duration::from_secs(45);
 /// How long a transfer sits with nothing moved before the person is told whom it waits on.
 pub const WAITING_NOTE_AFTER: Duration = Duration::from_secs(15);
 
-/// How long a canceled search is given to end and save its responses. slskd takes
-/// well under a second; the rest is slack for a busy disk.
+/// How long a canceled search is given to end and save its responses. slskd takes well under a
+/// second; the rest is slack for a busy disk.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
 /// After we've seen the transfer at least once, missing it for this many
@@ -193,8 +193,8 @@ pub fn contains_ignore_case(s: &str, value: &str) -> bool {
     dotnet::ordinal_ignore_case_key(s).contains(&dotnet::ordinal_ignore_case_key(value))
 }
 
-/// A property by the exact name first, then the first property whose name
-/// matches ignoring case. Nothing for an element that is not an object.
+/// A property by the exact name first, then the first property whose name matches ignoring case.
+/// Nothing for an element that is not an object.
 pub fn try_get_property_ignore_case<'a>(element: &'a Value, name: &str) -> Option<&'a Value> {
     let Value::Object(map) = element else {
         return None;

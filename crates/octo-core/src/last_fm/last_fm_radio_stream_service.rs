@@ -1,6 +1,6 @@
-//! The pure half of the radio stream service: the flow picker that orders a
-//! continuous stream by how smoothly one track follows another, and the tags it judges kinship
-//! by. The streaming itself is `octo::services::last_fm::last_fm_radio_stream_service`.
+//! The pure half of the radio stream service: the flow picker that orders a continuous stream by
+//! how smoothly one track follows another, and the tags it judges kinship by. The streaming
+//! itself is `octo::services::last_fm::last_fm_radio_stream_service`.
 
 use std::collections::HashSet;
 

@@ -1,7 +1,7 @@
-//! Lyrics choices, the pure half: the pin, the entry offered to a
-//! person choosing, and how an entry is judged and described. The pins on disk
-//! (`LyricsChoiceStore`) are `octo::services::lyrics::lyrics_choices`; `LyricsChoiceService`,
-//! which asks the sources, comes with them.
+//! Lyrics choices, the pure half: the pin, the entry offered to a person choosing, and how an
+//! entry is judged and described. The pins on disk (`LyricsChoiceStore`) are
+//! `octo::services::lyrics::lyrics_choices`; `LyricsChoiceService`, which asks the sources, comes
+//! with them.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
@@ -161,8 +161,8 @@ impl LyricsChoiceCandidate {
         }
     }
 
-    /// Whether a search entry is the song asked for, its
-    /// artist read one by one where it lists several.
+    /// Whether a search entry is the song asked for, its artist read one by one where it lists
+    /// several.
     pub fn is_this_song(candidate: &LyricsCandidate, query: &LyricsQuery) -> bool {
         let credits: Vec<&str> = candidate
             .artist

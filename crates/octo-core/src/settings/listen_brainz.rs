@@ -5,12 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use super::text::eq_ignore_case;
 
-/// Listen submission for tracks that never touch Navidrome's library. Plays of local
-/// tracks are scrobbled by Navidrome itself (Octo relays every scrobble unchanged);
-/// plays of external tracks, previews from search and Continuous Radio, would
-/// otherwise be lost to the listener's history. Each listener authorizes with their
-/// own ListenBrainz user token; a single default token covers a one-person install.
-/// Every value is read from the live settings at submit time.
+/// Listen submission for tracks that never touch Navidrome's library. Plays of local tracks are
+/// scrobbled by Navidrome itself (Octo relays every scrobble unchanged); plays of external
+/// tracks, previews from search and Continuous Radio, would otherwise be lost to the listener's
+/// history. Each listener authorizes with their own ListenBrainz user token; a single default
+/// token covers a one-person install. Every value is read from the live settings at submit time.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct ListenBrainzSettings {

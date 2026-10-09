@@ -110,8 +110,8 @@ pub struct Song {
     /// instead of under a new artist named after all of them (#49).
     pub artists: Vec<String>,
 
-    /// The first credited artist, when a structured source said which one that is.
-    /// Names the artist folder; see the download base's `placement::primary_credit`.
+    /// The first credited artist, when a structured source said which one that is. Names the
+    /// artist folder; see the download base's `placement::primary_credit`.
     pub primary_artist: Option<String>,
 
     pub is_compilation: bool,

@@ -1,5 +1,4 @@
-//! The rules for the length a client is shown for a
-//! song Octo found outside the library.
+//! The rules for the length a client is shown for a song Octo found outside the library.
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 

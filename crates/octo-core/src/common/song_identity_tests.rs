@@ -464,8 +464,8 @@ fn fold_makes_lookalikes_plain() {
 fn key_lowercases_one_character_at_a_time() {
     // No final sigma: every Σ lowercases to σ.
     assert_eq!(SongIdentity::key("ΟΔΟΣ"), "οδοσ");
-    // Lowercasing leaves İ alone (it would only become an ASCII i); its dot is then
-    // stripped as an accent, leaving a capital I in the key.
+    // Lowercasing leaves İ alone (it would only become an ASCII i); its dot is then stripped as
+    // an accent, leaving a capital I in the key.
     assert_eq!(SongIdentity::key("İstanbul"), "Istanbul");
     assert_eq!(SongIdentity::key("Straße & Œuvre"), "strasseandoeuvre");
     assert_eq!(SongIdentity::key("Hoppípolla"), SongIdentity::key("Hoppipolla"));
@@ -528,8 +528,8 @@ fn word_boundaries_and_classes_test_one_utf16_unit() {
         ["live"]
     );
     assert!(crate::common::live_version::mentions(Some("Live\u{093E}")));
-    // \p{L} matches no supplementary-plane letter, so one splits a word: the
-    // Cyrillic "с" after it is a word of its own and stays Cyrillic.
+    // \p{L} matches no supplementary-plane letter, so one splits a word: the Cyrillic "с" after
+    // it is a word of its own and stays Cyrillic.
     assert_eq!(SongIdentity::fold("a𠀀с"), "a𠀀с");
     assert_eq!(SongIdentity::fold("aс"), "ac");
     // Nor is a supplementary-plane digit a \d.

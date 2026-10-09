@@ -20,14 +20,14 @@ pub(crate) fn ignore_case_key(s: &str) -> String {
         .collect()
 }
 
-/// Ordinal order: UTF-16 code unit order (which differs from Rust's code point
-/// order only between supplementary characters and U+E000..U+FFFF).
+/// Ordinal order: UTF-16 code unit order (which differs from Rust's code point order only between
+/// supplementary characters and U+E000..U+FFFF).
 pub(crate) fn cmp_ordinal(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-/// An `i32` parsed in the invariant culture: optional leading and trailing white
-/// space (tab to carriage return, and space), an optional sign, ASCII digits, within `i32`.
+/// An `i32` parsed in the invariant culture: optional leading and trailing white space (tab to
+/// carriage return, and space), an optional sign, ASCII digits, within `i32`.
 pub(crate) fn parse_int(s: &str) -> Option<i32> {
     let is_white = |c: char| c == ' ' || ('\u{9}'..='\u{D}').contains(&c);
     let trimmed = s.trim_matches(is_white);

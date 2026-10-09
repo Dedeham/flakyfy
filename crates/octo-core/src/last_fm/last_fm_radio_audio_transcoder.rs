@@ -1,7 +1,6 @@
-//! The pure half of the radio audio transcoder: the measured profile a
-//! cached radio track carries (`<cache>/radio/<key>.mp3.json`), the loudness gain, and the
-//! reading of ffmpeg's spectral statistics. The ffmpeg runs are
-//! `octo::services::last_fm::last_fm_radio_audio_transcoder`.
+//! The pure half of the radio audio transcoder: the measured profile a cached radio track carries
+//! (`<cache>/radio/<key>.mp3.json`), the loudness gain, and the reading of ffmpeg's spectral
+//! statistics. The ffmpeg runs are `octo::services::last_fm::last_fm_radio_audio_transcoder`.
 
 use std::sync::LazyLock;
 

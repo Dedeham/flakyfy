@@ -1,10 +1,10 @@
 //! Lenient reading of request bodies.
 //!
 //! JSON bodies are read case-insensitively (`"url"`, `"Url"` and `"URL"` all fill `url`) and
-//! accept numbers written as strings (`"30"`). The dashboard and the apps rely on that
-//! leniency, so bodies are read through a deserializer over `serde_json::Value`
-//! that matches struct fields ignoring case and underscores, and parses numbers and bools out
-//! of strings when the field wants one.
+//! accept numbers written as strings (`"30"`). The dashboard and the apps rely on that leniency,
+//! so bodies are read through a deserializer over `serde_json::Value` that matches struct fields
+//! ignoring case and underscores, and parses numbers and bools out of strings when the field
+//! wants one.
 
 use serde::de::{
     self, DeserializeOwned, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess,

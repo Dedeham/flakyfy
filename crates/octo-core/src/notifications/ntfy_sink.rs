@@ -1,5 +1,5 @@
-//! The ntfy sink's pure parts: the topic URL, the body and the tag.
-//! The sink that publishes is `octo::services::notifications::ntfy_sink`.
+//! The ntfy sink's pure parts: the topic URL, the body and the tag. The sink that publishes is
+//! `octo::services::notifications::ntfy_sink`.
 
 use super::i_notification_sink::NotificationMessage;
 use super::notification_event::NotificationEventType;
@@ -31,9 +31,9 @@ pub struct TopicUrlError(pub String);
 
 /// "https://ntfy.sh/octo" -> ("https://ntfy.sh", "octo");
 /// "https://host/ntfy/octo" -> ("https://host/ntfy", "octo").
-/// The config stays one field (the URL users copy out of the ntfy app) and the
-/// sink derives the server root and topic itself. A URL with no topic is refused with a
-/// message the admin test button surfaces verbatim.
+/// The config stays one field (the URL users copy out of the ntfy app) and the sink derives the
+/// server root and topic itself. A URL with no topic is refused with a message the admin test
+/// button surfaces verbatim.
 pub fn parse_topic_url(url: &str) -> Result<(String, String), TopicUrlError> {
     let trimmed = url.trim().trim_end_matches('/');
     // An absolute URL only; anything else is refused in the admin test button's wording.

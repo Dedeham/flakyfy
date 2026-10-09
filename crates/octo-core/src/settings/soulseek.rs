@@ -72,8 +72,8 @@ pub struct SoulseekSettings {
     /// Environment variable: SLSKD_UPGRADE_SEARCH_WAIT_SECONDS
     pub upgrade_search_wait_seconds: i32,
 
-    /// Minimum file size in bytes to consider a search hit a real lossless file.
-    /// Default 5 MB filters out 30s teaser clips and mislabeled tiny files.
+    /// Minimum file size in bytes to consider a search hit a real lossless file. Default 5 MB
+    /// filters out 30s teaser clips and mislabeled tiny files.
     pub min_file_size_bytes: i64,
 
     /// Preferred file extension. Hits with this extension are sorted first.

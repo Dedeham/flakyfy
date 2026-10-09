@@ -85,8 +85,8 @@ fn same(now: Option<&str>, at_startup: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! The dashboard's "restart to apply" banner is computed from this,
-    //! so it has to name a changed startup-only setting and nothing else.
+    //! The dashboard's "restart to apply" banner is computed from this, so it has to name a
+    //! changed startup-only setting and nothing else.
 
     use super::*;
     use crate::config::ConfigTree;

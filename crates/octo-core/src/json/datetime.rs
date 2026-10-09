@@ -18,8 +18,7 @@ pub fn min_value() -> DateTime<Utc> {
         .and_utc()
 }
 
-/// The fractional-seconds part: ticks (100 ns), trailing zeros trimmed,
-/// nothing at all when zero.
+/// The fractional-seconds part: ticks (100 ns), trailing zeros trimmed, nothing at all when zero.
 fn fraction(nanos: u32) -> String {
     let ticks = nanos / 100;
     if ticks == 0 {
@@ -60,8 +59,8 @@ pub fn format_naive(value: &NaiveDateTime) -> String {
     format!("{base}{}", fraction(value.and_utc().timestamp_subsec_nanos()))
 }
 
-/// Parses an ISO 8601 date. A value without an offset is taken as UTC,
-/// which is what Octo's writers meant by it.
+/// Parses an ISO 8601 date. A value without an offset is taken as UTC, which is what Octo's
+/// writers meant by it.
 pub fn parse_utc(text: &str) -> Option<DateTime<Utc>> {
     let t = text.trim();
     if let Ok(dt) = DateTime::parse_from_rfc3339(t) {
@@ -208,8 +207,8 @@ pub mod utc_offset_option {
     }
 }
 
-/// A duration as `[-][d.]hh:mm:ss[.fffffff]`, always seven fractional
-/// digits when there is a fraction (`00:01:30.5000000`).
+/// A duration as `[-][d.]hh:mm:ss[.fffffff]`, always seven fractional digits when there is a
+/// fraction (`00:01:30.5000000`).
 pub fn format_timespan(value: &chrono::TimeDelta) -> String {
     let negative = *value < chrono::TimeDelta::zero();
     let total = value.abs();

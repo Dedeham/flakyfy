@@ -301,10 +301,10 @@ impl<'de, 'a> de::Deserializer<'de> for NodeDeserializer<'a> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, BindError> {
-        // An optional string given "" is "", while an optional number,
-        // bool or enum given "" is unset. The inner value rejects an empty number, and the
-        // retry in `bind` then leaves the field at its default (None). A missing value with no
-        // lower layer is unset for every type.
+        // An optional string given "" is "", while an optional number, bool or enum given "" is
+        // unset. The inner value rejects an empty number, and the retry in `bind` then leaves the
+        // field at its default (None). A missing value with no lower layer is unset for every
+        // type.
         if self.text().is_none() && self.node.children.is_empty() && self.node.fallbacks.is_empty() {
             visitor.visit_none()
         } else {

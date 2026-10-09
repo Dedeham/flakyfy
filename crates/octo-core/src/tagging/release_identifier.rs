@@ -39,8 +39,8 @@ use crate::tagging::tag_evidence::{
 };
 use crate::tagging::tag_plan::{TagConfidence, TagPlan};
 
-/// The music database calls the identifier makes. Implemented by the `octo` crate's
-/// MusicBrainz client.
+/// The music database calls the identifier makes. Implemented by the `octo` crate's MusicBrainz
+/// client.
 #[async_trait]
 pub trait ReleaseLookup: Send + Sync {
     /// The release's details, None when the database has no answer.

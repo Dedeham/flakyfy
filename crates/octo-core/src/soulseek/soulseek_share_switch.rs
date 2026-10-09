@@ -1,6 +1,6 @@
-//! The pure half of the Soulseek share switch: Octo's marked block in
-//! slskd.yml and the readers of slskd's answers the switch decides by. The switch itself, which
-//! asks slskd, is `octo::services::soulseek::soulseek_share_switch`.
+//! The pure half of the Soulseek share switch: Octo's marked block in slskd.yml and the readers
+//! of slskd's answers the switch decides by. The switch itself, which asks slskd, is
+//! `octo::services::soulseek::soulseek_share_switch`.
 
 use std::sync::LazyLock;
 

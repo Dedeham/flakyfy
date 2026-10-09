@@ -1,6 +1,5 @@
-//! How radio weighs its sources' answers (multi-source radio): rank decay,
-//! agreement adding up, weights, thin answers, guesses only as a last resort, and when the
-//! library leads.
+//! How radio weighs its sources' answers (multi-source radio): rank decay, agreement adding up,
+//! weights, thin answers, guesses only as a last resort, and when the library leads.
 
 use super::*;
 use crate::radio::radio_provider::{LAST_FM, LIBRARY, LISTEN_BRAINZ, SOUNDS_ALIKE, YOU_TUBE_MUSIC};

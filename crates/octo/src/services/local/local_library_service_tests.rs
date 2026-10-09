@@ -541,3 +541,24 @@ async fn a_scan_count_that_is_not_an_int32_is_none() {
     let f = Fixture::answering(r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":"5"}}}"#).await;
     assert!(f.service.get_scan_status().await.is_none());
 }
+
+/// A ping names the server even when Navidrome refused the sign-in; nothing answering is none.
+#[tokio::test]
+async fn get_server_info_reads_the_ping_envelope() {
+    let f = Fixture::answering(
+        r#"{"subsonic-response":{"status":"failed","version":"1.16.1","type":"navidrome","serverVersion":"0.64.2 (abc)","error":{"code":40}}}"#,
+    )
+    .await;
+    let info = f.service.get_server_info().await.expect("an answer");
+    assert!(info.is_navidrome());
+    assert_eq!(info.version(), Some((0, 64, 2)));
+    assert!(
+        crate::services::test_support::received(&f.server)
+            .await
+            .iter()
+            .any(|r| r.url.path() == "/rest/ping")
+    );
+
+    let not_subsonic = Fixture::answering("<html>not here</html>").await;
+    assert!(not_subsonic.service.get_server_info().await.is_none());
+}

@@ -6,6 +6,7 @@ pub mod credential_check;
 pub(crate) mod expiring_cache;
 pub mod navidrome_admin_role;
 pub mod navidrome_identity_service;
+pub mod navidrome_version;
 pub mod recent_scrobbles;
 pub mod request_identity;
 pub mod search_budget;

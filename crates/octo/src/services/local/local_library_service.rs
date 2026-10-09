@@ -30,6 +30,7 @@ use crate::services::framework::DotnetDictionary;
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::state_file;
 use crate::services::subsonic::NavidromeIdentityService;
+use crate::services::subsonic::navidrome_version::ServerInfo;
 
 /// Represents the mapping between an external song and its local file
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -550,6 +551,27 @@ impl ILocalLibraryService for LocalLibraryService {
         .await;
         result.unwrap_or_else(|e| {
             debug!(error = %e, "Error getting Subsonic scan status");
+            None
+        })
+    }
+
+    async fn get_server_info(&self) -> Option<ServerInfo> {
+        let result: anyhow::Result<Option<ServerInfo>> = async {
+            let base = self.settings.current().subsonic.url.clone().unwrap_or_default();
+            let url = match self.nav_identity.get_scan_auth() {
+                Some((user, token, salt)) => format!(
+                    "{base}/rest/ping?f=json&c=octo&v=1.16.1&u={}&t={token}&s={salt}",
+                    escape_data_string(&user)
+                ),
+                None => format!("{base}/rest/ping?f=json&c=octo&v=1.16.1"),
+            };
+            let content = self.http.get(&url).send().await?.bytes().await?;
+            let doc: Value = serde_json::from_slice(&content)?;
+            Ok(ServerInfo::read(&doc))
+        }
+        .await;
+        result.unwrap_or_else(|e| {
+            debug!(error = %e, "Could not ask the Subsonic server who it is");
             None
         })
     }

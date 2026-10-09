@@ -5,6 +5,7 @@ use octo_core::models::domain::Song;
 use octo_core::models::subsonic::ScanStatus;
 
 use super::LocalSongMapping;
+use crate::services::subsonic::navidrome_version::ServerInfo;
 
 /// What [`ILocalLibraryService::parse_song_id`] answers: whether the id is external, its
 /// provider and its external id.
@@ -83,4 +84,9 @@ pub trait ILocalLibraryService: Send + Sync {
 
     /// Gets the current scan status
     async fn get_scan_status(&self) -> Option<ScanStatus>;
+
+    /// Which server answers a ping: its type and version. None when nothing answered.
+    async fn get_server_info(&self) -> Option<ServerInfo> {
+        None
+    }
 }

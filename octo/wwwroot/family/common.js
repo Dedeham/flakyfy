@@ -1,7 +1,7 @@
 /*
- * What the Family page and the join page share: calls to /api/family, building elements, the
- * dashboard's icons, sheets and dialogs, the toast, copy buttons, labeled rows, sizes and times
- * in words, QR codes, and the steps for signing in to other music apps.
+ * What the Family pages share: calls to /api/family, building elements, the dashboard's icons,
+ * sheets and dialogs, the toast, copy buttons, labeled rows, sizes and times in words, QR codes,
+ * a person's login with the steps for each music app, and a password strength hint.
  */
 (function () {
   'use strict';
@@ -396,23 +396,23 @@
   };
 
   // ── Links ────────────────────────────────────────────────────────────────────────────
-  F.joinLink = function (server, username, code) {
-    return server + '/family/join#u=' + encodeURIComponent(username) + '&c=' + encodeURIComponent(code);
-  };
-
   F.inviteLink = function (server, token) {
     return server + '/family/join#invite=' + encodeURIComponent(token);
   };
 
-  F.octoLink = function (server, username, code, home) {
-    return 'octo://join?server=' + encodeURIComponent(server) + '&username=' + encodeURIComponent(username) +
-      '&code=' + encodeURIComponent(code) + (home ? '&home=' + encodeURIComponent(home) : '');
+  // Opens the Octo app at its sign-in screen with the server, home address and username filled
+  // in: `octo://signin?server=..&home=..&username=..`.
+  F.signInLink = function (server, username, home) {
+    return 'octo://signin?server=' + encodeURIComponent(server) +
+      (home && home !== server ? '&home=' + encodeURIComponent(home) : '') +
+      '&username=' + encodeURIComponent(username);
   };
 
-  F.intentLink = function (server, username, code, fallback, home) {
-    return 'intent://join?server=' + encodeURIComponent(server) + '&username=' + encodeURIComponent(username) +
-      '&code=' + encodeURIComponent(code) + (home ? '&home=' + encodeURIComponent(home) : '') +
-      '#Intent;scheme=octo;package=app.winters.octo;S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
+  // `octo://<path>?<query>` as an Android intent link that comes back to `fallback` when the app
+  // is not installed.
+  F.intentLink = function (path, query, fallback) {
+    return 'intent://' + path + '?' + query + '#Intent;scheme=octo;package=app.winters.octo;S.browser_fallback_url=' +
+      encodeURIComponent(fallback) + ';end';
   };
 
   F.platform = function () {
@@ -433,68 +433,130 @@
     return tile;
   };
 
-  // ── Other apps ───────────────────────────────────────────────────────────────────────
-  F.APPS = ['Symfonium', 'Feishin', 'Amperfy', 'Substreamer', 'Tempo'];
+  // ── A person's login ─────────────────────────────────────────────────────────────────
+  // One login works in every app: the server address, the username and the password the person
+  // chose. These are the steps for the apps people use most.
+  F.APPS = ['Octo', 'Symfonium', 'Feishin', 'Amperfy', 'Substreamer', 'Tempo'];
 
   F.appSteps = function (app) {
     switch (app) {
+      case 'Octo':
+        return [
+          'Open Octo and choose Sign in.',
+          'Type the server, your username and your password.',
+          'Press Sign in.'
+        ];
       case 'Symfonium':
         return [
           'Open Symfonium and choose Add a media provider, then Subsonic.',
-          'Type the server, username and app password shown here.',
+          'Type the server, your username and your password.',
           'Press Test, then Save.'
         ];
       case 'Feishin':
         return [
           'Open Feishin and choose Add server, with Subsonic as the server type.',
-          'Type a name, then the server, username and app password shown here.',
+          'Type a name, then the server, your username and your password.',
           'Press Add.'
         ];
       case 'Amperfy':
         return [
           'Open Amperfy and type the server on the sign-in screen.',
-          'Type the username and app password shown here.',
+          'Type your username and your password.',
           'Choose Subsonic if it asks which kind of server this is, then sign in.'
         ];
       case 'Substreamer':
         return [
           'Open Substreamer and choose Add server.',
-          'Type the server, username and app password shown here.',
+          'Type the server, your username and your password.',
           'Save, then wait while it reads the library.'
         ];
       default:
         return [
           'Open Tempo and choose Add server on the sign-in screen.',
-          'Type a name, then the server, username and app password shown here.',
+          'Type a name, then the server, your username and your password.',
           'Save and sign in.'
         ];
     }
   };
 
-  // The server, username and app password in labeled rows with copy buttons, and each app's
-  // steps behind its name.
-  F.otherApp = function (server, username, password) {
+  // The steps for each app, behind its name. On Android, Octo's steps also offer to open the
+  // app with the server and username filled in.
+  F.appList = function (login) {
     var apps = F.el('div', { class: 'fam-applist' });
+    var open = login && F.platform() === 'android'
+      ? F.el('a', { class: 'btn btn-sm btn-primary', href: F.signInLink(F.loginServer(login), login.username, login.servers.home) }, 'Open in Octo')
+      : null;
     F.APPS.forEach(function (app) {
       var steps = F.el('ol', { class: 'fam-steps' });
       F.appSteps(app).forEach(function (line) { steps.appendChild(F.el('li', null, line)); });
       apps.appendChild(F.el('details', { class: 'fam-app', name: 'fam-app-steps' },
         F.el('summary', null, F.el('span', null, app), F.icon('caret')),
-        steps));
+        steps,
+        app === 'Octo' && open ? F.el('div', { class: 'fam-actions' }, open) : null));
     });
-    return F.el('div', { class: 'fam-pop-stack' },
-      F.table(
-        F.row('Server', server, { copy: 'Copy the server' }),
-        F.row('Username', username, { copy: 'Copy the username' }),
-        password ? F.row('App password', password, {
-          copy: 'Copy the app password',
-          key: true,
-          tag: F.el('span', { class: 'fam-badge warn' }, 'Shown once')
-        }) : null),
-      password ? F.el('p', { class: 'fam-help' }, 'It works for this one app. You can sign the app out any time under Devices.') : null,
+    return apps;
+  };
+
+  // The address apps sign in to: the outside address when this person may listen away and the
+  // server has one, else the home address.
+  F.loginServer = function (login) {
+    var servers = login.servers || {};
+    return (login.awayAllowed !== false && login.anywhereAvailable && servers.anywhere) || servers.home || location.origin;
+  };
+
+  // "Your login": the server (with the home address under it when it differs), the username
+  // and the password, each server and the username with a copy button, then the steps for
+  // each app. `options.changePassword` puts a Change password button by the password;
+  // `options.passwordWords` says what the password is.
+  F.loginCard = function (login, options) {
+    options = options || {};
+    var servers = login.servers || {};
+    var server = F.loginServer(login);
+    var home = servers.home && servers.home !== server ? servers.home : null;
+    var away = login.awayAllowed !== false;
+    var serverValue = F.el('span', { class: 'fam-login-servers' },
+      F.el('span', { class: 'fam-login-line' }, F.el('span', { class: 'fam-mono' }, server), F.copyIcon(server, 'Copy the server')),
+      home ? F.el('span', { class: 'fam-login-line fam-login-home' },
+        F.el('span', null, 'At home: ', F.el('span', { class: 'fam-mono' }, home)), F.copyIcon(home, 'Copy the home address')) : null);
+    var note = null;
+    if (!away) {
+      note = F.el('p', { class: 'fam-where-uses' }, F.icon('house'), F.el('span', null, 'Your plan keeps listening to your home network, so this address works at home only.'));
+    } else if (!login.anywhereAvailable) {
+      note = F.el('p', { class: 'fam-where-uses' }, F.icon('house'), F.el('span', null, 'This address works on your home network. Away from home needs an outside address, which whoever runs this server sets.'));
+    }
+    var passwordValue = F.el('span', { class: 'fam-login-line' },
+      F.el('span', null, options.passwordWords || 'The one you chose'),
+      options.changePassword ? F.el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: options.changePassword }, 'Change password') : null);
+    return F.el('div', { class: 'fam-login' },
+      F.el('dl', { class: 'fam-table' },
+        F.el('div', { class: 'fam-trow' }, F.el('dt', { class: 'fam-tlabel' }, F.el('span', null, 'Server')), F.el('dd', { class: 'fam-tvalue' }, serverValue)),
+        F.row('Username', login.username, { copy: 'Copy the username' }),
+        F.el('div', { class: 'fam-trow' }, F.el('dt', { class: 'fam-tlabel' }, F.el('span', null, 'Password')), F.el('dd', { class: 'fam-tvalue' }, passwordValue))),
+      note,
       F.el('section', { class: 'fam-pop-block' },
-        F.el('h3', { class: 'fam-cap' }, 'Steps for your app'),
-        apps));
+        F.el('h3', { class: 'fam-cap' }, 'Use this in any app'),
+        F.appList(login)));
+  };
+
+  // ── Passwords ────────────────────────────────────────────────────────────────────────
+  // A plain-words hint on how strong a new password is, under `input`.
+  F.strengthHint = function (input) {
+    var hint = F.el('span', { class: 'fam-help fam-strength', 'aria-live': 'polite' }, 'At least 8 characters.');
+    var update = function () {
+      var value = input.value;
+      var kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter(function (re) { return re.test(value); }).length;
+      var words = value.trim().split(/\s+/).filter(Boolean).length;
+      var level;
+      if (!value) level = ['', 'At least 8 characters.'];
+      else if (value.length < 8) level = ['weak', 'Too short: use at least 8 characters.'];
+      else if (value.length >= 16 || words >= 4 || (value.length >= 12 && kinds >= 3)) level = ['strong', 'Strong.'];
+      else if (value.length >= 12 || kinds >= 3) level = ['good', 'Good. A few more characters make it stronger.'];
+      else level = ['fair', 'Fair. Longer is stronger: try a short phrase.'];
+      hint.className = 'fam-help fam-strength' + (level[0] ? ' ' + level[0] : '');
+      hint.textContent = level[1];
+    };
+    input.addEventListener('input', update);
+    return hint;
   };
 
   // Where to get Octo, for this device.

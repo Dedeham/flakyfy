@@ -613,19 +613,9 @@
 }
 .fam-qr-tile svg { display: block; width: 100%; height: auto; transition: opacity var(--t-card); }
 .fam-pair-info { display: grid; gap: var(--s-xl); min-width: 0; align-content: start; }
-.fam-pair.is-stale .fam-qr-tile svg { opacity: 0.25; }
-.fam-pair.is-stale .fam-pair-info { opacity: 0.5; }
-/* The one card for typing it in: the code, its copy button, and who and where underneath. */
-.fam-codecard { display: grid; gap: 2px; padding: 8px 8px 10px 16px; border-radius: 16px; background: var(--nest); box-shadow: var(--nest-rim); min-width: 0; }
-.fam-codecard-top { display: flex; align-items: center; gap: var(--s-l); min-height: 44px; }
-.fam-codecard-label { font-size: var(--t-meta); font-weight: 600; color: var(--text-muted); }
-.fam-codecard-code { flex: 1 1 auto; min-width: 0; font-size: 26px; font-weight: 750; line-height: 1.15; color: var(--ink); }
-.fam-codecard-for { margin: 0; font-size: var(--t-meta); color: var(--text-muted); overflow-wrap: anywhere; line-height: 1.45; }
-.fam-codecard-for strong { color: var(--ink-1); font-weight: 600; }
-.fam-codecard-for .fam-mono { font-size: 12.5px; }
 
-/* Phone: the whole add-device sheet fits one screen: the QR at about half the width, the
- * link pill and the code card, with the step labels kept short. */
+/* Phone: the whole invite sheet fits one screen: the QR at about half the width and the link
+ * pill, with the step labels kept short. */
 @media (max-width: 600px) {
   :root { --qr-tile: min(240px, max(200px, 53vw)); }
   .fam-pop-body { gap: 10px; }
@@ -639,13 +629,10 @@
   .fam-way-title { font-size: 12.5px; }
   .fam-way-n { width: 20px; height: 20px; font-size: 11px; }
   .fam-linkrow { min-height: 40px; padding: 2px 2px 2px 12px; }
-  .fam-codecard { padding: 4px 4px 8px 14px; }
-  .fam-codecard-top { min-height: 40px; }
   .fam-pop-top { gap: 6px; }
   .fam-pop-top .seg button { height: 30px; padding: 0 12px; }
   .fam-home-note, .fam-choice-note { padding: 0; background: none; box-shadow: none; font-size: 12.5px; }
   .fam-home-note.warn { background: none; box-shadow: none; }
-  .fam-codecard-code { font-size: 24px; }
 }
 
 /* A numbered way to use the link. */
@@ -743,14 +730,9 @@
 .fam-tval { flex: 1 1 auto; min-width: 0; color: var(--ink); font-size: var(--t-table); overflow-wrap: anywhere; }
 .fam-trow.big { min-height: 60px; }
 .fam-trow.big .fam-tval { font-size: 24px; font-weight: 700; line-height: 1.2; }
-.fam-trow.key { min-height: 56px; }
-.fam-trow.key .fam-tval { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; }
-.fam-bigcode { display: inline-flex; gap: 0.5em; font-family: var(--mono); letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
 @media (max-width: 600px) {
   .fam-trow { grid-template-columns: 92px minmax(0, 1fr); padding-left: 14px; }
   .fam-trow.big .fam-tval { font-size: 22px; }
-  /* The app password gets the whole width under its label. */
-  .fam-trow.key { grid-template-columns: minmax(0, 1fr); gap: 2px; padding-top: 10px; }
   .fam-qr-panel > .fam-skel-label { display: none; }
 }
 
@@ -837,27 +819,6 @@
 .fam-progress li.on { color: var(--text-secondary); }
 .fam-progress li.on::before { background: var(--accent); }
 .fam-progress li.now { color: var(--ink); }
-.fam-choice { display: grid; gap: var(--s-l); grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 560px) { .fam-choice { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.fam-option {
-  display: grid;
-  gap: var(--s-xs);
-  align-content: start;
-  text-align: left;
-  min-height: 96px;
-  padding: var(--s-xl);
-  border: 0;
-  border-radius: 18px;
-  background: var(--nest);
-  box-shadow: var(--nest-rim);
-  color: var(--ink);
-  transition: background var(--t-hover), box-shadow var(--t-hover), transform var(--t-press);
-}
-.fam-option:hover { background: var(--hover); box-shadow: var(--nest-rim), 0 6px 18px rgba(0, 0, 0, 0.12); }
-.fam-option:active { transform: scale(0.99); }
-.fam-option .icon { width: 22px; height: 22px; color: var(--accent); margin-bottom: var(--s-s); }
-.fam-option-title { font-weight: 700; font-size: var(--t-body); }
-.fam-option-sub { color: var(--text-muted); font-size: var(--t-meta); line-height: 1.5; }
 .fam-join-shell { width: min(760px, 100%); margin: 0 auto; padding: var(--s-page) var(--s-xl) 96px; }
 .fam-join-head { margin-bottom: var(--s-xl); }
 .fam-join .info-card + .info-card { margin-top: var(--s-xl); }
@@ -866,6 +827,21 @@
   .fam-join .btn { min-height: 48px; }
   .fam-join .set-input { min-height: 48px; font-size: 16px; }
 }
+
+/* Your login: the server with the home address under it, the username and the password. */
+.fam-login { display: grid; gap: var(--s-xl); min-width: 0; }
+.fam-login > .fam-where-uses { margin-top: calc(-1 * var(--s-m)); }
+.fam-login-servers { flex: 1 1 auto; display: grid; gap: 2px; min-width: 0; }
+.fam-login-line { display: flex; align-items: center; gap: var(--s-m); min-width: 0; color: var(--ink); font-size: var(--t-table); }
+.fam-login-line > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.fam-login-home { color: var(--text-secondary); font-size: var(--t-meta); }
+.fam-app .fam-actions { margin: 0 0 var(--s-l) 0; padding-left: var(--s-xl); }
+
+/* How strong a new password is, in words. */
+.fam-strength { transition: color var(--t-hover); }
+.fam-strength.weak { color: var(--bad); }
+.fam-strength.fair { color: var(--text-secondary); }
+.fam-strength.good, .fam-strength.strong { color: var(--good); }
 
 @media (prefers-reduced-motion: reduce) {
   .fam-skel, .fam-arriving, .fam-qr-tile .fam-leaving, .fam-sheet[open], .fam-sheet[open]::backdrop { animation: none; }

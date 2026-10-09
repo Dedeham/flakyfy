@@ -3,7 +3,9 @@
  * with its icon tile, and glass cards. Everyone sees "You" (overview, devices, requests, saved
  * songs, their library, audio quality and account); people who manage the family also see
  * "Family" (members, requests to approve, all devices, family playlists and activity).
- * Everything goes through /api/family; the page keeps no secrets of its own.
+ * Each person has one login (server, username and the password they chose) that works in any
+ * app; devices are tracked as they sign in, never set up here. Everything goes through
+ * /api/family; the page keeps no secrets of its own.
  */
 (function () {
   'use strict';
@@ -406,24 +408,23 @@
 
   async function viewOverview(main) {
     if (!session.managed) return session.manager ? viewFamilyOverview(main) : viewGuestOverview(main);
-    var replies = await Promise.all([api('GET', '/me'), api('GET', '/me/devices'), api('GET', '/me/requests')]);
+    var replies = await Promise.all([api('GET', '/me'), api('GET', '/me/devices'), api('GET', '/me/requests'), api('GET', '/me/login')]);
     if (!replies[0].ok) return failed(main, replies[0]);
     var me = replies[0].data;
     var a = me.abilities;
     var devices = replies[1].ok ? replies[1].data : [];
     var requests = replies[2].ok ? replies[2].data : [];
+    var login = replies[3].ok ? replies[3].data : null;
     var limit = a.storageLimitGb > 0 ? a.storageLimitGb * 1e9 : 0;
     var playing = devices.filter(function (d) { return d.playing; });
-    var addButton = function (words) {
-      return el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { deviceDialog(null); } }, F.icon('plus'), words);
-    };
 
     // One next step, the most useful first.
     var ready = requests.filter(function (r) { return r.state === 'Done'; })[0];
     var waiting = requests.filter(function (r) { return r.state === 'Pending'; });
     var next;
     if (!devices.length) {
-      next = nextStep('phone', 'Add your first device', 'Scan a code with the Octo app, or sign in any Subsonic app with an app password.', addButton('Add a device'));
+      next = nextStep('phone', 'Sign in on your first app', 'Use your login below in Octo or any Subsonic app. Each device shows up here once it signs in.',
+        el('a', { class: 'btn', href: '#/account' }, F.icon('key'), 'Your login'));
     } else if (ready) {
       next = nextStep('checkCircle', 'Your request for ' + (ready.title || 'a song') + ' is ready', 'It is in your library now, on every device.',
         el('a', { class: 'btn', href: '#/requests' }, 'See your requests'));
@@ -458,7 +459,7 @@
 
     F.clear(main);
     F.append(main, [
-      pageHeader('pulse', 'Hi, ' + me.displayName, 'Your plan is ' + (ROLE_WORDS[me.role] || me.role) + '. Your space, your requests and what is playing, at a glance.', addButton('Add a device')),
+      pageHeader('pulse', 'Hi, ' + me.displayName, 'Your plan is ' + (ROLE_WORDS[me.role] || me.role) + '. Your space, your requests and what is playing, at a glance.'),
       next,
       el('div', { class: 'fam-grid three' },
         card('Your space', 'Songs added for you.', null, meter(me.storageUsedBytes, limit, 'Your library'),
@@ -467,7 +468,9 @@
           a.addToLibrary !== 'SaveOnly' ? countMeter(me.requestsThisWeek, a.weeklyRequestLimit, 'This week') : null,
           statusBadges.length ? el('div', { class: 'fam-badges fam-gap' }, statusBadges) : null),
         card('Playing now', devices.length + (devices.length === 1 ? ' device' : ' devices') + ' signed in.', null, nowPlaying)),
-      card('What your plan allows', 'Set by whoever runs the family.', null, planLines(a))
+      el('div', { class: 'fam-grid two' },
+        login ? loginCard(login) : null,
+        card('What your plan allows', 'Set by whoever runs the family.', null, planLines(a)))
     ]);
   }
 
@@ -487,9 +490,10 @@
       return m ? m.displayName : user;
     };
     var weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
-    var fresh = devices.filter(function (d) { return byUser[d.username.toLowerCase()] && Date.parse(d.created) > weekAgo; })
-      .sort(function (a, b) { return Date.parse(b.created) - Date.parse(a.created); });
+    var fresh = devices.filter(function (d) { return byUser[d.username.toLowerCase()] && Date.parse(d.firstSeen) > weekAgo; })
+      .sort(function (a, b) { return Date.parse(b.firstSeen) - Date.parse(a.firstSeen); });
     var notJoined = members.filter(function (m) { return !m.joined; });
+    var needsPassword = members.filter(function (m) { return m.needsPassword; });
 
     var approveAll = el('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: async function () {
       if (!confirmIn('Approve all ' + waiting.length + (waiting.length === 1 ? ' request' : ' requests') + '? Each one starts fetching its song.')) return;
@@ -508,11 +512,14 @@
     if (!members.length) {
       next = nextStep('users', 'Add your first member', 'They get a link to set their password, then add their own devices.',
         el('button', { class: 'btn btn-primary', type: 'button', onclick: addMemberSheet }, F.icon('plus'), 'Add member'));
+    } else if (needsPassword.length) {
+      next = nextStep('key', needsPassword[0].displayName + ' needs a new password', 'Their sign-in is from before everyone had one login. Reset their password and send them the link to choose one.',
+        el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { resetPassword(needsPassword[0]); } }, F.icon('key'), 'Reset password'));
     } else if (waiting.length) {
       next = nextStep('checkCircle', waiting.length === 1 ? 'One request is waiting for you' : waiting.length + ' requests are waiting for you',
         'Approve them all here, or one at a time with a note.', el('a', { class: 'btn', href: '#/inbox' }, 'Review requests'));
     } else if (!session.publicUrl) {
-      next = nextStep('globe', 'Set your outside address', 'Then invite links and device codes work away from home too.',
+      next = nextStep('globe', 'Set your outside address', 'Then invite links and everyone’s apps work away from home too.',
         el('a', { class: 'btn', href: STATUS_ADDRESS }, F.icon('out'), 'Set it on the Status page'));
     } else if (notJoined.length) {
       next = nextStep('send', notJoined[0].displayName + ' has not joined yet', 'Send their link again, or show them the QR code.',
@@ -550,10 +557,10 @@
         return el('li', { class: 'fam-row' },
           el('span', { class: 'fam-row-ico', 'aria-hidden': 'true' }, F.icon('phone')),
           el('div', { class: 'fam-row-main' },
-            el('div', { class: 'fam-row-title' }, d.name || d.app || deviceKindWords(d.kind)),
-            el('div', { class: 'fam-row-meta' }, nameOf(d.username) + ' · added ' + F.ago(d.created).toLowerCase())));
+            el('div', { class: 'fam-row-title' }, deviceTitle(d)),
+            el('div', { class: 'fam-row-meta' }, nameOf(d.username) + ' · first seen ' + F.ago(d.firstSeen).toLowerCase())));
       }))
-      : empty('phone', 'No new devices this week.');
+      : empty('phone', 'No new devices this week. Devices show up as they sign in.');
 
     var storage = members.length
       ? el('div', { class: 'fam-storage' }, members.map(function (m) {
@@ -576,7 +583,7 @@
         card('Playing now', streams.length ? streams.length + (streams.length === 1 ? ' stream' : ' streams') + ' right now.' : 'By member, with their device.', null, playing),
         card('Requests waiting', waiting.length ? 'Copies family members asked for.' : 'Copies family members ask for wait here.', null, requestList)),
       el('div', { class: 'fam-grid two' },
-        card('New devices', 'Added in the last 7 days.', null, newDevices),
+        card('New devices', 'First seen in the last 7 days.', null, newDevices),
         card('Storage', 'Each member’s own library.', null, storage)),
       address
     ]);
@@ -597,16 +604,18 @@
   }
 
   // ── You: Devices ─────────────────────────────────────────────────────────────────────
-  function deviceKindWords(kind) {
-    return { OctoApp: 'Octo app', SubsonicApp: 'App with an app password', NavidromeWeb: 'Navidrome in a browser', Detected: 'Seen by Octo' }[kind] || kind;
+  function deviceTitle(device) {
+    return device.name || device.app || 'An app';
   }
 
+  // One device: its name, app, when it was last seen, where and what it plays. `options.quality`
+  // adds the quality choice; `options.forget` (the route to DELETE it at) adds Remove from list.
   function deviceRow(device, options) {
     options = options || {};
     var playing = device.playing ? el('div', { class: 'fam-row-meta fam-playing' }, F.icon('radio'), el('span', null, 'Playing ', el('strong', null, device.playing.title), device.playing.artist ? ' by ' + device.playing.artist : '')) : null;
     var side = el('div', { class: 'fam-row-side' });
     if (options.quality) {
-      var select = el('select', { class: 'set-input fam-select', 'aria-label': 'Quality for ' + (device.name || device.app), onchange: async function () {
+      var select = el('select', { class: 'set-input fam-select', 'aria-label': 'Quality for ' + deviceTitle(device), onchange: async function () {
         var reply = await api('PUT', '/me/devices/' + encodeURIComponent(device.id), { quality: select.value });
         if (!reply.ok) return F.toast(F.errorOf(reply), true);
         F.toast(select.value === 'Account' ? 'Follows your audio quality' : 'The app decides');
@@ -616,50 +625,53 @@
       select.value = device.quality || 'Account';
       side.appendChild(select);
     }
-    if (options.signOut && device.kind !== 'Detected') {
-      side.appendChild(el('button', { class: 'btn btn-sm btn-ghost btn-danger', type: 'button', onclick: async function () {
-        if (!confirmIn('Sign out ' + (device.name || device.app || 'this device') + '? It stops playing at once, and needs a new code or app password to come back.')) return;
-        var reply = await api('DELETE', options.signOut + encodeURIComponent(device.id));
+    if (options.forget) {
+      side.appendChild(el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: async function () {
+        if (!confirmIn('Remove ' + deviceTitle(device) + ' from the list? It shows up again the next time it signs in. To stop it signing in, change the password.')) return;
+        var reply = await api('DELETE', options.forget + encodeURIComponent(device.id));
         if (!reply.ok) return F.toast(F.errorOf(reply), true);
-        F.toast('Signed out');
+        F.toast('Removed from the list');
         if (options.after) options.after();
-      } }, 'Sign out'));
+      } }, 'Remove from list'));
     }
+    var web = /browser|navidrome/i.test(device.app || '') || /browser/i.test(device.name || '');
     return el('li', { class: 'fam-row stack' },
-      el('span', { class: 'fam-row-ico', 'aria-hidden': 'true' }, F.icon(device.kind === 'NavidromeWeb' ? 'globe' : 'phone')),
+      el('span', { class: 'fam-row-ico', 'aria-hidden': 'true' }, F.icon(web ? 'globe' : 'phone')),
       el('div', { class: 'fam-row-main' },
-        el('div', { class: 'fam-row-title' }, device.name || device.app || deviceKindWords(device.kind)),
+        el('div', { class: 'fam-row-title' }, deviceTitle(device)),
         el('div', { class: 'fam-row-meta' },
-          [options.owner ? device.username : null, device.app || deviceKindWords(device.kind), F.ago(device.lastSeen)].filter(Boolean).join(' · ')),
+          [options.owner ? device.username : null, device.name ? device.app : null, F.ago(device.lastSeen)].filter(Boolean).join(' · ')),
         el('div', { class: 'fam-badges' }, placeBadge(device.place), device.quality === 'App' ? badge('App decides') : null),
         playing),
       side);
+  }
+
+  // Sign out everywhere: a new password, which every app then needs.
+  function signOutEverywhere() {
+    location.hash = '#/account?password';
   }
 
   async function viewDevices(main) {
     var reply = await api('GET', '/me/devices');
     if (!reply.ok) return failed(main, reply);
     var devices = reply.data;
-    var addButton = function (words) {
-      return el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { deviceDialog(null); } }, F.icon('plus'), words);
-    };
     var list = el('ul', { class: 'fam-list' });
     devices.forEach(function (d) {
-      list.appendChild(deviceRow(d, { quality: true, signOut: session.managed ? '/me/devices/' : null, after: function () { viewDevices(main); } }));
+      list.appendChild(deviceRow(d, { quality: true, forget: '/me/devices/', after: function () { viewDevices(main); } }));
     });
+    var everywhere = session.managed
+      ? el('button', { class: 'btn', type: 'button', onclick: signOutEverywhere }, F.icon('signin'), 'Sign out everywhere')
+      : null;
     F.clear(main);
     F.append(main, [
       pageHeader('phone', 'Devices', session.managed
-        ? 'Every app you signed in, where it was last seen and what it plays. Add one, choose its quality, or sign it out.'
-        : 'The apps Octo has seen you use. Choose how each picks its audio quality.', session.managed ? addButton('Add a device') : null),
+        ? 'Every app that signed in with your login: where it was last seen and what it plays. Octo adds them as they sign in.'
+        : 'The apps Octo has seen you use. Choose how each picks its audio quality.', everywhere),
       card(null, null, null, devices.length ? list : empty('phone',
-        session.managed ? 'No devices yet. The Octo app scans a code; any other app gets an app password.' : 'Octo has not seen a device of yours yet. Play something in any app and it shows up here.',
-        session.managed ? addButton('Add your first device') : null))
+        session.managed ? 'No devices yet. Sign in on any app with your login, and it shows up here.' : 'Octo has not seen a device of yours yet. Play something in any app and it shows up here.',
+        session.managed ? el('a', { class: 'btn btn-primary', href: '#/account' }, F.icon('key'), 'Your login') : null)),
+      session.managed ? el('p', { class: 'fam-help fam-gap' }, 'Remove from list only tidies the list. To sign every device out, change your password: each app then needs the new one.') : null
     ]);
-  }
-
-  function viewIfShowing(view) {
-    if (currentView() === view) route();
   }
 
   // ── You: library, saved, requests ────────────────────────────────────────────────────
@@ -867,15 +879,40 @@
   }
 
   async function viewAccount(main) {
-    var reply = await api('GET', '/me');
-    if (!reply.ok) return failed(main, reply);
+    var replies = await Promise.all([api('GET', '/me'), api('GET', '/me/login')]);
+    if (!replies[0].ok) return failed(main, replies[0]);
+    var password = passwordCard();
     F.clear(main);
     F.append(main, [
-      pageHeader('key', 'Account', 'Your password for this page, your Last.fm scrobbles and where your notifications go.'),
-      passwordCard(),
+      pageHeader('key', 'Account', 'Your login for every app, your password, your Last.fm scrobbles and where your notifications go.'),
+      replies[1].ok ? loginCard(replies[1].data, function () { focusPassword(password); }) : null,
+      password,
+      handOverCard(),
       lastFmCard(),
-      ntfyCard(reply.data)
+      ntfyCard(replies[0].data)
     ]);
+    if (/[?&]password/.test(location.hash)) focusPassword(password);
+  }
+
+  function focusPassword(card) {
+    var calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+    var input = card.querySelector('input');
+    if (input) input.focus({ preventScroll: true });
+  }
+
+  // "Your login": what to type in any app. `onChange` runs from its Change password button.
+  function loginCard(login, onChange) {
+    return card('Your login', 'One login for every app: Octo, Symfonium, Feishin and any Subsonic app.', null,
+      F.loginCard(login, { changePassword: onChange || function () { location.hash = '#/account?password'; } }));
+  }
+
+  // Signing in on a new device by QR code starts from an app that is already signed in.
+  function handOverCard() {
+    return card('Sign in on another device', null, null,
+      el('p', { class: 'fam-where-uses' }, F.icon('qr'),
+        el('span', null, 'Open the Octo app on a device that is already signed in and choose ', el('strong', null, 'Sign in on another device'), '. It shows a QR code: scan it on the new device and allow it, and the new device is signed in without typing.')),
+      el('p', { class: 'fam-help' }, 'This page cannot show that code: it never holds your password.'));
   }
 
   function randomTopic() {
@@ -951,18 +988,19 @@
     var form = el('form', { class: 'fam-form', onsubmit: async function (e) {
       e.preventDefault();
       error.textContent = '';
+      if (!confirmIn('Change your password? Every app and browser signed in with the old one is signed out, and needs the new one.')) return;
       var reply = await api('PUT', '/me/password', { current: current.value, next: next.value });
       if (!reply.ok) { error.textContent = F.errorOf(reply); return; }
       current.value = '';
       next.value = '';
-      F.toast('Password changed');
+      F.toast('Password changed. Sign in again on your apps with the new one.');
     } },
     el('div', { class: 'set-grid2' },
       el('label', { class: 'fam-label', for: 'pw-current' }, 'Current password', current),
-      el('label', { class: 'fam-label', for: 'pw-next' }, 'New password', next, el('span', { class: 'fam-help' }, 'At least 8 characters.'))),
+      el('label', { class: 'fam-label', for: 'pw-next' }, 'New password', next, F.strengthHint(next))),
     error,
     el('div', null, el('button', { class: 'btn btn-primary', type: 'submit' }, 'Change password')));
-    return card('Password', 'For this page and Navidrome in a browser. Your apps use their own passwords, so they stay signed in.', null, form);
+    return card('Password', 'Changing it signs you out everywhere: every app and browser needs the new one.', null, form);
   }
 
   // ── The outside address ──────────────────────────────────────────────────────────────
@@ -1013,7 +1051,7 @@
   // inline field for the owner.
   function addressNotice(onSaved) {
     return el('section', { class: 'notice notice-warn fam-address-notice' },
-      el('p', null, el('strong', null, 'Set your outside address.'), ' Without it, invite links and device codes only work on your home network.'),
+      el('p', null, el('strong', null, 'Set your outside address.'), ' Without it, invite links and everyone’s apps only work on your home network.'),
       session.owner
         ? el('div', { class: 'fam-stack' },
           el('div', null, el('a', { class: 'btn btn-sm', href: STATUS_ADDRESS }, F.icon('out'), 'Set it on the Status page')),
@@ -1055,7 +1093,7 @@
         mark));
     }
     if (!members.length) {
-      parts.push(card(null, null, null, empty('users', 'No one yet. Add the first member of your family: they get a link to set their password, then add their own devices.',
+      parts.push(card(null, null, null, empty('users', 'No one yet. Add the first member of your family: they get a link to choose a password, then sign in on any app.',
         addButton('Add the first member'))));
     } else {
       parts.push(el('div', { class: 'fam-grid two' }, members.map(function (m) {
@@ -1094,6 +1132,7 @@
     var badges = [badge(ROLE_WORDS[m.role] || m.role, 'accent')];
     if (m.suspended) badges.push(badge('Paused', 'bad'));
     if (!m.joined) badges.push(badge('Has not joined yet', 'warn'));
+    if (m.needsPassword) badges.push(badge('Needs a new password', 'warn'));
     if (m.playingNow) badges.push(badge('Playing now', 'good'));
     if (m.pendingRequests) badges.push(badge(m.pendingRequests + (m.pendingRequests === 1 ? ' request waiting' : ' requests waiting'), 'warn'));
     var more = el('details', { class: 'fam-more' },
@@ -1113,7 +1152,9 @@
       el('div', { class: 'fam-actions' },
         el('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: function () { editMemberSheet(m); } }, 'Edit'),
         el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { memberDevicesSheet(m, devices); } }, 'Devices'),
-        el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { inviteDialog(m, null); } }, m.joined ? 'New sign-in link' : 'Send their link'),
+        m.joined
+          ? el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { resetPassword(m); } }, 'Reset password')
+          : el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { inviteDialog(m, null); } }, 'Send their link'),
         more));
   }
 
@@ -1137,11 +1178,11 @@
   function memberDevicesSheet(m, devices) {
     var list = el('ul', { class: 'fam-list' });
     devices.forEach(function (d) {
-      list.appendChild(deviceRow(d, { signOut: '/devices/', after: function () { F.closeSheet(); refreshFamily(); } }));
+      list.appendChild(deviceRow(d, { forget: '/devices/', after: function () { F.closeSheet(); refreshFamily(); } }));
     });
-    var add = m.suspended ? null : el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { deviceDialog(m); } }, F.icon('plus'), 'Add a device for ' + m.displayName);
-    F.openSheet(m.displayName + '’s devices', devices.length ? list : empty('phone', 'No devices yet. Add one for them, or send their link so they add their own.'),
-      { sub: 'Sign one out, or add one for them.', foot: [el('span'), add] });
+    var reset = m.joined ? el('button', { class: 'btn', type: 'button', onclick: function () { resetPassword(m); } }, F.icon('key'), 'Reset password') : null;
+    F.openSheet(m.displayName + '’s devices', devices.length ? list : empty('phone', m.joined ? 'No devices yet. They show up as ' + m.displayName + ' signs in on apps.' : m.displayName + ' has not joined yet. Their devices show up once they sign in.'),
+      { sub: 'Octo adds devices as they sign in. To sign ' + m.displayName + ' out everywhere, reset their password.', foot: [el('span'), reset] });
   }
 
   async function librariesPicker(current) {
@@ -1211,7 +1252,7 @@
     rowsCard([setRow('Allow listening away from home', 'On by default. Off keeps their links and apps to your home network.', away.node)]),
     el('div', { class: 'fam-label' }, 'Shared music they see', libraries),
     error);
-    F.openSheet('Add member', form, { side: true, sub: 'They get a link to set their password, then add their own devices.', foot: [el('button', { class: 'btn btn-ghost', type: 'button', onclick: F.closeSheet }, 'Cancel'), submit] });
+    F.openSheet('Add member', form, { side: true, sub: 'They get a link to choose a password, then sign in on any app.', foot: [el('button', { class: 'btn btn-ghost', type: 'button', onclick: F.closeSheet }, 'Cancel'), submit] });
     displayName.focus();
   }
 
@@ -1310,7 +1351,7 @@
     }, 'Their songs'), help),
     el('label', { class: 'fam-label', for: 'confirm-name' }, 'Type ' + m.username + ' to confirm', confirmInput),
     error);
-    F.openSheet('Remove ' + m.displayName + '?', form, { sub: 'Their account, devices and own library are removed. Shared music is not touched.', foot: [el('button', { class: 'btn btn-ghost', type: 'button', onclick: F.closeSheet }, 'Cancel'), button] });
+    F.openSheet('Remove ' + m.displayName + '?', form, { sub: 'Their login, devices and own library are removed. Shared music is not touched.', foot: [el('button', { class: 'btn btn-ghost', type: 'button', onclick: F.closeSheet }, 'Cancel'), button] });
     confirmInput.focus();
   }
 
@@ -1353,16 +1394,20 @@
   }
 
   async function viewAllDevices(main) {
-    var reply = await api('GET', '/devices');
-    if (!reply.ok) return failed(main, reply);
+    var replies = await Promise.all([api('GET', '/devices'), api('GET', '/members')]);
+    if (!replies[0].ok) return failed(main, replies[0]);
+    var members = {};
+    (replies[1].ok ? replies[1].data : []).forEach(function (m) { members[m.username.toLowerCase()] = true; });
     var list = el('ul', { class: 'fam-list' });
-    reply.data.forEach(function (d) {
-      list.appendChild(deviceRow(d, { owner: true, signOut: '/devices/', after: function () { viewAllDevices(main); } }));
+    replies[0].data.forEach(function (d) {
+      var member = members[String(d.username || '').toLowerCase()];
+      list.appendChild(deviceRow(d, { owner: true, forget: member ? '/devices/' : null, after: function () { viewAllDevices(main); } }));
     });
     F.clear(main);
     F.append(main, [
-      pageHeader('plugs', 'All devices', 'Every family member’s devices, and the apps Octo has seen for everyone else. Sign out any that should not be there.'),
-      card(null, null, null, reply.data.length ? list : empty('plugs', 'No devices yet. They show up here as members add them.', el('a', { class: 'btn', href: '#/members' }, 'Open members')))
+      pageHeader('plugs', 'All devices', 'Every family member’s devices, and the apps Octo has seen for everyone else. Octo adds them as they sign in.'),
+      card(null, null, null, replies[0].data.length ? list : empty('plugs', 'No devices yet. They show up here as members sign in on their apps.', el('a', { class: 'btn', href: '#/members' }, 'Open members'))),
+      el('p', { class: 'fam-help fam-gap' }, 'Remove from list only tidies the list. To sign a member out everywhere, reset their password on Members.')
     ]);
   }
 
@@ -1462,29 +1507,10 @@
     ]);
   }
 
-  // ── The add a device and invite dialogs ──────────────────────────────────────────────
-  // Both share one shape: who it is for and how long it works at the top; the link choice
-  // (anywhere or at home); the QR code on a raised panel on the left, and the other ways to
-  // use it, numbered, on the right (stacked on narrow screens); and a footer with Done.
-
-  // A code is renewed this long before it runs out, a failed renewal is tried again after
-  // REFRESH_RETRY, and renewing stops once a dialog has been open for REFRESH_FOR.
-  var REFRESH_LEAD = 5000;
-  var REFRESH_RETRY = 10000;
-  var REFRESH_FOR = 60 * 60 * 1000;
-
-  // "9:42" for what is left of `ms`.
-  function clock(ms) {
-    var seconds = Math.max(0, Math.ceil(ms / 1000));
-    var s = seconds % 60;
-    return Math.floor(seconds / 60) + ':' + (s < 10 ? '0' : '') + s;
-  }
-
-  // "482 913": the code in groups of three, kept as one word for copying and selecting.
-  function groupedCode(code) {
-    var groups = String(code).match(/.{1,3}/g) || [];
-    return el('span', { class: 'fam-bigcode' }, groups.map(function (g) { return el('span', null, g); }));
-  }
+  // ── The invite popup ─────────────────────────────────────────────────────────────────
+  // Who it is for and how long the link works at the top; where they will use it (anywhere or
+  // at home); the QR code on a raised panel on the left, and the link and what happens next,
+  // numbered, on the right (stacked on narrow screens); and a footer with Done.
 
   function doneButton() {
     return el('button', { class: 'btn btn-primary fam-done', type: 'button', onclick: F.closeSheet }, 'Done');
@@ -1516,8 +1542,8 @@
       el('figcaption', null, caption));
   }
 
-  // A grey stand-in for the QR code, the link and the code card while Octo answers.
-  function skeleton(withCode) {
+  // A grey stand-in for the QR code and the link while Octo answers.
+  function skeleton() {
     return el('div', { class: 'fam-pair', 'aria-busy': 'true' },
       el('div', { class: 'fam-qr-panel', 'aria-hidden': 'true' },
         el('span', { class: 'fam-skel fam-skel-label', style: 'width:70px;height:12px' }),
@@ -1525,18 +1551,8 @@
         el('span', { class: 'fam-skel', style: 'width:150px;height:12px' })),
       el('div', { class: 'fam-pair-info', 'aria-hidden': 'true' },
         el('div', { class: 'fam-way' }, el('span', { class: 'fam-skel', style: 'width:180px;height:12px' }), el('div', { class: 'fam-skel fam-skel-row' })),
-        withCode ? el('div', { class: 'fam-way' }, el('span', { class: 'fam-skel', style: 'width:220px;height:12px' }), el('div', { class: 'fam-skel fam-skel-card' })) : null),
+        el('div', { class: 'fam-way' }, el('span', { class: 'fam-skel', style: 'width:220px;height:12px' }), el('span', { class: 'fam-skel', style: 'width:200px;height:12px' }))),
       el('p', { class: 'visually-hidden' }, 'Loading'));
-  }
-
-  function skeletonRows(rows) {
-    var table = el('div', { class: 'fam-table fam-skel-table', 'aria-hidden': 'true' });
-    for (var i = 0; i < rows; i++) {
-      table.appendChild(el('div', { class: 'fam-trow' },
-        el('span', { class: 'fam-skel', style: 'width:84px' }),
-        el('span', { class: 'fam-skel', style: 'width:' + (i === rows - 1 ? 190 : 150) + 'px' })));
-    }
-    return el('div', { class: 'fam-pop-stack', 'aria-busy': 'true' }, table, el('p', { class: 'visually-hidden' }, 'Loading'));
   }
 
   // One plain line and a retry button, with Octo's reason under it when it gave one.
@@ -1631,279 +1647,20 @@
     return answer.anywhereAvailable ? 'anywhere' : 'home';
   }
 
-  // Add a device: a pairing code for the Octo app, or an app password for any other app.
-  // `member` is null for the signed-in person's own device, or the member a manager adds for.
-  //
-  // While the code view is open, a code about to run out is swapped for a new one in place,
-  // and the new one ends the old (`replaces`), so one code is live per dialog. Swapping waits
-  // while the page is hidden, and stops after an hour open.
-  function deviceDialog(member) {
-    var route = member ? '/members/' + encodeURIComponent(member.username) + '/devices' : '/me/devices';
-    var forName = member ? member.displayName : null;
-    var pop = F.openDialog({ wide: true, avatar: member ? member.displayName : session.displayName });
-    var done = doneButton();
-    var code = null;
-    var password = null;
-    var choice = null;
-    var turn = 0;
-    var madePassword = false;
-    var openedAt = Date.now();
-    var ticker = null;
-    var retry = null;
-    var view = null;
-    var flash = null;
-
-    function stop() {
-      if (ticker) clearInterval(ticker);
-      if (retry) clearTimeout(retry);
-      ticker = null;
-      retry = null;
-      view = null;
-    }
-    function onVisibility() {
-      if (view && !document.hidden) view.tick();
-    }
-    document.addEventListener('visibilitychange', onVisibility);
-    pop.onClose(stop);
-    pop.onClose(function () { document.removeEventListener('visibilitychange', onVisibility); });
-    pop.onClose(function () {
-      if (member) refreshFamily();
-      else if (madePassword || code) viewIfShowing('devices');
-    });
-
-    function ask(kind) {
-      return api('POST', route, { name: '', kind: kind, replaces: code ? code.deviceId || '' : '' });
-    }
-
-    function codeFooter() {
-      footer(pop,
-        el('button', { class: 'link-button fam-foot-link', type: 'button', onclick: function () { showApps(); } }, 'Using Symfonium or another app instead?'),
-        done);
-    }
-
-    async function showCode(fresh) {
-      var mine = ++turn;
-      stop();
-      pop.title.textContent = member ? 'Add a device for ' + member.displayName : 'Add a device';
-      codeFooter();
-      if (code && !fresh && Date.parse(code.expires) - Date.now() > REFRESH_LEAD) return drawCode(code);
-      if (fresh) openedAt = Date.now();
-      subLine(pop, ['Making a code']);
-      F.clear(pop.body).appendChild(skeleton(3));
-      var reply = await ask('OctoApp');
-      if (!pop.isOpen() || mine !== turn) return;
-      if (!reply.ok) {
-        pop.sub.textContent = 'Works once';
-        F.clear(pop.body).appendChild(errorLine('Couldn’t make a code. Try again.', reply, function () { showCode(true); }));
-        return;
-      }
-      code = reply.data;
-      if (!choice || (choice === 'anywhere' && code.awayAllowed === false)) choice = pickDefault(code);
-      drawCode(code);
-    }
-
-    // Past the hour: no more codes until someone asks for one.
-    function stillThere() {
-      stop();
-      turn++;
-      subLine(pop, ['Works once · expired']);
-      var again = el('button', { class: 'btn btn-primary', type: 'button', onclick: function () { showCode(true); } }, F.icon('retry'), 'Make a new code');
-      F.clear(pop.body).appendChild(el('div', { class: 'fam-pop-idle' },
-        el('span', { class: 'page-icon', 'aria-hidden': 'true' }, F.icon('clock')),
-        el('p', { class: 'fam-pop-idle-title' }, 'Still there? Make a new code'),
-        el('p', { class: 'fam-help' }, 'The code stopped renewing after an hour, so codes never pile up.'),
-        again));
-      pop.announcer.textContent = 'This code expired.';
-      if (pop.body.contains(document.activeElement) || document.activeElement === document.body) again.focus();
-    }
-
-    function linkOf(added) {
-      if (added.links && added.links[choice]) return added.links[choice];
-      if (added.links && added.links.home) return added.links.home;
-      return F.joinLink(added.server, added.username, added.pairCode);
-    }
-
-    function serverOf(added) {
-      return (added.servers && added.servers[choice]) || (added.servers && added.servers.home) || added.server;
-    }
-
-    // One card for typing it in: the code, large and grouped, with its copy button, and who
-    // and where it is for underneath.
-    function codeCard(added) {
-      return el('div', { class: 'fam-codecard' },
-        el('div', { class: 'fam-codecard-top' },
-          el('span', { class: 'fam-codecard-label' }, 'Code'),
-          el('span', { class: 'fam-codecard-code' }, groupedCode(added.pairCode)),
-          F.copyIcon(added.pairCode, 'Copy the code')),
-        el('p', { class: 'fam-codecard-for' }, 'for ', el('strong', null, added.username), ' on ', el('span', { class: 'fam-mono' }, serverOf(added))));
-    }
-
-    function drawCode(added) {
-      var mine = turn;
-      var top = el('div', { class: 'fam-pop-top' },
-        linkChoice(added, choice, function (v) { choice = v; drawCode(code); }, forName),
-        flash ? el('p', { class: 'inline-note ok' }, F.icon('check'), flash) : null);
-      flash = null;
-      var needs = homeNote(added, choice, function (words) { flash = words; showCode(true); });
-      var count = el('span', { class: 'fam-count' });
-      var fresh = el('span', { class: 'fam-badge good fam-new', hidden: true }, F.icon('check'), 'New code');
-      subLine(pop, ['Works once · ', count, fresh]);
-      F.clear(pop.body);
-      if (choice === 'anywhere' && !added.anywhereAvailable) {
-        F.append(pop.body, [top, needs]);
-      } else {
-        var note = el('p', { class: 'fam-pop-note', role: 'status', hidden: true });
-        var figure = qrPanel(linkOf(added), 'Scan with the new phone’s camera');
-        var tile = figure.querySelector('.fam-qr-tile');
-        var linkSlot = el('div', { class: 'fam-swap-slot' }, F.linkRow(linkOf(added), 'Copy the link'));
-        var codeRow = codeCard(added);
-        var pair = el('div', { class: 'fam-pair' },
-          figure,
-          el('div', { class: 'fam-pair-info' },
-            way(2, 'Or open this link on that device', linkSlot),
-            way(3, el('span', null, 'Or type it in Octo: ', el('strong', null, 'Join with a family code')), codeRow)));
-        F.append(pop.body, [top, needs, pair, note]);
-      }
-      var freshTimer = null;
-      var warned = false;
-      var asking = false;
-      var stale = false;
-
-      function setStale(on) {
-        stale = on;
-        if (!pair) return;
-        pair.classList.toggle('is-stale', on);
-        pair.querySelectorAll('.fam-pair-info button').forEach(function (b) { b.disabled = on; });
-        var anchor = linkSlot.querySelector('a');
-        if (on && anchor) {
-          anchor.removeAttribute('href');
-          anchor.setAttribute('aria-disabled', 'true');
-        }
-      }
-
-      // The new code goes in where the old one was: the QR crossfades, the link and the code
-      // fade in, and a "New code" notice shows for 3 seconds.
-      function swap(next) {
-        code = next;
-        if (!pair) return;
-        var link = linkOf(next);
-        var old = tile.querySelector('svg, p');
-        var drawn = F.qrCard(link).firstChild;
-        if (old) old.classList.add('fam-leaving');
-        drawn.classList.add('fam-arriving');
-        tile.appendChild(drawn);
-        setTimeout(function () { if (old) old.remove(); }, 400);
-        var row = F.linkRow(link, 'Copy the link');
-        row.classList.add('fam-arriving');
-        F.clear(linkSlot).appendChild(row);
-        var nextRow = codeCard(next);
-        nextRow.classList.add('fam-arriving');
-        codeRow.replaceWith(nextRow);
-        codeRow = nextRow;
-        setStale(false);
-        note.hidden = true;
-        warned = false;
-        fresh.hidden = false;
-        clearTimeout(freshTimer);
-        freshTimer = setTimeout(function () { fresh.hidden = true; }, 3000);
-        pop.announcer.textContent = 'New code.';
-      }
-
-      async function renew() {
-        if (asking) return;
-        asking = true;
-        if (retry) clearTimeout(retry);
-        retry = null;
-        var reply = await ask('OctoApp');
-        asking = false;
-        if (!pop.isOpen() || mine !== turn) return;
-        if (reply.ok) {
-          swap(reply.data);
-          tick();
-          return;
-        }
-        if (note) {
-          note.textContent = 'Couldn’t get a new code. Trying again.';
-          note.hidden = false;
-        }
-        retry = setTimeout(function () {
-          retry = null;
-          if (!document.hidden) renew();
-        }, REFRESH_RETRY);
-      }
-
-      function tick() {
-        if (!pop.isOpen() || mine !== turn) return;
-        var left = Date.parse(code.expires) - Date.now();
-        if (left > 0) {
-          count.textContent = 'expires in ' + clock(left);
-          count.classList.toggle('warn', left < 60000);
-        } else {
-          count.textContent = 'expired';
-          count.classList.add('warn');
-          if (!stale) setStale(true);
-        }
-        if (!warned && left <= 60000 && left > REFRESH_LEAD) {
-          warned = true;
-          pop.announcer.textContent = 'One minute left on this code.';
-        }
-        if (document.hidden || left > REFRESH_LEAD) return;
-        if (Date.now() - openedAt >= REFRESH_FOR) {
-          if (left <= 0) stillThere();
-          return;
-        }
-        if (!retry) renew();
-      }
-
-      view = { tick: tick };
-      tick();
-      ticker = setInterval(tick, 1000);
-    }
-
-    async function showApps() {
-      var mine = ++turn;
-      stop();
-      pop.title.textContent = 'Add Symfonium or another app' + (member ? ' for ' + member.displayName : '');
-      footer(pop,
-        el('button', { class: 'link-button fam-foot-link', type: 'button', onclick: function () { showCode(false); } }, F.icon('back'), 'Back to the QR code'),
-        done);
-      if (password) return drawApps(password);
-      pop.sub.textContent = 'Making an app password';
-      F.clear(pop.body).appendChild(skeletonRows(3));
-      // The app password ends the code shown before it, so no code is left live.
-      var reply = await ask('SubsonicApp');
-      if (!pop.isOpen() || mine !== turn) return;
-      if (!reply.ok) {
-        pop.sub.textContent = '';
-        F.clear(pop.body).appendChild(errorLine('Couldn’t make an app password. Try again.', reply, function () { showApps(); }));
-        return;
-      }
-      password = reply.data;
-      code = null;
-      madePassword = true;
-      if (!choice) choice = pickDefault(password);
-      drawApps(password);
-    }
-
-    function drawApps(added) {
-      subLine(pop, ['Shown once. Copy it now.'], 'key');
-      pop.sub.classList.add('warn');
-      var bar = linkChoice(added, choice, function (v) { choice = v; drawApps(added); }, forName);
-      var server = (added.servers && added.servers[choice]) || null;
-      var body = choice === 'anywhere' && !server
-        ? homeNote(added, choice, null)
-        : F.otherApp(server || added.server, added.username, added.appPassword);
-      F.clear(pop.body);
-      F.append(pop.body, [el('div', { class: 'fam-pop-top' }, bar), body]);
-    }
-
-    showCode(false);
-    done.focus();
+  // Reset password: after a plain confirmation, the member's password stops working at once and
+  // the invite popup shows their new sign-in link.
+  async function resetPassword(m) {
+    if (!confirmIn('Reset ' + m.displayName + '’s password? The one they use now stops working at once, on every app. They get a new link to choose another.')) return;
+    var r = await api('POST', '/members/' + encodeURIComponent(m.username) + '/reset', {});
+    if (!r.ok) return F.toast(F.errorOf(r), true);
+    inviteDialog(Object.assign({}, m, { needsPassword: false }), r.data, true);
+    refreshFamily();
   }
 
-  // Invite a member, or send a joined member a new sign-in link. `answer` is an invite answer
-  // already in hand (just after adding the member); without one the dialog asks for a link.
-  function inviteDialog(m, answer) {
+  // Invite a member, or (`reset`) show a member's new sign-in link after a password reset.
+  // `answer` is a link already in hand; without one the dialog asks for one. Send a new link
+  // ends the one shown before it.
+  function inviteDialog(m, answer, reset) {
     var name = m.displayName;
     var pop = F.openDialog({ wide: true, avatar: name });
     var done = doneButton();
@@ -1911,9 +1668,10 @@
     var choice = null;
     var current = null;
     var flash = null;
-    pop.title.textContent = m.joined ? 'A new sign-in link for ' + name : 'Invite ' + name;
+    pop.title.textContent = reset ? 'New sign-in link for ' + name : 'Invite ' + name;
     var again = el('button', { class: 'btn btn-ghost', type: 'button', onclick: function () { load(); } }, F.icon('retry'), 'Send a new link');
     footer(pop, again, done);
+    pop.onClose(function () { if (currentView() === 'overview') route(); });
 
     function lifetime(days) {
       days = Number(days) || 7;
@@ -1940,17 +1698,15 @@
         el('div', { class: 'fam-pair-info' },
           way(2, 'Or send ' + name + ' this link',
             F.linkRow(link, 'Copy the link', { title: 'Join my Octo family', text: 'Your sign-in link for Octo:' })),
-          way(3, 'Then', el('p', { class: 'fam-pop-line' }, m.joined
-            ? name + ' picks a new password. Their apps stay signed in.'
-            : name + ' picks a password, then adds their devices.'))))]);
+          way(3, 'Then', el('p', { class: 'fam-pop-line' }, name + ' picks a password, then signs in on any app.'))))]);
     }
 
     async function load() {
       var mine = ++turn;
       again.disabled = true;
       pop.sub.textContent = 'Making a link';
-      F.clear(pop.body).appendChild(skeleton(0));
-      var r = await api('POST', '/members/' + encodeURIComponent(m.username) + '/invite', {});
+      F.clear(pop.body).appendChild(skeleton());
+      var r = await api('POST', '/members/' + encodeURIComponent(m.username) + (reset ? '/reset' : '/invite'), {});
       if (!pop.isOpen() || mine !== turn) return;
       again.disabled = false;
       if (!r.ok) {
@@ -2025,7 +1781,7 @@
     if (!reply.ok && reply.status !== 401) F.toast(F.errorOf(reply), true);
   }
 
-  // An invite link opened here goes to the join page.
+  // An invite link (or an old pairing link) opened here goes to the join page.
   if (/invite=/.test(location.hash) || /[#&]c=\d/.test(location.hash)) {
     location.replace('/family/join' + location.hash);
     return;

@@ -16,6 +16,7 @@ use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use parking_lot::Mutex;
 use tracing::{debug, error, info, warn};
 
+use super::badged_covers::BadgedCovers;
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
 use super::cover_colors::{self, CoverMusic, Swatch};
@@ -111,6 +112,8 @@ pub struct CoverArtService {
     covers_directory: Option<PathBuf>,
     book: &'static CoverBook,
     setter: CoverTypesetter,
+    /// Badged covers of outside songs, kept an hour.
+    badged: BadgedCovers,
 }
 
 impl CoverArtService {
@@ -133,6 +136,7 @@ impl CoverArtService {
             covers_directory: covers_directory.filter(|d| !d.as_os_str().to_string_lossy().trim().is_empty()),
             book: CoverBook::shipped(),
             setter: CoverTypesetter,
+            badged: BadgedCovers::default(),
         }
     }
 
@@ -215,6 +219,28 @@ impl CoverArtService {
         image::imageops::overlay(&mut image, &badge, padding, padding);
         cover_image::encode_jpeg(&DynamicImage::ImageRgba8(image), 90)
             .unwrap_or_else(|| original_art.to_vec())
+    }
+
+    /// The key a badged outside cover is kept under: the cover design's version, the size asked
+    /// for, and the id.
+    pub fn badged_key(&self, id: &str, size: Option<i32>) -> String {
+        format!(
+            "{}|{}|{id}",
+            self.book.version,
+            size.map(|size| size.to_string()).unwrap_or_default()
+        )
+    }
+
+    /// A badged cover kept under `key`, while it is fresh.
+    pub fn kept_badged(&self, key: &str) -> Option<Vec<u8>> {
+        self.badged
+            .get(key, Instant::now())
+            .map(|bytes| bytes.as_ref().clone())
+    }
+
+    /// Keeps a badged cover under `key` for an hour.
+    pub fn keep_badged(&self, key: String, bytes: &[u8]) {
+        self.badged.put(key, Arc::new(bytes.to_vec()), Instant::now());
     }
 
     /// Returns a 600x600 placeholder JPEG with the Octo logo centered on a black background.

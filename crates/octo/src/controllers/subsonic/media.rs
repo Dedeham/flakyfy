@@ -555,7 +555,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
     // plain, and a missing one is a 404 it draws its own empty tile for. Every other
     // client keeps the badge, the only sign it gets that a song came from Octo's search.
     let plain = draws_its_own_marks(&call);
+    let badged_key = state
+        .cover_art_service
+        .badged_key(&id, requested_cover_size(&call));
     if let Some(routing) = state.external_id_registry.lookup(&id) {
+        if !plain && let Some(kept) = state.cover_art_service.kept_badged(&badged_key) {
+            return Ok(file(kept, "image/jpeg"));
+        }
         let routing = routing.snapshot();
         let raw = state.cover_art_aggregator.get_cover(&routing, false).await;
         let Some(raw) = raw else {
@@ -571,7 +577,9 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         let watermarked = if plain {
             raw.to_vec()
         } else {
-            badge(&state, raw.to_vec()).await
+            let badged = badge(&state, raw.to_vec()).await;
+            state.cover_art_service.keep_badged(badged_key, &badged);
+            badged
         };
         return Ok(file(watermarked, "image/jpeg"));
     }
@@ -589,6 +597,9 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
     // compatibility with any in-flight clients).
     let (is_external, cover_provider, kind, cover_external_id) = state.local_library.parse_external_id(&id);
     if is_external {
+        if !plain && let Some(kept) = state.cover_art_service.kept_badged(&badged_key) {
+            return Ok(file(kept, "image/jpeg"));
+        }
         let provider = cover_provider.unwrap_or_default();
         let external_id = cover_external_id.unwrap_or_default();
         let metadata = &state.music_metadata;
@@ -622,7 +633,9 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 let watermarked = if plain {
                     image_bytes
                 } else {
-                    badge(&state, image_bytes).await
+                    let badged = badge(&state, image_bytes).await;
+                    state.cover_art_service.keep_badged(badged_key, &badged);
+                    badged
                 };
                 return Ok(file(watermarked, "image/jpeg"));
             }

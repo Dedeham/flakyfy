@@ -2,6 +2,7 @@
 //! apps, the painted backgrounds and the veil under the words, the type, and the service that
 //! serves list covers, the placeholder and the Octo badge.
 
+pub mod badged_covers;
 pub mod cover_art_service;
 pub mod cover_backgrounds;
 pub mod cover_book;

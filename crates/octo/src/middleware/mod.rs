@@ -33,5 +33,7 @@ pub mod exception;
 #[cfg(test)]
 mod family_bypass_tests;
 pub mod family_gate;
+#[cfg(test)]
+mod family_reading_tests;
 pub mod forwarded;
 pub mod request_log;

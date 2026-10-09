@@ -16,9 +16,14 @@
 //!   fresh `s` and `t` made from the hidden password. An API key or a `jwt` that turns out to be
 //!   a member's is rewritten the same way. A wrong sign-in is answered with Subsonic error 40
 //!   and never reaches Navidrome; twenty wrong ones from one address for one member in 15
-//!   minutes, or a hundred from the peer that connected or for the member from everywhere, and
-//!   the rest are refused unchecked. The owner and anyone outside the family pass through
-//!   exactly as they came.
+//!   minutes, or a hundred from the peer that connected, or a hundred for the member from
+//!   addresses that never signed in as them, and the rest are refused unchecked. Addresses that
+//!   did sign in as the member count their wrong tries apart (a hundred more together), so a
+//!   flood from strangers never locks out a device that already has its secret. The owner and
+//!   anyone outside the family pass through exactly as they came.
+//! - **Paths**: a request is judged by its path as Navidrome may end up reading it
+//!   ([`gate_path`]), so `/rest/%67etNowPlaying`, `/rest/x/../getNowPlaying` and the like meet
+//!   the rules of the endpoint they reach.
 //! - **Navidrome's web player**: a member signs in on `/auth/login` with their account password
 //!   or any device secret. Octo signs in to Navidrome for them and answers with a token of its
 //!   own; the real one stays on the member's web device and is swapped in on the way to
@@ -51,7 +56,7 @@ use octo_core::family::device::{Device, DeviceKind, NetworkPlace, client_origin,
 use octo_core::family::endpoints::rest_endpoint_name;
 use octo_subsonic::SubsonicCredential;
 use octo_subsonic::subsonic_request_parser::{
-    Parameters, RequestParts, RequestReading, parse_query, read_request,
+    Parameters, RequestParts, RequestReading, parse_query, read_request, unescape_data_string,
 };
 use serde_json::{Value, json};
 use tracing::{info, warn};
@@ -97,21 +102,60 @@ pub async fn family_gate(State(state): State<AppState>, req: Request, next: Next
     if !state.settings.current().family.enabled {
         return next.run(req).await;
     }
-    let path = req.uri().path().to_string();
-    if skipped(&path) {
+    let sent_path = req.uri().path().to_string();
+    let path = gate_path(&sent_path);
+    if skipped(&sent_path) && skipped(&path) {
         return next.run(req).await;
     }
     let whereabouts = Whereabouts::of(&state, &req);
-    if let Some(token) = radio_token(&path) {
+    if let Some(token) = radio_token(&sent_path) {
         return radio(&state, req, next, &token, &whereabouts).await;
     }
     if under(&path, "/rest") {
-        return rest(state, req, next, whereabouts).await;
+        return rest(state, req, next, whereabouts, &path).await;
     }
     if path.trim_end_matches('/').eq_ignore_ascii_case("/auth/login") && req.method() == Method::POST {
         return web_sign_in(state, req, next, whereabouts).await;
     }
-    native(state, req, next, whereabouts).await
+    native(state, req, next, whereabouts, &path).await
+}
+
+/// A request path as an upstream server may end up reading it once Octo relays it, which is
+/// the path the gate judges a request by: escapes decoded (again while any are left, so an
+/// escaped escape counts too), tabs and line breaks dropped and everything from a `?` or `#`
+/// cut off (as a URL parser does), `\` read as `/`, empty and `.` segments dropped and `..`
+/// taking the segment before it away. Whatever spelling reaches an endpoint upstream, the
+/// gate sees that endpoint.
+pub(crate) fn gate_path(sent: &str) -> String {
+    let mut path = sent.to_string();
+    for _ in 0..4 {
+        let decoded = unescape_data_string(&path);
+        if decoded == path {
+            break;
+        }
+        path = decoded;
+    }
+    let path: String = path
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .take_while(|c| !matches!(c, '?' | '#'))
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect();
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    let mut out = format!("/{}", segments.join("/"));
+    if path.ends_with('/') && !segments.is_empty() {
+        out.push('/');
+    }
+    out
 }
 
 /// Whether `path` is `prefix` or below it, ignoring case, at a segment boundary.
@@ -428,6 +472,7 @@ async fn apply_answer_rules(
     state: &AppState,
     response: Response,
     caller: &FamilyCaller,
+    method: &Method,
     endpoint: &str,
     path: &str,
     parameters: &Parameters,
@@ -437,6 +482,14 @@ async fn apply_answer_rules(
         return response;
     }
     let (mut parts, body) = response.into_parts();
+    // A HEAD answer has no body for a rule to read, and its length would be the length of the
+    // answer before the rules, so neither goes out.
+    if method == Method::HEAD {
+        parts.headers.remove(header::CONTENT_LENGTH);
+        parts.headers.remove(header::TRANSFER_ENCODING);
+        parts.headers.remove(header::CONTENT_ENCODING);
+        return Response::from_parts(parts, Body::empty());
+    }
     let Ok(bytes) = axum::body::to_bytes(body, ANSWER_LIMIT).await else {
         warn!("FAMILY an answer to {endpoint} was too large to check, so it was not sent");
         return StatusCode::BAD_GATEWAY.into_response();
@@ -469,14 +522,12 @@ async fn apply_answer_rules(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
-    let format = Format::of(parameters);
     let context = AnswerContext {
         state,
         caller,
         endpoint,
         path,
         parameters,
-        format: &format.f,
         content_type: content_type.as_deref(),
     };
     for rule in rules {
@@ -566,7 +617,9 @@ enum Caller {
     Unchecked(FamilyCaller, Option<SubsonicCredential>),
 }
 
-async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts) -> Response {
+/// A `/rest` request. `gate_path` is its path as [`gate_path`] reads it, which names the
+/// endpoint.
+async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts, gate_path: &str) -> Response {
     let (parts, body) = req.into_parts();
     let Ok(body) = axum::body::to_bytes(body, MAX_BODY).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
@@ -577,7 +630,7 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts) -> Res
     let parameters = reading.parameters();
     let path = parts.uri.path().to_string();
     let request = RestRequest {
-        endpoint: rest_endpoint_name(&path).unwrap_or("").to_string(),
+        endpoint: rest_endpoint_name(gate_path).unwrap_or("").to_string(),
         format: Format::of(&parameters),
         seen: sighting(&parts.headers, &parameters),
         content_type,
@@ -653,12 +706,7 @@ async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts) -> Res
             // A member never holds a Navidrome token, and an Octo token that did not check out
             // proves nothing, so a token naming a member is refused before anything reads it.
             if let Some(member) = subjects.iter().find_map(|user| state.family_store.member(user)) {
-                let keys = TryKeys::new(
-                    &request.at.address,
-                    &request.at.peer,
-                    &member.username,
-                    MAX_FAILURES,
-                );
+                let keys = try_keys(&state, &request.at, &member.username);
                 state.family_bridge.throttle.failed_by(&keys);
                 log_refusal(&state, &member.username, &request.at, "a token Octo did not sign");
                 return subsonic_error(&state, &request.format, 40, WRONG_SIGN_IN);
@@ -732,6 +780,7 @@ async fn pass_rest(state: &AppState, request: RestRequest, next: Next, caller: O
         parameters,
         ..
     } = request;
+    let method = parts.method.clone();
     let Some(caller) = caller else {
         parts
             .extensions
@@ -775,7 +824,7 @@ async fn pass_rest(state: &AppState, request: RestRequest, next: Next, caller: O
     };
     let rules = state.family_answer_rules.has(&endpoint);
     if rules {
-        parts.headers.remove(header::ACCEPT_ENCODING);
+        without_partial_answers(&mut parts.headers);
     }
     let (mut req, view_reading, view_parameters) = match plan {
         None => (
@@ -809,10 +858,18 @@ async fn pass_rest(state: &AppState, request: RestRequest, next: Next, caller: O
     }
     let response = audio.track(state, response);
     if rules {
-        apply_answer_rules(state, response, &caller, &endpoint, &path, &parameters).await
+        apply_answer_rules(state, response, &caller, &method, &endpoint, &path, &parameters).await
     } else {
         response
     }
+}
+
+/// Takes off the headers that would have Navidrome answer in part or compressed, for a call
+/// whose answer a rule reads whole.
+fn without_partial_answers(headers: &mut HeaderMap) {
+    headers.remove(header::ACCEPT_ENCODING);
+    headers.remove(header::RANGE);
+    headers.remove(header::IF_RANGE);
 }
 
 /// Starts checking an unchecked caller's sign-in beside the call, which notes their device
@@ -847,7 +904,7 @@ async fn member_rest(
     checked: Option<Option<String>>,
 ) -> Response {
     let user = member.username.clone();
-    let keys = TryKeys::new(&request.at.address, &request.at.peer, &user, MAX_FAILURES);
+    let keys = try_keys(state, &request.at, &user);
     let throttle = &state.family_bridge.throttle;
     let refuse = |message: &str| subsonic_error(state, &request.format, 40, message);
     let device_id = match checked {
@@ -886,6 +943,8 @@ async fn member_rest(
             }
         }
     };
+    // The sign-in checked out, so tries from this address no longer count with strangers'.
+    state.family_bridge.known.signed_in(&request.at.address, &user);
     if member.suspended {
         return refuse(PAUSED);
     }
@@ -976,7 +1035,7 @@ async fn member_rest(
         };
         let mut req = assemble(&request.parts, query.as_deref(), body, changed);
         if rules {
-            req.headers_mut().remove(header::ACCEPT_ENCODING);
+            without_partial_answers(req.headers_mut());
         }
         req.extensions_mut().insert(caller.clone());
         req.extensions_mut()
@@ -1025,6 +1084,7 @@ async fn member_rest(
             state,
             response,
             &caller,
+            method,
             &request.endpoint,
             &request.path,
             &parameters,
@@ -1033,6 +1093,13 @@ async fn member_rest(
     } else {
         response
     }
+}
+
+/// The keys a sign-in try at `user` from `at` counts under.
+fn try_keys(state: &AppState, at: &Whereabouts, user: &str) -> TryKeys {
+    state
+        .family_bridge
+        .try_keys(&at.address, &at.peer, user, MAX_FAILURES)
 }
 
 /// One log line per member a minute about refused sign-ins, naming home or away only.
@@ -1180,14 +1247,15 @@ fn swap_answer_token(state: &AppState, response: &mut Response, member: &Member,
     }
 }
 
-/// Navidrome's native API and anything else that is not `/rest`.
-async fn native(state: AppState, req: Request, next: Next, at: Whereabouts) -> Response {
+/// Navidrome's native API and anything else that is not `/rest`. `gate_path` is the path as
+/// [`gate_path`] reads it, which the rules judge.
+async fn native(state: AppState, req: Request, next: Next, at: Whereabouts, gate_path: &str) -> Response {
     let tokens = native_tokens(&req);
     if tokens.is_empty() {
         return next.run(req).await;
     }
     let seen = sighting(req.headers(), &Parameters::new());
-    let path = req.uri().path().to_string();
+    let path = gate_path.to_string();
     let octo = tokens
         .iter()
         .find_map(|token| web_claims(&state, token).map(|claims| (token.clone(), claims)));
@@ -1202,7 +1270,7 @@ async fn native(state: AppState, req: Request, next: Next, at: Whereabouts) -> R
             .iter()
             .find_map(|(user, _)| state.family_store.member(user))
         {
-            let keys = TryKeys::new(&at.address, &at.peer, &member.username, MAX_FAILURES);
+            let keys = try_keys(&state, &at, &member.username);
             state.family_bridge.throttle.failed_by(&keys);
             log_refusal(&state, &member.username, &at, "a token Octo did not sign");
             return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
@@ -1233,7 +1301,7 @@ async fn native(state: AppState, req: Request, next: Next, at: Whereabouts) -> R
         return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
     };
     if !eq_ignore_case(&device.username, &member.username) || device.kind != DeviceKind::NavidromeWeb {
-        let keys = TryKeys::new(&at.address, &at.peer, &member.username, MAX_FAILURES);
+        let keys = try_keys(&state, &at, &member.username);
         state.family_bridge.throttle.failed_by(&keys);
         return native_refusal(StatusCode::UNAUTHORIZED, "Sign in again.");
     }
@@ -1391,7 +1459,7 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
         return next.run(Request::from_parts(parts, Body::from(body))).await;
     };
     let user = member.username.clone();
-    let keys = TryKeys::new(&at.address, &at.peer, &user, MAX_FAILURES);
+    let keys = try_keys(&state, &at, &user);
     let throttle = &state.family_bridge.throttle;
     // The try counts before the password is checked, so tries sent all at once cannot each
     // pass the throttle while the others are still being checked. A right one is forgiven, and
@@ -1412,6 +1480,7 @@ async fn web_sign_in(state: AppState, req: Request, next: Next, at: Whereabouts)
         return native_refusal(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
     throttle.forgive_by(&keys);
+    state.family_bridge.known.signed_in(&at.address, &user);
     if member.suspended {
         return native_refusal(StatusCode::UNAUTHORIZED, PAUSED);
     }

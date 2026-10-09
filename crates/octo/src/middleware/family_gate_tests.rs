@@ -1378,6 +1378,7 @@ async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
             &f.state,
             answer,
             &alex,
+            &Method::GET,
             "getNowPlaying",
             "/rest/getNowPlaying",
             &parameters,
@@ -1399,6 +1400,7 @@ async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
         &f.state,
         answer,
         &alex,
+        &Method::GET,
         "getNowPlaying",
         "/rest/getNowPlaying",
         &parameters,
@@ -1411,6 +1413,7 @@ async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
         &f.state,
         answer,
         &alex,
+        &Method::GET,
         "getNowPlaying",
         "/rest/getNowPlaying",
         &parameters,
@@ -1423,6 +1426,7 @@ async fn an_encoded_answer_is_opened_before_the_answer_rules_read_it() {
         &f.state,
         answer,
         &alex,
+        &Method::GET,
         "getNowPlaying",
         "/rest/getNowPlaying",
         &parameters,
@@ -1708,4 +1712,29 @@ async fn handlers_read_the_parameters_the_gate_read() {
     )
     .await;
     assert_eq!(r.json()["subsonic-response"]["error"]["code"], 0, "{}", r.body);
+}
+
+#[test]
+fn the_gate_reads_a_path_as_an_upstream_server_may() {
+    for (sent, read) in [
+        ("/rest/getNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/getNowPlaying/", "/rest/getNowPlaying/"),
+        ("/rest/%67etNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/%2567etNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/x/../getNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/x/%2E%2E/getNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/./getNowPlaying", "/rest/getNowPlaying"),
+        ("//rest//getNowPlaying", "/rest/getNowPlaying"),
+        ("/rest%2FgetNowPlaying", "/rest/getNowPlaying"),
+        ("/rest%5CgetNowPlaying", "/rest/getNowPlaying"),
+        ("/rest/getNow%09Playing", "/rest/getNowPlaying"),
+        ("/rest/getNowPlaying%3Fu=alex%26x=", "/rest/getNowPlaying"),
+        ("/rest/getNowPlaying%23x", "/rest/getNowPlaying"),
+        ("/api/../rest/ping", "/rest/ping"),
+        ("/../../rest/ping", "/rest/ping"),
+        ("/", "/"),
+        ("/assets/a%20b.js", "/assets/a b.js"),
+    ] {
+        assert_eq!(gate_path(sent), read, "{sent}");
+    }
 }

@@ -31,14 +31,19 @@ pub trait IMusicMetadataService: Send + Sync {
     ) -> Vec<Song>;
 
     /// Fills in real duration/album/year on external placeholder songs (which
-    /// otherwise show a 3:00 fallback) from a metadata provider. Bounded, cached,
+    /// otherwise go out with no length) from a metadata provider. Bounded, cached,
     /// best-effort; does not block or fail the search if the provider is down.
     async fn enrich_external_songs(&self, _songs: &mut [Song]) {}
 
-    /// Gives external songs outside a search (station playlists) the lengths already known
-    /// for them, and looks the rest up in the background so the next response has them.
-    /// Never waits on the network: whatever is not known yet keeps the fallback for now.
+    /// Gives external songs outside a search (stations, radio, a song read by its id) the
+    /// lengths already known for them, and looks the rest up in the background so the next
+    /// response has them. Never waits on the network: whatever is not known yet goes out
+    /// with no length for now.
     fn complete_song_lengths(&self, _songs: &mut [Song]) {}
+
+    /// Remembers the length of a file downloaded for the outside song `external_id`, so rows
+    /// that still name the song by that id carry the length it really runs.
+    fn remember_file_length(&self, _external_id: &str, _seconds: i32) {}
 
     /// Resolves the real YouTube video (and its duration) for the top of a search
     /// result so the shown length matches the audio that plays. Bounded + cached;

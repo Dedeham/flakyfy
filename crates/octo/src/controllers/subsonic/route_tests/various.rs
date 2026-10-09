@@ -440,7 +440,8 @@ async fn length_fixture() -> LengthFixture {
     }
 }
 
-fn lengths(songs: &Value) -> HashMap<String, i64> {
+/// Each row's length by "artist|title"; None where the row carries no `duration` at all.
+fn lengths(songs: &Value) -> HashMap<String, Option<i64>> {
     songs
         .as_array()
         .unwrap()
@@ -452,13 +453,13 @@ fn lengths(songs: &Value) -> HashMap<String, i64> {
                     song["artist"].as_str().unwrap(),
                     song["title"].as_str().unwrap()
                 ),
-                song["duration"].as_i64().unwrap(),
+                song.get("duration").map(|d| d.as_i64().unwrap()),
             )
         })
         .collect()
 }
 
-async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
+async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, Option<i64>> {
     let body = get(
         &fixture.app,
         "/rest/search3?query=genesis&songCount=50&albumCount=0&artistCount=0&u=alice&t=token&s=salt&f=json",
@@ -468,7 +469,7 @@ async fn search3_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
     lengths(&body["subsonic-response"]["searchResult3"]["song"])
 }
 
-async fn playlist_lengths(fixture: &LengthFixture) -> HashMap<String, i64> {
+async fn playlist_lengths(fixture: &LengthFixture) -> HashMap<String, Option<i64>> {
     let body = get(
         &fixture.app,
         &format!(
@@ -532,16 +533,16 @@ async fn search3_rows_without_a_metadata_length_carry_one_in_the_next_response()
         .insert("Justice Genesis".into(), 234);
 
     let first = search3_lengths(&fixture).await;
-    assert_eq!(first["Filler|Song1"], 201);
-    assert_eq!(first["Daft Punk|Emotion"], 180);
+    assert_eq!(first["Filler|Song1"], Some(201));
+    assert_eq!(first["Daft Punk|Emotion"], None);
     fixture.state.music_metadata.last_length_warm().await;
 
     let next = search3_lengths(&fixture).await;
-    assert_eq!(next["Filler|Song1"], 201);
-    assert_eq!(next["Daft Punk|Emotion"], 417);
-    assert_eq!(next["Kavinsky|Prelude"], 95);
-    assert_eq!(next["Justice|Genesis"], 234);
-    assert_eq!(next["Nobody|Nothing"], 180); // still the placeholder: nothing plausible
+    assert_eq!(next["Filler|Song1"], Some(201));
+    assert_eq!(next["Daft Punk|Emotion"], Some(417));
+    assert_eq!(next["Kavinsky|Prelude"], Some(95));
+    assert_eq!(next["Justice|Genesis"], Some(234));
+    assert_eq!(next["Nobody|Nothing"], None); // still unknown: nothing plausible
 }
 
 #[tokio::test]
@@ -592,16 +593,79 @@ async fn get_playlist_station_rows_without_a_length_carry_one_in_the_next_respon
     );
 
     let first = playlist_lengths(&fixture).await;
-    assert_eq!(first["Mr. Oizo|Positif"], 207);
-    assert_eq!(first["Justice|Genesis"], 180);
+    assert_eq!(first["Mr. Oizo|Positif"], Some(207));
+    assert_eq!(first["Justice|Genesis"], None);
     fixture.state.music_metadata.last_length_warm().await;
 
     let next = playlist_lengths(&fixture).await;
-    assert_eq!(next["Justice|Genesis"], 234);
-    assert_eq!(next["Kavinsky|Prelude"], 95);
-    assert_eq!(next["Daft Punk|Emotion"], 417);
-    assert_eq!(next["Mr. Oizo|Positif"], 207);
-    assert_eq!(next["Nobody|Nothing"], 180);
+    assert_eq!(next["Justice|Genesis"], Some(234));
+    assert_eq!(next["Kavinsky|Prelude"], Some(95));
+    assert_eq!(next["Daft Punk|Emotion"], Some(417));
+    assert_eq!(next["Mr. Oizo|Positif"], Some(207));
+    assert_eq!(next["Nobody|Nothing"], None);
+}
+
+#[tokio::test]
+async fn get_song_an_outside_song_carries_its_remembered_length_or_none() {
+    let fixture = length_fixture().await;
+    fixture
+        .upstream
+        .deezer
+        .lock()
+        .insert("Justice Genesis".into(), 234);
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    };
+    fixture.state.last_fm_radio_state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: station_id("alice", "your-mix"),
+            key: "your-mix".into(),
+            name: "Your Mix".into(),
+            owner: "alice".into(),
+            kind: LastFmRadioStationKind::YourMix,
+            personalized: true,
+            created_utc: Utc::now() - TimeDelta::hours(1),
+            changed_utc: Utc::now() - TimeDelta::hours(1),
+            valid_until_utc: Utc::now() + TimeDelta::days(1),
+            tracks: vec![track("Justice", "Genesis"), track("Nobody", "Nothing")],
+            ..Default::default()
+        }],
+    );
+    let body = get(
+        &fixture.app,
+        &format!(
+            "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+            station_id("alice", "your-mix")
+        ),
+    )
+    .await
+    .json();
+    fixture.state.music_metadata.last_length_warm().await;
+    let ids: HashMap<String, String> = body["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|song| {
+            (
+                song["title"].as_str().unwrap().to_string(),
+                song["id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+
+    let song = |id: &str| {
+        let url = format!("/rest/getSong?id={id}&u=alice&t=token&s=salt&f=json");
+        let app = &fixture.app;
+        async move { get(app, &url).await.json()["subsonic-response"]["song"].clone() }
+    };
+    let known = song(&ids["Genesis"]).await;
+    assert_eq!(known["duration"], 234);
+    let unknown = song(&ids["Nothing"]).await;
+    assert_eq!(unknown["title"], "Nothing");
+    assert!(unknown.get("duration").is_none(), "{unknown}");
 }
 
 // ---------------------------------------------------------------------------------------

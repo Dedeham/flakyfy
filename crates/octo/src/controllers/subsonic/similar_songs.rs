@@ -146,7 +146,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         library_song: library_seed,
         you_tube_id: seed_video,
     };
-    let resolved_songs = state
+    let mut resolved_songs = state
         .song_radio
         .build(
             &seed,
@@ -168,6 +168,10 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         }
         return builder.create_response(format, response_key).into_response();
     }
+
+    // Outside picks take the lengths already known for them; the rest are looked up in the
+    // background for the next answer.
+    state.metadata_service.complete_song_lengths(&mut resolved_songs);
 
     let local_count = resolved_songs.iter().filter(|song| song.is_local).count();
     info!(

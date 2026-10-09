@@ -239,7 +239,7 @@ fn a_watch_stops_at_the_ceiling_even_while_moving() {
     assert!(watch.hit_ceiling(at(t0, 60)));
 }
 
-// A peer that accepts and then sends nothing (2026-10-09, Drake - Forever: 180 s for nothing).
+// A peer that accepts and then sends nothing is left at the first-byte wait, not the quiet window.
 #[test]
 fn a_watch_gives_up_soon_on_a_peer_that_never_starts() {
     let t0 = Utc::now();

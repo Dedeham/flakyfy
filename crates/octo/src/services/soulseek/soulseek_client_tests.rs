@@ -476,8 +476,8 @@ async fn a_peer_that_sends_nothing_is_canceled_in_slskd() {
     assert_eq!(deletes[0].query(), Some("remove=true"));
 }
 
-// 2026-10-09, Drake - Forever: a peer that said it could send now accepted and sent
-// nothing, and the song waited the whole 180 s window for it.
+// A peer that said it could send now, accepted, and sent nothing is given up at the
+// first-byte wait instead of the whole quiet window.
 #[tokio::test]
 async fn a_peer_that_never_sends_a_byte_is_given_up_at_the_first_byte_wait() {
     let slskd = FakeTransferSlskd::new(|_| ("Initializing", 0));

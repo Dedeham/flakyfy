@@ -1294,7 +1294,7 @@ async fn a_song_without_a_routing_is_an_invalid_operation() {
     );
 }
 
-// What the row says while a peer has not started (2026-10-09).
+// What the row says while a peer has not started.
 #[test]
 fn a_transfer_that_has_not_started_names_whom_it_waits_on() {
     assert_eq!(

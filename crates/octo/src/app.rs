@@ -87,8 +87,8 @@ use crate::services::library::{
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
     LibraryActionPlaylistWorker, LibraryActionQuarantine, LibraryActionRatingWorker, LibraryOwnership,
-    NavidromePlaylistApi, NavidromeSongPathResolver, NoticeQueue, OwnershipNavidrome, UpgradeQueue,
-    UpgradeSources,
+    NavidromePlaylistApi, NavidromeSongPathResolver, NoticeQueue, OwnershipNavidrome, RejectionStore,
+    SongAnswers, UpgradeQueue, UpgradeSources,
 };
 use crate::services::lidarr::{
     ILidarrHeartAcquisitionService, ILidarrTrackFetcher, LidarrAlbumClaims, LidarrClient,
@@ -1157,6 +1157,8 @@ struct Lyrics {
     choice_service: Arc<LyricsChoiceService>,
     sidecar_writer: Arc<LyricsSidecarWriter>,
     undo_journal: Arc<LyricsUndoJournal>,
+    /// The lyrics and covers people turned down, `<config>/rejections.json`.
+    rejections: Arc<RejectionStore>,
 }
 
 impl Lyrics {
@@ -1180,6 +1182,20 @@ impl Lyrics {
             undo_journal: Arc::new(LyricsUndoJournal::new(
                 config_dir.map(|dir| dir.join("lyrics-undo.jsonl")),
             )),
+            rejections: Arc::new(RejectionStore::new(
+                config_dir.map(|dir| dir.join("rejections.json")),
+            )),
+        }
+    }
+
+    /// What Wrong lyrics and Wrong cover work with.
+    fn song_answers(&self, covers: &Arc<CoverUpgradeWorker>) -> SongAnswers {
+        SongAnswers {
+            lyrics: self.service.clone(),
+            choices: self.choice_service.clone(),
+            sidecars: self.sidecar_writer.clone(),
+            covers: covers.clone(),
+            rejections: self.rejections.clone(),
         }
     }
 
@@ -1696,6 +1712,7 @@ impl LibraryActions {
         acquisition: &Acquisition,
         soulseek_link: Arc<dyn ISoulseekLink>,
         spectrum: Arc<SpectrumAnalyzer>,
+        answers: SongAnswers,
     ) -> Self {
         let notice_queue = stores.notice_queue.clone();
         let quarantine = Arc::new(LibraryActionQuarantine::new(settings.clone()));
@@ -1714,6 +1731,7 @@ impl LibraryActions {
             stars: Some(acquisition.star_on_arrival.clone()),
             soulseek_link: Some(soulseek_link),
             sources: Some(acquisition.upgrade_sources.clone()),
+            answers: Some(answers),
         }));
         let rating_worker = Arc::new(LibraryActionRatingWorker::new(
             executor.clone(),
@@ -2059,6 +2077,7 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
             tagging.spectrum_analyzer.clone(),
+            lyrics.song_answers(&genre_cover_jobs.cover_upgrade_worker),
         );
         library_actions.register_workers(&workers);
         let library_jobs = LibraryJobs::build(
@@ -2358,6 +2377,7 @@ impl AppState {
             &acquisition,
             soulseek.link.clone(),
             tagging.spectrum_analyzer.clone(),
+            lyrics.song_answers(&genre_cover_jobs.cover_upgrade_worker),
         );
         // The 5-B queues keep their files in the test's config directory; no worker is run.
         let library_jobs = LibraryJobs::build(

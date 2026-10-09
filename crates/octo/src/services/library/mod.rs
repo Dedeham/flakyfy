@@ -27,6 +27,7 @@ pub mod navidrome_song_path_resolver;
 pub mod notice_playlist_worker;
 pub mod notice_queue;
 pub mod quality_upgrade_worker;
+pub mod rejections;
 pub mod replacement_handoff;
 mod state_dictionary;
 pub mod upgrade_queue;
@@ -44,7 +45,7 @@ pub use generated_playlist_service::{GeneratedPlaylist, GeneratedPlaylistService
 pub use heart_ownership::HeartOwnership;
 pub use library_action_executor::{
     LibraryActionCodes, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionOutcome,
-    LibraryActionRequest,
+    LibraryActionRequest, SongAnswers,
 };
 pub use library_action_journal::{LibraryActionEntry, LibraryActionJournal, LibraryActionState};
 pub use library_action_playlist_provisioner::LibraryActionPlaylistProvisioner;
@@ -69,6 +70,7 @@ pub use quality_upgrade_worker::{
     LibrarySongRow, QualityUpgradeAttempt, QualityUpgradeState, QualityUpgradeStatus, QualityUpgradeStore,
     QualityUpgradeWorker,
 };
+pub use rejections::RejectionStore;
 pub use replacement_handoff::{ReplacementHandoff, ReplacementRejectedException};
 pub use upgrade_queue::{
     AudioSummary, UpgradeAsk, UpgradeJob, UpgradeQueue, UpgradeResult, UpgradeStates, UpgradeWorker,

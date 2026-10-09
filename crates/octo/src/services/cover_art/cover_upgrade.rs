@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::album_cover_finder::{AlbumCoverQuery, IAlbumCoverFinder};
+use super::album_cover_finder::{AlbumCoverQuery, IAlbumCoverFinder, RejectedCovers};
 use crate::services::framework::HttpAnswer;
 use crate::services::library::library_walk;
 use crate::services::library::navidrome_song_list::{self, full_path};
@@ -709,6 +709,27 @@ impl std::fmt::Display for StoppedByShutdown {
 }
 
 impl std::error::Error for StoppedByShutdown {}
+
+/// One album's songs as its files tell it, for replacing a cover someone said was wrong.
+#[derive(Debug, Clone)]
+pub struct AlbumOnDisk {
+    /// What the album's rejected covers are kept under: its album artist and album, or the
+    /// song's own path when it names no album.
+    pub key: String,
+    pub paths: Vec<String>,
+    pub query: AlbumCoverQuery,
+    /// The picture the album shows now, when it shows one.
+    pub shown: Option<Vec<u8>>,
+    folder_cover: Option<String>,
+}
+
+/// What replacing one album's cover did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumCoverReplaced {
+    pub source: String,
+    pub files: usize,
+    pub folder_cover: bool,
+}
 
 /// What the C# `GetRequiredService<ILocalLibraryService>()` threw when the container had none.
 const NO_LIBRARY_SERVICE: &str =
@@ -1494,8 +1515,19 @@ impl CoverUpgradeWorker {
 impl CoverUpgradeWorker {
     /// Replaces the front cover and nothing else, after keeping the old one.
     async fn write_embedded(&self, path: &str, cover: Arc<Vec<u8>>, run_id: &str) -> bool {
+        let written = self.try_write_embedded(path, cover, run_id).await;
+        self.recorded(path, written)
+    }
+
+    /// The same write, its failure told to the caller rather than put on the run.
+    async fn try_write_embedded(
+        &self,
+        path: &str,
+        cover: Arc<Vec<u8>>,
+        run_id: &str,
+    ) -> Result<bool, String> {
         let (journal, target, run_id) = (self.journal.clone(), path.to_string(), run_id.to_string());
-        let written = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
             let mut file = TagFile::open(&target).map_err(|failure| failure.to_string())?;
             let pictures = file.pictures();
             let front = front_index(&pictures);
@@ -1519,18 +1551,23 @@ impl CoverUpgradeWorker {
             Ok(true)
         })
         .await
-        .unwrap_or_else(|panic| Err(panic.to_string()));
-        self.recorded(path, written)
+        .unwrap_or_else(|panic| Err(panic.to_string()))
     }
 
     async fn write_folder_cover(&self, path: &str, cover: &[u8], run_id: &str) -> bool {
+        let written = self.try_write_folder_cover(path, cover, run_id).await;
+        self.recorded(path, written)
+    }
+
+    /// The same write, its failure told to the caller rather than put on the run.
+    async fn try_write_folder_cover(&self, path: &str, cover: &[u8], run_id: &str) -> Result<bool, String> {
         let (journal, target, cover, run_id) = (
             self.journal.clone(),
             path.to_string(),
             cover.to_vec(),
             run_id.to_string(),
         );
-        let written = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
             let before = std::fs::read(&target).map_err(|failure| failure.to_string())?;
             if !journal.record(&target, CoverUpgradeJournal::FOLDER_FILE, Some(&before), &run_id) {
                 return Ok(false);
@@ -1547,8 +1584,140 @@ impl CoverUpgradeWorker {
             Ok(true)
         })
         .await
-        .unwrap_or_else(|panic| Err(panic.to_string()));
-        self.recorded(path, written)
+        .unwrap_or_else(|panic| Err(panic.to_string()))
+    }
+
+    /// The album `song_path` is on, as its files tell it: the songs beside it with the same album
+    /// artist and album (the song alone when it names no album), the picture they show now (the
+    /// song's own front cover, else the folder's cover file), and the folder's JPEG cover when
+    /// the folder holds this album only. None when the song cannot be read.
+    pub async fn album_on_disk(self: &Arc<Self>, song_path: &str) -> Option<AlbumOnDisk> {
+        let worker = Arc::clone(self);
+        let song_path = song_path.to_string();
+        tokio::task::spawn_blocking(move || worker.read_album_on_disk(&song_path))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    fn read_album_on_disk(&self, song_path: &str) -> Option<AlbumOnDisk> {
+        let song = read_song(song_path)?;
+        let folder = Path::new(song_path).parent()?.to_string_lossy().into_owned();
+        let in_folder = audio_files_in(Path::new(&folder)).ok()?;
+        let key = album_key(&song);
+        let mut songs: Vec<SongFile> = if is_null_or_white_space(song.album.as_deref()) {
+            vec![song.clone()]
+        } else {
+            in_folder
+                .iter()
+                .filter_map(|path| {
+                    if path == song_path {
+                        Some(song.clone())
+                    } else {
+                        read_song(path)
+                    }
+                })
+                .filter(|other| album_key(other) == key)
+                .collect()
+        };
+        if songs.is_empty() {
+            songs.push(song.clone());
+        }
+        let paths: Vec<String> = songs.iter().map(|song| song.path.clone()).collect();
+        let folder_cover = if in_folder.iter().all(|path| paths.contains(path)) {
+            self.folder_cover(&folder, true)
+                .ok()
+                .flatten()
+                .map(|(path, _)| path)
+        } else {
+            None
+        };
+        let shown = TagFile::open(song_path)
+            .ok()
+            .and_then(|file| front_of(&file.pictures()))
+            .map(|picture| picture.data)
+            .filter(|bytes| !bytes.is_empty())
+            .or_else(|| {
+                let (file, _) = self.folder_cover(&folder, true).ok().flatten()?;
+                std::fs::read(file).ok()
+            });
+        let query = AlbumCoverQuery {
+            artist: song.artist.clone(),
+            album: song.album.clone(),
+            title: song.title.clone(),
+            music_brainz_release_id: songs
+                .iter()
+                .find_map(|song| song.release_id.clone().filter(|id| !id.is_empty())),
+            music_brainz_release_group_id: songs
+                .iter()
+                .find_map(|song| song.release_group_id.clone().filter(|id| !id.is_empty())),
+            barcode: songs
+                .iter()
+                .find_map(|song| song.barcode.clone().filter(|code| !code.is_empty())),
+        };
+        Some(AlbumOnDisk {
+            key,
+            paths,
+            query,
+            shown,
+            folder_cover,
+        })
+    }
+
+    /// Puts a cover none of `rejected` is on every song of one album, and in its folder's cover
+    /// file, whatever size it is: the one there was wrong, not small. Each replaced picture is
+    /// kept first, as a run keeps them, so Undo puts these back too. None when no other cover
+    /// was found, and then nothing was touched. An error says why nothing could be written.
+    pub async fn replace_album_cover(
+        &self,
+        album: &AlbumOnDisk,
+        rejected: &RejectedCovers,
+    ) -> Result<Option<AlbumCoverReplaced>, String> {
+        if self.is_busy() {
+            return Err("The cover upgrade is running; this waits until it is done.".into());
+        }
+        let Some(found) = self.finder.find_excluding(&album.query, rejected).await else {
+            return Ok(None);
+        };
+        let embed = if self.settings.current().metadata.embed_full_size_covers {
+            found.bytes.clone()
+        } else {
+            cover_image::fit_within(&found.bytes, MetadataSettings::EMBEDDED_COVER_SIDE as u32)
+        };
+        let embed = Arc::new(embed);
+        let run_id = new_run_id();
+        let mut files = 0;
+        let mut failures = Vec::new();
+        for path in &album.paths {
+            match self.try_write_embedded(path, embed.clone(), &run_id).await {
+                Ok(true) => files += 1,
+                Ok(false) => failures.push(format!("{path}: the old cover could not be kept")),
+                Err(message) => failures.push(format!("{path}: {message}")),
+            }
+        }
+        let mut folder_cover = false;
+        if let Some(path) = &album.folder_cover {
+            match self.try_write_folder_cover(path, &found.bytes, &run_id).await {
+                Ok(true) => folder_cover = true,
+                Ok(false) => failures.push(format!("{path}: the old cover could not be kept")),
+                Err(message) => failures.push(format!("{path}: {message}")),
+            }
+        }
+        for failure in &failures {
+            warn!("Wrong cover could not write {failure}");
+        }
+        if files == 0 && !folder_cover {
+            return Err(failures
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "There was no song to write the cover into.".into()));
+        }
+        self.rescan().await;
+        Ok(Some(AlbumCoverReplaced {
+            source: found.source,
+            files,
+            folder_cover,
+        }))
     }
 
     /// A write's failure goes on the run, as the C# catch put it there.
@@ -1948,6 +2117,16 @@ fn front_index(pictures: &[TagPicture]) -> Option<usize> {
         .iter()
         .position(|picture| picture.picture_type == FRONT_COVER)
         .or(if pictures.is_empty() { None } else { Some(0) })
+}
+
+/// The key an album's rejected covers are kept under.
+fn album_key(song: &SongFile) -> String {
+    match song.album.as_deref() {
+        Some(album) if !is_null_or_white_space(Some(album)) => {
+            format!("{}|{}", SongIdentity::key(&song.artist), SongIdentity::key(album))
+        }
+        _ => format!("\u{1}{}", song.path),
+    }
 }
 
 fn front_of(pictures: &[TagPicture]) -> Option<TagPicture> {

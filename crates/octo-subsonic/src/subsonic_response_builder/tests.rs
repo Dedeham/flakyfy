@@ -1098,14 +1098,14 @@ fn library_actions_offer_what_is_enabled() {
     assert_eq!(json["subsonic-response"]["libraryActions"]["admin"], true);
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove", "upgrade"])
+        json!(["remove", "upgrade", "lyrics", "cover-swap"])
     );
     let json = json_of(
         &builder().create_library_actions_response(&on, None, 3, false, "Lidarr", true, false, false),
     );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove"])
+        json!(["remove", "lyrics", "cover-swap"])
     );
     // Version 3 (374dac8, f2c6a65): remove only for a Navidrome admin; the edits whenever the
     // server can make them, cover last and only with a cover finder.
@@ -1113,7 +1113,16 @@ fn library_actions_offer_what_is_enabled() {
         json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["upgrade", "retag", "joinAlbum", "lookup", "undo", "restore"])
+        json!([
+            "upgrade",
+            "lyrics",
+            "cover-swap",
+            "retag",
+            "joinAlbum",
+            "lookup",
+            "undo",
+            "restore"
+        ])
     );
     let json = json_of(
         &builder().create_library_actions_response(&off, None, 1, false, "Soulseek", true, true, true),
@@ -1132,6 +1141,37 @@ fn library_actions_offer_what_is_enabled() {
             .text(),
         r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryAction":{"id":"s1","action":"upgrade","state":"queued","detail":null}}}"#
     );
+}
+
+#[test]
+fn wrong_lyrics_and_wrong_cover_are_offered_only_when_switched_on() {
+    use octo_core::settings::{LibraryAction, LibraryActionDefinition};
+    let only = |action: LibraryAction| LibraryActionSettings {
+        enabled: true,
+        allowed_users: vec!["alice".into()],
+        actions: vec![LibraryActionDefinition {
+            action,
+            enabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let offered = |settings: &LibraryActionSettings| {
+        json_of(&builder().create_library_actions_response(
+            settings,
+            Some("alice"),
+            1,
+            false,
+            "Soulseek",
+            false,
+            false,
+            false,
+        ))["subsonic-response"]["libraryActions"]["actions"]
+            .clone()
+    };
+    assert_eq!(offered(&only(LibraryAction::WrongLyrics)), json!(["lyrics"]));
+    assert_eq!(offered(&only(LibraryAction::WrongCover)), json!(["cover-swap"]));
+    assert_eq!(offered(&only(LibraryAction::Keep)), json!([]));
 }
 
 // ---- getOpenSubsonicExtensions --------------------------------------------------------------

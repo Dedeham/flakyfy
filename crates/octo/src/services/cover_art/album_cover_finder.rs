@@ -12,6 +12,7 @@ use octo_core::common::{SongIdentity, SongMatchOptions, dotnet};
 use octo_core::metadata::deezer_metadata_service::AlbumHit;
 use octo_media::cover::cover_image;
 use parking_lot::Mutex;
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_util::sync::CancellationToken;
@@ -63,6 +64,37 @@ impl FoundCover {
     }
 }
 
+/// Pictures someone turned down for an album: by their SHA-256, and by how they look, so a copy
+/// of the same artwork at another size or compression is turned down too.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RejectedCovers {
+    pub hashes: HashSet<[u8; 32]>,
+    pub looks: Vec<u64>,
+}
+
+impl RejectedCovers {
+    pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+        Sha256::digest(bytes).into()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty() && self.looks.is_empty()
+    }
+
+    /// Whether this picture is one of them, or looks like one.
+    pub fn rejects(&self, bytes: &[u8]) -> bool {
+        if self.hashes.contains(&Self::sha256(bytes)) {
+            return true;
+        }
+        !self.looks.is_empty()
+            && cover_image::looks_hash(Some(bytes)).is_some_and(|looks| {
+                self.looks
+                    .iter()
+                    .any(|rejected| cover_image::look_alike(*rejected, looks))
+            })
+    }
+}
+
 /// What a priming run says it is doing, in words (`IProgress<string>`).
 pub type PrimeStatus<'a> = &'a (dyn Fn(String) + Send + Sync);
 
@@ -77,6 +109,14 @@ pub trait IAlbumCoverFinder: Send + Sync {
     /// a tile and for `cover_image::looks_hash`. For a preview.
     async fn preview(&self, query: &AlbumCoverQuery) -> Option<FoundCover> {
         self.find(query).await
+    }
+
+    /// The largest cover that is none of the `rejected` ones. A finder that knows several
+    /// answers passes over the rejected ones to the next; this one only drops its answer.
+    async fn find_excluding(&self, query: &AlbumCoverQuery, rejected: &RejectedCovers) -> Option<FoundCover> {
+        self.find(query)
+            .await
+            .filter(|found| !rejected.rejects(&found.bytes))
     }
 
     /// Gets ready for many albums at once, before [`IAlbumCoverFinder::find`] is asked about
@@ -181,7 +221,12 @@ impl AlbumCoverFinder {
         }
     }
 
-    async fn choose(&self, query: &AlbumCoverQuery, probe_only: bool) -> Option<FoundCover> {
+    async fn choose(
+        &self,
+        query: &AlbumCoverQuery,
+        probe_only: bool,
+        rejected: Option<&RejectedCovers>,
+    ) -> Option<FoundCover> {
         let album = query.album.as_deref().filter(|album| !dotnet::is_blank(album));
         // An album being primed waits for its own batch at Apple, so its master is matched in
         // bulk rather than searched; the other sources start at once.
@@ -255,7 +300,9 @@ impl AlbumCoverFinder {
             let Some(bytes) = bytes else {
                 continue;
             };
-            if !cover_image::is_usable(Some(&bytes), true) {
+            if !cover_image::is_usable(Some(&bytes), true)
+                || rejected.is_some_and(|rejected| rejected.rejects(&bytes))
+            {
                 continue;
             }
             let Some((width, height)) = cover_image::measure(&bytes) else {
@@ -321,11 +368,15 @@ impl AlbumCoverFinder {
 #[async_trait]
 impl IAlbumCoverFinder for AlbumCoverFinder {
     async fn find(&self, query: &AlbumCoverQuery) -> Option<FoundCover> {
-        self.choose(query, false).await
+        self.choose(query, false, None).await
     }
 
     async fn preview(&self, query: &AlbumCoverQuery) -> Option<FoundCover> {
-        self.choose(query, true).await
+        self.choose(query, true, None).await
+    }
+
+    async fn find_excluding(&self, query: &AlbumCoverQuery, rejected: &RejectedCovers) -> Option<FoundCover> {
+        self.choose(query, false, Some(rejected)).await
     }
 
     async fn prime(&self, albums: &[AlbumCoverQuery], status: Option<PrimeStatus<'_>>) -> anyhow::Result<()> {

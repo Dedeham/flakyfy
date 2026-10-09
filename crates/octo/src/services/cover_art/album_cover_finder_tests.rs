@@ -100,6 +100,44 @@ async fn the_largest_square_cover_of_the_three_sources_wins() {
     assert_eq!((found.source.as_str(), found.side), ("Deezer", 1000));
 }
 
+/// A turned-down picture is passed over for the next largest, and so is any picture that looks
+/// like it (the two sources here serve the same grey artwork at two sizes).
+#[tokio::test]
+async fn a_rejected_cover_and_its_look_alikes_are_passed_over() {
+    let server = MockServer::start().await;
+    serve_json(&server, "/search", r#"{"results":[]}"#.into()).await;
+    let largest = jpeg(1200, 1200);
+    serve(&server, "/release/rel-1/front-1200", largest.clone()).await;
+    serve_json(
+        &server,
+        "/search/album",
+        deezer_hits(&server, 7, "Discovery", "/cdn/discovery.jpg"),
+    )
+    .await;
+    serve(&server, "/cdn/discovery.jpg", jpeg(1000, 1000)).await;
+    let finder = finder(&server);
+    let query = AlbumCoverQuery {
+        music_brainz_release_id: Some("rel-1".into()),
+        ..AlbumCoverQuery::new("Daft Punk", Some("Discovery".into()), None)
+    };
+
+    let by_hash = RejectedCovers {
+        hashes: [RejectedCovers::sha256(&largest)].into(),
+        looks: Vec::new(),
+    };
+    let found = finder
+        .find_excluding(&query, &by_hash)
+        .await
+        .expect("the next cover");
+    assert_eq!((found.source.as_str(), found.side), ("Deezer", 1000));
+
+    let by_look = RejectedCovers {
+        looks: vec![cover_image::looks_hash(Some(&largest)).expect("a look")],
+        ..by_hash
+    };
+    assert!(finder.find_excluding(&query, &by_look).await.is_none());
+}
+
 #[tokio::test]
 async fn a_wide_picture_is_no_cover() {
     let server = MockServer::start().await;

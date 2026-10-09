@@ -22,6 +22,12 @@ pub const REMOVE_ACTION: &str = "remove";
 /// song keeping its place. Queued, never run inside the request.
 pub const UPGRADE_ACTION: &str = "upgrade";
 
+/// The Wrong lyrics action: show the next source's lyrics for the song and never these again.
+pub const LYRICS_ACTION: &str = "lyrics";
+
+/// The Wrong cover action: put another cover on the song's album and never use this one again.
+pub const COVER_SWAP_ACTION: &str = "cover-swap";
+
 /// Version 3: write tags into a song's file, in place.
 pub const RETAG_ACTION: &str = "retag";
 
@@ -134,6 +140,12 @@ fn offered_actions(
     }
     if enabled.contains(&LibraryAction::BetterQuality) && upgrade_ready {
         offered.push(UPGRADE_ACTION);
+    }
+    if enabled.contains(&LibraryAction::WrongLyrics) {
+        offered.push(LYRICS_ACTION);
+    }
+    if enabled.contains(&LibraryAction::WrongCover) {
+        offered.push(COVER_SWAP_ACTION);
     }
     if edits {
         offered.extend([

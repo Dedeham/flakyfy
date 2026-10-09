@@ -1,6 +1,7 @@
 //! LyricsTests (Service_*), LyricsSongSourceTests (Ranked_*) and LyricsWordTimingTests
 //! (Order_*).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -345,4 +346,67 @@ async fn an_instrumental_answer_ends_the_search() {
 
     assert!(lookup.result.expect("an answer").instrumental);
     assert_eq!(words.calls(), 0);
+}
+
+// ---- Wrong lyrics ---------------------------------------------------------------------------
+
+fn found_as(source: &str, synced: &str, candidate: &str) -> LyricsLookup {
+    LyricsLookup::new(
+        Some(LyricsResult::new(source, Some(synced.to_string()), None, false).with_candidate_id(candidate)),
+        false,
+    )
+}
+
+#[tokio::test]
+async fn a_rejected_candidate_is_never_returned_and_the_next_source_answers() {
+    let kugou = FakeSource::new("kugou", || found_as("KuGou", LINES, "kugou:1.a"));
+    let lrclib = FakeSource::new("lrclib", || found_as("LRCLIB", LINES, "lrclib:9"));
+    let service = service("kugou,lrclib", false, &[kugou, lrclib]);
+
+    let first = service
+        .find_skipping(&query(), &none(), LyricsTiming::None, &HashSet::new())
+        .await;
+    assert_eq!(source_of(&first), "KuGou");
+
+    let skip: HashSet<String> = ["kugou:1.a".to_string()].into();
+    let next = service
+        .find_skipping(&query(), &none(), LyricsTiming::None, &skip)
+        .await;
+    assert_eq!(source_of(&next), "LRCLIB");
+    assert_eq!(
+        next.result.and_then(|r| r.candidate_id).as_deref(),
+        Some("lrclib:9")
+    );
+
+    // The plain lookup is not affected by what one song turned down.
+    let plain = service.find(&query(), &none(), LyricsTiming::None).await;
+    assert_eq!(source_of(&plain), "KuGou");
+}
+
+#[tokio::test]
+async fn the_songs_own_lyrics_can_be_turned_down_too() {
+    let lrclib = FakeSource::new("lrclib", || found_as("LRCLIB", LINES, "lrclib:9"));
+    let service = service("song,lrclib", false, &[lrclib]);
+
+    let own = service.find(&query(), &none(), LyricsTiming::Line).await;
+    assert!(own.result.expect("found").is_songs_own());
+
+    let skip: HashSet<String> = [MetadataSettings::SONG_LYRICS_SOURCE.to_string()].into();
+    let next = service
+        .find_skipping(&query(), &none(), LyricsTiming::Line, &skip)
+        .await;
+    assert_eq!(source_of(&next), "LRCLIB");
+}
+
+#[tokio::test]
+async fn every_candidate_turned_down_is_a_miss() {
+    let lrclib = FakeSource::new("lrclib", || found_as("LRCLIB", LINES, "lrclib:9"));
+    let service = service("lrclib", false, &[lrclib]);
+
+    let skip: HashSet<String> = ["lrclib:9".to_string()].into();
+    let next = service
+        .find_skipping(&query(), &none(), LyricsTiming::None, &skip)
+        .await;
+    assert!(next.result.is_none());
+    assert!(!next.transient);
 }

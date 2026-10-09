@@ -120,6 +120,7 @@ pub(crate) struct Extras {
     pub stars: Option<Arc<StarOnArrival>>,
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     pub sources: Option<Arc<UpgradeSources>>,
+    pub answers: Option<super::SongAnswers>,
 }
 
 /// An executor over `settings`; whatever `extras` leaves out is real and idle.
@@ -147,5 +148,6 @@ pub(crate) fn executor(settings: &Arc<SettingsStore>, extras: Extras) -> Arc<Lib
         stars: extras.stars,
         soulseek_link: extras.soulseek_link,
         sources: extras.sources,
+        answers: extras.answers,
     }))
 }

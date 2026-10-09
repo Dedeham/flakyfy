@@ -408,6 +408,7 @@ impl World {
             fetcher: fetcher.clone(),
             stars: self.stars.clone(),
             events: Arc::new(FamilyEvents::new()),
+            playlists: self.playlists.clone(),
         });
         (service, fetcher)
     }

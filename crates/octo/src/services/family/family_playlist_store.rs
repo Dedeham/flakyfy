@@ -32,6 +32,13 @@ pub struct FamilyPlaylistEntry {
     /// Waiting for an approver (playlists that need approval for additions).
     #[serde(default)]
     pub pending: bool,
+    /// The outside version's length in seconds, as the catalog gave it when it was added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<i64>,
+    /// The outside version's explicit mark (`explicit`, `clean`, or empty for none), as the
+    /// catalog gave it when it was added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explicit_status: Option<String>,
 }
 
 /// One family playlist.
@@ -239,6 +246,8 @@ mod tests {
             added_by: by.to_string(),
             added: now(),
             pending: false,
+            duration: None,
+            explicit_status: None,
         }
     }
 

@@ -7,11 +7,14 @@
 pub mod audio_gate;
 pub mod caller;
 pub mod device_registry;
+#[cfg(test)]
+pub(crate) mod fake_navidrome;
 pub mod family_playlist_store;
 pub mod family_playlists;
 pub mod family_pool_store;
 pub mod family_service;
 pub mod family_store;
+pub mod hooks;
 pub mod kid_filter;
 pub mod library_index;
 pub mod library_write_gate;

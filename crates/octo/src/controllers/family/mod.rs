@@ -16,6 +16,8 @@ pub mod manage;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wiring_tests;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

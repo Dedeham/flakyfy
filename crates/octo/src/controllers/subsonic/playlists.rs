@@ -29,10 +29,11 @@ use super::action_helpers::{
     queue_refresh_if_stale, xml_value,
 };
 use crate::app::AppState;
+use crate::services::family::audio_gate::ExplicitMark;
 use crate::services::family::family_playlists::{
     self, FAMILY_OWNER, NewEntry, PlaylistError, SHARED_SCOPE, Serve, personal_scope,
 };
-use crate::services::family::{FamilyCaller, FamilyPlaylist, family_caller, kid_filter};
+use crate::services::family::{FamilyCaller, FamilyPlaylist, FamilyPlaylistEntry, family_caller, kid_filter};
 use crate::services::library::library_action_playlist_provisioner::{
     REMOVE_PLAYLIST, REQUEST_FLAC_PLAYLIST, REQUEST_PLAYLIST,
 };
@@ -95,7 +96,7 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
     };
     // The chart lists, on whether or not the mixes are: after the stations, before the mixes.
     let charts = state.chart_playlists.list(&username, &call.parameters).await;
-    let family = family_rows(&state, caller.as_ref());
+    let family = family_rows(&state, caller.as_ref()).await;
     if stations.is_empty() && family.is_empty() && charts.is_empty() && generated.is_empty() {
         return call.file(&relay.body, relay.content_type.as_deref());
     }
@@ -158,46 +159,117 @@ pub(crate) fn chart_playlist_fields(
 
 /// The family playlists as playlist rows for this caller: none while Family is off or for an
 /// account outside the family.
-fn family_rows(state: &AppState, caller: Option<&FamilyCaller>) -> Vec<serde_json::Map<String, Value>> {
+async fn family_rows(state: &AppState, caller: Option<&FamilyCaller>) -> Vec<serde_json::Map<String, Value>> {
     if !state.settings.current().family.enabled {
         return Vec::new();
     }
     let Some(caller) = caller else {
         return Vec::new();
     };
-    family_playlists::visible_playlists(&state.family_playlists, caller)
-        .iter()
-        .map(|playlist| family_playlist_fields(state, playlist, caller))
+    let mut rows = Vec::new();
+    for playlist in family_playlists::visible_playlists(&state.family_playlists, caller) {
+        let (count, seconds) = family_playlist_totals(state, &playlist, caller).await;
+        rows.push(family_playlist_fields(&playlist, caller, count, seconds));
+    }
+    rows
+}
+
+/// What a family playlist's row counts for `viewer`: the songs they are shown and how many
+/// seconds those last. A kid profile's count and length leave out explicit songs, library and
+/// outside alike, as their `getPlaylist` answer does.
+async fn family_playlist_totals(
+    state: &AppState,
+    playlist: &FamilyPlaylist,
+    viewer: &FamilyCaller,
+) -> (usize, i64) {
+    let kid = kid_filter::is_kid(viewer);
+    let unrated = state.settings.current().family.kid_unrated_is_explicit;
+    let index = &state.library_index;
+    let songs: Vec<(i64, bool)> = futures::stream::iter(family_playlists::shown_entries(playlist, viewer))
+        .map(|shown| async move {
+            match shown.serve {
+                Serve::Library { id, .. } => {
+                    let seconds = index.song(&id).map_or(0, |song| i64::from(song.duration));
+                    let explicit = kid && kid_filter::song_is_explicit(index, &id, None, unrated);
+                    (seconds, explicit)
+                }
+                Serve::Outside(id) => {
+                    let stored = playlist.entries.get(shown.stored);
+                    let (seconds, mark) = outside_facts(state, stored, &id).await;
+                    (seconds.unwrap_or(0), kid && mark.blocks_clean_only(unrated))
+                }
+            }
+        })
+        .buffered(FAMILY_SONGS_AT_ONCE)
         .collect()
+        .await;
+    songs
+        .iter()
+        .filter(|(_, explicit)| !explicit)
+        .fold((0, 0), |(count, total), (seconds, _)| {
+            (count + 1, total + seconds)
+        })
+}
+
+/// An outside song's length and explicit mark: as the entry kept them when it was added, else
+/// from the catalog now.
+async fn outside_facts(
+    state: &AppState,
+    stored: Option<&FamilyPlaylistEntry>,
+    id: &str,
+) -> (Option<i64>, ExplicitMark) {
+    if let Some(entry) = stored.filter(|e| e.outside_id.as_deref() == Some(id))
+        && (entry.duration.is_some() || entry.explicit_status.is_some())
+    {
+        return (
+            entry.duration,
+            ExplicitMark::from_status(entry.explicit_status.as_deref().unwrap_or("")),
+        );
+    }
+    let (duration, status) = outside_lookup(state, id).await;
+    (
+        duration,
+        ExplicitMark::from_status(status.as_deref().unwrap_or("")),
+    )
+}
+
+/// An outside song's length in seconds and its explicit mark word, from the catalog.
+async fn outside_lookup(state: &AppState, id: &str) -> (Option<i64>, Option<String>) {
+    let (external, provider, external_id) = state.local_library.parse_song_id(id);
+    if !external {
+        return (None, None);
+    }
+    let Some(song) = state
+        .metadata_service
+        .get_song(
+            provider.as_deref().unwrap_or_default(),
+            external_id.as_deref().unwrap_or_default(),
+        )
+        .await
+    else {
+        return (None, None);
+    };
+    let status = match ExplicitMark::from_catalog(song.explicit_content_lyrics) {
+        ExplicitMark::Explicit => "explicit",
+        ExplicitMark::Clean => "clean",
+        ExplicitMark::Unrated => "",
+    };
+    (song.duration.map(i64::from), Some(status.to_string()))
 }
 
 fn utc_millis(at: &DateTime<Utc>) -> String {
     at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
-/// One family playlist's row as `viewer` sees it: owned by "Family", public, with the count of
-/// the songs this viewer is shown (for a kid profile, without the library songs marked
-/// explicit). Read-only for a viewer who cannot change it.
+/// One family playlist's row as `viewer` sees it: owned by "Family", public, with the number
+/// of songs this viewer is shown and how long they last. Read-only for a viewer who cannot
+/// change it.
 fn family_playlist_fields(
-    state: &AppState,
     playlist: &FamilyPlaylist,
     viewer: &FamilyCaller,
+    count: usize,
+    seconds: i64,
 ) -> serde_json::Map<String, Value> {
-    let shown = family_playlists::shown_entries(playlist, viewer);
-    let count = if kid_filter::is_kid(viewer) {
-        let unrated = state.settings.current().family.kid_unrated_is_explicit;
-        shown
-            .iter()
-            .filter(|entry| match &entry.serve {
-                Serve::Library { id, .. } => {
-                    !kid_filter::song_is_explicit(&state.library_index, id, None, unrated)
-                }
-                Serve::Outside(_) => true,
-            })
-            .count()
-    } else {
-        shown.len()
-    };
     let changed = playlist
         .entries
         .iter()
@@ -212,7 +284,7 @@ fn family_playlist_fields(
     fields.insert("owner".into(), FAMILY_OWNER.into());
     fields.insert("public".into(), true.into());
     fields.insert("songCount".into(), count.into());
-    fields.insert("duration".into(), 0.into());
+    fields.insert("duration".into(), seconds.into());
     fields.insert("created".into(), utc_millis(&playlist.created).into());
     fields.insert("changed".into(), utc_millis(&changed).into());
     fields.insert("readonly".into(), (!family_playlists::may_edit(viewer)).into());
@@ -743,7 +815,13 @@ async fn family_playlist(
         .filter_map(|song| async move { song })
         .collect()
         .await;
-    let fields = family_playlist_fields(state, &playlist, caller);
+    // The whole list's count and length; a kid profile's answer rule then takes out the
+    // explicit songs and lowers both.
+    let seconds = entries
+        .iter()
+        .map(|song| song.get("duration").and_then(Value::as_i64).unwrap_or(0))
+        .sum();
+    let fields = family_playlist_fields(&playlist, caller, entries.len(), seconds);
     state
         .subsonic_response_builder
         .create_chart_playlist_response(&call.format, fields, &entries)
@@ -881,8 +959,11 @@ async fn new_entry(state: &AppState, id: &str) -> Option<NewEntry> {
     }
     let (external, _, _) = state.local_library.parse_song_id(id);
     if external {
+        let (duration, explicit_status) = outside_lookup(state, id).await;
         return Some(NewEntry {
             outside_id: Some(id.to_string()),
+            duration,
+            explicit_status,
             ..NewEntry::default()
         });
     }
@@ -893,10 +974,16 @@ async fn new_entry(state: &AppState, id: &str) -> Option<NewEntry> {
         .and_then(|library| state.library_scope.personal_library_owner(library))
         .map_or_else(|| SHARED_SCOPE.to_string(), |owner| personal_scope(&owner));
     let outside_id = outside_id_of(state, id, indexed.as_ref().map(|song| song.path.as_str())).await;
+    let (duration, explicit_status) = match &outside_id {
+        Some(outside) => outside_lookup(state, outside).await,
+        None => (None, None),
+    };
     Some(NewEntry {
         library_id: Some(id.to_string()),
         scope,
         outside_id,
+        duration,
+        explicit_status,
     })
 }
 

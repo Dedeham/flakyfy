@@ -96,6 +96,11 @@ fn library_song(id: &str) -> Option<&'static LibrarySong> {
     SONGS.iter().find(|song| song.id == id)
 }
 
+/// Every song is Rock but Alex's own album of one, which is Pop.
+fn genre_of(id: &str) -> &'static str {
+    if id == "s-alex-only" { "Pop" } else { "Rock" }
+}
+
 /// A song as Navidrome answers it. Older clients (DSub) get no `explicitStatus`.
 fn song_json(song: &LibrarySong, legacy: bool) -> Value {
     let mut fields = json!({
@@ -166,6 +171,12 @@ impl FakeNavidrome {
             "getRandomSongs" => ok(json!({"randomSongs": {
                 "song": songs(&["s-clean", "s-explicit", "s-alex"]),
             }})),
+            // Navidrome counts every library for an admin: Rock is the three shared songs, Alex's
+            // and Sam's (albums al-shared, al-alex, al-sam), Pop is Alex's own album alone.
+            "getGenres" => ok(json!({"genres": {"genre": [
+                {"value": "Rock", "songCount": 5, "albumCount": 3},
+                {"value": "Pop", "songCount": 1, "albumCount": 1},
+            ]}})),
             "getPlaylist" | "updatePlaylist" | "deletePlaylist" => json!({"status": "failed",
                 "version": "1.16.1", "error": {"code": 70, "message": "Playlist not found"}}),
             _ => ok(json!({})),
@@ -246,7 +257,10 @@ async fn fixture_with(enabled: bool, change: impl FnOnce(&mut FamilySettings)) -
                 "id": song.id, "albumId": song.album, "artistId": song.artist,
                 "albumArtistId": song.artist, "libraryId": song.library, "libraryPath": base,
                 "path": format!("{}/{}.flac", song.album, song.id),
-                "explicitStatus": song.explicit, "size": 1000, "title": song.id
+                "explicitStatus": song.explicit, "size": 1000, "title": song.id,
+                "duration": song.seconds as f64 + 0.4,
+                "genre": genre_of(song.id),
+                "genres": [{"id": format!("g-{}", genre_of(song.id)), "name": genre_of(song.id)}]
             })
         })
         .collect();
@@ -406,6 +420,7 @@ fn library(id: &str, scope: &str, outside: Option<&str>) -> NewEntry {
         library_id: Some(id.into()),
         scope: scope.into(),
         outside_id: outside.map(str::to_string),
+        ..NewEntry::default()
     }
 }
 
@@ -928,4 +943,159 @@ async fn family_off_changes_no_answer() {
     }
     let random = f.get("alex", "getRandomSongs?f=json").await.text();
     assert!(!random.contains("octoPersonal"), "{random}");
+}
+
+// ---- Genres, playlist lengths and playlist additions ----
+
+#[tokio::test]
+async fn owner_genres_leave_out_members_own_songs() {
+    let f = fixture(true).await;
+    let owner = f.json("winters", "getGenres").await;
+    assert_eq!(
+        owner["genres"]["genre"],
+        json!([{"value": "Rock", "songCount": 3, "albumCount": 1}]),
+        "{owner}"
+    );
+    let xml = f.get("winters", "getGenres").await.text();
+    assert!(
+        xml.contains(r#"songCount="3""#) && xml.contains(r#"albumCount="1""#),
+        "{xml}"
+    );
+    assert!(!xml.contains("Pop"), "{xml}");
+    // Members' answers are Navidrome's own (their libraries are theirs).
+    let alex = f.json("alex", "getGenres").await;
+    assert_eq!(alex["genres"]["genre"][0]["songCount"], 5, "{alex}");
+    assert_eq!(alex["genres"]["genre"][1]["value"], "Pop", "{alex}");
+    // An owner who chose to see members' music sees every count.
+    let sees = fixture_with(true, |family| family.owner_sees_member_libraries = true).await;
+    let all = sees.json("winters", "getGenres").await;
+    assert_eq!(all["genres"]["genre"][0]["songCount"], 5, "{all}");
+}
+
+#[tokio::test]
+async fn family_playlist_rows_carry_their_length_and_kids_lose_explicit_outside_songs() {
+    let f = fixture(true).await;
+    let id = f.playlist(
+        false,
+        vec![
+            library("s-clean", SHARED_SCOPE, None),
+            library("s-explicit", SHARED_SCOPE, None),
+            outside(OUTSIDE),
+            outside(OUTSIDE_EXPLICIT),
+        ],
+    );
+    let owner = f.json("winters", "getPlaylists").await;
+    let row_of = |answer: &Value| row(answer, &id).cloned().expect("listed");
+    let listed = row_of(&owner);
+    assert_eq!(listed["songCount"], 4, "{listed}");
+    // 200 and 150 seconds from the library index, 180 each from the catalog.
+    assert_eq!(listed["duration"], 710, "{listed}");
+    let kid = row_of(&f.json("kid", "getPlaylists").await);
+    assert_eq!(kid["songCount"], 2, "{kid}");
+    assert_eq!(kid["duration"], 380, "{kid}");
+    // The playlist itself says the same as its row, for the kid and for everyone else.
+    let kid_list = f.json("kid", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(kid_list["playlist"]["songCount"], 2, "{kid_list}");
+    assert_eq!(kid_list["playlist"]["duration"], 380, "{kid_list}");
+    let sam_list = f.json("sam", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(sam_list["playlist"]["duration"], 710, "{sam_list}");
+}
+
+#[tokio::test]
+async fn an_outside_song_added_keeps_its_length_and_mark() {
+    let f = fixture(true).await;
+    let id = f.playlist(false, Vec::new());
+    let added = f
+        .json(
+            "alex",
+            &format!("updatePlaylist?playlistId={id}&songIdToAdd={OUTSIDE_EXPLICIT}"),
+        )
+        .await;
+    assert_eq!(added["status"], "ok", "{added}");
+    let entry = f.entries(&id).pop().expect("added");
+    assert_eq!(entry.duration, Some(180));
+    assert_eq!(entry.explicit_status.as_deref(), Some("explicit"));
+}
+
+#[tokio::test]
+async fn a_held_addition_is_a_request_approving_adds_it_and_declining_drops_it() {
+    let f = fixture(true).await;
+    let id = f.playlist(true, Vec::new());
+    let add = |song: &'static str| {
+        let id = id.clone();
+        let f = &f;
+        async move {
+            f.json(
+                "sam",
+                &format!("updatePlaylist?playlistId={id}&songIdToAdd={song}"),
+            )
+            .await
+        }
+    };
+    assert_eq!(add(OUTSIDE).await["status"], "ok");
+    let entries = f.entries(&id);
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].pending, "a listener's addition waits");
+    let requests = &f.state.family_requests;
+    let titled = crate::services::family::test_support::eventually(|| {
+        requests
+            .for_user("sam")
+            .iter()
+            .any(|r| r.title == "Outside" && r.artist == "Somebody")
+    })
+    .await;
+    assert!(titled, "{:?}", requests.for_user("sam"));
+    let asked = requests.for_user("sam").pop().expect("a request");
+    assert_eq!(asked.kind, octo_core::family::request::RequestKind::PlaylistAdd);
+    assert_eq!(asked.state, octo_core::family::request::RequestState::Pending);
+    assert_eq!(asked.note, "For the family playlist Road trip");
+    assert_eq!(
+        requests.quota_used("sam", Utc::now()),
+        0,
+        "an addition takes no slot"
+    );
+
+    // Approving puts the song in the playlist for everyone.
+    f.state
+        .family_request_service
+        .approve(&asked.id, "winters", None)
+        .expect("approved");
+    let added = crate::services::family::test_support::eventually(|| {
+        f.entries(&id).first().is_some_and(|e| !e.pending)
+            && requests
+                .get(&asked.id)
+                .is_some_and(|r| r.state == octo_core::family::request::RequestState::Done)
+    })
+    .await;
+    assert!(added, "{:?} {:?}", f.entries(&id), requests.get(&asked.id));
+    let alex = f.json("alex", &format!("getPlaylist?id={id}")).await;
+    assert_eq!(ids(&alex["playlist"]["entry"]), [OUTSIDE], "{alex}");
+
+    // Declining takes the song back out.
+    assert_eq!(add(OUTSIDE_EXPLICIT).await["status"], "ok");
+    assert_eq!(f.entries(&id).len(), 2);
+    let second = crate::services::family::test_support::eventually(|| {
+        requests
+            .for_user("sam")
+            .iter()
+            .any(|r| r.state == octo_core::family::request::RequestState::Pending)
+    })
+    .await;
+    assert!(second);
+    let waiting = requests
+        .for_user("sam")
+        .into_iter()
+        .find(|r| r.state == octo_core::family::request::RequestState::Pending)
+        .expect("waiting");
+    f.state
+        .family_request_service
+        .decline(&waiting.id, "winters", Some("Not this one"))
+        .expect("declined");
+    assert_eq!(
+        f.entries(&id)
+            .iter()
+            .map(|e| e.outside_id.clone())
+            .collect::<Vec<_>>(),
+        [Some(OUTSIDE.to_string())]
+    );
 }

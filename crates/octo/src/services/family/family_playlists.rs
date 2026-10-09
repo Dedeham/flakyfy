@@ -4,9 +4,9 @@
 //! - An entry waiting for approval is shown only to whoever added it and to approvers.
 //! - An entry is served as the library song when it is shared or in the viewer's own library;
 //!   otherwise as its outside version, when it has one.
-//! - Anyone with `FamilyPlaylistsEdit` adds and removes songs (kids cannot). Renaming and the
-//!   approval switch need the playlist's creator or `ManageFamily`; deleting needs
-//!   `ManageFamily`.
+//! - Anyone with `FamilyPlaylistsEdit` adds and removes songs (kids cannot) and makes
+//!   playlists. Renaming needs the playlist's creator or `ManageFamily`; the approval switch
+//!   (when making a playlist too) and deleting need `ManageFamily`.
 //! - In a playlist that needs approval, an addition by someone who cannot approve waits, and
 //!   [`PlaylistAddRequests`] is told so the approvers see it.
 
@@ -87,6 +87,7 @@ impl PlaylistError {
 const CANNOT_EDIT: &str = "This account cannot change family playlists.";
 const CANNOT_RENAME: &str = "Only the person who made this playlist or a family manager can change it.";
 const CANNOT_DELETE: &str = "Only a family manager can delete a family playlist.";
+const CANNOT_APPROVE: &str = "Only people who manage the family can ask for approval of additions.";
 
 /// Whether the caller sees family playlists: the owner and members.
 pub fn may_view(caller: &FamilyCaller) -> bool {
@@ -112,6 +113,11 @@ pub fn may_rename(caller: &FamilyCaller, playlist: &FamilyPlaylist) -> bool {
 
 /// Whether the caller may delete the playlist.
 pub fn may_delete(caller: &FamilyCaller) -> bool {
+    may_view(caller) && caller.abilities.manage_family
+}
+
+/// Whether the caller may turn approval of additions on or off.
+pub fn may_set_approval(caller: &FamilyCaller) -> bool {
     may_view(caller) && caller.abilities.manage_family
 }
 
@@ -196,6 +202,9 @@ pub fn create(
     if !may_edit(caller) {
         return Err(PlaylistError::NotAllowed(CANNOT_EDIT));
     }
+    if approve_additions && !may_set_approval(caller) {
+        return Err(PlaylistError::NotAllowed(CANNOT_APPROVE));
+    }
     if name.trim().is_empty() {
         return Err(PlaylistError::BlankName);
     }
@@ -231,9 +240,9 @@ pub fn set_approve(
     id: &str,
     approve_additions: bool,
 ) -> Result<FamilyPlaylist, PlaylistError> {
-    let playlist = find(store, caller, id).ok_or(PlaylistError::NotFound)?;
-    if !may_rename(caller, &playlist) {
-        return Err(PlaylistError::NotAllowed(CANNOT_RENAME));
+    find(store, caller, id).ok_or(PlaylistError::NotFound)?;
+    if !may_set_approval(caller) {
+        return Err(PlaylistError::NotAllowed(CANNOT_APPROVE));
     }
     store.set_approve(id, approve_additions);
     store.get(id).ok_or(PlaylistError::NotFound)
@@ -252,12 +261,15 @@ pub fn delete(store: &FamilyPlaylistStore, caller: &FamilyCaller, id: &str) -> R
     }
 }
 
-/// A song to add: its library song and scope, and its outside id, as far as they are known.
+/// A song to add: its library song and scope, and its outside id, as far as they are known,
+/// with the outside version's length and explicit mark when the catalog gave them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NewEntry {
     pub library_id: Option<String>,
     pub scope: String,
     pub outside_id: Option<String>,
+    pub duration: Option<i64>,
+    pub explicit_status: Option<String>,
 }
 
 /// Adds songs at the end. In a playlist that needs approval, a caller who cannot approve adds
@@ -285,6 +297,8 @@ pub fn add(
             added_by: caller.user.clone(),
             added: now,
             pending,
+            duration: song.duration,
+            explicit_status: song.explicit_status,
         })
         .collect();
     let added = entries.len();
@@ -347,6 +361,7 @@ mod tests {
             library_id: Some(id.into()),
             scope: scope.into(),
             outside_id: outside.map(str::to_string),
+            ..NewEntry::default()
         }
     }
 
@@ -552,6 +567,8 @@ mod tests {
             added_by: "sam".into(),
             added: now(),
             pending: true,
+            duration: None,
+            explicit_status: None,
         };
         hook.get().addition_waits(&playlist, 0, &entry, "sam");
         hook.set(told.clone());

@@ -37,6 +37,7 @@ use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
+use super::family_playlist_store::FamilyPlaylistStore;
 use super::family_store::{FamilyStore, Member};
 use super::personal_library::PersonalLibrary;
 use super::pool::{FamilyPool, LinkMode, MemberStars};
@@ -92,6 +93,11 @@ impl FamilyEvents {
     pub fn send(&self, event: FamilyEvent) {
         // Nobody listening is fine: the request itself is the record.
         let _ = self.sender.send(event);
+    }
+
+    /// How many listeners hear the events now.
+    pub fn listeners(&self) -> usize {
+        self.sender.receiver_count()
     }
 }
 
@@ -211,6 +217,8 @@ pub struct RequestParts {
     pub fetcher: Arc<dyn RequestFetcher>,
     pub stars: Arc<dyn MemberStars>,
     pub events: Arc<FamilyEvents>,
+    /// The family playlists whose waiting additions are requests too.
+    pub playlists: Arc<FamilyPlaylistStore>,
 }
 
 /// Members' requests. See the module comment.
@@ -224,7 +232,38 @@ pub struct RequestService {
     fetcher: Arc<dyn RequestFetcher>,
     stars: Arc<dyn MemberStars>,
     events: Arc<FamilyEvents>,
+    playlists: Arc<FamilyPlaylistStore>,
     timing: RequestTiming,
+}
+
+/// The target of a playlist addition request: `<playlist id>:<song id>`.
+pub fn playlist_addition_target(playlist_id: &str, song_id: &str) -> String {
+    format!("{playlist_id}:{song_id}")
+}
+
+/// A playlist addition request's playlist and song.
+fn playlist_addition_parts(target: &str) -> Option<(&str, &str)> {
+    target
+        .split_once(':')
+        .filter(|(playlist, song)| !playlist.is_empty() && !song.is_empty())
+}
+
+/// A request's titles from a file's place in the `<Artist>/<Album>/<file>` layout.
+pub fn facts_from_path(path: &str) -> RequestFacts {
+    let parts: Vec<&str> = path.rsplit('/').collect();
+    let file = parts.first().copied().unwrap_or("");
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    // "01 Title" and "01 - Title" read as the title.
+    let title = stem
+        .trim_start_matches(|c: char| c.is_ascii_digit())
+        .trim_start_matches([' ', '-', '.'])
+        .trim();
+    RequestFacts {
+        title: if title.is_empty() { stem } else { title }.to_string(),
+        artist: parts.get(2).copied().unwrap_or("").to_string(),
+        album: parts.get(1).copied().unwrap_or("").to_string(),
+        cover_art: String::new(),
+    }
 }
 
 impl RequestService {
@@ -243,6 +282,7 @@ impl RequestService {
             fetcher: parts.fetcher,
             stars: parts.stars,
             events: parts.events,
+            playlists: parts.playlists,
             timing,
         })
     }
@@ -372,10 +412,110 @@ impl RequestService {
                 self.create_album(&member, target, &outside, quality, facts).await
             }
             RequestKind::Upgrade => self.create_upgrade(&member, target, quality, facts),
-            RequestKind::Import | RequestKind::PlaylistAdd => self.decide_new(
+            RequestKind::Import => self.decide_new(
                 &member,
                 self.new_request(&member, kind, target, quality, facts.unwrap_or_default()),
             ),
+            RequestKind::PlaylistAdd => Err(RequestError::new(
+                50,
+                "Add the song to the family playlist; the approvers see it there.",
+            )),
+        }
+    }
+
+    /// A request for an addition to a family playlist that waits for approval: `song_id` was
+    /// added to `playlist_id` by `user`. Approving it puts the song in the playlist; declining
+    /// or canceling it takes the song out. The request exists at once; its titles are looked
+    /// up next, and the approvers hear of it then.
+    pub fn create_playlist_addition(
+        &self,
+        user: &str,
+        playlist_id: &str,
+        playlist_name: &str,
+        song_id: &str,
+    ) -> Result<FamilyRequest, RequestError> {
+        let member = self.member(user)?;
+        let target = playlist_addition_target(playlist_id, song_id);
+        if let Some(existing) = self.requests.for_user(&member.username).into_iter().find(|r| {
+            r.kind == RequestKind::PlaylistAdd && r.target == target && r.state == RequestState::Pending
+        }) {
+            return Ok(existing);
+        }
+        let mut request = self.new_request(
+            &member,
+            RequestKind::PlaylistAdd,
+            &target,
+            member.abilities().request_quality,
+            RequestFacts::default(),
+        );
+        request.note = format!("For the family playlist {playlist_name}");
+        request.cover_art = song_id.to_string();
+        let made = self.requests.create(request, Utc::now());
+        info!(
+            "FAMILY request {} {} PlaylistAdd {song_id} to {playlist_id} -> Pending",
+            made.id, made.username
+        );
+        match self.me.upgrade() {
+            Some(me) if tokio::runtime::Handle::try_current().is_ok() => {
+                let (id, song) = (made.id.clone(), song_id.to_string());
+                tokio::spawn(async move { me.titled(&id, &song).await });
+            }
+            _ => self.events.send(FamilyEvent::RequestCreated(made.clone())),
+        }
+        Ok(made)
+    }
+
+    /// Fills in a playlist addition's titles from the song, then tells the approvers.
+    async fn titled(&self, id: &str, song_id: &str) {
+        let facts = match self.catalog.outside(song_id) {
+            Some(outside) => song_facts(
+                self.catalog
+                    .song(&outside.provider, &outside.external_id)
+                    .await
+                    .as_ref(),
+                song_id,
+            ),
+            None => self
+                .pool()
+                .index()
+                .song(song_id)
+                .map(|song| facts_from_path(&song.path))
+                .unwrap_or_default(),
+        };
+        let updated = self.requests.update(id, |r| {
+            r.title = facts.title.clone();
+            r.artist = facts.artist.clone();
+            r.album = facts.album.clone();
+        });
+        if let Some(request) = updated.filter(|r| r.state == RequestState::Pending) {
+            self.events.send(FamilyEvent::RequestCreated(request));
+        }
+    }
+
+    /// The waiting entry a playlist addition request stands for: its playlist and its place.
+    fn playlist_entry(&self, request: &FamilyRequest) -> Option<(String, usize)> {
+        let (playlist_id, song_id) = playlist_addition_parts(&request.target)?;
+        let playlist = self.playlists.get(playlist_id)?;
+        let index = playlist.entries.iter().position(|entry| {
+            entry.pending
+                && eq_ignore_case(&entry.added_by, &request.username)
+                && (entry.library_id.as_deref() == Some(song_id)
+                    || entry.outside_id.as_deref() == Some(song_id))
+        })?;
+        Some((playlist.id, index))
+    }
+
+    /// Takes a declined or canceled playlist addition out of its playlist.
+    fn drop_playlist_entry(&self, request: &FamilyRequest) {
+        if request.kind != RequestKind::PlaylistAdd {
+            return;
+        }
+        if let Some((playlist, index)) = self.playlist_entry(request) {
+            self.playlists.remove_indexes(&playlist, &[index]);
+            info!(
+                "FAMILY request {} took its song out of family playlist {playlist}",
+                request.id
+            );
         }
     }
 
@@ -613,6 +753,7 @@ impl RequestService {
                     "FAMILY request {} {} {:?} \"{}\" {:?} -> AutoApproved",
                     made.id, made.username, made.kind, made.title, made.quality
                 );
+                self.events.send(FamilyEvent::RequestDecided(made.clone()));
                 self.start(made.clone(), false);
                 Ok(made)
             }
@@ -693,6 +834,7 @@ impl RequestService {
             })
             .ok_or_else(|| RequestError::new(70, "There is no such request."))?;
         info!("FAMILY request {id} declined by {by}");
+        self.drop_playlist_entry(&decided);
         self.events.send(FamilyEvent::RequestDecided(decided.clone()));
         Ok(decided)
     }
@@ -707,9 +849,12 @@ impl RequestService {
         if request.state != RequestState::Pending {
             return Err(RequestError::new(50, "Only a waiting request can be taken back."));
         }
-        self.requests
+        let canceled = self
+            .requests
             .update(id, |r| r.state = RequestState::Cancelled)
-            .ok_or_else(|| RequestError::new(70, "There is no such request."))
+            .ok_or_else(|| RequestError::new(70, "There is no such request."))?;
+        self.drop_playlist_entry(&canceled);
+        Ok(canceled)
     }
 
     /// Asks again for an MP3 of a song whose FLAC request failed.
@@ -756,7 +901,17 @@ impl RequestService {
                 Ok(_) => self.done(&request, Some(RequestOutcome::Downloaded), None),
                 Err(reason) => self.failed(&request, &reason),
             },
-            RequestKind::PlaylistAdd => self.done(&request, None, None),
+            RequestKind::PlaylistAdd => match self.playlist_entry(&request) {
+                Some((playlist, index)) => {
+                    self.playlists.approve_entry(&playlist, index);
+                    info!(
+                        "FAMILY request {} put its song in family playlist {playlist}",
+                        request.id
+                    );
+                    self.done(&request, None, None);
+                }
+                None => self.failed(&request, "The song is no longer waiting in that playlist."),
+            },
         }
     }
 

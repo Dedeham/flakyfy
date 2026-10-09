@@ -42,6 +42,42 @@ use crate::services::local::ILocalLibraryService;
 /// library and out of Navidrome's scans.
 pub const POOL_FOLDER: &str = ".pool";
 
+/// Where a removed member's files are kept aside, under the members folder. The dot keeps it
+/// out of every library.
+pub const KEPT_FOLDER: &str = ".kept";
+
+/// What becomes of the files only a removed member had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilesChoice {
+    /// Kept aside for the owner, under `<members>/.kept/<user>/`.
+    Keep,
+    /// Moved into the shared library.
+    Promote,
+    /// Sent to Octo's trash.
+    Delete,
+}
+
+impl FilesChoice {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "keep" => Some(FilesChoice::Keep),
+            "promote" => Some(FilesChoice::Promote),
+            "delete" => Some(FilesChoice::Delete),
+            _ => None,
+        }
+    }
+}
+
+/// What became of a removed member's pool files.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Released {
+    pub kept: usize,
+    pub promoted: usize,
+    pub trashed: usize,
+    /// Files another member still has, left where they are.
+    pub shared: usize,
+}
+
 /// What the Family page says when the members folder cannot link files.
 pub const COPY_MODE_MESSAGE: &str =
     "This disk cannot link files, so a song two members want takes space twice.";
@@ -80,7 +116,7 @@ pub struct LinkStatus {
 }
 
 impl LinkStatus {
-    fn of(mode: LinkMode) -> Self {
+    pub fn of(mode: LinkMode) -> Self {
         match mode {
             LinkMode::Symlink => LinkStatus {
                 links: mode,
@@ -725,6 +761,97 @@ impl FamilyPool {
         Ok(target)
     }
 
+    /// Lets go of everything a member who is leaving the family has: each of their links goes,
+    /// and each pool file only they had follows `choice` (kept aside under
+    /// `<members>/.kept/<user>/`, moved into the shared library, or sent to the trash). Files
+    /// another member still has stay where they are. Answers what became of the files.
+    pub async fn release_member(&self, user: &str, choice: FilesChoice) -> Result<Released, PoolError> {
+        let member = self
+            .family
+            .member(user)
+            .ok_or_else(|| PoolError::NotMember(user.to_string()))?;
+        let name = member.username.clone();
+        let mut released = Released::default();
+        for file in self.store.refs_of(&name) {
+            let companions = companions(&file.path);
+            self.remove_link(&file.path, &name, &companions);
+            let left = self.store.remove_ref(&file.path, &name);
+            if left.is_some_and(|left| left > 0) {
+                released.shared += 1;
+                continue;
+            }
+            if !Path::new(&file.path).is_file() {
+                self.store.remove(&file.path);
+                continue;
+            }
+            match choice {
+                FilesChoice::Keep => {
+                    self.keep_aside(&file.path, &name, &companions).await?;
+                    released.kept += 1;
+                }
+                FilesChoice::Promote => {
+                    self.promote(&file.path).await?;
+                    released.promoted += 1;
+                }
+                FilesChoice::Delete => {
+                    if self.gc(&file.path).await {
+                        released.trashed += 1;
+                    }
+                }
+            }
+        }
+        // Whatever is left of their folder is empty folders and covers.
+        let root = PathBuf::from(self.member_root(&name));
+        prune_folder_tree(&root);
+        info!(
+            "FAMILY released {name}'s files ({choice:?}): {} kept, {} promoted, {} trashed, {} still with others",
+            released.kept, released.promoted, released.trashed, released.shared
+        );
+        Ok(released)
+    }
+
+    /// Moves a pool file only `user` had to `<members>/.kept/<user>/<layout>`, with its lyrics
+    /// and cover, out of every library.
+    async fn keep_aside(&self, pool_path: &str, user: &str, companions: &[String]) -> Result<(), PoolError> {
+        let relative = self
+            .relative_in_pool(pool_path)
+            .ok_or_else(|| PoolError::NotInPool(pool_path.to_string()))?;
+        let mut target = format!("{}/{KEPT_FOLDER}/{user}/{relative}", self.members_root());
+        if Path::new(&target).exists() {
+            target = PathHelper::resolve_unique_path(&target);
+        }
+        move_file(Path::new(pool_path), Path::new(&target))?;
+        for companion in companions {
+            let Some(name) = Path::new(companion).file_name() else {
+                continue;
+            };
+            let destination = Path::new(&target).with_file_name(name);
+            if destination.exists() {
+                continue;
+            }
+            let is_cover = COVER_FILES
+                .iter()
+                .any(|cover| eq_ignore_case(cover, &name.to_string_lossy()));
+            let result = if is_cover {
+                std::fs::copy(companion, &destination).map(|_| ())
+            } else {
+                move_file(Path::new(companion), &destination)
+            };
+            if let Err(e) = result {
+                warn!("FAMILY could not keep {companion} with its song: {e}");
+            }
+        }
+        self.store.remove(pool_path);
+        if let Some(folder) = Path::new(pool_path).parent() {
+            remove_lonely_covers(folder);
+            prune_empty(folder, Path::new(&self.pool_root_path()));
+        }
+        if let Err(e) = self.library.forget_mapping(pool_path).await {
+            warn!("FAMILY could not forget {pool_path}'s mapping: {e}");
+        }
+        Ok(())
+    }
+
     /// Waits until the library index finds a file at `path` (in `library_id` when given),
     /// reading the index again when it is older than the poll interval. None after
     /// [`PoolTiming::max_wait`].
@@ -1006,6 +1133,22 @@ fn prune_empty(folder: &Path, stop: &Path) {
         }
         current = dir.parent().map(Path::to_path_buf);
     }
+}
+
+/// Removes every empty folder under `root` (and `root` itself when it ends up empty), and covers
+/// left alone in a folder. Files are never touched otherwise.
+fn prune_folder_tree(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            prune_folder_tree(&path);
+        }
+    }
+    remove_lonely_covers(root);
+    let _ = std::fs::remove_dir(root);
 }
 
 /// Creates a folder and its parents, readable and writable by the group (Navidrome often runs

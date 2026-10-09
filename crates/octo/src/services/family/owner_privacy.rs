@@ -1,7 +1,7 @@
 //! The owner's privacy. With `Family:OwnerSeesMemberLibraries` off (the default), the owner's
 //! answers leave out the music in members' own libraries: their songs, albums whose every song
-//! is a member's, artists whose every song is a member's, and the libraries themselves in
-//! `getMusicFolders`. With `Family:OwnerSeesMemberPlaylists` off, the owner's `getPlaylists`
+//! is a member's, artists whose every song is a member's, the libraries themselves in
+//! `getMusicFolders`, and their songs and albums in `getGenres` counts. With `Family:OwnerSeesMemberPlaylists` off, the owner's `getPlaylists`
 //! leaves out playlists members own.
 //!
 //! Navidrome shows an admin every library, and `getArtist` and `getAlbum` take no folder, so
@@ -16,13 +16,17 @@ use octo_core::family::abilities::Role;
 use octo_core::settings::FamilySettings;
 use parking_lot::Mutex;
 
+use octo_subsonic::xml::XNode;
+use serde_json::Value;
+
 use super::caller::FamilyCaller;
 use super::library_index::LibraryIndex;
-use super::list_rules::{NodeKind, listed};
+use super::list_rules::{self, NodeKind, listed};
 
 /// The endpoints whose answers to the owner leave out members' own music.
 pub const LIBRARY_ENDPOINTS: &[&str] = &[
     "search",
+    "getGenres",
     "search2",
     "search3",
     "getAlbum",
@@ -76,6 +80,8 @@ pub struct PrivateView {
     libraries: HashSet<i64>,
     albums: HashSet<String>,
     artists: HashSet<String>,
+    /// Per genre (lower case): the members' own songs, and the albums that are all members'.
+    genres: HashMap<String, (i64, i64)>,
 }
 
 impl PrivateView {
@@ -86,6 +92,9 @@ impl PrivateView {
         // Songs per album and per artist: (in members' libraries, elsewhere).
         let mut albums: HashMap<String, (u32, u32)> = HashMap::new();
         let mut artists: HashMap<String, (u32, u32)> = HashMap::new();
+        let mut genres: HashMap<String, (i64, i64)> = HashMap::new();
+        // The genres of the members' own songs, per album.
+        let mut album_genres: HashMap<String, HashSet<String>> = HashMap::new();
         index.each_song(|song| {
             let personal = song
                 .library_id
@@ -103,6 +112,15 @@ impl PrivateView {
             for artist in &song.artist_ids {
                 tally(artists.entry(artist.clone()).or_default());
             }
+            if personal {
+                for genre in &song.genres {
+                    let key = genre.to_lowercase();
+                    genres.entry(key.clone()).or_default().0 += 1;
+                    if !song.album_id.is_empty() {
+                        album_genres.entry(song.album_id.clone()).or_default().insert(key);
+                    }
+                }
+            }
         });
         let own = |counts: HashMap<String, (u32, u32)>| -> HashSet<String> {
             counts
@@ -111,11 +129,26 @@ impl PrivateView {
                 .map(|(id, _)| id)
                 .collect()
         };
+        let albums = own(albums);
+        for album in &albums {
+            for genre in album_genres.get(album).into_iter().flatten() {
+                genres.entry(genre.clone()).or_default().1 += 1;
+            }
+        }
         PrivateView {
             libraries,
-            albums: own(albums),
+            albums,
             artists: own(artists),
+            genres,
         }
+    }
+
+    /// How many of a genre's songs, and of its albums, are members' own.
+    pub fn genre_counts(&self, genre: &str) -> (i64, i64) {
+        self.genres
+            .get(&genre.trim().to_lowercase())
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Whether a song in `library` is a member's own (an unknown library is shared).
@@ -136,6 +169,109 @@ impl PrivateView {
             NodeKind::Song | NodeKind::Playlist => false,
         }
     }
+}
+
+/// A `getGenres` answer without the members' own music: each genre's `songCount` and
+/// `albumCount` lose what is in members' own libraries, and a genre left with nothing goes.
+/// None when nothing changed or the answer cannot be read.
+pub fn genres_answer(body: &[u8], view: &PrivateView) -> Option<Vec<u8>> {
+    if view.genres.is_empty() {
+        return None;
+    }
+    // The counts a genre keeps, or None when it has nothing left.
+    let lowered = |genre: &str, songs: i64, albums: i64| -> Option<(i64, i64, bool)> {
+        let (own_songs, own_albums) = view.genre_counts(genre);
+        if own_songs == 0 && own_albums == 0 {
+            return Some((songs, albums, false));
+        }
+        let (songs, albums) = ((songs - own_songs).max(0), (albums - own_albums).max(0));
+        (songs > 0 || albums > 0).then_some((songs, albums, true))
+    };
+    let number = |value: Option<&Value>| match value {
+        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
+        Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    };
+    list_rules::edit_answer(
+        body,
+        |response| {
+            let Some(Value::Array(list)) = response
+                .get_mut("genres")
+                .and_then(Value::as_object_mut)
+                .and_then(|genres| genres.get_mut("genre"))
+            else {
+                return false;
+            };
+            let mut changed = false;
+            list.retain_mut(|item| {
+                let Value::Object(genre) = item else {
+                    return true;
+                };
+                let name = genre
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let songs = number(genre.get("songCount"));
+                let albums = number(genre.get("albumCount"));
+                match lowered(&name, songs, albums) {
+                    None => {
+                        changed = true;
+                        false
+                    }
+                    Some((_, _, false)) => true,
+                    Some((songs, albums, true)) => {
+                        genre.insert("songCount".into(), Value::from(songs));
+                        genre.insert("albumCount".into(), Value::from(albums));
+                        changed = true;
+                        true
+                    }
+                }
+            });
+            changed
+        },
+        |root| {
+            let mut changed = false;
+            for genres in root.elements_mut().filter(|e| e.name == "genres") {
+                let content = std::mem::take(&mut genres.content);
+                let mut kept = Vec::with_capacity(content.len());
+                for node in content {
+                    let XNode::Element(mut genre) = node else {
+                        kept.push(node);
+                        continue;
+                    };
+                    if genre.name != "genre" {
+                        kept.push(XNode::Element(genre));
+                        continue;
+                    }
+                    let parse = |name: &str| {
+                        genre
+                            .attribute(name)
+                            .and_then(|v| v.trim().parse::<i64>().ok())
+                            .unwrap_or(0)
+                    };
+                    let (songs, albums) = (parse("songCount"), parse("albumCount"));
+                    // Subsonic writes the name as the element's text; some servers as `value`.
+                    let name = genre
+                        .attribute("value")
+                        .map(str::to_string)
+                        .unwrap_or_else(|| genre.value());
+                    match lowered(&name, songs, albums) {
+                        None => changed = true,
+                        Some((_, _, false)) => kept.push(XNode::Element(genre)),
+                        Some((songs, albums, true)) => {
+                            genre.set_attr("songCount", songs.to_string());
+                            genre.set_attr("albumCount", albums.to_string());
+                            changed = true;
+                            kept.push(XNode::Element(genre));
+                        }
+                    }
+                }
+                genres.content = kept;
+            }
+            changed
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +347,24 @@ mod tests {
         assert!(!hides_playlist(&members, Some("winters")));
         assert!(!hides_playlist(&members, Some("Family")));
         assert!(!hides_playlist(&members, None));
+    }
+
+    #[test]
+    fn genre_counts_lose_members_songs_with_the_name_as_text() {
+        let view = PrivateView {
+            genres: [("rock".to_string(), (2, 1)), ("pop".to_string(), (1, 1))].into(),
+            ..PrivateView::default()
+        };
+        let xml = br#"<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><genres><genre songCount="5" albumCount="3">Rock</genre><genre songCount="1" albumCount="1">Pop</genre><genre songCount="2" albumCount="1">Jazz</genre></genres></subsonic-response>"#;
+        let out = String::from_utf8(genres_answer(xml, &view).expect("changed")).expect("text");
+        assert!(
+            out.contains(r#"<genre songCount="3" albumCount="2">Rock</genre>"#),
+            "{out}"
+        );
+        assert!(!out.contains("Pop"), "{out}");
+        assert!(out.contains(">Jazz</genre>"), "{out}");
+        let untouched = br#"<subsonic-response status="ok"><genres><genre songCount="2" albumCount="1">Jazz</genre></genres></subsonic-response>"#;
+        assert_eq!(genres_answer(untouched, &view), None);
     }
 
     #[test]

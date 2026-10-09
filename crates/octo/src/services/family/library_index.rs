@@ -39,6 +39,10 @@ pub struct IndexedSong {
     pub path: String,
     /// Bytes.
     pub size: u64,
+    /// Its genres as Navidrome names them (`genres`, else the one `genre`).
+    pub genres: Vec<String>,
+    /// Seconds.
+    pub duration: u32,
 }
 
 /// A file Octo placed in a library since the index was last read.
@@ -136,7 +140,38 @@ fn indexed(song: &Value) -> Option<IndexedSong> {
         explicit_status: text("explicitStatus"),
         path: full,
         size: song.get("size").and_then(Value::as_u64).unwrap_or(0),
+        genres: genres_of(song),
+        duration: song
+            .get("duration")
+            .and_then(Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map_or(0, |seconds| seconds.round().min(f64::from(u32::MAX)) as u32),
     })
+}
+
+/// A native song row's genres: each of `genres` by name, else its one `genre`, without repeats.
+fn genres_of(song: &Value) -> Vec<String> {
+    let mut genres: Vec<String> = Vec::new();
+    if let Some(Value::Array(list)) = song.get("genres") {
+        for genre in list {
+            let name = genre
+                .get("name")
+                .and_then(Value::as_str)
+                .or_else(|| genre.as_str())
+                .unwrap_or("")
+                .trim();
+            if !name.is_empty() && !genres.iter().any(|g| g.eq_ignore_ascii_case(name)) {
+                genres.push(name.to_string());
+            }
+        }
+    }
+    if genres.is_empty() {
+        let one = song.get("genre").and_then(Value::as_str).unwrap_or("").trim();
+        if !one.is_empty() {
+            genres.push(one.to_string());
+        }
+    }
+    genres
 }
 
 impl LibraryIndex {
@@ -528,7 +563,8 @@ mod tests {
         json!({
             "id": id, "albumId": format!("al-{id}"), "artistId": "ar-1", "albumArtistId": "ar-1",
             "libraryId": library, "libraryPath": library_path, "path": rel,
-            "explicitStatus": explicit, "size": size, "title": "T"
+            "explicitStatus": explicit, "size": size, "title": "T",
+            "duration": 240.6, "genre": "Rock", "genres": [{"id": "g1", "name": "Rock"}, {"id": "g2", "name": "Pop"}]
         })
     }
 
@@ -596,6 +632,8 @@ mod tests {
                 explicit_status: "explicit".into(),
                 path: "/music/Artist/Album/01 Song.flac".into(),
                 size: 30_000_000,
+                genres: vec!["Rock".into(), "Pop".into()],
+                duration: 241,
             }
         );
         assert_eq!(index.library_of("s2"), Some(3));

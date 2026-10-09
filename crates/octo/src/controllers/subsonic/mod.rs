@@ -13,7 +13,7 @@ pub mod similar_songs;
 pub mod top_songs;
 
 #[cfg(test)]
-mod route_tests;
+pub(crate) mod route_tests;
 
 pub(crate) mod album_ownership;
 pub mod browsing;

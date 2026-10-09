@@ -200,7 +200,7 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
     let member = state.family_store.member(signed.user());
     let manager = settings.family.enabled && FamilyService::may_manage(&state, &signed.actor);
     let approver = settings.family.enabled && FamilyService::may_approve(&state, &signed.actor);
-    let links = state.family.links();
+    let links = state.family.link_status(&state);
     let members_path = settings.family.effective_members_path();
     ok(&json!({
         "username": member.as_ref().map_or(signed.user().to_string(), |m| m.username.clone()),
@@ -214,9 +214,9 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
         "place": web.place,
         "manageFromAway": settings.family.manage_from_away,
         "membersPath": members_path,
-        "links": links,
-        "linksMessage": (links == Some(crate::services::family::family_service::LinkMode::Copy))
-            .then(|| crate::services::family::family_service::copy_mode_message(&members_path)),
+        "links": links.as_ref().map(|status| status.links),
+        "linksMessage": links.as_ref().and_then(|status| status.message.clone()),
+        "linksFix": links.as_ref().and_then(|status| status.fix.clone()),
         "server": web.base(&state),
     }))
 }
@@ -450,10 +450,7 @@ pub async fn ask(State(state): State<AppState>, web: Web, body: Bytes) -> Respon
         })
         .await
     {
-        Ok(made) => {
-            FamilyService::request_created(&state, &made);
-            ok(&FamilyService::request_json(&state, &made))
-        }
+        Ok(made) => ok(&FamilyService::request_json(&state, &made)),
         Err(e) => family_error(&e),
     }
 }

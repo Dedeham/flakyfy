@@ -218,6 +218,17 @@ impl RequestService for FakeRequests {
             })
             .ok_or_else(|| FamilyError::NotFound("There is no such request.".into()))
     }
+
+    async fn retry_as_mp3(&self, id: &str, by: &str) -> Result<FamilyRequest, FamilyError> {
+        let failed = self
+            .store
+            .get(id)
+            .filter(|r| r.username.eq_ignore_ascii_case(by))
+            .ok_or_else(|| FamilyError::NotFound("There is no such request.".into()))?;
+        Ok(self
+            .store
+            .create(request(by, &failed.target, RequestQuality::Mp3), Utc::now()))
+    }
 }
 
 fn request(user: &str, target: &str, quality: RequestQuality) -> FamilyRequest {

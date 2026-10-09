@@ -4,8 +4,9 @@
 //!
 //! Work that belongs to other parts of Octo is reached through small traits gathered in
 //! [`FamilyHooks`]: the members' folders and files, requests, storage use, the personal library,
-//! saved songs, family playlists, live streams and the explicit marks. Each has a default that
-//! works on its own; the parts that own the work install theirs with [`FamilyService::wire`].
+//! saved songs, family playlists, live streams and the explicit marks. [`FamilyHooks::standard`]
+//! puts each over the service that does the work ([`super::hooks`]); the state installs them
+//! once it is built, and tests replace any of them with [`FamilyService::wire`].
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -30,12 +31,11 @@ use tracing::{info, warn};
 
 use super::device_registry::NewDevice;
 use super::family_store::{Member, PairOutcome, SharedLibraries};
-use super::library_index::LibraryIndex;
 use super::navidrome_admin::{AdminError, NavidromeAdmin, NdLibrary, NdUser};
 use super::passwords;
+use super::request_service::FamilyEvent;
 use crate::app::AppState;
 use crate::services::admin::SignInThrottle;
-use crate::services::library::explicit_backfill::{ExplicitBackfillMode, ExplicitBackfillRequest};
 
 // ------------------------------------------------------------------------------------------
 // Errors
@@ -153,13 +153,7 @@ impl MemberAccounts for NavidromeAdmin {
     }
 }
 
-/// Whether the members folder can hold links between members' libraries, or each member
-/// needs a copy of their own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum LinkMode {
-    Symlink,
-    Copy,
-}
+pub use super::pool::{FilesChoice, LinkMode};
 
 /// Members' folders on disk.
 #[async_trait]
@@ -171,27 +165,10 @@ pub trait PersonalFolders: Send + Sync {
     async fn remove_if_empty(&self, username: &str);
     /// Makes a link in the members folder, reads through it and removes it.
     async fn probe_links(&self) -> LinkMode;
-}
-
-/// What becomes of a removed member's files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FilesChoice {
-    /// Kept aside for the owner.
-    Keep,
-    /// Moved into the shared library.
-    Promote,
-    /// Sent to Octo's trash.
-    Delete,
-}
-
-impl FilesChoice {
-    pub fn parse(text: &str) -> Option<Self> {
-        match text.trim().to_ascii_lowercase().as_str() {
-            "keep" => Some(FilesChoice::Keep),
-            "promote" => Some(FilesChoice::Promote),
-            "delete" => Some(FilesChoice::Delete),
-            _ => None,
-        }
+    /// How members' libraries get files now, when it can change after the probe (Navidrome
+    /// never showing a linked song switches to copies).
+    fn mode(&self) -> Option<LinkMode> {
+        None
     }
 }
 
@@ -213,7 +190,8 @@ pub struct NewRequest {
     pub kind: Option<RequestKind>,
 }
 
-/// Requests for a copy: making, canceling and deciding them. Listing reads the request store.
+/// Requests for a copy: making, canceling and deciding them, and asking again for an MP3 when a
+/// FLAC could not be found. Listing reads the request store.
 #[async_trait]
 pub trait RequestService: Send + Sync {
     async fn create(&self, ask: NewRequest) -> Result<FamilyRequest, FamilyError>;
@@ -227,6 +205,8 @@ pub trait RequestService: Send + Sync {
         by: &str,
         note: &str,
     ) -> Result<FamilyRequest, FamilyError>;
+    /// The requester's own failed FLAC request, asked for again as an MP3.
+    async fn retry_as_mp3(&self, id: &str, by: &str) -> Result<FamilyRequest, FamilyError>;
 }
 
 /// How much a member's own library holds.
@@ -282,11 +262,12 @@ pub struct FamilyPlaylistSummary {
     pub created: String,
 }
 
-/// Playlists every member can add to.
+/// Playlists every member can add to. Each change is checked for the person making it.
 #[async_trait]
 pub trait FamilyPlaylists: Send + Sync {
+    /// The playlists `viewer` sees, each with the count of songs they are shown.
     fn list(&self, viewer: &str) -> Vec<FamilyPlaylistSummary>;
-    fn get(&self, id: &str) -> Option<FamilyPlaylistSummary>;
+    fn get(&self, id: &str, viewer: &str) -> Option<FamilyPlaylistSummary>;
     async fn create(
         &self,
         name: &str,
@@ -296,10 +277,11 @@ pub trait FamilyPlaylists: Send + Sync {
     async fn update(
         &self,
         id: &str,
+        by: &str,
         name: Option<&str>,
         approve_additions: Option<bool>,
     ) -> Result<FamilyPlaylistSummary, FamilyError>;
-    async fn delete(&self, id: &str) -> Result<(), FamilyError>;
+    async fn delete(&self, id: &str, by: &str) -> Result<(), FamilyError>;
 }
 
 /// What a device is playing.
@@ -384,68 +366,48 @@ pub struct FamilyHooks {
 }
 
 impl FamilyHooks {
-    /// The hooks that work with what is already on the state.
+    /// The hooks Octo runs with: each over the service on `state` that does the work.
     pub fn standard(state: &AppState) -> Self {
+        use super::hooks::{
+            IndexUnrated, LiveRequests, PersonalSongs, PersonalStorage, PoolFiles, PoolFolders,
+            RulePlaylists, TrackerStreams,
+        };
         FamilyHooks {
             accounts: state.navidrome_admin.clone(),
-            folders: Arc::new(LocalFolders {
-                settings: state.settings.clone(),
+            folders: Arc::new(PoolFolders {
+                personal: state.personal_library.clone(),
             }),
-            files: Arc::new(KeepOnlyFiles),
-            requests: Arc::new(RequestsNotReady),
-            storage: Arc::new(IndexStorage {
-                store: state.family_store.clone(),
-                index: state.library_index.clone(),
+            files: Arc::new(PoolFiles {
+                pool: state.family_pool_service.clone(),
             }),
-            my_library: Arc::new(IndexLibrary {
-                store: state.family_store.clone(),
-                index: state.library_index.clone(),
+            requests: Arc::new(LiveRequests {
+                service: state.family_request_service.clone(),
+            }),
+            storage: Arc::new(PersonalStorage {
+                personal: state.personal_library.clone(),
+            }),
+            my_library: Arc::new(PersonalSongs {
+                personal: state.personal_library.clone(),
             }),
             saved: Arc::new(StoreSaved {
                 saved: state.family_saved.clone(),
             }),
-            playlists: Arc::new(StorePlaylists {
+            playlists: Arc::new(RulePlaylists {
                 store: state.family_playlists.clone(),
+                family: state.family_store.clone(),
             }),
-            streams: Arc::new(NoStreams),
-            unrated: Arc::new(IndexUnrated { state: state.clone() }),
+            streams: Arc::new(TrackerStreams {
+                tracker: state.family_audio.tracker().clone(),
+                index: state.library_index.clone(),
+                registry: state.external_id_registry.clone(),
+                acquisitions: state.acquisition_tracker.clone(),
+            }),
+            unrated: Arc::new(IndexUnrated {
+                index: state.library_index.clone(),
+                scope: state.library_scope.clone(),
+                backfill: state.explicit_backfill.clone(),
+            }),
         }
-    }
-}
-
-/// Members' folders under `Family:MembersPath` on Octo's own disk.
-pub struct LocalFolders {
-    settings: Arc<octo_core::settings::SettingsStore>,
-}
-
-impl LocalFolders {
-    fn root(&self) -> PathBuf {
-        PathBuf::from(self.settings.current().family.effective_members_path())
-    }
-}
-
-#[async_trait]
-impl PersonalFolders for LocalFolders {
-    async fn create(&self, username: &str) -> Result<String, String> {
-        let path = self.root().join(username);
-        let made = path.clone();
-        tokio::task::spawn_blocking(move || make_folder(&made))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("Octo could not make {}: {e}", path.display()))?;
-        Ok(path.to_string_lossy().into_owned())
-    }
-
-    async fn remove_if_empty(&self, username: &str) {
-        let path = self.root().join(username);
-        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir(path)).await;
-    }
-
-    async fn probe_links(&self) -> LinkMode {
-        let root = self.root();
-        tokio::task::spawn_blocking(move || probe_links_in(&root))
-            .await
-            .unwrap_or(LinkMode::Copy)
     }
 }
 
@@ -458,127 +420,6 @@ fn make_folder(path: &Path) -> std::io::Result<()> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o775))?;
     }
     Ok(())
-}
-
-/// Writes a file in `root`, links to it, reads it back through the link and removes both.
-fn probe_links_in(root: &Path) -> LinkMode {
-    let stamp = hex::encode(rand::random::<[u8; 6]>());
-    let target = root.join(format!(".octo-link-probe-{stamp}"));
-    let link = root.join(format!(".octo-link-probe-{stamp}.link"));
-    let works = (|| -> std::io::Result<bool> {
-        std::fs::write(&target, b"octo")?;
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(target.file_name().unwrap_or_default(), &link)?;
-        #[cfg(not(unix))]
-        return Ok(false);
-        #[cfg(unix)]
-        Ok(std::fs::read(&link)? == b"octo")
-    })()
-    .unwrap_or(false);
-    let _ = std::fs::remove_file(&link);
-    let _ = std::fs::remove_file(&target);
-    if works { LinkMode::Symlink } else { LinkMode::Copy }
-}
-
-/// Removed members' files stay where they are; moving or deleting them needs the family pool.
-pub struct KeepOnlyFiles;
-
-#[async_trait]
-impl MemberFiles for KeepOnlyFiles {
-    async fn release(&self, _username: &str, choice: FilesChoice) -> Result<(), FamilyError> {
-        match choice {
-            FilesChoice::Keep => Ok(()),
-            FilesChoice::Promote | FilesChoice::Delete => Err(FamilyError::Unavailable(
-                "This server can only keep a removed member's files for now. Choose Keep.".into(),
-            )),
-        }
-    }
-}
-
-/// Requests before the request service is installed: nothing can be asked for or decided.
-pub struct RequestsNotReady;
-
-const REQUESTS_NOT_READY: &str = "Requests are not ready on this server yet.";
-
-#[async_trait]
-impl RequestService for RequestsNotReady {
-    async fn create(&self, _ask: NewRequest) -> Result<FamilyRequest, FamilyError> {
-        Err(FamilyError::Unavailable(REQUESTS_NOT_READY.into()))
-    }
-
-    async fn cancel(&self, _id: &str, _by: &str) -> Result<FamilyRequest, FamilyError> {
-        Err(FamilyError::Unavailable(REQUESTS_NOT_READY.into()))
-    }
-
-    async fn decide(
-        &self,
-        _id: &str,
-        _approve: bool,
-        _by: &str,
-        _note: &str,
-    ) -> Result<FamilyRequest, FamilyError> {
-        Err(FamilyError::Unavailable(REQUESTS_NOT_READY.into()))
-    }
-}
-
-/// Storage use read from the library index: the size of every song in the member's library.
-pub struct IndexStorage {
-    store: Arc<super::FamilyStore>,
-    index: Arc<LibraryIndex>,
-}
-
-impl StorageUsage for IndexStorage {
-    fn used_bytes(&self, username: &str) -> u64 {
-        self.store
-            .member(username)
-            .and_then(|m| m.personal_library_id)
-            .map(|id| self.index.bytes_in_library(id))
-            .unwrap_or(0)
-    }
-}
-
-/// A member's library read from the library index; the names come from the file's place in
-/// the `<Artist>/<Album>/<file>` layout. Taking a song out needs the family pool.
-pub struct IndexLibrary {
-    store: Arc<super::FamilyStore>,
-    index: Arc<LibraryIndex>,
-}
-
-#[async_trait]
-impl RemoveFromMyLibrary for IndexLibrary {
-    fn list(&self, username: &str, offset: usize, size: usize) -> MyLibraryPage {
-        let Some(library) = self.store.member(username).and_then(|m| m.personal_library_id) else {
-            return MyLibraryPage::default();
-        };
-        let mut songs = self.index.songs_in_library(library);
-        songs.sort_by(|a, b| a.path.cmp(&b.path));
-        let total = songs.len();
-        let songs = songs
-            .into_iter()
-            .skip(offset)
-            .take(size)
-            .map(|song| {
-                let parts: Vec<&str> = song.path.rsplit('/').collect();
-                let file = parts.first().copied().unwrap_or("");
-                let title = file.rsplit_once('.').map_or(file, |(stem, _)| stem).to_string();
-                MySong {
-                    id: song.id.clone(),
-                    title,
-                    album: parts.get(1).copied().unwrap_or("").to_string(),
-                    artist: parts.get(2).copied().unwrap_or("").to_string(),
-                    size: song.size,
-                    added: None,
-                }
-            })
-            .collect();
-        MyLibraryPage { songs, total }
-    }
-
-    async fn remove(&self, _username: &str, _song_id: &str) -> Result<(), FamilyError> {
-        Err(FamilyError::Unavailable(
-            "Removing songs from your library is not ready on this server yet.".into(),
-        ))
-    }
 }
 
 /// Saved songs and albums, from `family-saved.json`.
@@ -627,129 +468,6 @@ impl SavedItems for StoreSaved {
 
     async fn remove(&self, username: &str, id: &str) -> bool {
         self.saved.remove(username, id)
-    }
-}
-
-/// Family playlists, from `family-playlists.json`.
-pub struct StorePlaylists {
-    store: Arc<super::FamilyPlaylistStore>,
-}
-
-fn playlist_summary(playlist: &super::FamilyPlaylist) -> FamilyPlaylistSummary {
-    FamilyPlaylistSummary {
-        id: playlist.id.clone(),
-        name: playlist.name.clone(),
-        song_count: playlist.entries.iter().filter(|e| !e.pending).count(),
-        approve_additions: playlist.approve_additions,
-        created_by: playlist.created_by.clone(),
-        created: datetime::format_utc(&playlist.created),
-    }
-}
-
-#[async_trait]
-impl FamilyPlaylists for StorePlaylists {
-    fn list(&self, _viewer: &str) -> Vec<FamilyPlaylistSummary> {
-        self.store.list().iter().map(playlist_summary).collect()
-    }
-
-    fn get(&self, id: &str) -> Option<FamilyPlaylistSummary> {
-        self.store.get(id).as_ref().map(playlist_summary)
-    }
-
-    async fn create(
-        &self,
-        name: &str,
-        by: &str,
-        approve_additions: bool,
-    ) -> Result<FamilyPlaylistSummary, FamilyError> {
-        let playlist = self.store.create(name, by, Utc::now());
-        if approve_additions {
-            self.store.set_approve(&playlist.id, true);
-        }
-        self.get(&playlist.id)
-            .ok_or_else(|| FamilyError::Unavailable("The playlist could not be kept.".into()))
-    }
-
-    async fn update(
-        &self,
-        id: &str,
-        name: Option<&str>,
-        approve_additions: Option<bool>,
-    ) -> Result<FamilyPlaylistSummary, FamilyError> {
-        if self.store.get(id).is_none() {
-            return Err(FamilyError::NotFound("There is no such family playlist.".into()));
-        }
-        if let Some(name) = name {
-            self.store.rename(id, name);
-        }
-        if let Some(approve) = approve_additions {
-            self.store.set_approve(id, approve);
-        }
-        self.get(id)
-            .ok_or_else(|| FamilyError::NotFound("There is no such family playlist.".into()))
-    }
-
-    async fn delete(&self, id: &str) -> Result<(), FamilyError> {
-        if self.store.delete(id) {
-            Ok(())
-        } else {
-            Err(FamilyError::NotFound("There is no such family playlist.".into()))
-        }
-    }
-}
-
-/// No stream tracker installed: nothing is known to be playing.
-pub struct NoStreams;
-
-impl LiveStreams for NoStreams {
-    fn playing(&self, _device_id: &str) -> Option<Playing> {
-        None
-    }
-
-    fn user_playing(&self, _username: &str) -> bool {
-        false
-    }
-
-    fn count(&self) -> usize {
-        0
-    }
-
-    fn load(&self) -> LoadReport {
-        LoadReport::default()
-    }
-}
-
-/// Unmarked shared songs counted from the library index; marking them starts the explicit
-/// lookup over the shared library.
-pub struct IndexUnrated {
-    state: AppState,
-}
-
-#[async_trait]
-impl UnratedCount for IndexUnrated {
-    fn unrated(&self) -> Option<u64> {
-        let scope = &self.state.library_scope;
-        if !scope.ready() {
-            return None;
-        }
-        let personal = scope.personal_library_ids();
-        let count = scope.index().count_songs(|song| {
-            song.library_id.is_none_or(|id| !personal.contains(&id)) && song.explicit_status.trim().is_empty()
-        });
-        Some(count as u64)
-    }
-
-    async fn mark_now(&self, by: &str) -> Result<String, FamilyError> {
-        let backfill = &self.state.explicit_backfill;
-        if backfill.is_busy() {
-            return Ok("Octo is already looking songs up for explicit marks.".into());
-        }
-        if !backfill.try_enqueue(ExplicitBackfillRequest::new(ExplicitBackfillMode::Preview, by)) {
-            return Err(FamilyError::Unavailable(
-                "Octo could not start looking the songs up. Try again in a minute.".into(),
-            ));
-        }
-        Ok("Octo is looking the songs up now. When it is done, open Tags and genres in the dashboard and write the marks it found.".into())
     }
 }
 
@@ -996,9 +714,22 @@ impl FamilyService {
         *self.hooks.write() = Some(hooks);
     }
 
-    /// What the last link probe found, if one ran.
-    pub fn links(&self) -> Option<LinkMode> {
-        *self.links.read()
+    /// How members' libraries get files, once a link probe has run: what the probe found, or
+    /// copies when Navidrome has since shown it cannot follow links.
+    pub fn links(&self, state: &AppState) -> Option<LinkMode> {
+        let probed = (*self.links.read())?;
+        Some(self.hooks(state).folders.mode().unwrap_or(probed))
+    }
+
+    /// The link mode with what the Family page and the dashboard say about it:
+    /// `{links, message, fix}`, or None before the first probe.
+    pub fn link_status(&self, state: &AppState) -> Option<super::LinkStatus> {
+        let mut status = super::LinkStatus::of(self.links(state)?);
+        if status.message.is_some() {
+            let members_path = state.settings.current().family.effective_members_path();
+            status.message = Some(copy_mode_message(&members_path));
+        }
+        Some(status)
     }
 
     /// Probes the members folder for links and keeps the answer.
@@ -2024,7 +1755,7 @@ impl FamilyService {
             return Ok(EnableReport {
                 enabled: false,
                 members_path,
-                links: self.links().unwrap_or(LinkMode::Symlink),
+                links: self.links(state).unwrap_or(LinkMode::Symlink),
                 message: "Family is off. Members cannot sign in until it is on again.".into(),
             });
         }
@@ -2114,55 +1845,42 @@ impl FamilyService {
             .notify_member(&member.ntfy_topic, Self::request_event(state, request, kind));
     }
 
-    /// A request was made: approvers hear of it while it waits; an approved one tells the
-    /// member.
-    pub fn request_created(state: &AppState, request: &FamilyRequest) {
-        match request.state {
-            RequestState::Pending => state.notifications.notify(Self::request_event(
+    /// Tells people about one change to a request, whatever made it (the Family page, an app,
+    /// a heart, an action playlist, an import, a Find songs pick or a playlist addition). Each
+    /// change is raised once on [`super::FamilyEvents`], so each is told once:
+    ///
+    /// - a request that waits: the owner's channels;
+    /// - approved (by an approver or at once by the member's abilities) or declined: the member;
+    /// - in the member's library: the member;
+    /// - failed: the owner's channels and the member.
+    pub fn announce(state: &AppState, event: &FamilyEvent) {
+        match event {
+            FamilyEvent::RequestCreated(request) => state.notifications.notify(Self::request_event(
                 state,
                 request,
                 NotificationEventType::FamilyRequestNew,
             )),
-            RequestState::Approved => {
-                Self::push_member(state, request, NotificationEventType::FamilyRequestApproved)
-            }
-            RequestState::Done => {
+            FamilyEvent::RequestDecided(request) => match request.state {
+                RequestState::Approved => {
+                    Self::push_member(state, request, NotificationEventType::FamilyRequestApproved)
+                }
+                RequestState::Declined => {
+                    Self::push_member(state, request, NotificationEventType::FamilyRequestDeclined)
+                }
+                _ => {}
+            },
+            FamilyEvent::RequestDone(request) => {
                 Self::push_member(state, request, NotificationEventType::FamilyRequestAdded)
             }
-            _ => {}
+            FamilyEvent::RequestFailed(request) => {
+                state.notifications.notify(Self::request_event(
+                    state,
+                    request,
+                    NotificationEventType::FamilyRequestFailed,
+                ));
+                Self::push_member(state, request, NotificationEventType::FamilyRequestFailed);
+            }
         }
-    }
-
-    /// A request was approved or declined: the member hears of it.
-    pub fn request_decided(state: &AppState, request: &FamilyRequest) {
-        match request.state {
-            RequestState::Approved => {
-                Self::push_member(state, request, NotificationEventType::FamilyRequestApproved)
-            }
-            RequestState::Declined => {
-                Self::push_member(state, request, NotificationEventType::FamilyRequestDeclined)
-            }
-            RequestState::Done => {
-                Self::push_member(state, request, NotificationEventType::FamilyRequestAdded)
-            }
-            RequestState::Failed => Self::request_failed(state, request),
-            _ => {}
-        }
-    }
-
-    /// A requested song is in the member's library: the member hears of it.
-    pub fn request_added(state: &AppState, request: &FamilyRequest) {
-        Self::push_member(state, request, NotificationEventType::FamilyRequestAdded);
-    }
-
-    /// Octo could not get a requested song: the owner's channels and the member hear of it.
-    pub fn request_failed(state: &AppState, request: &FamilyRequest) {
-        state.notifications.notify(Self::request_event(
-            state,
-            request,
-            NotificationEventType::FamilyRequestFailed,
-        ));
-        Self::push_member(state, request, NotificationEventType::FamilyRequestFailed);
     }
 
     /// A device was seen for the first time: the owner's channels hear of it.
@@ -2190,8 +1908,9 @@ impl FamilyService {
 pub const LIBRARY_SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Family's own background work while Family is on: probes the members folder for links,
-/// tells the owner's channels about new devices, and keeps members' libraries in step with
-/// the shared libraries Navidrome has. Holds the state weakly, so a dropped state ends it.
+/// tells people about requests ([`FamilyService::announce`]) and the owner's channels about
+/// new devices, and keeps members' libraries in step with the shared libraries Navidrome has.
+/// Holds the state weakly, so a dropped state ends it.
 pub async fn run_family_work(
     state: std::sync::Weak<crate::app::AppInner>,
     token: tokio_util::sync::CancellationToken,
@@ -2199,13 +1918,26 @@ pub async fn run_family_work(
     let Some(first) = state.upgrade().map(AppState::from_inner) else {
         return Ok(());
     };
-    first.family.probe_links(&first).await;
     let mut devices = first.family_devices.subscribe();
+    let mut requests = first.family_events.subscribe();
+    first.family.probe_links(&first).await;
     drop(first);
     let mut sync = tokio::time::interval(LIBRARY_SYNC_EVERY);
     loop {
         tokio::select! {
             () = token.cancelled() => return Ok(()),
+            changed = requests.recv() => match changed {
+                Ok(event) => {
+                    let Some(state) = state.upgrade().map(AppState::from_inner) else { return Ok(()) };
+                    if state.settings.current().family.enabled {
+                        FamilyService::announce(&state, &event);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!("FAMILY {missed} request notices were not sent: too many at once");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+            },
             seen = devices.recv() => match seen {
                 Ok(device) => {
                     let Some(state) = state.upgrade().map(AppState::from_inner) else { return Ok(()) };

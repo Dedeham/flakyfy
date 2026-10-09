@@ -2179,6 +2179,7 @@ impl FamilyRequests {
                 )),
             )),
             events: Arc::clone(&events),
+            playlists: Arc::clone(&stores.family_playlists),
         });
         imports.use_family(crate::services::imports::ImportFamily {
             gate: navidrome.library_write_gate.clone(),
@@ -2300,6 +2301,18 @@ impl AppState {
         self.workers.register("FamilyWork", move |token| {
             crate::services::family::family_service::run_family_work(weak.clone(), token)
         });
+    }
+
+    /// Connects the family service to the services that do its work, once the state is built:
+    /// its hooks ([`crate::services::family::FamilyHooks::standard`]), and family playlist
+    /// additions that wait for approval to the request service.
+    fn wire_family(&self) {
+        self.family.wire(self, |_| {});
+        self.family_playlist_requests.set(Arc::new(
+            crate::services::family::hooks::RequestPlaylistAdditions {
+                service: Arc::downgrade(&self.family_request_service),
+            },
+        ));
     }
 
     /// The state around an existing inner, for work that keeps only a weak hold on it.
@@ -2653,6 +2666,7 @@ impl AppState {
         let state = AppState {
             inner: Arc::new(inner),
         };
+        state.wire_family();
         state.start_family();
         state
     }
@@ -3007,9 +3021,11 @@ impl AppState {
             family_started: AtomicBool::new(false),
         };
         inner.use_member_credentials();
-        AppState {
+        let state = AppState {
             inner: Arc::new(inner),
-        }
+        };
+        state.wire_family();
+        state
     }
 }
 

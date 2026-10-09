@@ -217,6 +217,7 @@ fn setup(world: World) -> Setup {
             fetcher: fetcher.clone(),
             stars: world.stars.clone(),
             events,
+            playlists: world.playlists.clone(),
         },
         RequestTiming {
             poll: Duration::from_millis(10),

@@ -420,7 +420,6 @@ pub async fn request_copy(State(state): State<AppState>, req: Request) -> Respon
         .await
     {
         Ok(made) => {
-            FamilyService::request_created(&state, &made);
             let value = FamilyService::request_json(&state, &made);
             octo_reply(&state, &call.format, Some(("familyRequest", &value)))
         }
@@ -479,7 +478,6 @@ pub async fn decide_family_request(State(state): State<AppState>, req: Request) 
         .await
     {
         Ok(request) => {
-            FamilyService::request_decided(&state, &request);
             let value = FamilyService::request_json(&state, &request);
             octo_reply(&state, &call.format, Some(("familyRequest", &value)))
         }

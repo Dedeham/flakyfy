@@ -17,7 +17,6 @@ use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::middleware::admin_sign_in_gate::{Caller, caller_of};
 use crate::services::admin::{AdminCallerKind, BrowseSessionStore};
-use crate::services::family::family_service::{LinkMode, copy_mode_message};
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -49,14 +48,15 @@ pub async fn summary(State(state): State<AppState>, caller: Caller) -> Response 
         })
         .collect();
     let members_path = settings.family.effective_members_path();
-    let links = state.family.links();
+    let links = state.family.link_status(&state);
     ok(&json!({
         "supported": true,
         "enabled": settings.family.enabled,
         "owner": state.family_store.owner(),
         "membersPath": members_path,
-        "links": links,
-        "linksMessage": (links == Some(LinkMode::Copy)).then(|| copy_mode_message(&members_path)),
+        "links": links.as_ref().map(|status| status.links),
+        "linksMessage": links.as_ref().and_then(|status| status.message.clone()),
+        "linksFix": links.as_ref().and_then(|status| status.fix.clone()),
         "members": members,
         "devices": state.family_store.devices().len(),
         "pendingRequests": state.family_requests.pending().len(),

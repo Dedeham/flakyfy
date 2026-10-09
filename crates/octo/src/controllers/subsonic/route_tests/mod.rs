@@ -91,7 +91,7 @@ type ArtistTitle = Box<dyn Fn(&str, &str, Option<i32>) -> Vec<Song> + Send + Syn
 
 /// `Mock<IMusicMetadataService>`: answers what a test sets, records what the controller asked.
 #[derive(Default)]
-pub(super) struct TestMetadata {
+pub(crate) struct TestMetadata {
     /// `SearchSongsByArtistTitleAsync`; nothing when unset (the C# setups answered `[]`).
     pub by_artist_title: Mutex<Option<ArtistTitle>>,
     /// The `topN` of every `PrewarmYouTubeIdsAsync` call.

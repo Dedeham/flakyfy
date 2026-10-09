@@ -27,6 +27,7 @@ use super::{kid_filter, owner_privacy, personal_marks};
 /// Every endpoint these rules read. Each rule keeps to its own list within it.
 pub const ENDPOINTS: &[&str] = &[
     "search",
+    "getGenres",
     "search2",
     "search3",
     "getAlbum",
@@ -352,12 +353,35 @@ fn artists_in_xml(element: &XElement) -> usize {
 /// (`callback(...)`) or XML (its declaration kept). None when nothing changed or the answer
 /// cannot be read, so the caller sends the bytes it has.
 pub fn rewrite_answer(body: &[u8], judge: &Judge<'_>) -> Option<Vec<u8>> {
-    let text = std::str::from_utf8(body).ok()?;
-    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
-    let mut walk = Walk {
+    let walk = std::cell::RefCell::new(Walk {
         judge,
         changed: false,
-    };
+    });
+    edit_answer(
+        body,
+        |response| {
+            let mut walk = walk.borrow_mut();
+            walk.object(response, true);
+            walk.changed
+        },
+        |root| {
+            let mut walk = walk.borrow_mut();
+            walk.element(root, true);
+            walk.changed
+        },
+    )
+}
+
+/// An answer changed in the shape it came in: `json` gets the `subsonic-response` object of a
+/// JSON or JSONP answer, `xml` the root element of an XML one (its declaration kept). Each says
+/// whether it changed anything. None when nothing changed or the answer cannot be read.
+pub fn edit_answer(
+    body: &[u8],
+    json: impl FnOnce(&mut Map<String, Value>) -> bool,
+    xml: impl FnOnce(&mut XElement) -> bool,
+) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(body).ok()?;
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
     if trimmed.starts_with('<') {
         let (declaration, rest) = match trimmed.strip_prefix("<?xml") {
             Some(after) => {
@@ -369,13 +393,12 @@ pub fn rewrite_answer(body: &[u8], judge: &Judge<'_>) -> Option<Vec<u8>> {
             None => ("", trimmed),
         };
         let mut root = XElement::parse(rest).ok()?;
-        walk.element(&mut root, true);
-        if !walk.changed {
+        if !xml(&mut root) {
             return None;
         }
         return Some(format!("{declaration}{}", root.to_xml_string()).into_bytes());
     }
-    let (head, json, tail) = if trimmed.starts_with('{') {
+    let (head, body_json, tail) = if trimmed.starts_with('{') {
         ("", trimmed, "")
     } else {
         // JSONP: `callback({...});`.
@@ -386,11 +409,12 @@ pub fn rewrite_answer(body: &[u8], judge: &Judge<'_>) -> Option<Vec<u8>> {
         }
         (&trimmed[..=open], &trimmed[open + 1..close], &trimmed[close..])
     };
-    let mut root: Value = serde_json::from_str(json).ok()?;
-    if let Some(Value::Object(response)) = root.get_mut("subsonic-response") {
-        walk.object(response, true);
-    }
-    if !walk.changed {
+    let mut root: Value = serde_json::from_str(body_json).ok()?;
+    let changed = match root.get_mut("subsonic-response") {
+        Some(Value::Object(response)) => json(response),
+        _ => false,
+    };
+    if !changed {
         return None;
     }
     let written = serde_json::to_string(&root).ok()?;
@@ -449,6 +473,15 @@ fn lists_rule(context: &AnswerContext<'_>, body: Bytes, privacy: &PrivacyCache) 
     let view: Option<Arc<PrivateView>> = owner
         .filter(|o| o.libraries)
         .map(|_| privacy.view(index, state.library_scope.personal_library_ids()));
+    if eq_ignore_case(endpoint, "getGenres") {
+        return match view
+            .as_ref()
+            .and_then(|view| owner_privacy::genres_answer(&body, view))
+        {
+            Some(rewritten) => Bytes::from(rewritten),
+            None => body,
+        };
+    }
     let members: HashSet<String> = if owner.is_some_and(|o| o.playlists) {
         state
             .family_store

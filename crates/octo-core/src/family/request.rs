@@ -108,7 +108,7 @@ impl FamilyRequest {
 
     /// Whether this request takes one of the member's weekly slots: asked for in the last 7
     /// days, not declined, cancelled or failed, and not met without a download (a song that
-    /// was already shared, or linked from another member's copy).
+    /// was already shared, or linked from another member's copy), and not a playlist addition.
     pub fn counts_toward_quota(&self, now: DateTime<Utc>) -> bool {
         let live = matches!(
             self.state,
@@ -118,7 +118,8 @@ impl FamilyRequest {
             self.outcome,
             Some(RequestOutcome::AlreadyShared | RequestOutcome::AddedFromFamily)
         );
-        live && !free && self.created > now - TimeDelta::days(7) && self.created <= now
+        let copy = self.kind != RequestKind::PlaylistAdd;
+        live && !free && copy && self.created > now - TimeDelta::days(7) && self.created <= now
     }
 }
 

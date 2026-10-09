@@ -664,6 +664,9 @@
     if (options.cancel && request.state === 'Pending') {
       side.appendChild(el('button', { class: 'fam-btn small', type: 'button', onclick: function () { options.cancel(request); } }, 'Cancel'));
     }
+    if (options.retry && request.state === 'Failed' && request.quality === 'Flac') {
+      side.appendChild(el('button', { class: 'fam-btn small', type: 'button', onclick: function () { options.retry(request); } }, 'Try MP3'));
+    }
     var meta = [request.artist, request.album].filter(Boolean).join(' · ');
     var who = options.decide ? request.displayName + ' asked ' + F.ago(request.created).toLowerCase() : 'Asked ' + F.ago(request.created).toLowerCase();
     var warning = options.fullFor && options.fullFor(request) ? el('div', { class: 'fam-row-meta', style: 'color:var(--warn)' }, options.fullFor(request)) : null;
@@ -691,6 +694,11 @@
         var answer = await api('DELETE', '/me/requests/' + encodeURIComponent(r.id));
         if (!answer.ok) return F.toast(F.errorOf(answer), true);
         F.toast('Canceled');
+        viewRequests(main);
+      }, retry: async function (r) {
+        var answer = await api('POST', '/me/requests', { id: r.target, quality: 'Mp3' });
+        if (!answer.ok) return F.toast(F.errorOf(answer), true);
+        F.toast(answer.data.state === 'Pending' ? 'Asked for an MP3. You will hear back.' : 'Asked for an MP3');
         viewRequests(main);
       } }));
     });

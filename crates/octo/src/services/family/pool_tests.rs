@@ -204,6 +204,8 @@ async fn upgrade_repoints_every_link() {
             added_by: "sam".into(),
             added: chrono::Utc::now(),
             pending: false,
+            duration: None,
+            explicit_status: None,
         }],
     );
 

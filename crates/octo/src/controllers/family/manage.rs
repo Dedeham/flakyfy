@@ -6,7 +6,6 @@ use axum::body::Bytes;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::abilities::Preset;
 use octo_core::family::request::RequestState;
 use serde::Deserialize;
@@ -337,10 +336,7 @@ async fn decide(state: AppState, web: Web, id: String, body: Bytes, approve: boo
         .decide(&id, approve, signed.user(), note.trim())
         .await
     {
-        Ok(decided) => {
-            FamilyService::request_decided(&state, &decided);
-            ok(&FamilyService::request_json(&state, &decided))
-        }
+        Ok(decided) => ok(&FamilyService::request_json(&state, &decided)),
         Err(e) => family_error(&e),
     }
 }
@@ -415,20 +411,6 @@ pub async fn create_playlist(State(state): State<AppState>, web: Web, body: Byte
         Ok(request) => request,
         Err(res) => return res,
     };
-    let abilities = FamilyService::abilities_of(&state, signed.user());
-    if !abilities.family_playlists_edit {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "Family playlists cannot be changed from this account.",
-        );
-    }
-    let approve = request.approve_additions.unwrap_or(false);
-    if approve && !FamilyService::may_manage(&state, &signed.actor) {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "Only people who manage the family can ask for approval of additions.",
-        );
-    }
     let Some(name) = request.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else {
         return refusal(StatusCode::BAD_REQUEST, "Give the playlist a name.");
     };
@@ -436,7 +418,7 @@ pub async fn create_playlist(State(state): State<AppState>, web: Web, body: Byte
         .family
         .hooks(&state)
         .playlists
-        .create(name, signed.user(), approve)
+        .create(name, signed.user(), request.approve_additions.unwrap_or(false))
         .await
     {
         Ok(playlist) => ok(&json!(playlist)),
@@ -444,7 +426,8 @@ pub async fn create_playlist(State(state): State<AppState>, web: Web, body: Byte
     }
 }
 
-/// `PUT /api/family/playlists/{id}`: the creator or a manager.
+/// `PUT /api/family/playlists/{id}`: the creator or a manager renames it; only managers turn
+/// approval of additions on or off.
 pub async fn change_playlist(
     State(state): State<AppState>,
     web: Web,
@@ -459,28 +442,17 @@ pub async fn change_playlist(
         Ok(request) => request,
         Err(res) => return res,
     };
-    let playlists = state.family.hooks(&state).playlists;
-    let Some(existing) = playlists.get(&id) else {
-        return refusal(StatusCode::NOT_FOUND, "There is no such family playlist.");
-    };
-    let manager = FamilyService::may_manage(&state, &signed.actor);
-    if !manager && !eq_ignore_case(&existing.created_by, signed.user()) {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "Only whoever made this playlist, or a manager, can change it.",
-        );
-    }
-    if request.approve_additions.is_some() && !manager {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "Only people who manage the family can ask for approval of additions.",
-        );
-    }
     let name = request.name.as_deref().map(str::trim);
     if name.is_some_and(str::is_empty) {
         return refusal(StatusCode::BAD_REQUEST, "Give the playlist a name.");
     }
-    match playlists.update(&id, name, request.approve_additions).await {
+    match state
+        .family
+        .hooks(&state)
+        .playlists
+        .update(&id, signed.user(), name, request.approve_additions)
+        .await
+    {
         Ok(playlist) => ok(&json!(playlist)),
         Err(e) => family_error(&e),
     }
@@ -488,10 +460,17 @@ pub async fn change_playlist(
 
 /// `DELETE /api/family/playlists/{id}`: managers.
 pub async fn delete_playlist(State(state): State<AppState>, web: Web, Path(id): Path<String>) -> Response {
-    if let Err(res) = web.manager(&state).await {
-        return res;
-    }
-    match state.family.hooks(&state).playlists.delete(&id).await {
+    let signed = match web.manager(&state).await {
+        Ok(signed) => signed,
+        Err(res) => return res,
+    };
+    match state
+        .family
+        .hooks(&state)
+        .playlists
+        .delete(&id, signed.user())
+        .await
+    {
         Ok(()) => no_content(),
         Err(e) => family_error(&e),
     }

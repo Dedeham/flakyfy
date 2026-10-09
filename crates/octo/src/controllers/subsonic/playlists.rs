@@ -29,6 +29,7 @@ use super::action_helpers::{
     queue_refresh_if_stale, xml_value,
 };
 use crate::app::AppState;
+use crate::middleware::family_gate::{GateReading, Unverified};
 use crate::services::family::audio_gate::ExplicitMark;
 use crate::services::family::family_playlists::{
     self, FAMILY_OWNER, NewEntry, PlaylistError, SHARED_SCOPE, Serve, personal_scope,
@@ -373,7 +374,6 @@ pub async fn get_playlist(State(state): State<AppState>, req: Request) -> Respon
 }
 
 async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAborted) -> Response {
-    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(state, req).await {
         Ok(call) => call,
         Err(response) => return response,
@@ -384,16 +384,13 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
     let username = call.param_or("u", "").to_string();
 
     if is_family_playlist_id(state, &id) {
-        return family_playlist(state, &call, caller.as_ref(), &id).await;
+        return family_playlist(state, &call, &id).await;
     }
 
     // A mix is the listener's own library, served as a playlist Navidrome has never heard of.
     // The ping is the auth check, as for a station: nothing about a user is revealed first.
     if let Some(mix) = state.generated_playlists.find(&username, &id) {
-        let mut auth_only = call.parameters.clone();
-        auth_only.shift_remove("id");
-        let check = call.proxy.relay_safe("rest/ping", &auth_only).await;
-        if !check.is_some_and(|check| is_successful_subsonic_response(&check.body, format)) {
+        if !signed_in(state, &call, format).await {
             return builder
                 .create_error(format, 40, "Wrong username or password")
                 .into_response();
@@ -415,10 +412,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
 
     // A chart list (C#'s `PopularPlaylistAsync`), with the same ping first.
     if let Some(chart) = state.chart_playlists.which(&username, &id) {
-        let mut auth_only = call.parameters.clone();
-        auth_only.shift_remove("id");
-        let check = call.proxy.relay_safe("rest/ping", &auth_only).await;
-        if !check.is_some_and(|check| is_successful_subsonic_response(&check.body, format)) {
+        if !signed_in(state, &call, format).await {
             return builder
                 .create_error(format, 40, "Wrong username or password")
                 .into_response();
@@ -473,10 +467,7 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
                 .into_response(),
         };
     };
-    let mut auth = call.parameters.clone();
-    auth.shift_remove("id");
-    let ping = call.proxy.relay_safe("rest/ping", &auth).await;
-    if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, format)) {
+    if !signed_in(state, &call, format).await {
         return builder
             .create_error(format, 40, "Wrong username or password")
             .into_response();
@@ -681,7 +672,6 @@ async fn family_action_playlist(
 /// Refuses Octo's own ids, changes family playlists, and relays everything else as
 /// `rest/<last path segment>` in the client's own spelling.
 async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, failure: &str) -> Response {
-    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return response,
@@ -706,7 +696,7 @@ async fn mutate(state: AppState, req: Request, id_key: &str, _fallback: &str, fa
     if is_family_playlist_id(&state, &id)
         && let Some(change) = playlist_change(&call)
     {
-        return family_mutate(&state, &call, caller.as_ref(), &id, change).await;
+        return family_mutate(&state, &call, &id, change).await;
     }
     if is_octo_playlist_id(&id, state.settings.current().family.enabled) {
         return state
@@ -776,26 +766,50 @@ fn playlist_error(state: &AppState, call: &SubsonicCall, error: PlaylistError) -
     family_error(state, call, code, error.message())
 }
 
+/// Whether the request's sign-in is good, before Octo answers with something of the caller's
+/// own. While Family is on, the family gate's reading checks exactly the sign-in it read;
+/// otherwise Navidrome is pinged with the request's own parameters, as it always was.
+async fn signed_in(state: &AppState, call: &SubsonicCall, format: &str) -> bool {
+    if let Some(reading) = GateReading::of(&call.parts.extensions) {
+        return reading.verify(state).await.is_ok();
+    }
+    let mut auth_only = call.parameters.clone();
+    auth_only.shift_remove("id");
+    let check = call.proxy.relay_safe("rest/ping", &auth_only).await;
+    check.is_some_and(|check| is_successful_subsonic_response(&check.body, format))
+}
+
+/// The caller of a family playlist call, checked by the family gate's reading with exactly the
+/// sign-in it read, or the answer to send instead.
+#[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
+async fn checked_caller(state: &AppState, call: &SubsonicCall) -> Result<FamilyCaller, Response> {
+    let Some(reading) = GateReading::of(&call.parts.extensions) else {
+        return Err(playlist_error(state, call, PlaylistError::NotFound));
+    };
+    match reading.verify(state).await {
+        Ok(verified) => Ok(verified.caller().clone()),
+        Err(Unverified::Missing) => Err(playlist_error(state, call, PlaylistError::NotFound)),
+        Err(Unverified::Refused) => Err(family_error(state, call, 40, "Wrong username or password")),
+        Err(Unverified::Unreachable) => Err(family_error(
+            state,
+            call,
+            0,
+            "Octo can't reach Navidrome to check who is asking",
+        )),
+    }
+}
+
 /// A family playlist, each entry resolved for the caller: the library song (read as the caller)
 /// when it is shared or the caller's own, otherwise its outside version.
-async fn family_playlist(
-    state: &AppState,
-    call: &SubsonicCall,
-    caller: Option<&FamilyCaller>,
-    id: &str,
-) -> Response {
-    let Some(caller) = caller else {
-        return playlist_error(state, call, PlaylistError::NotFound);
+async fn family_playlist(state: &AppState, call: &SubsonicCall, id: &str) -> Response {
+    let caller = match checked_caller(state, call).await {
+        Ok(caller) => caller,
+        Err(answer) => return answer,
     };
+    let caller = &caller;
     let Some(playlist) = family_playlists::find(&state.family_playlists, caller, id) else {
         return playlist_error(state, call, PlaylistError::NotFound);
     };
-    let mut auth = call.parameters.clone();
-    auth.shift_remove("id");
-    let ping = call.proxy.relay_safe("rest/ping", &auth).await;
-    if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, &call.format)) {
-        return family_error(state, call, 40, "Wrong username or password");
-    }
 
     let shown = family_playlists::shown_entries(&playlist, caller);
     let entries: Vec<Value> = futures::stream::iter(shown)
@@ -863,28 +877,18 @@ async fn outside_song_json(state: &AppState, id: &str) -> Option<Value> {
 
 /// `updatePlaylist` and `deletePlaylist` on a family playlist. `createPlaylist` never replaces
 /// one.
-async fn family_mutate(
-    state: &AppState,
-    call: &SubsonicCall,
-    caller: Option<&FamilyCaller>,
-    id: &str,
-    change: PlaylistChange,
-) -> Response {
+async fn family_mutate(state: &AppState, call: &SubsonicCall, id: &str, change: PlaylistChange) -> Response {
     let store = &state.family_playlists;
-    let Some(caller) = caller else {
-        return playlist_error(state, call, PlaylistError::NotFound);
+    // Nothing here goes to Navidrome, so the caller is checked before a change is made in
+    // anyone's name.
+    let caller = match checked_caller(state, call).await {
+        Ok(caller) => caller,
+        Err(answer) => return answer,
     };
+    let caller = &caller;
     let Some(playlist) = family_playlists::find(store, caller, id) else {
         return playlist_error(state, call, PlaylistError::NotFound);
     };
-    // Nothing here goes to Navidrome, so a sign-in the gate did not check is checked now,
-    // before a change is made in anyone's name.
-    if !caller.checked {
-        let ping = call.proxy.relay_safe("rest/ping", &call.parameters).await;
-        if !ping.is_some_and(|ping| is_successful_subsonic_response(&ping.body, &call.format)) {
-            return family_error(state, call, 40, "Wrong username or password");
-        }
-    }
     let done = || {
         state
             .subsonic_response_builder

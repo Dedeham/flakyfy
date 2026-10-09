@@ -357,3 +357,95 @@ fn escape_data_string_matches_uri_escape_data_string() {
         "a%20b%2Bc%2F%C3%A9~-_.%21%2A%27%28%29"
     );
 }
+
+#[test]
+fn a_readable_body_reads_to_the_same_parameters_once() {
+    let cases = [
+        query("u=a&U=b&id=1&id=&f=json"),
+        with_body(
+            Some("id=Q&f=json"),
+            "application/x-www-form-urlencoded",
+            "u=x&id=1&id=2",
+        ),
+        with_body(
+            Some("u=a"),
+            "application/json",
+            r#"{"id":"9","n":[1, 2],"t":true}"#,
+        ),
+        with_body(Some("u=a"), "application/json", "\u{feff}{\"id\":\"9\"}"),
+        with_body(
+            None,
+            "multipart/form-data; boundary=XX",
+            "--XX\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\n5\r\n--XX--\r\n",
+        ),
+        with_body(Some("u=a"), "text/plain", "u=b"),
+        with_body(Some("u=a"), "application/json", "  "),
+        with_body(Some("u=a"), "multipart/form-data", ""),
+    ];
+    for parts in cases {
+        let reading = read_request(&parts);
+        assert!(!reading.unreadable(), "{parts:?}");
+        assert_eq!(reading.parameters(), extract_all_parameters(&parts), "{parts:?}");
+        for name in ["id", "u"] {
+            assert_eq!(
+                reading.parameter_values(name),
+                extract_parameter_values(&parts, name),
+                "{parts:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_body_the_parameters_would_guess_at_is_unreadable() {
+    for parts in [
+        // No boundary, or one too long: the parameters once read the body as a query.
+        with_body(None, "multipart/form-data", "u=guest&p=pw"),
+        with_body(
+            None,
+            &format!("multipart/form-data; boundary={}", "b".repeat(80)),
+            "u=guest",
+        ),
+        // A boundary the body never uses.
+        with_body(None, "multipart/form-data; boundary=XX", "garbage u=guest"),
+        // JSON that is not one object.
+        with_body(None, "application/json", r#"["u","guest"]"#),
+        with_body(None, "application/json", "null"),
+        with_body(None, "application/json", "{ broken"),
+    ] {
+        let reading = read_request(&parts);
+        assert!(reading.unreadable(), "{parts:?}");
+        assert_eq!(
+            reading.parameters(),
+            extract_all_parameters(&query(parts.query.unwrap_or("")))
+        );
+    }
+}
+
+#[test]
+fn every_value_is_read_from_the_query_and_either_kind_of_body() {
+    let reading = read_request(&with_body(
+        Some("id=a&ID=b"),
+        "application/x-www-form-urlencoded",
+        "iD=c&other=x",
+    ));
+    assert_eq!(reading.every_value("id"), ["a", "b", "c"]);
+    let reading = read_request(&with_body(
+        Some("id=a"),
+        "application/json",
+        r#"{"Id":" d ","x":"y"}"#,
+    ));
+    assert_eq!(reading.every_value("id"), ["a", "d"]);
+    let values = reading.body_values().expect("a body");
+    assert_eq!(values.get("id"), Some(&[" d ".to_string()][..]));
+}
+
+#[test]
+fn json_object_reads_as_the_parameters_read() {
+    assert!(json_object("\u{feff}{\"a\":1}".as_bytes()).is_some());
+    assert!(json_object(b"{\"a\":\"\xff\"}").is_some());
+    assert!(json_object(b"[1]").is_none());
+    assert!(json_object(b"").is_none());
+    let deep = format!("{{\"a\":{}{}}}", "[".repeat(64), "]".repeat(64));
+    assert!(json_object(deep.as_bytes()).is_none());
+}

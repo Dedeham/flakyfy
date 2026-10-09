@@ -2917,3 +2917,137 @@ async fn the_family_page_names_the_setting_for_an_untrusted_proxy() {
     let r = f.get("/api/family/session", Some(&f.owner_cookie())).await;
     assert!(r.json()["proxyWarning"].is_null(), "{}", r.body);
 }
+
+// ------------------------------------------------------------------------------------------
+// Sign-in throttles across addresses
+// ------------------------------------------------------------------------------------------
+
+/// Wrong passwords for one account from many addresses count together, so the owner's
+/// Navidrome password cannot be guessed from address after address.
+#[tokio::test]
+async fn auth_tries_for_one_account_from_many_addresses_count_together() {
+    let f = fam().await;
+    let wrong = json!({ "username": "winters", "password": "guess" });
+    for n in 0..crate::services::family::member_bridge::ACCOUNT_FAILURES {
+        let from = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        let r = f
+            .call(Method::POST, "/api/family/auth", None, Some(wrong.clone()), &from)
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    }
+    let right = json!({ "username": "winters", "password": "owner pass" });
+    let r = f
+        .call(
+            Method::POST,
+            "/api/family/auth",
+            None,
+            Some(right),
+            "198.51.100.9",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+    assert!(r.headers.contains_key("retry-after"));
+    // Another account is not held back.
+    let bob = json!({ "username": "bob", "password": "bob pass" });
+    let r = f
+        .call(Method::POST, "/api/family/auth", None, Some(bob), "198.51.100.9")
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+/// A device on the home network naming a new X-Forwarded-For hop on every try still counts
+/// against the address that connected.
+#[tokio::test]
+async fn auth_tries_naming_new_forwarded_hops_count_against_the_peer() {
+    let f = fam().await;
+    for n in 0..crate::services::family::member_bridge::PEER_FAILURES {
+        // A different account each time, so only the peer's count adds up.
+        let wrong = json!({ "username": format!("guess-{n}"), "password": "guess" });
+        let hop = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        let r = raw(
+            &f.app,
+            Method::POST,
+            "/api/family/auth",
+            &[
+                ("x-octo-family", "1".into()),
+                ("content-type", "application/json".into()),
+                ("x-forwarded-for", hop),
+            ],
+            wrong.to_string(),
+            HOME,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+    }
+    let right = json!({ "username": "winters", "password": "owner pass" });
+    let r = raw(
+        &f.app,
+        Method::POST,
+        "/api/family/auth",
+        &[
+            ("x-octo-family", "1".into()),
+            ("content-type", "application/json".into()),
+            ("x-forwarded-for", "198.51.100.200".into()),
+        ],
+        right.to_string(),
+        HOME,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+}
+
+/// A sign-in, a join or a password change takes a small body only.
+#[tokio::test]
+async fn sign_in_routes_take_a_small_body_only() {
+    let f = fam().await;
+    let huge = json!({ "username": "alex", "password": "x".repeat(64 * 1024) });
+    for uri in ["/api/family/auth", "/api/family/join"] {
+        let r = f.post(uri, None, huge.clone()).await;
+        assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}: {}", r.body);
+    }
+    let r = f
+        .put(
+            "/api/family/me/password",
+            Some(&f.alex()),
+            json!({ "current": "x".repeat(64 * 1024), "next": "y" }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.body);
+}
+
+/// A password over the cap is wrong without being hashed.
+#[tokio::test]
+async fn a_password_over_the_cap_is_wrong() {
+    let f = fam().await;
+    let r = f
+        .post(
+            "/api/family/auth",
+            None,
+            json!({ "username": "alex", "password": "x".repeat(passwords::MAX_BYTES + 1) }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+}
+
+#[test]
+fn pair_guard_counts_per_peer_and_per_username_across_addresses() {
+    let guard = PairGuard::new(Clock::system());
+    use crate::services::family::family_service::{PAIR_ACCOUNT_FAILURES, PAIR_PEER_FAILURES};
+    for n in 0..PAIR_ACCOUNT_FAILURES {
+        guard.failed_from(&format!("10.0.0.{n}"), &format!("10.0.0.{n}"), "Alex");
+    }
+    assert!(
+        guard.blocked("10.9.9.9", "10.9.9.9", "alex"),
+        "the username waits"
+    );
+    assert!(!guard.blocked("10.9.9.9", "10.9.9.9", "sam"));
+    let guard = PairGuard::new(Clock::system());
+    for n in 0..PAIR_PEER_FAILURES {
+        guard.failed_from(&format!("203.0.113.{n}"), "192.168.1.5", &format!("user-{n}"));
+    }
+    assert!(
+        guard.blocked("198.51.100.1", "192.168.1.5", "someone"),
+        "the peer waits, whatever hop it names"
+    );
+    assert!(!guard.blocked("198.51.100.1", "192.168.1.6", "someone"));
+}

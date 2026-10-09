@@ -4,6 +4,7 @@
 //! It also keeps the failure throttle and repairs a hidden password Navidrome stopped taking.
 
 use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,11 +15,11 @@ use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::family::codes::{constant_time_eq, device_secret, normalize_app_password, subsonic_token};
 use octo_core::family::device::DeviceKind;
 use octo_subsonic::subsonic_request_parser::{
-    StringValuesCollection, escape_data_string, has_form_content_type, parse_query, read_form,
-    unescape_data_string,
+    BodyReading, RequestParts, RequestReading, StringValuesCollection, escape_data_string, json_object,
+    read_request, unescape_data_string,
 };
 use parking_lot::Mutex;
-use serde_json::Value;
+
 use tracing::{info, warn};
 
 use super::family_store::FamilyStore;
@@ -68,29 +69,37 @@ pub struct SignIn {
 }
 
 impl SignIn {
+    /// The sign-in of a request with this query and body, read as [`read_request`] reads it.
     pub fn read(query: Option<&str>, content_type: Option<&str>, body: &[u8]) -> SignIn {
+        let reading = read_request(&RequestParts {
+            query,
+            content_type,
+            content_length: Some(body.len() as u64),
+            body,
+        });
+        SignIn::of(&reading, content_type)
+    }
+
+    /// The sign-in a request read once carries.
+    pub fn of(reading: &RequestReading, content_type: Option<&str>) -> SignIn {
         let mut sign_in = SignIn::default();
-        let query = parse_query(query.unwrap_or(""));
-        sign_in.take(&query);
-        let user_in_query = query.get("u").is_some();
-        if has_form_content_type(content_type) {
-            if let Ok(form) = read_form(content_type.unwrap_or(""), body) {
-                if is_url_encoded(content_type) {
-                    sign_in.user_in_body_only = !user_in_query && form.get("u").is_some();
-                    sign_in.take(&form);
-                } else {
-                    sign_in.in_multipart = form.iter().any(|(key, _)| is_sign_in_key(key));
-                    sign_in.take(&form);
+        sign_in.take(&reading.query);
+        let user_in_query = reading.query.get("u").is_some();
+        match &reading.body {
+            BodyReading::Form(form) if is_url_encoded(content_type) => {
+                sign_in.user_in_body_only = !user_in_query && form.get("u").is_some();
+                sign_in.take(form);
+            }
+            BodyReading::Form(form) => {
+                sign_in.in_multipart = form.iter().any(|(key, _)| is_sign_in_key(key));
+                sign_in.take(form);
+            }
+            BodyReading::Json(_) => {
+                if let Some(values) = reading.body_values() {
+                    sign_in.take(&values);
                 }
             }
-        } else if is_json(content_type)
-            && let Some(pairs) = octo_subsonic::subsonic_request_parser::json_parameters(body)
-        {
-            let mut json = StringValuesCollection::new();
-            for (key, value) in pairs {
-                json.append(key, value);
-            }
-            sign_in.take(&json);
+            BodyReading::Nothing | BodyReading::Unreadable => {}
         }
         sign_in
     }
@@ -301,13 +310,18 @@ pub fn rewrite(
             query_out = joined(kept_query, &signed);
         }
     } else {
+        // Read as the parameters read it (a byte order mark, or bytes that are not UTF-8,
+        // included), so no sign-in key the parameters would find stays behind.
         if is_json(content_type)
-            && let Ok(Value::Object(mut object)) = serde_json::from_slice::<Value>(body)
+            && let Some(members) = json_object(body)
         {
-            let before = object.len();
-            object.retain(|key, _| !is_sign_in_key(key));
-            if object.len() != before {
-                new_body = Some(Bytes::from(Value::Object(object).to_string()));
+            let before = members.len();
+            let kept: indexmap::IndexMap<String, Box<serde_json::value::RawValue>> = members
+                .into_iter()
+                .filter(|(key, _)| !is_sign_in_key(key))
+                .collect();
+            if kept.len() != before {
+                new_body = serde_json::to_vec(&kept).ok().map(Bytes::from);
             }
         }
         query_out = joined(kept_query, &signed);
@@ -320,11 +334,59 @@ pub fn rewrite(
 
 /// Wrong sign-ins allowed per address and member before more are refused unchecked.
 pub const MAX_FAILURES: usize = 20;
+/// Wrong sign-ins allowed from one peer Octo can vouch for, to any account, in the window. A
+/// peer may stand for several people (a proxy Octo does not trust), so its ceiling is higher.
+pub const PEER_FAILURES: usize = 100;
+/// Wrong sign-ins allowed for one account, from every address together, in the window.
+pub const ACCOUNT_FAILURES: usize = 100;
 /// How long a wrong sign-in counts.
 pub const FAILURE_WINDOW: TimeDelta = TimeDelta::minutes(15);
 const MAX_KEYS: usize = 10_000;
+/// Tries kept per key at most: twice the highest ceiling.
+const KEPT_TRIES: usize = 2 * PEER_FAILURES;
 
-/// Counts wrong member sign-ins per client address and member.
+/// How many of a key's tries still count at `now`, the older ones dropped.
+fn recent(failures: &mut HashMap<String, VecDeque<DateTime<Utc>>>, key: &str, now: DateTime<Utc>) -> usize {
+    let Some(tries) = failures.get_mut(key) else {
+        return 0;
+    };
+    while tries.front().is_some_and(|first| now - *first >= FAILURE_WINDOW) {
+        tries.pop_front();
+    }
+    tries.len()
+}
+
+/// The keys one sign-in try counts under, each with its ceiling: the client address with the
+/// account, the peer Octo can vouch for (whatever hops it names), and the account across every
+/// address. A try is held back when any of them is used up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TryKeys(Vec<(String, usize)>);
+
+impl TryKeys {
+    /// The keys for a try at `user` from `address` (behind `peer`), allowing `per_address` wrong
+    /// tries from that address.
+    pub fn new(address: &IpAddr, peer: &IpAddr, user: &str, per_address: usize) -> Self {
+        let user = user.trim().to_lowercase();
+        TryKeys(vec![
+            (format!("{address}|{user}"), per_address),
+            (format!("peer|{peer}"), PEER_FAILURES),
+            (format!("account|{user}"), ACCOUNT_FAILURES),
+        ])
+    }
+
+    /// The keys with their ceilings.
+    pub fn keys(&self) -> &[(String, usize)] {
+        &self.0
+    }
+
+    /// The key of the address with the account, which a right sign-in clears.
+    pub fn address_key(&self) -> &str {
+        &self.0[0].0
+    }
+}
+
+/// Counts wrong sign-ins per client address and member, and under the other keys of a
+/// [`TryKeys`]: the peer that connected, and the account from everywhere.
 pub struct FailureThrottle {
     failures: Mutex<HashMap<String, VecDeque<DateTime<Utc>>>>,
     clock: Clock,
@@ -368,7 +430,7 @@ impl FailureThrottle {
         }
         let tries = failures.entry(key.to_string()).or_default();
         tries.push_back(now);
-        while tries.len() > MAX_FAILURES * 2 {
+        while tries.len() > KEPT_TRIES {
             tries.pop_front();
         }
     }
@@ -404,6 +466,53 @@ impl FailureThrottle {
             if tries.is_empty() {
                 failures.remove(key);
             }
+        }
+    }
+
+    /// Whether any of these keys has used up its tries.
+    pub fn blocked_by(&self, keys: &TryKeys) -> bool {
+        let now = self.clock.now();
+        let mut failures = self.failures.lock();
+        keys.keys()
+            .iter()
+            .any(|(key, ceiling)| recent(&mut failures, key, now) >= *ceiling)
+    }
+
+    /// One more wrong sign-in under every one of these keys.
+    pub fn failed_by(&self, keys: &TryKeys) {
+        for (key, _) in keys.keys() {
+            self.failed(key);
+        }
+    }
+
+    /// Counts one try under every key now, before its sign-in is checked, and answers true; or
+    /// answers false, counting nothing, when any key has used up its tries. All under one lock,
+    /// as [`FailureThrottle::attempt`].
+    pub fn attempt_by(&self, keys: &TryKeys) -> bool {
+        let now = self.clock.now();
+        let mut failures = self.failures.lock();
+        if keys
+            .keys()
+            .iter()
+            .any(|(key, ceiling)| recent(&mut failures, key, now) >= *ceiling)
+        {
+            return false;
+        }
+        for (key, _) in keys.keys() {
+            failures.entry(key.clone()).or_default().push_back(now);
+        }
+        if failures.len() > MAX_KEYS {
+            failures.retain(|_, tries| tries.back().is_some_and(|last| now - *last < FAILURE_WINDOW));
+            trim_oldest(&mut failures, MAX_KEYS, |tries| tries.back().copied());
+        }
+        true
+    }
+
+    /// Takes back the newest try under every key: one counted before its sign-in was checked,
+    /// which turned out right or could not be checked at all.
+    pub fn forgive_by(&self, keys: &TryKeys) {
+        for (key, _) in keys.keys() {
+            self.forgive(key);
         }
     }
 
@@ -548,6 +657,7 @@ pub async fn repair(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_subsonic::subsonic_request_parser::parse_query;
 
     #[test]
     fn a_try_counts_before_it_is_checked_and_a_right_one_is_taken_back() {
@@ -576,10 +686,10 @@ mod tests {
         }
         assert!(throttle.len() <= MAX_KEYS, "{}", throttle.len());
         let key = "10.9.9.9|alex";
-        for _ in 0..(MAX_FAILURES * 5) {
+        for _ in 0..(KEPT_TRIES * 3) {
             throttle.failed(key);
         }
-        assert!(throttle.tries(key) <= MAX_FAILURES * 2);
+        assert!(throttle.tries(key) <= KEPT_TRIES);
         let bridge = MemberBridge::default();
         for n in 0..(MAX_KEYS + 50) {
             assert!(bridge.may_log(&format!("sign-in|user-{n}")));
@@ -785,6 +895,44 @@ mod tests {
             "h",
         );
         assert_eq!(out.body.as_deref(), Some(&br#"{"id":"1"}"#[..]));
+    }
+
+    #[test]
+    fn tries_count_per_peer_and_per_account_whatever_address_is_named() {
+        let ip = |text: String| -> IpAddr { text.parse().expect("an address") };
+        let home = ip("192.168.1.5".into());
+        let throttle = FailureThrottle::new(Clock::system());
+        for n in 0..PEER_FAILURES {
+            let keys = TryKeys::new(
+                &ip(format!("203.0.113.{n}")),
+                &home,
+                &format!("user-{n}"),
+                MAX_FAILURES,
+            );
+            assert!(!throttle.blocked_by(&keys));
+            throttle.failed_by(&keys);
+        }
+        let other = ip("198.51.100.1".into());
+        assert!(throttle.blocked_by(&TryKeys::new(&other, &home, "anyone", MAX_FAILURES)));
+        assert!(!throttle.blocked_by(&TryKeys::new(&other, &other, "anyone", MAX_FAILURES)));
+
+        let throttle = FailureThrottle::new(Clock::system());
+        for n in 0..ACCOUNT_FAILURES {
+            let from = ip(format!("10.0.{}.{}", n / 200, n % 200));
+            assert!(throttle.attempt_by(&TryKeys::new(&from, &from, "Alex", MAX_FAILURES)));
+        }
+        let fresh = ip("10.9.9.9".into());
+        let keys = TryKeys::new(&fresh, &fresh, "alex", MAX_FAILURES);
+        assert!(!throttle.attempt_by(&keys), "the account waits");
+        assert!(throttle.attempt_by(&TryKeys::new(&fresh, &fresh, "sam", MAX_FAILURES)));
+        // A try taken back frees one place under every key.
+        let last = ip(format!(
+            "10.0.{}.{}",
+            (ACCOUNT_FAILURES - 1) / 200,
+            (ACCOUNT_FAILURES - 1) % 200
+        ));
+        throttle.forgive_by(&TryKeys::new(&last, &last, "alex", MAX_FAILURES));
+        assert!(throttle.attempt_by(&keys));
     }
 
     #[test]

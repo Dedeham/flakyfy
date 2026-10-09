@@ -44,8 +44,9 @@ pub struct SubsonicCall {
 }
 
 impl SubsonicCall {
-    /// Reads the body and the parameters. A body over Kestrel's limit is refused as Kestrel
-    /// refused it. (The refusal is a whole response, as an action's early return was.)
+    /// Reads the body and the parameters (while Family is on, the ones the family gate read).
+    /// A body over Kestrel's limit is refused as Kestrel refused it. (The refusal is a whole
+    /// response, as an action's early return was.)
     #[allow(clippy::result_large_err)]
     pub async fn read(state: &AppState, req: Request) -> Result<SubsonicCall, Response> {
         let (parts, body) = req.into_parts();
@@ -53,8 +54,7 @@ impl SubsonicCall {
             return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
         };
         let incoming = Arc::new(IncomingRequest::from_parts(&parts, body));
-        let mut parameters = incoming.parameters();
-        crate::services::family::audio_gate::hold_quality(&parts.extensions, &mut parameters);
+        let parameters = incoming.parameters();
         let format = parameters.get("f").map_or("xml", String::as_str).to_string();
         let proxy = state.subsonic_proxy.with_request(Arc::clone(&incoming));
         Ok(SubsonicCall {

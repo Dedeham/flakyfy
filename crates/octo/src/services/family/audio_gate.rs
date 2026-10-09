@@ -8,7 +8,7 @@
 //! works out the quality to ask Navidrome for: the client's own `format` and `maxBitRate`
 //! first, then the account's quality for the place (when the device follows the account),
 //! then the family limit. The lowest bitrate wins and nothing ever raises what the client asked
-//! for. The answer is an [`AudioPlan`]: [`AudioPlan::apply`] rewrites the request and
+//! for. The answer is an [`AudioPlan`]: [`AudioPlan::apply_to`] rewrites the request and
 //! [`AudioPlan::track`] hands the answer's body to the [`StreamTracker`].
 //!
 //! Octo's own file serving for outside songs asks [`ceiling`] too, and relays the library copy
@@ -21,8 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{OriginalUri, Request};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use indexmap::IndexMap;
@@ -31,7 +30,10 @@ use octo_core::family::abilities::Role;
 use octo_core::family::device::NetworkPlace;
 use octo_core::family::policy::{ClientAsk, Refusal, StreamRewrite, cap_for, stream_rewrite};
 use octo_core::settings::SettingsStore;
-use octo_subsonic::subsonic_request_parser::{Parameters, escape_data_string, unescape_data_string};
+use octo_subsonic::subsonic_request_parser::{
+    Parameters, RequestParts, RequestReading, escape_data_string, json_object, read_request,
+    unescape_data_string,
+};
 use parking_lot::Mutex;
 use serde_json::Value;
 use tracing::info;
@@ -55,6 +57,7 @@ pub const PAUSED: &str = "This account is paused by the family owner.";
 pub const AUDIO_BODY_REFUSED: &str =
     "Send the parameters of this request in the address, a url-encoded form or JSON.";
 pub const ONE_SONG_AT_A_TIME: &str = "Ask for one song at a time.";
+pub const LIBRARY_SONGS_ONLY: &str = "This profile can download single songs from the library only.";
 
 /// How long what Octo learned about a song (its explicit mark, its bitrate) is kept.
 const FACTS_FOR: Duration = Duration::from_secs(60 * 60);
@@ -333,6 +336,16 @@ impl AudioGate {
         };
         self.keep_facts(song_id, found);
         Some(found)
+    }
+
+    /// The explicit mark of a song the library index knows; None for any other id.
+    pub fn indexed_mark(&self, song_id: &str) -> Option<ExplicitMark> {
+        if song_id.trim().is_empty() {
+            return None;
+        }
+        self.index
+            .song(song_id)
+            .map(|indexed| ExplicitMark::from_status(&indexed.explicit_status))
     }
 
     /// A song's explicit mark: a library song's from the library index, else from `getSong` as
@@ -622,6 +635,8 @@ pub struct Sent<'a> {
     pub query: Option<&'a str>,
     pub content_type: Option<&'a str>,
     pub body: &'a [u8],
+    /// The family gate's one reading of this query and body, which every value is read from.
+    pub reading: Option<&'a RequestReading>,
 }
 
 impl Sent<'_> {
@@ -647,37 +662,18 @@ impl Sent<'_> {
     }
 
     /// Every value of `name`, in any case, from the query and the body (a form of either kind,
-    /// or a JSON object), blank ones left out.
+    /// or a JSON object), each trimmed, blank ones left out.
     pub fn values(&self, name: &str) -> Vec<String> {
-        use octo_subsonic::subsonic_request_parser::{parse_query, parse_query_helpers, read_form};
-        let mut values: Vec<String> = Vec::new();
-        let mut take = |found: &[String]| {
-            values.extend(
-                found
-                    .iter()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty()),
-            );
-        };
-        if let Some(found) = parse_query(self.query.unwrap_or("")).get(name) {
-            take(found);
+        match self.reading {
+            Some(reading) => reading.every_value(name),
+            None => read_request(&RequestParts {
+                query: self.query,
+                content_type: self.content_type,
+                content_length: Some(self.body.len() as u64),
+                body: self.body,
+            })
+            .every_value(name),
         }
-        let media_type = self.media_type();
-        if media_type == "application/x-www-form-urlencoded" || media_type == "multipart/form-data" {
-            let form = read_form(self.content_type.unwrap_or(""), self.body)
-                .unwrap_or_else(|_| parse_query_helpers(&String::from_utf8_lossy(self.body)));
-            if let Some(found) = form.get(name) {
-                take(found);
-            }
-        } else if let Some(pairs) = octo_subsonic::subsonic_request_parser::json_parameters(self.body) {
-            let found: Vec<String> = pairs
-                .into_iter()
-                .filter(|(key, _)| eq_ignore_case(key, name))
-                .map(|(_, value)| value)
-                .collect();
-            take(&found);
-        }
-        values
     }
 }
 
@@ -687,17 +683,22 @@ fn is_json_media_type(media_type: &str) -> bool {
 }
 
 /// A JSON object body without the members `rewrite` sets (any case), every other member kept
-/// as written. None when the body is not a JSON object or has none of them.
-fn json_without(rewrite: &ParamRewrite, body: &[u8]) -> Option<Vec<u8>> {
-    let members: IndexMap<String, Box<serde_json::value::RawValue>> = serde_json::from_slice(body).ok()?;
+/// as written. The body is read as the parameters read it (a byte order mark, or bytes that are
+/// not UTF-8, included), so no value the parameters would find stays behind. Ok(None) when it
+/// has none of them; Err when it is not a JSON object at all.
+fn json_without(rewrite: &ParamRewrite, body: &[u8]) -> Result<Option<Vec<u8>>, UnreadableBody> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(None);
+    }
+    let members = json_object(body).ok_or(UnreadableBody)?;
     if !members.keys().any(|key| rewrite.removes(key)) {
-        return None;
+        return Ok(None);
     }
     let kept: IndexMap<String, Box<serde_json::value::RawValue>> = members
         .into_iter()
         .filter(|(key, _)| !rewrite.removes(key))
         .collect();
-    serde_json::to_vec(&kept).ok()
+    serde_json::to_vec(&kept).map(Some).map_err(|_| UnreadableBody)
 }
 
 /// The parameter that names the song of an audio request, as Navidrome reads it.
@@ -720,18 +721,6 @@ pub fn songs_named(endpoint: &str, sent: &Sent<'_>) -> Vec<String> {
     songs
 }
 
-/// The quality an audio request was given, kept on the request so a handler that reads its
-/// parameters again (query, form or JSON) still finds these values last.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct QualityLock(pub ParamRewrite);
-
-/// Sets the locked quality on parameters read from a request, when the gate locked one.
-pub fn hold_quality(extensions: &axum::http::Extensions, parameters: &mut Parameters) {
-    if let Some(QualityLock(rewrite)) = extensions.get::<QualityLock>() {
-        rewrite.apply_to(parameters);
-    }
-}
-
 /// Whether a stream marked `X-Octo-Purpose: offline` comes from one of the caller's own paired
 /// Octo apps, the only devices that make offline copies.
 fn from_paired_octo_app(state: &AppState, caller: &FamilyCaller) -> bool {
@@ -744,6 +733,18 @@ fn from_paired_octo_app(state: &AppState, caller: &FamilyCaller) -> bool {
                 && eq_ignore_case(&device.username, &caller.user)
         })
 }
+
+/// A request's query and body after an [`AudioPlan`] set its quality.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Applied {
+    pub query: Option<String>,
+    /// The new body, when it changed.
+    pub body: Option<Bytes>,
+}
+
+/// A body that carries parameters but cannot be read to rewrite them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnreadableBody;
 
 /// What the gate does with an audio request that may go on.
 #[derive(Debug, Clone, Default)]
@@ -758,57 +759,40 @@ impl AudioPlan {
         &self.rewrite
     }
 
-    /// The request with its quality set in its query (and taken out of a url-encoded form or
-    /// a JSON object body, so the query's value is the one read), and locked on the request for
-    /// handlers that read its parameters again.
-    pub async fn apply(&self, req: Request) -> Request {
+    /// The query and body with this plan's quality set: in the query, and taken out of a
+    /// url-encoded form or a JSON object body so the query's value is the one read. None when
+    /// the plan sets nothing; Err when a JSON body cannot be read to take the values out.
+    pub fn apply_to(
+        &self,
+        query: Option<&str>,
+        content_type: Option<&str>,
+        body: &Bytes,
+    ) -> Result<Option<Applied>, UnreadableBody> {
         if self.rewrite.is_empty() {
-            return req;
+            return Ok(None);
         }
-        let (mut parts, body) = req.into_parts();
-        parts.extensions.insert(QualityLock(self.rewrite.clone()));
-        let query = self.rewrite.query(parts.uri.query().unwrap_or(""));
-        let with_query = |uri: &Uri| -> Option<Uri> {
-            let mut uri_parts = uri.clone().into_parts();
-            uri_parts.path_and_query = Some(format!("{}?{query}", uri.path()).parse().ok()?);
-            Uri::from_parts(uri_parts).ok()
-        };
-        if let Some(uri) = with_query(&parts.uri) {
-            parts.uri = uri;
-        }
-        if let Some(OriginalUri(original)) = parts.extensions.get::<OriginalUri>().cloned()
-            && let Some(uri) = with_query(&original)
-        {
-            parts.extensions.insert(OriginalUri(uri));
-        }
-        let media_type = parts
-            .headers
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
+        let query = Some(self.rewrite.query(query.unwrap_or("")));
+        let media_type = content_type
             .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
             .unwrap_or_default();
-        let form = media_type == "application/x-www-form-urlencoded";
-        if !form && !is_json_media_type(&media_type) {
-            return Request::from_parts(parts, body);
-        }
-        let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
-            return Request::from_parts(parts, Body::empty());
-        };
-        let stripped = if form {
-            let text = String::from_utf8_lossy(&bytes);
+        let body = if media_type == "application/x-www-form-urlencoded" {
+            let text = String::from_utf8_lossy(body);
             let stripped = self.rewrite.strip(&text);
-            (stripped != text).then(|| stripped.into_bytes())
+            (stripped != text).then(|| Bytes::from(stripped.into_bytes()))
+        } else if is_json_media_type(&media_type) {
+            match json_without(&self.rewrite, body) {
+                Ok(stripped) => stripped.map(Bytes::from),
+                // A body the parameters read (a JSON content type) must be rewritten; one of a
+                // JSON-like type they never read carries nothing to rewrite.
+                Err(unreadable) if content_type.is_some_and(|ct| ct.contains("application/json")) => {
+                    return Err(unreadable);
+                }
+                Err(_) => None,
+            }
         } else {
-            json_without(&self.rewrite, &bytes)
+            None
         };
-        let Some(stripped) = stripped else {
-            return Request::from_parts(parts, Body::from(bytes));
-        };
-        parts.headers.remove(header::TRANSFER_ENCODING);
-        parts
-            .headers
-            .insert(header::CONTENT_LENGTH, HeaderValue::from(stripped.len()));
-        Request::from_parts(parts, Body::from(Bytes::from(stripped)))
+        Ok(Some(Applied { query, body }))
     }
 
     /// The answer, its body tracked when it is audio.
@@ -929,7 +913,16 @@ pub async fn admit(
         if caller.place == NetworkPlace::Away && !abilities.away {
             return Err(refuse(50, Refusal::Away.message()));
         }
-        if abilities.clean_only && !song_id.trim().is_empty() {
+        if abilities.clean_only && eq_ignore_case(endpoint, "download") {
+            // A download of an album, an artist or a playlist is a zip of every song in it, so
+            // only one song the index knows, with a mark the profile may hear, goes through.
+            let Some(mark) = gate.indexed_mark(&song_id) else {
+                return Err(refuse(50, LIBRARY_SONGS_ONLY));
+            };
+            if mark.blocks_clean_only(state.settings.current().family.kid_unrated_is_explicit) {
+                return Err(refuse(50, NOT_ON_PROFILE));
+            }
+        } else if abilities.clean_only && !song_id.trim().is_empty() {
             let mark = gate
                 .explicit_mark(
                     &song_id,
@@ -1122,6 +1115,7 @@ mod tests {
             query: Some("id=a&ID=b"),
             content_type: Some("application/x-www-form-urlencoded"),
             body: b"iD=c&other=x",
+            reading: None,
         };
         assert_eq!(sent.values("id"), ["a", "b", "c"]);
         assert!(!sent.has_other_body());
@@ -1129,6 +1123,7 @@ mod tests {
             query: Some("id=a"),
             content_type: Some("application/json; charset=utf-8"),
             body: br#"{"Id":"d","format":"raw"}"#,
+            reading: None,
         };
         assert_eq!(json.values("id"), ["a", "d"]);
         assert!(!json.has_other_body());
@@ -1136,6 +1131,7 @@ mod tests {
             query: None,
             content_type: Some("multipart/form-data; boundary=XyZ"),
             body: b"--XyZ\r\nContent-Disposition: form-data; name=\"id\"\r\n\r\ne\r\n--XyZ--\r\n",
+            reading: None,
         };
         assert_eq!(multipart.values("id"), ["e"]);
         assert!(multipart.has_other_body());
@@ -1169,6 +1165,53 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_sets_its_values_in_the_query_and_takes_them_out_of_any_body_read() {
+        assert_eq!(
+            AudioPlan::default().apply_to(Some("id=1"), None, &Bytes::new()),
+            Ok(None)
+        );
+        let plan = AudioPlan {
+            rewrite: ParamRewrite {
+                set: vec![("format".into(), "opus".into())],
+            },
+            start: None,
+        };
+        let form = plan
+            .apply_to(
+                Some("id=1&format=raw"),
+                Some("application/x-www-form-urlencoded"),
+                &Bytes::from_static(b"FORMAT=raw&x=1"),
+            )
+            .expect("read")
+            .expect("applied");
+        assert_eq!(form.query.as_deref(), Some("id=1&format=opus"));
+        assert_eq!(form.body.as_deref(), Some(&b"x=1"[..]));
+        let json = plan
+            .apply_to(
+                None,
+                Some("application/json"),
+                &Bytes::from_static("\u{feff}{\"format\":\"raw\",\"id\":\"1\"}".as_bytes()),
+            )
+            .expect("read")
+            .expect("applied");
+        assert_eq!(json.body.as_deref(), Some(&br#"{"id":"1"}"#[..]));
+        assert_eq!(
+            plan.apply_to(None, Some("application/json"), &Bytes::from_static(b"[1]")),
+            Err(UnreadableBody)
+        );
+        // A JSON-like type the parameters never read has nothing to rewrite.
+        let other = plan
+            .apply_to(
+                None,
+                Some("application/problem+json"),
+                &Bytes::from_static(b"[1]"),
+            )
+            .expect("read")
+            .expect("applied");
+        assert_eq!(other.body, None);
+    }
+
+    #[test]
     fn a_json_body_loses_only_the_rewritten_members() {
         let rewrite = ParamRewrite {
             set: vec![
@@ -1180,10 +1223,21 @@ mod tests {
             &rewrite,
             br#"{"FORMAT":"raw","id":"x","MaxBitRate":0,"n":[1, 2]}"#,
         )
+        .expect("read")
         .expect("rewritten");
         assert_eq!(String::from_utf8(out).unwrap(), r#"{"id":"x","n":[1, 2]}"#);
-        assert!(json_without(&rewrite, br#"{"id":"x"}"#).is_none());
-        assert!(json_without(&rewrite, b"not json").is_none());
+        assert_eq!(json_without(&rewrite, br#"{"id":"x"}"#), Ok(None));
+        assert_eq!(json_without(&rewrite, b"not json"), Err(UnreadableBody));
+        assert_eq!(json_without(&rewrite, b"  "), Ok(None));
+        // A byte order mark, or bytes that are not UTF-8, are read as the parameters read them.
+        let out = json_without(&rewrite, "\u{feff}{\"format\":\"raw\",\"id\":\"x\"}".as_bytes())
+            .expect("read")
+            .expect("rewritten");
+        assert_eq!(String::from_utf8(out).unwrap(), r#"{"id":"x"}"#);
+        let out = json_without(&rewrite, b"{\"format\":\"raw\",\"x\":\"\xff\"}")
+            .expect("read")
+            .expect("rewritten");
+        assert!(!String::from_utf8_lossy(&out).contains("raw"));
     }
 
     fn params(pairs: &[(&str, &str)]) -> Parameters {

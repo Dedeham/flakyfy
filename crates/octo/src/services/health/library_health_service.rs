@@ -219,10 +219,6 @@ impl LibraryHealthService {
     /// Most steps one run takes.
     pub const MAX_STEPS: usize = 5000;
 
-    /// How many songs one lookup run takes: each is a fingerprint and a catalog search, a few
-    /// seconds apiece.
-    pub const LOOKUP_BATCH: usize = 25;
-
     /// The C#'s `SettleFor` default: ninety seconds.
     pub const SETTLE_FOR: TimeDelta = TimeDelta::seconds(90);
 
@@ -569,7 +565,8 @@ impl LibraryHealthService {
         None
     }
 
-    /// Starts a lookup of up to [`Self::LOOKUP_BATCH`] songs; the run going now, when one is.
+    /// Starts a lookup of these songs, one after another (each a fingerprint and a catalog search,
+    /// a few seconds apiece); the run going now, when one is.
     pub fn start_lookup(
         self: &Arc<Self>,
         songs: Vec<(String, String)>,

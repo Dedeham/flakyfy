@@ -6,7 +6,7 @@
 //! are on the library actions allowed list, exactly as the app's libraryAction is. Writes carry
 //! X-Octo-Admin, as every dashboard write does.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -220,7 +220,6 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
         "readUtc": utc(&found.read_utc),
         "user": user,
         "can": serde_json::to_value(&can).unwrap_or(Value::Null),
-        "lookupBatch": LibraryHealthService::LOOKUP_BATCH,
         "checks": checks,
         "songs": by_id,
         "run": run_view(health.run().as_deref()),
@@ -752,8 +751,9 @@ impl FromBody for LookupRequest {
     };
 }
 
-/// Looks songs up the way a download is tagged, at most 25 a run, and writes nothing. What it
-/// found comes back in the run, each change marked picked or not, for a person to choose.
+/// Looks songs up the way a download is tagged, and writes nothing: the songs named, or with
+/// none named, every song the check found. What it found comes back in the run as it goes, each
+/// change marked picked or not, for a person to choose.
 async fn lookup(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
     let request: LookupRequest = match bind_body(&parts, &body) {
@@ -767,33 +767,58 @@ async fn lookup(State(state): State<AppState>, request: Request) -> Response {
     if let Some(refused) = health.refusal(Some(&user)) {
         return error(StatusCode::FORBIDDEN, refused);
     }
+    let check = parse_check(request.check.as_deref());
     let mut ids: Vec<String> = Vec::new();
     for id in request.ids.unwrap_or_default().into_iter().flatten() {
         if !is_blank(&id) && !ids.contains(&id) {
             ids.push(id);
         }
     }
+    let found = health.report(false).await;
+    if ids.is_empty()
+        && let (Some(check), Some(found)) = (check, found.as_ref())
+    {
+        ids = found
+            .report
+            .songs(check)
+            .iter()
+            .map(|song| song.id.clone())
+            .collect();
+    }
     if ids.is_empty() {
         return error(StatusCode::BAD_REQUEST, "No songs picked.");
     }
-    if ids.len() > LibraryHealthService::LOOKUP_BATCH {
+    if ids.len() > LibraryHealthService::MAX_STEPS {
         return error(
             StatusCode::BAD_REQUEST,
-            format!("At most {} songs at a time.", LibraryHealthService::LOOKUP_BATCH),
+            format!(
+                "At most {} songs at a time.",
+                words::n0(LibraryHealthService::MAX_STEPS as i64)
+            ),
         );
     }
-    let found = health.report(false).await;
+    let titles: HashMap<&str, &str> = found
+        .as_ref()
+        .map(|found| {
+            found
+                .songs
+                .iter()
+                .map(|song| (song.id.as_str(), song.title.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
     let songs: Vec<(String, String)> = ids
         .iter()
         .map(|id| {
-            let title = found
-                .as_ref()
-                .and_then(|found| found.songs.iter().find(|song| &song.id == id))
-                .map_or_else(|| id.clone(), |song| song.title.clone());
-            (id.clone(), title)
+            (
+                id.clone(),
+                titles
+                    .get(id.as_str())
+                    .map_or_else(|| id.clone(), |title| (*title).to_string()),
+            )
         })
         .collect();
-    if let Some(busy) = health.start_lookup(songs, parse_check(request.check.as_deref()), &user) {
+    if let Some(busy) = health.start_lookup(songs, check, &user) {
         return busy_answer(&busy);
     }
     info!("{user} is looking up {} song(s) from Library health", ids.len());

@@ -6778,6 +6778,11 @@ let healthShown = {};
 let healthTimer = null;
 let healthHandledRun = null;
 let healthLoading = false;
+// The check the page shows, one at a time, picked from the menu beside it; kept for the next visit.
+const HEALTH_PICKED_KEY = 'octo.health.picked';
+let healthPicked = ambientStoreGet(HEALTH_PICKED_KEY);
+// A lookup's review closed here is not opened again on the next visit.
+const HEALTH_CLOSED_LOOKUP_KEY = 'octo.health.closedLookup';
 
 function healthPaneOpen() {
   return document.querySelector('section[data-pane="health"]')?.classList.contains('active') ?? false;
@@ -6839,12 +6844,38 @@ function renderHealth() {
     body.innerHTML = stateBlock('empty', report.allClear);
     return;
   }
-  body.innerHTML = report.checks.map(healthSection).join('');
-  // A preview or a lookup's review open before stays open.
+  const shown = healthShownCheck();
+  const menu = report.checks.map(check => {
+    const lit = check.check === shown.check;
+    return `<button type="button" class="health-nav-item${lit ? ' active' : ''}" role="tab" id="health-tab-${check.check}" aria-selected="${lit}" aria-controls="health-panel" tabindex="${lit ? 0 : -1}" data-health-pick="${check.check}">
+      <span class="health-nav-name">${esc(check.title)}</span>
+      <span class="health-nav-count">${(check.count ?? 0).toLocaleString()}</span>
+    </button>`;
+  }).join('');
+  body.innerHTML = `<div class="health-layout">
+    <nav class="health-nav" role="tablist" aria-label="Findings" aria-orientation="vertical">${menu}</nav>
+    <div class="health-main" id="health-panel" role="tabpanel" aria-labelledby="health-tab-${shown.check}">${healthSection(shown)}</div>
+  </div>`;
+  // A preview or a lookup's review open before stays open, on its own check's page.
   for (const [check, open] of Object.entries(healthPreviews)) {
+    if (check !== shown.check) continue;
     if (open.lookupRun) renderHealthLookups(open.lookupRun);
     else if (open.data) renderHealthPreview(check);
   }
+}
+
+// The check picked from the menu, or the first with findings once it has none left.
+function healthShownCheck() {
+  const checks = healthReport.checks;
+  return checks.find(check => check.check === healthPicked) ?? checks[0];
+}
+
+function pickHealthCheck(name, focus = false) {
+  if (!healthReport?.checks.some(check => check.check === name)) return;
+  healthPicked = name;
+  ambientStoreSet(HEALTH_PICKED_KEY, name);
+  renderHealth();
+  if (focus) document.getElementById(`health-tab-${name}`)?.focus();
 }
 
 // What a check offers: its fix-all button, and a lookup for songs a fill cannot reach.
@@ -6852,9 +6883,8 @@ function healthFixes(check) {
   const can = healthReport.can || {};
   const busy = healthReport.run?.state === 'running';
   const songs = check.songs || [];
-  const batch = healthReport.lookupBatch || 25;
   const lookUp = can.lookUp && songs.length && ['noTrackNumber', 'noYear', 'noGenre', 'noAlbumArtist'].includes(check.check)
-    ? `Look up ${songs.length > batch ? `the first ${batch}` : healthPlural(songs.length, 'song')}` : null;
+    ? (songs.length === 1 ? 'Look up 1 song' : `Look up all ${healthPlural(songs.length, 'song')}`) : null;
   let all = null;
   if (check.check === 'duplicates' && can.remove) all = check.fixAllLabel;
   if (check.check === 'splitAlbums' && can.joinAlbums) all = check.fixAllLabel;
@@ -6897,6 +6927,7 @@ function healthSection(check) {
             <div class="set-info-d">${esc(fixable ? check.fixMeaning : check.advice)}</div>
             ${whyNot ? `<div class="set-info-d">${esc(whyNot)}${whyNot.includes('Library actions') ? ' <button type="button" class="link-button" data-open-tab="libraryactions">Open Library actions</button>' : ''}</div>` : ''}
             ${fixable ? '<div class="set-info-more">Every fix below shows what it changes first. The buttons on each item fix that one alone.</div>' : ''}
+            ${fixes.lookUp ? '<div class="set-info-more">A lookup takes a few seconds a song and runs on the server, so you can leave this page. What it finds waits here for you to look over; nothing is written until you say.</div>' : ''}
           </div>
           ${buttons ? `<div class="set-ctrl health-ctrl">${buttons}</div>` : ''}
         </div>
@@ -7147,7 +7178,9 @@ function renderHealthRun(run) {
   wrap.hidden = !running;
   if (!running) { list.innerHTML = ''; return; }
   const pct = run.total ? Math.round((run.done / run.total) * 100) : 0;
-  const unit = run.kind === 'lookup' ? 'songs' : 'changes';
+  const lookup = run.kind === 'lookup';
+  const unit = lookup ? 'songs' : 'changes';
+  const found = lookup ? (run.lookups || []).filter(entry => entry.state === 'found' && entry.changes.length).length : 0;
   list.innerHTML = `<div class="acq-card">
     <div class="acq-art">${icon(run.kind === 'lookup' ? 'i-magnifying-glass' : 'i-wrench')}</div>
     <div class="dl-main">
@@ -7156,8 +7189,9 @@ function renderHealthRun(run) {
         <span class="dl-badge state">${run.done.toLocaleString()} of ${run.total.toLocaleString()} ${unit}</span>
       </div>
       ${run.current ? `<div class="dl-sub">Now: ${esc(run.current)}</div>` : ''}
-      <div class="acq-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
-      <div class="health-actions"><button class="btn btn-ghost btn-sm" type="button" id="health-stop">Stop after this song</button></div>
+      ${lookup ? `<div class="dl-sub">${found ? `Found changes for ${esc(healthPlural(found, 'song'))} so far.` : 'Nothing to change found yet.'}</div>` : ''}
+      <div class="acq-bar" role="progressbar" aria-label="${esc(run.label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>
+      <div class="health-actions health-run-actions"><button class="btn btn-ghost btn-sm" type="button" id="health-stop">${lookup ? 'Stop and look over what was found' : 'Stop after this song'}</button></div>
     </div>
   </div>`;
 }
@@ -7173,9 +7207,13 @@ function followHealthRun(run, undoCount) {
   if (healthHandledRun === run.id) return;
   const fresh = !healthHandledRun;
   healthHandledRun = run.id;
+  // What a lookup found waits to be looked over, however long ago it ended, until written or closed.
+  if (run.kind === 'lookup') {
+    if (ambientStoreGet(HEALTH_CLOSED_LOOKUP_KEY) !== run.id) renderHealthLookups(run);
+    return;
+  }
   // A run that ended before this page was opened is not news; one that ended while it watched is.
   if (fresh && run.finishedUtc && Date.now() - Date.parse(run.finishedUtc) > 120000) return;
-  if (run.kind === 'lookup') { renderHealthLookups(run); return; }
   const text = run.state === 'failed' ? `${run.label} stopped: ${run.error || 'something went wrong'}.` : run.summary;
   showHealthResult(text, run.kind === 'fix' && undoCount > 0);
 }
@@ -7205,8 +7243,15 @@ function showHealthResult(text, undo) {
 // is written until the button below is pressed.
 function renderHealthLookups(run) {
   const check = run.check || 'noTrackNumber';
+  // The review opens on its check's page, which is shown first when it is not.
+  if (!healthPreviewHolder(check) && healthReport?.checks.some(entry => entry.check === check)) {
+    healthPreviews[check] = { lookupRun: run };
+    healthPicked = check;
+    renderHealth();
+    return;
+  }
   let holder = healthPreviewHolder(check);
-  if (!holder) holder = healthPreviewHolder((healthReport?.checks || [])[0]?.check);
+  if (!holder) holder = healthPreviewHolder(healthShownCheck()?.check);
   if (!holder) return;
   const found = run.lookups.filter(lookup => lookup.state === 'found');
   const misses = run.lookups.filter(lookup => lookup.state !== 'found');
@@ -7219,7 +7264,8 @@ function renderHealthLookups(run) {
   const summary = !found.length
     ? (misses[0]?.detail || 'Nothing was found.')
     : !changes ? 'The tags already say what was found. Nothing to change.'
-      : `Found tags for ${healthPlural(found.length, 'song')}. Sure matches and blanks are picked; look over the rest.`;
+      : `Found tags for ${healthPlural(found.length, 'song')}${run.state === 'stopped' ? `, stopped after ${healthPlural(run.done, 'song')} of ${run.total.toLocaleString()}` : ''}. Sure matches and blanks are picked; look over the rest.`;
+  const many = found.filter(lookup => lookup.changes.length).length > 1;
   holder.hidden = false;
   healthPreviews[holder.id.replace('health-preview-', '')] = { lookupRun: run };
   holder.innerHTML = `
@@ -7227,9 +7273,13 @@ function renderHealthLookups(run) {
       <div class="set-info-t">${esc(run.label)}</div>
       <div class="set-info-d">${esc(summary)}${misses.length && found.length ? ` ${esc(healthPlural(misses.length, 'song'))} found nothing.` : ''}</div>
     </div>
+    ${many ? `<div class="health-actions health-pick-all">
+      <button class="btn btn-ghost btn-sm" type="button" data-health-pick-all="1">Pick all</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-health-pick-all="0">Pick none</button>
+    </div>` : ''}
     <div class="health-plans">${blocks}</div>
     <div class="form-actions health-preview-actions">
-      <button class="btn btn-ghost" type="button" data-health-cancel="${holder.id.replace('health-preview-', '')}">Close</button>
+      <button class="btn btn-ghost" type="button" data-health-cancel="${holder.id.replace('health-preview-', '')}" data-run="${esc(run.id)}">Close</button>
       ${changes ? `<button class="btn btn-primary" type="button" data-health-write="${esc(run.check || '')}">${icon('i-check')}<span>Write the picked changes</span></button>` : ''}
     </div>`;
 }
@@ -7271,14 +7321,29 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
   const checkOf = name => healthReport.checks.find(check => check.check === name);
   if (target.id === 'health-stop') { target.disabled = true; healthCall('/api/admin/health/stop', {}); return; }
   if (d.healthMore) { healthShown[d.healthMore] = (healthShown[d.healthMore] ?? healthPage(d.healthMore)) + healthPage(d.healthMore); renderHealth(); return; }
-  if (d.healthCancel) { closeHealthPreview(d.healthCancel); return; }
+  if (d.healthPick) { pickHealthCheck(d.healthPick); return; }
+  if (d.healthPickAll !== undefined) {
+    target.closest('.health-preview')?.querySelectorAll('[data-health-lookup-pick]').forEach(box => { box.checked = d.healthPickAll === '1'; });
+    return;
+  }
+  if (d.healthCancel) {
+    if (d.run) ambientStoreSet(HEALTH_CLOSED_LOOKUP_KEY, d.run);
+    closeHealthPreview(d.healthCancel);
+    return;
+  }
   if (d.healthGo) { runHealthPreview(d.healthGo); return; }
-  if (d.healthWrite !== undefined) { healthWriteLookups(d.healthWrite, target.closest('.health-preview')); return; }
+  if (d.healthWrite !== undefined) {
+    const holder = target.closest('.health-preview');
+    const run = healthPreviews[holder.id.replace('health-preview-', '')]?.lookupRun;
+    if (run) ambientStoreSet(HEALTH_CLOSED_LOOKUP_KEY, run.id);
+    healthWriteLookups(d.healthWrite, holder);
+    return;
+  }
   if (d.healthFixAll) { openHealthPreview(d.healthFixAll, {}); return; }
   if (d.healthLookupAll) {
-    const check = checkOf(d.healthLookupAll);
-    const ids = (check?.songs || []).slice(0, healthReport.lookupBatch || 25);
-    startHealthRun('/api/admin/health/lookup', { ids, check: d.healthLookupAll }, d.healthLookupAll);
+    // No ids: the server looks up every song the check found.
+    if (!checkOf(d.healthLookupAll)) return;
+    startHealthRun('/api/admin/health/lookup', { ids: [], check: d.healthLookupAll }, d.healthLookupAll);
     return;
   }
   if (d.healthFixSet) { openHealthPreview('duplicates', { keys: [d.healthFixSet] }); return; }
@@ -7299,6 +7364,18 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
     }
     openHealthPreview('duplicates', request);
   }
+});
+
+// The findings menu is one tab stop; the arrow keys, Home and End move along it.
+document.getElementById('health-body')?.addEventListener('keydown', event => {
+  const tab = event.target.closest?.('[data-health-pick]');
+  if (!tab || !healthReport) return;
+  const names = healthReport.checks.map(check => check.check);
+  const at = names.indexOf(tab.dataset.healthPick);
+  const to = { ArrowDown: at + 1, ArrowRight: at + 1, ArrowUp: at - 1, ArrowLeft: at - 1, Home: 0, End: names.length - 1 }[event.key];
+  if (to === undefined) return;
+  event.preventDefault();
+  pickHealthCheck(names[(to + names.length) % names.length], true);
 });
 
 // ────────────────────────────────────────────────────────────────

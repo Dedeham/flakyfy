@@ -1,12 +1,11 @@
-//! Port of `Services/Lyrics/LyricsText.cs`: LRC and enhanced LRC read and written, and the
-//! credit lines some sources put over a lyric taken out.
+//! LRC and enhanced LRC read and written, and the credit lines some sources put over a lyric
+//! taken out.
 //!
-//! Regex notes. The C# time tags used `\d`, which in .NET also matches other scripts' digits,
-//! after which `long.Parse` threw; the port reads ASCII digits only (known-diffs.md). The
-//! credit label counted its `{1,16}` in UTF-16 units, so it is matched over a view of the text
-//! in which every supplementary-plane character is two private-use characters. The
-//! case-insensitive patterns keep .NET's invariant equivalences: Rust's `(?i)s` would also
-//! take `ſ`, so the letter `s` is matched as `[sS]` with case-insensitivity off.
+//! Regex notes. The time tags read ASCII digits only. The credit label counts its `{1,16}` in
+//! UTF-16 units, so it is matched over a view of the text in which every supplementary-plane
+//! character is two private-use characters. The case-insensitive patterns keep the invariant
+//! culture's equivalences: Rust's `(?i)s` would also take `ſ`, so the letter `s` is matched as
+//! `[sS]` with case-insensitivity off.
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -21,7 +20,7 @@ use crate::common::path_helper;
 /// space after the word too, except at the end of the line, which is how enhanced LRC and the
 /// OpenSubsonic cues both place a word. `end_ms` is None when nothing says when the word ends.
 ///
-/// (C# held UTF-16 indices; see the module notes of [`crate::lyrics`].)
+/// (See the module notes of [`crate::lyrics`] on text positions.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LyricWord {
     pub start_ms: i64,
@@ -74,7 +73,7 @@ fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a fixed pattern compiles")
 }
 
-/// A `RegexOptions.IgnoreCase` alternation of plain lower-case words, with .NET's invariant
+/// A case-insensitive alternation of plain lower-case words, with the invariant culture's
 /// equivalences: every `s` is matched as `[sS]` alone (Rust's case folding would add `ſ`).
 fn ignore_case_words(words: &[&str]) -> String {
     words
@@ -91,7 +90,7 @@ static TIME_TAG: LazyLock<Regex> =
 static WORD_TAG: LazyLock<Regex> = LazyLock::new(|| rx(r"<([0-9]{1,3}):([0-9]{1,2})(?:[.:]([0-9]{1,3}))?>"));
 
 /// "label: value", where the label is at most three short words. Matched over
-/// [`utf16_units_view`], so the lengths count UTF-16 units as .NET did.
+/// [`utf16_units_view`], so the lengths count UTF-16 units.
 static CREDIT_LABEL: LazyLock<Regex> =
     LazyLock::new(|| rx(r"^\s*([^\s:：]{1,16}(?:\s[^\s:：]{1,16}){0,2})\s*[:：]"));
 
@@ -120,7 +119,7 @@ const CJK_NOTICES: [&str; 7] = [
 ];
 
 /// The Latin ones match only as whole words, so "Stop: ..." is never taken for "OP".
-/// Matched over [`word_boundary_view`], for .NET's `\b`.
+/// Matched over [`word_boundary_view`], so `\b` sees the word characters it should.
 static LATIN_CREDIT: LazyLock<Regex> = LazyLock::new(|| {
     let words = ignore_case_words(&[
         "op",
@@ -160,16 +159,14 @@ static SECTION_HEADING: LazyLock<Regex> = LazyLock::new(|| rx(r"^\[[^\]]*\]$"));
 /// A silence between two words at least this long (ms) is written down.
 const WORD_GAP_MS: i64 = 30;
 
-/// `text[from..to]`, or empty when the range does not fit (C# would have thrown; every range
-/// the port makes fits).
+/// `text[from..to]`, or empty when the range does not fit (every range made here fits).
 fn slice(text: &str, from: usize, to: usize) -> &str {
     text.get(from..to).unwrap_or("")
 }
 
 /// The text with every supplementary-plane character written as two private-use characters,
-/// so a Rust pattern counts what a .NET pattern counted: UTF-16 units. A private-use character
-/// is what a lone surrogate was to the patterns here: not a space, not a colon, not a word
-/// character, and above U+2E80.
+/// so a pattern's lengths count UTF-16 units. A private-use character stands for one surrogate
+/// half: not a space, not a colon, not a word character, and above U+2E80.
 fn utf16_units_view(text: &str) -> Cow<'_, str> {
     if text.chars().all(|c| (c as u32) < 0x10000) {
         return Cow::Borrowed(text);
@@ -185,12 +182,12 @@ fn utf16_units_view(text: &str) -> Cow<'_, str> {
     Cow::Owned(view)
 }
 
-/// `Regex.Replace(text, "")` for the tag patterns.
+/// The text with every match of a tag pattern removed.
 fn strip(pattern: &Regex, text: &str) -> String {
     pattern.replace_all(text, "").into_owned()
 }
 
-/// `raw.Replace("\r\n", "\n").Split('\n')`.
+/// The lines, split on `\n` after every `\r\n` becomes `\n`.
 fn lrc_lines(text: &str) -> Vec<String> {
     text.replace("\r\n", "\n")
         .split('\n')
@@ -216,7 +213,7 @@ fn millis(tag: &Captures) -> i64 {
     }
 }
 
-/// LRC text: reading, writing and cleaning. A static class in C#.
+/// LRC text: reading, writing and cleaning.
 pub struct LyricsText;
 
 impl LyricsText {
@@ -265,7 +262,7 @@ impl LyricsText {
                 });
             }
         }
-        // OrderBy is stable, as sort_by_key is.
+        // A stable sort: lines at one time keep their order.
         lines.sort_by_key(|line| line.start_ms);
         lines
     }
@@ -338,7 +335,7 @@ impl LyricsText {
         }
     }
 
-    /// A lyric's first lines with words in them, for a choice list. (C#'s default count is 2.)
+    /// A lyric's first `count` lines with words in them, for a choice list.
     pub fn preview(result: &LyricsResult, count: usize) -> Vec<String> {
         let lines: Vec<String> = if result.has_synced() {
             Self::parse_lrc(result.synced.as_deref().unwrap_or(""))

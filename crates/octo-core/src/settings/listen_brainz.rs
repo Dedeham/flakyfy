@@ -10,7 +10,7 @@ use super::text::eq_ignore_case;
 /// plays of external tracks, previews from search and Continuous Radio, would
 /// otherwise be lost to the listener's history. Each listener authorizes with their
 /// own ListenBrainz user token; a single default token covers a one-person install.
-/// Every value is read through IOptionsMonitor at submit time.
+/// Every value is read from the live settings at submit time.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct ListenBrainzSettings {
@@ -23,7 +23,7 @@ pub struct ListenBrainzSettings {
     /// Navidrome username to ListenBrainz user token, for installs with more than one
     /// listener. Environment variable form: LISTENBRAINZ__USERTOKENS__alice=...
     ///
-    /// The C# dictionary compares keys with OrdinalIgnoreCase; look entries up with
+    /// Keys compare ignoring case; look entries up with
     /// [`ListenBrainzSettings::user_token`], not `get`.
     pub user_tokens: IndexMap<String, String>,
 
@@ -43,7 +43,7 @@ impl Default for ListenBrainzSettings {
 }
 
 impl ListenBrainzSettings {
-    /// `UserTokens.TryGetValue(name)` with the dictionary's OrdinalIgnoreCase comparer.
+    /// The listener's token, its name matched ignoring case.
     pub fn user_token(&self, username: &str) -> Option<&str> {
         self.user_tokens
             .get(username)
@@ -79,7 +79,6 @@ impl ListenBrainzSettings {
 mod tests {
     use super::*;
 
-    // LastFmRadioCoreTests.ListenBrainzSettings_PickTheListenersTokenThenTheDefaultAndRespectTheSwitch
     #[test]
     fn listen_brainz_settings_pick_the_listeners_token_then_the_default_and_respect_the_switch() {
         let mut settings = ListenBrainzSettings {

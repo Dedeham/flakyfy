@@ -1,8 +1,7 @@
-//! Binds a [`ConfigNode`] onto a settings struct, the way ConfigurationBinder does.
+//! Binds a [`ConfigNode`] onto a settings struct.
 //!
 //! The settings structs derive `Deserialize` with `#[serde(default)]`, and their `Default`
-//! carries the C# property initializers. This deserializer then reproduces the binder's
-//! rules:
+//! carries each setting's default value. This deserializer then applies the binding rules:
 //!
 //! - a key matches a field ignoring case and underscores (`DownloadOnStar` →
 //!   `download_on_star`), and keys that match nothing are ignored;
@@ -11,9 +10,8 @@
 //! - an empty string leaves an optional field unset and a typed field at its default;
 //! - list items are the children `0`, `1`, ... in numeric order.
 //!
-//! Where .NET would throw on a value it cannot convert, which fails the app at the first
-//! settings read, this binder keeps the default for that field and records a warning, so a
-//! typo in one setting does not take the whole server down.
+//! A value that cannot be converted does not fail the bind: the field keeps its default and a
+//! warning is recorded, so a typo in one setting does not take the whole server down.
 
 use serde::de::{self, DeserializeOwned, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
@@ -199,9 +197,8 @@ impl<'a> OwnedNodeDeserializer<'a> {
     }
 }
 
-/// Parses an integer or float the way Int32Converter and DoubleConverter do under the
-/// invariant culture: surrounding whitespace and a sign are fine, and integers also take a
-/// `0x`, `&h` or `#` hex prefix.
+/// Parses an integer or float with no locale: surrounding whitespace and a sign are fine, and
+/// integers also take a `0x`, `&h` or `#` hex prefix.
 fn parse_dotnet_number<T: std::str::FromStr + TryFrom<i64>>(text: &str) -> Option<T> {
     let t = text.trim();
     if let Ok(v) = t.parse::<T>() {
@@ -304,7 +301,7 @@ impl<'de, 'a> de::Deserializer<'de> for NodeDeserializer<'a> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, BindError> {
-        // As ConfigurationBinder: an optional string given "" is "", while an optional number,
+        // An optional string given "" is "", while an optional number,
         // bool or enum given "" is unset. The inner value rejects an empty number, and the
         // retry in `bind` then leaves the field at its default (None). A missing value with no
         // lower layer is unset for every type.
@@ -586,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn integers_take_dotnet_hex_prefixes() {
+    fn integers_take_hex_prefixes() {
         let (s, _) = bind_env(&[("S__SearchWaitSeconds", "0x1E")]);
         assert_eq!(s.search_wait_seconds, 30);
     }

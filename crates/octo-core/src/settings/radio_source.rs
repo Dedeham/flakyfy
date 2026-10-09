@@ -106,10 +106,10 @@ mod tests {
         assert_eq!(RadioSourceSettings::default().effective_sonic_pause_seconds(), 2);
     }
 
-    /// The config binder matches names ignoring case and underscores, so the C# property names
+    /// The config binder matches names ignoring case and underscores, so the PascalCase names
     /// (with the capital T of YouTube) bind.
     #[test]
-    fn the_section_binds_by_its_csharp_names() {
+    fn the_section_binds_by_its_pascal_case_names() {
         let mut tree = crate::config::ConfigTree::new();
         tree.set("RadioSources:YouTubeMusic", Some("false".into()));
         tree.set("RadioSources:youtubemusicweight", Some("2.5".into()));

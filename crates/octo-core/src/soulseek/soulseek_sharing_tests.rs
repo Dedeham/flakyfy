@@ -1,4 +1,4 @@
-//! `SoulseekSharingTests.cs`, the parts that build the card from slskd's answers. The JSON
+//! Soulseek sharing tests: the parts that build the card from slskd's answers. The JSON
 //! below has the shape slskd 0.26.0 gave on the live box on 2026-10-04.
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};

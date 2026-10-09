@@ -1,4 +1,4 @@
-//! The pure half of `Services/Lidarr/LidarrTrackFetcher.cs`: the request, which of the album's
+//! The pure half of the Lidarr track fetcher: the request, which of the album's
 //! tracks is the song, and whether a file is lossless. The fetcher is
 //! `octo::services::lidarr::lidarr_track_fetcher`.
 
@@ -27,7 +27,7 @@ pub struct LidarrTrackRequest {
     pub step: Option<LidarrStep>,
 }
 
-/// `Action<string, string?>`: a line for the download's log, and its detail.
+/// Takes a line for the download's log, and its detail.
 #[derive(Clone)]
 pub struct LidarrStep(pub Arc<dyn Fn(&str, Option<&str>) + Send + Sync>);
 
@@ -47,7 +47,7 @@ impl fmt::Debug for LidarrStep {
     }
 }
 
-/// A delegate is equal only to itself, as C# record equality compared it.
+/// A step is equal only to itself: the same callback.
 impl PartialEq for LidarrStep {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -58,7 +58,7 @@ impl Eq for LidarrStep {}
 
 const LOSSLESS_SUFFIXES: [&str; 6] = [".flac", ".wav", ".aiff", ".aif", ".ape", ".wv"];
 
-/// `Match`: the album's track for this song: by title, never by number, since the number came
+/// The album's track for this song: by title, never by number, since the number came
 /// from whatever release the request was made from. Several by title: the nearest length.
 pub fn match_track<'a>(
     tracks: impl IntoIterator<Item = &'a LidarrImportedTrack>,
@@ -73,7 +73,7 @@ pub fn match_track<'a>(
         Some(d) if d > 0 && by_title.len() > 1 => d,
         _ => return by_title.first().copied(),
     };
-    // OrderBy is stable: the first of the nearest.
+    // `min_by_key` keeps the first of the nearest.
     by_title.into_iter().min_by_key(|t| match t.duration_seconds {
         Some(d) => (i64::from(d) - i64::from(wanted)).abs(),
         None => i64::from(i32::MAX),
@@ -95,7 +95,7 @@ pub fn is_lossless(track: &LidarrImportedTrack) -> bool {
     }
 }
 
-/// `Path.GetExtension`: from the file name's last dot, empty when there is none or the name ends
+/// The file's extension: from the file name's last dot, empty when there is none or the name ends
 /// with it.
 fn get_extension(path: &str) -> &str {
     let name = &path[path.rfind('/').map_or(0, |i| i + 1)..];
@@ -137,7 +137,6 @@ mod tests {
         }
     }
 
-    // LidarrTrackFetcherTests.TheSongIsMatchedByTitleNeverByNumber
     #[test]
     fn the_song_is_matched_by_title_never_by_number() {
         let tracks = [track(1, "Angel", 380), track(3, "Teardrop", 330)];

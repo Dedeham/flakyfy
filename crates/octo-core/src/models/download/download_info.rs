@@ -1,5 +1,3 @@
-//! Port of `Models/Download/DownloadInfo.cs`.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +32,7 @@ impl Default for DownloadInfo {
             progress: 0.0,
             local_path: None,
             error_message: None,
-            // DateTime's default is DateTime.MinValue.
+            // A date that was never set reads as the minimum date.
             started_at: datetime::min_value(),
             completed_at: None,
         }
@@ -46,7 +44,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn writes_the_status_as_a_number_and_dates_as_stj_did() {
+    fn writes_the_status_as_a_number_and_dates_in_iso_8601() {
         let info = DownloadInfo {
             song_id: "ext-deezer-1".into(),
             status: DownloadStatus::Completed,

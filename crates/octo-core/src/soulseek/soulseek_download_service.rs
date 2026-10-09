@@ -1,10 +1,9 @@
-//! The candidate matching of `Services/Soulseek/SoulseekDownloadService.cs`: the pure statics
-//! that decide which peer file answers a request (the searches to run, the filename, length and
-//! version checks, the quality ranking). The service itself, and the deny-list seam that needs
-//! the rejected-peer store, are `octo::services::soulseek::soulseek_download_service` (task 4-C
-//! ports the rest of it there).
+//! The Soulseek download service's candidate matching: the pure functions that decide which
+//! peer file answers a request (the searches to run, the filename, length and version checks,
+//! the quality ranking). The service itself, and the deny-list seam that needs the
+//! rejected-peer store, are `octo::services::soulseek::soulseek_download_service`.
 //!
-//! The regexes run over the views `common::dotnet` provides where .NET's character classes
+//! The regexes run over the views `common::dotnet` provides where the wanted character classes
 //! differ from Rust's: [`dotnet::word_boundary_view`] for `\b`, [`dotnet::utf16_class_view`]
 //! for `\d`, `\p{L}` and `\p{N}`.
 
@@ -299,7 +298,7 @@ pub fn rank(
     // The copy that says it is the version asked for goes first: "Too Close (Radio Edit)"
     // takes "Too Close [Radio Edit].flac" before a plain "Too Close.flac". Then an unnamed
     // bracketed addition sorts last rather than being dropped: it may be a different take
-    // ("Angel (Angel Dust)"), or only a peer's own label. Stable, as LINQ's OrderBy is.
+    // ("Angel (Angel Dust)"), or only a peer's own label. A stable sort.
     found.sort_by_cached_key(|h| {
         (
             version_variant::missing(&h.filename, Some(title), artist).len(),
@@ -354,7 +353,7 @@ pub fn size_sort_key(size: i64, preferred_extension: Option<&str>) -> i64 {
 ///
 /// Unknown sits deliberately between the two. Most peers report neither field, so
 /// treating unknown as hi-res would bury the majority of a normal search, and treating
-/// it as CD would let an unlabelled 24/96 outrank a labelled 16/44.1.
+/// it as CD would let an unlabeled 24/96 outrank a labeled 16/44.1.
 pub fn quality_penalty(h: &SoulseekFileHit) -> i32 {
     let bit_depth_penalty = match h.bit_depth {
         Some(16) => 0,
@@ -563,7 +562,7 @@ static NOT_LETTER_OR_NUMBER: LazyLock<Regex> = LazyLock::new(|| rx(r"[^\p{L}\p{N
 static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| rx(r"\s+"));
 
 /// Every run of characters that are not letters or numbers as one space. Run over the UTF-16
-/// view: .NET never counted a supplementary-plane character as either, and such a character
+/// view: a supplementary-plane character never counts as either, and such a character
 /// always falls inside a replaced run, so the view's result is the text's.
 fn space_normalize(value: &str) -> String {
     let spaced = NOT_LETTER_OR_NUMBER

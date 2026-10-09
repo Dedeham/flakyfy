@@ -1,6 +1,6 @@
-//! The download log's lines (`AcquisitionEvent` and `AcquisitionCandidate`, declared in
-//! `Services/Common/AcquisitionTracker.cs`), as a fetched-songs entry keeps them in
-//! `downloads-history.json`. The tracker that writes them is group D's.
+//! The download log's lines ([`AcquisitionEvent`] and [`AcquisitionCandidate`]), as a
+//! fetched-songs entry keeps them in `downloads-history.json`. The tracker that writes them is
+//! `octo::services::common::acquisition_tracker`.
 
 use chrono::{DateTime, Utc};
 use serde::ser::SerializeStruct;
@@ -49,7 +49,7 @@ pub struct AcquisitionEvent {
 /// kept; any of them may be missing. Rank is Octo's order of preference among the copies it would
 /// try (1 is first), None for a copy it would pass over, and Note says why it would.
 ///
-/// Written by hand ([`Serialize`] below) because STJ also wrote the computed `Quality`.
+/// Written by hand ([`Serialize`] below) because the computed `Quality` is written too.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct AcquisitionCandidate {
@@ -85,7 +85,7 @@ impl AcquisitionCandidate {
     }
 }
 
-/// `AcquisitionCandidate.QualityText`: the format upper-cased without its dot, then the bit depth
+/// A candidate's quality in words: the format upper-cased without its dot, then the bit depth
 /// and sample rate ("16-bit 44.1 kHz", the kHz with at most one decimal), else the bit rate.
 pub fn quality_text(
     format: Option<&str>,

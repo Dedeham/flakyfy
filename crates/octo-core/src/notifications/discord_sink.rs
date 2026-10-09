@@ -1,5 +1,5 @@
-//! The wire shape of `Services/Notifications/DiscordSink.cs` (`BuildPayload`, `ColorFor`,
-//! `Truncate`). The sink that posts it is `octo::services::notifications::discord_sink`.
+//! The Discord sink's wire shape ([`build_payload`], its colors and [`truncate`]). The sink
+//! that posts it is `octo::services::notifications::discord_sink`.
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
@@ -9,7 +9,7 @@ use super::notification_event::NotificationEventType;
 use crate::common::dotnet;
 
 /// One rich embed and no top-level content. Taking the time as an argument lets tests pin the
-/// exact wire shape without HTTP; the sink passes `DateTime.UtcNow`.
+/// exact wire shape without HTTP; the sink passes the current UTC time.
 pub fn build_payload(message: &NotificationMessage, now: DateTime<Utc>) -> Value {
     let mut embed = Map::new();
     embed.insert("title".into(), json!(truncate(&message.title, 256)));
@@ -71,8 +71,8 @@ pub fn color_for(r#type: NotificationEventType) -> i32 {
     }
 }
 
-/// `s.Length <= max ? s : s[..max]`, counting UTF-16 code units. A surrogate pair that the
-/// cut would split is left out whole (.NET kept its first half, which no Rust string can hold).
+/// The first `max` UTF-16 code units of `s`, or all of it when it fits. A surrogate pair that
+/// the cut would split is left out whole, since half of one is not a valid string.
 pub fn truncate(s: &str, max: usize) -> String {
     if dotnet::utf16_len(s) <= max {
         return s.to_string();
@@ -89,7 +89,7 @@ pub fn truncate(s: &str, max: usize) -> String {
     out
 }
 
-/// `DateTime.ToString("o")` of a UTC time: seven fractional digits and a `Z`.
+/// A UTC time in the round-trip format: seven fractional digits and a `Z`.
 pub fn round_trip(now: DateTime<Utc>) -> String {
     format!(
         "{}.{:07}Z",
@@ -252,10 +252,10 @@ mod tests {
         assert!(embed(&payload).get("thumbnail").is_none());
     }
 
-    /// Rust-only: the whole payload as `JsonObject.ToJsonString()` wrote it, the timestamp in
-    /// the round-trip format, and a cut that would split a surrogate pair.
+    /// The whole payload byte for byte, the timestamp in the round-trip format, and a cut that
+    /// would split a surrogate pair.
     #[test]
-    fn the_payload_is_written_as_the_csharp_wrote_it() {
+    fn the_payload_keeps_its_wire_shape() {
         let now = DateTime::parse_from_rfc3339("2026-10-04T12:00:00.1234567Z")
             .expect("a date")
             .with_timezone(&Utc);

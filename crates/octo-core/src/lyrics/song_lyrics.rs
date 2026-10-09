@@ -1,12 +1,12 @@
-//! Port of `Services/Lyrics/SongLyrics.cs`, its pure half: the answer and how text is timed.
-//! The half that looks at files (`SongLyrics.Of`, `MayWriteInside`, `MayWriteBeside`) is
+//! What lyrics a song file has, the pure half: the answer and how text is timed. The half
+//! that looks at files (`of`, `may_write_inside`, `may_write_beside`) is
 //! `octo::services::lyrics::song_lyrics`.
 
 use super::lyrics_models::LyricsTiming;
 use super::lyrics_text::LyricsText;
 use crate::common::dotnet::is_null_or_white_space;
 
-/// `LyricsSidecarWriter.OctoMark`: the first line of every lyrics file Octo writes, and of the
+/// The first line of every lyrics file Octo writes, and of the
 /// lyrics it writes inside a song's tags. Octo replaces only lyrics that start with it.
 pub const OCTO_MARK: &str = "[re:Octo]";
 
@@ -22,8 +22,6 @@ pub enum SongLyricsPlace {
 /// The lyrics a song file has now, as Navidrome serves them: a .lrc beside it first, then a .txt,
 /// then its tags (Navidrome's default LyricsPriority). Octos is whether Octo wrote them, so may
 /// replace them. Unknown is a lyrics file in a format Octo does not read, which it leaves alone.
-///
-/// (C#'s `Where` is `place` here, `where` being a Rust keyword.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct SongLyrics {
     pub place: SongLyricsPlace,
@@ -33,7 +31,7 @@ pub struct SongLyrics {
 }
 
 impl SongLyrics {
-    /// `SongLyrics.Nothing`.
+    /// No lyrics anywhere.
     pub const NOTHING: SongLyrics = SongLyrics {
         place: SongLyricsPlace::None,
         timing: LyricsTiming::None,

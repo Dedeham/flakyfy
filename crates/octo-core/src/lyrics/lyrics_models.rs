@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LyricsModels.cs`: the query, the answer, and the source interface.
+//! The lyrics models: the query, the answer, and the source interface.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,7 +9,7 @@ use super::lyrics_text::LyricsText;
 use crate::common::dotnet::is_null_or_white_space;
 use crate::settings::MetadataSettings;
 
-/// What a lyrics lookup asks for. Note the C# parameter order: artist first.
+/// What a lyrics lookup asks for. Note the parameter order: artist first.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LyricsQuery {
     pub artist: String,
@@ -53,8 +53,8 @@ pub enum LyricsTiming {
 /// knows the track has no words, which is an answer, not a miss.
 ///
 /// Written to `lyrics-choices.json` and `lyrics-library.json` with its computed properties
-/// (`HasSynced`, `HasPlain`, `HasWordTiming`, `Timing`, `IsSongsOwn`), as System.Text.Json
-/// wrote every public getter; those are ignored on read.
+/// (`HasSynced`, `HasPlain`, `HasWordTiming`, `Timing`, `IsSongsOwn`) too; those are ignored on
+/// read.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LyricsResult {
     pub source: String,
@@ -133,15 +133,14 @@ impl LyricsResult {
         }
     }
 
-    /// `result with { CandidateId = id }`.
+    /// The same result with its candidate id set.
     pub fn with_candidate_id(mut self, candidate_id: impl Into<String>) -> Self {
         self.candidate_id = Some(candidate_id.into());
         self
     }
 }
 
-/// The shape System.Text.Json wrote: the record's parameters, its computed getters and its
-/// init properties, in declaration order.
+/// The result as written: its stored members and its computed getters, in this order.
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct LyricsResultOut<'a> {
@@ -179,11 +178,11 @@ impl Serialize for LyricsResult {
     }
 }
 
-/// What a read takes: the settable members only. The computed ones are ignored, as STJ did.
+/// What a read takes: the stored members only. The computed ones are ignored.
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "PascalCase")]
 struct LyricsResultIn {
-    // A null where C# declared a non-nullable string reads as empty.
+    // A JSON null here reads as empty.
     #[serde(deserialize_with = "crate::models::null_as_default")]
     source: String,
     synced: Option<String>,
@@ -223,12 +222,12 @@ impl LyricsLookup {
         Self { result, transient }
     }
 
-    /// `LyricsLookup.Miss`.
+    /// The source answered and has no lyrics for the song.
     pub fn miss() -> Self {
         Self::new(None, false)
     }
 
-    /// `LyricsLookup.Failed`.
+    /// The source could not answer right now.
     pub fn failed() -> Self {
         Self::new(None, true)
     }
@@ -288,12 +287,12 @@ impl LyricsSearch {
         }
     }
 
-    /// `LyricsSearch.Empty`.
+    /// The source answered with no entries.
     pub fn empty() -> Self {
         Self::new(Vec::new(), false)
     }
 
-    /// `LyricsSearch.Failed`.
+    /// The source could not search right now.
     pub fn failed() -> Self {
         Self::new(Vec::new(), true)
     }

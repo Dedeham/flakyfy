@@ -1,5 +1,3 @@
-//! Port of `Models/Subsonic/ScanStatus.cs`.
-
 use serde::{Deserialize, Serialize};
 
 /// Subsonic library scan status

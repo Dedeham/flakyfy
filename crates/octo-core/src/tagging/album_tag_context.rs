@@ -1,5 +1,3 @@
-//! Port of `Services/Tagging/AlbumTagContext.cs`.
-
 use parking_lot::Mutex;
 
 use crate::common::dotnet::eq_ignore_case;
@@ -83,8 +81,8 @@ impl<L: Clone> AlbumTagContext<L> {
         self.settled.lock().release_id.clone()
     }
 
-    /// `Loudness[path] = value`: the C# dictionary ignored the path's case, and a path already
-    /// there keeps the spelling it was first placed with.
+    /// Sets a path's loudness. Paths match ignoring case, and a path already there keeps the
+    /// spelling it was first placed with.
     pub fn set_loudness(&self, path: &str, value: Option<L>) {
         let mut loudness = self.loudness.lock();
         match loudness.get_mut(&ignore_case_key(path)) {
@@ -238,8 +236,8 @@ mod tests {
         }
     }
 
-    /// The pure half of `DownloadTaggingTests.TwoTracksOfOneWalk_ShareTheReleaseFacts` (the
-    /// download itself is 4-B's): the first track's facts are captured, a second track's other
+    /// Two tracks of one walk share the release facts (the download itself is tested with the
+    /// download service): the first track's facts are captured, a second track's other
     /// pressing of the same group is steered onto the settled release, and its song is pinned.
     #[test]
     fn a_walk_captures_steers_and_pins() {

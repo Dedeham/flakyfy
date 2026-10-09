@@ -1,5 +1,4 @@
-//! `LyricsText` tests: the enhanced-LRC half of `LyricsWordTimingTests.cs`, the LyricsText half of
-//! `LyricsTests.cs`, and `LyricsChoiceTests.Sidecar_OctosMark_IsSkippedByTheLrcReader`.
+//! `LyricsText` tests: enhanced LRC, credit cleaning, and Octo's own mark skipped by the reader.
 
 use super::*;
 use crate::lyrics::lyrics_models::LyricsTiming;
@@ -13,7 +12,7 @@ fn word_texts(line: &LyricLine) -> Vec<&str> {
     line.words.iter().map(|word| line.word_text(word)).collect()
 }
 
-// ---- LyricsWordTimingTests: enhanced LRC -------------------------------------------------
+// ---- enhanced LRC ------------------------------------------------------------------------
 
 #[test]
 fn a_word_before_a_pause_keeps_its_own_end() {
@@ -159,8 +158,8 @@ fn strip_credits_drops_headings_and_credits_the_evaluation_found() {
     }
 }
 
-/// The Krc_BecomesEnhancedLrcThatReadsBackTheSame expectations, from the lines KuGou's parser
-/// gives (the parser itself is ported with the KuGou source).
+/// KuGou's KRC becomes enhanced LRC that reads back the same, from the lines KuGou's parser
+/// gives (the parser itself lives with the KuGou source).
 #[test]
 fn krc_lines_become_enhanced_lrc_that_reads_back_the_same() {
     let text = "Work it make it";
@@ -185,7 +184,7 @@ fn krc_lines_become_enhanced_lrc_that_reads_back_the_same() {
     assert_eq!(back[0].end_ms, Some(1590));
 }
 
-// ---- LyricsTests: LyricsText -------------------------------------------------------------
+// ---- LyricsText --------------------------------------------------------------------------
 
 #[test]
 fn parse_lrc_reads_every_tag_and_fraction_and_sorts() {
@@ -267,7 +266,7 @@ fn query_title_keeps_the_version_but_not_the_guest_or_the_noise() {
     }
 }
 
-// ---- LyricsChoiceTests -------------------------------------------------------------------
+// ---- lyrics choices ----------------------------------------------------------------------
 
 #[test]
 fn sidecar_octos_mark_is_skipped_by_the_lrc_reader() {
@@ -278,9 +277,9 @@ fn sidecar_octos_mark_is_skipped_by_the_lrc_reader() {
     );
 }
 
-// ---- Rust-only: the .NET semantics this port had to keep ---------------------------------
+// ---- UTF-16 lengths and invariant case ---------------------------------------------------
 
-/// `[^\s:：]{1,16}` counted UTF-16 units: a label of nine emoji is eighteen units, too long to
+/// `[^\s:：]{1,16}` counts UTF-16 units: a label of nine emoji is eighteen units, too long to
 /// be a label, while eight are sixteen and still one.
 #[test]
 fn a_credit_label_counts_utf16_units() {
@@ -296,9 +295,10 @@ fn a_credit_label_counts_utf16_units() {
     );
 }
 
-/// .NET's invariant `IgnoreCase` takes `S` for `s` but not `ſ`, and the Kelvin sign for `k`.
+/// Invariant-culture case-insensitivity takes `S` for `s` but not `ſ`, and the Kelvin sign
+/// for `k`.
 #[test]
-fn credit_words_ignore_case_as_dotnet_did() {
+fn credit_words_ignore_case_in_the_invariant_culture() {
     assert!(LyricsText::is_credit_label("PRODUCERS"));
     assert!(!LyricsText::is_credit_label("ſamples"));
     assert!(LyricsText::is_credit_label("samples"));

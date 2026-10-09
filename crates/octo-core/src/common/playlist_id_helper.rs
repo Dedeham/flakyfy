@@ -1,5 +1,3 @@
-//! Port of `Services/Common/PlaylistIdHelper.cs`.
-//!
 //! Helper for handling external playlist IDs.
 //! Playlist IDs use the format: "pl-{provider}-{externalId}"
 //! Example: "pl-deezer-123456", "pl-qobuz-789"
@@ -14,7 +12,7 @@ const PLAYLIST_PREFIX: &str = "pl-";
 /// a metadata service, so there is one list rather than two that have to agree.
 const KNOWN_PROVIDERS: [&str; 2] = ["deezer", "qobuz"];
 
-/// What `ParsePlaylistId` and `CreatePlaylistId` threw (`ArgumentException`).
+/// A playlist ID that could not be parsed or built.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct InvalidPlaylistId(pub String);

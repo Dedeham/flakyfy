@@ -1,5 +1,3 @@
-//! Port of `Services/Radio/RadioBlend.cs`.
-//!
 //! How radio weighs its sources' answers. Each song scores weight x match x rank decay, the
 //! stations' shape ([`RANK_HALF_DEPTH`]), and the same song from several sources adds up, since
 //! agreement is the best sign a suggestion fits.
@@ -18,7 +16,7 @@ use crate::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use crate::last_fm::radio_filler;
 use crate::models::domain::Song;
 
-/// What each source counts, by provider key, in the order the C# dictionary listed them.
+/// What each source counts, by provider key, in the order they were listed.
 pub type RadioWeights = IndexMap<String, f64>;
 
 /// A song the blend kept, and the source that counted most for it.
@@ -57,8 +55,8 @@ pub const SOUNDS_ALIKE_WHEN_UNKNOWN: f64 = 0.8;
 /// of three, say) are what they are and count in full.
 ///
 /// `wanted`: how many songs the radio asked for: an answer that has them all is full however
-/// short, so a radio of eight songs is not thin for having eight. (The C# default was
-/// [`FULL_ANSWER`].)
+/// short, so a radio of eight songs is not thin for having eight. ([`FULL_ANSWER`] when no
+/// count was asked for.)
 pub fn thin(answer: &RadioAnswer, wanted: i32) -> f64 {
     if radio_provider::is_catalog(&answer.provider) {
         (answer.count() as f64 / f64::from(wanted.clamp(1, FULL_ANSWER))).min(1.0)
@@ -80,7 +78,7 @@ pub fn station_factor(r#match: RadioMatch) -> f64 {
 /// The catalogs found fewer than [`FULL_ANSWER`] songs like this very song, so the seed's own
 /// album and genre join and lead, and no spacing by artist is applied (#78). A thin exact answer
 /// counts as none: three YouTube Music rows must not push a playlist's own songs out of the
-/// radio. (The C# default for `wanted` was [`FULL_ANSWER`].)
+/// radio. (`wanted` is [`FULL_ANSWER`] when no count was asked for.)
 pub fn library_led<'a>(answers: impl IntoIterator<Item = &'a RadioAnswer>, wanted: i32) -> bool {
     let exact: usize = answers
         .into_iter()
@@ -111,7 +109,8 @@ pub fn without_filler_or_bans(answer: RadioAnswer, bans: &IgnoreCaseKeys) -> Rad
     }
 }
 
-/// `wanted`: how many songs the radio is for ([`thin`]; the C# default was [`FULL_ANSWER`]).
+/// `wanted`: how many songs the radio is for ([`thin`]; [`FULL_ANSWER`] when no count was asked
+/// for).
 pub fn blend(
     answers: &[RadioAnswer],
     weights: &RadioWeights,

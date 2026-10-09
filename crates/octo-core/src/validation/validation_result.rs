@@ -1,8 +1,6 @@
-//! Port of `Services/Validation/ValidationResult.cs`.
-
 use indexmap::IndexMap;
 
-/// `System.ConsoleColor`, which the startup report colors its statuses with.
+/// A console color, which the startup report colors its statuses with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ConsoleColor {
     Black,
@@ -25,7 +23,7 @@ pub enum ConsoleColor {
 }
 
 impl ConsoleColor {
-    /// The ANSI foreground code .NET's terminal driver sets for this color.
+    /// The ANSI foreground code for this color.
     pub fn ansi_code(self) -> u8 {
         match self {
             ConsoleColor::Black => 30,
@@ -48,7 +46,7 @@ impl ConsoleColor {
     }
 }
 
-/// A metadata value (`object` in C#).
+/// A metadata value: any JSON value.
 pub type MetadataValue = serde_json::Value;
 
 /// Result of a startup validation operation
@@ -82,7 +80,7 @@ impl ValidationResult {
         }
     }
 
-    /// Creates a failed validation result. (C#'s default color is red.)
+    /// Creates a failed validation result shown in the given color.
     pub fn failure(status: impl Into<String>, details: impl Into<String>, color: ConsoleColor) -> Self {
         Self {
             is_valid: false,

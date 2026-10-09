@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/LastFmRadioSeedNormalizer.cs`.
-//!
 //! Canonicalizes artist/title seeds for every Last.fm radio path, by [`SongIdentity`]'s reading
 //! of a credit and a title.
 
@@ -32,7 +30,6 @@ pub fn track_key(artist: &str, title: &str) -> String {
 mod tests {
     use super::*;
 
-    // LastFmRadioCoreTests.SeedNormalizer_RemovesFeatureDecorationsWithoutDamagingArtist
     #[test]
     fn seed_normalizer_removes_feature_decorations_without_damaging_artist() {
         for (input, expected) in [
@@ -44,7 +41,6 @@ mod tests {
         }
     }
 
-    // LastFmRadioCoreTests.SeedNormalizer_CleansCommonTitleDecorations
     #[test]
     fn seed_normalizer_cleans_common_title_decorations() {
         for (input, expected) in [

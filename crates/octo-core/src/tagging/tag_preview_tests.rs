@@ -1,5 +1,5 @@
-//! Rust-only: `TagPreview` over fake services. The C# exercised it only through the admin
-//! endpoint (`AdminContractTests.TagPreview_*`, 6-B), which checks the request, not the preview.
+//! `TagPreview` over fake services: the preview itself, apart from the admin endpoint (whose
+//! tests check the request, not the preview).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

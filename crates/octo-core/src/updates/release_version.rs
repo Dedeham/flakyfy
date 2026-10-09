@@ -1,12 +1,12 @@
-//! Port of `Services/Updates/ReleaseVersion.cs`.
+//! Dated Octo release versions: parsing, ordering and display.
 
 use std::fmt;
 use std::sync::LazyLock;
 
 use regex::Regex;
 
-/// `^v?(\d{4})\.(\d{2})\.(\d{2})(?:\.(\d{1,4}))?$`, with ASCII digits: .NET's `\d` also took
-/// other scripts' digits, on which `int.Parse` then threw (known-diffs.md).
+/// `^v?(\d{4})\.(\d{2})\.(\d{2})(?:\.(\d{1,4}))?$`, with ASCII digits only: another script's
+/// digits are not a release.
 static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^v?([0-9]{4})\.([0-9]{2})\.([0-9]{2})(?:\.([0-9]{1,4}))?$")
         .expect("a fixed pattern compiles")
@@ -35,9 +35,9 @@ impl ReleaseVersion {
         }
     }
 
-    /// `TryParse`. Pass "" for a null text.
+    /// Parses a release from its text, or `None`. Pass "" when there is no text.
     pub fn try_parse(text: &str) -> Option<Self> {
-        // .NET stamps "+<commit>" after the informational version; the release is what is before it.
+        // A build version may carry "+<commit>" after it; the release is what is before it.
         let release = text.split('+').next().unwrap_or("").trim();
         let caps = PATTERN.captures(release)?;
         let number = |index: usize| -> Option<i32> { caps.get(index)?.as_str().parse().ok() };
@@ -69,7 +69,6 @@ impl fmt::Display for ReleaseVersion {
 mod tests {
     use super::*;
 
-    /// ReleaseCheckTests.OnlyDatedReleasesParse.
     #[test]
     fn only_dated_releases_parse() {
         for (text, parses) in [
@@ -86,7 +85,6 @@ mod tests {
         }
     }
 
-    /// ReleaseCheckTests.ReleasesCompareByTheirNumbers.
     #[test]
     fn releases_compare_by_their_numbers() {
         for (newer, older) in [

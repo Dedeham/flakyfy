@@ -1,4 +1,4 @@
-//! `Octo.Models.Settings.MetadataSettings` and `LyricsSaveTo` (the `Metadata` section).
+//! `MetadataSettings` and `LyricsSaveTo` (the `Metadata` section).
 
 use serde::{Deserialize, Serialize};
 
@@ -211,7 +211,7 @@ impl MetadataSettings {
     }
 }
 
-/// `Split(',', RemoveEmptyEntries | TrimEntries)`.
+/// Split on commas, each piece trimmed, empty pieces dropped.
 fn split_trimmed(value: &str) -> impl Iterator<Item = &str> {
     value.split(',').map(str::trim).filter(|s| !s.is_empty())
 }
@@ -238,7 +238,6 @@ impl LyricsSaveTo {
 mod tests {
     use super::*;
 
-    // LyricsSongSourceTests.Order_SavedWithoutTheSong_PutsItFirst
     #[test]
     fn order_saved_without_the_song_puts_it_first() {
         let with = |sources: &str| MetadataSettings {
@@ -259,7 +258,6 @@ mod tests {
         );
     }
 
-    // LyricsSongSourceTests.SaveTo_AnythingUnknown_IsBeside
     #[test]
     fn save_to_anything_unknown_is_beside() {
         assert_eq!(LyricsSaveTo::normalize(Some("sideways")), LyricsSaveTo::BESIDE);

@@ -1,5 +1,5 @@
-//! Rust-only: `ReleaseIdentifier` over fake sources. The C# drove it only through the download
-//! base (`DownloadTaggingTests`, 4-B); these pin each stage, budget and note on their own.
+//! `ReleaseIdentifier` over fake sources: these pin each stage, budget and note on their own,
+//! apart from the download base.
 
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-//! Port of `Services/Metadata/GenreNormalizer.cs`.
+//! Turns raw genre values into the small set of genres a library can browse.
 
 use std::sync::LazyLock;
 
@@ -54,7 +54,7 @@ impl GenreTagPlan {
 /// splitting on it destroys "R&B" and "Drum & Bass".
 const SEPARATORS: [char; 5] = [';', ',', '|', '\0', '/'];
 
-/// `^\s*\(\d+\)\s*`, matched over [`utf16_class_view`] for .NET's `\d`.
+/// `^\s*\(\d+\)\s*`, matched over [`utf16_class_view`] so `\d` sees the digits it should.
 static NUMERIC_GENRE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*\(\d+\)\s*").expect("a fixed pattern compiles"));
 
@@ -149,7 +149,7 @@ impl GenreNormalizer {
     }
 
     /// The pipeline, and the ORDER is the design:
-    /// split, canonicalise, blocklist, map, case, dedupe, cap.
+    /// split, canonicalize, blocklist, map, case, dedupe, cap.
     pub fn normalize<'a>(
         raw: impl IntoIterator<Item = Option<&'a str>>,
         settings: &GenreSettings,
@@ -279,8 +279,8 @@ fn first_match<'a>(rules: &'a [GenreMappingSettings], key: &str) -> Option<&'a G
     })
 }
 
-/// What `StringComparison.OrdinalIgnoreCase` compares a character as (ı and ſ stay apart from
-/// I and S, as they do in `eq_ignore_case`).
+/// What an ordinal case-insensitive comparison compares a character as (ı and ſ stay apart
+/// from I and S, as they do in `eq_ignore_case`).
 fn ordinal_case_key(c: char) -> char {
     if c == '\u{0131}' || c == '\u{017F}' {
         c
@@ -289,7 +289,7 @@ fn ordinal_case_key(c: char) -> char {
     }
 }
 
-/// `text.Contains(value, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `text` contains `value`, ordinally and ignoring case.
 fn contains_ignore_case(text: &str, value: &str) -> bool {
     let text: String = text.chars().map(ordinal_case_key).collect();
     let value: String = value.chars().map(ordinal_case_key).collect();
@@ -302,7 +302,7 @@ fn contains_ignore_case(text: &str, value: &str) -> bool {
 /// already been lowercased, so asking whether it is all-caps always answers no and EDM,
 /// IDM and UKG all come back as Edm, Idm and Ukg.
 ///
-/// Invariant culture throughout, because under a Turkish locale ToTitleCase turns "indie"
+/// Invariant culture throughout, because under a Turkish locale title casing turns "indie"
 /// into something that no longer matches "Indie", and a container's locale is not
 /// something a user thinks of as a genre setting.
 fn title_case_genre(key: &str, original: &str) -> String {
@@ -310,8 +310,8 @@ fn title_case_genre(key: &str, original: &str) -> String {
     if trimmed.is_empty() {
         return to_title_case(key);
     }
-    // char.IsLetter and char.IsUpper looked at UTF-16 units; a supplementary character is
-    // neither, which the `_utf16` tests answer the same way.
+    // Letters and capitals are judged per UTF-16 unit; a supplementary character is neither,
+    // which the `_utf16` tests answer the same way.
     if (1..=4).contains(&utf16_len(&trimmed))
         && trimmed.chars().any(is_letter_utf16)
         && trimmed.chars().all(|c| !is_letter_utf16(c) || is_upper_utf16(c))
@@ -342,7 +342,7 @@ fn is_letter_category(category: GeneralCategory) -> bool {
     )
 }
 
-/// The categories `TextInfo.ToTitleCase` ends a word on: spaces, controls, format characters,
+/// The categories title casing ends a word on: spaces, controls, format characters,
 /// punctuation and symbols. Letters, marks, numbers, private use and unassigned characters
 /// continue it.
 fn is_word_separator(category: GeneralCategory) -> bool {
@@ -367,7 +367,7 @@ fn is_word_separator(category: GeneralCategory) -> bool {
     )
 }
 
-/// The first letter of a word as `TextInfo.ToTitleCase` writes it: the titlecase forms of the
+/// The first letter of a word as title casing writes it: the titlecase forms of the
 /// Latin digraphs, otherwise the invariant upper case.
 fn title_letter(c: char) -> char {
     match c {
@@ -379,7 +379,7 @@ fn title_letter(c: char) -> char {
     }
 }
 
-/// `CultureInfo.InvariantCulture.TextInfo.ToTitleCase`: each word's first letter upper-cased
+/// Invariant-culture title casing: each word's first letter upper-cased
 /// and the rest of it lower-cased, unless the word has no lower-case letter (an acronym), which
 /// is left as it is. An apostrophe inside a word starts a new stretch that is lower-cased
 /// ("Rock'n'roll").
@@ -405,9 +405,9 @@ pub fn to_title_case(text: &str) -> String {
         result.push(title_letter(chars[i]));
         i += 1;
 
-        // Convert the characters until the end of the this word to lowercase.
+        // Convert the characters until the end of this word to lowercase.
         let mut lowercase_start = i;
-        // Use hasLowerCase flag to prevent from lowercasing acronyms (like "URT", "USA", etc)
+        // `has_lower_case` keeps acronyms (like "URT", "USA") from being lowercased.
         let mut has_lower_case = category == GeneralCategory::LowercaseLetter;
         while i < chars.len() {
             let category = get_general_category(chars[i]);

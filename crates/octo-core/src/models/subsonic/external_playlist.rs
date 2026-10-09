@@ -1,5 +1,3 @@
-//! Port of `Models/Subsonic/ExternalPlaylist.cs`.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

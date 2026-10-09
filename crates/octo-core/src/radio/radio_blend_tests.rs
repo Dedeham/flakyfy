@@ -1,4 +1,4 @@
-//! `RadioBlendTests`: how radio weighs its sources' answers (multi-source radio): rank decay,
+//! How radio weighs its sources' answers (multi-source radio): rank decay,
 //! agreement adding up, weights, thin answers, guesses only as a last resort, and when the
 //! library leads.
 
@@ -55,7 +55,6 @@ fn song(id: &str, artist: &str, title: &str) -> Song {
     }
 }
 
-// RadioBlendTests.ASongTwoSourcesSuggest_OutranksOneOnlyOneDoes
 #[test]
 fn a_song_two_sources_suggest_outranks_one_only_one_does() {
     let last_fm = full(LAST_FM, "A", 25);
@@ -68,7 +67,6 @@ fn a_song_two_sources_suggest_outranks_one_only_one_does() {
     assert_eq!(titles(&picks)[0], "Song 7");
 }
 
-// RadioBlendTests.AWeightOfNothing_LeavesASourceOut
 #[test]
 fn a_weight_of_nothing_leaves_a_source_out() {
     let mut weights = even();
@@ -85,7 +83,6 @@ fn a_weight_of_nothing_leaves_a_source_out() {
     assert_eq!(picks.len(), 25);
 }
 
-// RadioBlendTests.AThinAnswer_CountsLessThanAFullOne
 #[test]
 fn a_thin_answer_counts_less_than_a_full_one() {
     let thin_answer = catalog(LAST_FM, RadioMatch::Song, &[("Thin", "Only")]);
@@ -104,7 +101,6 @@ fn a_thin_answer_counts_less_than_a_full_one() {
     assert!(position > 10, "a one-song answer does not lead");
 }
 
-// RadioBlendTests.ALibraryAnswer_IsNeverThin
 #[test]
 fn a_library_answer_is_never_thin() {
     let album = RadioAnswer::new(
@@ -116,7 +112,6 @@ fn a_library_answer_is_never_thin() {
     assert_eq!(thin(&album, FULL_ANSWER), 1.0);
 }
 
-// RadioBlendTests.GuessedArtists_PlayOnlyWhenNothingElseCame
 #[test]
 fn guessed_artists_play_only_when_nothing_else_came() {
     let guess = catalog(
@@ -142,7 +137,6 @@ fn guessed_artists_play_only_when_nothing_else_came() {
     );
 }
 
-// RadioBlendTests.TheSeed_NeverComesBack
 #[test]
 fn the_seed_never_comes_back() {
     let seed_key = seed_normalizer::track_key("Massive Attack", "Teardrop");
@@ -170,7 +164,6 @@ fn the_seed_never_comes_back() {
     );
 }
 
-// RadioBlendTests.ALibraryCopy_WinsOverATrackToLookUp_AndACompleteCopyOverAStub
 #[test]
 fn a_library_copy_wins_over_a_track_to_look_up_and_a_complete_copy_over_a_stub() {
     let mut stub = RadioAnswer::new(
@@ -207,7 +200,6 @@ fn a_library_copy_wins_over_a_track_to_look_up_and_a_complete_copy_over_a_stub()
     );
 }
 
-// RadioBlendTests.TheLibraryLeads_WhenTheCatalogsHaveFewerThanTwentySongsLikeIt
 #[test]
 fn the_library_leads_when_the_catalogs_have_fewer_than_twenty_songs_like_it() {
     for (songs, led) in [(19, true), (20, false)] {
@@ -218,7 +210,6 @@ fn the_library_leads_when_the_catalogs_have_fewer_than_twenty_songs_like_it() {
     }
 }
 
-// RadioBlendTests.FillerAndOneStarSongs_AreLeftOut
 #[test]
 fn filler_and_one_star_songs_are_left_out() {
     let answer = RadioAnswer::new(
@@ -241,7 +232,6 @@ fn filler_and_one_star_songs_are_left_out() {
     assert_eq!(kept, ["Keep"]);
 }
 
-// RadioBlendTests.PrimaryGenre_IsTheFirstRealOne
 #[test]
 fn primary_genre_is_the_first_real_one() {
     for (genre, expected) in [
@@ -256,7 +246,6 @@ fn primary_genre_is_the_first_real_one() {
     }
 }
 
-// RadioBlendTests.AnAnswerWithAllTheSongsAsked_IsFull_HoweverShort
 #[test]
 fn an_answer_with_all_the_songs_asked_is_full_however_short() {
     let eight = RadioAnswer::new(
@@ -273,7 +262,6 @@ fn an_answer_with_all_the_songs_asked_is_full_however_short() {
     assert!(library_led(std::slice::from_ref(&eight), 50));
 }
 
-// RadioBlendTests.TheSameSongFromASourceThatKnowsItsVideo_KeepsTheVideo
 #[test]
 fn the_same_song_from_a_source_that_knows_its_video_keeps_the_video() {
     let last_fm = catalog(LAST_FM, RadioMatch::Song, &[("Portishead", "Roads")]);
@@ -295,7 +283,7 @@ fn the_same_song_from_a_source_that_knows_its_video_keeps_the_video() {
     );
 }
 
-/// Rust-only: the station factor discounts a guess, and a pick's source is the one that counted
+/// The station factor discounts a guess, and a pick's source is the one that counted
 /// most for it.
 #[test]
 fn stations_keep_guesses_at_a_discount_and_a_pick_names_its_strongest_source() {

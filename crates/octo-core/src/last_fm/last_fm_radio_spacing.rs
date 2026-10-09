@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/LastFmRadioSpacing.cs`.
-//!
 //! Spreads a song radio's artists out. The similar-tracks list puts the seed's own album and
 //! artist at the top, so played in order a radio opened with three songs from one album and
 //! sounded like the album, not a radio.
@@ -54,8 +52,7 @@ fn artist_key(artist: Option<&str>) -> String {
     }
 }
 
-/// LastFmRadioSpacingTests: a song radio spreads its artists out, so it does not open with
-/// the seed's album.
+/// A song radio spreads its artists out, so it does not open with the seed's album.
 #[cfg(test)]
 mod tests {
     use super::*;

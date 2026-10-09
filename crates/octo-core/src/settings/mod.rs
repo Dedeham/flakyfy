@@ -1,10 +1,9 @@
-//! The settings classes (`Octo.Models.Settings`), the live store that binds them from the
-//! layered configuration, and the admin helpers that edit `settings.json`
-//! (`SettingsFileWriter`, `RestartTracker`).
+//! The settings classes, the live store that binds them from the layered configuration, and
+//! the admin helpers that edit `settings.json` (`SettingsFileWriter`, `RestartTracker`).
 //!
-//! Each struct derives `Deserialize` with `#[serde(default)]` and carries the C# property
-//! initializers in its `Default`; [`crate::config::bind`] fills it from a configuration
-//! section. `Effective*` properties are methods that clamp at read time, as the C# did.
+//! Each struct derives `Deserialize` with `#[serde(default)]` and carries its defaults in its
+//! `Default`; [`crate::config::bind`] fills it from a configuration section. `effective_*`
+//! methods clamp at read time.
 
 pub mod admin;
 pub mod generated_playlist;
@@ -59,9 +58,8 @@ pub use text::IgnoreCaseSet;
 pub use update::UpdateSettings;
 pub use writer::{JsonObject, SettingsFileCorruptError, SettingsFileWriter, SettingsWriteError};
 
-/// Every bound settings section, as one snapshot. `Program.cs` registered each class with
-/// `Configure<T>(Configuration.GetSection(name))`; the section names are the field names in
-/// PascalCase.
+/// Every bound settings section, as one snapshot. Each class is bound from the configuration
+/// section of its name; the section names are the field names in PascalCase.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppSettings {
@@ -83,7 +81,7 @@ pub struct AppSettings {
 }
 
 impl AppSettings {
-    /// The configuration section names, in `Program.cs` registration order.
+    /// The configuration section names, in registration order.
     pub const SECTIONS: [&'static str; 15] = [
         "Genre",
         "LibraryActions",
@@ -124,10 +122,9 @@ impl AppSettings {
             admin: bind_section(tree, "Admin", &mut warnings),
             imports: bind_section(tree, "Imports", &mut warnings),
         };
-        // A port fix: Navidrome's address is read without the spaces and trailing slashes it
-        // may have been typed with, so every upstream URL Octo builds from it has one slash
-        // (the C# stream relay asked for `//rest/stream`; BACKLOG, "Found while building the
-        // harness"; known-diffs.md).
+        // Navidrome's address is read without the spaces and trailing slashes it may have been
+        // typed with, so every upstream URL Octo builds from it has one slash (a trailing slash
+        // would make the stream relay ask for `//rest/stream`).
         if let Some(url) = settings.subsonic.url.as_mut() {
             *url = normalize_server_url(url);
         }
@@ -180,7 +177,7 @@ mod tests {
         assert_eq!(normalize_server_url(""), "");
     }
 
-    /// A port fix: slskd's web address is read without the spaces it was typed with.
+    /// slskd's web address is read without the spaces it was typed with.
     #[test]
     fn slskds_web_address_is_read_without_spaces() {
         let mut tree = ConfigTree::new();

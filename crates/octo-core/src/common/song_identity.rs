@@ -1,27 +1,26 @@
 //! One reading of song titles and artist credits for every place Octo decides whether two
-//! songs are the same. Port of `Services/Common/SongIdentity.cs`.
+//! songs are the same.
 //!
-//! The C# took `string?` almost everywhere and read null as empty. The Rust takes `&str` for
-//! those (pass `""` for null) and keeps an `Option` only where null meant something else: the
-//! artist of [`SongIdentity::parse_title`], where null reads the title alone and empty means
-//! the song has no artist.
+//! Text arguments are `&str`, where a missing value is passed as `""` and reads as empty. An
+//! `Option` is kept only where missing means something else: the artist of
+//! [`SongIdentity::parse_title`], where `None` reads the title alone and empty means the song
+//! has no artist.
 //!
-//! Regex notes. The `regex` crate has no lookaround, so the four C# patterns that used it are
+//! Regex notes. The `regex` crate has no lookaround, so the four patterns that need it are
 //! matched in two steps that give the same answer: the track-number lookahead is a captured
 //! character, the `x` separator's negative lookahead is checked after the match (and the search
-//! resumes one character on, as the backtracking engine would), and the `VEVO` lookbehind is
-//! tested by hand. Leftmost-first alternation and lazy quantifiers agree with .NET's
-//! backtracking. Where the Unicode classes do not agree, the pattern is run over a same-length
-//! view of the text: [`word_boundary_view`] for `\b` (.NET's word characters are letters,
-//! nonspacing marks, digits and connectors in one UTF-16 unit; Rust's also take spacing marks
-//! and supplementary letters), [`utf16_class_view`] for `\d` and `\p{L}` (.NET never matched a
-//! supplementary-plane character with either). Case-insensitive patterns agree with .NET's
-//! invariant culture, which is what the container runs (no `LANG`): under en-US, .NET's `(?i)i`
-//! would also match `İ`.
+//! resumes one character on, as a backtracking engine would), and the `VEVO` lookbehind is
+//! tested by hand. Leftmost-first alternation and lazy quantifiers behave as in a backtracking
+//! engine. Where the Unicode classes must answer differently from Rust's, the pattern is run over
+//! a same-length view of the text: [`word_boundary_view`] for `\b` (word characters here are
+//! letters, nonspacing marks, digits and connectors in one UTF-16 unit; Rust's also take spacing
+//! marks and supplementary letters), [`utf16_class_view`] for `\d` and `\p{L}` (neither matches
+//! a supplementary-plane character). Case-insensitive patterns fold case with no locale, as the
+//! container runs with no `LANG`: under en-US, `(?i)i` would also match `İ`.
 //!
-//! Every public function here was compared with the C# on two generated corpora of about 25,000
-//! titles, credits and pairs each (all of song-identity-cases.json, plus mixed scripts, marks,
-//! supplementary characters, brackets and separators), with no difference.
+//! Every public function here was compared with the reference output on two generated corpora
+//! of about 25,000 titles, credits and pairs each (all of song-identity-cases.json, plus mixed
+//! scripts, marks, supplementary characters, brackets and separators), with no difference.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -188,7 +187,6 @@ pub struct SongTitle {
     /// The artist a title named in "Artist - Title" form, or None.
     pub artist_from_title: Option<String>,
     /// The core with its part numbers, before keying: where numbers are still apart.
-    /// (`internal` in C#.)
     pub keyed: String,
 }
 
@@ -284,7 +282,7 @@ fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a fixed pattern compiles")
 }
 
-/// Every pattern the C# compiled with `RegexOptions.IgnoreCase`.
+/// A case-insensitive pattern.
 fn rxi(pattern: &str) -> Regex {
     rx(&format!("(?i){pattern}"))
 }
@@ -343,7 +341,7 @@ fn homoglyph(ch: char) -> Option<char> {
 }
 
 fn fold_mixed_script_words(text: &str) -> String {
-    // .NET's \p{L} never matched a supplementary-plane letter, so one splits a word.
+    // \p{L} matches no supplementary-plane letter here, so one splits a word.
     replace_in_view(text, &utf16_class_view(text), &WORD, |caps| {
         let word = &caps[0];
         if !word.chars().any(|ch| ch.is_ascii_alphabetic()) {
@@ -356,8 +354,8 @@ fn fold_mixed_script_words(text: &str) -> String {
     })
 }
 
-/// `Regex.Replace(text, evaluator)`, matched in a view of the text (see
-/// [`word_boundary_view`]) and replaced in the text itself. The evaluator sees the view's
+/// Replaces every match of `pattern` with what the evaluator returns, matched in a view of the
+/// text (see [`word_boundary_view`]) and replaced in the text itself. The evaluator sees the view's
 /// captures, which only differ from the text in characters these patterns never capture.
 fn replace_in_view(
     text: &str,
@@ -410,7 +408,7 @@ fn lower_fold(folded: &str) -> String {
 /// "01 - ", "01. ", "1-01 ", "2) " in front of a title, with a letter after it.
 /// "1-800-273-8255" and "99 Problems" keep their numbers.
 ///
-/// The C# ended in the lookahead `(?=[^\d\s.])`; here that character is group 1 and the
+/// The letter after the number, `[^\d\s.]`, is group 1 rather than a lookahead, and the
 /// number ends where it starts.
 static TRACK_NUMBER: LazyLock<Regex> =
     LazyLock::new(|| rx(r"^(?:\d{1,2}-\d{1,3}\s+|\d{1,3}\s*[.)]\s*|\d{1,3}\s+-\s+)([^\d\s.])"));
@@ -425,7 +423,7 @@ static DASH_TAIL: LazyLock<Regex> = LazyLock::new(|| rx(r"\s+-\s+"));
 static TRAILING_FEATURE: LazyLock<Regex> = LazyLock::new(|| rxi(r"\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$"));
 
 /// A guest credit run on after a version inside one bracket, "Radio Edit - feat. X". Matched in
-/// the view where `\b` falls where .NET's did.
+/// the view where `\b` falls by word characters in one UTF-16 unit.
 static INNER_FEATURE: LazyLock<Regex> =
     LazyLock::new(|| rxi(r"\s*(?:[-\u{2013},;/]\s*)?\b(?:feat\.?|ft\.?|featuring)\s+.+$"));
 
@@ -524,7 +522,7 @@ struct Marker {
 }
 
 fn marker(pattern: &str, name: &'static str) -> Marker {
-    // RegexOptions.IgnoreCase | RegexOptions.CultureInvariant.
+    // Case-insensitive, with no locale.
     Marker {
         pattern: rxi(pattern),
         name,
@@ -737,7 +735,7 @@ impl TitleParts {
     }
 }
 
-/// Order-keeping `Distinct()`.
+/// The values with repeats dropped, each kept where it first appears.
 fn distinct(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = HashSet::new();
     values
@@ -845,7 +843,7 @@ static ALIAS_NAMES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
     ])
 });
 
-/// The C# separator, `...|\sx\s(?!(?:feat|ft|featuring|with|and|x)\b|[&,;/])|...`, with the
+/// The separator, `...|\sx\s(?!(?:feat|ft|featuring|with|and|x)\b|[&,;/])|...`, with the
 /// `x` branch captured as group 1 and its negative lookahead checked by
 /// [`X_SEPARATOR_REFUSED`] after the match.
 static ARTIST_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
@@ -858,13 +856,13 @@ static ARTIST_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
 static X_SEPARATOR_REFUSED: LazyLock<Regex> =
     LazyLock::new(|| rxi(r"^(?:(?:feat|ft|featuring|with|and|x)\b|[&,;/])"));
 
-/// The C# `(?:\s+-\s+topic|(?<=\p{Ll})vevo|\s+vevo)$`, in its parts.
+/// The channel suffix `(?:\s+-\s+topic|(?<=\p{Ll})vevo|\s+vevo)$`, in its parts.
 static CHANNEL_TOPIC: LazyLock<Regex> = LazyLock::new(|| rxi(r"\s+-\s+topic$"));
 static CHANNEL_SPACED_VEVO: LazyLock<Regex> = LazyLock::new(|| rxi(r"\s+vevo$"));
 
 static HAS_LATIN: LazyLock<Regex> = LazyLock::new(|| rx(r"[A-Za-z]"));
 
-/// The separators of an artist credit, as `ArtistSeparator.Matches` found them.
+/// The separators of an artist credit, every match of [`ARTIST_SEPARATOR`] in order.
 fn artist_separators(text: &str) -> Vec<std::ops::Range<usize>> {
     let mut found = Vec::new();
     let mut at = 0;
@@ -887,7 +885,7 @@ fn artist_separators(text: &str) -> Vec<std::ops::Range<usize>> {
     found
 }
 
-/// `ChannelSuffix.Replace(text, "")`: " - Topic", "ArtistVEVO" and "Artist VEVO" lose the
+/// The text without its channel suffix: " - Topic", "ArtistVEVO" and "Artist VEVO" lose the
 /// channel name.
 fn strip_channel_suffix(text: &str) -> &str {
     if let Some(found) = CHANNEL_TOPIC.find(text) {
@@ -896,7 +894,7 @@ fn strip_channel_suffix(text: &str) -> &str {
     if let Some(found) = CHANNEL_SPACED_VEVO.find(text) {
         return &text[..found.start()];
     }
-    // (?<=\p{Ll})vevo$: under IgnoreCase .NET widens \p{Ll} to every cased letter (Lu, Ll,
+    // (?<=\p{Ll})vevo$: ignoring case widens \p{Ll} to every cased letter (Lu, Ll,
     // Lt) in one UTF-16 unit, so "DRAKEVEVO" loses its suffix too; a CJK name does not.
     let cut = text.len().wrapping_sub(4);
     if text.len() >= 4
@@ -1349,7 +1347,7 @@ impl SongIdentity {
         if value.is_empty() {
             return String::new();
         }
-        // char.IsLetter and friends looked at UTF-16 units; a supplementary character's
+        // Letters, digits and uppercase are tested on UTF-16 units; a supplementary character's
         // surrogates are none of letter, digit or upper, and neither is the char here.
         let chars: Vec<char> = value.chars().collect();
         let mut out = String::with_capacity(value.len());
@@ -1524,8 +1522,8 @@ impl SongIdentity {
         }
     }
 
-    /// The markers of a title that make it a different recording, for this caller. (A sorted
-    /// set: the C# HashSet was filled from the sorted versions, so it iterated in this order.)
+    /// The markers of a title that make it a different recording, for this caller, in sorted
+    /// order.
     pub fn distinct_versions(title: &SongTitle, options: Option<&SongMatchOptions>) -> BTreeSet<String> {
         title
             .versions
@@ -1873,7 +1871,7 @@ impl SongIdentity {
         )
     }
 
-    /// Within the tolerance, or unknown on either side. (The C# default tolerance is
+    /// Within the tolerance, or unknown on either side. (The usual tolerance is
     /// [`SongIdentity::LENGTH_TOLERANCE_SECONDS`].)
     pub fn length_fits(want: Option<i32>, got: Option<f64>, tolerance: i32) -> bool {
         match (want, got) {

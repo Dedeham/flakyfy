@@ -1,13 +1,10 @@
-//! `System.Random` constructed with a seed: the framework type behind the radio's weighted draw
-//! (`LastFmRadioRecommendationService.Randomizer`) and the mixes' per-period shuffle
-//! (`GeneratedPlaylistService.Select`). Not a C# file of Octo's.
+//! A seeded pseudo-random generator (Knuth's subtractive generator), behind the radio's
+//! weighted draw and the mixes' per-period shuffle.
 //!
-//! A seeded `new Random(seed)` in .NET 6+ still runs the .NET Framework algorithm (Knuth's
-//! subtractive generator, `Net5CompatSeedImpl`), so the same seed gives the same sequence on
-//! every .NET version. Porting it exactly means a mix drawn by the Rust build for a listener and
-//! a period holds the same songs the C# build drew, and the C# tests' seeds draw what they drew.
+//! The same seed always gives the same sequence, so a mix drawn for a listener and a period
+//! holds the same songs every time it is drawn.
 
-/// `new Random(seed)`.
+/// A generator seeded with one `i32`.
 #[derive(Debug, Clone)]
 pub struct DotnetRandom {
     seed_array: [i32; 56],
@@ -79,12 +76,12 @@ impl DotnetRandom {
         value
     }
 
-    /// `NextDouble()`: in [0, 1).
+    /// The next double, in [0, 1).
     pub fn next_double(&mut self) -> f64 {
         f64::from(self.internal_sample()) * (1.0 / f64::from(i32::MAX))
     }
 
-    /// `Next(maxValue)`: in [0, maxValue). (`maxValue` must not be negative, as C# required.)
+    /// The next integer, in [0, max_value). (`max_value` must not be negative.)
     pub fn next(&mut self, max_value: i32) -> i32 {
         (self.next_double() * f64::from(max_value)) as i32
     }
@@ -94,9 +91,9 @@ impl DotnetRandom {
 mod tests {
     use super::*;
 
-    /// The sequences .NET 9 gave for these seeds (printed with "R").
+    /// The reference sequences for these seeds (printed with "R").
     #[test]
-    fn draws_what_dotnet_draws_for_a_seed() {
+    fn draws_the_reference_sequence_for_a_seed() {
         let cases: [(i32, [f64; 6], [i32; 12]); 7] = [
             (
                 0,

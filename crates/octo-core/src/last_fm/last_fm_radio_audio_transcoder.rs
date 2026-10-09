@@ -1,4 +1,4 @@
-//! The pure half of `Services/LastFm/LastFmRadioAudioTranscoder.cs`: the measured profile a
+//! The pure half of the radio audio transcoder: the measured profile a
 //! cached radio track carries (`<cache>/radio/<key>.mp3.json`), the loudness gain, and the
 //! reading of ffmpeg's spectral statistics. The ffmpeg runs are
 //! `octo::services::last_fm::last_fm_radio_audio_transcoder`.
@@ -40,7 +40,7 @@ pub struct RadioAudioProfile {
 }
 
 impl RadioAudioProfile {
-    /// The positional record's constructor, without the optional genre and tags.
+    /// A profile from its measurements, without the optional genre and tags.
     pub fn new(
         integrated_lufs: f64,
         loudness_range_lu: f64,
@@ -63,7 +63,7 @@ impl RadioAudioProfile {
         }
     }
 
-    /// `with { Genre = .., Tags = .. }`.
+    /// The same profile with its genre and tags set.
     pub fn with_kinship(mut self, genre: Option<&str>, tags: Option<Vec<String>>) -> Self {
         self.genre = genre.map(str::to_string);
         self.tags = tags;
@@ -87,8 +87,8 @@ pub fn gain_for(measured_lufs: Option<f64>, target_lufs: Option<f64>) -> f64 {
     if measured.is_nan() || measured.is_infinite() {
         return 0.0;
     }
-    // Math.Clamp(NaN, ..) is NaN, and Math.Round keeps it: a NaN target gives no gain only
-    // through the test's own reading of NaN as "no target".
+    // A NaN survives the clamp and the rounding: a NaN target gives no gain only through the
+    // test's own reading of NaN as "no target".
     dotnet::round((target - measured).clamp(-MAXIMUM_GAIN_DB, MAXIMUM_GAIN_DB), 2)
 }
 
@@ -104,7 +104,7 @@ static SPECTRAL_LINE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// The means of the centroid, flatness and rolloff lines `ametadata=mode=print` wrote, each 0
 /// when none was finite. An error is a value the pattern let through that is not a number
-/// (`1.2.3`), which C# threw from `double.Parse`.
+/// (`1.2.3`).
 pub fn read_spectral(text: &str) -> Result<(f64, f64, f64), std::num::ParseFloatError> {
     let (mut centroid, mut flatness, mut rolloff) = (0.0, 0.0, 0.0);
     let (mut centroids, mut flatnesses, mut rolloffs) = (0, 0, 0);
@@ -141,7 +141,6 @@ pub fn read_spectral(text: &str) -> Result<(f64, f64, f64), std::num::ParseFloat
 mod tests {
     use super::*;
 
-    // LastFmRadioCoreTests.Gain_TakesTheMeasurementToTheTargetWithinBounds
     #[test]
     fn gain_takes_the_measurement_to_the_target_within_bounds() {
         let cases = [
@@ -167,7 +166,7 @@ mod tests {
         assert_eq!(gain_text(18.0), "18.00");
     }
 
-    /// The radio cache fixture reads and writes back byte for byte (state-files.md §4.25).
+    /// The radio cache fixture reads and writes back byte for byte.
     #[test]
     fn the_profile_fixture_round_trips_byte_for_byte() {
         let path = concat!(

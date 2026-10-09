@@ -1,15 +1,16 @@
-//! Dates as System.Text.Json writes and reads them.
+//! Dates in Octo's JSON, written in one fixed shape and read in any of its forms.
 //!
-//! STJ writes ISO 8601 with up to seven fractional digits, trailing zeros trimmed: a UTC
-//! `DateTime` ends in `Z`, an unspecified one (including `DateTime.MinValue`, the C# default)
-//! has no suffix, and a `DateTimeOffset` always carries its offset (`+00:00`). Reading
-//! accepts any of these forms.
+//! Dates are written in ISO 8601 with up to seven fractional digits (100 ns ticks), trailing
+//! zeros trimmed: a UTC instant ends in `Z`, a date and time without a zone (including
+//! [`min_value`], which stands for an unset date) has no suffix, and an instant with an offset
+//! always carries it (`+00:00`). Reading accepts any of these forms.
 //!
 //! Use with `#[serde(with = "octo_core::json::datetime::utc")]` and friends.
 
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat, TimeZone, Utc};
 
-/// `DateTime.MinValue`, which STJ writes without a `Z` whatever the kind.
+/// The earliest date, 0001-01-01T00:00:00, which stands for an unset date and is always written
+/// without a `Z`.
 pub fn min_value() -> DateTime<Utc> {
     NaiveDate::from_ymd_opt(1, 1, 1)
         .unwrap_or(NaiveDate::MIN)
@@ -17,7 +18,7 @@ pub fn min_value() -> DateTime<Utc> {
         .and_utc()
 }
 
-/// The fractional-seconds part as .NET writes it: ticks (100 ns), trailing zeros trimmed,
+/// The fractional-seconds part: ticks (100 ns), trailing zeros trimmed,
 /// nothing at all when zero.
 fn fraction(nanos: u32) -> String {
     let ticks = nanos / 100;
@@ -28,8 +29,8 @@ fn fraction(nanos: u32) -> String {
     format!(".{}", digits.trim_end_matches('0'))
 }
 
-/// A UTC instant as STJ writes a `DateTime` of kind Utc: `2026-10-04T12:34:56.12345Z`.
-/// `DateTime.MinValue` is written without the `Z`, as C# writes an unset field.
+/// A UTC instant: `2026-10-04T12:34:56.12345Z`. [`min_value`] is written without the `Z`, as
+/// an unset date.
 pub fn format_utc(value: &DateTime<Utc>) -> String {
     let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
     let frac = fraction(value.timestamp_subsec_nanos());
@@ -40,7 +41,7 @@ pub fn format_utc(value: &DateTime<Utc>) -> String {
     }
 }
 
-/// An instant with its offset, as STJ writes a `DateTimeOffset`: `2026-10-04T12:34:56+00:00`.
+/// An instant with its offset: `2026-10-04T12:34:56+00:00`.
 pub fn format_offset(value: &DateTime<FixedOffset>) -> String {
     let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
     let frac = fraction(value.timestamp_subsec_nanos());
@@ -48,18 +49,18 @@ pub fn format_offset(value: &DateTime<FixedOffset>) -> String {
     format!("{base}{frac}{off}")
 }
 
-/// A UTC instant written as a `DateTimeOffset` at offset zero.
+/// A UTC instant written with offset zero (`+00:00`).
 pub fn format_utc_as_offset(value: &DateTime<Utc>) -> String {
     format_offset(&value.fixed_offset())
 }
 
-/// A local date and time without a zone, as STJ writes an unspecified `DateTime`.
+/// A local date and time without a zone.
 pub fn format_naive(value: &NaiveDateTime) -> String {
     let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
     format!("{base}{}", fraction(value.and_utc().timestamp_subsec_nanos()))
 }
 
-/// Parses what STJ (or anything ISO 8601) wrote. A value without an offset is taken as UTC,
+/// Parses an ISO 8601 date. A value without an offset is taken as UTC,
 /// which is what Octo's writers meant by it.
 pub fn parse_utc(text: &str) -> Option<DateTime<Utc>> {
     let t = text.trim();
@@ -81,7 +82,7 @@ pub fn parse_utc(text: &str) -> Option<DateTime<Utc>> {
         .map(|d| d.and_time(NaiveTime::MIN).and_utc())
 }
 
-/// Parses a `DateTimeOffset`; a value without an offset is taken as UTC.
+/// Parses an instant with its offset; a value without an offset is taken as UTC.
 pub fn parse_offset(text: &str) -> Option<DateTime<FixedOffset>> {
     let t = text.trim();
     DateTime::parse_from_rfc3339(t)
@@ -90,12 +91,12 @@ pub fn parse_offset(text: &str) -> Option<DateTime<FixedOffset>> {
 }
 
 /// ISO 8601 with milliseconds and `Z`, as JavaScript's `toISOString` writes, for the places
-/// Octo formats a date itself with `"o"`-like patterns.
+/// Octo formats a date itself.
 pub fn to_iso_millis(value: &DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-/// `#[serde(with = "utc")]` for a C# `DateTime` that holds UTC.
+/// `#[serde(with = "utc")]` for a UTC instant.
 pub mod utc {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -110,7 +111,7 @@ pub mod utc {
     }
 }
 
-/// `#[serde(with = "utc_option")]` for a C# `DateTime?` that holds UTC.
+/// `#[serde(with = "utc_option")]` for an optional UTC instant.
 pub mod utc_option {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -132,7 +133,7 @@ pub mod utc_option {
     }
 }
 
-/// `#[serde(with = "offset")]` for a C# `DateTimeOffset`.
+/// `#[serde(with = "offset")]` for an instant with its offset.
 pub mod offset {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -147,7 +148,7 @@ pub mod offset {
     }
 }
 
-/// `#[serde(with = "offset_option")]` for a C# `DateTimeOffset?`.
+/// `#[serde(with = "offset_option")]` for an optional instant with its offset.
 pub mod offset_option {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -169,8 +170,8 @@ pub mod offset_option {
     }
 }
 
-/// `#[serde(with = "utc_offset")]` for a C# `DateTimeOffset` that Octo only ever sets to a UTC
-/// instant: kept as `DateTime<Utc>` in Rust, written with `+00:00`.
+/// `#[serde(with = "utc_offset")]` for an instant written with its offset that Octo only ever
+/// sets to UTC: kept as `DateTime<Utc>`, written with `+00:00`.
 pub mod utc_offset {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -185,7 +186,7 @@ pub mod utc_offset {
     }
 }
 
-/// `#[serde(with = "utc_offset_option")]` for a C# `DateTimeOffset?` holding UTC instants.
+/// `#[serde(with = "utc_offset_option")]` for an optional UTC instant written with its offset.
 pub mod utc_offset_option {
     use super::*;
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -207,7 +208,7 @@ pub mod utc_offset_option {
     }
 }
 
-/// A C# `TimeSpan` as STJ writes it: `[-][d.]hh:mm:ss[.fffffff]`, always seven fractional
+/// A duration as `[-][d.]hh:mm:ss[.fffffff]`, always seven fractional
 /// digits when there is a fraction (`00:01:30.5000000`).
 pub fn format_timespan(value: &chrono::TimeDelta) -> String {
     let negative = *value < chrono::TimeDelta::zero();
@@ -264,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn timespans_match_dotnet_constant_format() {
+    fn timespans_write_days_and_seven_fraction_digits() {
         assert_eq!(
             format_timespan(&chrono::TimeDelta::milliseconds(90_500)),
             "00:01:30.5000000"

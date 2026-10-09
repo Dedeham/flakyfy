@@ -1,7 +1,7 @@
-//! A JSON tree that keeps numbers as written, like System.Text.Json's `JsonNode`.
+//! A JSON tree that keeps numbers as written.
 //!
-//! settings.json is edited by hand and by the dashboard, and C#'s `JsonNode` writes a number
-//! back with its original text (`1.50` stays `1.50`, `1e3` stays `1e3`). serde_json's
+//! settings.json is edited by hand and by the dashboard, and a number must be written back
+//! with its original text (`1.50` stays `1.50`, `1e3` stays `1e3`). serde_json's
 //! `Value` would normalize those, so the settings writer works on this tree instead. Parsing
 //! is lenient the way the config reader is: comments and trailing commas are accepted (and
 //! dropped on the next write).
@@ -106,8 +106,8 @@ impl Node {
         }
     }
 
-    /// Writes the tree as `JsonNode.ToJsonString` does: default encoder escaping, numbers
-    /// verbatim, and two-space indentation when `indented`.
+    /// Writes the tree with the default escaping, numbers verbatim, and two-space indentation
+    /// when `indented`.
     pub fn to_json_string(&self, indented: bool) -> String {
         let mut out = String::new();
         self.write(&mut out, indented, 0);
@@ -369,7 +369,7 @@ impl Parser<'_> {
             self.expect(":")?;
             self.skip_ws()?;
             let value = self.value()?;
-            // JsonNode keeps the last of two equal names.
+            // Of two equal names, the last is kept.
             map.insert(key, value);
             self.skip_ws()?;
             match self.peek() {
@@ -395,8 +395,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbers_keep_their_text_and_layout_matches_json_node() {
-        // Captured from .NET 9: JsonNode.Parse(...).ToJsonString(WriteIndented = true).
+    fn numbers_keep_their_text_through_an_indented_write() {
+        // The reference output for this document, parsed and written indented.
         let n = Node::parse(r#"{"a": 1.50, "b": [], "c": {}, "d": [1, {"x": null}], "e": "é", "f": 1e3}"#)
             .unwrap();
         assert_eq!(

@@ -60,7 +60,7 @@ pub struct SoulseekSettings {
     ///
     /// This is a CEILING, not a duration. slskd ends most searches itself, after 15 s
     /// with no new answer or at the response or file limit, and Octo reads the answers
-    /// then. A search still running at the ceiling is cancelled, which makes slskd hand
+    /// then. A search still running at the ceiling is canceled, which makes slskd hand
     /// over everything it gathered, so a long search costs time but never its results.
     ///
     /// Star-triggered downloads are fire-and-forget, so the wait costs the user
@@ -73,7 +73,7 @@ pub struct SoulseekSettings {
     pub upgrade_search_wait_seconds: i32,
 
     /// Minimum file size in bytes to consider a search hit a real lossless file.
-    /// Default 5 MB filters out 30s teaser clips and mislabelled tiny files.
+    /// Default 5 MB filters out 30s teaser clips and mislabeled tiny files.
     pub min_file_size_bytes: i64,
 
     /// Preferred file extension. Hits with this extension are sorted first.
@@ -304,8 +304,7 @@ impl SoulseekSettings {
     /// An absolute http or https address, trimmed, or None. Anything else (a script: or file:
     /// address, a bare host) is never handed to the browser as a link.
     ///
-    /// `Uri.TryCreate(..., UriKind.Absolute)` and `Uri.ToString()` in the C#; the `url` crate
-    /// parses and writes the same addresses for http and https (a bare host gains its "/").
+    /// The `url` crate parses and writes the address (a bare host gains its "/").
     pub fn safe_web_url(value: Option<&str>) -> Option<String> {
         let parsed = url::Url::parse(value?.trim()).ok()?;
         let web = matches!(parsed.scheme(), "http" | "https");
@@ -317,7 +316,6 @@ impl SoulseekSettings {
 mod tests {
     use super::*;
 
-    // ParallelDownloadTests.TheSettingIsClamped
     #[test]
     fn the_setting_is_clamped() {
         let with = |n| SoulseekSettings {

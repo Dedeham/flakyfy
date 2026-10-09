@@ -1,11 +1,11 @@
-//! The pure half of `Services/Lidarr/LidarrHeartAcquisitionService.cs`: which of a heart's songs
+//! The pure half of the Lidarr heart acquisition service: which of a heart's songs
 //! an imported track is. The service is `octo::services::lidarr::lidarr_heart_acquisition_service`.
 
 use super::LidarrImportedTrack;
 use crate::common::SongIdentity;
 use crate::models::domain::{Album, Song};
 
-/// `MatchSong`: the album's song Lidarr imported: by title, read by [`SongIdentity`] so Deezer's
+/// The album's song Lidarr imported: by title, read by [`SongIdentity`] so Deezer's
 /// "Song (feat. X)" is MusicBrainz's "Song" but never its "Song (Live)", then by track number.
 ///
 /// `match_by_number`: whether an imported file may be matched to a song by its track number. Not
@@ -38,7 +38,6 @@ pub fn match_song<'a>(
 mod tests {
     use super::*;
 
-    // LidarrHeartProtectionTests.ATrackHeartNeverMatchesByTrackNumber
     #[test]
     fn a_track_heart_never_matches_by_track_number() {
         // Deezer found the song on its single, where it is track 1. On the album, 1 is Angel.

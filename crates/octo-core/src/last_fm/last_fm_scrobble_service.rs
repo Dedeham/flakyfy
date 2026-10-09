@@ -1,4 +1,4 @@
-//! The records and the request signature of `Services/LastFm/LastFmScrobbleService.cs`. The
+//! The records and the request signature of the Last.fm scrobble service. The
 //! queue, the Connect flow and the calls are `octo::services::last_fm::last_fm_scrobble_service`.
 
 use chrono::{DateTime, Utc};
@@ -30,8 +30,8 @@ impl LastFmTrack {
     }
 }
 
-/// One Navidrome user as the dashboard's Last.fm scrobbling card shows them. Serialized as
-/// ASP.NET wrote the record: camelCase, nulls written.
+/// One Navidrome user as the dashboard's Last.fm scrobbling card shows them. Serialized in
+/// camelCase, with nulls written.
 ///
 /// `approval_url`: the last.fm page that approves Octo, while a Connect is waiting on it.
 /// `last_sent`: the latest play Last.fm took for this listener since Octo started.
@@ -103,7 +103,7 @@ pub fn sign<'a>(parameters: impl IntoIterator<Item = (&'a str, &'a str)>, secret
         .into_iter()
         .filter(|(name, _)| !matches!(*name, "format" | "callback" | "api_sig"))
         .collect();
-    // StringComparer.Ordinal compares UTF-16 code units; the names are ASCII.
+    // Ordinal order over UTF-16 code units; the names are ASCII.
     pairs.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
     let mut text = String::new();
     for (name, value) in pairs {
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(sign(parameters, SECRET), "33dc1eb9105f636ce7cde482d248d31b");
     }
 
-    /// Rust-only: the dashboard records as ASP.NET wrote them.
+    /// The dashboard records: camelCase, with nulls written.
     #[test]
     fn the_dashboard_records_serialize_in_camel_case_with_nulls() {
         let user = LastFmScrobbleUser {

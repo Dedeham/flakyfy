@@ -1,6 +1,5 @@
-//! Ports of `octo.Tests/MusicBrainzStudioAlbumTests.cs`, the `MusicBrainzQueryTests` class of
-//! `octo.Tests/MusicBrainzReleaseDetailsTests.cs`, and `ParseIsrcs_ReadsARecordingLookup` of
-//! `octo.Tests/IsrcVerificationTests.cs`.
+//! Tests for the MusicBrainz query builders and the readers of its answers: the studio album
+//! pick, the search queries, and the ISRCs of a recording lookup.
 
 use super::*;
 
@@ -9,7 +8,7 @@ fn studio(json: &str, title: &str) -> Option<String> {
     pick_studio_album(&doc, title).expect("the answer reads")
 }
 
-// ---- MusicBrainzStudioAlbumTests ---------------------------------------------------------
+// ---- Studio album pick -----------------------------------------------------------------
 
 #[test]
 fn picks_earliest_studio_album_over_singles_compilations_and_other_recordings() {
@@ -71,7 +70,7 @@ fn returns_null_when_only_singles_and_compilations() {
     assert_eq!(studio(search, "Zukunft Pink"), None);
 }
 
-// ---- MusicBrainzQueryTests ---------------------------------------------------------------
+// ---- Search queries ----------------------------------------------------------------------
 // Titles and names with quotes, colons, slashes or brackets must reach the music database as
 // the words they are, not as operators, or the failure reads as "no candidate".
 
@@ -151,7 +150,7 @@ fn escape_query_cases() {
     }
 }
 
-// ---- IsrcVerificationTests ---------------------------------------------------------------
+// ---- ISRCs of a recording lookup ---------------------------------------------------------
 
 #[test]
 fn parse_isrcs_reads_a_recording_lookup() {
@@ -165,10 +164,10 @@ fn parse_isrcs_reads_a_recording_lookup() {
     assert!(parse_isrcs(&none).expect("reads").is_empty());
 }
 
-// ---- Rust-only checks of the other two queries and Pick -----------------------------------
+// ---- The recording and studio album queries, and pick ------------------------------------
 
 #[test]
-fn find_recording_and_studio_album_queries_are_shaped_as_the_csharp_wrote_them() {
+fn find_recording_and_studio_album_queries_keep_their_shape() {
     let url = find_recording_url("Massive Attack", "Tear\"drop", 330).expect("asks");
     assert_eq!(
         query(&url),

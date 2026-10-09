@@ -1,7 +1,6 @@
-//! The data half of `Services/Fingerprint/DownloadVerificationService.cs`: the verdict, why it
-//! was inconclusive, and the result a download carries. The service (fingerprinting, the
-//! AcoustID and MusicBrainz calls, `Decide` and its helpers) is ported with the download base
-//! (task 4-B).
+//! The data half of download verification: the verdict, why it was inconclusive, and the
+//! result a download carries. The service (fingerprinting, the AcoustID and MusicBrainz calls,
+//! the decision and its helpers) is `octo::services::fingerprint::download_verification_service`.
 
 use std::fmt;
 
@@ -31,7 +30,7 @@ pub enum VerificationVerdict {
 }
 
 impl VerificationVerdict {
-    /// The C# member name.
+    /// The verdict's name.
     pub fn name(self) -> &'static str {
         match self {
             Self::Confirmed => "Confirmed",
@@ -80,7 +79,7 @@ impl InconclusiveReason {
         Self::LengthOff,
     ];
 
-    /// The C# member name, which the notice queue stores.
+    /// The reason's name, which the notice queue stores.
     pub fn name(self) -> &'static str {
         match self {
             Self::None => "None",
@@ -264,7 +263,6 @@ mod tests {
     use super::*;
     use crate::fingerprint::acoust_id_client::{AcoustIdCredit, AcoustIdRelease};
 
-    /// From `DownloadVerificationDecisionTests.NeedsReview_OnlyForQuestionsAPersonCanSettle`.
     #[test]
     fn needs_review_only_for_questions_a_person_can_settle() {
         let cases = [
@@ -285,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_the_csharp_record() {
+    fn defaults_are_an_inconclusive_result_with_no_reason() {
         let result = VerificationResult::default();
         assert_eq!(result.verdict, VerificationVerdict::Inconclusive);
         assert_eq!(result.reason, InconclusiveReason::None);
@@ -303,9 +301,10 @@ mod tests {
         assert_eq!(named.describe(), "'Massive Attack - Teardrop'");
     }
 
-    /// The `ApplyTagsTo` half of `ApplyTagsTo_ConfirmedWithTaggingOff_StillRecordsTheRecordingId`
-    /// and `ApplyTagsTo_ConfirmedAndTaggingOn_TakesTheReleasesTrackAndAlbumArtist`, on the
-    /// result `Decide` builds for a confirmation (the decision itself is the service's, 4-B).
+    /// Applying tags from a confirmed result: when its tags are not authoritative it still
+    /// records the recording id, and when they are it takes the release's track and album
+    /// artist. The result is the one the service builds for a confirmation (the decision itself
+    /// is tested with the service).
     #[test]
     fn apply_tags_to_records_ids_and_takes_the_release_only_when_authoritative() {
         let release = AcoustIdRelease {

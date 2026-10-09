@@ -1,6 +1,5 @@
-//! Ports of `octo.Tests/SongIdentityTests.cs` (the parts that test SongIdentity itself) and
-//! `octo.Tests/SongIdentityCasesTests.cs`, plus targeted checks of the places where Rust's
-//! Unicode and regex behavior had to be bent to match .NET's.
+//! Tests for SongIdentity: query variants, comparisons, ISRCs, the shared cases file, and
+//! targeted checks of the places where Rust's own Unicode and regex behavior is overridden.
 
 use super::*;
 use serde_json::Value;
@@ -9,7 +8,7 @@ fn texts(queries: &[SongQuery]) -> Vec<String> {
     queries.iter().map(SongQuery::text).collect()
 }
 
-// ---- SongIdentityTests: query variants -----------------------------------------------------
+// ---- Query variants --------------------------------------------------------------------------
 
 #[test]
 fn query_variants_stylized_artist_adds_the_spelled_out_query() {
@@ -67,11 +66,11 @@ fn query_variants_artist_prefixed_title_loses_the_prefix() {
     );
 }
 
-// ---- SongIdentityTests: lyrics (the SongIdentity half) -------------------------------------
+// ---- Lyrics (the SongIdentity half) -----------------------------------------------------------
 
 #[test]
 fn lyrics_a_clean_edits_words_fit_the_song() {
-    // The KuGou half of this test is ported with the lyrics sources. Here: a download still
+    // The KuGou half of this check lives with the lyrics sources. Here: a download still
     // never takes the clean edit for the song asked for.
     for (want, got) in [
         ("Movie Star", "Movie Star (Clean)"),
@@ -86,7 +85,7 @@ fn lyrics_a_clean_edits_words_fit_the_song() {
     }
 }
 
-// ---- SongIdentityTests: the comparison itself ----------------------------------------------
+// ---- The comparison itself --------------------------------------------------------------------
 
 #[test]
 fn same_says_why_and_how_sure() {
@@ -149,7 +148,7 @@ fn match_key_one_song_one_key_one_version_one_key() {
     );
 }
 
-// ---- SongIdentityTests: ISRCs --------------------------------------------------------------
+// ---- ISRCs ------------------------------------------------------------------------------------
 
 #[test]
 fn normalize_isrc_one_spelling_or_absent() {
@@ -247,13 +246,13 @@ fn known_name_an_alias_leads_to_the_name_the_artist_is_known_by() {
 
 #[test]
 fn known_name_none_for_a_name_that_is_not_an_alias() {
-    // "" stands for both the C# "" and null cases.
+    // "" twice: an empty name and a missing one read the same.
     for artist in ["Kanye West", "2Pac", "Diddy", "Radiohead", "", ""] {
         assert_eq!(SongIdentity::known_name(artist), None, "{artist}");
     }
 }
 
-// ---- SongIdentityCasesTests ----------------------------------------------------------------
+// ---- The shared cases file ---------------------------------------------------------------------
 
 fn cases() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/song-identity-cases.json");
@@ -444,7 +443,7 @@ fn query_case() {
     );
 }
 
-// ---- Rust-only: where .NET semantics had to be reproduced ----------------------------------
+// ---- Folding, keying and the overridden Unicode and regex rules ------------------------------
 
 #[test]
 fn fold_makes_lookalikes_plain() {
@@ -462,10 +461,10 @@ fn fold_makes_lookalikes_plain() {
 }
 
 #[test]
-fn key_lowercases_one_character_at_a_time_as_dotnet_did() {
-    // No final sigma: .NET's ToLowerInvariant maps every Σ to σ.
+fn key_lowercases_one_character_at_a_time() {
+    // No final sigma: every Σ lowercases to σ.
     assert_eq!(SongIdentity::key("ΟΔΟΣ"), "οδοσ");
-    // ToLowerInvariant leaves İ alone (it would only become an ASCII i); its dot is then
+    // Lowercasing leaves İ alone (it would only become an ASCII i); its dot is then
     // stripped as an accent, leaving a capital I in the key.
     assert_eq!(SongIdentity::key("İstanbul"), "Istanbul");
     assert_eq!(SongIdentity::key("Straße & Œuvre"), "strasseandoeuvre");
@@ -514,27 +513,26 @@ fn channel_names_are_not_the_artist() {
         SongIdentity::parse_artists("Rick Astley VEVO").display,
         "Rick Astley"
     );
-    // Under IgnoreCase .NET's lookbehind \p{Ll} takes any cased letter, but not a CJK one
-    // (both checked against .NET 9).
+    // Ignoring case, the lookbehind \p{Ll} takes any cased letter, but not a CJK one.
     assert_eq!(SongIdentity::parse_artists("RICKVEVO").display, "RICK");
     assert_eq!(SongIdentity::parse_artists("侃爷VEVO").display, "侃爷VEVO");
     assert_eq!(SongIdentity::parse_artists("ǅVEVO").display, "Dž");
 }
 
 #[test]
-fn word_boundaries_and_classes_fall_where_dotnet_put_them() {
-    // A Devanagari vowel sign (a spacing mark) is no word character to .NET, so "live" before
+fn word_boundaries_and_classes_test_one_utf16_unit() {
+    // A Devanagari vowel sign (a spacing mark) is no word character here, so "live" before
     // it is still the word live; to Rust's own \b it would not be.
     assert_eq!(
         SongIdentity::parse_title("Song (live\u{093E})", None).versions,
         ["live"]
     );
     assert!(crate::common::live_version::mentions(Some("Live\u{093E}")));
-    // .NET's \p{L} never matched a supplementary-plane letter, so one splits a word: the
+    // \p{L} matches no supplementary-plane letter, so one splits a word: the
     // Cyrillic "с" after it is a word of its own and stays Cyrillic.
     assert_eq!(SongIdentity::fold("a𠀀с"), "a𠀀с");
     assert_eq!(SongIdentity::fold("aс"), "ac");
-    // Nor was a supplementary-plane digit a \d.
+    // Nor is a supplementary-plane digit a \d.
     assert_eq!(
         SongIdentity::parse_title("Song (𑁧)", None).extras,
         [SongIdentity::key("𑁧")]
@@ -551,7 +549,7 @@ fn part_numbers_are_spelled_one_way() {
 }
 
 #[test]
-fn lengths_are_written_as_dotnet_wrote_them() {
+fn lengths_are_written_with_at_most_one_decimal() {
     let found = SongIdentity::same(
         &SongRef::new("Song", "Artist").with_seconds(200.0),
         &SongRef::new("Song", "Artist").with_seconds(204.25),

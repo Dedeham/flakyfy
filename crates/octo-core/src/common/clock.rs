@@ -1,6 +1,5 @@
-//! The clock services read the time from. Not a C# file: where the C# took a
-//! `Func<DateTime>` or a `TimeProvider` so tests could fix the time, the Rust takes a
-//! [`Clock`].
+//! The clock services read the time from. Services take a [`Clock`] so tests can fix the
+//! time.
 
 use std::fmt;
 use std::sync::Arc;
@@ -17,7 +16,7 @@ impl Clock {
         Self(Arc::new(now))
     }
 
-    /// The system clock (`DateTime.UtcNow`, `TimeProvider.System`).
+    /// The system clock.
     pub fn system() -> Self {
         Self::new(Utc::now)
     }

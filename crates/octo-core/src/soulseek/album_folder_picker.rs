@@ -1,4 +1,4 @@
-//! Port of `Services/Soulseek/AlbumFolderPicker.cs`.
+//! Picks one peer's folder of an album for an album heart.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -95,7 +95,7 @@ impl AlbumFolderPicker {
             return None;
         }
 
-        // GroupBy keeps the groups in the order their first member appeared.
+        // Groups stay in the order their first member appeared.
         let mut groups: Vec<((&str, String), Vec<&SoulseekFileHit>)> = Vec::new();
         let mut index: HashMap<(&str, String), usize> = HashMap::new();
         for hit in hits.iter().filter(|hit| usable(hit)) {
@@ -131,8 +131,7 @@ impl AlbumFolderPicker {
         };
         let free_and_enough =
             |f: &Candidate| free_now(&f.files) && f.files.len() as f64 >= FREE_SLOT_SHARE * fullest as f64;
-        // OrderByDescending(...).ThenByDescending(...).ThenBy(...): a stable sort, so the first
-        // of equals is the first folder found.
+        // A stable sort, so the first of equals is the first folder found.
         let mut order: Vec<usize> = (0..folders.len()).collect();
         order.sort_by(|&a, &b| {
             let (x, y) = (&folders[a], &folders[b]);
@@ -237,8 +236,8 @@ impl AlbumFolderPicker {
             }
         }
 
-        // OrderBy(score).ThenBy(filename, Ordinal): stable, so ties keep track-then-file order.
-        // Ordinal compares UTF-16 code units.
+        // By score, then by filename in ordinal (UTF-16 code unit) order; stable, so ties keep
+        // track-then-file order.
         pairs.sort_by(|a, b| {
             a.2.cmp(&b.2).then_with(|| {
                 files[a.1]
@@ -266,7 +265,7 @@ fn free_now(files: &[(&AlbumTrack, &SoulseekFileHit)]) -> bool {
     files[0].1.has_free_upload_slot == Some(true)
 }
 
-/// `Path.GetFileNameWithoutExtension` of a name with no separator in it.
+/// A name with no separator in it, cut at its last dot (the whole name when it has none).
 fn file_name_without_extension(name: &str) -> &str {
     match name.rfind('.') {
         Some(at) => &name[..at],
@@ -274,7 +273,7 @@ fn file_name_without_extension(name: &str) -> &str {
     }
 }
 
-/// "03 - Song", "03. Song", "1-03 Song": the track number, without a disc prefix. The C#
+/// "03 - Song", "03. Song", "1-03 Song": the track number, without a disc prefix. The
 /// pattern, `^\s*(?:\d{1,2}\s*[-.]\s*(?=\d))?0*(\d{1,3})(?!\d)`, has lookarounds the `regex`
 /// crate lacks, so it is matched by hand in the order the backtracking engine tries it.
 /// Returns where the match ends (a byte offset) and the captured digits.
@@ -351,8 +350,8 @@ fn exact_title(leaf: &str, title: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Port of the picker half of `octo.Tests/AlbumFolderTests.cs` (the walk through the
-    //! download service belongs to 4-B and 4-C).
+    //! The picker half of album folders (the walk through the download service is tested with
+    //! the download service).
     //!
     //! An album heart used to search, pick a peer and queue song by song. These pin down
     //! choosing one peer's folder of the album.
@@ -550,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn the_leading_number_reads_as_the_csharp_pattern_did() {
+    fn the_leading_number_reads_as_the_pattern_says() {
         let cases = [
             ("03 - Song", Some("3")),
             ("03. Song", Some("3")),

@@ -1,5 +1,3 @@
-//! Port of `ForYouLists` in `Services/Library/ForYouLists.cs` (f54467a, 1f940f2, 452f47e).
-//!
 //! Made for you: the picking behind New Releases, Rediscover and Deep Cuts. Everything here
 //! reads one walk of a listener's library, as that listener sees it, so each song carries their
 //! own playCount, played (last played), starred and userRating. Pure, so it is tested without a
@@ -76,7 +74,7 @@ impl TopArtist {
 /// nobody's favorite artist.
 pub fn top_artists(songs: &[Node], count: usize) -> Vec<TopArtist> {
     let various = SongIdentity::key("Various Artists");
-    // Grouped in the order each artist is first seen, as LINQ's GroupBy does.
+    // Grouped in the order each artist is first seen.
     let mut groups: IndexMap<String, Vec<&Node>> = IndexMap::new();
     for song in songs {
         groups.entry(artist_key(song)).or_default().push(song);
@@ -253,9 +251,8 @@ pub fn played(song: &Node) -> Option<DateTime<Utc>> {
     parse_instant(str_of(song, "played")?)
 }
 
-/// `DateTime.TryParse(text, InvariantCulture, RoundtripKind)` and `ToUniversalTime()` for the
-/// shapes Navidrome writes: an ISO 8601 instant with its zone, or one without (the server's own
-/// time, which in the container is UTC).
+/// An instant in UTC, read from the shapes Navidrome writes: an ISO 8601 instant with its zone,
+/// or one without (the server's own time, which in the container is UTC).
 fn parse_instant(text: &str) -> Option<DateTime<Utc>> {
     if let Ok(at) = DateTime::parse_from_rfc3339(text.trim()) {
         return Some(at.with_timezone(&Utc));

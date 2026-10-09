@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/AcoustIdLookupTests.cs`.
-//!
 //! AcoustID's response decides whether a finished download is kept or deleted, so the parser
 //! has to tell three things apart that all look like "no match" from a distance: a refusal, a
 //! track AcoustID has never heard of, and a confident identification of something else.
@@ -11,7 +9,7 @@ fn parse(json: &str) -> AcoustIdLookup {
     parse_lookup(&doc).expect("the lookup reads")
 }
 
-/// The separator is load-bearing. FormUrlEncodedContent encodes a literal '+' as %2B, so a
+/// The separator is load-bearing. The form encoding writes a literal '+' as %2B, so a
 /// '+'-joined meta reaches AcoustID as ONE unknown token; it answers 200 with a real score
 /// and no metadata, every result has zero recordings, and the verdict is permanently
 /// Inconclusive. The feature then accepts every file forever while looking healthy, which
@@ -161,7 +159,7 @@ fn parse_lookup_real_response_reads_score_title_artist_album_and_year() {
 }
 
 /// The Deezer trap, reproduced here: refusal arrives as HTTP 200 with an error envelope.
-/// Reading IsOk from the status code would turn every over-budget call into "no match",
+/// Reading `is_ok` from the status code would turn every over-budget call into "no match",
 /// which this feature reads as "accept the file".
 #[test]
 fn parse_lookup_error_envelope_in_a_200_is_not_ok() {
@@ -360,8 +358,8 @@ fn pick_release_various_artists_group_is_a_compilation() {
     assert_eq!(release.release_id.as_deref(), Some("rel1"));
 }
 
-/// Rust-only: a field of the wrong kind ends the read, as `GetString()` threw in the C#, so
-/// the client reads it as a failed lookup rather than half an answer.
+/// A field of the wrong kind ends the read with an error, so the client reads it as a failed
+/// lookup rather than half an answer.
 #[test]
 fn a_field_of_the_wrong_kind_fails_the_whole_read() {
     let doc: Value = serde_json::from_str(r#"{"status": "ok", "results": [{"recordings": [{"id": 5}]}]}"#)
@@ -406,7 +404,6 @@ fn the_submit_form_numbers_every_item() {
     assert_eq!(form[3].1, format!("octo-{}", octo_user_agent::version()));
 }
 
-/// From 2-A's port of the records.
 #[test]
 fn artist_credit_joins_with_the_phrases_or_the_usual_ones() {
     let credited = AcoustIdRecording {

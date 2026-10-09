@@ -1,28 +1,28 @@
-//! Small .NET string semantics the settings classes lean on: `Length` in UTF-16 code units,
-//! `ToLowerInvariant` / `ToUpperInvariant` as per-character mappings, and sets that compare
-//! with `StringComparer.OrdinalIgnoreCase`.
+//! Small string semantics the settings classes lean on: lengths in UTF-16 code units,
+//! invariant lower- and upper-casing as per-character mappings, and sets that compare
+//! ordinally, ignoring case.
 
 use std::collections::HashSet;
 
-/// `string.Length`: the number of UTF-16 code units.
+/// A string's length: the number of UTF-16 code units.
 pub(crate) fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// `ToLowerInvariant`: each character mapped on its own, never expanding (unlike
+/// Invariant lower-casing: each character mapped on its own, never expanding (unlike
 /// `str::to_lowercase`, which applies final-sigma rules and multi-character mappings).
 pub(crate) fn lower_invariant(s: &str) -> String {
     s.chars().map(lower_char).collect()
 }
 
-/// `ToUpperInvariant`, per character as above (`ß` stays `ß`).
+/// Invariant upper-casing, per character as above (`ß` stays `ß`).
 pub(crate) fn upper_invariant(s: &str) -> String {
     s.chars().map(upper_char).collect()
 }
 
 fn lower_char(c: char) -> char {
     if c == '\u{130}' {
-        // The simple mapping .NET uses; Rust's full mapping gives "i\u{307}".
+        // The simple one-character mapping; Rust's full mapping gives "i\u{307}".
         return 'i';
     }
     let mut it = c.to_lowercase();
@@ -40,18 +40,18 @@ fn upper_char(c: char) -> char {
     }
 }
 
-/// The key `StringComparer.OrdinalIgnoreCase` compares by: every character upper-cased.
+/// The key an ordinal case-insensitive comparison compares by: every character upper-cased.
 pub(crate) fn ignore_case_key(s: &str) -> String {
     upper_invariant(s)
 }
 
-/// `string.Equals(a, b, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `a` and `b` are equal, ordinally and ignoring case.
 pub(crate) fn eq_ignore_case(a: &str, b: &str) -> bool {
     a == b || ignore_case_key(a) == ignore_case_key(b)
 }
 
-/// A `HashSet<string>` built with `StringComparer.OrdinalIgnoreCase`: membership ignores
-/// case, and each entry keeps the spelling it was first added with.
+/// A set of strings compared ordinally, ignoring case: membership ignores case, and each entry
+/// keeps the spelling it was first added with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IgnoreCaseSet {
     keys: HashSet<String>,

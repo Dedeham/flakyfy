@@ -1,4 +1,4 @@
-//! The pure parts of `Services/Lyrics/LyricsLibrarySteps.cs`: the lyrics page's rules, without
+//! The pure parts of the lyrics library steps: the lyrics page's rules, without
 //! the files and the lookups. The steps themselves are
 //! `octo::services::lyrics::lyrics_library_steps`.
 

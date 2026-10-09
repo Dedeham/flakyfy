@@ -1,7 +1,6 @@
-//! The pure halves of the SoulseekClient tests: SoulseekTransferPollTests, the parsing half of
-//! SoulseekOutageTests, the payload half of SoulseekSearchProfileTests, SoulseekSlowTransferTests'
-//! TransferWatch tests, ParallelDownloadTests' batch shapes, AlbumFolderTests' folder listings,
-//! AcquisitionTrackerTests' progress reads and SoulseekCandidateMatchingTests' extension tests.
+//! The pure halves of the Soulseek client's tests: transfer polling, outage parsing, the search
+//! payload, `TransferWatch`, the batch shapes of parallel downloads, folder listings, progress
+//! reads and extension normalization.
 
 use chrono::TimeZone;
 use serde_json::Value;
@@ -13,7 +12,7 @@ fn parse(json: &str) -> Value {
     serde_json::from_str(json).expect("valid JSON")
 }
 
-// ---- SoulseekTransferPollTests --------------------------------------------------------------
+// ---- transfer polling ----------------------------------------------------------------------
 
 const REMOTE_FILENAME: &str = r"music\Daft Punk\1997 - Homework [CD]\01 - Daftendirekt.flac";
 
@@ -86,14 +85,13 @@ fn malformed_roots_return_null() {
     );
 }
 
-/// Not in the C#: a directory that is not an object made `TryGetProperty` throw, which the
-/// poll logged as transient. The reader still says so.
+/// A directory that is not an object is an error, which the poll logs as transient.
 #[test]
-fn a_directory_that_is_not_an_object_throws_as_json_element_did() {
+fn a_directory_that_is_not_an_object_is_an_error() {
     assert!(find_transfer(&parse(r#"{"directories":[5]}"#), "f", None).is_err());
 }
 
-// ---- SoulseekOutageTests (the parsing half) -----------------------------------------------
+// ---- outages (the parsing half) ----------------------------------------------------------
 
 const LOGGED_IN_JSON: &str = r#"
 {"version":{"current":"0.26.0"},
@@ -167,7 +165,7 @@ fn the_flags_and_names_are_read_ignoring_case() {
     assert_eq!(reading.username.as_deref(), Some("x"));
 }
 
-// ---- SoulseekSearchProfileTests.ThePayloadCarriesEachProfilesLimits (the payload half) ----
+// ---- the search payload carries each profile's limits ------------------------------------
 
 #[test]
 fn the_payload_carries_each_profiles_limits() {
@@ -199,7 +197,7 @@ fn the_payload_carries_each_profiles_limits() {
     );
 }
 
-// ---- SoulseekSlowTransferTests (TransferWatch) -------------------------------------------
+// ---- slow transfers (TransferWatch) ------------------------------------------------------
 
 fn at(t0: DateTime<Utc>, seconds: i64) -> DateTime<Utc> {
     t0 + TimeDelta::seconds(seconds)
@@ -273,7 +271,7 @@ fn the_first_byte_wait_is_never_longer_than_the_quiet_window() {
     assert!(!plain.expired(at(t0, 100)));
 }
 
-// ---- ParallelDownloadTests (slskd's batch API) -------------------------------------------
+// ---- parallel downloads (slskd's batch API) ----------------------------------------------
 
 const JOB: &str = ".octo-incoming/slskd/job";
 
@@ -336,7 +334,7 @@ fn a_transfer_is_followed_by_its_id_not_an_older_one_of_the_same_name() {
     assert!(find_transfer(&root, "a\\f.flac", Some("gone")).unwrap().is_none());
 }
 
-// ---- AlbumFolderTests (folder listings) ----------------------------------------------------
+// ---- album folders (folder listings) -------------------------------------------------------
 
 #[test]
 fn a_folders_files_come_back_with_their_full_remote_path() {
@@ -394,7 +392,7 @@ fn a_listing_that_is_not_json_or_of_the_wrong_kind_fails_its_own_way() {
     ));
 }
 
-// ---- AcquisitionTrackerTests (the SoulseekClient halves) ---------------------------------
+// ---- download progress reads -------------------------------------------------------------
 
 // The per-user transfer shape slskd 0.26 returns, with a transfer part way through.
 const IN_PROGRESS_TRANSFER: &str = r#"
@@ -462,7 +460,7 @@ fn missing_figures_read_as_unknown_not_zero() {
     assert_eq!(progress.percent_complete, None);
 }
 
-// ---- SoulseekCandidateMatchingTests (extension normalization) ----------------------------
+// ---- extension normalization -------------------------------------------------------------
 
 /// Ranking accepts a hit by comparing its extension against the configured one, and
 /// slskd does not report a consistent shape. An unnormalized ".flac" matched no
@@ -487,7 +485,7 @@ fn a_missing_extension_falls_back_to_the_filename() {
     assert_eq!(normalize_extension(None, "no extension at all"), "");
 }
 
-// ---- The rest of the readers (not in the C# tests) -----------------------------------------
+// ---- the rest of the readers ---------------------------------------------------------------
 
 #[test]
 fn search_responses_carry_each_peers_queue_and_speed() {

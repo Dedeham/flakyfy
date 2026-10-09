@@ -1,11 +1,10 @@
-//! The pure half of `Services/Soulseek/SoulseekClient.cs`: the records slskd's answers become,
+//! The pure half of the Soulseek client: the records slskd's answers become,
 //! the request bodies, and the readers of slskd's JSON. The HTTP client itself (auth, the
 //! operation gate, the search and transfer waits) is `octo::services::soulseek::soulseek_client`.
 //!
-//! The readers keep `JsonDocument`'s habit of throwing where serde_json would quietly answer
-//! `None` (`GetString()` on a number, `GetInt32()` on `3.5`, `TryGetProperty` on an array), so
-//! they return an [`ElementResult`] at the places the C# could throw, and their callers catch
-//! what the C# caught.
+//! The readers are strict where serde_json would quietly answer `None` (a string read from a
+//! number, an int read from `3.5`, a property read from an array), so they return an
+//! [`ElementResult`] at those places, and each caller decides which errors it recovers from.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -35,7 +34,7 @@ pub const FIRST_BYTE_WAIT: Duration = Duration::from_secs(45);
 /// How long a transfer sits with nothing moved before the person is told whom it waits on.
 pub const WAITING_NOTE_AFTER: Duration = Duration::from_secs(15);
 
-/// How long a cancelled search is given to end and save its responses. slskd takes
+/// How long a canceled search is given to end and save its responses. slskd takes
 /// well under a second; the rest is slack for a busy disk.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
@@ -147,7 +146,7 @@ impl TransferWatch {
     }
 }
 
-/// A `TimeSpan` as a chrono span, saturating (no wait here comes near the limit).
+/// A wait as a chrono span, saturating (no wait here comes near the limit).
 pub fn delta(span: Duration) -> TimeDelta {
     TimeDelta::from_std(span).unwrap_or(TimeDelta::MAX)
 }
@@ -189,12 +188,12 @@ pub struct SoulseekSearchOutcome {
     pub hit_limit: bool,
 }
 
-/// `s.Contains(value, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `s` contains `value`, ordinally and ignoring case.
 pub fn contains_ignore_case(s: &str, value: &str) -> bool {
     dotnet::ordinal_ignore_case_key(s).contains(&dotnet::ordinal_ignore_case_key(value))
 }
 
-/// `TryGetPropertyIgnoreCase`: the exact name first, then the first property whose name
+/// A property by the exact name first, then the first property whose name
 /// matches ignoring case. Nothing for an element that is not an object.
 pub fn try_get_property_ignore_case<'a>(element: &'a Value, name: &str) -> Option<&'a Value> {
     let Value::Object(map) = element else {
@@ -207,8 +206,8 @@ pub fn try_get_property_ignore_case<'a>(element: &'a Value, name: &str) -> Optio
     })
 }
 
-/// `Path.GetExtension` on Linux: from the last `.` of the file name (after the last `/`), dot
-/// included, or empty when there is none or it is the last character.
+/// From the last `.` of the file name (after the last `/`), dot included, or empty when there
+/// is none or it is the last character.
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
     match name.rfind('.') {
@@ -376,8 +375,7 @@ pub fn batch_payload(username: &str, files: &[(String, i64)], destination: &str)
 
 /// Reads a batch answer: batch.transfers carries what slskd queued, failures what it
 /// would not. Anything unreadable reads as nothing queued. (A transfer or failure that is not an
-/// object, or a name that is not a string, threw past the C#'s `catch (JsonException)`, and does
-/// here too.)
+/// object, or a name that is not a string, is an error rather than nothing queued.)
 pub fn parse_batch(json: &str) -> ElementResult<BatchEnqueue> {
     let mut ids = HashMap::new();
     let mut failures = Vec::new();
@@ -439,8 +437,8 @@ pub fn parse_search_status(json: &str) -> Result<Option<SearchStatus>, serde_jso
     }))
 }
 
-/// `TryGetProperty(name) && ValueKind == Number ? GetInt32() : null`: a number that is not a
-/// whole Int32 throws.
+/// The property as an `i32` when it is a number, else None; a number that is not a whole
+/// `i32` is an error.
 fn opt_int32(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     match try_get_property(element, name)? {
         Some(value @ Value::Number(_)) => get_int32(value).map(Some),
@@ -464,7 +462,7 @@ fn opt_string<'a>(element: &'a Value, name: &str) -> ElementResult<Option<&'a st
 
 /// Every file of a search's responses. The second value is the message of whatever ended the
 /// read early (bad JSON, or a field of the wrong kind), for the caller to log; the files read
-/// before it are kept, as the C# kept them.
+/// before it are kept.
 pub fn parse_responses(json: &str) -> (Vec<SoulseekFileHit>, Option<String>) {
     let mut hits = Vec::new();
     let outcome = (|| -> Result<(), String> {
@@ -524,8 +522,8 @@ fn read_response(resp: &Value, hits: &mut Vec<SoulseekFileHit>) -> ElementResult
     Ok(())
 }
 
-/// Why a folder listing could not be read: JSON that does not parse (`JsonException`, which
-/// the browse catches), or an element of the wrong kind (which it did not).
+/// Why a folder listing could not be read: JSON that does not parse (which the browse
+/// recovers from), or an element of the wrong kind (which it does not).
 #[derive(Debug, thiserror::Error)]
 pub enum DirectoryError {
     #[error("{0}")]
@@ -592,7 +590,7 @@ pub fn parse_directory(
     Ok(hits)
 }
 
-/// The id slskd gives a transfer, for cancelling it.
+/// The id slskd gives a transfer, for canceling it.
 pub fn transfer_id(file: &Value) -> ElementResult<Option<String>> {
     Ok(match try_get_property(file, "id")? {
         Some(Value::String(id)) => Some(id.clone()),
@@ -690,7 +688,7 @@ pub fn find_transfer<'a>(
 }
 
 /// The JWT slskd's session endpoint answers with: `token` and `expires` (Unix seconds). A
-/// missing property or one of the wrong kind throws, as `GetProperty` did.
+/// missing property or one of the wrong kind is an error.
 pub fn parse_session(json: &str) -> anyhow::Result<(Option<String>, DateTime<Utc>)> {
     let root: Value = serde_json::from_str(json)?;
     let token = get_string(crate::json::element::get_property(&root, "token")?)?.map(str::to_string);

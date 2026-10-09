@@ -1,6 +1,5 @@
-//! Port of `Services/Radio/RadioTypes.cs`: what a radio starts from, how closely a source's
-//! answer is about it, and the answer. `IRadioSource` (a source with I/O) is
-//! `octo::services::radio::radio_types`.
+//! What a radio starts from, how closely a source's answer is about it, and the answer.
+//! `IRadioSource` (a source with I/O) is `octo::services::radio::radio_source`.
 
 use crate::last_fm::SimilarTrack;
 use crate::models::domain::Song;
@@ -57,7 +56,7 @@ pub enum RadioMatch {
 }
 
 impl std::fmt::Display for RadioMatch {
-    /// The member's name, as the C# log lines wrote it.
+    /// The member's name, as the log lines write it.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             RadioMatch::None => "None",

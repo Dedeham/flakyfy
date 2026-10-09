@@ -1,9 +1,9 @@
-//! `PathHelperTests.cs`, `PathHelperLayoutTests.cs`, and the `PathHelper` half of
-//! `SoulseekResolveRetryTests.cs` (`WindowsDrivePathDetectionTests`).
+//! Tests for track paths, folder layouts, Windows drive path detection and the path and string
+//! rules underneath them.
 
 use super::*;
 
-// ---- PathHelperTests: BuildTrackPath is what the Organized folder layout is built on, so an
+// ---- Track paths: build_track_path is what the Organized folder layout is built on, so an
 // album lands as one folder on disk instead of a folder per track. ----
 
 // Relative so the test reads the same on Windows and on the Linux CI runner.
@@ -150,7 +150,7 @@ fn file_title_title_that_is_only_a_bracket_is_kept() {
     }
 }
 
-// ---- PathHelperLayoutTests ----
+// ---- Folder layouts ----
 
 const LAYOUT_ROOT: &str = "/music";
 
@@ -249,9 +249,9 @@ fn empty_extension_is_honored() {
     assert_eq!(path, "/music/Daft Punk/Digital Love");
 }
 
-/// `UnknownLayout_ThrowsRatherThanSilentlyPickingOne`: a C# enum can hold 999, a Rust one
-/// cannot, and `build_layout_path`'s match has no default arm, so a new layout fails to
-/// compile there. What is left to check is that every layout resolves to its own shape.
+/// No layout is silently picked for another: `build_layout_path`'s match has no default arm, so
+/// a new layout fails to compile there. What is left to check is that every layout resolves to
+/// its own shape.
 #[test]
 fn unknown_layout_throws_rather_than_silently_picking_one() {
     let shapes: Vec<String> = [
@@ -268,7 +268,7 @@ fn unknown_layout_throws_rather_than_silently_picking_one() {
     );
 }
 
-// ---- WindowsDrivePathDetectionTests (SoulseekResolveRetryTests.cs): a Windows drive-letter
+// ---- Windows drive path detection: a Windows drive-letter
 // path configured inside a Linux container is silently created as a literal directory name; the
 // detector behind the startup warning must catch that shape and nothing else. ----
 
@@ -293,7 +293,7 @@ fn non_drive_paths_are_not() {
     }
 }
 
-// ---- Rust-only: the .NET path and string rules the port reproduces ----
+// ---- Path and string details: UTF-16 cuts, track numbers, unique and cache paths, joins ----
 
 #[test]
 fn sanitize_cuts_at_one_hundred_utf16_units_then_trims() {

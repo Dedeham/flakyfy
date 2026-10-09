@@ -1,9 +1,9 @@
-//! `Octo.Models.Settings.UpdateSettings` (the `Updates` section).
+//! The release check settings (the `Updates` section).
 
 use serde::{Deserialize, Serialize};
 
-/// Whether Octo looks for its own new releases, and where. Read through IOptionsMonitor at every
-/// check, so a change applies without a restart.
+/// Whether Octo looks for its own new releases, and where. Read fresh at every check, so a
+/// change applies without a restart.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct UpdateSettings {

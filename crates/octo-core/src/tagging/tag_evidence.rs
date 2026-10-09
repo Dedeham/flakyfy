@@ -1,4 +1,5 @@
-//! Port of `Services/Tagging/TagEvidence.cs`.
+//! The evidence the release chooser weighs: the request, the file's own facts and the
+//! candidates.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -19,7 +20,7 @@ pub enum TagSource {
 }
 
 impl TagSource {
-    /// The C# member name, which the report and the field table carry.
+    /// The member's name, which the report and the field table carry.
     pub fn name(self) -> &'static str {
         match self {
             Self::Fingerprint => "Fingerprint",
@@ -139,7 +140,7 @@ pub struct ReleaseCandidate {
 }
 
 impl ReleaseCandidate {
-    /// The positional part of the C# record; everything else starts unsaid.
+    /// A candidate from its required facts; everything else starts unsaid.
     pub fn new(
         source: TagSource,
         recording_title: impl Into<String>,
@@ -196,7 +197,7 @@ pub struct TagEvidence {
     pub request: TagRequest,
     pub file: FileFacts,
     pub fingerprint_threshold: f64,
-    /// Compared as `StringComparer.OrdinalIgnoreCase` compares.
+    /// Compared ordinally, ignoring case.
     pub fingerprinted_recording_ids: IgnoreCaseSet,
 }
 

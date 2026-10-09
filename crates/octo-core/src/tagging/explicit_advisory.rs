@@ -1,5 +1,3 @@
-//! Port of `Services/Tagging/ExplicitAdvisory.cs`.
-//!
 //! Whether the version that landed is the explicit one or the clean edit, for the advisory tag
 //! the library server reads into each song's explicit status. A clean and an explicit copy of a
 //! song carry different codes, so the catalog's flag counts only from the hit whose code is the
@@ -140,8 +138,8 @@ fn says_clean(title: Option<&str>) -> bool {
     })
 }
 
-/// The last part of a peer's path, either separator, without its extension
-/// (`Path.GetFileNameWithoutExtension`).
+/// The last part of a peer's path, either separator, without its extension (cut at its last
+/// dot).
 fn leaf_name(path: Option<&str>) -> Option<String> {
     let path = path.filter(|path| !crate::common::dotnet::is_blank(path))?;
     let leaf = path.split(['\\', '/']).rfind(|part| !part.is_empty())?;
@@ -151,7 +149,7 @@ fn leaf_name(path: Option<&str>) -> Option<String> {
     })
 }
 
-/// The advisory half of `ReleaseFactTagsTests.cs` ("which version landed").
+/// The advisory half of the release fact tags ("which version landed").
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,7 +293,7 @@ mod tests {
         }
     }
 
-    /// Rust-only: the report words (`Field`, 099fdd3), and a decision with no plan at all.
+    /// The report words (`field`), and a decision with no plan at all.
     #[test]
     fn the_report_words_and_no_plan() {
         let words = |value| field(&AdvisoryDecision::new(value, "Catalog")).value;

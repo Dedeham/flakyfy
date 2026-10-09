@@ -1,5 +1,4 @@
-//! Port of `ForYouListsTests` in `octo.Tests/ForYouListsTests.cs` (f54467a, 1f940f2): the
-//! picking is what a listener hears, so it is tested directly.
+//! Made for you's picking is what a listener hears, so it is tested directly.
 
 use std::collections::HashSet;
 
@@ -334,7 +333,7 @@ fn pick_tracks_an_album_gives_its_best_by_rank_in_album_order_a_single_its_first
     assert_eq!(positions(pick_tracks(Some("album"), &unranked)), [1, 2, 3]);
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- names, filter and dates -------------------------------------------------------------
 
 /// The names and the filter rules, and `played` read in the shapes Navidrome writes.
 #[test]

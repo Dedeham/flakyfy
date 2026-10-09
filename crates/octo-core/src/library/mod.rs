@@ -1,4 +1,4 @@
-//! `Services/Library` in the C#, the pure parts: the generated mixes' rules. The services are
+//! The library's pure parts: the generated mixes' rules. The services are
 //! `octo::services::library`.
 
 pub mod for_you_lists;

@@ -1,4 +1,4 @@
-//! GeneratedPlaylistSelectTests: genre and decade mixes (#54). The draw is what a listener
+//! Genre and decade mixes (#54). The draw is what a listener
 //! hears, so its rules are tested directly: it holds still for a period, never breaks the artist
 //! cap, and keeps its share for new tracks only when asked to.
 
@@ -12,7 +12,7 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap()
 }
 
-/// `created.ToString("O")`: seven fraction digits and a Z.
+/// The round-trip date format: seven fraction digits and a Z.
 fn round_trip_text(at: DateTime<Utc>) -> String {
     format!(
         "{}.{:07}Z",
@@ -105,9 +105,9 @@ fn select_new_share_zero_ignores_newness() {
     );
 }
 
-/// The draws .NET 9 made from the same pools and seeds: a mix holds the songs the C# build drew.
+/// The reference draws from the same pools and seeds: a mix holds exactly these songs.
 #[test]
-fn select_draws_what_dotnet_drew() {
+fn select_draws_the_reference_songs() {
     assert_eq!(
         ids(&select(&pool(200, 50), 50, 3, 0, 30, now(), 42)),
         "s18,s157,s171,s99,s152,s56,s142,s49,s91,s185,s83,s39,s76,s40,s113,s107,s84,s41,s183,s68,s198,s75,s136,s105,s85,s3,s189,s26,s137,s160,s127,s47,s161,s169,s93,s38,s120,s170,s65,s22,s92,s193,s151,s114,s35,s45,s72,s11,s80,s199"
@@ -224,7 +224,7 @@ fn ids_are_octo_shaped_and_per_listener() {
     assert_eq!(alice, playlist_id(" ALICE ", "genre:Rock"));
     assert_ne!(alice, playlist_id("bob", "genre:Rock"));
     assert_ne!(alice, playlist_id("alice", "genre:Pop"));
-    // What .NET 9 computed.
+    // The reference values.
     assert_eq!(alice, "ogCBXI0xBkBbo5YFCGFg0J");
     assert_eq!(playlist_id(" ALICE ", "decade:1990"), "oggfZ1V0xbMkjnZt0DRDBI");
 }
@@ -242,7 +242,7 @@ fn period_index_changes_once_per_period() {
         period_index(start + TimeDelta::hours(24), 24)
     );
     assert_ne!(seed("alice", "genre:Rock", 1), seed("alice", "genre:Rock", 2));
-    // What .NET 9 computed.
+    // The reference values.
     assert_eq!(seed("alice", "genre:Rock", 1), -1611485292);
     assert_eq!(seed("alice", "genre:Rock", 2), -847570069);
     assert_eq!(seed("bob", "decade:1990", 20000), -1817182269);
@@ -307,7 +307,7 @@ fn blend_nothing_new_leaves_the_station_alone() {
     assert!(blend(&songs, &[song(1, "Library", Some(3), None)], 2, 30, now()).is_none());
 }
 
-/// state-files.md §4.14: the file reads and writes back byte for byte, compact.
+/// The state file reads and writes back byte for byte, compact.
 #[test]
 fn the_state_fixture_round_trips_byte_for_byte() {
     let text = std::fs::read_to_string(concat!(
@@ -348,7 +348,7 @@ fn kinds_and_staleness_follow_the_settings() {
         now() + TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
     ));
     assert!(is_stale(&UserMixes::default(), &settings, all, now()));
-    // Made for you (f54467a, 452f47e): on by default whatever the mixes switch says, and what
+    // Made for you: on by default whatever the mixes switch says, and what
     // decides each list is part of the kinds, the explicit filter too.
     let defaults = GeneratedPlaylistSettings::default();
     assert_eq!(

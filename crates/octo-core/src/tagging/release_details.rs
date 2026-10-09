@@ -1,9 +1,7 @@
-//! Port of `Services/Tagging/ReleaseDetails.cs`.
+//! A music database release's details, read from a `serde_json::Value`.
 //!
-//! The C# read a `JsonElement`; this reads a `serde_json::Value`. One difference in shape
-//! handling is listed in `known-diffs.md`: a block of the wrong JSON kind where an object is
-//! expected (an artist credit that is a string, say) made `TryGetProperty` throw; here it reads
-//! as absent.
+//! A block of the wrong JSON kind where an object is expected (an artist credit that is a
+//! string, say) reads as absent.
 
 use indexmap::IndexSet;
 use serde_json::Value;
@@ -80,7 +78,7 @@ impl ReleaseDetails {
         })
     }
 
-    /// The genres with at least `min_votes` votes, most voted first (the C# defaults are 2 and 3).
+    /// The genres with at least `min_votes` votes, most voted first, at most `max` of them.
     pub fn top_genres(&self, min_votes: i32, max: usize) -> Vec<String> {
         let mut genres: Vec<&ReleaseGenre> = self.genres.iter().filter(|g| g.count >= min_votes).collect();
         genres.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| cmp_ordinal(&a.name, &b.name)));
@@ -249,17 +247,17 @@ fn clean(value: Option<String>) -> Option<String> {
     value.filter(|v| !is_blank(v)).map(|v| v.trim().to_string())
 }
 
-/// `(int)Math.Round(ms / 1000.0)`.
+/// Milliseconds as whole seconds, rounded half to even.
 pub(crate) fn seconds_of(ms: i32) -> i32 {
     (f64::from(ms) / 1000.0).round_ties_even() as i32
 }
 
-/// The property when it is a JSON string (`JsonValueKind.String`).
+/// The property when it is a JSON string.
 pub(crate) fn str_of(element: &Value, name: &str) -> Option<String> {
     element.get(name).and_then(Value::as_str).map(str::to_string)
 }
 
-/// The property when it is a JSON number that fits an `int` (`TryGetInt32`): no fraction or
+/// The property when it is a JSON number that fits an `i32`: no fraction or
 /// exponent, within range.
 pub(crate) fn int_of(element: &Value, name: &str) -> Option<i32> {
     element
@@ -295,7 +293,7 @@ mod tests {
         ReleaseDetails::parse(&serde_json::from_str(text).expect("valid JSON"))
     }
 
-    // ---- from MusicBrainzReleaseDetailsTests ----
+    // ---- MusicBrainz release details ----
 
     #[test]
     fn parse_reads_every_field() {
@@ -374,10 +372,10 @@ mod tests {
         assert_eq!(details.secondary_types, ["Compilation"]);
     }
 
-    // ---- Rust-only: the JsonElement readings ----
+    // ---- numbers, media and credits ----
 
     #[test]
-    fn numbers_read_as_try_get_int32_and_lengths_round_to_even() {
+    fn numbers_read_as_whole_i32s_and_lengths_round_to_even() {
         let value: Value =
             serde_json::from_str(r#"{"a": 1, "b": 1.0, "c": 1e3, "d": 3000000000, "e": "1"}"#).unwrap();
         assert_eq!(int_of(&value, "a"), Some(1));

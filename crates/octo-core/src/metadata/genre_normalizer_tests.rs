@@ -1,10 +1,10 @@
-//! `GenreNormalizerTests.cs`. Downloads arrive with whatever the source called a genre. The
+//! Genre normalizer tests. Downloads arrive with whatever the source called a genre. The
 //! reporter's library had 316 genres for 1,900 tracks, and the mechanism was subtler than it
 //! looks: genre was only ever written when non-empty and never cleared, so junk reached the
 //! library through the ABSENCE of a write rather than a bad one.
 //!
-//! The two settings-only tests (`EffectiveMappings_*`, `EffectiveBlocklist_*`) were ported with
-//! the settings, in `settings/genre.rs`.
+//! The two settings-only tests (`effective_mappings_*`, `effective_blocklist_*`) live with the
+//! settings, in `settings/genre.rs`.
 
 use super::*;
 
@@ -47,7 +47,7 @@ fn enabled(max: i32) -> GenreSettings {
     }
 }
 
-/// GenreSettings { Enabled = true } with the shipped MaxGenres.
+/// Genre settings switched on, with the shipped `max_genres`.
 fn shipped() -> GenreSettings {
     GenreSettings {
         enabled: true,
@@ -260,8 +260,7 @@ fn plan_is_idempotent() {
 
 /// This is the test that enforces the two year rules agree. Two hand-rolled copies is how
 /// one of them quietly stops dropping "2020s" when someone fixes the other. (The radio
-/// kinship half of the C# test, `LastFmRadioStreamService.KinshipTags`, is checked beside
-/// `kinship_tags` in `last_fm::last_fm_radio_stream_service`.)
+/// kinship half is checked beside `kinship_tags` in `last_fm::last_fm_radio_stream_service`.)
 #[test]
 fn is_year_like_matches_what_the_radio_kinship_filter_also_drops() {
     for (tag, expected) in [
@@ -283,9 +282,9 @@ fn is_year_like_empty_is_not_a_year() {
     assert!(!GenreNormalizer::is_year_like(""));
 }
 
-/// A Turkish-locale container turns "I" into a dotless "ı" through ToLower and ToTitleCase,
-/// which silently stops "Indie" matching "indie". Rust has no process culture: the port is
-/// invariant by construction, which this pins.
+/// A Turkish-locale container turns "I" into a dotless "ı" when lower- and title-casing,
+/// which silently stops "Indie" matching "indie". Rust has no process culture: the
+/// normalizer is invariant by construction, which this pins.
 #[test]
 fn normalize_is_culture_invariant() {
     assert_eq!(primary("indie", &shipped()).as_deref(), Some("Indie"));
@@ -361,10 +360,10 @@ fn broad_genre_preset_collapses_real_world_junk_to_a_short_list() {
     assert!((1..=14).contains(&produced.len()), "{} genres", produced.len());
 }
 
-// ---- Rust-only: TextInfo.ToTitleCase, as .NET 9 answered for these -----------------------
+// ---- invariant title casing, against the reference answers -------------------------------
 
 #[test]
-fn title_case_follows_dotnet_word_rules() {
+fn title_case_follows_the_invariant_word_rules() {
     for (text, expected) in [
         ("indie rock", "Indie Rock"),
         ("4ad", "4Ad"),

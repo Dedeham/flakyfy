@@ -1,5 +1,5 @@
-//! JSON as System.Text.Json wrote and read it, so state files and API answers stay byte
-//! for byte what existing installs and clients already have.
+//! JSON written and read in one exact shape, so state files and API answers stay byte for
+//! byte what existing installs and clients already have.
 
 pub mod datetime;
 pub mod dom;
@@ -12,10 +12,9 @@ pub use format::{
     to_string_with, to_vec_with,
 };
 
-/// [`to_string`] with `DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull`: every
-/// member whose value is null is left out, at every depth. (STJ applies the condition to
-/// properties only; a dictionary entry whose value is null would be kept. The files written
-/// this way hold no dictionary with a null value.)
+/// [`to_string`] with every member whose value is null left out, at every depth. (A map entry
+/// whose value is null is dropped too; the files written this way hold no map with a null
+/// value, so only struct fields are ever left out.)
 pub fn to_string_without_nulls<T: serde::Serialize + ?Sized>(value: &T) -> String {
     fn strip(node: &mut dom::Node) {
         match node {

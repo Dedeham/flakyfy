@@ -1,4 +1,4 @@
-//! The pure half of `Services/LastFm/LastFmRadioTrackResolver.cs`: whether a library hit is the
+//! The pure half of the radio track resolver: whether a library hit is the
 //! recording Last.fm recommended. The lookups are
 //! `octo::services::last_fm::last_fm_radio_track_resolver`.
 
@@ -28,7 +28,7 @@ pub fn is_same_recording(want_artist: &str, want_title: &str, hit_artist: &str, 
             .is_same()
 }
 
-/// LastFmRadioTrackResolverMatchTests: radio prefers a copy you already own, so matching a
+/// Radio prefers a copy you already own, so matching a
 /// Last.fm recommendation to the library decides what actually plays. A false match plays a
 /// different song with nothing to say so; a missed match only plays the external copy. These
 /// pin the cases that went the wrong way under substring matching, and the owned tags that must

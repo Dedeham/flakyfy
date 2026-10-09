@@ -1,5 +1,3 @@
-//! Port of `Models/Domain/Album.cs`.
-
 use serde::{Deserialize, Serialize};
 
 use super::song::Song;

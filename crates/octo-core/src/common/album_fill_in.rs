@@ -1,5 +1,3 @@
-//! Port of `Services/Common/AlbumFillIn.cs`.
-//!
 //! Which catalog album may fill in a library album's missing songs on getAlbum. A name is not
 //! an identity: "Nightcore" by "Nightcore" names one 3-song album on Deezer and a listener's own
 //! 388-song collection in the library, with no song in common (octo-player#1). Navidrome's
@@ -19,7 +17,7 @@ use crate::models::domain::{Album, Song};
 pub struct LibraryTrack {
     pub title: Option<String>,
     pub duration: Option<i32>,
-    /// The C# `IReadOnlyCollection<string?>`: a null entry is kept as `None`.
+    /// Every ISRC the song carries; a null entry is kept as `None`.
     pub isrcs: Vec<Option<String>>,
 }
 
@@ -37,7 +35,7 @@ impl LibraryTrack {
     }
 }
 
-/// `AlbumFillIn`, a static class: associated functions on an empty struct.
+/// The album fill-in rules, as associated functions on an empty struct.
 pub struct AlbumFillIn;
 
 impl AlbumFillIn {
@@ -46,9 +44,8 @@ impl AlbumFillIn {
 
     /// A song from Navidrome's JSON, as the merge holds it: title, duration and isrc.
     ///
-    /// The C# read a `Dictionary<string, object>` whose duration was an `int` or a `double`
-    /// (anything else read as no duration); here a JSON number that fits an `int` is taken as it
-    /// is, and any other number is rounded the .NET way.
+    /// A JSON number that fits an `int` is taken as the duration as it is, any other number is
+    /// rounded half to even, and anything else reads as no duration.
     pub fn from_subsonic(song: Option<&Value>) -> LibraryTrack {
         let Some(Value::Object(dict)) = song else {
             return LibraryTrack::default();
@@ -79,8 +76,7 @@ impl AlbumFillIn {
     /// tracks to hold half of the library album's `library_songs` is left out before its
     /// tracklist is ever fetched.
     ///
-    /// The C# skipped a hit with a null artist; a Rust album's artist is never null, and an
-    /// empty one matches neither rule below.
+    /// An album's artist is never null, and an empty one matches neither rule below.
     pub fn candidates<'a>(
         hits: &'a [Album],
         artist_name: &str,
@@ -106,7 +102,7 @@ impl AlbumFillIn {
                 && !wanted_title.is_empty()
                 && (title.contains(&wanted_title) || wanted_title.contains(&title))
         });
-        // `Distinct()` on a class: the same hit once, wherever it matched first.
+        // The same hit once, wherever it matched first.
         let mut seen = Vec::new();
         let mut answer = Vec::new();
         for (index, hit) in exact.chain(loose) {
@@ -162,7 +158,7 @@ impl AlbumFillIn {
     }
 }
 
-/// `v?.ToString()`: a JSON string as it is, a null as nothing, anything else as its text.
+/// A JSON value as text: a string as it is, a null as nothing, anything else as its JSON text.
 fn to_text(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
@@ -211,14 +207,13 @@ fn distinct(library: &[LibraryTrack]) -> Vec<LibraryTrack> {
         .into_iter()
         .map(|(_, members)| LibraryTrack {
             title: members[0].title.clone(),
-            // `FirstOrDefault(d => d > 0)` over `int?`: the first positive length, else none.
+            // The first positive length, else none.
             duration: members.iter().filter_map(|l| l.duration).find(|d| *d > 0),
             isrcs: members.iter().flat_map(|l| l.isrcs.iter().cloned()).collect(),
         })
         .collect()
 }
 
-/// Port of `AlbumFillInTests`.
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -405,7 +400,7 @@ mod tests {
             album("deluxe", "Test Album (Deluxe)", "Test Artist", None),
             album("other", "Test Album", "Someone Else", None),
             album("exact", "Test Album", "Test Artist", None),
-            // The C# hit had a null artist; an empty one is left out the same way.
+            // A hit with no artist is left out.
             album("unknown", "Test Album", "", None),
         ];
 
@@ -435,7 +430,7 @@ mod tests {
         assert_eq!(ids(6), ["ep", "unknown"]);
     }
 
-    /// Rust-only: a fractional duration rounds the .NET way, and the song count ignores blanks.
+    /// A fractional duration rounds half to even, and the song count ignores blanks.
     #[test]
     fn a_fractional_duration_rounds_and_blank_titles_are_not_songs() {
         assert_eq!(

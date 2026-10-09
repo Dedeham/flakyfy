@@ -1,15 +1,15 @@
-//! A serde_json formatter that writes what System.Text.Json writes.
+//! A serde_json formatter that writes Octo's established JSON byte format.
 //!
-//! Octo's state files and API answers were written by System.Text.Json, and existing
-//! installs carry those files. Writing them back byte for byte the same means matching three
-//! things serde_json does differently by default:
+//! Octo's state files and API answers have one established format, and existing installs
+//! carry those files. Writing them back byte for byte the same means three things serde_json
+//! does differently by default:
 //!
-//! - **Escaping.** `JavaScriptEncoder.Default` escapes every non-ASCII character as `\uXXXX`
-//!   with uppercase hex (astral characters as a surrogate pair), and also `"` `&` `'` `+`
-//!   `<` `>` `` ` `` and DEL. `UnsafeRelaxedJsonEscaping` leaves non-ASCII and the HTML
-//!   characters alone but still escapes controls, DEL, U+2028/2029 and astral characters.
-//! - **Doubles.** .NET writes the shortest round-trip digits, `1` rather than `1.0`, and
-//!   switches to `1E-05` / `1.5E+300` outside a fixed range; see [`format_double`].
+//! - **Escaping.** The default escaping writes every non-ASCII character as `\uXXXX` with
+//!   uppercase hex (astral characters as a surrogate pair), and also escapes `"` `&` `'` `+`
+//!   `<` `>` `` ` `` and DEL. Relaxed escaping leaves non-ASCII and the HTML characters alone
+//!   but still escapes controls, DEL, U+2028/2029 and astral characters.
+//! - **Doubles.** The shortest round-trip digits, `1` rather than `1.0`, switching to
+//!   `1E-05` / `1.5E+300` outside a fixed range; see [`format_double`].
 //! - **Indentation.** Two spaces and `"key": value`, which matches serde_json's pretty
 //!   printer; it is reimplemented here only because one formatter must do both.
 
@@ -17,18 +17,19 @@ use serde::Serialize;
 use serde_json::ser::{CharEscape, Formatter};
 use std::io::{self, Write};
 
-/// Which System.Text.Json encoder to imitate.
+/// Which escaping to apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Escaping {
-    /// `JavaScriptEncoder.Default`: everything outside printable ASCII, plus the
-    /// HTML-sensitive characters. What every Octo state file and API answer used.
+    /// Everything outside printable ASCII, plus the HTML-sensitive characters. What every Octo
+    /// state file and API answer uses.
     #[default]
     Default,
-    /// `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`.
+    /// Non-ASCII and HTML-sensitive characters as they are; controls, DEL, U+2028/2029 and
+    /// astral characters still escaped.
     Relaxed,
 }
 
-/// Output options: the encoder and whether to indent.
+/// Output options: the escaping and whether to indent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Options {
     pub escaping: Escaping,
@@ -46,12 +47,12 @@ impl Options {
     };
 }
 
-/// Serializes as System.Text.Json would with the default encoder, compact.
+/// Serializes with the default escaping, compact.
 pub fn to_string<T: Serialize + ?Sized>(value: &T) -> String {
     to_string_with(value, Options::COMPACT)
 }
 
-/// Serializes as System.Text.Json would with `WriteIndented = true`.
+/// Serializes with the default escaping, indented by two spaces.
 pub fn to_string_indented<T: Serialize + ?Sized>(value: &T) -> String {
     to_string_with(value, Options::INDENTED)
 }
@@ -97,7 +98,7 @@ impl StjFormatter {
     }
 }
 
-/// Writes `text` with the escapes the chosen encoder applies, without surrounding quotes.
+/// Writes `text` with the escapes the chosen escaping applies, without surrounding quotes.
 pub fn write_escaped<W: ?Sized + Write>(writer: &mut W, text: &str, escaping: Escaping) -> io::Result<()> {
     let mut start = 0;
     for (i, c) in text.char_indices() {
@@ -115,7 +116,7 @@ pub fn write_escaped<W: ?Sized + Write>(writer: &mut W, text: &str, escaping: Es
     Ok(())
 }
 
-/// `text` as a quoted JSON string with the chosen encoder's escapes.
+/// `text` as a quoted JSON string with the chosen escaping's escapes.
 pub fn quote(text: &str, escaping: Escaping) -> String {
     let mut out = Vec::with_capacity(text.len() + 2);
     out.push(b'"');
@@ -250,8 +251,7 @@ impl Formatter for StjFormatter {
     }
 }
 
-/// A double as .NET Core 3.0+ writes it (`double.ToString("R")`, which is also what
-/// Utf8JsonWriter emits): the shortest digits that round-trip, in fixed notation while the
+/// A double as the shortest digits that round-trip, in fixed notation while the
 /// decimal point sits between 3 places left of the first digit and 17 places right of it,
 /// otherwise `d.dddE+XX` with a signed, at least two-digit exponent.
 pub fn format_double(value: f64) -> String {
@@ -264,7 +264,7 @@ pub fn format_double(value: f64) -> String {
     )
 }
 
-/// A float as .NET writes `float.ToString("R")`: as [`format_double`], with the switch to
+/// A float written as [`format_double`] writes a double, with the switch to
 /// exponent notation past 9 digits.
 pub fn format_single(value: f32) -> String {
     format_shortest(
@@ -298,8 +298,8 @@ fn format_shortest(nan: bool, infinite: bool, negative: bool, sci: &str, max_sca
     if digits.chars().all(|c| c == '0') {
         return format!("{sign}0");
     }
-    // The decimal point's position counted from the left of the digits, as .NET's
-    // number.Scale: 1.5 has scale 1, 0.015 has scale -1.
+    // The decimal point's position counted from the left of the digits: 1.5 has scale 1,
+    // 0.015 has scale -1.
     let scale = exp + 1;
     if scale > max_scale || scale < -3 {
         let (first, rest) = digits.split_at(1);
@@ -328,8 +328,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn default_escaping_matches_javascript_encoder_default() {
-        // Captured from .NET 9: JsonSerializer.Serialize(s).
+    fn default_escaping_escapes_non_ascii_and_html_characters() {
+        // The reference output for this string.
         let s = "a\"b\\c/d<e>f&g'h+i`j\n\r\t\u{8}\u{c}\u{1}\u{7f} \u{e9} \u{25b8} \u{1f6e0} \u{2028} ~";
         let want = concat!(
             r#""a\u0022b\\c/d\u003Ce\u003Ef\u0026g\u0027h\u002Bi\u0060j\n\r\t\b\f"#,
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn relaxed_escaping_matches_unsafe_relaxed_json_escaping() {
+    fn relaxed_escaping_leaves_non_ascii_and_html_characters() {
         let s = "a\"b\\c/d<e>f&g'h+i`j\n\r\t\u{8}\u{c}\u{1}\u{7f} \u{e9} \u{25b8} \u{1f6e0} \u{2028} ~";
         let opts = Options {
             escaping: Escaping::Relaxed,
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::approx_constant)]
-    fn doubles_match_dotnet_round_trip_format() {
+    fn doubles_use_the_shortest_round_trip_digits() {
         let cases: &[(f64, &str)] = &[
             (0.0, "0"),
             (1.0, "1"),
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn indented_output_matches_write_indented() {
+    fn indented_output_uses_two_spaces() {
         let v = json!({"A": [], "B": {}, "C": null, "D": [1, 2]});
         assert_eq!(
             to_string_indented(&v),

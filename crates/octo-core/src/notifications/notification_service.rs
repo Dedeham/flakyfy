@@ -1,4 +1,4 @@
-//! The rendering half of `Services/Notifications/NotificationService.cs`: which events are
+//! The rendering half of the notification service: which events are
 //! switched on, and the text every transport carries. The fan-out is
 //! `octo::services::notifications::notification_service`.
 
@@ -18,7 +18,7 @@ pub fn is_enabled(s: &NotificationSettings, r#type: NotificationEventType) -> bo
     }
 }
 
-/// `$"{value}"` of a nullable: null interpolates as nothing.
+/// An optional value as text: None is the empty string.
 fn text<T: ToString>(value: &Option<T>) -> String {
     value.as_ref().map(ToString::to_string).unwrap_or_default()
 }
@@ -189,7 +189,7 @@ fn album_fields(evt: &NotificationEvent) -> Vec<(String, String)> {
     .collect()
 }
 
-/// `{n:N0}` with the invariant culture: thousands separated by commas.
+/// A whole number with its thousands separated by commas.
 fn group_thousands(value: i64) -> String {
     let digits = value.unsigned_abs().to_string();
     let mut out = String::new();
@@ -202,7 +202,7 @@ fn group_thousands(value: i64) -> String {
     if value < 0 { format!("-{out}") } else { out }
 }
 
-/// `F1`/`F0` round half to even on the double's exact value in .NET 9, as Rust's `{:.1}` does.
+/// One decimal (or none) rounded half to even on the double's exact value, as `{:.1}` does.
 pub fn format_size(bytes: i64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
@@ -325,9 +325,9 @@ mod tests {
         assert!(!msg.body.contains("Both"));
     }
 
-    /// Rust-only: the exact texts, checked against the C# Render.
+    /// The exact texts, checked against the reference rendering.
     #[test]
-    fn rendered_texts_match_the_csharp_word_for_word() {
+    fn rendered_texts_match_word_for_word() {
         let completed = render(&NotificationEvent {
             artist: Some("Sigur Rós".into()),
             title: Some("Hoppípolla".into()),
@@ -396,9 +396,9 @@ mod tests {
         );
     }
 
-    /// Rust-only: sizes and lengths as .NET 9 formats them (`F1` rounds half to even).
+    /// Sizes and lengths as the cards show them (one decimal, rounded half to even).
     #[test]
-    fn sizes_and_durations_format_as_dotnet() {
+    fn sizes_and_durations_format_with_half_to_even_rounding() {
         assert_eq!(format_size(512), "0 KB");
         assert_eq!(format_size(1536), "2 KB");
         assert_eq!(format_size(2560), "2 KB");

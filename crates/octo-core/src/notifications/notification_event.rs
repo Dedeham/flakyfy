@@ -1,4 +1,4 @@
-//! Port of `Services/Notifications/NotificationEvent.cs`.
+//! What happened, in domain terms, for the notification sinks.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NotificationEventType {
@@ -39,7 +39,7 @@ pub struct NotificationEvent {
     pub size_bytes: Option<i64>,
 
     /// Track length in seconds. On the completed path this is the enriched
-    /// song's duration (EnrichAsync runs before the hook); on started it is
+    /// song's duration (enrichment runs before the hook); on started it is
     /// the routing's expected duration.
     pub duration_seconds: Option<i32>,
 
@@ -66,7 +66,7 @@ pub struct NotificationEvent {
 }
 
 impl NotificationEvent {
-    /// `new NotificationEvent { Type = type }`: every other field unset. Fill the rest with
+    /// An event of `type` with every other field unset. Fill the rest with
     /// `NotificationEvent { artist: .., ..NotificationEvent::new(type) }`.
     pub fn new(r#type: NotificationEventType) -> Self {
         Self {

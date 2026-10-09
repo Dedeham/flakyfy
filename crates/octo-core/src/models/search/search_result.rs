@@ -1,5 +1,3 @@
-//! Port of `Models/Search/SearchResult.cs`.
-
 use serde::{Deserialize, Serialize};
 
 use crate::models::domain::{album::Album, artist::Artist, song::Song};

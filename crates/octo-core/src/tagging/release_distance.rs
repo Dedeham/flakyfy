@@ -1,4 +1,4 @@
-//! Port of `Services/Tagging/ReleaseDistance.cs`.
+//! How far a release candidate is from what a download asked for, key by key.
 
 use std::collections::BTreeSet;
 
@@ -249,14 +249,14 @@ impl ReleaseDistance {
         ScoredCandidate::new(candidate.clone(), value, distance.into_breakdown())
     }
 
-    /// The same title is 0. A title that reads the same once stylised characters are letters, or
+    /// The same title is 0. A title that reads the same once stylized characters are letters, or
     /// agrees by the looser readings, is 0.1; one that holds the other is 0.3; another title is 1.
     /// A version the request never asked for (a remix, a live take) is 1 whatever the core says. A
     /// version the request asked for and the candidate's title lacks is 0.8, unless the release's
     /// kind carries it (a live album, a remix release): the music database writes "live" in a
     /// recording's disambiguation and the release's kind, not always in its title.
     ///
-    /// `request_markers` is unused, as in the C#: the title's own markers are read again here.
+    /// `request_markers` is unused: the title's own markers are read again here.
     pub fn title_penalty(
         requested: &str,
         candidate: &str,
@@ -326,7 +326,7 @@ impl ReleaseDistance {
         utf16_len(shorter) >= Self::MIN_PREFIX_CORE && longer.contains(shorter)
     }
 
-    /// The same artist is 0, the same once stylised characters are letters 0.1, one side
+    /// The same artist is 0, the same once stylized characters are letters 0.1, one side
     /// unknown 0.5, a different guest list 1. A credit that only holds the other's name is 0.2.
     pub fn artist_penalty(requested: &str, credit: &str, credits: &[String]) -> f64 {
         match SongIdentity::compare_artists_with_credits(requested, credit, credits) {
@@ -507,10 +507,8 @@ fn has_edition(title: &str) -> bool {
 }
 
 /// A barcode as given, and as the 12-digit UPC when it is a longer form with leading zeros.
-/// Only digits count; anything else is not a barcode.
-///
-/// Port of `ITunesCoverArtLookup.BarcodeForms` (the cover lookups, task 2-D), which the
-/// distance needs; that port can call this one.
+/// Only digits count; anything else is not a barcode. The distance needs it, and the cover
+/// lookups can call this one.
 pub fn barcode_forms(code: Option<&str>) -> Vec<String> {
     let digits: String = code
         .unwrap_or("")

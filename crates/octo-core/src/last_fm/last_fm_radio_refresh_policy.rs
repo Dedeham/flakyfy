@@ -1,5 +1,4 @@
-//! Port of `Services/LastFm/LastFmRadioRefreshPolicy.cs`: when a listener's stations are due a
-//! rebuild.
+//! When a listener's stations are due a rebuild.
 
 use std::time::Duration;
 
@@ -64,7 +63,6 @@ mod tests {
     use super::*;
     use crate::models::radio::{LastFmRadioPlay, LastFmRadioStation};
 
-    // LastFmRadioRefreshQueueTests.Policy_CoversThresholdNewPlayStalenessAndDeterministicStartupJitter
     #[test]
     fn policy_covers_threshold_new_play_staleness_and_deterministic_startup_jitter() {
         let settings = LastFmSettings {
@@ -115,9 +113,9 @@ mod tests {
         assert!((100..=499).contains(&jitter.as_millis()));
     }
 
-    /// What .NET 9 computed for these names.
+    /// The reference values for these names.
     #[test]
-    fn startup_jitter_is_what_dotnet_computed() {
+    fn startup_jitter_matches_the_reference_values() {
         assert_eq!(startup_jitter("Alice"), Duration::from_millis(239));
         assert_eq!(startup_jitter(" bob "), Duration::from_millis(421));
     }

@@ -1,5 +1,3 @@
-//! Port of `Services/Tagging/MatchingSettings.cs`.
-
 use crate::settings::metadata::MetadataSettings;
 use crate::settings::soulseek::SoulseekSettings;
 
@@ -14,7 +12,7 @@ pub struct MatchingSettings {
 }
 
 impl Default for MatchingSettings {
-    /// `MatchingSettings.Default`.
+    /// The chooser's defaults.
     fn default() -> Self {
         Self {
             prefer_original_album: true,

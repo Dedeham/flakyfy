@@ -1,4 +1,4 @@
-//! The pure half of `Services/Common/AcquisitionTracker.cs`: a transfer's progress from slskd's
+//! The pure half of the acquisition tracker: a transfer's progress from slskd's
 //! figures, and the short, path-free error a phone is shown. The tracker itself (the live list
 //! behind the download ring) is `octo::services::common::acquisition_tracker`.
 
@@ -6,7 +6,7 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 
 use super::dotnet;
 
-/// The longest error a row carries, in UTF-16 code units as `string.Length` counted them.
+/// The longest error a row carries, in UTF-16 code units.
 pub const MAX_ERROR_LENGTH: usize = 160;
 
 /// Progress from 0 to 1. The bytes win when both are known, because slskd's percentage is
@@ -56,7 +56,7 @@ fn is_letter_or_number_utf16(c: char) -> bool {
     dotnet::is_letter_utf16(c) || is_number_utf16(c)
 }
 
-/// Where the first sentence ends: the C# `SentenceEnd` regex,
+/// Where the first sentence ends, by the pattern
 /// `(?<=[\p{L}\p{N}'"\)]{4})\.\s+(?=\p{Lu})`. A sentence ends at a full stop after a word of
 /// four or more characters and before a capital, so "Mr. Brightside" and "St. Vincent" stay
 /// whole. The byte index of the full stop, which the match began with.
@@ -80,7 +80,7 @@ fn sentence_end(text: &str) -> Option<usize> {
     None
 }
 
-/// The C# `ServerPath` regex, `(?<![\p{L}\p{N}])(?:[A-Za-z]:\\|/)[^\s'"(),;]+`, replaced with
+/// The server path pattern, `(?<![\p{L}\p{N}])(?:[A-Za-z]:\\|/)[^\s'"(),;]+`, replaced with
 /// "a path". A path on the server is nobody's business away from home. "AC/DC" is not a path: a
 /// letter or digit before the slash rules it out.
 fn replace_server_paths(text: &str) -> String {
@@ -121,7 +121,7 @@ fn replace_server_paths(text: &str) -> String {
 }
 
 /// The longest prefix of at most `units` UTF-16 code units (`text[..units]`), never splitting a
-/// character: C# could cut a surrogate pair in half, which a Rust string cannot hold.
+/// character, since a Rust string cannot hold half of a surrogate pair.
 fn utf16_prefix(text: &str, units: usize) -> &str {
     let mut count = 0;
     for (index, c) in text.char_indices() {
@@ -137,7 +137,6 @@ fn utf16_prefix(text: &str, units: usize) -> &str {
 mod tests {
     use super::*;
 
-    /// `ProgressComesFromTheBytesThenThePercentage`.
     #[test]
     fn progress_comes_from_the_bytes_then_the_percentage() {
         let cases: [(Option<i64>, Option<i64>, Option<f64>, f64); 6] = [
@@ -163,7 +162,6 @@ mod tests {
         assert_eq!(fraction_of(Some(100), Some(0), None), None);
     }
 
-    /// `ErrorsAreShortAndKeepServerPathsHome`.
     #[test]
     fn errors_are_short_and_keep_server_paths_home() {
         let cases = [
@@ -197,8 +195,7 @@ mod tests {
         assert!(safe.ends_with("..."));
     }
 
-    /// Rust-only: nothing to say is no error, only the first line counts, and a path alone is
-    /// a path.
+    /// Nothing to say is no error, only the first line counts, and a path alone is a path.
     #[test]
     fn blank_and_multi_line_errors() {
         assert_eq!(user_safe(None), None);

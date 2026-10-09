@@ -1,8 +1,12 @@
-//! octo-sonic: reads one song and answers with bliss's numbers for how it sounds.
-//! Octo keeps the numbers and finds songs that sound alike; this only reads files,
-//! and only under MUSIC_ROOT. Each file is read by a child process (`octo-sonic read
-//! <path>`): FFmpeg can crash on a damaged file, and a crash there must cost that file,
-//! not the server.
+//! octo-sonic: reads one song and answers with bliss's numbers for how it sounds, and with
+//! its transition profile (where it can blend into the next song). Octo keeps the numbers
+//! and finds songs that sound alike, and hands the profiles to the apps; this only reads
+//! files, and only under MUSIC_ROOT. Each file is read by a child process (`octo-sonic read
+//! <path> [parts]`): FFmpeg can crash on a damaged file, and a crash there must cost that
+//! file, not the server.
+
+mod automix;
+mod transition;
 
 use std::{path::{Component, Path, PathBuf}, sync::Arc, time::Duration};
 
@@ -30,6 +34,47 @@ struct App {
 #[derive(Deserialize)]
 struct Analyse {
     path: String,
+    /// What to read: "sound" (bliss's numbers) and "transition" (the profile). Only the
+    /// sound when left out, as an Octo that knows nothing of profiles asks.
+    #[serde(default)]
+    parts: Option<Vec<String>>,
+}
+
+/// What a reading covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Parts {
+    sound: bool,
+    transition: bool,
+}
+
+impl Parts {
+    /// From the names asked for; nothing known is the sound alone.
+    fn of<'a>(names: impl IntoIterator<Item = &'a str>) -> Parts {
+        let mut parts = Parts { sound: false, transition: false };
+        for name in names {
+            match name.trim() {
+                "sound" => parts.sound = true,
+                "transition" => parts.transition = true,
+                _ => {}
+            }
+        }
+        if !parts.sound && !parts.transition {
+            parts.sound = true;
+        }
+        parts
+    }
+
+    /// As the child takes them on its command line.
+    fn arg(self) -> String {
+        let mut names = Vec::new();
+        if self.sound {
+            names.push("sound");
+        }
+        if self.transition {
+            names.push("transition");
+        }
+        names.join(",")
+    }
 }
 
 fn version() -> u16 {
@@ -44,8 +89,9 @@ fn enabled(value: Option<&str>) -> bool {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() == 3 && args[1] == "read" {
-        std::process::exit(read_one(Path::new(&args[2])));
+    if (args.len() == 3 || args.len() == 4) && args[1] == "read" {
+        let parts = Parts::of(args.get(3).map_or("sound", String::as_str).split(','));
+        std::process::exit(read_one(Path::new(&args[2]), parts));
     }
     tracing_subscriber::fmt::init();
     let root = std::env::var("MUSIC_ROOT").unwrap_or_else(|_| "/music".into());
@@ -80,11 +126,12 @@ async fn stopped() {
     interrupt.await;
 }
 
-/// The child: print the features as JSON on stdout, or the error on stderr. Exit 0 or 2.
-fn read_one(path: &Path) -> i32 {
-    match FFmpegDecoder::song_from_path(path) {
-        Ok(song) => {
-            println!("{}", json!({ "features": song.analysis.as_vec(), "version": version() }));
+/// The child: print what was asked for as JSON on stdout, or the error on stderr. Exit 0
+/// or 2. The song is decoded once (mono, 22050 Hz) for both parts.
+fn read_one(path: &Path, parts: Parts) -> i32 {
+    match read_parts(path, parts) {
+        Ok(answer) => {
+            println!("{answer}");
             0
         }
         Err(e) => {
@@ -93,6 +140,24 @@ fn read_one(path: &Path) -> i32 {
         }
     }
 }
+
+fn read_parts(path: &Path, parts: Parts) -> Result<serde_json::Value, bliss_audio::BlissError> {
+    let decoded = FFmpegDecoder::decode(path)?;
+    let mut answer = serde_json::Map::new();
+    if parts.transition {
+        let profile = transition::analyze(&decoded.sample_array, DECODED_RATE);
+        answer.insert("transition".into(), transition::to_json(&profile));
+    }
+    if parts.sound {
+        let song = bliss_audio::Song::try_from(decoded)?;
+        answer.insert("features".into(), json!(song.analysis.as_vec()));
+        answer.insert("version".into(), json!(version()));
+    }
+    Ok(serde_json::Value::Object(answer))
+}
+
+/// The rate bliss's decoder hands the sound over at, mono.
+const DECODED_RATE: u32 = 22_050;
 
 fn router(app: App) -> Router {
     Router::new().route("/health", get(health)).route("/analyse", post(analyse)).with_state(app)
@@ -104,6 +169,7 @@ async fn health(State(app): State<App>) -> impl IntoResponse {
     if !app.enabled {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
             "ok": false, "off": true, "featuresVersion": version(),
+            "transitionVersion": transition::version(),
             "error": "Sounds alike is off (RADIO_SOUNDS_ALIKE=false)",
         })));
     }
@@ -114,10 +180,12 @@ async fn health(State(app): State<App>) -> impl IntoResponse {
     .await
     .unwrap_or(false);
     if sees {
-        (StatusCode::OK, Json(json!({ "ok": true, "featuresVersion": version() })))
+        (StatusCode::OK, Json(json!({
+            "ok": true, "featuresVersion": version(), "transitionVersion": transition::version(),
+        })))
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
-            "ok": false, "featuresVersion": version(),
+            "ok": false, "featuresVersion": version(), "transitionVersion": transition::version(),
             "error": "cannot see the music folder",
         })))
     }
@@ -136,8 +204,9 @@ async fn analyse(State(app): State<App>, Json(body): Json<Analyse>) -> impl Into
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "not a file" })));
     }
     let _slot = app.slots.acquire().await.expect("semaphore");
+    let parts = Parts::of(body.parts.iter().flatten().map(String::as_str));
     let child = tokio::process::Command::new(&app.program)
-        .arg("read").arg(&path)
+        .arg("read").arg(&path).arg(parts.arg())
         .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn();
@@ -224,6 +293,16 @@ mod tests {
         let (status, value) = health(app(&root)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(value["featuresVersion"], json!(2));
+        assert_eq!(value["transitionVersion"], json!(1));
+    }
+
+    #[test]
+    fn a_reading_asks_for_the_sound_unless_told_otherwise() {
+        assert_eq!(Parts::of([]), Parts { sound: true, transition: false });
+        assert_eq!(Parts::of(["nonsense"]), Parts { sound: true, transition: false });
+        assert_eq!(Parts::of(["transition"]), Parts { sound: false, transition: true });
+        assert_eq!(Parts::of(["sound", " transition"]).arg(), "sound,transition");
+        assert_eq!(Parts::of("transition".split(',')).arg(), "transition");
     }
 
     #[test]
@@ -292,6 +371,6 @@ mod tests {
     fn a_file_that_is_not_music_is_an_error_not_a_crash() {
         let junk = std::env::temp_dir().join("octo-sonic-junk.flac");
         std::fs::write(&junk, b"not audio").unwrap();
-        assert_eq!(read_one(&junk), 2);
+        assert_eq!(read_one(&junk, Parts::of(["sound", "transition"])), 2);
     }
 }

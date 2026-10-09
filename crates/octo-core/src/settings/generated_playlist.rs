@@ -50,9 +50,26 @@ pub struct GeneratedPlaylistSettings {
     /// How recently added a track still counts as new. Environment variable: MIX_NEW_DAYS
     pub new_days: i32,
 
-    /// How a mix is named; "{0}" is the genre or decade. Empty means "{0} Mix".
+    /// How a mix is named; "{0}" is the genre, decade or country. Empty means "{0} Mix".
     /// Environment variable: MIX_NAME_FORMAT
     pub name_format: String,
+
+    /// A mix per country the library's artists are from, as MusicBrainz knows them. Off by
+    /// default: learning the countries takes MusicBrainz lookups in the background.
+    /// Environment variable: COUNTRY_MIXES
+    pub country_mixes: bool,
+
+    /// Which countries get a mix: two-letter codes such as "ES,JP". Empty: any country that
+    /// reaches CreateAt songs. Environment variable: MIX_COUNTRIES
+    pub countries: String,
+
+    /// Most country mixes shown, largest first, on top of MaxPlaylists, so countries never
+    /// take the place of a genre. Environment variable: MIX_MAX_COUNTRY_PLAYLISTS
+    pub max_country_playlists: i32,
+
+    /// The most artists looked up on MusicBrainz in one pass; the rest wait for the next pass.
+    /// Environment variable: COUNTRY_LOOKUPS_PER_REFRESH
+    pub country_lookups_per_refresh: i32,
 
     // ---- Made for you: three lists per listener, on whether or not the genre and decade mixes
     // are. Each is rebuilt once a RefreshHours period from that listener's own plays.
@@ -121,6 +138,10 @@ impl Default for GeneratedPlaylistSettings {
             new_share: 0,
             new_days: 30,
             name_format: "{0} Mix".to_string(),
+            country_mixes: false,
+            countries: String::new(),
+            max_country_playlists: 5,
+            country_lookups_per_refresh: 200,
             new_releases: true,
             rediscover: true,
             deep_cuts: true,
@@ -198,6 +219,30 @@ impl GeneratedPlaylistSettings {
 
     pub fn effective_max_playlists(&self) -> i32 {
         self.max_playlists.clamp(1, 100)
+    }
+
+    pub fn effective_max_country_playlists(&self) -> i32 {
+        self.max_country_playlists.clamp(1, 100)
+    }
+
+    pub fn effective_country_lookups_per_refresh(&self) -> i32 {
+        self.country_lookups_per_refresh.clamp(0, 2000)
+    }
+
+    /// The countries named in [`Self::countries`], upper case, in order, each once; codes that
+    /// are not countries are left out. Empty: every country.
+    pub fn country_codes(&self) -> Vec<&'static str> {
+        let mut codes: Vec<&'static str> = Vec::new();
+        for code in self
+            .countries
+            .split([',', ';', ' '])
+            .filter_map(crate::common::countries::normalize)
+        {
+            if !codes.contains(&code) {
+                codes.push(code);
+            }
+        }
+        codes
     }
 
     pub fn effective_refresh_hours(&self) -> i32 {
@@ -430,6 +475,25 @@ mod tests {
         assert_eq!(s.effective_new_release_artists(), 200);
         assert_eq!(s.effective_rediscover_months(), 3);
         assert!(!s.any_for_you());
+    }
+
+    #[test]
+    fn country_mixes_are_off_by_default_and_read_their_country_list() {
+        let defaults = GeneratedPlaylistSettings::default();
+        assert!(!defaults.country_mixes);
+        assert!(defaults.country_codes().is_empty());
+        assert_eq!(defaults.effective_max_country_playlists(), 5);
+        assert_eq!(defaults.effective_country_lookups_per_refresh(), 200);
+
+        let set = GeneratedPlaylistSettings {
+            countries: " es, jp;XX ES  gb".into(),
+            max_country_playlists: 0,
+            country_lookups_per_refresh: 99_999,
+            ..Default::default()
+        };
+        assert_eq!(set.country_codes(), ["ES", "JP", "GB"]);
+        assert_eq!(set.effective_max_country_playlists(), 1);
+        assert_eq!(set.effective_country_lookups_per_refresh(), 2000);
     }
 
     #[test]

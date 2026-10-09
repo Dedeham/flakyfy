@@ -494,6 +494,13 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("NewShare", n_num(mixes.new_share)),
             ("NewDays", n_num(mixes.new_days)),
             ("NameFormat", n_str(&mixes.name_format)),
+            ("CountryMixes", Node::Bool(mixes.country_mixes)),
+            ("Countries", n_str(&mixes.countries)),
+            ("MaxCountryPlaylists", n_num(mixes.max_country_playlists)),
+            (
+                "CountryLookupsPerRefresh",
+                n_num(mixes.country_lookups_per_refresh),
+            ),
             ("NewReleases", Node::Bool(mixes.new_releases)),
             ("Rediscover", Node::Bool(mixes.rediscover)),
             ("DeepCuts", Node::Bool(mixes.deep_cuts)),

@@ -3,6 +3,7 @@
 pub mod acquisition_tracker;
 pub mod album_fill_in;
 pub mod clock;
+pub mod countries;
 pub mod dotnet;
 pub mod dotnet_random;
 pub mod error;

@@ -26,9 +26,9 @@ use octo_core::common::{SingleFlight, dotnet};
 use octo_core::json::dom::Node;
 use octo_core::library::for_you_lists;
 use octo_core::library::generated_playlist_service::{
-    BLEND_CANDIDATES, FIRST_DECADE, MAX_GENRE_PAGES, POOL_PAGE, StateDocument, UserMixes, apply_hysteresis,
-    blend, describe, dotnet_ticks, for_you_on, is_stale, kinds_of, mixes_on, parse_genres, period_index,
-    playlist_id, seed, select, str_of, user_key,
+    BLEND_CANDIDATES, COUNTRY_PREFIX, FIRST_DECADE, MAX_GENRE_PAGES, POOL_PAGE, StateDocument, UserMixes,
+    active_mixes, apply_hysteresis, blend, country_mixes_on, describe, dotnet_ticks, for_you_on, is_stale,
+    kinds_of, mixes_on, parse_genres, period_index, playlist_id, seed, select, str_of, user_key,
 };
 use octo_core::models::domain::Song;
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind};
@@ -40,6 +40,7 @@ use tracing::{debug, info, warn};
 
 pub use octo_core::library::generated_playlist_service::GeneratedPlaylist;
 
+use super::artist_country::CountryLibrary;
 use super::for_you_lists::{CatalogSeed, Entry, NewReleasesBuilder, mint};
 use crate::services::framework::{DotnetDictionary, MemoryCache};
 use crate::services::last_fm::OperationCanceled;
@@ -98,6 +99,8 @@ pub struct GeneratedPlaylistService {
     /// What New Releases needs (the C# resolved them from a scope when it built the list):
     /// None leaves New Releases as it was, as a provider without them did.
     for_you: Option<ForYouServices>,
+    /// The library walk and artist countries the country mixes share. None: no country mixes.
+    countries: Option<Arc<CountryLibrary>>,
 }
 
 /// The services New Releases is made with: the catalog walk, and the outside song's JSON.
@@ -125,6 +128,7 @@ impl GeneratedPlaylistService {
             rated: Mutex::new(HashMap::new()),
             state: Mutex::new(Mixes::default()),
             for_you: None,
+            countries: None,
         };
         service.load();
         service
@@ -134,6 +138,87 @@ impl GeneratedPlaylistService {
     pub fn with_for_you(mut self, for_you: ForYouServices) -> Self {
         self.for_you = Some(for_you);
         self
+    }
+
+    /// The service with what the country mixes need.
+    pub fn with_countries(mut self, countries: Arc<CountryLibrary>) -> Self {
+        self.countries = Some(countries);
+        self
+    }
+
+    /// Starts a pass over the library's artist countries in the background when the country
+    /// mixes are on and one is due.
+    fn start_country_pass(self: &Arc<Self>, settings: &GeneratedPlaylistSettings) {
+        if !country_mixes_on(settings)
+            || !self
+                .countries
+                .as_ref()
+                .is_some_and(|countries| countries.pass_due())
+        {
+            return;
+        }
+        let service = Arc::clone(self);
+        tokio::spawn(async move { service.country_pass().await });
+    }
+
+    /// One pass over the library's artist countries (see [`CountryLibrary::run_pass`]); when it
+    /// learned something, every listener's country mixes are counted again from it.
+    pub async fn country_pass(self: &Arc<Self>) {
+        let Some(countries) = &self.countries else {
+            return;
+        };
+        let settings = self.settings.current().generated_playlists.clone();
+        let budget = u32::try_from(settings.effective_country_lookups_per_refresh()).unwrap_or(0);
+        if countries.run_pass(budget).await {
+            self.recount_countries();
+        }
+    }
+
+    /// Every listener's country mixes counted again from the last walk and what is known of
+    /// its artists, with the same thresholds as before; nothing else of their mixes changes.
+    fn recount_countries(&self) {
+        let settings = self.settings.current().generated_playlists.clone();
+        let Some(countries) = self.countries.as_ref() else {
+            return;
+        };
+        let Some(walked) = countries.last_walk() else {
+            return;
+        };
+        if !country_mixes_on(&settings) {
+            return;
+        }
+        let counts = walked.counts(countries.lookup(), &settings.country_codes());
+        let kinds = kinds_of(&settings, self.explicit_filter_now());
+        let mut state = self.state.lock();
+        for mixes in state.users.values_mut().filter(|mixes| mixes.kinds == kinds) {
+            mixes.counts.retain(|key, _| !key.starts_with(COUNTRY_PREFIX));
+            mixes.counts.extend(counts.clone());
+            let shown = apply_hysteresis(
+                &counts,
+                &mixes.active,
+                settings.effective_create_at(),
+                settings.effective_remove_below(),
+                settings.effective_max_country_playlists(),
+            );
+            mixes.active.retain(|key| !key.starts_with(COUNTRY_PREFIX));
+            mixes.active.extend(shown);
+        }
+        self.save_locked(&state);
+    }
+
+    /// The songs of the library whose artists are from `code`, from the shared walk.
+    async fn country_pool(&self, code: &str) -> Vec<Node> {
+        let Some(countries) = &self.countries else {
+            return Vec::new();
+        };
+        let walked = match countries.last_walk() {
+            Some(walked) => walked,
+            None => match countries.walk().await {
+                Some(walked) => walked,
+                None => return Vec::new(),
+            },
+        };
+        walked.songs_from(countries.lookup(), code)
     }
 
     /// The server's explicit filter, which New Releases' outside songs obey as search and radio's
@@ -154,6 +239,7 @@ impl GeneratedPlaylistService {
         if dotnet::is_blank(username) || !(mixes_on(&settings) || settings.any_for_you()) {
             return Vec::new();
         }
+        self.start_country_pass(&settings);
 
         let user = user_key(username);
         let now = Utc::now();
@@ -257,6 +343,7 @@ impl GeneratedPlaylistService {
                     .filter(|key| {
                         (settings.genres && key.starts_with("genre:"))
                             || (settings.decades && key.starts_with("decade:"))
+                            || (settings.country_mixes && key.starts_with(COUNTRY_PREFIX))
                     })
                     .map(|key| {
                         let (kind, label) = describe(key);
@@ -326,6 +413,14 @@ impl GeneratedPlaylistService {
                 decade += 10;
             }
         }
+        // Countries from the walk every listener shares, as far as their artists are known by
+        // now: a pass that learns more counts them again for everyone.
+        if country_mixes_on(&settings)
+            && let Some(countries) = &self.countries
+            && let Some(walked) = countries.last_walk()
+        {
+            counts.extend(walked.counts(countries.lookup(), &settings.country_codes()));
+        }
 
         let explicit_filter = self.explicit_filter_now();
         let before = self.state.lock().users.get(&user_key(username)).cloned();
@@ -351,13 +446,7 @@ impl GeneratedPlaylistService {
                 .get(&user)
                 .map(|old| old.active.clone())
                 .unwrap_or_default();
-            let active = apply_hysteresis(
-                &counts,
-                &previous,
-                settings.effective_create_at(),
-                settings.effective_remove_below(),
-                settings.effective_max_playlists(),
-            );
+            let active = active_mixes(&counts, &previous, &settings);
             state.users.insert(
                 user,
                 UserMixes {
@@ -537,45 +626,13 @@ impl GeneratedPlaylistService {
         }
     }
 
-    /// Every song of the listener's library as they see it, 500 at a time, up to
-    /// [`MAX_WALK_PAGES`] pages; None when Navidrome did not answer, even part way: lists made
-    /// from part of a library would show songs the listener owns as outside ones and miss their
-    /// plays, so the lists they have stay instead.
+    /// Every song of the listener's library as they see it: [`walk_library`].
     async fn walk_library(
         &self,
         auth: &IndexMap<String, String>,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<Option<Vec<Node>>> {
-        let mut all: Vec<Node> = Vec::new();
-        for page in 0..MAX_WALK_PAGES {
-            if cancellation_token.is_cancelled() {
-                return Err(OperationCanceled.into());
-            }
-            let extra = [
-                // Navidrome's whole library: an empty phrase, as the duplicate scan walks it.
-                ("query", "\"\"".to_string()),
-                ("songCount", POOL_PAGE.to_string()),
-                ("songOffset", (page * POOL_PAGE).to_string()),
-                ("albumCount", "0".to_string()),
-                ("artistCount", "0".to_string()),
-            ];
-            let Some(songs) = self
-                .fetch_songs(auth, "rest/search3", "searchResult3", &extra)
-                .await
-            else {
-                return Ok(None);
-            };
-            let full = songs.len() as i32 >= POOL_PAGE;
-            all.extend(songs);
-            if !full {
-                return Ok(Some(all));
-            }
-        }
-        info!(
-            "Made for you read the first {} songs of a bigger library",
-            all.len()
-        );
-        Ok(Some(all))
+        walk_library(&self.proxy, auth, cancellation_token).await
     }
 
     /// A Made for you list as stored. Each outside song is made again from its seed, with the
@@ -653,7 +710,9 @@ impl GeneratedPlaylistService {
 
         let settings = self.settings.current().generated_playlists.clone();
         let mut pool: Vec<Node> = Vec::new();
-        if playlist.kind == "decade" {
+        if let Some(code) = playlist.key.strip_prefix(COUNTRY_PREFIX) {
+            pool = self.country_pool(code).await;
+        } else if playlist.kind == "decade" {
             let decade: i32 = playlist
                 .key
                 .get("decade:".len()..)
@@ -969,8 +1028,7 @@ impl GeneratedPlaylistService {
         }
     }
 
-    /// The songs of one Subsonic call, or None when it did not answer: an empty list is a real
-    /// answer and None is not, and only the first may replace what is known.
+    /// The songs of one Subsonic call: [`fetch_songs`].
     async fn fetch_songs(
         &self,
         auth: &IndexMap<String, String>,
@@ -978,31 +1036,7 @@ impl GeneratedPlaylistService {
         container: &str,
         extra: &[(&str, String)],
     ) -> Option<Vec<Node>> {
-        let extra: Vec<(&str, &str)> = extra.iter().map(|(key, value)| (*key, value.as_str())).collect();
-        let Some(result) = self.proxy.relay_safe(endpoint, parameters(auth, &extra)).await else {
-            debug!("Mix lookup {endpoint} failed: no answer");
-            return None;
-        };
-        if result.body.is_empty() {
-            return None;
-        }
-        let root = match Node::parse(&String::from_utf8_lossy(&result.body)) {
-            Ok(root) => root,
-            Err(error) => {
-                debug!("Mix lookup {endpoint} failed: {error}");
-                return None;
-            }
-        };
-        let response = root.get("subsonic-response")?;
-        if response.get("status").and_then(Node::as_str) != Some("ok") {
-            return None;
-        }
-        Some(
-            match response.get(container).and_then(|songs| songs.get("song")) {
-                Some(Node::Array(songs)) => songs.iter().filter(|song| song.is_object()).cloned().collect(),
-                _ => Vec::new(),
-            },
-        )
+        fetch_songs(&self.proxy, auth, endpoint, container, extra).await
     }
 
     fn load(&self) {
@@ -1062,6 +1096,80 @@ fn stored_entry(entry: &Entry, responses: &SubsonicResponseBuilder) -> String {
     song.to_json_string(false)
 }
 
+/// Every song of the listener's library as they see it, 500 at a time, up to
+/// [`MAX_WALK_PAGES`] pages; None when Navidrome did not answer, even part way: lists made
+/// from part of a library would show songs the listener owns as outside ones and miss their
+/// plays, so the lists they have stay instead.
+pub(crate) async fn walk_library(
+    proxy: &SubsonicProxyService,
+    auth: &IndexMap<String, String>,
+    cancellation_token: &CancellationToken,
+) -> anyhow::Result<Option<Vec<Node>>> {
+    let mut all: Vec<Node> = Vec::new();
+    for page in 0..MAX_WALK_PAGES {
+        if cancellation_token.is_cancelled() {
+            return Err(OperationCanceled.into());
+        }
+        let extra = [
+            // Navidrome's whole library: an empty phrase, as the duplicate scan walks it.
+            ("query", "\"\"".to_string()),
+            ("songCount", POOL_PAGE.to_string()),
+            ("songOffset", (page * POOL_PAGE).to_string()),
+            ("albumCount", "0".to_string()),
+            ("artistCount", "0".to_string()),
+        ];
+        let Some(songs) = fetch_songs(proxy, auth, "rest/search3", "searchResult3", &extra).await else {
+            return Ok(None);
+        };
+        let full = songs.len() as i32 >= POOL_PAGE;
+        all.extend(songs);
+        if !full {
+            return Ok(Some(all));
+        }
+    }
+    info!(
+        "Made for you read the first {} songs of a bigger library",
+        all.len()
+    );
+    Ok(Some(all))
+}
+
+/// The songs of one Subsonic call, or None when it did not answer: an empty list is a real
+/// answer and None is not, and only the first may replace what is known.
+pub(crate) async fn fetch_songs(
+    proxy: &SubsonicProxyService,
+    auth: &IndexMap<String, String>,
+    endpoint: &str,
+    container: &str,
+    extra: &[(&str, String)],
+) -> Option<Vec<Node>> {
+    let extra: Vec<(&str, &str)> = extra.iter().map(|(key, value)| (*key, value.as_str())).collect();
+    let Some(result) = proxy.relay_safe(endpoint, parameters(auth, &extra)).await else {
+        debug!("Mix lookup {endpoint} failed: no answer");
+        return None;
+    };
+    if result.body.is_empty() {
+        return None;
+    }
+    let root = match Node::parse(&String::from_utf8_lossy(&result.body)) {
+        Ok(root) => root,
+        Err(error) => {
+            debug!("Mix lookup {endpoint} failed: {error}");
+            return None;
+        }
+    };
+    let response = root.get("subsonic-response")?;
+    if response.get("status").and_then(Node::as_str) != Some("ok") {
+        return None;
+    }
+    Some(
+        match response.get(container).and_then(|songs| songs.get("song")) {
+            Some(Node::Array(songs)) => songs.iter().filter(|song| song.is_object()).cloned().collect(),
+            _ => Vec::new(),
+        },
+    )
+}
+
 fn marks_key(username: &str) -> String {
     format!("marks|{}", user_key(username))
 }
@@ -1092,7 +1200,7 @@ fn until(expires: DateTime<Utc>) -> Duration {
 /// as the sync catalog does, minus anything that named the playlist being read.
 /// In the order the C# `Dictionary` enumerated them, freed slots reused, which is the order the
 /// query is written in.
-fn parameters(auth: &IndexMap<String, String>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(crate) fn parameters(auth: &IndexMap<String, String>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut parameters: DotnetDictionary<String> = DotnetDictionary::new();
     for (key, value) in auth {
         parameters.set(key.clone(), value.clone());

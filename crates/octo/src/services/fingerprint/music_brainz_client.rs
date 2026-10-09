@@ -35,6 +35,7 @@ pub enum MusicBrainzError {
 enum Cached {
     Release(Arc<ReleaseDetails>),
     Json(Value),
+    Text(String),
 }
 
 /// One question for MusicBrainz, asked only when a person keeps a track AcoustID had never heard
@@ -50,8 +51,11 @@ enum Cached {
 pub struct MusicBrainzClient {
     client: reqwest::Client,
     base: Url,
-    /// `SemaphoreSlim(1, 1)` and `_lastCallUtc`: held across the wait and the call.
-    gate: tokio::sync::Mutex<Option<Instant>>,
+    /// `SemaphoreSlim(1, 1)` and `_lastCallUtc`: held across the wait and the call. The
+    /// background lane only ever tries it (see [`Self::get_background`]).
+    gate: tokio::sync::Mutex<Option<LastCall>>,
+    /// How long the background lane waits when the gate is busy.
+    background_backoff: Duration,
     /// Release lookups are remembered a day, since an album's tracks ask for the same
     /// release one by one; searches six hours. Every entry counts as one, so the limit is a count.
     cache: MemoryCache<Cached>,
@@ -64,6 +68,8 @@ impl MusicBrainzClient {
     const MINIMUM_GAP: Duration = Duration::from_millis(1100);
     const RELEASE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
     const SEARCH_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+    const ARTIST_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+    const BACKGROUND_BACKOFF: Duration = Duration::from_secs(5);
 
     pub fn new() -> Self {
         Self::with_base_url(Url::parse(Self::BASE_ADDRESS).expect("the MusicBrainz base address parses"))
@@ -80,6 +86,7 @@ impl MusicBrainzClient {
             client,
             base,
             gate: tokio::sync::Mutex::new(None),
+            background_backoff: Self::BACKGROUND_BACKOFF,
             cache: MemoryCache::new(2000),
         }
     }
@@ -210,19 +217,101 @@ impl MusicBrainzClient {
         }
     }
 
+    /// Where the artist with this MusicBrainz id is from: a two-letter country, empty when
+    /// MusicBrainz names none, None when it could not be asked. On the background lane;
+    /// answers are remembered a day.
+    pub async fn artist_country(&self, mbid: &str) -> Result<Option<String>, MusicBrainzError> {
+        let Some(url) = pure::artist_lookup_url(mbid) else {
+            return Ok(None);
+        };
+        let key = format!("artist|{}", dotnet::to_lower_invariant(mbid.trim()));
+        if let Some(Cached::Text(cached)) = self.cache.get(&key) {
+            return Ok(Some(cached));
+        }
+        let Some(doc) = self.get_background(&url, "artist lookup").await? else {
+            return Ok(None);
+        };
+        let country = pure::artist_country(&doc);
+        self.cache
+            .set(key, Cached::Text(country.clone()), 1, Self::ARTIST_TTL);
+        Ok(Some(country))
+    }
+
+    /// Where the artist of this name is from, by a name search that takes only the same name
+    /// (`pure::searched_artist_country`): a two-letter country, empty when no result is that
+    /// artist or it names no country, None when MusicBrainz could not be asked. On the
+    /// background lane; answers are remembered a day.
+    pub async fn search_artist_country(&self, name: &str) -> Result<Option<String>, MusicBrainzError> {
+        let Some(url) = pure::artist_search_url(name) else {
+            return Ok(None);
+        };
+        let key = format!("artist-search|{}", SongIdentity::key(name));
+        if let Some(Cached::Text(cached)) = self.cache.get(&key) {
+            return Ok(Some(cached));
+        }
+        let Some(doc) = self.get_background(&url, "artist search").await? else {
+            return Ok(None);
+        };
+        let country = pure::searched_artist_country(&doc, name);
+        self.cache
+            .set(key, Cached::Text(country.clone()), 1, Self::ARTIST_TTL);
+        Ok(Some(country))
+    }
+
     /// One request, spaced at least [`Self::MINIMUM_GAP`] after the last. None on any
     /// failure, which every caller reads as "MusicBrainz had nothing to say"; the timeout is
     /// the exception, as it was in the C#.
     async fn get(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
         let mut last_call = self.gate.lock().await;
         if let Some(last) = *last_call {
-            let due = last + Self::MINIMUM_GAP;
+            let due = last.at + Self::MINIMUM_GAP;
             if due > Instant::now() {
                 tokio::time::sleep_until(due).await;
             }
         }
-        *last_call = Some(Instant::now());
+        *last_call = Some(LastCall {
+            at: Instant::now(),
+            background: false,
+        });
+        self.send(relative, what).await
+    }
 
+    /// One request on the background lane, for work nobody is waiting on. It never queues on
+    /// the gate: while the gate is held, or a call that is not its own went out less than
+    /// [`Self::MINIMUM_GAP`] ago, it steps back for [`Self::BACKGROUND_BACKOFF`] and tries
+    /// again, so a download being verified goes first. It takes its turn and lets go of the gate
+    /// before it sends, so a caller arriving meanwhile waits one gap at most.
+    async fn get_background(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
+        loop {
+            let wait = match self.gate.try_lock() {
+                Err(_) => self.background_backoff,
+                Ok(mut last_call) => {
+                    let now = Instant::now();
+                    match *last_call {
+                        Some(last) if last.at + Self::MINIMUM_GAP > now => {
+                            if last.background {
+                                last.at + Self::MINIMUM_GAP - now
+                            } else {
+                                self.background_backoff
+                            }
+                        }
+                        _ => {
+                            *last_call = Some(LastCall {
+                                at: now,
+                                background: true,
+                            });
+                            break;
+                        }
+                    }
+                }
+            };
+            tokio::time::sleep(wait).await;
+        }
+        self.send(relative, what).await
+    }
+
+    /// The request itself, once its turn has come.
+    async fn send(&self, relative: &str, what: &str) -> Result<Option<Value>, MusicBrainzError> {
         let attempt = async {
             let url = resolve(&self.base, relative)?;
             let response = self.client.get(url).send().await?;
@@ -246,6 +335,13 @@ impl MusicBrainzClient {
             }
         }
     }
+}
+
+/// When the last request went out, and whether the background lane sent it.
+#[derive(Debug, Clone, Copy)]
+struct LastCall {
+    at: Instant,
+    background: bool,
 }
 
 /// The music database calls the release identifier makes. A timeout is the error the C#

@@ -602,6 +602,40 @@
       ],
       "reason": "Mixes, Made for you and the chart lists put the listener's hearts and ratings as Navidrome holds them now onto their library songs, so a heart given after a list was made (16-lists/listener-star-hjarta) shows on it at once. Outside songs keep their own marks.",
       "knownDiff": "Lists show current hearts"
+    },
+    {
+      "id": "country-mix-settings",
+      "backlog": "lists",
+      "requests": [
+        "09-admin/settings",
+        "09-admin/settings-with-origin-no-cors",
+        "09-admin/config-sources",
+        "11-signin/in-get-settings",
+        "11-signin/in-get-config-sources",
+        "11-signin/in-header-token",
+        "11-signin/recovery-settings",
+        "11-signin/alt-admin-settings",
+        "14-settings-media/settings-*",
+        "14-settings-media/config-sources-*",
+        "14-settings-media/recovery-reads-settings",
+        "15-radio/settings-learning-*-read",
+        "18-dashboard/settings-*",
+        "90-mutations/settings-after-patch"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "CountryMixes",
+        "Countries",
+        "MaxCountryPlaylists",
+        "CountryLookupsPerRefresh",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ "
+      ],
+      "reason": "Country mixes (off by default): the dashboard's settings and config sources gain GeneratedPlaylists CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh. With the switch off nothing else answers differently: no library walk, no MusicBrainz lookup, no country rows.",
+      "knownDiff": "Country mixes"
     }
   ]
 }

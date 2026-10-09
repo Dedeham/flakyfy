@@ -130,3 +130,77 @@ async fn requests_are_spaced_a_second_apart() {
     client.fetch_isrcs("rec-2").await.expect("no timeout");
     assert!(Instant::now() - start >= Duration::from_millis(1100));
 }
+
+// ---- Where an artist is from, on the background lane ----------------------------------------
+
+const ROSALIA: &str =
+    r#"{"id":"a-rosalia","name":"Rosalía","country":"ES","area":{"name":"Spain","iso-3166-1-codes":["ES"]}}"#;
+
+#[tokio::test]
+async fn an_artist_lookup_reads_the_country_and_remembers_it() {
+    let (client, server) = client(ResponseTemplate::new(200).set_body_string(ROSALIA)).await;
+
+    let first = client.artist_country("A-Rosalia").await.expect("no timeout");
+    let second = client.artist_country("a-rosalia").await.expect("no timeout");
+
+    assert_eq!(first.as_deref(), Some("ES"));
+    assert_eq!(second.as_deref(), Some("ES"));
+    let calls = calls(&server).await;
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].ends_with("/ws/2/artist/A-Rosalia?fmt=json"),
+        "{}",
+        calls[0]
+    );
+}
+
+#[tokio::test]
+async fn an_artist_search_that_could_not_be_asked_is_none_and_not_remembered() {
+    let (client, server) = client(ResponseTemplate::new(503)).await;
+
+    assert_eq!(
+        client.search_artist_country("Rosalía").await.expect("no timeout"),
+        None
+    );
+    assert_eq!(
+        client.search_artist_country("Rosalía").await.expect("no timeout"),
+        None
+    );
+
+    let calls = calls(&server).await;
+    assert_eq!(calls.len(), 2);
+    assert!(
+        calls[0].contains("/ws/2/artist/?query=artist%3A%22Rosal"),
+        "{}",
+        calls[0]
+    );
+}
+
+#[tokio::test]
+async fn background_lookups_step_aside_so_a_download_check_waits_one_gap_at_most() {
+    let (client, _server) = client(ResponseTemplate::new(200).set_body_string(ROSALIA)).await;
+    let client = Arc::new(client);
+    let background = {
+        let client = Arc::clone(&client);
+        tokio::spawn(async move {
+            for i in 0..20 {
+                let _ = client.artist_country(&format!("artist-{i}")).await;
+            }
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // A download being verified asks three questions in a row.
+    let started = std::time::Instant::now();
+    client.fetch_isrcs("rec-1").await.expect("no timeout");
+    let first = started.elapsed();
+    client.fetch_isrcs("rec-2").await.expect("no timeout");
+    client.fetch_isrcs("rec-3").await.expect("no timeout");
+    let all = started.elapsed();
+    background.abort();
+
+    let gap = MusicBrainzClient::MINIMUM_GAP;
+    assert!(first < gap + Duration::from_millis(400), "first {first:?}");
+    // One gap behind the background's last call, then one gap each: never behind its queue.
+    assert!(all < gap * 3 + Duration::from_millis(900), "all {all:?}");
+}

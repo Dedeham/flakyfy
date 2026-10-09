@@ -3,9 +3,8 @@
 //! of `BaseDownloadService.cs`.
 
 use std::path::Path;
-use std::sync::LazyLock;
 
-use octo_core::common::{PathHelper, SongIdentity, dotnet};
+use octo_core::common::{PathHelper, SongIdentity, artist_credit, dotnet};
 use octo_core::fingerprint::VerificationVerdict;
 use octo_core::lyrics::lyrics_text::LyricsText;
 use octo_core::models::domain::Song;
@@ -13,7 +12,6 @@ use octo_core::settings::FolderStructure;
 use octo_media::cover::cover_files;
 use octo_media::tags::KeptIdentityTags;
 use octo_media::tags::tag_writer_extras;
-use regex::Regex;
 use tracing::{debug, error, info, warn};
 
 use super::{BaseDownloadService, FileNotFoundException, RequestedIdentity, file_exists, get_extension};
@@ -61,11 +59,6 @@ pub(super) fn is_audio_file(path: &str) -> bool {
         .iter()
         .any(|known| dotnet::eq_ignore_case(known, extension))
 }
-
-static CREDIT_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*(,|&|\+|/|;|\bx\b|\bvs\.?|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b)")
-        .expect("the credit separator pattern is valid")
-});
 
 impl BaseDownloadService {
     /// Fail a download whose file is not on disk. Everything after the transfer carries on past
@@ -361,40 +354,9 @@ impl BaseDownloadService {
         }
     }
 
-    /// The artist a folder is named after (#49). Splits only on proof: a structured source (the
-    /// MusicBrainz credit, Deezer's main artist) that names either the whole requested string,
-    /// which keeps it whole, or its FIRST credit followed by a separator, which splits there.
-    /// "Earth, Wind & Fire" and "Tyler, The Creator" survive because every structured source
-    /// names them whole. A separator on its own never splits anything.
+    /// The artist a folder is named after: the rule the library tidy follows too.
     pub fn primary_credit(requested: &str, structured: &[Option<&str>]) -> String {
-        let whole = requested.trim();
-        let candidates: Vec<&str> = structured
-            .iter()
-            .flatten()
-            .filter(|value| !dotnet::is_blank(value))
-            .map(|value| value.trim())
-            .collect();
-
-        if whole.is_empty() {
-            return candidates.first().map(|c| c.to_string()).unwrap_or_default();
-        }
-        if candidates.iter().any(|c| dotnet::eq_ignore_case(c, whole)) {
-            return whole.to_string();
-        }
-
-        for candidate in &candidates {
-            if dotnet::utf16_len(whole) > dotnet::utf16_len(candidate)
-                && dotnet::starts_with_ignore_case(whole, candidate)
-            {
-                // OrdinalIgnoreCase matches one character for one, so the candidate spans as many
-                // characters of the whole as it has itself.
-                let rest: String = whole.chars().skip(candidate.chars().count()).collect();
-                if CREDIT_SEPARATOR.is_match(&rest) {
-                    return candidate.to_string();
-                }
-            }
-        }
-        whole.to_string()
+        artist_credit::primary_credit(requested, structured)
     }
 
     /// Walk up from `start_dir` removing empty folders, never past `stop_at`.

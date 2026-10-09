@@ -2,6 +2,7 @@
 
 pub mod acquisition_tracker;
 pub mod album_fill_in;
+pub mod artist_credit;
 pub mod clock;
 pub mod dotnet;
 pub mod dotnet_random;

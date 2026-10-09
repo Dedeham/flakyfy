@@ -61,10 +61,11 @@ impl SongLength {
     pub const STREAM_LENGTH_SLACK_PERCENT: i32 = 7;
 
     /// Whether a length learned from a stream may be written over `known`, the routing's own
-    /// length. It fills an unknown length; a known one it replaces only when it is close, so a
-    /// short clip or a long upload never stands in for the catalog's length.
+    /// length. Only a length that could be one song counts ([`Self::sane_video_length`]). It
+    /// fills an unknown length; a known one it replaces only when it is close, so a short clip
+    /// or a long upload never stands in for the catalog's length.
     pub fn stream_length_may_replace(known: Option<i32>, learned: i32) -> bool {
-        if learned <= 0 {
+        if Self::sane_video_length(Some(learned)).is_none() {
             return false;
         }
         let Some(known) = known.filter(|&k| k > 0) else {
@@ -119,9 +120,11 @@ mod tests {
 
     #[test]
     fn a_stream_length_replaces_a_known_length_only_when_close_to_it() {
-        // Fills an unknown length.
-        assert!(SongLength::stream_length_may_replace(None, 3));
-        assert!(SongLength::stream_length_may_replace(Some(0), 3));
+        // Fills an unknown length, when it could be one song.
+        assert!(SongLength::stream_length_may_replace(None, 200));
+        assert!(SongLength::stream_length_may_replace(Some(0), 200));
+        assert!(!SongLength::stream_length_may_replace(None, 3));
+        assert!(!SongLength::stream_length_may_replace(None, 3600));
         // Within 7 seconds of a short song, within 7 % of a long one.
         assert!(SongLength::stream_length_may_replace(Some(100), 107));
         assert!(SongLength::stream_length_may_replace(Some(100), 93));

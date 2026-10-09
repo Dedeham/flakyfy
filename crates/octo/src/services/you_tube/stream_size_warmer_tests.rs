@@ -209,3 +209,44 @@ fn a_song_with_no_pinned_video_has_no_loudness_to_ask_for() {
     assert!(!warmer.want_loudness(&id));
     assert!(!warmer.want_loudness("unknown"));
 }
+
+fn hit_of(duration: i32) -> YouTubeHit {
+    YouTubeHit {
+        video_id: "vid-c".into(),
+        duration: Some(duration),
+        stream: sized(48_000),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_stream_far_from_the_catalog_length_never_replaces_it() {
+    let mut shim = FakeShim::default();
+    shim.hits.insert("Velvet Static Velvet".into(), hit_of(3));
+    let (registry, _shim, warmer) = warmer_over(shim);
+    let id = registry.register(SoulseekRouting {
+        duration: Some(201),
+        ..song("Velvet Static", "Velvet")
+    });
+
+    warmer.warm_one(&id).await;
+
+    let r = registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(r.you_tube_id.as_deref(), Some("vid-c"));
+    assert_eq!(r.duration, Some(201));
+}
+
+#[tokio::test]
+async fn a_stream_length_fills_an_unknown_length() {
+    let mut shim = FakeShim::default();
+    shim.hits.insert("Velvet Static Velvet".into(), hit_of(3));
+    let (registry, _shim, warmer) = warmer_over(shim);
+    let id = registry.register(SoulseekRouting {
+        duration: None,
+        ..song("Velvet Static", "Velvet")
+    });
+
+    warmer.warm_one(&id).await;
+
+    assert_eq!(registry.lookup(&id).expect("known").snapshot().duration, Some(3));
+}

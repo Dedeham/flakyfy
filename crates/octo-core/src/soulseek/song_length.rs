@@ -55,6 +55,25 @@ impl SongLength {
         seconds.filter(|&s| (Self::MIN_VIDEO_SECONDS..=Self::MAX_VIDEO_SECONDS).contains(&s))
     }
 
+    /// How far a stream's length may sit from a known length and still replace it: 7 seconds,
+    /// or 7 % of a long song.
+    pub const STREAM_LENGTH_SLACK_SECONDS: i32 = 7;
+    pub const STREAM_LENGTH_SLACK_PERCENT: i32 = 7;
+
+    /// Whether a length learned from a stream may be written over `known`, the routing's own
+    /// length. It fills an unknown length; a known one it replaces only when it is close, so a
+    /// short clip or a long upload never stands in for the catalog's length.
+    pub fn stream_length_may_replace(known: Option<i32>, learned: i32) -> bool {
+        if learned <= 0 {
+            return false;
+        }
+        let Some(known) = known.filter(|&k| k > 0) else {
+            return true;
+        };
+        let slack = Self::STREAM_LENGTH_SLACK_SECONDS.max(known * Self::STREAM_LENGTH_SLACK_PERCENT / 100);
+        (learned - known).abs() <= slack
+    }
+
     /// Store a length on the routing unless a stronger source already gave one. Returns
     /// whether it was stored. A missing or zero length is never stored: no length beats a
     /// made-up one.
@@ -96,6 +115,24 @@ mod tests {
             title: Some(title.into()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_stream_length_replaces_a_known_length_only_when_close_to_it() {
+        // Fills an unknown length.
+        assert!(SongLength::stream_length_may_replace(None, 3));
+        assert!(SongLength::stream_length_may_replace(Some(0), 3));
+        // Within 7 seconds of a short song, within 7 % of a long one.
+        assert!(SongLength::stream_length_may_replace(Some(100), 107));
+        assert!(SongLength::stream_length_may_replace(Some(100), 93));
+        assert!(!SongLength::stream_length_may_replace(Some(100), 108));
+        assert!(SongLength::stream_length_may_replace(Some(201), 215));
+        assert!(!SongLength::stream_length_may_replace(Some(201), 216));
+        assert!(SongLength::stream_length_may_replace(Some(600), 642));
+        assert!(!SongLength::stream_length_may_replace(Some(600), 643));
+        // A short stub never stands in for a catalog length.
+        assert!(!SongLength::stream_length_may_replace(Some(201), 3));
+        assert!(!SongLength::stream_length_may_replace(Some(201), 0));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use octo_core::soulseek::{LengthSource, RoutingKind, SoulseekRouting, StreamFacts};
+use octo_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting, StreamFacts};
 use octo_subsonic::subsonic_response_builder::IdRegistry;
 use parking_lot::Mutex;
 use tokio::sync::{Semaphore, mpsc};
@@ -190,7 +190,10 @@ impl StreamSizeWarmer {
         }
         self.registry.remember_stream(song_id, &hit.video_id, &hit.stream);
         if let (Some(d), Some(routing)) = (hit.duration, self.registry.lookup(song_id)) {
-            routing.lock().duration = Some(d);
+            let mut r = routing.lock();
+            if SongLength::stream_length_may_replace(r.duration, d) {
+                r.duration = Some(d);
+            }
         }
         self.registry
             .remember_length(song_id, hit.duration, LengthSource::Video);

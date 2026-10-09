@@ -750,6 +750,44 @@ async fn a_removed_members_waiting_requests_are_canceled_and_cannot_be_approved(
 }
 
 #[tokio::test]
+async fn turning_family_on_over_pool_records_whose_disk_is_missing_marks_nothing() {
+    let w = wired(false).await;
+    let admin = format!("octo_browse={}", w.state.browse_sessions.create("winters"));
+    let pool = &w.state.family_pool_service;
+    // Family was on before and recorded a member's download; its disk is not mounted now.
+    pool.record(crate::services::family::PoolFile {
+        path: format!("{}/Artist/Album/01 Song.flac", pool.pool_root_path()),
+        size: 10,
+        format: "flac".into(),
+        outside_ids: Vec::new(),
+        isrc: None,
+        title: "Song".into(),
+        artist: "Artist".into(),
+        album: "Album".into(),
+        refs: vec!["alex".into()],
+        transcoded_from: None,
+    });
+    let on = w
+        .send(
+            Method::POST,
+            "/api/admin/family/enable",
+            Some(&admin),
+            Some(json!({ "enabled": true })),
+        )
+        .await;
+    assert_eq!(on.status, StatusCode::CONFLICT, "{}", on.body);
+    assert!(on.body.contains("mount"), "{}", on.body);
+    let marker = format!(
+        "{}/{}",
+        pool.pool_root_path(),
+        crate::services::family::pool::POOL_MARKER
+    );
+    assert!(!Path::new(&marker).exists(), "no marker on an empty mount point");
+    assert!(!w.state.settings.current().family.enabled, "Family stays off");
+    assert_eq!(pool.store().list().len(), 1, "the record is kept");
+}
+
+#[tokio::test]
 async fn turning_family_on_probes_links_and_both_pages_show_them() {
     let w = wired(false).await;
     let admin = format!("octo_browse={}", w.state.browse_sessions.create("winters"));

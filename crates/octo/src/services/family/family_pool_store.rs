@@ -385,4 +385,91 @@ mod tests {
         std::fs::write(&path, b"").expect("emptied by a crash");
         assert!(FamilyPoolStore::new(Some(&path)).load_warning().is_some());
     }
+
+    #[test]
+    fn a_save_torn_by_a_crash_leaves_the_last_whole_file() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-pool.json");
+        let store = FamilyPoolStore::new(Some(&path));
+        store.upsert(file(POOL, &["sam"]));
+        // A crash in the middle of the next save tears its temporary file, never this one.
+        let whole = std::fs::read(&path).expect("written");
+        let temporary = crate::services::state_file::tmp_path(&path);
+        std::fs::write(&temporary, &whole[..whole.len() / 2]).expect("a torn temporary file");
+        let reloaded = FamilyPoolStore::new(Some(&path));
+        assert!(reloaded.load_warning().is_none(), "{:?}", reloaded.load_warning());
+        assert_eq!(reloaded.get(POOL).expect("the last whole file").refs, ["sam"]);
+        // The next save writes over the torn temporary file and leaves none behind.
+        assert!(reloaded.add_ref(POOL, "alex"));
+        assert!(!temporary.exists());
+        assert_eq!(
+            FamilyPoolStore::new(Some(&path)).get(POOL).expect("saved").refs,
+            ["sam", "alex"]
+        );
+    }
+
+    #[test]
+    fn an_empty_or_blank_pool_file_is_broken_not_an_empty_pool() {
+        for blank in ["", " \n\t"] {
+            let dir = tempfile::tempdir().expect("a temp dir");
+            let path = dir.path().join("family-pool.json");
+            std::fs::write(&path, blank).expect("left blank by a crash");
+            let store = FamilyPoolStore::new(Some(&path));
+            assert!(
+                store
+                    .load_warning()
+                    .is_some_and(|w| w.contains("the file is empty")),
+                "{blank:?}: {:?}",
+                store.load_warning()
+            );
+            assert!(store.list().is_empty());
+            assert!(
+                !path.exists(),
+                "{blank:?}: kept aside, never written over as an empty pool"
+            );
+            let kept = std::fs::read_dir(dir.path())
+                .expect("lists")
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("family-pool.json.broken-")
+                })
+                .count();
+            assert_eq!(kept, 1, "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn saves_from_many_threads_leave_the_newest_records_on_disk() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("family-pool.json");
+        let store = std::sync::Arc::new(FamilyPoolStore::new(Some(&path)));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let writers: Vec<_> = (0..8)
+            .map(|n| {
+                let (store, barrier) = (store.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for m in 0..15 {
+                        let path = format!("/members/.pool/A/{n}/{m}.flac");
+                        store.upsert(file(&path, &["sam"]));
+                        store.add_ref(&path, "alex");
+                        if m % 3 == 0 {
+                            store.remove_ref(&path, "sam");
+                        }
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("joins");
+        }
+        let mut in_memory = store.list();
+        let mut on_disk = FamilyPoolStore::new(Some(&path)).list();
+        in_memory.sort_by(|a, b| a.path.cmp(&b.path));
+        on_disk.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(in_memory.len(), 120);
+        assert_eq!(on_disk, in_memory, "the last save wrote the newest records");
+    }
 }

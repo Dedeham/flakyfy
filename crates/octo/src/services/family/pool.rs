@@ -18,15 +18,20 @@
 //! a member let go, a sweep) claims the pool files it works on for its whole run, so two
 //! changes to one file never overlap, while changes to different files go on side by side. The
 //! pool's lock is held only while a change reads and writes the record and decides what to do,
-//! never across a copy, a move or a call to Navidrome, and every file operation runs on a
-//! blocking thread.
+//! never across a copy, a move or a call to Navidrome (its guard cannot cross an `.await` in a
+//! change that builds), and every file operation runs on a blocking thread. Each change runs
+//! as a task of its own, so it goes to its end even when whoever asked for it stops waiting:
+//! its claims are let go of only once its last file operation is over, and a panic lets go of
+//! them too.
 //!
 //! Octo writes a marker file ([`POOL_MARKER`]) in the pool folder when Family is turned on. A
 //! pool folder without it is taken for an empty mount point where the members disk should be:
 //! no record is forgotten and no member download is placed there until it is back.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::io;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -73,8 +78,40 @@ const POOL_MARKER_TEXT: &str =
 pub const POOL_NOT_READY: &str = "The family library's disk is not ready. Try again later.";
 
 /// Sweeps for pool files deleted by hand run at most this often, and a file goes only when it
-/// has been missing at least this long.
+/// has been missing at least this long, both measured by a [`SteadyClock`].
 pub const SWEEP_SPACING: Duration = Duration::from_secs(10 * 60);
+
+/// Time as it really passes for the pool, from when the pool was made. It only goes forward,
+/// whatever the wall clock is set to, so a clock set by hand or by a time server never makes
+/// sweeps run closer together or a file look missing for longer than it was.
+#[derive(Clone)]
+pub struct SteadyClock(Arc<dyn Fn() -> Duration + Send + Sync>);
+
+impl SteadyClock {
+    /// The system's steady clock.
+    pub fn system() -> Self {
+        let start = std::time::Instant::now();
+        SteadyClock(Arc::new(move || start.elapsed()))
+    }
+
+    /// A clock that reads the given function, for tests that move time along. It must never
+    /// go back.
+    pub fn new(elapsed: impl Fn() -> Duration + Send + Sync + 'static) -> Self {
+        SteadyClock(Arc::new(elapsed))
+    }
+
+    /// How long since the clock started.
+    pub fn elapsed(&self) -> Duration {
+        (self.0)()
+    }
+}
+
+/// A pool file a sweep found missing: when, by the steady clock and by the wall clock.
+#[derive(Debug, Clone, Copy)]
+struct Miss {
+    since: Duration,
+    at: DateTime<Utc>,
+}
 
 /// What becomes of the files only a removed member had.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +208,25 @@ pub enum PoolError {
     NotInPool(String),
     #[error("{0}")]
     Io(#[from] io::Error),
+}
+
+/// What a change answers when it could not run because Octo is stopping.
+fn stopping() -> PoolError {
+    PoolError::Io(io::Error::other("Octo is stopping"))
+}
+
+/// Why the pool folder's marker file was not written.
+#[derive(Debug, thiserror::Error)]
+pub enum NotMarked {
+    /// Octo recorded pool files and none of them is in the pool folder: the members disk may
+    /// not be mounted, and the folder may be its empty mount point.
+    #[error(
+        "none of the {recorded} family downloads Octo recorded is in the pool folder, so the members disk may not be mounted"
+    )]
+    DiskMissing { recorded: usize },
+    /// Writing it failed.
+    #[error("{0}")]
+    Io(io::Error),
 }
 
 impl PoolError {
@@ -355,6 +411,29 @@ pub enum ScanCheck {
     Unsure,
 }
 
+/// The lock a change holds while it reads and writes the pool's records. Its guard
+/// ([`RecordsHeld`]) may not move to another thread, so an `async` change that held it across
+/// an `.await` would make a future that may not either; every change runs as a task of its own
+/// ([`FamilyPool::whole`]), which needs a future that may, so such a change does not build.
+#[derive(Default)]
+struct RecordsLock(Mutex<()>);
+
+/// A change's hold on the pool's records, let go of when dropped.
+struct RecordsHeld<'a> {
+    _held: parking_lot::MutexGuard<'a, ()>,
+    /// Makes the hold one that may not move to another thread, whatever the mutex allows.
+    _here: PhantomData<*const ()>,
+}
+
+impl RecordsLock {
+    fn lock(&self) -> RecordsHeld<'_> {
+        RecordsHeld {
+            _held: self.0.lock(),
+            _here: PhantomData,
+        }
+    }
+}
+
 /// Pool files that changes are working on now, each held by one change at a time.
 #[derive(Default)]
 struct Claims {
@@ -444,20 +523,26 @@ pub struct FamilyPool {
     shared_root: Box<dyn Fn() -> String + Send + Sync>,
     mode: RwLock<LinkMode>,
     /// Held while a change reads and writes the records and decides what to do; never across a
-    /// copy, a move or a call to Navidrome.
-    records: Mutex<()>,
+    /// copy, a move, a call to Navidrome or any other `.await`.
+    records: RecordsLock,
     /// The pool files changes are working on.
     claims: Claims,
-    /// When the last sweep ran.
-    last_sweep: Mutex<Option<DateTime<Utc>>>,
+    /// When the last sweep ran, by the steady clock.
+    last_sweep: Mutex<Option<Duration>>,
     /// Pool files sweeps found missing, with when they were first found missing; a file goes
     /// only when a sweep at least [`SWEEP_SPACING`] later finds it missing still.
-    misses: Mutex<HashMap<String, DateTime<Utc>>>,
+    misses: Mutex<HashMap<String, Miss>>,
+    /// The wall clock, for what the log says.
     clock: RwLock<Clock>,
+    /// The steady clock sweeps are spaced by.
+    steady: RwLock<SteadyClock>,
     timing: PoolTiming,
     /// How long each copy waits before it starts (tests make copies slow with it).
     #[cfg(test)]
     copy_pause: Mutex<Duration>,
+    /// How many sweeps got past the spacing (tests count them).
+    #[cfg(test)]
+    sweeps_run: std::sync::atomic::AtomicUsize,
 }
 
 /// The services a [`FamilyPool`] works with.
@@ -497,14 +582,17 @@ impl FamilyPool {
             quarantine,
             shared_root: parts.shared_root,
             mode: RwLock::new(mode),
-            records: Mutex::new(()),
+            records: RecordsLock::default(),
             claims: Claims::default(),
             last_sweep: Mutex::new(None),
             misses: Mutex::new(HashMap::new()),
             clock: RwLock::new(Clock::system()),
+            steady: RwLock::new(SteadyClock::system()),
             timing,
             #[cfg(test)]
             copy_pause: Mutex::new(Duration::ZERO),
+            #[cfg(test)]
+            sweeps_run: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -512,13 +600,43 @@ impl FamilyPool {
         self.me.upgrade()
     }
 
-    /// Reads the time from `clock` from now on (tests move it along).
+    /// Reads the wall clock time from `clock` from now on (tests move it along).
     pub fn set_clock(&self, clock: Clock) {
         *self.clock.write() = clock;
     }
 
+    /// Spaces sweeps by `steady` from now on (tests move it along).
+    pub fn set_steady_clock(&self, steady: SteadyClock) {
+        *self.steady.write() = steady;
+    }
+
     fn now(&self) -> DateTime<Utc> {
         self.clock.read().now()
+    }
+
+    fn steady_now(&self) -> Duration {
+        self.steady.read().elapsed()
+    }
+
+    /// Runs `change` as a task of its own and waits for it, so the change goes to its end,
+    /// holding its claims until its last file operation is over, even when whoever asked for it
+    /// stops waiting (a dropped web request, an aborted download). A panic in the change is
+    /// the caller's panic again, its claims let go of on the way. `stopped` is the answer when
+    /// the change cannot run because Octo is stopping.
+    async fn whole<R, F, Fut>(&self, stopped: R, change: F) -> R
+    where
+        F: FnOnce(Arc<FamilyPool>) -> Fut,
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let Some(pool) = self.arc() else {
+            return stopped;
+        };
+        match tokio::spawn(change(pool)).await {
+            Ok(done) => done,
+            Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Err(_) => stopped,
+        }
     }
 
     /// Makes every copy wait `pause` before it starts.
@@ -646,25 +764,35 @@ impl FamilyPool {
     /// Writes the marker file when the pool folder plainly is the pool: nothing is recorded yet
     /// (so nothing could be forgotten by mistake), or a recorded file is there. A folder with
     /// records but none of their files is left without one: it is most likely an empty mount
-    /// point, and members' downloads wait until the disk is back. Answers whether the marker is
-    /// there now.
-    pub fn keep_marker(&self) -> bool {
+    /// point, and members' downloads wait until the disk is back. Done when Family is turned
+    /// on, and when Octo starts with Family on. Answers why the marker is not there now.
+    pub fn mark_when_plainly_ours(&self) -> Result<(), NotMarked> {
         if self.pool_ready() {
-            return true;
+            return Ok(());
         }
         let recorded = self.store.list();
         let ours = recorded.is_empty() || recorded.iter().any(|file| Path::new(&file.path).is_file());
         if !ours {
-            warn!(
-                "FAMILY {} has no {POOL_MARKER} file and none of the {} pool files Octo recorded; its disk may not be mounted, so no member download is placed there until it is",
-                self.pool_root_path(),
-                recorded.len()
-            );
-            return false;
+            return Err(NotMarked::DiskMissing {
+                recorded: recorded.len(),
+            });
         }
-        match self.mark_pool_root() {
+        self.mark_pool_root().map_err(NotMarked::Io)
+    }
+
+    /// [`Self::mark_when_plainly_ours`], saying in the log why the marker is not there. Answers
+    /// whether it is there now.
+    pub fn keep_marker(&self) -> bool {
+        match self.mark_when_plainly_ours() {
             Ok(()) => true,
-            Err(e) => {
+            Err(NotMarked::DiskMissing { recorded }) => {
+                warn!(
+                    "FAMILY {} has no {POOL_MARKER} file and none of the {recorded} pool files Octo recorded; its disk may not be mounted, so no member download is placed there until it is",
+                    self.pool_root_path()
+                );
+                false
+            }
+            Err(NotMarked::Io(e)) => {
                 warn!(
                     "FAMILY could not write {POOL_MARKER} in {}: {e}",
                     self.pool_root_path()
@@ -690,6 +818,15 @@ impl FamilyPool {
     /// for it. Nothing changes once a link has ever been shown, or for anything but a link.
     /// Answers whether the link became a copy.
     pub async fn copy_unshown_link(&self, user: &str, link: &str) -> bool {
+        let (user, link) = (user.to_string(), link.to_string());
+        self.whole(false, move |pool| async move {
+            pool.copy_unshown_link_now(&user, &link).await
+        })
+        .await
+    }
+
+    /// [`Self::copy_unshown_link`] on the caller's task.
+    async fn copy_unshown_link_now(&self, user: &str, link: &str) -> bool {
         if self.links_seen() {
             return false;
         }
@@ -747,6 +884,15 @@ impl FamilyPool {
     /// probed for links again, and only when that probe fails does every member get copies from
     /// now on ([`Self::fall_back_to_copies`]). Answers whether that happened now.
     pub async fn copy_shown_where_link_was_not(&self, song: &str) -> bool {
+        let song = song.to_string();
+        self.whole(false, move |pool| async move {
+            pool.copy_shown_where_link_was_not_now(&song).await
+        })
+        .await
+    }
+
+    /// [`Self::copy_shown_where_link_was_not`] on the caller's task.
+    async fn copy_shown_where_link_was_not_now(&self, song: &str) -> bool {
         if self.links_seen() {
             return false;
         }
@@ -777,7 +923,7 @@ impl FamilyPool {
             );
             return false;
         }
-        self.fall_back_to_copies().await;
+        self.fall_back_to_copies_now().await;
         true
     }
 
@@ -785,6 +931,12 @@ impl FamilyPool {
     /// restarts), and every link made so far becomes a copy, written beside the link before it
     /// takes the link's place. Answers how many links were replaced.
     pub async fn fall_back_to_copies(&self) -> usize {
+        self.whole(0, |pool| async move { pool.fall_back_to_copies_now().await })
+            .await
+    }
+
+    /// [`Self::fall_back_to_copies`] on the caller's task.
+    async fn fall_back_to_copies_now(&self) -> usize {
         {
             let _records = self.records.lock();
             *self.mode.write() = LinkMode::Copy;
@@ -881,8 +1033,12 @@ impl FamilyPool {
     /// index the file is there, and starts a scan of their library. Doing it twice changes
     /// nothing. Answers the link's path.
     pub async fn link(&self, pool_path: &str, user: &str) -> Result<String, PoolError> {
-        let _claim = self.claims.claim(&[pool_path]).await;
-        self.link_claimed(pool_path, user).await
+        let (pool_path, user) = (pool_path.to_string(), user.to_string());
+        self.whole(Err(stopping()), move |pool| async move {
+            let _claim = pool.claims.claim(&[&pool_path]).await;
+            pool.link_claimed(&pool_path, &user).await
+        })
+        .await
     }
 
     /// [`Self::link`] for a change that holds the file's claim already.
@@ -921,6 +1077,20 @@ impl FamilyPool {
             }
             self.store.add_ref(pool_path, &member.username);
         }
+        // Removing a member takes them out of the family, then lets go of every pool file still
+        // recorded for them. A member taken out while this link was being made is seen here, and
+        // gets nothing: either way no link is left for someone who is gone.
+        if self.family.member(&member.username).is_none() {
+            self.remove_link_claimed(pool_path, &member.username).await;
+            let left = {
+                let _records = self.records.lock();
+                self.store.remove_ref(pool_path, &member.username)
+            };
+            if left.is_none_or(|left| left == 0) {
+                self.gc_claimed(pool_path).await;
+            }
+            return Err(PoolError::NotMember(member.username));
+        }
         if let Some(library_id) = member.personal_library_id {
             self.index.note_placed(library_id, &link, size);
             self.library.trigger_library_scan_of(library_id).await;
@@ -932,6 +1102,16 @@ impl FamilyPool {
     /// the trash once nobody has it.
     pub async fn unlink(&self, pool_path: &str, user: &str) -> Result<(), PoolError> {
         let member = self.member_named(user)?;
+        let pool_path = pool_path.to_string();
+        self.whole(Err(stopping()), move |pool| async move {
+            pool.unlink_now(&pool_path, &member).await;
+            Ok(())
+        })
+        .await
+    }
+
+    /// [`Self::unlink`] for a member, on the caller's task.
+    async fn unlink_now(&self, pool_path: &str, member: &Member) {
         let _claim = self.claims.claim(&[pool_path]).await;
         self.remove_link_claimed(pool_path, &member.username).await;
         let left = {
@@ -944,18 +1124,27 @@ impl FamilyPool {
         if let Some(library_id) = member.personal_library_id {
             self.library.trigger_library_scan_of(library_id).await;
         }
-        Ok(())
     }
 
     /// Lets go of a download that landed for `user` after they stopped wanting it (their
-    /// request was closed while it was on its way, as they left the family): their link and
-    /// their reference go, and the file goes to the trash when nobody else has it. Whether or
-    /// not they are still a member.
+    /// request was closed while it was on its way, as they left the family, or it could not be
+    /// put in their library): their link and their reference go, and the file goes to the
+    /// trash when nobody else has it. Whether or not they are still a member.
     pub async fn let_go(&self, pool_path: &str, user: &str) {
         if self.relative_in_pool(pool_path).is_none() {
             return;
         }
-        let name = self.member_name(user);
+        let (pool_path, name) = (pool_path.to_string(), self.member_name(user));
+        self.whole(
+            (),
+            move |pool| async move { pool.let_go_now(&pool_path, &name).await },
+        )
+        .await;
+    }
+
+    /// [`Self::let_go`] for `name`, on the caller's task.
+    async fn let_go_now(&self, pool_path: &str, name: &str) {
+        let name = name.to_string();
         let _claim = self.claims.claim(&[pool_path]).await;
         if valid_username(&name) {
             self.remove_link_claimed(pool_path, &name).await;
@@ -967,7 +1156,7 @@ impl FamilyPool {
         if left.is_none_or(|left| left == 0) {
             self.gc_claimed(pool_path).await;
         }
-        info!("FAMILY {name} no longer wanted {pool_path} when it landed; let go of it");
+        info!("FAMILY let go of {pool_path} for {name}, who no longer wants it");
     }
 
     /// Removes `name`'s link to a pool file (with its companions' links and any folders left
@@ -989,18 +1178,26 @@ impl FamilyPool {
     /// [`SWEEP_SPACING`], and a file goes only when a sweep at least that long after the one
     /// that first missed it misses it still. Nothing goes while the pool folder lacks Octo's
     /// marker file (a members disk that is not mounted looks like every file gone, and a
-    /// download onto its empty mount point makes the folder look alive). Answers how many
+    /// download onto its empty mount point makes the folder look alive). Time is read from the
+    /// steady clock, so a wall clock set back or forward changes nothing. Answers how many
     /// files went.
     pub async fn sweep_dangling(&self) -> usize {
-        let now = self.now();
-        let spacing = sweep_spacing();
+        self.whole(0, |pool| async move { pool.sweep_dangling_now().await })
+            .await
+    }
+
+    /// [`Self::sweep_dangling`] on the caller's task.
+    async fn sweep_dangling_now(&self) -> usize {
+        let (now, wall) = (self.steady_now(), self.now());
         {
             let mut last = self.last_sweep.lock();
-            if last.is_some_and(|at| now - at < spacing) {
+            if last.is_some_and(|at| now.saturating_sub(at) < SWEEP_SPACING) {
                 return 0;
             }
             *last = Some(now);
         }
+        #[cfg(test)]
+        self.sweeps_run.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let recorded = self.store.list();
         if recorded.is_empty() {
             self.misses.lock().clear();
@@ -1027,23 +1224,25 @@ impl FamilyPool {
             self.misses.lock().clear();
             return 0;
         };
-        let gone: Vec<String> = {
+        let gone: Vec<(String, Miss)> = {
             let mut misses = self.misses.lock();
             misses.retain(|path, _| missing.contains(path));
             let mut gone = Vec::new();
             for path in missing {
                 match misses.get(&path) {
-                    Some(first) if now - *first >= spacing => gone.push(path),
+                    Some(first) if now.saturating_sub(first.since) >= SWEEP_SPACING => {
+                        gone.push((path, *first));
+                    }
                     Some(_) => {}
                     None => {
-                        misses.insert(path, now);
+                        misses.insert(path, Miss { since: now, at: wall });
                     }
                 }
             }
             gone
         };
         let mut count = 0;
-        for path in gone {
+        for (path, first) in gone {
             let _claim = self.claims.claim(&[&path]).await;
             self.misses.lock().remove(&path);
             let Some(file) = self.store.get(&path) else {
@@ -1071,7 +1270,8 @@ impl FamilyPool {
                 warn!("FAMILY could not forget {path}'s mapping: {e}");
             }
             warn!(
-                "FAMILY {path} is gone from the pool; removed the links of {}",
+                "FAMILY {path} is gone from the pool (missing since {}); removed the links of {}",
+                first.at.to_rfc3339(),
                 file.refs.join(", ")
             );
             count += 1;
@@ -1084,8 +1284,12 @@ impl FamilyPool {
     /// disk is never trashed, whatever the record says: the record learns of them again.
     /// True when it went.
     pub async fn gc(&self, pool_path: &str) -> bool {
-        let _claim = self.claims.claim(&[pool_path]).await;
-        self.gc_claimed(pool_path).await
+        let pool_path = pool_path.to_string();
+        self.whole(false, move |pool| async move {
+            let _claim = pool.claims.claim(&[&pool_path]).await;
+            pool.gc_claimed(&pool_path).await
+        })
+        .await
     }
 
     /// [`Self::gc`] for a change that holds the file's claim already.
@@ -1174,8 +1378,12 @@ impl FamilyPool {
     /// moves to `new_path`, the old file goes to the trash, and their stars and family playlist
     /// entries follow the song once the index finds it again. Answers the members moved.
     pub async fn repoint(&self, old_path: &str, new_path: &str) -> Vec<String> {
-        let _claim = self.claims.claim(&[old_path, new_path]).await;
-        self.repoint_claimed(old_path, new_path).await
+        let (old_path, new_path) = (old_path.to_string(), new_path.to_string());
+        self.whole(Vec::new(), move |pool| async move {
+            let _claim = pool.claims.claim(&[&old_path, &new_path]).await;
+            pool.repoint_claimed(&old_path, &new_path).await
+        })
+        .await
     }
 
     /// [`Self::repoint`] for a change that holds both files' claims already.
@@ -1245,8 +1453,12 @@ impl FamilyPool {
     /// keeps their link, and the pool keeps the file for them: then the shared library gets a
     /// copy. Answers its new path.
     pub async fn promote(&self, pool_path: &str) -> Result<String, PoolError> {
-        let _claim = self.claims.claim(&[pool_path]).await;
-        self.promote_claimed(pool_path, None).await
+        let pool_path = pool_path.to_string();
+        self.whole(Err(stopping()), move |pool| async move {
+            let _claim = pool.claims.claim(&[&pool_path]).await;
+            pool.promote_claimed(&pool_path, None).await
+        })
+        .await
     }
 
     /// A song the owner already has a copy of at `path`, as the owner may have it: a pool file
@@ -1257,14 +1469,18 @@ impl FamilyPool {
         if self.relative_in_pool(path).is_none() {
             return Some(path.to_string());
         }
-        let _claim = self.claims.claim(&[path]).await;
-        match self.promote_claimed(path, None).await {
-            Ok(moved) => Some(moved),
-            Err(e) => {
-                warn!("FAMILY could not move {path} into the shared library for the owner: {e}");
-                None
+        let path = path.to_string();
+        self.whole(None, move |pool| async move {
+            let _claim = pool.claims.claim(&[&path]).await;
+            match pool.promote_claimed(&path, None).await {
+                Ok(moved) => Some(moved),
+                Err(e) => {
+                    warn!("FAMILY could not move {path} into the shared library for the owner: {e}");
+                    None
+                }
             }
-        }
+        })
+        .await
     }
 
     /// [`Self::promote`] for a change that holds the file's claim already. `leaving` (a member
@@ -1448,10 +1664,44 @@ impl FamilyPool {
         let target = self
             .pool_place_of_shared(shared_path)
             .ok_or_else(|| PoolError::NotInPool(shared_path.to_string()))?;
-        let _claim = self.claims.claim(&[&target]).await;
+        let (shared_path, outside_key, song) = (
+            shared_path.to_string(),
+            outside_key.map(str::to_string),
+            song.cloned(),
+        );
+        self.whole(Err(stopping()), move |pool| async move {
+            let _claim = pool.claims.claim(&[&target]).await;
+            let linked = pool
+                .copy_shared_claimed(
+                    &shared_path,
+                    &member,
+                    &target,
+                    outside_key.as_deref(),
+                    song.as_ref(),
+                )
+                .await;
+            // A copy nobody could be given is not kept.
+            if linked.is_err() && pool.store.get(&target).is_some_and(|file| file.refs.is_empty()) {
+                pool.gc_claimed(&target).await;
+            }
+            linked
+        })
+        .await
+    }
+
+    /// [`Self::copy_shared_for`] for a change that holds the claim on `target`, the copy's
+    /// place in the pool.
+    async fn copy_shared_claimed(
+        &self,
+        shared_path: &str,
+        member: &Member,
+        target: &str,
+        outside_key: Option<&str>,
+        song: Option<&Song>,
+    ) -> Result<String, PoolError> {
         let (from, to, pause) = (
             PathBuf::from(shared_path),
-            PathBuf::from(&target),
+            PathBuf::from(target),
             self.copy_pause(),
         );
         let (copied, size) = on_disk(move || -> io::Result<(bool, u64)> {
@@ -1477,9 +1727,9 @@ impl FamilyPool {
         }
         {
             let _records = self.records.lock();
-            self.record_shared_copy(&target, size, outside_key, song);
+            self.record_shared_copy(target, size, outside_key, song);
         }
-        self.link_claimed(&target, &member.username).await
+        self.link_claimed(target, &member.username).await
     }
 
     /// Records a pool copy of a shared file as a copy of `song`. A record it already has gains
@@ -1545,7 +1795,14 @@ impl FamilyPool {
     /// became of the files.
     pub async fn release_member(&self, user: &str, choice: FilesChoice) -> Result<Released, PoolError> {
         let member = self.member_named(user)?;
-        let name = member.username.clone();
+        self.whole(Err(stopping()), move |pool| async move {
+            pool.release_member_now(member.username, choice).await
+        })
+        .await
+    }
+
+    /// [`Self::release_member`] for the member named `name`, on the caller's task.
+    async fn release_member_now(&self, name: String, choice: FilesChoice) -> Result<Released, PoolError> {
         let mut released = Released::default();
         let mut failure: Option<PoolError> = None;
         for listed in self.store.refs_of(&name) {
@@ -1806,8 +2063,56 @@ impl FamilyPlacement for FamilyPool {
         external_id: &str,
         members: &[String],
     ) -> Option<String> {
+        let (path, song, provider, external_id, members) = (
+            path.to_string(),
+            song.clone(),
+            provider.to_string(),
+            external_id.to_string(),
+            members.to_vec(),
+        );
+        self.whole(None, move |pool| async move {
+            pool.placed_now(&path, &song, &provider, &external_id, &members)
+                .await
+        })
+        .await
+    }
+
+    async fn settle(
+        &self,
+        path: &str,
+        members: &[String],
+        wants_shared: bool,
+        outside_key: Option<&str>,
+    ) -> String {
+        // With Family off nothing is in the pool and nobody gets a copy: the file stays put.
+        if !self.active() {
+            return path.to_string();
+        }
+        let (owned, members, outside_key) = (
+            path.to_string(),
+            members.to_vec(),
+            outside_key.map(str::to_string),
+        );
+        self.whole(path.to_string(), move |pool| async move {
+            pool.settle_now(&owned, &members, wants_shared, outside_key.as_deref())
+                .await
+        })
+        .await
+    }
+}
+
+impl FamilyPool {
+    /// [`FamilyPlacement::placed`] on the caller's task.
+    async fn placed_now(
+        &self,
+        path: &str,
+        song: &Song,
+        provider: &str,
+        external_id: &str,
+        members: &[String],
+    ) -> Option<String> {
         // Each new pool file is a moment to let go of any that went missing by hand.
-        self.sweep_dangling().await;
+        self.sweep_dangling_now().await;
         let key = key_of(provider, external_id);
         let older = self
             .find(Some(&key), song.isrc.as_deref(), &song.artist, &song.title)
@@ -1856,7 +2161,8 @@ impl FamilyPlacement for FamilyPool {
         first
     }
 
-    async fn settle(
+    /// [`FamilyPlacement::settle`] on the caller's task.
+    async fn settle_now(
         &self,
         path: &str,
         members: &[String],
@@ -1967,11 +2273,6 @@ fn unrecorded_file(pool_path: &str, size: u64, refs: Vec<String>) -> PoolFile {
         refs,
         transcoded_from: None,
     }
-}
-
-/// How far apart sweeps are, as a time difference.
-fn sweep_spacing() -> TimeDelta {
-    TimeDelta::seconds(SWEEP_SPACING.as_secs() as i64)
 }
 
 /// Runs file work on a blocking thread, so a slow disk never holds up the async workers.
@@ -2346,3 +2647,7 @@ fn probe(root: &Path) -> bool {
 #[cfg(test)]
 #[path = "pool_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pool_property_tests.rs"]
+mod property_tests;

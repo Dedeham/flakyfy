@@ -166,7 +166,9 @@ pub trait PersonalFolders: Send + Sync {
     async fn remove_if_empty(&self, username: &str);
     /// Makes a link in the members folder, reads through it and removes it.
     async fn probe_links(&self) -> LinkMode;
-    /// Writes the pool's marker file (making the pool folder first), as Family is turned on.
+    /// Writes the pool's marker file (making the pool folder first), as Family is turned on,
+    /// unless the pool's records name files none of which is there (its disk may not be
+    /// mounted): then what the owner reads about it.
     async fn mark_pool(&self) -> Result<(), String> {
         Ok(())
     }
@@ -1395,7 +1397,7 @@ impl FamilyService {
             }
         }
         state.family_store.remove_member(&member.username);
-        state.family_request_service.close_member(&member.username);
+        state.family_request_service.close_member(&member.username).await;
         state.family_saved.remove_user(&member.username);
         state.browse_sessions.revoke_user(&member.username);
         self.applied_libraries

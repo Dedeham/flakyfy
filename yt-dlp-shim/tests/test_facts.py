@@ -88,11 +88,11 @@ def test_a_search_payload_carries_its_videos_facts():
 
 
 def test_facts_answers_from_what_is_known_without_running_yt_dlp(monkeypatch):
-    app._facts_put("vid-known", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
+    app._facts_put("vid-known01", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
     monkeypatch.setattr(app, "_run", lambda *a, **k: pytest.fail("no yt-dlp run for a known video"))
-    answer = app.app.test_client().get("/facts?id=vid-known")
+    answer = app.app.test_client().get("/facts?id=vid-known01")
     assert answer.status_code == 200
-    assert answer.get_json() == {"video_id": "vid-known", "itag": "140", "size": 6755585, "ext": "m4a", "abr": 129}
+    assert answer.get_json() == {"video_id": "vid-known01", "itag": "140", "size": 6755585, "ext": "m4a", "abr": 129}
 
 
 def test_facts_resolves_an_unknown_video_with_the_format_line(monkeypatch):
@@ -103,12 +103,36 @@ def test_facts_resolves_an_unknown_video_with_the_format_line(monkeypatch):
         return "140|6755585|m4a|129.486\n" + URL_140 + "\n"
 
     monkeypatch.setattr(app, "_run", run)
-    answer = app.app.test_client().get("/facts?id=vid-cold&bg=1")
+    answer = app.app.test_client().get("/facts?id=vid-cold001&bg=1")
     assert answer.get_json()["size"] == 6755585
     assert "--print" in calls[0] and facts.FORMAT_PRINT in calls[0]
-    assert app._url_cache_get("vid-cold") == URL_140
+    assert app._url_cache_get("vid-cold001") == URL_140
 
 
 def test_facts_is_502_when_nothing_resolves(monkeypatch):
     monkeypatch.setattr(app, "_run", lambda *a, **k: None)
     assert app.app.test_client().get("/facts?id=vid-nothing").status_code == 502
+
+
+@pytest.mark.parametrize(
+    "value,valid",
+    [
+        ("dQw4w9WgXcQ", True),
+        ("a-b_c-d_e-f", True),
+        ("dQw4w9WgXc", False),
+        ("dQw4w9WgXcQQ", False),
+        ("dQw4w9WgXc!", False),
+        ("../../etc/x", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_a_video_id_is_eleven_letters_digits_dashes_or_underscores(value, valid):
+    assert facts.is_video_id(value) is valid
+
+
+def test_facts_refuses_an_id_that_is_not_a_video_id_without_running_yt_dlp(monkeypatch):
+    monkeypatch.setattr(app, "_run", lambda *a, **k: pytest.fail("no yt-dlp run for a bad id"))
+    for bad in ("short", "dQw4w9WgXcQ%20--exec", "ytsearch1:x"):
+        answer = app.app.test_client().get(f"/facts?id={bad}")
+        assert answer.status_code == 400, bad

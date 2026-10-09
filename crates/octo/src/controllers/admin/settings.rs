@@ -144,6 +144,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("EnableSyncCatalog", Node::Bool(subsonic.enable_sync_catalog)),
             ("SyncCatalogClients", n_str(&subsonic.sync_catalog_clients)),
             ("SyncCatalogMaxSongs", n_num(subsonic.sync_catalog_max_songs)),
+            (
+                "StreamSizeWarmPerMinute",
+                n_num(subsonic.stream_size_warm_per_minute),
+            ),
             ("StorageMode", name(subsonic.storage_mode)),
             ("DownloadMode", name(subsonic.download_mode)),
             ("DownloadOnStar", Node::Bool(subsonic.download_on_star)),

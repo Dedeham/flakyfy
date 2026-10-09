@@ -505,8 +505,11 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
             .stream_facts(&song.id)
             .unwrap_or_default()
     };
-    if !lossless && facts.size.is_none() {
-        state.stream_size_warmer.size_wanted(&song.id);
+    if !lossless {
+        state.stream_size_warmer.outside_listed(&song.id);
+        if facts.size.is_none() {
+            state.stream_size_warmer.size_wanted(&song.id);
+        }
     }
     let declared = facts.declared();
     let suffix = match &declared {

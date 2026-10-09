@@ -53,8 +53,8 @@ fn warmer_over(shim: FakeShim) -> (Arc<ExternalIdRegistry>, Arc<FakeShim>, Strea
 #[test]
 fn the_rate_window_lets_thirty_a_minute_start() {
     let t0 = Instant::now();
-    let mut window = RateWindow::new(PER_MINUTE);
-    for i in 0..PER_MINUTE {
+    let mut window = RateWindow::new(30);
+    for i in 0..30 {
         assert_eq!(
             window.wait_before_next(t0 + Duration::from_millis(i as u64)),
             None,
@@ -75,7 +75,7 @@ async fn a_pinned_song_is_sized_from_its_videos_facts() {
     let id = registry.register(song("Daft Punk", "Emotion"));
     registry.set_you_tube_id(&id, "vid-a");
 
-    assert!(warmer.want(&id));
+    assert!(warmer.want(&id, true));
     warmer.warm_one(&id).await;
 
     assert_eq!(registry.stream_facts(&id), Some(sized(6_755_585)));
@@ -114,24 +114,24 @@ async fn an_unpinned_song_gets_the_video_a_play_would_pick_and_its_size() {
 async fn sized_unknown_and_recently_tried_songs_are_not_queued_twice() {
     let (registry, _shim, warmer) = warmer_over(FakeShim::default());
     let id = registry.register(song("Daft Punk", "Emotion"));
-    assert!(warmer.want(&id));
+    assert!(warmer.want(&id, true));
     // Already waiting.
-    assert!(!warmer.want(&id));
+    assert!(!warmer.want(&id, true));
     // Tried and given no answer: left alone for an hour.
-    warmer.done(&id);
-    assert!(!warmer.want(&id));
+    warmer.done(&id, None);
+    assert!(!warmer.want(&id, true));
 
     let sized_id = registry.register(song("Justice", "Genesis"));
     registry.set_you_tube_id(&sized_id, "vid-c");
     registry.remember_stream(&sized_id, "vid-c", &sized(1));
-    assert!(!warmer.want(&sized_id));
-    assert!(!warmer.want("unknown"));
+    assert!(!warmer.want(&sized_id, true));
+    assert!(!warmer.want("unknown", true));
     let artist = registry.register(SoulseekRouting {
         kind: RoutingKind::Artist,
         artist: Some("Justice".into()),
         ..Default::default()
     });
-    assert!(!warmer.want(&artist));
+    assert!(!warmer.want(&artist, true));
 }
 
 #[test]
@@ -139,10 +139,10 @@ fn a_full_queue_drops_new_rows() {
     let (registry, _shim, warmer) = warmer_over(FakeShim::default());
     for i in 0..QUEUE_CAPACITY {
         let id = registry.register(song("Artist", &format!("Song {i}")));
-        assert!(warmer.want(&id), "row {i}");
+        assert!(warmer.want(&id, true), "row {i}");
     }
     let late = registry.register(song("Artist", "One too many"));
-    assert!(!warmer.want(&late));
+    assert!(!warmer.want(&late, true));
     // Dropped, not remembered: it can be queued again once there is room.
     assert!(!warmer.queued.lock().contains(&late));
 }
@@ -155,7 +155,7 @@ async fn the_worker_sizes_what_was_queued_and_stops_on_shutdown() {
     let warmer = Arc::new(warmer);
     let id = registry.register(song("Daft Punk", "Emotion"));
     registry.set_you_tube_id(&id, "vid-a");
-    warmer.want(&id);
+    warmer.want(&id, true);
 
     let token = CancellationToken::new();
     let worker = tokio::spawn(warmer.clone().run(token.clone()));
@@ -187,7 +187,7 @@ async fn a_played_song_asks_for_its_measured_loudness_even_with_its_size_known()
     registry.remember_stream(&id, "vid-a", &sized(6_755_585));
 
     // Sized: a listing alone asks nothing.
-    assert!(!warmer.want(&id));
+    assert!(!warmer.want(&id, true));
     assert!(warmer.want_loudness(&id));
     warmer.warm_one(&id).await;
 
@@ -198,7 +198,7 @@ async fn a_played_song_asks_for_its_measured_loudness_even_with_its_size_known()
     );
     assert_eq!(*shim.asked.lock(), vec!["facts vid-a".to_string()]);
     // Known now: a later play asks nothing more.
-    warmer.done(&id);
+    warmer.done(&id, None);
     assert!(!warmer.want_loudness(&id));
 }
 
@@ -267,4 +267,123 @@ async fn a_clip_length_never_fills_an_unknown_length() {
     warmer.warm_one(&id).await;
 
     assert_eq!(registry.lookup(&id).expect("known").snapshot().duration, None);
+}
+
+fn pinned(registry: &ExternalIdRegistry, title: &str) -> String {
+    let id = registry.register(song("Artist", title));
+    registry.set_you_tube_id(&id, &format!("vid-{title}"));
+    id
+}
+
+/// Lists `count` outside rows in one answer, every other one pinned to a video, none sized.
+async fn list_rows(
+    warmer: &Arc<StreamSizeWarmer>,
+    registry: &ExternalIdRegistry,
+    count: usize,
+) -> Vec<String> {
+    let ids: Vec<String> = (0..count)
+        .map(|i| {
+            if i % 2 == 0 {
+                pinned(registry, &format!("Pinned {i}"))
+            } else {
+                registry.register(song("Artist", &format!("Unpinned {i}")))
+            }
+        })
+        .collect();
+    warmer
+        .listing(async {
+            for id in &ids {
+                warmer.outside_listed(id);
+                warmer.size_wanted(id);
+            }
+        })
+        .await;
+    ids
+}
+
+#[tokio::test]
+async fn a_short_answer_may_search_for_its_unpinned_songs() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    let warmer = Arc::new(warmer);
+    let ids = list_rows(&warmer, &registry, SEARCH_LISTING_MAX).await;
+    let queued = warmer.queued.lock().clone();
+    assert!(ids.iter().all(|id| queued.contains(id)), "every row queued");
+}
+
+#[tokio::test]
+async fn a_long_answer_starts_no_searches_but_still_sizes_its_pinned_songs() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    let warmer = Arc::new(warmer);
+    let ids = list_rows(&warmer, &registry, SEARCH_LISTING_MAX + 1).await;
+    let queued = warmer.queued.lock().clone();
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(queued.contains(id), i % 2 == 0, "row {i}");
+    }
+}
+
+#[test]
+fn a_row_listed_outside_any_answer_never_starts_a_search() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    let unpinned = registry.register(song("Daft Punk", "Emotion"));
+    let pinned = pinned(&registry, "Genesis");
+    warmer.size_wanted(&unpinned);
+    warmer.size_wanted(&pinned);
+    let queued = warmer.queued.lock().clone();
+    assert!(!queued.contains(&unpinned));
+    assert!(queued.contains(&pinned));
+}
+
+#[test]
+fn zero_a_minute_turns_the_warmer_off() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    let warmer = warmer.with_per_minute(Arc::new(|| 0));
+    let id = pinned(&registry, "Genesis");
+    assert!(!warmer.want(&id, true));
+    assert!(!warmer.want_loudness(&id));
+}
+
+#[test]
+fn five_a_minute_by_default() {
+    let (_registry, _shim, warmer) = warmer_over(FakeShim::default());
+    assert_eq!(warmer.per_minute(), 5);
+}
+
+#[test]
+fn five_failed_or_empty_lookups_in_a_row_pause_the_warmer_for_thirty_minutes() {
+    let t0 = Instant::now();
+    let mut breaker = Breaker::default();
+    for _ in 0..BREAKER_MISSES - 1 {
+        breaker.record(false, t0);
+    }
+    assert_eq!(breaker.paused_for(t0), None);
+    breaker.record(false, t0);
+    assert_eq!(BREAKER_MISSES, 5);
+    assert_eq!(BREAKER_PAUSE, Duration::from_secs(30 * 60));
+    assert_eq!(breaker.paused_for(t0), Some(BREAKER_PAUSE));
+    assert_eq!(breaker.paused_for(t0 + BREAKER_PAUSE), None);
+}
+
+#[test]
+fn a_lookup_that_answers_starts_the_count_of_misses_again() {
+    let t0 = Instant::now();
+    let mut breaker = Breaker::default();
+    for _ in 0..BREAKER_MISSES - 1 {
+        breaker.record(false, t0);
+    }
+    breaker.record(true, t0);
+    for _ in 0..BREAKER_MISSES - 1 {
+        breaker.record(false, t0);
+    }
+    assert_eq!(breaker.paused_for(t0), None);
+}
+
+#[tokio::test]
+async fn lookups_that_come_back_empty_trip_the_breaker() {
+    let (registry, _shim, warmer) = warmer_over(FakeShim::default());
+    for i in 0..BREAKER_MISSES {
+        let id = pinned(&registry, &format!("Song {i}"));
+        let answered = warmer.warm_one(&id).await;
+        warmer.done(&id, answered);
+    }
+    assert!(warmer.paused_for(Instant::now()).is_some());
 }

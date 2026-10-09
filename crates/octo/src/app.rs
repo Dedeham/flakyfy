@@ -1045,10 +1045,17 @@ impl Stores {
         });
         let you_tube_resolver = Arc::new(YouTubeResolver::new(settings));
         // Every row the response builder sends without a size asks this to learn one.
-        let stream_size_warmer = Arc::new(StreamSizeWarmer::new(
-            external_id_registry.clone(),
-            you_tube_resolver.clone(),
-        ));
+        let warm_settings = settings.clone();
+        let stream_size_warmer = Arc::new(
+            StreamSizeWarmer::new(external_id_registry.clone(), you_tube_resolver.clone()).with_per_minute(
+                Arc::new(move || {
+                    warm_settings
+                        .current()
+                        .subsonic
+                        .effective_stream_size_warm_per_minute()
+                }),
+            ),
+        );
         Stores {
             download_history: Arc::new(DownloadHistoryService::new(
                 config_dir.join("downloads-history.json"),

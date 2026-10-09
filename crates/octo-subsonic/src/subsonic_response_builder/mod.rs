@@ -122,6 +122,10 @@ pub trait IdRegistry: Send + Sync {
 
     /// An outside song went out without its size: a chance to learn it for next time.
     fn size_wanted(&self, _song_id: &str) {}
+
+    /// An outside song that streams from YouTube is in the answer being built, with its size
+    /// or without, so the registry knows how many such rows one answer lists.
+    fn outside_listed(&self, _song_id: &str) {}
 }
 
 /// Handles building Subsonic API responses in both XML and JSON formats.
@@ -903,6 +907,7 @@ impl SubsonicResponseBuilder {
             }
             fields.insert("replayGain".into(), Value::Object(replay_gain));
         }
+        self.id_registry.outside_listed(song_id);
         if facts.size.is_none() {
             self.id_registry.size_wanted(song_id);
         }

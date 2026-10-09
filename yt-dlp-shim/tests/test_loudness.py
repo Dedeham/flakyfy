@@ -136,13 +136,13 @@ def test_a_measurement_holds_a_background_slot_and_lands_in_facts(monkeypatch):
             self.target()
 
     monkeypatch.setattr(app.threading, "Thread", InlineThread)
-    assert app._maybe_measure_loudness("vid-measured", "https://example/x")
+    assert app._maybe_measure_loudness("vidMeasured", "https://example/x")
     assert started
     # Known now: a second play measures nothing.
-    assert not app._maybe_measure_loudness("vid-measured", "https://example/x")
+    assert not app._maybe_measure_loudness("vidMeasured", "https://example/x")
 
-    app._facts_put("vid-measured", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
-    answer = app.app.test_client().get("/facts?id=vid-measured").get_json()
+    app._facts_put("vidMeasured", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
+    answer = app.app.test_client().get("/facts?id=vidMeasured").get_json()
     assert answer["track_gain"] == -10.0 and answer["track_peak"] == 1.135011
 
 

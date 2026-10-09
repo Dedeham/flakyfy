@@ -219,6 +219,12 @@ pub struct SubsonicSettings {
     /// Environment variable: SYNC_CATALOG_MAX_SONGS
     pub sync_catalog_max_songs: i32,
 
+    /// How many outside songs a minute have their stream size learned in the background, so
+    /// the next answer listing them carries it (default: 5, range 0-30). Each costs YouTube one
+    /// extraction. 0 turns the background lookups off.
+    /// Environment variable: STREAM_SIZE_WARM_PER_MINUTE
+    pub stream_size_warm_per_minute: i32,
+
     /// Directory name for storing playlist .m3u files (default: "playlists")
     /// Environment variable: PLAYLISTS_DIRECTORY
     /// Relative to the music library root directory
@@ -347,6 +353,7 @@ impl Default for SubsonicSettings {
             enable_sync_catalog: true,
             sync_catalog_clients: "Symfonium".to_string(),
             sync_catalog_max_songs: 1000,
+            stream_size_warm_per_minute: 5,
             playlists_directory: "playlists".to_string(),
             download_on_star: true,
             download_album_on_star: true,
@@ -368,6 +375,10 @@ impl Default for SubsonicSettings {
 impl SubsonicSettings {
     pub fn effective_sync_catalog_max_songs(&self) -> i32 {
         self.sync_catalog_max_songs.clamp(50, 5000)
+    }
+
+    pub fn effective_stream_size_warm_per_minute(&self) -> usize {
+        self.stream_size_warm_per_minute.clamp(0, 30) as usize
     }
 
     pub fn effective_heart_download_sources(&self) -> Vec<HeartDownloadStep> {
@@ -509,6 +520,25 @@ mod tests {
             (steps[0].song_enabled, steps[0].album_enabled),
             (Some(true), Some(false))
         );
+    }
+
+    #[test]
+    fn stream_size_warming_is_five_a_minute_by_default_and_zero_turns_it_off() {
+        assert_eq!(
+            SubsonicSettings::default().effective_stream_size_warm_per_minute(),
+            5
+        );
+        for (configured, expected) in [(0, 0), (-3, 0), (12, 12), (500, 30)] {
+            let s = SubsonicSettings {
+                stream_size_warm_per_minute: configured,
+                ..Default::default()
+            };
+            assert_eq!(
+                s.effective_stream_size_warm_per_minute(),
+                expected,
+                "{configured}"
+            );
+        }
     }
 
     #[test]

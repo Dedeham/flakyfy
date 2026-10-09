@@ -1162,7 +1162,8 @@
         "^\\$\\.GeneratedPlaylists\\.MaxCountryPlaylists:\\ only\\ in\\ B\\ \\(5\\)$",
         "^\\$\\.GeneratedPlaylists\\.LikedSongsName:\\ only\\ in\\ B\\ \\(Liked\\ Songs\\)$",
         "^\\$\\.GeneratedPlaylists\\.ChartCountry:\\ only\\ in\\ B\\ \\(auto\\)$",
-        "^\\$\\.keys:\\ array\\ length\\ 177\\ !=\\ 189$",
+        "^\\$\\.Subsonic\\.StreamSizeWarmPerMinute:\\ only\\ in\\ B\\ \\(5\\)$",
+        "^\\$\\.keys:\\ array\\ length\\ 177\\ !=\\ 190$",
         "^\\$\\.keys\\[26\\]\\.Key:\\ Soulseek:BaseUrl\\ !=\\ Soulseek:Enabled$",
         "^\\$\\.keys\\[26\\]\\.Value:\\ http://stubs:5030\\ !=\\ $",
         "^\\$\\.keys\\[27\\]\\.Key:\\ Soulseek:Username\\ !=\\ Soulseek:BaseUrl$",
@@ -1521,10 +1522,11 @@
         "^\\$\\.persisted\\.GeneratedPlaylists\\.MaxCountryPlaylists:\\ only\\ in\\ B\\ \\(5\\)$",
         "^\\$\\.persisted\\.GeneratedPlaylists\\.LikedSongsName:\\ only\\ in\\ B\\ \\(Liked\\ Songs\\)$",
         "^\\$\\.persisted\\.GeneratedPlaylists\\.ChartCountry:\\ only\\ in\\ B\\ \\(auto\\)$",
+        "^\\$\\.persisted\\.Subsonic\\.StreamSizeWarmPerMinute:\\ only\\ in\\ B\\ \\(5\\)$",
         "^\\$\\.persisted\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$",
         "^\\$\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$"
       ],
-      "reason": "Every settings answer (settings, raw-config, config-sources, a save's persisted copy, settings.json) now carries all of the new keys at once: GeneratedPlaylists Charts and ChartCountry, LikedSongs, LikedSongsName and LikedSongsMax, CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh, Lidarr WebhookSecret, Soulseek Enabled, RadioSources ListenBrainzRadioMode and the two new LibraryActions (seven actions), with the config-sources rows they shift and the trimmed slskd web address. One answer can be explained by one entry only, so the single-change entries (charts-settings-listed, liked-songs-first, country-mix-settings, lidarr-webhook-secret-listed, soulseek-enabled-listed, lb-radio-mode-listed, wrong-lyrics-wrong-cover-actions, config-sources-fixed-mask, slskd-web-url-trimmed) no longer match these answers; this entry pins the combined diff line by line.",
+      "reason": "Every settings answer (settings, raw-config, config-sources, a save's persisted copy, settings.json) now carries all of the new keys at once: GeneratedPlaylists Charts and ChartCountry, LikedSongs, LikedSongsName and LikedSongsMax, CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh, Lidarr WebhookSecret, Soulseek Enabled, RadioSources ListenBrainzRadioMode, Subsonic StreamSizeWarmPerMinute (listed last in config-sources, so it shifts no row; its settings.json and byte-count lines are pinned by the next parity run) and the two new LibraryActions (seven actions), with the config-sources rows they shift and the trimmed slskd web address. One answer can be explained by one entry only, so the single-change entries (charts-settings-listed, liked-songs-first, country-mix-settings, lidarr-webhook-secret-listed, soulseek-enabled-listed, lb-radio-mode-listed, wrong-lyrics-wrong-cover-actions, config-sources-fixed-mask, slskd-web-url-trimmed) no longer match these answers; this entry pins the combined diff line by line.",
       "knownDiff": "Settings answers with every new key"
     },
     {

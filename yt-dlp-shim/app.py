@@ -915,6 +915,8 @@ def stream_facts():
     video_id = request.args.get("id", "").strip()
     if not video_id:
         abort(400, "missing id")
+    if not stream_info.is_video_id(video_id):
+        abort(400, "not a video id")
     known = _facts_get(video_id)
     if known.get("size") is None:
         if not _resolve_url(video_id, _is_bg()):

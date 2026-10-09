@@ -129,6 +129,13 @@ async fn test_host_points_at_a_closed_port_not_a_real_server() {
 }
 
 #[tokio::test]
+async fn settings_list_how_many_stream_sizes_are_learned_a_minute() {
+    let (_, app) = factory();
+    let document = get(&app, "/api/admin/settings").await.json();
+    assert_eq!(document["Subsonic"]["StreamSizeWarmPerMinute"], 5);
+}
+
+#[tokio::test]
 async fn settings_report_restart_pending_as_a_list() {
     let (_, app) = factory();
     let reply = get(&app, "/api/admin/settings").await;
@@ -653,9 +660,10 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, Liked Songs'
     // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, the
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
-    // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled and
-    // RadioSources:ListenBrainzRadioMode.
-    assert_eq!(rows.len(), 189);
+    // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
+    // RadioSources:ListenBrainzRadioMode and Subsonic:StreamSizeWarmPerMinute.
+    assert_eq!(rows.len(), 190);
+    assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
     assert_eq!(row("RadioSources:ListenBrainzRadioMode")["IsSecret"], false);

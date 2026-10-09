@@ -164,6 +164,7 @@ Enums:
 | `EnableSyncCatalog` | `ENABLE_SYNC_CATALOG` (compose only, not in `.env.example`) | bool | true / `true` / `true` | - | Live | yes |
 | `SyncCatalogClients` | `SYNC_CATALOG_CLIENTS` (compose only) | string (comma list) | `Symfonium` / `Symfonium` / `Symfonium` | Split on `,`, entries trimmed, empties dropped. **A client matches when its `c` parameter *contains* an entry, ignoring case** (a substring match, not equality). | Live | yes |
 | `SyncCatalogMaxSongs` | `SYNC_CATALOG_MAX_SONGS` (compose only) | int | 1000 / `1000` / `1000` | `Math.Clamp(v, 50, 5000)` | Live | yes |
+| `StreamSizeWarmPerMinute` | `STREAM_SIZE_WARM_PER_MINUTE` | int | 5 / `5` / `5` | Rust only. Outside songs a minute whose stream size is learned in the background; `Clamp(0, 30)`, 0 turns the lookups off. Listed last in config-sources. | Live | yes |
 | `PlaylistsDirectory` | - | string | `playlists` / `playlists` / - | **Dead:** its only consumer, `PlaylistSyncService`, is never registered in DI (`GetService` returns null). It would be relative to `Library:DownloadPath`, with null falling back to `"playlists"`. | Dead | yes |
 | `DownloadOnStar` | `DOWNLOAD_ON_STAR` | bool | true / `true` / `true` | Feeds only `EffectiveHeartDownloadSources()` when `HeartDownloadSources` is empty. | Live | no |
 | `DownloadAlbumOnStar` | `DOWNLOAD_ALBUM_ON_STAR` | bool | true / `true` / `true` | As above. | Live | no |

@@ -964,27 +964,7 @@ impl LibraryActionExecutor {
         key: &str,
         carry_star: bool,
     ) -> bool {
-        let seams = self.seams.lock().clone();
-        let mut kept = false;
-        let mut attempt = 0;
-        while attempt < seams.history_attempts.max(1) && !kept {
-            if attempt % 8 == 0 {
-                match &seams.force_scan {
-                    Some(scan) => {
-                        scan().await;
-                    }
-                    None => {
-                        self.library.trigger_library_scan(true).await;
-                    }
-                }
-            }
-            tokio::time::sleep(seams.history_poll).await;
-            kept = match &seams.shows_at {
-                Some(shows_at) => shows_at(original.navidrome_id.clone(), new_path.to_string()).await,
-                None => self.resolver.shows_at(&original.navidrome_id, new_path).await,
-            };
-            attempt += 1;
-        }
+        let kept = self.wait_until_shown(&original.navidrome_id, new_path).await;
 
         self.journal.complete(
             key,
@@ -1028,6 +1008,33 @@ impl LibraryActionExecutor {
             );
         }
         false
+    }
+
+    /// Scans, then watches until Navidrome shows `navidrome_id` as a present song at exactly
+    /// `path`: about ten minutes, scanning again every two in case Navidrome was busy.
+    pub async fn wait_until_shown(&self, navidrome_id: &str, path: &str) -> bool {
+        let seams = self.seams.lock().clone();
+        let mut shown = false;
+        let mut attempt = 0;
+        while attempt < seams.history_attempts.max(1) && !shown {
+            if attempt % 8 == 0 {
+                match &seams.force_scan {
+                    Some(scan) => {
+                        scan().await;
+                    }
+                    None => {
+                        self.library.trigger_library_scan(true).await;
+                    }
+                }
+            }
+            tokio::time::sleep(seams.history_poll).await;
+            shown = match &seams.shows_at {
+                Some(shows_at) => shows_at(navidrome_id.to_string(), path.to_string()).await,
+                None => self.resolver.shows_at(navidrome_id, path).await,
+            };
+            attempt += 1;
+        }
+        shown
     }
 
     /// Where a replacement may come from, in the order tried. Better quality uses the upgrade

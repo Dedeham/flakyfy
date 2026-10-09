@@ -56,6 +56,7 @@ use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
     MusicBrainzClient,
 };
+use crate::services::health::keep_marks::{KeepMarks, KeepMarksParts};
 use crate::services::health::{HealthServices, LibraryHealthService};
 use crate::services::http_client_factory;
 use crate::services::i_download_service::IDownloadService;
@@ -474,6 +475,7 @@ pub struct AppInner {
 
 /// Library health for the dashboard (`Program.cs`, 69f577f): the app's checks over the library
 /// snapshot, and its fixes through the edit service and the library actions executor.
+#[allow(clippy::too_many_arguments)]
 fn library_health(
     settings: &Arc<SettingsStore>,
     snapshot: &Arc<LibrarySnapshot>,
@@ -481,7 +483,21 @@ fn library_health(
     edits: &Arc<LibraryEditService>,
     executor: &Arc<LibraryActionExecutor>,
     upgrade_sources: &Arc<UpgradeSources>,
+    navidrome: &NavidromeServices,
+    stores: &Stores,
+    quarantine: &Arc<LibraryActionQuarantine>,
 ) -> Arc<LibraryHealthService> {
+    // Only the admin's marks are read for now; members' marks plug in here.
+    let keep_marks = Arc::new(KeepMarks::new(KeepMarksParts {
+        api: navidrome.navidrome_playlist_api.clone(),
+        resolver: navidrome.navidrome_song_path_resolver.clone(),
+        quarantine: Arc::clone(quarantine),
+        journal: stores.library_action_journal.clone(),
+        library: navidrome.local_library.clone(),
+        executor: Arc::clone(executor),
+        settings: Arc::clone(settings),
+        members: None,
+    }));
     Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
         Arc::clone(rescan),
@@ -490,6 +506,7 @@ fn library_health(
             edits: Some(Arc::clone(edits)),
             executor: Some(Arc::clone(executor)),
             upgrade_sources: Some(Arc::clone(upgrade_sources)),
+            keep_marks: Some(keep_marks),
         },
         Clock::system(),
     ))
@@ -2130,6 +2147,9 @@ impl AppState {
             &library_edits,
             &library_actions.executor,
             &acquisition.upgrade_sources,
+            &navidrome,
+            &stores,
+            &library_actions.quarantine,
         );
         let imports = Imports::build(
             &settings,
@@ -2440,6 +2460,9 @@ impl AppState {
             &library_edits,
             &library_actions.executor,
             &acquisition.upgrade_sources,
+            &navidrome,
+            &stores,
+            &library_actions.quarantine,
         );
         // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
         let imports = Imports::build(

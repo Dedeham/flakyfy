@@ -496,6 +496,28 @@
       "reason": "A failed call says what happened in plain words instead of .NET's exception text (BACKLOG, Improvements we want while porting): \"Could not connect to stubs:9: the connection was refused.\" for \"Connection refused (stubs:9)\", and likewise a timeout (\"No answer came within 100 seconds, so Octo stopped waiting.\"), a name that cannot be looked up and a status that is not a success (\"The server answered 404 (Not Found).\"). The Lidarr test is the one answer the corpus reaches.",
       "knownDiff": "Plain error words",
       "reviewed": "Brandon 2026-10-08"
+    },
+    {
+      "id": "duplicates-keep-marks",
+      "backlog": "base",
+      "requests": [
+        "19-health/health-*",
+        "19-health/preview-dups*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ ",
+        "Keeps the best (copy|sound) of each song",
+        "Fix these copies first checks which copy",
+        "\\.(fixMeaning|meaning|note|sound)\\b",
+        "\"sound\":"
+      ],
+      "reason": "Fixing duplicates keeps the best sound in the copy people marked: the copy whose id carries the most stars, ratings and plays (then playlist entries, then the oldest) keeps its id and path, and the best-sounding copy of the same format moves into it under its identity tags. Duplicates' fix meaning says so, a set in the list notes that Fix these copies picks the marked copy, and the preview's side by side view marks the copy whose sound moves in (\"sound\"). With the planted Harbor Lights pair (FLAC and MP3, nobody's marks) the plan itself stays the best-sound one.",
+      "knownDiff": "Duplicates keep the marked copy's id"
     }
   ]
 }

@@ -3,6 +3,7 @@
 
 pub mod health_fixes;
 pub mod health_words;
+pub mod keep_marks;
 pub mod library_health;
 pub mod library_health_service;
 pub mod server_song_fields;

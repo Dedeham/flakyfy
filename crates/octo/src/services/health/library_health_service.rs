@@ -18,6 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use super::health_fixes::{self as fixes, FixAnswer, FixOutcome, FixStep, TagChange, fix_actions as actions};
 use super::health_words::{self as words, count_text};
+use super::keep_marks::{self, KeepMarks};
 use super::library_health::{self as health, HealthCheck, HealthReport};
 use super::server_song_fields::ServerSongFields;
 use crate::services::library::library_tag_edits::{self as tag_edits, song_tag_fields};
@@ -159,6 +160,8 @@ pub struct HealthServices {
     pub edits: Option<Arc<LibraryEditService>>,
     pub executor: Option<Arc<LibraryActionExecutor>>,
     pub upgrade_sources: Option<Arc<UpgradeSources>>,
+    /// Fixing duplicates so the best sound ends up in the copy people marked.
+    pub keep_marks: Option<Arc<KeepMarks>>,
 }
 
 /// How one step is sent; tests answer here instead of touching files.
@@ -252,6 +255,12 @@ impl LibraryHealthService {
 
     pub fn set_settle_for(&self, settle_for: TimeDelta) {
         *self.settle_for.lock() = settle_for;
+    }
+
+    /// Fixing duplicates so the best sound ends up in the copy people marked, when this server
+    /// can.
+    pub fn keep_marks(&self) -> Option<&Arc<KeepMarks>> {
+        self.services.keep_marks.as_ref()
     }
 
     /// The run going now or last, for the page and the activity toasts.
@@ -488,6 +497,25 @@ impl LibraryHealthService {
                     return Some(bad);
                 }
             }
+            if step.action == actions::MOVE_SOUND {
+                let from = step.param("from").map(str::trim).unwrap_or("");
+                if from.is_empty() || from == step.id.trim() {
+                    return Some(format!("No copy to move the sound from for {}.", step.title));
+                }
+                let params = step.params();
+                if let Some(unknown) = keep_marks::unknown_tag(&params) {
+                    return Some(format!("Unknown tag \"{unknown}\"."));
+                }
+                let changes: IndexMap<String, Option<String>> = params
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        song_tag_fields::canonical(key).map(|tag| (tag.to_string(), Some(value.clone())))
+                    })
+                    .collect();
+                if let Some(bad) = tag_edits::invalid(&changes) {
+                    return Some(bad);
+                }
+            }
             if step.action == actions::JOIN_ALBUM
                 && step.param("like").is_none_or(|like| like.trim().is_empty())
             {
@@ -675,6 +703,7 @@ impl LibraryHealthService {
                 run.one_done();
             }
         }
+        let notes = self.finish_moves(&run, &mut done, &mut failed).await;
         let any_done = !done.is_empty();
         let outcome = FixOutcome {
             done,
@@ -682,6 +711,7 @@ impl LibraryHealthService {
             failed,
             rehearsed,
             stopped,
+            notes,
         };
         let now = self.clock.now();
         {
@@ -691,6 +721,17 @@ impl LibraryHealthService {
             }
             for step in outcome.done.iter().filter(|step| step.action == actions::RESTORE) {
                 state.removed.remove(&step.id);
+            }
+            // The copy whose sound moved is gone from the library; put back, it is there again.
+            for step in &outcome.done {
+                let Some(from) = step.param("from").filter(|from| !from.is_empty()) else {
+                    continue;
+                };
+                if step.action == actions::MOVE_SOUND {
+                    state.removed.insert(from.to_string(), now);
+                } else if step.action == actions::MOVE_BACK {
+                    state.removed.remove(from);
+                }
             }
             if let Some(check) = check {
                 let ids = state.settled.entry(check).or_default();
@@ -727,6 +768,41 @@ impl LibraryHealthService {
         if any_done {
             self.schedule_read();
         }
+    }
+
+    /// The end of a run that moved sound between copies: each move is checked until Navidrome
+    /// keeps the song as the same one, and one it does not keep was put back, so it counts as
+    /// failed. Songs put back get their playlist places back. Answers what is worth saying.
+    async fn finish_moves(
+        &self,
+        run: &HealthRun,
+        done: &mut Vec<FixStep>,
+        failed: &mut Vec<(FixStep, String)>,
+    ) -> Vec<String> {
+        let Some(keep) = &self.services.keep_marks else {
+            return Vec::new();
+        };
+        let ids = |action: &str| -> Vec<String> {
+            done.iter()
+                .filter(|step| step.action == action)
+                .map(|step| step.id.clone())
+                .collect()
+        };
+        let (moved, back) = (ids(actions::MOVE_SOUND), ids(actions::MOVE_BACK));
+        if moved.is_empty() && back.is_empty() {
+            return Vec::new();
+        }
+        run.step(Some(keep_marks::CHECKING.to_string()));
+        let (put_back, notes) = keep.finish_run(&moved, &back).await;
+        for (id, why) in put_back {
+            if let Some(at) = done
+                .iter()
+                .position(|step| step.action == actions::MOVE_SOUND && step.id == id)
+            {
+                failed.push((done.remove(at), why));
+            }
+        }
+        notes
     }
 
     async fn lookup(self: Arc<Self>, run: Arc<HealthRun>, songs: Vec<(String, String)>) {
@@ -792,6 +868,20 @@ impl LibraryHealthService {
 
     /// One step, through the same service the app's libraryAction uses.
     pub async fn send_through_services(&self, step: &FixStep, user: &str) -> anyhow::Result<FixAnswer> {
+        if step.action == actions::MOVE_SOUND || step.action == actions::MOVE_BACK {
+            let Some(keep) = &self.services.keep_marks else {
+                return Ok(FixAnswer::new(
+                    "skipped",
+                    Some("This server cannot move songs between copies."),
+                ));
+            };
+            return Ok(if step.action == actions::MOVE_SOUND {
+                keep.move_sound(&step.id, step.param("from").unwrap_or(""), user, &step.params())
+                    .await
+            } else {
+                keep.move_back(&step.id, user).await
+            });
+        }
         if step.action == actions::REMOVE {
             let Some(executor) = &self.services.executor else {
                 return Ok(FixAnswer::new("skipped", Some("Library actions are off.")));

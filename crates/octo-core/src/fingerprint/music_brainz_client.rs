@@ -102,8 +102,8 @@ pub fn studio_album_search(artist: &str, title: &str) -> Option<(String, String)
     ))
 }
 
-/// The release group of the oldest official studio album a song appears on, or of a
-/// soundtrack when no studio album has it. None when the answer names neither.
+/// The release group of the oldest official studio album a song appears on, else of a mixtape,
+/// else of a soundtrack. None when the answer names none of them.
 pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<String>> {
     let Some(recordings @ Value::Array(_)) = try_get_property(root, "recordings")? else {
         return Ok(None);
@@ -146,7 +146,8 @@ pub fn pick_studio_album(root: &Value, title: &str) -> ElementResult<Option<Stri
             }
             let rank = match secondary.as_slice() {
                 [] => 0,
-                [Some("Soundtrack")] => 1,
+                [Some("Mixtape/Street")] => 1,
+                [Some("Soundtrack")] => 2,
                 _ => -1,
             };
             if rank < 0 || rank > group_rank {

@@ -109,6 +109,24 @@ fn a_year_only_date_never_beats_a_full_date_of_the_same_year() {
     assert_eq!(studio(earlier_year, "Song").as_deref(), Some("year-before"));
 }
 
+#[test]
+fn a_mixtape_ranks_after_a_studio_album_and_before_a_soundtrack() {
+    let all_three = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}},
+      {"date":"1995-01-01","release-group":{"id":"studio","primary-type":"Album"}}]}]}
+    "#;
+    let mixtape_and_soundtrack = r#"
+    {"recordings":[{"title":"Song","releases":[
+      {"date":"1990-01-01","release-group":{"id":"film","primary-type":"Album","secondary-types":["Soundtrack"]}},
+      {"date":"1991-01-01","release-group":{"id":"tape","primary-type":"Album","secondary-types":["Mixtape/Street"]}}]}]}
+    "#;
+
+    assert_eq!(studio(all_three, "Song").as_deref(), Some("studio"));
+    assert_eq!(studio(mixtape_and_soundtrack, "Song").as_deref(), Some("tape"));
+}
+
 // ---- MusicBrainzQueryTests ---------------------------------------------------------------
 // Titles and names with quotes, colons, slashes or brackets must reach the music database as
 // the words they are, not as operators, or the failure reads as "no candidate".

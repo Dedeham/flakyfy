@@ -812,6 +812,8 @@ struct LengthTables {
     deezer: Arc<Mutex<HashMap<String, i32>>>,
     last_fm: Arc<Mutex<HashMap<String, i32>>>,
     video: Arc<Mutex<HashMap<String, i32>>>,
+    /// The album Deezer names for a track, by "artist title".
+    albums: Arc<Mutex<HashMap<String, String>>>,
     requests: Arc<Mutex<Vec<String>>>,
     /// Background shim requests are held back this long, so a test can keep them in flight.
     hold_background: Arc<Mutex<Option<Duration>>>,
@@ -844,9 +846,13 @@ impl Respond for DeezerTable {
         match hit {
             Some((key, duration)) if request.url.path() == "/search" => {
                 let split = key.rfind(' ').expect("an artist and a title");
-                let body = serde_json::json!({"data": [{
+                let mut row = serde_json::json!({
                     "title": &key[split + 1..], "duration": duration, "artist": {"name": &key[..split]},
-                }]});
+                });
+                if let Some(album) = self.0.albums.lock().get(&key) {
+                    row["album"] = serde_json::json!({ "title": album });
+                }
+                let body = serde_json::json!({"data": [row]});
                 ResponseTemplate::new(200).set_body_string(body.to_string())
             }
             _ => ResponseTemplate::new(200).set_body_string(r#"{"data":[]}"#),
@@ -1509,4 +1515,45 @@ async fn get_song_an_unknown_length_keeps_the_video_a_play_pinned() {
     assert!(!fixture.requests().iter().any(|r| r.starts_with("shim/meta?")));
     let pinned = fixture.registry.lookup(&row.id).expect("registered").snapshot();
     assert_eq!(pinned.you_tube_id.as_deref(), Some("vid-played"));
+}
+
+#[tokio::test]
+async fn deezers_album_title_fills_a_blank_album_and_never_replaces_one() {
+    let fixture = LengthFixture::new().await;
+    for title in ["Genesis", "Phantom"] {
+        fixture.deezer(&format!("Justice {title}"), 234);
+        fixture
+            .tables
+            .albums
+            .lock()
+            .insert(format!("Justice {title}"), "Ed Banger Compilation".into());
+    }
+    let mut named = fixture.search("Justice", "Genesis").await;
+    named.album = "Cross".into();
+    fixture
+        .registry
+        .lookup(&named.id)
+        .expect("registered")
+        .lock()
+        .album = Some("Cross".into());
+    let blank = fixture.search("Justice", "Phantom").await;
+    assert!(blank.album.is_empty(), "{}", blank.album);
+    let mut songs = vec![named, blank];
+
+    fixture.service.enrich_external_songs(&mut songs).await;
+
+    assert_eq!(songs[0].album, "Cross");
+    assert_eq!(songs[1].album, "Ed Banger Compilation");
+    let routed = |song: &Song| {
+        fixture
+            .registry
+            .lookup(&song.id)
+            .expect("registered")
+            .snapshot()
+            .album
+    };
+    assert_eq!(routed(&songs[0]).as_deref(), Some("Cross"));
+    assert_eq!(routed(&songs[1]).as_deref(), Some("Ed Banger Compilation"));
+    // The length still comes from Deezer for both.
+    assert_eq!(songs[0].duration, Some(234));
 }

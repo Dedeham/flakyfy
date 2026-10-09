@@ -385,12 +385,16 @@ impl Inner {
     }
 
     /// Reflect a catalog answer onto the song and its shared routing, so getSong stays
-    /// consistent, and remember its length.
+    /// consistent, and remember its length. The catalog's album only fills a blank one: the
+    /// track it matched can sit on a compilation, and the album the song already names is the
+    /// one it came from.
     fn apply_track_meta(&self, song: &mut Song, meta: &TrackMeta) {
         if let Some(d) = meta.duration.filter(|&d| d > 0) {
             song.duration = Some(d);
         }
-        if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
+        if dotnet::is_blank(&song.album)
+            && let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a))
+        {
             song.album = album.to_string();
         }
         if let Some(words) = meta.explicit_content {
@@ -405,7 +409,9 @@ impl Inner {
             if let Some(d) = meta.duration.filter(|&d| d > 0) {
                 r.duration = Some(d);
             }
-            if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
+            if r.album.as_deref().is_none_or(dotnet::is_blank)
+                && let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a))
+            {
                 r.album = Some(album.to_string());
             }
             if let Some(said) = meta.explicit_content {

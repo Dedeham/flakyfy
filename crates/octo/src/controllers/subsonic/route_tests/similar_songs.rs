@@ -934,3 +934,40 @@ async fn an_outside_artist_is_the_top_songs_of_artists_like_them() {
         .count();
     assert_eq!(asked, 1, "{:?}", f.calls());
 }
+
+// A scrobble starts resolving the next songs of a radio queue only once Navidrome has accepted
+// the caller: one it refuses never makes Octo look a song up on YouTube.
+#[tokio::test]
+async fn a_scrobble_prewarms_the_queue_only_for_a_caller_navidrome_accepts() {
+    use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
+    let f = fixture(|_| {}).await;
+    let outside = |title: &str| {
+        f.state.external_id_registry.register(SoulseekRouting {
+            kind: RoutingKind::Song,
+            artist: Some("Queue Band".into()),
+            title: Some(title.into()),
+            duration: Some(200),
+            ..Default::default()
+        })
+    };
+    let playing = outside("Now Playing");
+    let next = outside("Up Next");
+    f.state.radio_queues.register([playing.clone(), next]);
+    let looked_up = |f: &Fixture| {
+        f.calls()
+            .iter()
+            .filter(|call| call.starts_with("/search?") && call.contains("Up"))
+            .count()
+    };
+
+    scrobble(&f, "mallory", &playing, false).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(looked_up(&f), 0, "{:?}", f.calls());
+
+    scrobble(&f, "alice", &playing, false).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while looked_up(&f) == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(looked_up(&f), 1, "{:?}", f.calls());
+}

@@ -359,7 +359,8 @@ fn try_parse_int(text: &str) -> Option<i32> {
 }
 
 /// Scrobbles a play. Plays of external songs go to Last.fm (when configured) and the radio's
-/// listening profile; the first id also prewarms the next songs of a queue.
+/// listening profile; once Navidrome accepts the caller, the first id also prewarms the next
+/// songs of a queue.
 ///
 /// Library songs are relayed to Navidrome too, because real scrobbling
 /// (last-played stats, the Now Playing panel) is the upstream's job. Outside
@@ -380,7 +381,12 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
     let id = ids.first().cloned().unwrap_or_default();
     let format = call.format();
 
-    if !id.is_empty() {
+    // The next songs of a radio queue start resolving only once Navidrome has accepted the
+    // caller: an unchecked request never spends YouTube lookups.
+    let prewarm_queue = || {
+        if id.is_empty() {
+            return;
+        }
         let upcoming = state.radio_queues.get_upcoming_from(&id, 16);
         if !upcoming.is_empty() {
             debug!("scrobble {id}: prewarming next {} from queue", upcoming.len());
@@ -389,7 +395,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
                 metadata.prewarm_you_tube_ids_for_song_ids(&upcoming, 8).await;
             });
         }
-    }
+    };
 
     // Library songs pass through so Navidrome's last-played/Now Playing stays accurate.
     // An outside id is not Navidrome's: relayed, it logs "data not found" on every play
@@ -429,6 +435,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
                 .relay("rest/ping", relay_parameters.iter().map(|(k, v)| (k, v)))
                 .await?;
             if is_successful_subsonic_response(&check.body, &format) {
+                prewarm_queue();
                 learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
             }
             let content_type = check
@@ -448,6 +455,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
             .relay("rest/scrobble", relay_parameters.iter().map(|(k, v)| (k, v)))
             .await?;
         if is_successful_subsonic_response(&result.body, &format) {
+            prewarm_queue();
             learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
         }
         let content_type = result
@@ -460,7 +468,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
     match outcome {
         Ok(response) => Ok(response),
         // Even if upstream is briefly unhappy, return 200 so the client
-        // doesn't think scrobble is broken: the prewarm side already fired.
+        // doesn't think scrobble is broken.
         Err(RelayError::Http(_)) => Ok(state
             .subsonic_response_builder
             .create_response(&format, "scrobble")

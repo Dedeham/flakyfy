@@ -496,6 +496,23 @@
       "reason": "A failed call says what happened in plain words instead of .NET's exception text (BACKLOG, Improvements we want while porting): \"Could not connect to stubs:9: the connection was refused.\" for \"Connection refused (stubs:9)\", and likewise a timeout (\"No answer came within 100 seconds, so Octo stopped waiting.\"), a name that cannot be looked up and a status that is not a success (\"The server answered 404 (Not Found).\"). The Lidarr test is the one answer the corpus reaches.",
       "knownDiff": "Plain error words",
       "reviewed": "Brandon 2026-10-08"
+    },
+    {
+      "id": "outside-song-true-size",
+      "backlog": "base",
+      "requests": [
+        "08-catchall-native/native-song-external",
+        "08-catchall-native/native-songs-of-external-album",
+        "08-catchall-native/native-song-by-title-discovery"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$(\\[\\d+\\])?\\.size: only in A \\(\\d+\\)$"
+      ],
+      "reason": "An outside song's size is the true byte count of the stream Octo relays, learned from the shim (yt-dlp's filesize, the URL's clen when that is unknown, and the bytes of a play over both), and absent until it is known. The C# native rows sent duration x bit rate as the size, an estimate that never matched the bytes; strict clients use the size to seek. Subsonic rows (search3 and the rest) gain the true size once known, so a corpus row whose stream the parity stub never sized is unchanged there. The lines need pinning against a parity run.",
+      "knownDiff": "Outside songs: the true stream size"
     }
   ]
 }

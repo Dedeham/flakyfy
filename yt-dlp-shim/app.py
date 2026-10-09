@@ -15,6 +15,11 @@ Endpoints:
       With a hint it picks the closest-length of several flat candidates
       (cheap, no per-video extraction), then resolves the winner's URL.
 
+  GET /facts?id=<videoId>
+      The stream /stream would send for a video: format id (itag), exact
+      size in bytes, container and bit rate. /search carries the same fields
+      for the video it found.
+
   GET /stream?id=<videoId>
       Resolves the best-audio URL (cached), then proxies bytes from
       YouTube's CDN to the caller. Streaming chunks so this stays
@@ -41,6 +46,7 @@ from flask import Flask, Response, abort, jsonify, request, stream_with_context
 
 import ytm
 
+import facts as stream_info
 from gate import TieredGate
 
 # The binary baked into the image. Never written to, so a rebuild is always a
@@ -154,6 +160,46 @@ def _url_cache_put(video_id: str, url: str):
         _URL_CACHE.move_to_end(video_id)
         while len(_URL_CACHE) > _URL_CACHE_MAX:
             _URL_CACHE.popitem(last=False)
+
+# What each video's stream is (itag, size, container, bit rate), learned in the same run that
+# picked its URL. A video's format and size do not change, so these outlive the URL itself.
+_FACTS_LOCK = threading.Lock()
+_FACTS: "OrderedDict[str, dict]" = OrderedDict()
+_FACTS_MAX = int(os.environ.get("FACTS_CACHE_MAX", "4096"))
+
+
+def _facts_get(video_id: str) -> dict:
+    with _FACTS_LOCK:
+        known = _FACTS.get(video_id)
+        if known is None:
+            return {}
+        _FACTS.move_to_end(video_id)
+        return dict(known)
+
+
+def _facts_put(video_id: str, learned: dict):
+    """Keep what is known; a later answer fills gaps and a measured size replaces a printed one."""
+    if not video_id:
+        return
+    with _FACTS_LOCK:
+        known = dict(_FACTS.get(video_id) or {})
+        for key, value in learned.items():
+            if value is not None:
+                known[key] = value
+        _FACTS[video_id] = known
+        _FACTS.move_to_end(video_id)
+        while len(_FACTS) > _FACTS_MAX:
+            _FACTS.popitem(last=False)
+
+
+def _with_facts(payload: dict) -> dict:
+    """A /search payload with its video's stream facts, when the run that found it had them."""
+    known = _facts_get(payload.get("video_id") or "")
+    for key in ("size", "itag", "ext", "abr"):
+        if known.get(key) is not None:
+            payload[key] = known[key]
+    return payload
+
 
 def _url_cache_evict(video_id: str):
     with _URL_CACHE_LOCK:
@@ -317,6 +363,7 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
             "-f", _AUDIO_FORMAT,
             "--ignore-no-formats-error",
             "--print", "%(.{id,title,duration,channel})j",
+            "--print", stream_info.FORMAT_PRINT,
             "--print", "%(urls)s",
         ],
         timeout=15,
@@ -325,7 +372,7 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
     )
     if out is None:
         return None
-    lines = [ln.strip() for ln in out.strip().split("\n") if ln.strip()]
+    lines, format_line, stream_url = stream_info.split_run(out)
     if not lines:
         return {}
     try:
@@ -334,14 +381,14 @@ def _search_single(q: str, bg: bool = False) -> Optional[dict]:
         log.warning("search: bad json from yt-dlp: %s", e)
         return None
     payload = _payload_from(data)
-    stream_url = lines[1] if len(lines) > 1 else None
     if payload.get("video_id") and stream_url:
         # Warm the URL cache from the SAME extraction. This used to be a second
         # `yt-dlp -g` on a detached daemon thread; folding it in removes an
         # entire yt-dlp invocation per track and makes the warm /stream path a
         # deterministic cache hit instead of a gate-race.
         _url_cache_put(payload["video_id"], stream_url)
-    return payload
+        _facts_put(payload["video_id"], stream_info.stream_facts(format_line, stream_url))
+    return _with_facts(payload)
 
 
 _LIVE = re.compile(r"\b(live|unplugged|in concert|concert|bootleg)\b", re.IGNORECASE)
@@ -398,7 +445,7 @@ def _search_with_hint(q: str, duration_hint: int, bg: bool = False) -> Optional[
     if payload.get("video_id"):
         # Warm the URL cache for the coming /stream (single-flight + cached).
         _resolve_url(payload["video_id"], bg)
-    return payload
+    return _with_facts(payload)
 
 
 _META_CACHE_LOCK = threading.Lock()
@@ -562,10 +609,12 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
         cached = _url_cache_get(video_id)
         if cached:
             return cached
+        # The same URL `-g` printed, plus the picked format's facts from the same run.
         out = _run(
             [
-                "-g",
                 "-f", _AUDIO_FORMAT,
+                "--print", stream_info.FORMAT_PRINT,
+                "--print", "%(urls)s",
                 f"https://www.youtube.com/watch?v={video_id}",
             ],
             timeout=15,
@@ -574,9 +623,10 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
         )
         if not out:
             return None
-        url = out.strip().split("\n", 1)[0].strip()
+        _, format_line, url = stream_info.split_run(out)
         if url:
             _url_cache_put(video_id, url)
+            _facts_put(video_id, stream_info.stream_facts(format_line, url))
         return url or None
     finally:
         # Only the thread that actually holds the lock may pop and release it.
@@ -802,6 +852,30 @@ def ytm_artist_radio():
     return jsonify(artist=artist, tracks=rows)
 
 
+@app.get("/facts")
+def stream_facts():
+    """What /stream would send for a video: {video_id, itag, size, ext, abr}.
+
+    Resolves the URL the way /stream does (same format, same cache, same gate) when this video
+    has not been resolved yet, so a later play of it is a cache hit.
+    """
+    video_id = request.args.get("id", "").strip()
+    if not video_id:
+        abort(400, "missing id")
+    known = _facts_get(video_id)
+    if known.get("size") is None:
+        if not _resolve_url(video_id, _is_bg()):
+            return jsonify(error="no_audio_url"), 502
+        known = _facts_get(video_id)
+    return jsonify(
+        video_id=video_id,
+        itag=known.get("itag"),
+        size=known.get("size"),
+        ext=known.get("ext"),
+        abr=known.get("abr"),
+    )
+
+
 @app.get("/stream")
 def stream():
     video_id = request.args.get("id", "").strip()
@@ -903,6 +977,14 @@ def stream():
     # the caller never made as partial. Report 200 to the caller instead and
     # drop Content-Range: upstream's Content-Length already equals the full
     # size here since the synthesized range always starts at byte 0.
+    # The bytes themselves are the last word on the size: the total of a partial answer, or
+    # the whole body of one that starts at the first byte.
+    played_size = stream_info.total_from_content_range(upstream.headers.get("Content-Range"))
+    if played_size is None and upstream.status_code == 200:
+        played_size = stream_info.total_from_content_range(f"/{upstream.headers.get('Content-Length', '')}")
+    if played_size is not None:
+        _facts_put(video_id, {"size": played_size})
+
     response_status = upstream.status_code
     headers = {
         "Content-Type": upstream.headers.get("Content-Type", "audio/mp4"),

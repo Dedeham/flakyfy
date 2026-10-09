@@ -46,11 +46,11 @@ RUN set -eux; \
 
 RUN pip install --no-cache-dir flask gunicorn requests "ytmusicapi>=1.12,<2"
 
-# gate.py and ytm.py too, not just app.py -- app.py imports them at module scope, so omitting
+# facts.py, gate.py and ytm.py too, not just app.py -- app.py imports them at module scope, so omitting
 # one here is a ModuleNotFoundError at startup and total loss of playback. CI
 # builds this image only to publish it, after a merge, so no pull request
 # check would catch that.
-COPY app.py gate.py ytm.py /app/
+COPY app.py facts.py gate.py ytm.py /app/
 
 EXPOSE 8080
 

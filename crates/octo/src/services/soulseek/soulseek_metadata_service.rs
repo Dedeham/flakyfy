@@ -1016,20 +1016,15 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
                     song.duration = Some(shown);
                 }
-                let routing = inner.lookup(&song.id);
-                if let Some(routing) = &routing {
-                    let mut r = routing.lock();
-                    // A play can pin a different video while this lookup runs. The next Range
-                    // request has to get the same video, so the pinned one wins.
-                    if background
-                        && r.you_tube_id
-                            .as_deref()
-                            .is_some_and(|y| !y.is_empty() && y != hit.video_id)
-                    {
-                        return;
+                // Playback reuses this exact video. A play can pin a different video while this
+                // lookup runs; the next Range request has to get the same video, so in the
+                // background the pinned one wins.
+                if inner.id_registry.pin_video(&song.id, &hit.video_id, !background) {
+                    if let Some(routing) = inner.lookup(&song.id) {
+                        routing.lock().duration = Some(d);
                     }
-                    r.you_tube_id = Some(hit.video_id.clone()); // playback reuses this exact video
-                    r.duration = Some(d);
+                } else if background && inner.lookup(&song.id).is_some() {
+                    return;
                 }
                 inner
                     .id_registry
@@ -1101,12 +1096,13 @@ impl IMusicMetadataService for SoulseekMetadataService {
             };
             let hit = inner.youtube.search(&query, duration, true).await;
             if let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) {
-                {
-                    let mut r = routing.lock();
-                    r.you_tube_id = Some(hit.video_id.clone());
-                    if let Some(d) = hit.duration {
-                        r.duration = Some(d);
-                    }
+                // A play that pinned a video meanwhile keeps it.
+                if !inner.id_registry.pin_video(&id, &hit.video_id, false) {
+                    return;
+                }
+                inner.id_registry.remember_stream(&id, &hit.video_id, &hit.stream);
+                if let Some(d) = hit.duration {
+                    routing.lock().duration = Some(d);
                 }
                 inner
                     .id_registry

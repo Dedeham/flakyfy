@@ -472,3 +472,86 @@ fn a_registration_without_an_album_keeps_the_album_already_known() {
     let first = registry.register(album("Zephyr Echo", "Tidal Lines", None));
     assert_eq!(album_of(&first).as_deref(), Some("Tidal Lines"));
 }
+
+// ---- The stream an outside song plays -------------------------------------------------------
+
+fn sized(size: u64) -> StreamFacts {
+    StreamFacts {
+        size: Some(size),
+        itag: Some("140".into()),
+        ext: Some("m4a".into()),
+        bit_rate: Some(129),
+    }
+}
+
+#[test]
+fn a_re_registered_song_keeps_its_video_and_size() {
+    let registry = ExternalIdRegistry::in_memory();
+    let id = registry.register(song("Daft Punk", "Emotion"));
+    assert!(registry.set_you_tube_id(&id, "vid-a"));
+    assert!(registry.remember_stream(&id, "vid-a", &sized(6_755_585)));
+
+    // A later search mints the song again, with no video of its own.
+    assert_eq!(registry.register(song("Daft Punk", "Emotion")), id);
+    let r = registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(r.you_tube_id.as_deref(), Some("vid-a"));
+    assert_eq!(registry.stream_facts(&id), Some(sized(6_755_585)));
+}
+
+#[test]
+fn a_different_video_clears_the_size() {
+    let registry = ExternalIdRegistry::in_memory();
+    let id = registry.register(song("Daft Punk", "Emotion"));
+    registry.set_you_tube_id(&id, "vid-a");
+    registry.remember_stream(&id, "vid-a", &sized(100));
+
+    // A lookup that would keep another pin does not move it, and so keeps the size.
+    assert!(!registry.pin_video(&id, "vid-b", false));
+    assert_eq!(registry.stream_facts(&id).and_then(|f| f.size), Some(100));
+
+    // A re-pin does, and the size belonged to the old video.
+    assert!(registry.set_you_tube_id(&id, "vid-b"));
+    assert_eq!(registry.stream_facts(&id), None);
+    // Facts for a video the song no longer plays are not taken.
+    assert!(!registry.remember_stream(&id, "vid-a", &sized(100)));
+    assert!(registry.remember_stream(&id, "vid-b", &sized(200)));
+    assert_eq!(registry.stream_facts(&id).and_then(|f| f.size), Some(200));
+    assert!(!registry.set_you_tube_id("unknown", "vid-b"));
+    assert!(!registry.remember_stream("unknown", "vid-b", &sized(1)));
+}
+
+#[test]
+fn a_re_pin_and_a_size_are_written_down_and_outlive_a_restart() {
+    let (_dir, path) = temp_path("octo-ids.json");
+    let first = ExternalIdRegistry::new(Some(&path));
+    let id = first.register(song("Daft Punk", "Emotion"));
+    first.flush();
+    first.set_you_tube_id(&id, "vid-a");
+    first.remember_stream(&id, "vid-a", &sized(6_755_585));
+    first.flush();
+    drop(first);
+
+    let reopened = ExternalIdRegistry::new(Some(&path));
+    assert_eq!(
+        reopened
+            .lookup(&id)
+            .expect("restored")
+            .lock()
+            .you_tube_id
+            .as_deref(),
+        Some("vid-a")
+    );
+    assert_eq!(reopened.stream_facts(&id), Some(sized(6_755_585)));
+
+    // A re-pin alone marks the registry changed, so it is written too.
+    reopened.flush();
+    reopened.set_you_tube_id(&id, "vid-b");
+    reopened.flush();
+    drop(reopened);
+    let again = ExternalIdRegistry::new(Some(&path));
+    assert_eq!(
+        again.lookup(&id).expect("restored").lock().you_tube_id.as_deref(),
+        Some("vid-b")
+    );
+    assert_eq!(again.stream_facts(&id), None);
+}

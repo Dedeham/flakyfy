@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::soulseek::song_length::LengthSource;
+use crate::soulseek::stream_facts::StreamFacts;
 
 /// What a short external id stands for. Written as its number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize_repr, Deserialize_repr)]
@@ -78,11 +79,59 @@ pub struct SoulseekRouting {
     /// explicit original. None for every other song or album, so every id minted before this
     /// existed (stars, playlists, pins) stays the same.
     pub version: Option<String>,
+
+    /// The exact byte count of the pinned video's audio stream, once an answer named it. It
+    /// belongs to [`SoulseekRouting::you_tube_id`]: pinning another video clears it. Not part of
+    /// the id.
+    pub stream_size: Option<u64>,
+
+    /// The pinned video's audio format id (140 is AAC in mp4, 251 Opus in webm).
+    pub stream_itag: Option<String>,
+
+    /// The pinned video's audio container, as yt-dlp names it ("m4a", "webm").
+    pub stream_ext: Option<String>,
+
+    /// The pinned video's average audio bit rate in kbps.
+    pub stream_bit_rate: Option<i32>,
 }
 
 impl SoulseekRouting {
     pub fn has_you_tube(&self) -> bool {
         self.you_tube_id.as_deref().is_some_and(|id| !id.is_empty())
+    }
+
+    /// What is known of the pinned video's stream.
+    pub fn stream_facts(&self) -> StreamFacts {
+        StreamFacts {
+            size: self.stream_size,
+            itag: self.stream_itag.clone(),
+            ext: self.stream_ext.clone(),
+            bit_rate: self.stream_bit_rate,
+        }
+    }
+
+    /// Takes what `facts` knows of the pinned video's stream, keeping what it does not.
+    pub fn merge_stream_facts(&mut self, facts: &StreamFacts) {
+        let mut known = self.stream_facts();
+        known.merge(facts);
+        self.stream_size = known.size;
+        self.stream_itag = known.itag;
+        self.stream_ext = known.ext;
+        self.stream_bit_rate = known.bit_rate;
+    }
+
+    /// Pins `video` for playback. A video other than the pinned one forgets the old one's
+    /// stream facts, which describe a different stream. True when the pin changed.
+    pub fn pin_video(&mut self, video: &str) -> bool {
+        if self.you_tube_id.as_deref() == Some(video) {
+            return false;
+        }
+        self.you_tube_id = Some(video.to_string());
+        self.stream_size = None;
+        self.stream_itag = None;
+        self.stream_ext = None;
+        self.stream_bit_rate = None;
+        true
     }
 
     pub fn has_artist_title(&self) -> bool {
@@ -92,10 +141,20 @@ impl SoulseekRouting {
 }
 
 /// By hand, because System.Text.Json also wrote the computed `HasYouTube` and `HasArtistTitle`
-/// (ignored again on read).
+/// (ignored again on read). The stream facts are written only when known, so a routing without
+/// them is written exactly as before.
 impl Serialize for SoulseekRouting {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut s = serializer.serialize_struct("SoulseekRouting", 18)?;
+        let stream_fields = [
+            self.stream_size.is_some(),
+            self.stream_itag.is_some(),
+            self.stream_ext.is_some(),
+            self.stream_bit_rate.is_some(),
+        ]
+        .into_iter()
+        .filter(|known| *known)
+        .count();
+        let mut s = serializer.serialize_struct("SoulseekRouting", 18 + stream_fields)?;
         s.serialize_field("Kind", &self.kind)?;
         s.serialize_field("YouTubeId", &self.you_tube_id)?;
         s.serialize_field("Artist", &self.artist)?;
@@ -112,6 +171,18 @@ impl Serialize for SoulseekRouting {
         s.serialize_field("ShownDurationSource", &self.shown_duration_source)?;
         s.serialize_field("ExplicitContent", &self.explicit_content)?;
         s.serialize_field("Version", &self.version)?;
+        if let Some(size) = &self.stream_size {
+            s.serialize_field("StreamSize", size)?;
+        }
+        if let Some(itag) = &self.stream_itag {
+            s.serialize_field("StreamItag", itag)?;
+        }
+        if let Some(ext) = &self.stream_ext {
+            s.serialize_field("StreamExt", ext)?;
+        }
+        if let Some(bit_rate) = &self.stream_bit_rate {
+            s.serialize_field("StreamBitRate", bit_rate)?;
+        }
         s.serialize_field("HasYouTube", &self.has_you_tube())?;
         s.serialize_field("HasArtistTitle", &self.has_artist_title())?;
         s.end()
@@ -139,5 +210,44 @@ mod tests {
         );
         let back: SoulseekRouting = serde_json::from_str(&json).expect("reads back");
         assert_eq!(back, routing);
+    }
+
+    #[test]
+    fn stream_facts_round_trip_and_a_routing_written_before_them_still_reads() {
+        let routing = SoulseekRouting {
+            you_tube_id: Some("abc".into()),
+            stream_size: Some(6_755_585),
+            stream_itag: Some("140".into()),
+            stream_ext: Some("m4a".into()),
+            stream_bit_rate: Some(129),
+            ..Default::default()
+        };
+        let json = crate::json::to_string(&routing);
+        assert!(
+            json.contains(r#""StreamSize":6755585,"StreamItag":"140","StreamExt":"m4a","StreamBitRate":129"#),
+            "{json}"
+        );
+        assert_eq!(
+            serde_json::from_str::<SoulseekRouting>(&json).expect("reads"),
+            routing
+        );
+        let old: SoulseekRouting = serde_json::from_str(r#"{"Kind":0,"YouTubeId":"abc"}"#).expect("reads");
+        assert_eq!(old.stream_facts(), StreamFacts::default());
+    }
+
+    #[test]
+    fn pinning_another_video_forgets_the_old_streams_facts() {
+        let mut routing = SoulseekRouting::default();
+        assert!(routing.pin_video("a"));
+        routing.merge_stream_facts(&StreamFacts {
+            size: Some(10),
+            itag: Some("140".into()),
+            ..Default::default()
+        });
+        assert!(!routing.pin_video("a"));
+        assert_eq!(routing.stream_size, Some(10));
+        assert!(routing.pin_video("b"));
+        assert_eq!(routing.you_tube_id.as_deref(), Some("b"));
+        assert_eq!(routing.stream_facts(), StreamFacts::default());
     }
 }

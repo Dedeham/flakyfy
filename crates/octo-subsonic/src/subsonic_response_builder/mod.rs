@@ -195,6 +195,50 @@ impl SubsonicResponseBuilder {
         SubsonicReply::xml(&envelope("ok").child(element))
     }
 
+    /// [`Self::create_info_response`] for an artist, with the related artists as
+    /// `similarArtist` entries after the fields (none written when there are none).
+    pub fn create_artist_info_response(
+        &self,
+        format: &str,
+        element_name: &str,
+        fields: &[(&str, &str)],
+        similar: &[Artist],
+    ) -> SubsonicReply {
+        if format == "json" {
+            let mut body = Fields::new();
+            body.insert("status".into(), "ok".into());
+            body.insert("version".into(), SUBSONIC_VERSION.into());
+            let mut element: Fields = fields
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), Value::from(*v)))
+                .collect();
+            if !similar.is_empty() {
+                element.insert(
+                    "similarArtist".into(),
+                    Value::Array(
+                        similar
+                            .iter()
+                            .map(|artist| Value::Object(build_artist_fields(artist)))
+                            .collect(),
+                    ),
+                );
+            }
+            body.insert(element_name.into(), Value::Object(element));
+            return self.create_json_response(Value::Object(body));
+        }
+
+        let mut element = subsonic_element(element_name);
+        for (key, value) in fields {
+            element.push(subsonic_element(*key).text(*value));
+        }
+        for artist in similar {
+            let mut entry = subsonic_element("similarArtist");
+            attributes(&mut entry, &build_artist_fields(artist));
+            element.push(entry);
+        }
+        SubsonicReply::xml(&envelope("ok").child(element))
+    }
+
     /// Creates a Subsonic error response.
     pub fn create_error(&self, format: &str, code: i32, message: &str) -> SubsonicReply {
         if format == "json" {

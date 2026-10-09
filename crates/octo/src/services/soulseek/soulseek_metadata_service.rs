@@ -1558,6 +1558,59 @@ impl IMusicMetadataService for SoulseekMetadataService {
         })
     }
 
+    async fn get_related_artists(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        limit: i32,
+    ) -> Vec<Artist> {
+        if !is_ours(external_provider) || limit <= 0 {
+            return Vec::new();
+        }
+        let inner = &self.inner;
+        let Some(routing) = inner.lookup(external_id).map(|r| r.snapshot()) else {
+            return Vec::new();
+        };
+        if routing.kind != RoutingKind::Artist {
+            return Vec::new();
+        }
+        let Some(hit) = inner.find_catalog_artist(&routing).await else {
+            return Vec::new();
+        };
+        let mut related = Vec::new();
+        for other in inner.deezer.related_artists(&hit.deezer_id, limit).await {
+            // The same id the artist's search row has, so the row opens that artist's page.
+            let id = inner.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Artist,
+                artist: Some(other.name.clone()),
+                ..Default::default()
+            });
+            if let Some(shared) = inner.lookup(&id) {
+                let unsettled = {
+                    let mut r = shared.lock();
+                    let unsettled = r.external_artist_id.is_none();
+                    if unsettled {
+                        r.external_artist_id = Some(other.deezer_id.clone());
+                    }
+                    unsettled
+                };
+                if unsettled {
+                    inner.id_registry.register(shared);
+                }
+            }
+            related.push(Artist {
+                id: id.clone(),
+                name: other.name,
+                image_url: other.picture_url,
+                album_count: Some(other.album_count),
+                is_local: false,
+                external_provider: Some(Self::PROVIDER_NAME.to_string()),
+                external_id: Some(id),
+            });
+        }
+        related
+    }
+
     /// An outside artist's releases, for their page and for filling out a library artist's
     /// page. Each album is registered the way album search registers one, so it opens, plays
     /// and stars like any other outside album. The artist name and id are left for the caller:

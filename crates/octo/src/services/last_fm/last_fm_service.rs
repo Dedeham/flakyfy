@@ -36,6 +36,7 @@ enum RadioValue {
     Tracks(Vec<SimilarTrack>),
     Info(Option<TrackInfo>),
     Count(i64),
+    Text(Option<String>),
 }
 
 /// A value [`LastFmService::cached`] can keep: `cached.Value is T typed`.
@@ -51,6 +52,18 @@ impl Cacheable for Vec<SimilarArtist> {
     fn unwrap(value: &RadioValue) -> Option<Self> {
         match value {
             RadioValue::Artists(v) => Some(v.clone()),
+            _ => None,
+        }
+    }
+}
+
+impl Cacheable for Option<String> {
+    fn wrap(self) -> RadioValue {
+        RadioValue::Text(self)
+    }
+    fn unwrap(value: &RadioValue) -> Option<Self> {
+        match value {
+            RadioValue::Text(v) => Some(v.clone()),
             _ => None,
         }
     }
@@ -443,6 +456,41 @@ impl LastFmService {
             Ok(parse_long(&listeners).unwrap_or(0))
         })
         .await
+    }
+
+    /// Last.fm's short biography of an artist, or None. Only when the artist Last.fm answers
+    /// for is the one asked about: a near name is someone else's story.
+    pub async fn artist_biography(&self, artist: &str) -> Option<String> {
+        if dotnet::is_blank(artist) {
+            return None;
+        }
+        let read = self
+            .cached(&format!("artist-bio|{artist}"), || async {
+                let Some(doc) = self.get_document("artist.getInfo", &[("artist", artist)]).await else {
+                    return Ok(None);
+                };
+                let Some(found) = try_get_property(&doc, "artist")? else {
+                    return Ok(None);
+                };
+                let answered = try_get_property(found, "name")?
+                    .map(element_text)
+                    .unwrap_or_default();
+                if SongIdentity::key(&answered) != SongIdentity::key(artist) {
+                    return Ok(None);
+                }
+                let Some(bio) = try_get_property(found, "bio")? else {
+                    return Ok(None);
+                };
+                let summary = try_get_property(bio, "summary")?
+                    .map(element_text)
+                    .unwrap_or_default();
+                Ok((!summary.trim().is_empty()).then(|| summary.trim().to_string()))
+            })
+            .await;
+        read.unwrap_or_else(|e| {
+            debug!("Last.fm artist.getInfo for {artist} could not be read: {e}");
+            None
+        })
     }
 
     /// Top songs of the artists Last.fm counts as like one artist: a radio for an artist.

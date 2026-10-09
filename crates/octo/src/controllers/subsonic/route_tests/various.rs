@@ -13,6 +13,7 @@ use octo_core::last_fm::last_fm_radio_state_store::station_id;
 use octo_core::models::domain::Album;
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use octo_core::settings::{AppSettings, GeneratedPlaylistSettings, LastFmSettings, SubsonicSettings};
+use octo_core::soulseek::{RoutingKind, SoulseekRouting};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -329,6 +330,11 @@ struct LengthUpstream {
     video: Arc<Mutex<HashMap<String, i32>>>,
     /// Videos the shim's full search (the one a play makes) finds; its quick lookup does not.
     played_video: Arc<Mutex<HashMap<String, i32>>>,
+    /// Last.fm's artist.getInfo by the name asked: (the name Last.fm answers for, the summary).
+    artist_bio: Arc<Mutex<HashMap<String, (String, String)>>>,
+    /// Deezer's artists by name (their catalog id), and the artists related to each id.
+    deezer_artists: Arc<Mutex<HashMap<String, i64>>>,
+    deezer_related: Arc<Mutex<HashMap<i64, Vec<(i64, String)>>>>,
     search_tracks: Arc<Mutex<Vec<(String, String)>>>,
 }
 
@@ -361,6 +367,18 @@ impl Respond for LengthUpstream {
                     return json_reply(json!({"results": {"trackmatches": {"track": tracks}}}).to_string());
                 }
                 Some("artist.gettoptracks") => return json_reply(r#"{"toptracks":{"track":[]}}"#.into()),
+                Some("artist.getInfo") => {
+                    let artist = query_value(request, "artist").unwrap_or_default();
+                    if let Some((name, summary)) = self.artist_bio.lock().get(&artist) {
+                        return json_reply(
+                            json!({"artist": {"name": name, "bio": {"summary": summary, "content": summary}}})
+                                .to_string(),
+                        );
+                    }
+                    return json_reply(
+                        r#"{"error":6,"message":"The artist you supplied could not be found"}"#.into(),
+                    );
+                }
                 Some("track.getInfo") => {
                     let artist = query_value(request, "artist").unwrap_or_default();
                     let track = query_value(request, "track").unwrap_or_default();
@@ -376,6 +394,32 @@ impl Respond for LengthUpstream {
             }
         }
         let q = query_value(request, "q").unwrap_or_default();
+        if path == "/deezer/search/artist" {
+            let found: Vec<Value> = self
+                .deezer_artists
+                .lock()
+                .iter()
+                .filter(|(name, _)| name.to_lowercase() == q.to_lowercase())
+                .map(|(name, id)| json!({"id": id, "name": name, "nb_fan": 1000, "nb_album": 4}))
+                .collect();
+            return json_reply(json!({ "data": found }).to_string());
+        }
+        if let Some(id) = path
+            .strip_prefix("/deezer/artist/")
+            .and_then(|rest| rest.strip_suffix("/related"))
+            .and_then(|id| id.parse::<i64>().ok())
+        {
+            let related: Vec<Value> = self
+                .deezer_related
+                .lock()
+                .get(&id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, name)| json!({"id": id, "name": name, "nb_fan": 10, "nb_album": 2}))
+                .collect();
+            return json_reply(json!({ "data": related }).to_string());
+        }
         if let Some(path) = path.strip_prefix("/deezer") {
             return match find_ignore_case(&self.deezer.lock(), &q) {
                 Some((key, duration)) if path == "/search" => {
@@ -971,4 +1015,88 @@ async fn a_played_outside_song_remembers_the_length_of_the_video_that_played() {
 
     let after = song_by_id(&fixture, &ids["Nothing"]).await;
     assert_eq!(after["duration"], 199, "{after}");
+}
+
+/// An outside artist, as search registers one: its id.
+fn outside_artist(fixture: &LengthFixture, name: &str) -> String {
+    fixture.state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Artist,
+        artist: Some(name.into()),
+        ..Default::default()
+    })
+}
+
+fn justice_upstream(fixture: &LengthFixture, answered_as: &str) {
+    fixture.upstream.artist_bio.lock().insert(
+        "Justice".into(),
+        (answered_as.into(), "French electronic duo.".into()),
+    );
+    fixture
+        .upstream
+        .deezer_artists
+        .lock()
+        .insert("Justice".into(), 27);
+    fixture
+        .upstream
+        .deezer_related
+        .lock()
+        .insert(27, vec![(1, "Daft Punk".into()), (2, "Kavinsky".into())]);
+}
+
+#[tokio::test]
+async fn get_artist_info2_an_outside_artist_has_last_fms_biography_and_related_artists() {
+    let fixture = length_fixture().await;
+    justice_upstream(&fixture, "Justice");
+    let id = outside_artist(&fixture, "Justice");
+
+    let body = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&u=alice&t=token&s=salt&f=json"),
+    )
+    .await
+    .json();
+
+    let info = &body["subsonic-response"]["artistInfo2"];
+    assert_eq!(info["biography"], "French electronic duo.", "{body}");
+    let similar = info["similarArtist"].as_array().expect("related artists");
+    let names: Vec<&str> = similar.iter().map(|a| a["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Daft Punk", "Kavinsky"]);
+    assert_eq!(similar[0]["isExternal"], true);
+    // Each opens that artist's own outside page.
+    let daft_punk = similar[0]["id"].as_str().unwrap();
+    let routing = fixture
+        .state
+        .external_id_registry
+        .lookup(daft_punk)
+        .expect("registered")
+        .snapshot();
+    assert_eq!(routing.artist.as_deref(), Some("Daft Punk"));
+    assert_eq!(routing.external_artist_id.as_deref(), Some("1"));
+
+    let xml = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&count=1&u=alice&t=token&s=salt"),
+    )
+    .await
+    .body;
+    assert_eq!(xml.matches("<similarArtist ").count(), 1, "{xml}");
+    assert!(xml.contains("name=\"Daft Punk\""), "{xml}");
+}
+
+#[tokio::test]
+async fn get_artist_info2_a_biography_last_fm_gives_for_another_name_is_left_out() {
+    let fixture = length_fixture().await;
+    justice_upstream(&fixture, "Justice Crew");
+    let id = outside_artist(&fixture, "Justice");
+
+    let body = get(
+        &fixture.app,
+        &format!("/rest/getArtistInfo2?id={id}&u=alice&t=token&s=salt&f=json"),
+    )
+    .await
+    .json();
+
+    let info = &body["subsonic-response"]["artistInfo2"];
+    assert_eq!(info["biography"], "", "{body}");
+    assert_eq!(info["similarArtist"].as_array().map(Vec::len), Some(2));
 }

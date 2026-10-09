@@ -80,6 +80,16 @@ pub trait IMusicMetadataService: Send + Sync {
     /// any provider that doesn't need it.
     async fn prewarm_cover_art(&self, _songs: &[Song], _top_n: usize) {}
 
+    /// Artists the catalog relates to an outside artist, as outside artists, at most `limit`.
+    async fn get_related_artists(
+        &self,
+        _external_provider: &str,
+        _external_id: &str,
+        _limit: i32,
+    ) -> Vec<Artist> {
+        Vec::new()
+    }
+
     /// Searches for albums on external providers. `limit` was 20 by default.
     async fn search_albums(&self, query: &str, limit: i32) -> Vec<Album>;
 

@@ -46,7 +46,7 @@ pub use family_playlist_store::{FamilyPlaylist, FamilyPlaylistEntry, FamilyPlayl
 pub use family_pool_store::{FamilyPoolStore, PoolFile};
 pub use family_service::{FamilyError, FamilyHooks, FamilyService};
 pub use family_store::{FamilyStore, Member, PairOutcome, SharedLibraries};
-pub use library_index::{IndexedSong, LibraryIndex, LibraryScope, ScopeResolver};
+pub use library_index::{IndexedSong, LibraryIndex, LibraryScope, ScopeResolver, ScopeView};
 pub use library_write_gate::{HeartOutcome, LibraryWriteGate, WriteDecision};
 pub use member_bridge::MemberBridge;
 pub use member_credentials::MemberCredentials;

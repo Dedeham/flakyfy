@@ -912,7 +912,11 @@ async fn a_kept_report_lists_the_songs_as_the_library_read_them() {
 // ---- Family ----------------------------------------------------------------------------------
 
 /// Library health over these rows, with Family on or off.
-async fn checked_with_family(family_on: bool, rows: Vec<LibrarySongRow>) -> HealthSnapshot {
+async fn checked_with_family(
+    family_on: bool,
+    members: &[(&str, i64)],
+    rows: Vec<LibrarySongRow>,
+) -> HealthSnapshot {
     let read_page: ReadPage = Arc::new(move |start, _| {
         let rows = rows.clone();
         async move {
@@ -930,8 +934,7 @@ async fn checked_with_family(family_on: bool, rows: Vec<LibrarySongRow>) -> Heal
         Arc::new(SettingsStore::for_tests(AppSettings::default())),
         HealthServices {
             scope: Some(crate::services::family::library_index::scope_for_tests(
-                family_on,
-                &[("alex", 3)],
+                family_on, members,
             )),
             ..Default::default()
         },
@@ -941,7 +944,8 @@ async fn checked_with_family(family_on: bool, rows: Vec<LibrarySongRow>) -> Heal
 }
 
 /// A member's own copy of a shared song is never a duplicate of it: Library health keeps to the
-/// shared library (Keep would remove the member's file). With Family off nothing changes.
+/// shared library (Keep would remove the member's file), with Family on and after it was turned
+/// off while members' libraries are still there. With no member library nothing changes.
 #[tokio::test]
 async fn health_never_sees_personal_libraries() {
     let mut shared = song("a", "Song", "Album", "x", Some(2020), "flac");
@@ -952,12 +956,14 @@ async fn health_never_sees_personal_libraries() {
     alexs.path = "Artist/Album/b.mp3".into();
     let rows = vec![shared, alexs];
 
-    let on = checked_with_family(true, rows.clone()).await;
-    assert_eq!(on.report.checked, 1);
-    assert!(on.report.duplicates.is_empty());
-    assert_eq!(ids_of(&on.songs), ["a"]);
+    for family_on in [true, false] {
+        let kept = checked_with_family(family_on, &[("alex", 3)], rows.clone()).await;
+        assert_eq!(kept.report.checked, 1, "Family on: {family_on}");
+        assert!(kept.report.duplicates.is_empty());
+        assert_eq!(ids_of(&kept.songs), ["a"]);
+    }
 
-    let off = checked_with_family(false, rows).await;
+    let off = checked_with_family(false, &[], rows).await;
     assert_eq!(off.report.checked, 2);
     assert_eq!(ids_of(&off.report.duplicates[0].copies), ["a", "b"]);
 }

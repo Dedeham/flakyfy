@@ -15,7 +15,7 @@ use super::album_ownership::LibraryAlbumIndex;
 use super::navidrome_playlist_api::NavidromePlaylistApi;
 use super::quality_upgrade_worker::LibrarySongRow;
 use crate::services::family::library_index::row_full_path;
-use crate::services::family::{LibraryScope, ScopeResolver};
+use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 
 /// One page of the library, with how many rows Navidrome's page held; None when Navidrome could
 /// not be read. Tests answer from a list.
@@ -45,9 +45,9 @@ struct Inner {
 }
 
 /// Whether a row is in `scope`.
-fn row_in(resolver: &ScopeResolver, scope: &LibraryScope, row: &LibrarySongRow) -> bool {
+fn row_in(view: &ScopeView, scope: &LibraryScope, row: &LibrarySongRow) -> bool {
     let full = row_full_path(row.library_path.as_deref(), &row.path);
-    resolver.allows(scope, Some(&row.id), Some(&full))
+    view.allows(scope, Some(&row.id), Some(&full))
 }
 
 /// The whole library, read through Navidrome's own song list and kept, for the questions a
@@ -122,11 +122,12 @@ impl LibrarySnapshot {
         let Some(everything) = everything else {
             return Some(shared);
         };
+        let scopes = resolver.view();
         let view = Arc::new(LibraryAlbumIndex::new(
             everything
                 .rows()
                 .iter()
-                .filter(|row| row_in(&resolver, scope, row))
+                .filter(|row| row_in(&scopes, scope, row))
                 .map(|row| (**row).clone()),
         ));
         self.inner.state.lock().viewers.insert(key, Arc::clone(&view));
@@ -231,14 +232,16 @@ async fn read(inner: &Inner) -> Option<Arc<LibraryAlbumIndex>> {
         start += LibrarySnapshot::PAGE_SIZE;
     }
     let read = rows.len();
-    // With Family on, the library's copy is the shared library's; members' own songs are kept
+    // While members have libraries of their own (Family on, or turned off with their libraries
+    // still there), the library's copy is the shared library's; members' own songs are kept
     // aside for their own view.
-    let resolver = inner.scope.lock().clone().filter(ScopeResolver::active);
+    let resolver = inner.scope.lock().clone().filter(ScopeResolver::keeps_shared);
     let (index, everything) = match resolver {
         Some(resolver) => {
+            let scopes = resolver.shared_view();
             let (shared, own): (Vec<LibrarySongRow>, Vec<LibrarySongRow>) = rows
                 .into_iter()
-                .partition(|row| row_in(&resolver, &LibraryScope::Shared, row));
+                .partition(|row| row_in(&scopes, &LibraryScope::Shared, row));
             let shared_index = Arc::new(LibraryAlbumIndex::new(shared));
             let everything = (!own.is_empty()).then(|| {
                 Arc::new(LibraryAlbumIndex::new(
@@ -359,12 +362,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_family_off_every_song_counts() {
-        let snapshot = snapshot(library()).with_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+    async fn without_member_libraries_every_song_counts() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(false, &[]));
         let all = snapshot.current().await.expect("read");
         assert_eq!(all.song_count(), 3);
         let unscoped = snapshot_unscoped().current().await.expect("read");
         assert_eq!(unscoped.song_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn with_family_turned_off_members_songs_are_still_not_the_librarys() {
+        let snapshot = snapshot(library()).with_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+        let shared = snapshot.current().await.expect("read");
+        assert_eq!(shared.song_count(), 1);
+        assert!(
+            shared
+                .find("Teardrop", Some("Massive Attack"), Some(200), &[], None)
+                .is_none()
+        );
     }
 
     fn snapshot_unscoped() -> LibrarySnapshot {

@@ -378,18 +378,21 @@ impl LibraryHealthService {
         }))
     }
 
-    /// The rows Library health looks at: every row, or with Family on the shared library's.
+    /// The rows Library health looks at: every row, or the shared library's while members have
+    /// libraries of their own (Family on, or turned off with their libraries still there).
     fn shared_rows(&self, rows: &[Row]) -> Vec<Row> {
-        match &self.services.scope {
-            Some(scope) if scope.active() => rows
-                .iter()
-                .filter(|row| {
-                    let full = row_full_path(row.library_path.as_deref(), &row.path);
-                    scope.allows(&LibraryScope::Shared, Some(&row.id), Some(&full))
-                })
-                .cloned()
-                .collect(),
-            _ => rows.to_vec(),
+        match self.services.scope.as_ref().filter(|scope| scope.keeps_shared()) {
+            Some(scope) => {
+                let view = scope.shared_view();
+                rows.iter()
+                    .filter(|row| {
+                        let full = row_full_path(row.library_path.as_deref(), &row.path);
+                        view.allows(&LibraryScope::Shared, Some(&row.id), Some(&full))
+                    })
+                    .cloned()
+                    .collect()
+            }
+            None => rows.to_vec(),
         }
     }
 

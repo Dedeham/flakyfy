@@ -841,14 +841,25 @@ fn scoped_sweep(family_on: bool) -> LibraryReviewSweepWorker {
     ))
 }
 
-/// With Family on the sweep keeps to the shared library: a member's own songs and the family
-/// pool are never asked about.
+/// While members have libraries of their own the sweep keeps to the shared library: a member's
+/// own songs and the family pool are never asked about, with Family on or turned off since.
 #[test]
 fn the_sweep_never_asks_about_a_family_members_own_songs() {
-    let sweep = scoped_sweep(true);
-    assert!(sweep.in_shared("/music/Massive Attack/Mezzanine/01 Angel.flac"));
-    assert!(!sweep.in_shared("/members/alex/Massive Attack/Mezzanine/01 Angel.flac"));
-    assert!(!sweep.in_shared("/members/.pool/Massive Attack/Mezzanine/01 Angel.flac"));
-    let off = scoped_sweep(false);
-    assert!(off.in_shared("/members/alex/Massive Attack/Mezzanine/01 Angel.flac"));
+    for family_on in [true, false] {
+        let sweep = scoped_sweep(family_on);
+        let view = sweep.shared_view();
+        let asks = |full: &str| LibraryReviewSweepWorker::in_shared(view.as_ref(), full);
+        assert!(asks("/music/Massive Attack/Mezzanine/01 Angel.flac"));
+        assert!(!asks("/members/alex/Massive Attack/Mezzanine/01 Angel.flac"));
+        assert!(!asks("/members/.pool/Massive Attack/Mezzanine/01 Angel.flac"));
+    }
+    let never_family = scoped_sweep(false).with_library_scope(
+        crate::services::family::library_index::scope_for_tests(false, &[]),
+    );
+    let view = never_family.shared_view();
+    assert!(view.is_none());
+    assert!(LibraryReviewSweepWorker::in_shared(
+        view.as_ref(),
+        "/members/alex/Massive Attack/Mezzanine/01 Angel.flac"
+    ));
 }

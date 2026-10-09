@@ -294,6 +294,9 @@ async fn import_songs_go_where_the_member_may_add_them() {
 #[tokio::test]
 async fn family_off_plays_and_hearts_as_always() {
     let world = World::with_family(None, false);
+    // Nobody has a library of their own: Family was never used here.
+    world.family.remove_member("alex");
+    world.family.remove_member("sam");
     configure(&world, &[HeartDownloadSource::YouTube], true);
     let chain = chain(world);
     chain
@@ -301,11 +304,29 @@ async fn family_off_plays_and_hearts_as_always() {
         .queue_play("test", "9", Some("sam"), None, Some("sam"));
     let request = next_queued(&chain.queue).await.expect("queued");
     assert_eq!(request.place(), AcquisitionPlace::default());
-    // With Family off Alex's copy is just the library's.
+    // The file under the members folder is just the library's.
     let owner = chain
         .coordinator
         .acquire_track_outcome("test", "1", Some("winters"), None, &AcquisitionTarget::Shared)
         .await
         .expect("ran");
     assert_eq!(owner, TrackOutcome::AlreadyThere);
+}
+
+#[tokio::test]
+async fn family_turned_off_never_counts_a_members_own_copy_as_the_librarys() {
+    let world = World::with_family(None, false);
+    configure(&world, &[HeartDownloadSource::YouTube], true);
+    let chain = chain(world);
+    let coordinator = chain.coordinator.clone();
+    let owner = tokio::spawn(async move {
+        coordinator
+            .acquire_track_outcome("test", "1", Some("winters"), None, &AcquisitionTarget::Shared)
+            .await
+    });
+    // Alex's library is still there, so the shared library does not have the song: it is fetched.
+    let request = next_queued(&chain.queue).await.expect("queued");
+    assert_eq!(request.external_id, "1");
+    assert_eq!(request.place(), AcquisitionPlace::default());
+    owner.abort();
 }

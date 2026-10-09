@@ -266,24 +266,28 @@ impl DuplicateScanWorker {
         self
     }
 
-    /// The tracks the scan may pair: all of them, or with Family on the shared library's. Until
-    /// the library index has been read, the walk counts as unfinished, so nothing is settled
-    /// from it.
+    /// The tracks the scan may pair: all of them, or the shared library's while members have
+    /// libraries of their own (Family on, or turned off with their libraries still there).
+    /// Until the library index has been read no track can be told apart, so none is paired
+    /// and the walk counts as unfinished: nothing is asked or settled from it.
     fn shared_only(&self, tracks: Vec<LibraryTrack>, complete: bool) -> (Vec<LibraryTrack>, bool) {
         match &self.scope {
-            Some(scope) if scope.active() => {
-                let ready = scope.ready();
+            Some(scope) if scope.keeps_shared() => {
+                if !scope.ready() {
+                    return (Vec::new(), false);
+                }
+                let view = scope.shared_view();
                 let shared = tracks
                     .into_iter()
                     .filter(|track| {
-                        scope.allows(
+                        view.allows(
                             &crate::services::family::LibraryScope::Shared,
                             Some(&track.id),
                             None,
                         )
                     })
                     .collect();
-                (shared, complete && ready)
+                (shared, complete)
             }
             _ => (tracks, complete),
         }

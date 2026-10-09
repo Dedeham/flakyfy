@@ -261,6 +261,18 @@ impl LibraryIndex {
         self.songs.read().by_id.get(id).and_then(|song| song.library_id)
     }
 
+    /// The library whose songs sit under `folder` (any one of them tells); None when the index
+    /// holds no song there.
+    pub fn library_of_folder(&self, folder: &str) -> Option<i64> {
+        let prefix = format!("{}/", folder.trim_end_matches('/'));
+        self.songs
+            .read()
+            .by_path
+            .iter()
+            .find(|(path, _)| path.starts_with(&prefix))
+            .and_then(|(_, song)| song.library_id)
+    }
+
     /// The song whose file is at this full path.
     pub fn find_by_path(&self, path: &str) -> Option<IndexedSong> {
         self.songs.read().by_path.get(path).map(|song| (**song).clone())
@@ -396,12 +408,26 @@ pub enum LibraryScope {
     Viewer(String),
 }
 
-/// Answers whether a song is in a scope. With Family off every song is in every scope, so the
-/// work that asks behaves as it always has.
+/// Answers whether a song is in a scope. With Family off a member and their own library see
+/// nothing of each other, since no member signs in, so a viewer's scope holds every song.
+/// Library-wide work is another matter: members' own libraries and the family pool stay on
+/// disk when Family is turned off, so that work keeps to the shared library for as long as
+/// any member has a library of their own ([`ScopeResolver::keeps_shared`]).
 #[derive(Clone)]
 pub struct ScopeResolver {
     settings: Arc<SettingsStore>,
     store: Arc<FamilyStore>,
+    index: Arc<LibraryIndex>,
+}
+
+/// One look at the scopes, made once and asked about many songs: the members' own libraries
+/// and the members folder, read when it was made.
+pub struct ScopeView {
+    /// Whether songs are told apart at all; when not, every song is in every scope.
+    apart: bool,
+    /// Each member's own library id and their name.
+    owners: HashMap<i64, String>,
+    members_path: String,
     index: Arc<LibraryIndex>,
 }
 
@@ -414,50 +440,91 @@ impl ScopeResolver {
         }
     }
 
-    /// Whether scopes mean anything now (Family is on).
+    /// Whether scopes mean anything to a viewer now (Family is on).
     pub fn active(&self) -> bool {
         self.settings.current().family.enabled
     }
 
-    /// Whether a destructive walk may trust the answers: Family is off, or the index has been
-    /// read at least once.
+    /// Whether library-wide work must keep to the shared library: Family is on, or a member
+    /// has a library of their own (Family was on and was turned off).
+    pub fn keeps_shared(&self) -> bool {
+        self.active() || self.store.has_personal_libraries()
+    }
+
+    /// Whether a destructive walk may trust the answers: nothing needs keeping apart, or the
+    /// index has been read at least once.
     pub fn ready(&self) -> bool {
-        !self.active() || self.index.is_ready()
+        !self.keeps_shared() || self.index.is_ready()
     }
 
     pub fn index(&self) -> &Arc<LibraryIndex> {
         &self.index
     }
 
+    /// A view for a viewer's scope, apart only while Family is on.
+    pub fn view(&self) -> ScopeView {
+        self.view_apart(self.active())
+    }
+
+    /// A view for library-wide work, apart while [`Self::keeps_shared`].
+    pub fn shared_view(&self) -> ScopeView {
+        self.view_apart(self.keeps_shared())
+    }
+
+    fn view_apart(&self, apart: bool) -> ScopeView {
+        ScopeView {
+            apart,
+            owners: if apart {
+                self.store.personal_libraries().into_iter().collect()
+            } else {
+                HashMap::new()
+            },
+            members_path: self.settings.current().family.effective_members_path(),
+            index: Arc::clone(&self.index),
+        }
+    }
+
     /// Every member's own library id.
     pub fn personal_library_ids(&self) -> Vec<i64> {
         self.store
-            .members()
-            .iter()
-            .filter_map(|member| member.personal_library_id)
+            .personal_libraries()
+            .into_iter()
+            .map(|(library, _)| library)
             .collect()
     }
 
     /// The member whose own library this is.
     pub fn personal_library_owner(&self, library_id: i64) -> Option<String> {
         self.store
-            .members()
+            .personal_libraries()
             .into_iter()
-            .find(|member| member.personal_library_id == Some(library_id))
-            .map(|member| member.username)
+            .find(|(library, _)| *library == library_id)
+            .map(|(_, owner)| owner)
     }
 
     /// The member a file under the members folder belongs to (`<members>/<user>/...`).
     /// `Some("")` for a file under the members folder that is no member's library (the family
     /// pool), None for a file outside it.
     pub fn path_owner(&self, full: &str) -> Option<String> {
-        let members = self.settings.current().family.effective_members_path();
-        let rest = full.strip_prefix(&members)?.strip_prefix('/')?;
-        let first = rest.split('/').next().unwrap_or("");
-        if first.starts_with('.') {
-            return Some(String::new());
-        }
-        Some(first.to_string())
+        path_owner_under(&self.settings.current().family.effective_members_path(), full)
+    }
+
+    /// Whether a song (by id, path, or both) is in `scope`. Asking about many songs, make a
+    /// [`ScopeView`] once instead.
+    pub fn allows(&self, scope: &LibraryScope, song_id: Option<&str>, full: Option<&str>) -> bool {
+        self.view().allows(scope, song_id, full)
+    }
+
+    /// Whether a library is in `scope` (an unknown library counts as shared).
+    pub fn allows_library(&self, scope: &LibraryScope, library_id: i64) -> bool {
+        self.view().allows_library(scope, library_id)
+    }
+}
+
+impl ScopeView {
+    /// Whether songs are told apart in this view.
+    pub fn apart(&self) -> bool {
+        self.apart
     }
 
     /// The member whose own library holds this song, from the index, a file Octo just placed,
@@ -466,15 +533,15 @@ impl ScopeResolver {
         let library = song_id
             .and_then(|id| self.index.library_of(id))
             .or_else(|| full.and_then(|path| self.index.placed_library_of(path)));
-        if let Some(owner) = library.and_then(|id| self.personal_library_owner(id)) {
-            return Some(owner);
+        if let Some(owner) = library.and_then(|id| self.owners.get(&id)) {
+            return Some(owner.clone());
         }
-        full.and_then(|path| self.path_owner(path))
+        full.and_then(|path| path_owner_under(&self.members_path, path))
     }
 
     /// Whether a song (by id, path, or both) is in `scope`.
     pub fn allows(&self, scope: &LibraryScope, song_id: Option<&str>, full: Option<&str>) -> bool {
-        if !self.active() {
+        if !self.apart {
             return true;
         }
         match (self.owner_of(song_id, full), scope) {
@@ -488,15 +555,25 @@ impl ScopeResolver {
 
     /// Whether a library is in `scope` (an unknown library counts as shared).
     pub fn allows_library(&self, scope: &LibraryScope, library_id: i64) -> bool {
-        if !self.active() {
+        if !self.apart {
             return true;
         }
-        match (self.personal_library_owner(library_id), scope) {
+        match (self.owners.get(&library_id), scope) {
             (None, _) => true,
             (Some(_), LibraryScope::Shared) => false,
-            (Some(owner), LibraryScope::Viewer(viewer)) => eq_ignore_case(&owner, viewer),
+            (Some(owner), LibraryScope::Viewer(viewer)) => eq_ignore_case(owner, viewer),
         }
     }
+}
+
+/// The member a file under `members` belongs to; see [`ScopeResolver::path_owner`].
+fn path_owner_under(members: &str, full: &str) -> Option<String> {
+    let rest = full.strip_prefix(members)?.strip_prefix('/')?;
+    let first = rest.split('/').next().unwrap_or("");
+    if first.starts_with('.') {
+        return Some(String::new());
+    }
+    Some(first.to_string())
 }
 
 /// A scope over no Navidrome for tests: Family on or off, and members with their own library

@@ -318,7 +318,8 @@ impl QualityUpgradeWorker {
         }
     }
 
-    /// With Family on, the weekly upgrade keeps to the shared library: songs in members' own
+    /// While members have libraries of their own (Family on, or turned off with their libraries
+    /// still there), the weekly upgrade keeps to the shared library: songs in members' own
     /// libraries are left out of the walk.
     pub fn with_library_scope(self, scope: crate::services::family::ScopeResolver) -> Self {
         self.configure(|seams| {
@@ -328,9 +329,10 @@ impl QualityUpgradeWorker {
                 let scope = scope.clone();
                 async move {
                     let (songs, complete) = walk().await;
-                    if !scope.active() {
+                    if !scope.keeps_shared() {
                         return (songs, complete);
                     }
+                    let view = scope.shared_view();
                     let shared = songs
                         .into_iter()
                         .filter(|row| {
@@ -338,7 +340,7 @@ impl QualityUpgradeWorker {
                                 row.library_path.as_deref(),
                                 &row.path,
                             );
-                            scope.allows(
+                            view.allows(
                                 &crate::services::family::LibraryScope::Shared,
                                 Some(&row.id),
                                 Some(&full),

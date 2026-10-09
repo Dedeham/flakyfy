@@ -271,7 +271,7 @@ impl SyncCatalogService {
     /// member's own library go, and so do albums and artists only those songs had. Unchanged
     /// with Family off or for anyone Octo cannot name.
     pub(crate) fn scoped_answer(&self, user: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
-        let resolver = self.scope.lock().clone().filter(ScopeResolver::active)?;
+        let resolver = self.scope.lock().clone().filter(ScopeResolver::active)?.view();
         let user = user.filter(|u| !u.trim().is_empty())?;
         let scope = LibraryScope::Viewer(user.to_string());
         let mut document: Value = serde_json::from_slice(body).ok()?;

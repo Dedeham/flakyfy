@@ -14,7 +14,7 @@ use tracing::debug;
 
 use super::NavidromeSongPathResolver;
 use super::duplicate_scan_worker::is_lossless_file;
-use crate::services::family::{LibraryScope, ScopeResolver};
+use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::local::ILocalLibraryService;
 use crate::services::subsonic::NavidromeIdentityService;
 
@@ -152,7 +152,9 @@ impl LibraryOwnership {
     }
 
     /// [`Self::find`] in one scope: the shared library, or the shared library and one member's
-    /// own (never another member's). With Family off every song counts, as always.
+    /// own (never another member's). The shared library leaves members' own songs out for as
+    /// long as members have libraries of their own; a member's view only while Family is on.
+    /// With neither, every song counts, as always.
     pub async fn find_in(
         &self,
         scope: &LibraryScope,
@@ -163,7 +165,13 @@ impl LibraryOwnership {
     ) -> Option<OwnedCopy> {
         let artist = artist.filter(|a| !dotnet::is_blank(a))?;
         let title = title.filter(|t| !dotnet::is_blank(t))?;
-        let resolver = self.seams.lock().scope.clone().filter(ScopeResolver::active);
+        let resolver = self.seams.lock().scope.clone();
+        let resolver = resolver
+            .map(|resolver| match scope {
+                LibraryScope::Shared => resolver.shared_view(),
+                LibraryScope::Viewer(_) => resolver.view(),
+            })
+            .filter(ScopeView::apart);
         let scope_key = match (&resolver, scope) {
             (None, _) => String::new(),
             (Some(_), LibraryScope::Shared) => "|shared".to_string(),

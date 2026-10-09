@@ -16,7 +16,7 @@ use octo_core::settings::{AppSettings, RadioSourceSettings, SoulseekSettings, Su
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::test_support_6b1::{Reply, admin_write, app, get, send};
+use super::test_app::{Reply, admin_write, app, get, send};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::{App, app_routes};
 use crate::http::static_files::StaticAssets;
@@ -456,6 +456,55 @@ async fn a_navidrome_admin_signs_in_and_the_cookie_opens_the_dashboard() {
     assert_eq!(session["signInOff"], false);
 }
 
+/// Library health answers a signed-in Navidrome admin, and its fixes still go through the library
+/// actions gates: off here, so nothing is changed.
+#[tokio::test]
+async fn library_health_answers_a_signed_in_admin_and_its_fixes_keep_the_library_actions_gates() {
+    let factory = SignInFactory::new().await;
+    let cookie = cookie_of(&factory.sign_in("admin", "pw").await);
+
+    let report = get_cookie(&factory.app, "/api/admin/health", &cookie).await;
+    // The fake Navidrome has no native song list, so the report says it could not read one.
+    assert_eq!(report.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        report.json()["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("could not read your library")
+    );
+    // Check again asks with ?fresh=1.
+    assert_eq!(
+        get_cookie(&factory.app, "/api/admin/health?fresh=1", &cookie)
+            .await
+            .status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let apply = post_json(
+        &factory.app,
+        "/api/admin/health/apply",
+        &json!({
+            "label": "Fixing copies",
+            "check": "duplicates",
+            "steps": [{ "action": "remove", "id": "a", "title": "A" }],
+        }),
+        &[("Cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(apply.status, StatusCode::FORBIDDEN);
+    assert_eq!(apply.json()["error"], "Library actions are off.");
+
+    let no_header = send(
+        &factory.app,
+        Method::POST,
+        "/api/admin/health/undo",
+        &[("Cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(no_header.status, StatusCode::FORBIDDEN);
+}
+
 #[tokio::test]
 async fn a_listener_cannot_sign_in_to_the_dashboard() {
     let factory = SignInFactory::new().await;
@@ -521,6 +570,23 @@ async fn the_recovery_code_works_once_and_opens_settings_but_not_files() {
         get_cookie(&factory.app, "/api/admin/browse", &cookie)
             .await
             .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_cookie(&factory.app, "/api/admin/health", &cookie)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_json(
+            &factory.app,
+            "/api/admin/health/undo",
+            &json!({}),
+            &[("Cookie", &cookie)]
+        )
+        .await
+        .status,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
@@ -887,6 +953,10 @@ async fn with_the_sign_in_off_the_dashboard_is_open_but_files_still_ask_for_navi
     );
     assert_eq!(
         get(&factory.app, "/api/admin/lyrics/library").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(&factory.app, "/api/admin/health").await.status,
         StatusCode::UNAUTHORIZED
     );
 }

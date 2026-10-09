@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use octo_core::common::dotnet;
 use octo_subsonic::SubsonicReply;
 
-use super::helpers_6a1::SubsonicCall;
+use super::action_helpers::SubsonicCall;
 use crate::app::AppState;
 use crate::http::error::AppError;
 use crate::services::subsonic::subsonic_proxy_service::is_absolute_uri;

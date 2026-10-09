@@ -2,7 +2,7 @@
 //! (endpoints.md §3), split by area. Every action is registered at `rest/{name}` and
 //! `rest/{name}.view` for GET and POST; any other method, and every path no action claims,
 //! reaches the catch-all (`http::catch_all`, the controller's `GenericEndpoint`).
-pub mod helpers_6a1;
+pub mod action_helpers;
 pub mod info;
 pub mod internet_radio;
 pub mod native;
@@ -13,39 +13,41 @@ pub mod similar_songs;
 pub mod top_songs;
 
 #[cfg(test)]
-mod tests_6a1;
+mod route_tests;
 
 pub(crate) mod album_ownership;
 pub mod browsing;
+pub(crate) mod caller_checks;
 pub mod downloads;
 pub mod extensions;
-pub(crate) mod helpers_6a2;
 pub mod imports;
 pub mod lyrics;
 pub mod media;
 pub mod stars;
 
-pub(crate) mod playlist_names_6a2;
+pub(crate) mod playlist_names;
 
 #[cfg(test)]
-mod test_support_6a2;
+mod test_app;
 
 #[cfg(test)]
-mod browsing_tests_6a2;
-#[cfg(test)]
-mod extensions_tests_6a2;
+mod extensions_tests;
 #[cfg(test)]
 mod for_you_tests;
 #[cfg(test)]
-mod lyrics_endpoint_tests_6a2;
+mod library_edit_tests;
 #[cfg(test)]
-mod media_tests_6a2;
+mod lyrics_endpoint_tests;
+#[cfg(test)]
+mod media_tests;
+#[cfg(test)]
+mod merged_browsing_tests;
 #[cfg(test)]
 mod radio_ban_tests;
 #[cfg(test)]
-mod rating_tests_6a2;
+mod rating_tests;
 #[cfg(test)]
-mod scrobble_tests_6a2;
+mod scrobble_tests;
 #[cfg(test)]
 mod search_album_ownership_tests;
 #[cfg(test)]

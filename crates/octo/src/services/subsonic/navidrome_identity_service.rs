@@ -350,7 +350,7 @@ impl NavidromeIdentityService {
         // have on by default, including for existing installs on update.
         if !Path::new(&folder).is_dir() {
             warn!(
-                "Navidrome reports its music folder as '{folder}', but that path is not mounted in Octo's container — keeping the configured download path. Mount '{folder}' into Octo (or set Navidrome's remotePath) to enable auto-detect."
+                "Navidrome reports its music folder as '{folder}', but that path is not mounted in Octo's container, so Octo keeps the configured download path. Mount '{folder}' into Octo (or set Navidrome's remotePath) to enable auto-detect."
             );
             return Ok(None);
         }

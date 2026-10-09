@@ -11,13 +11,15 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use tracing::info;
 
-use super::helpers_6b1::{bind_body, error_json, header_value, object_result, ok, request_cookie};
-use super::helpers_6b2::query;
+use super::json_body::bind_body;
+use super::json_body::{FromBody, Kind, Member, Shape};
+use super::plumbing::{error_json, header_value, object_result, ok, request_cookie};
+use super::request_binding::query;
 use crate::app::AppState;
-use crate::http::error::{AppError, AppResult, problem, validation_problem};
+use crate::http::error::{AppError, AppResult, problem};
 use crate::http::routes::RouteSet;
 use crate::services::imports::ImportActionResult;
 use crate::services::imports::import_file_reader::ImportFileReader;
@@ -51,8 +53,8 @@ pub fn routes() -> RouteSet {
 /// `SignedIn(header)`: `NavidromeUserOf(cookie ?? header)`. Never the recovery code, and the
 /// cookie is not renewed here.
 fn signed_in(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let token = request_cookie(headers, super::helpers_6b1::BROWSE_COOKIE_NAME)
-        .or_else(|| header_value(headers, super::helpers_6b1::BROWSE_TOKEN_HEADER));
+    let token = request_cookie(headers, super::plumbing::BROWSE_COOKIE_NAME)
+        .or_else(|| header_value(headers, super::plumbing::BROWSE_TOKEN_HEADER));
     state.browse_sessions.navidrome_user_of(token.as_deref())
 }
 
@@ -86,197 +88,21 @@ pub(crate) fn app_error(e: anyhow::Error) -> AppError {
 
 // ---- Request bodies ---------------------------------------------------------------------------
 
-/// What a member of a request record must hold.
-#[derive(Clone, Copy)]
-enum Kind {
-    Bool,
-    Text,
-    TextList,
-}
-
-/// A `[FromBody]` record: ASP.NET's binder, with System.Text.Json's refusal of a member of the
-/// wrong type (`"on": "yes"`) as it wrote it, naming the record and the member's path.
-#[allow(clippy::result_large_err)]
-fn bind_record<T: serde::de::DeserializeOwned>(
-    headers: &HeaderMap,
-    body: &[u8],
-    record: &str,
-    members: &[(&str, Kind)],
-) -> Result<T, Response> {
-    let value: Value = bind_body(headers, body, "request")?;
-    let text = String::from_utf8_lossy(body);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    if let Some(Value::Object(fields)) = Some(&value) {
-        for (name, kind) in members {
-            let Some((key, member)) = fields.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) else {
-                continue;
-            };
-            let wrong = match kind {
-                Kind::Bool => (!member.is_boolean()).then(|| format!("$.{name}")),
-                Kind::Text => (!member.is_string() && !member.is_null()).then(|| format!("$.{name}")),
-                Kind::TextList => match member {
-                    Value::Null => None,
-                    Value::Array(items) => items
-                        .iter()
-                        .position(|item| !item.is_string() && !item.is_null())
-                        .map(|at| format!("$.{name}[{at}]")),
-                    _ => Some(format!("$.{name}")),
-                },
-            };
-            if let Some(path) = wrong {
-                let (line, byte) = token_end(text, key, &path).unwrap_or((0, 0));
-                let message = format!(
-                    "The JSON value could not be converted to Octo.Controllers.ImportsController+{record}. Path: {path} | LineNumber: {line} | BytePositionInLine: {byte}."
-                );
-                return Err(validation_problem(&[
-                    ("request", &["The request field is required."]),
-                    (path.as_str(), &[message.as_str()]),
-                ]));
-            }
-        }
-    }
-    octo_core::json::web::from_value(&value).map_err(|e| {
-        let message = format!("The JSON value could not be converted. {e}");
-        validation_problem(&[
-            ("$", &[message.as_str()]),
-            ("request", &["The request field is required."]),
-        ])
-    })
-}
-
-/// Where the reader stood after the token it refused, as `LineNumber` and
-/// `BytePositionInLine`: the end of a scalar, just past the `[` or `{` of a container. `path` is
-/// `$.member` or `$.member[i]`.
-fn token_end(text: &str, key: &str, path: &str) -> Option<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let element: Option<usize> = path
-        .rsplit_once('[')
-        .and_then(|(_, rest)| rest.trim_end_matches(']').parse().ok());
-    let mut i = 0usize;
-    let skip_ws = |i: &mut usize| {
-        while *i < bytes.len() && matches!(bytes[*i], b' ' | b'\t' | b'\r' | b'\n') {
-            *i += 1;
-        }
-    };
-    // One string token, from its opening quote: its decoded text.
-    let read_string = |i: &mut usize| -> Option<String> {
-        let start = *i;
-        *i += 1;
-        while *i < bytes.len() {
-            match bytes[*i] {
-                b'\\' => *i += 2,
-                b'"' => {
-                    *i += 1;
-                    return serde_json::from_str(&text[start..*i]).ok();
-                }
-                _ => *i += 1,
-            }
-        }
-        None
-    };
-    // One value from its first byte: where it ends.
-    fn value_end(bytes: &[u8], mut i: usize) -> usize {
-        match bytes.get(i) {
-            Some(b'"') => {
-                i += 1;
-                while i < bytes.len() {
-                    match bytes[i] {
-                        b'\\' => i += 2,
-                        b'"' => return i + 1,
-                        _ => i += 1,
-                    }
-                }
-                i
-            }
-            Some(b'{' | b'[') => {
-                let mut depth = 0i32;
-                while i < bytes.len() {
-                    match bytes[i] {
-                        b'"' => {
-                            i = value_end(bytes, i);
-                            continue;
-                        }
-                        b'{' | b'[' => depth += 1,
-                        b'}' | b']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return i + 1;
-                            }
-                        }
-                        _ => {}
-                    }
-                    i += 1;
-                }
-                i
-            }
-            _ => {
-                while i < bytes.len()
-                    && !matches!(bytes[i], b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n')
-                {
-                    i += 1;
-                }
-                i
-            }
-        }
-    }
-    let position = |at: usize| {
-        let before = &text[..at];
-        let line = before.matches('\n').count();
-        let start = before.rfind('\n').map_or(0, |n| n + 1);
-        (line, at - start)
-    };
-    let refused = |start: usize| -> usize {
-        match bytes.get(start) {
-            Some(b'{' | b'[') => start + 1,
-            _ => value_end(bytes, start),
-        }
-    };
-    skip_ws(&mut i);
-    if bytes.get(i) != Some(&b'{') {
-        return None;
-    }
-    i += 1;
-    loop {
-        skip_ws(&mut i);
-        if bytes.get(i) != Some(&b'"') {
-            return None;
-        }
-        let name = read_string(&mut i)?;
-        skip_ws(&mut i);
-        i += 1; // the colon
-        skip_ws(&mut i);
-        if name == key {
-            match element {
-                None => return Some(position(refused(i))),
-                Some(wanted) => {
-                    i += 1; // the [
-                    let mut index = 0;
-                    loop {
-                        skip_ws(&mut i);
-                        if index == wanted {
-                            return Some(position(refused(i)));
-                        }
-                        i = value_end(bytes, i);
-                        skip_ws(&mut i);
-                        i += 1; // the comma
-                        index += 1;
-                    }
-                }
-            }
-        }
-        i = value_end(bytes, i);
-        skip_ws(&mut i);
-        if bytes.get(i) != Some(&b',') {
-            return None;
-        }
-        i += 1;
-    }
-}
-
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct OnRequest {
     on: bool,
+}
+
+impl FromBody for OnRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+OnRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "on",
+            kind: Kind::Bool,
+        }],
+    };
 }
 
 #[derive(Deserialize, Default)]
@@ -285,10 +111,32 @@ struct PausedRequest {
     paused: bool,
 }
 
+impl FromBody for PausedRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+PausedRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "paused",
+            kind: Kind::Bool,
+        }],
+    };
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct KeysRequest {
     keys: Option<Vec<Option<String>>>,
+}
+
+impl FromBody for KeysRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+KeysRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "keys",
+            kind: Kind::TextList,
+        }],
+    };
 }
 
 impl KeysRequest {
@@ -305,14 +153,36 @@ struct LinkRequest {
     url: Option<String>,
 }
 
+impl FromBody for LinkRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+LinkRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "url",
+            kind: Kind::Text,
+        }],
+    };
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct FinishRequest {
     address: Option<String>,
 }
 
+impl FromBody for FinishRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+FinishRequest",
+        by_constructor: true,
+        members: &[Member {
+            name: "address",
+            kind: Kind::Text,
+        }],
+    };
+}
+
 async fn split(request: Request) -> (axum::http::request::Parts, axum::body::Bytes) {
-    super::helpers_6b2::split(request).await
+    super::request_binding::split(request).await
 }
 
 // ---- The endpoints ----------------------------------------------------------------------------
@@ -344,11 +214,10 @@ async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Response 
 
 async fn finish(State(state): State<AppState>, request: Request) -> AppResult {
     let (parts, body) = split(request).await;
-    let request: FinishRequest =
-        match bind_record(&parts.headers, &body, "FinishRequest", &[("address", Kind::Text)]) {
-            Ok(request) => request,
-            Err(refused) => return Ok(refused),
-        };
+    let request: FinishRequest = match bind_body::<FinishRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return Ok(refused),
+    };
     let Some(user) = signed_in(&state, &parts.headers) else {
         return Ok(sign_in());
     };
@@ -385,8 +254,7 @@ async fn read(State(state): State<AppState>, headers: HeaderMap) -> Response {
 
 async fn link(State(state): State<AppState>, request: Request) -> AppResult {
     let (parts, body) = split(request).await;
-    let request: LinkRequest = match bind_record(&parts.headers, &body, "LinkRequest", &[("url", Kind::Text)])
-    {
+    let request: LinkRequest = match bind_body::<LinkRequest>(&parts.headers, &body, "request") {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
@@ -459,7 +327,7 @@ async fn file(State(state): State<AppState>, request: Request) -> AppResult {
 
 async fn playlist(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> AppResult {
     let (parts, body) = split(request).await;
-    let request: OnRequest = match bind_record(&parts.headers, &body, "OnRequest", &[("on", Kind::Bool)]) {
+    let request: OnRequest = match bind_body::<OnRequest>(&parts.headers, &body, "request") {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
@@ -475,7 +343,7 @@ async fn playlist(State(state): State<AppState>, Path(id): Path<String>, request
 
 async fn fetch(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
     let (parts, body) = split(request).await;
-    let request: OnRequest = match bind_record(&parts.headers, &body, "OnRequest", &[("on", Kind::Bool)]) {
+    let request: OnRequest = match bind_body::<OnRequest>(&parts.headers, &body, "request") {
         Ok(request) => request,
         Err(refused) => return refused,
     };
@@ -487,11 +355,10 @@ async fn fetch(State(state): State<AppState>, Path(id): Path<String>, request: R
 
 async fn songs(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
     let (parts, body) = split(request).await;
-    let request: KeysRequest =
-        match bind_record(&parts.headers, &body, "KeysRequest", &[("keys", Kind::TextList)]) {
-            Ok(request) => request,
-            Err(refused) => return refused,
-        };
+    let request: KeysRequest = match bind_body::<KeysRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return refused,
+    };
     let Some(user) = signed_in(&state, &parts.headers) else {
         return sign_in();
     };
@@ -523,11 +390,10 @@ async fn remove(State(state): State<AppState>, Path(id): Path<String>, headers: 
 
 async fn pause(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
-    let request: PausedRequest =
-        match bind_record(&parts.headers, &body, "PausedRequest", &[("paused", Kind::Bool)]) {
-            Ok(request) => request,
-            Err(refused) => return refused,
-        };
+    let request: PausedRequest = match bind_body::<PausedRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return refused,
+    };
     let Some(user) = signed_in(&state, &parts.headers) else {
         return sign_in();
     };
@@ -536,11 +402,10 @@ async fn pause(State(state): State<AppState>, request: Request) -> Response {
 
 async fn retry(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
-    let request: KeysRequest =
-        match bind_record(&parts.headers, &body, "KeysRequest", &[("keys", Kind::TextList)]) {
-            Ok(request) => request,
-            Err(refused) => return refused,
-        };
+    let request: KeysRequest = match bind_body::<KeysRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return refused,
+    };
     let Some(user) = signed_in(&state, &parts.headers) else {
         return sign_in();
     };
@@ -549,11 +414,10 @@ async fn retry(State(state): State<AppState>, request: Request) -> Response {
 
 async fn skip(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
-    let request: KeysRequest =
-        match bind_record(&parts.headers, &body, "KeysRequest", &[("keys", Kind::TextList)]) {
-            Ok(request) => request,
-            Err(refused) => return refused,
-        };
+    let request: KeysRequest = match bind_body::<KeysRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return refused,
+    };
     let Some(user) = signed_in(&state, &parts.headers) else {
         return sign_in();
     };

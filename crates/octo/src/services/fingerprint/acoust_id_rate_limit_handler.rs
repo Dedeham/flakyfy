@@ -112,7 +112,7 @@ impl AcoustIdRateLimitHandler {
         match tokio::time::timeout(Self::TIMEOUT, call).await {
             Ok(answer) => Ok(answer?),
             Err(_) => Err(anyhow!(
-                "The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing."
+                "No answer came within 10 seconds, so Octo stopped waiting."
             )),
         }
     }

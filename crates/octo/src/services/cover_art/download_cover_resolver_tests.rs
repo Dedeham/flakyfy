@@ -24,14 +24,14 @@ use crate::services::cover_art::ICoverArtSource;
 use crate::services::cover_art::itunes_cover_art_lookup::set_apple_interval;
 use crate::services::http_client_factory;
 
-fn jpeg_with(width: u32, height: u32, centre: Option<[u8; 3]>, quality: u8) -> Vec<u8> {
+fn jpeg_with(width: u32, height: u32, center: Option<[u8; 3]>, quality: u8) -> Vec<u8> {
     let mut image = RgbImage::from_pixel(width, height, Rgb([0, 0, 0]));
-    if let Some(colour) = centre {
+    if let Some(color) = center {
         let side = width.min(height);
         let (x0, y0) = ((width - side) / 2, (height - side) / 2);
         for y in y0..y0 + side {
             for x in x0..x0 + side {
-                image.put_pixel(x, y, Rgb(colour));
+                image.put_pixel(x, y, Rgb(color));
             }
         }
     }
@@ -88,7 +88,7 @@ fn is_usable_too_small_or_not_an_image_fails() {
 
 /// A YouTube "Topic" frame letterboxes the real cover; its center square is that cover.
 #[test]
-fn crop_to_square_letterbox_returns_the_centre() {
+fn crop_to_square_letterbox_returns_the_center() {
     let cropped = cover_image::crop_to_square(&video_frame()).expect("cropped");
 
     let image = image::load_from_memory(&cropped).expect("decodes").to_rgb8();
@@ -285,7 +285,8 @@ async fn resolve_archive_first_when_the_album_is_the_matched_release() {
             .iter()
             .any(|u| u.contains("release/rel-1/front-1200"))
     );
-    assert!(!hosts.calls().iter().any(|u| u.contains("deezer.example")));
+    // Asked as well: a larger copy of the same art may come after a sharp one.
+    assert!(hosts.calls().iter().any(|u| u.contains("deezer.example")));
 }
 
 /// The soft cover Brandon got: the archive's 500 px scan beat the catalog's 1000.
@@ -452,7 +453,7 @@ async fn resolve_non_square_catalog_cover_falls_through_to_the_search() {
 }
 
 #[tokio::test]
-async fn resolve_nothing_found_uses_the_centre_of_the_video_frame() {
+async fn resolve_nothing_found_uses_the_center_of_the_video_frame() {
     let hosts = Hosts::start(|_, _| not_found()).await;
 
     let choice = resolve(
@@ -588,7 +589,6 @@ async fn resolve_apple_master_of_the_same_album_comes_first_at_full_size() {
 
     assert_eq!(choice.source, "iTunes");
     assert_eq!(cover_image::measure(&choice.bytes), Some((3000, 3000)));
-    assert!(!hosts.calls().iter().any(|u| u.contains("deezer.example")));
 }
 
 /// A barcode the chooser found asks Apple by barcode, never by search: one lookup, then the
@@ -750,7 +750,7 @@ fn fit_within_shrinks_a_master_and_leaves_a_smaller_cover_alone() {
 }
 
 #[test]
-fn mark_as_octo_stays_a_readable_jpeg_and_is_recognised() {
+fn mark_as_octo_stays_a_readable_jpeg_and_is_recognized() {
     let square = square();
     assert!(!cover_image::is_octo_cover(&square));
 
@@ -966,4 +966,431 @@ async fn apple_matches_are_remembered_on_disk_across_a_restart() {
             .iter()
             .any(|u| u.contains("itunes.apple.com/search"))
     );
+}
+
+// ---- CoverKeepTests: the resolver ---------------------------------------------------------
+//
+// Port of the resolver half of `CoverKeepTests`: the song's own cover is judged against the
+// release's art, kept when it is the same art and nothing much larger turned up, and the
+// timeline is told what was kept or replaced and what else was looked at.
+
+mod keep {
+    use super::*;
+    use crate::services::cover_art::cover_keep::tests::{art, blown_up_art};
+
+    fn catalog_art() -> Vec<u8> {
+        art(1, 1000)
+    }
+
+    fn apple(base: &Base, album: &str, song: bool) -> String {
+        let track = song.then_some("Be Her");
+        let results = serde_json::json!([{
+            "wrapperType": if song { "track" } else { "collection" },
+            "artistName": "Ella Langley",
+            "collectionName": album,
+            "trackName": track,
+            "collectionExplicitness": "notExplicit",
+            "artworkUrl100": format!("{}/is1.example/Music/m/100x100bb.jpg", base.lock()),
+        }]);
+        serde_json::json!({"resultCount": 1, "results": results}).to_string()
+    }
+
+    /// The catalog answers with `catalog`, the archive with `archive`, Apple with `master` for
+    /// the album asked (or, when `apple_album` is another album, lists the song only there).
+    async fn sources(
+        catalog: Option<Vec<u8>>,
+        master: Option<Vec<u8>>,
+        archive: Option<Vec<u8>>,
+        apple_album: &'static str,
+    ) -> Hosts {
+        hosts_with_base(move |url, _, base| {
+            if url.contains("deezer.example") {
+                catalog.as_deref().map_or_else(not_found, picture)
+            } else if url.contains("coverartarchive") {
+                archive.as_deref().map_or_else(not_found, picture)
+            } else if url.contains("itunes.apple.com/search") {
+                match &master {
+                    None => json(r#"{"resultCount":0,"results":[]}"#.to_string()),
+                    Some(_) => json(apple(base, apple_album, url.contains("entity=song"))),
+                }
+            } else if url.contains("is1.example") {
+                master.as_deref().map_or_else(not_found, picture)
+            } else {
+                not_found()
+            }
+        })
+        .await
+    }
+
+    fn resolver(hosts: &Hosts, search: Option<Vec<u8>>) -> DownloadCoverResolver {
+        hosts.resolver(FixedSource::new(search), None, true)
+    }
+
+    fn dandelion(hosts: &Hosts, catalog: bool) -> Song {
+        let song = Song {
+            album: "Dandelion".into(),
+            ..song("Ella Langley", "Choosin' Texas")
+        };
+        if catalog { with_catalog(song, hosts) } else { song }
+    }
+
+    /// The live case (canary, "Be Her"): Apple lists the song only on the album "Dandelion", the
+    /// archive has the single at 1200 px and stopped the chain, and the file's own 1400 px cover
+    /// of the same art was replaced. Now it stays, and the timeline names everything that was
+    /// looked at.
+    fn be_her(hosts: &Hosts) -> Song {
+        with_catalog(
+            Song {
+                album: "Be Her".into(),
+                music_brainz_release_id: Some("rel-be-her".into()),
+                music_brainz_album_title: Some("Be Her".into()),
+                ..song("Ella Langley", "Be Her")
+            },
+            hosts,
+        )
+    }
+
+    async fn choose(resolver: &DownloadCoverResolver, song: &Song, on_hand: CoversOnHand<'_>) -> CoverChoice {
+        resolver
+            .choose(song, &on_hand, &CancellationToken::new())
+            .await
+            .expect("a cover")
+    }
+
+    fn note(choice: &CoverChoice) -> &str {
+        choice.note.as_deref().unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn choose_be_her_its_own1400_px_cover_stays_and_the_timeline_says_what_else_was_seen() {
+        let hosts = sources(
+            Some(catalog_art()),
+            Some(art(9, 3000)),
+            Some(art(1, 1200)),
+            "Dandelion",
+        )
+        .await;
+        let own = art(1, 1400);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &be_her(&hosts),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(choice.keeps_existing);
+        assert_eq!(choice.headline.as_deref(), Some("Kept the cover it came with"));
+        let pattern = regex::Regex::new(
+            r"^1400 x 1400 px, \d+ KB, the same art\. Also looked at: iTunes had none, Cover Art Archive 1200 px, the catalog 1000 px\.$",
+        )
+        .expect("a pattern");
+        assert!(pattern.is_match(note(&choice)), "{}", note(&choice));
+        assert!(hosts.calls().iter().any(|u| u.contains("coverartarchive")));
+    }
+
+    /// A sharper picture of another album never stands in for the release's art.
+    #[tokio::test]
+    async fn choose_be_her_a_small_own_cover_goes_to_the_largest_copy_of_the_same_art_never_to_another_picture()
+     {
+        let hosts = sources(
+            Some(catalog_art()),
+            Some(art(9, 3000)),
+            Some(art(1, 1200)),
+            "Be Her",
+        )
+        .await;
+        let own = art(1, 300);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &be_her(&hosts),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert_eq!(choice.source, "Cover Art Archive");
+        assert_eq!(
+            choice.headline.as_deref(),
+            Some("Replaced its 300 px cover with a 1200 x 1200 px one from Cover Art Archive")
+        );
+        assert!(
+            note(&choice).contains("iTunes 3000 px of a different picture"),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_the_same_art_at1400_is_kept_over_smaller_copies() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 1200)), None, "Dandelion").await;
+        let own = art(1, 1400);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(choice.keeps_existing);
+        assert!(note(&choice).starts_with("1400 x 1400 px, "), "{}", note(&choice));
+        assert!(
+            note(&choice).contains("the same art. Also looked at: iTunes 1200 px, the catalog 1000 px."),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    /// A much larger copy of the same art is still worth having: Apple's master over a 1400 px
+    /// scan.
+    #[tokio::test]
+    async fn choose_a_much_larger_copy_of_the_same_art_replaces_its_own() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 3000)), None, "Dandelion").await;
+        let own = art(1, 1400);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert_eq!(choice.source, "iTunes");
+        assert_eq!(
+            choice.headline.as_deref(),
+            Some("Replaced its 1400 px cover with a 3000 x 3000 px one from iTunes")
+        );
+        assert!(
+            note(&choice).starts_with("iTunes has the same art much larger."),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_a_small_cover_is_replaced_by_apple_and_says_so() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 3000)), None, "Dandelion").await;
+        let own = art(1, 300);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(!choice.keeps_existing);
+        assert_eq!(
+            choice.headline.as_deref(),
+            Some("Replaced its 300 px cover with a 3000 x 3000 px one from iTunes")
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_a_somewhat_smaller_cover_of_the_same_art_stays_when_nothing_is_much_larger() {
+        let hosts = sources(Some(catalog_art()), None, None, "Dandelion").await;
+        let own = art(1, 900);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(choice.keeps_existing);
+        assert!(
+            note(&choice).contains(
+                "the same art; nothing found was much larger. Also looked at: iTunes had none, the catalog 1000 px."
+            ),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_a_different_picture_is_replaced_even_when_larger() {
+        let hosts = sources(Some(catalog_art()), None, None, "Dandelion").await;
+        let own = art(2, 1400);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(!choice.keeps_existing);
+        assert_eq!(choice.source, "the catalog");
+        assert_eq!(
+            choice.headline.as_deref(),
+            Some("Replaced its 1400 px cover with a 1000 x 1000 px one from the catalog")
+        );
+        assert!(
+            note(&choice).starts_with("It was a different picture from the album's cover."),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    #[tokio::test]
+    async fn choose_a_blown_up_cover_is_replaced() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 3000)), None, "Dandelion").await;
+        let own = blown_up_art(1, 200, 1400);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert_eq!(choice.source, "iTunes");
+        assert!(
+            note(&choice).starts_with("It was a smaller picture blown up."),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    /// With no strict source, a cover search by name is weak evidence: it may add a larger copy
+    /// of the same art, never swap the picture.
+    #[tokio::test]
+    async fn choose_without_a_strict_source_a_cover_search_may_not_swap_the_picture() {
+        let hosts = sources(None, None, None, "Dandelion").await;
+        let song = dandelion(&hosts, false);
+        let (own_900, own_1000, own_600) = (art(1, 900), art(1, 1000), art(1, 600));
+
+        let other = choose(
+            &resolver(&hosts, Some(art(3, 1200))),
+            &song,
+            CoversOnHand::new(Some(&own_900)),
+        )
+        .await;
+        let larger = choose(
+            &resolver(&hosts, Some(art(1, 1200))),
+            &song,
+            CoversOnHand::new(Some(&own_1000)),
+        )
+        .await;
+
+        assert!(other.keeps_existing);
+        assert!(
+            note(&other).contains("a cover search 1200 px of a different picture"),
+            "{}",
+            note(&other)
+        );
+        assert!(larger.keeps_existing);
+        let much_larger = choose(
+            &resolver(&hosts, Some(art(1, 1200))),
+            &song,
+            CoversOnHand::new(Some(&own_600)),
+        )
+        .await;
+        assert_eq!(much_larger.source, "a cover search");
+    }
+
+    #[tokio::test]
+    async fn choose_nothing_found_anywhere_keeps_what_it_has() {
+        let hosts = sources(None, None, None, "Dandelion").await;
+        let own = art(2, 700);
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, false),
+            CoversOnHand::new(Some(&own)),
+        )
+        .await;
+
+        assert!(choice.keeps_existing);
+        assert!(
+            note(&choice).contains("nothing else was found"),
+            "{}",
+            note(&choice)
+        );
+    }
+
+    /// The tagging round's rule stands: filed under another album, its own art never outranks
+    /// the chain, and stays only when the chain finds nothing.
+    #[tokio::test]
+    async fn choose_art_of_the_album_it_was_filed_away_from_loses_to_the_chain_but_stays_as_a_last_resort() {
+        let own = art(1, 1400);
+        let on_hand = CoversOnHand {
+            arrived: Some(&own),
+            arrived_from_other_album: true,
+            library_copy: None,
+        };
+        let with = sources(Some(catalog_art()), None, None, "Dandelion").await;
+        let without = sources(None, None, None, "Dandelion").await;
+
+        let replaced = choose(&resolver(&with, None), &dandelion(&with, true), on_hand).await;
+        let alone = choose(&resolver(&without, None), &dandelion(&without, false), on_hand).await;
+
+        assert_eq!(replaced.source, "the catalog");
+        assert!(
+            note(&replaced).contains("filed under before"),
+            "{}",
+            note(&replaced)
+        );
+        assert!(alone.keeps_existing);
+    }
+
+    /// Better quality and the other replacements: the old copy's cover is what the album shows,
+    /// so a good one goes onto the new file instead of the peer's.
+    #[tokio::test]
+    async fn choose_a_replacement_keeps_the_old_copys_good_cover() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 3000)), None, "Dandelion").await;
+        let (own, old_cover) = (art(1, 1400), art(4, 1500));
+        let on_hand = CoversOnHand {
+            arrived: Some(&own),
+            arrived_from_other_album: false,
+            library_copy: Some(&old_cover),
+        };
+
+        let choice = choose(&resolver(&hosts, None), &dandelion(&hosts, true), on_hand).await;
+
+        assert!(!choice.keeps_existing);
+        assert_eq!(choice.bytes, old_cover);
+        assert_eq!(choice.headline.as_deref(), Some("Kept your old copy's cover"));
+        assert!(!hosts.calls().iter().any(|u| u.contains("itunes")));
+    }
+
+    #[tokio::test]
+    async fn choose_a_replacement_whose_old_cover_is_small_falls_back_to_the_new_files_good_one() {
+        let hosts = sources(Some(catalog_art()), None, None, "Dandelion").await;
+        let (own, old_cover) = (art(1, 1400), art(1, 250));
+        let on_hand = CoversOnHand {
+            arrived: Some(&own),
+            arrived_from_other_album: false,
+            library_copy: Some(&old_cover),
+        };
+
+        let choice = choose(&resolver(&hosts, None), &dandelion(&hosts, true), on_hand).await;
+
+        assert!(choice.keeps_existing);
+        assert_eq!(choice.headline.as_deref(), Some("Kept the cover it came with"));
+    }
+
+    #[tokio::test]
+    async fn choose_no_cover_of_its_own_says_so() {
+        let hosts = sources(Some(catalog_art()), Some(art(1, 3000)), None, "Dandelion").await;
+
+        let choice = choose(
+            &resolver(&hosts, None),
+            &dandelion(&hosts, true),
+            CoversOnHand::new(None),
+        )
+        .await;
+
+        assert_eq!(choice.source, "iTunes");
+        assert_eq!(
+            choice.headline.as_deref(),
+            Some("Cover from iTunes, 3000 x 3000 px")
+        );
+        assert_eq!(
+            note(&choice),
+            "It came with no cover of its own. Also looked at: iTunes 3000 px, the catalog 1000 px."
+        );
+    }
 }

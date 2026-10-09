@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn serialises_every_field_in_declaration_order_but_the_ignored_two() {
+    fn serializes_every_field_in_declaration_order_but_the_ignored_two() {
         let song = Song {
             id: "ext-deezer-1".into(),
             title: "Hoppípolla".into(),

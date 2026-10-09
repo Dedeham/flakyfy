@@ -50,7 +50,7 @@ fn a_song_already_queued_is_not_queued_twice() {
 }
 
 #[test]
-fn only_jobs_that_have_not_started_can_be_cancelled() {
+fn only_jobs_that_have_not_started_can_be_canceled() {
     let queue = UpgradeQueue::new();
     queue.add(asks(&["a", "b"]), "alice", "app");
     let running = queue.take_next().expect("a job");

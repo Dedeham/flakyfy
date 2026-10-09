@@ -24,6 +24,7 @@ use super::genre_backfill_journal::{GenreBackfillJournal, GenreJournalEntry};
 use super::genre_backfill_state::{
     GenreBackfillChange, GenreBackfillRun, GenreBackfillScope, GenreBackfillStatus, GenreBackfillStore,
 };
+use crate::services::library::library_walk;
 use crate::services::local::ILocalLibraryService;
 
 /// What the dashboard asks for: a walk over `scope` (a preview when `dry_run`), or an undo of
@@ -118,6 +119,12 @@ impl GenreBackfillWorker {
 
     pub fn is_running(&self) -> bool {
         self.store.read(|run| run.status == GenreBackfillStatus::Running)
+    }
+
+    /// A run accepted and still reading the library before it turns Running. Without it the
+    /// dashboard reads the last run's answer right after Start and thinks nothing began.
+    pub fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::SeqCst)
     }
 
     /// The run the dashboard polls. Exposed here so the controller has one thing to talk to
@@ -571,7 +578,10 @@ impl GenreBackfillWorker {
 
         let walked = {
             let root = root.clone();
-            tokio::task::spawn_blocking(move || all_files(Path::new(&root)))
+            // The trash is not part of the library (port fix).
+            let trash =
+                library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
+            tokio::task::spawn_blocking(move || library_walk::all_files(Path::new(&root), Some(&trash)))
                 .await
                 .unwrap_or_else(|panic| Err(io::Error::other(panic.to_string())))
         };
@@ -718,30 +728,6 @@ fn get_extension(path: &str) -> &str {
         Some(dot) if dot + 1 < name.len() => &name[dot..],
         _ => "",
     }
-}
-
-/// `Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)`. Symbolic links to folders
-/// are followed, and any folder that cannot be read fails the whole listing
-/// (`IgnoreInaccessible` is off for that overload).
-fn all_files(root: &Path) -> io::Result<Vec<String>> {
-    let mut found = Vec::new();
-    let mut folders = vec![root.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder)? {
-            let entry = entry?;
-            let path = entry.path();
-            let is_dir = match entry.file_type()? {
-                kind if kind.is_symlink() => std::fs::metadata(&path).is_ok_and(|target| target.is_dir()),
-                kind => kind.is_dir(),
-            };
-            if is_dir {
-                folders.push(path);
-            } else {
-                found.push(path.to_string_lossy().into_owned());
-            }
-        }
-    }
-    Ok(found)
 }
 
 #[cfg(test)]

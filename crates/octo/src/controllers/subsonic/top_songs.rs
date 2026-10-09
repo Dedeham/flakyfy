@@ -14,7 +14,7 @@ use octo_subsonic::subsonic_response_builder::{ChartChoiceRow, RankedRow, TopSon
 use serde_json::Value;
 use tracing::{debug, info};
 
-use super::helpers_6a2::{SubsonicCall, refuse_unless_signed_in, signed_in_user};
+use super::caller_checks::{SubsonicCall, refuse_unless_signed_in, signed_in_user};
 use super::native::has_external_id;
 use crate::app::AppState;
 use crate::http::error::AppResult;

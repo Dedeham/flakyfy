@@ -6,7 +6,7 @@ use image::RgbImage;
 
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
-use super::cover_colours;
+use super::cover_colors;
 use super::cover_fonts::CoverTypesetter;
 use super::cover_layout::CoverWords;
 use super::cover_veil;
@@ -41,7 +41,7 @@ pub fn paint(
 
     let mut lines = Vec::new();
     for words in &art.words {
-        let ink = cover_colours::a(words.ink) as u8;
+        let ink = cover_colors::a(words.ink) as u8;
         // The baseline sits where a capital H's foot is: the outlines are drawn from it.
         for placed in setter.place(words) {
             lines.push((placed, ink));

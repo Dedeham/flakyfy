@@ -1,11 +1,12 @@
 //! `AdminController`'s library actions, questions and checks (L1137-L1250, L1433): the action
-//! history, the notices, the duplicate scan, the library Review sweep, the weekly upgrade's
-//! status and the song path resolver.
+//! history and its Allow downloading again, the notices, the duplicate scan, the library Review
+//! sweep, the weekly upgrade's status and the song path resolver.
 //!
-//! Session-gated, because these list filenames and usernames. Read-only: there is deliberately
-//! no endpoint here that deletes a quarantined file or applies an action on demand, since
-//! /api/admin has no authentication of its own and those would be the wrong things to leave
-//! reachable.
+//! Session-gated, because these list filenames and usernames. Every /api/admin endpoint sits
+//! behind the dashboard sign-in, and the rule for anything that changes library files on demand
+//! is: a Navidrome admin's own sign-in (never the recovery code), acting as that person, who must
+//! pass the same gates as in the apps (library actions on, on the allowed list, dry run only
+//! rehearses). Nothing here ever deletes a quarantined file; the retention sweep alone does.
 
 use std::path::Path;
 
@@ -15,7 +16,12 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use serde_json::{Value, json};
 
-use super::helpers_6b2::{browse_user, error, ok, query, sign_in, status, utc, utc_opt};
+use serde::Deserialize;
+
+use super::json_body::{FromBody, Shape, text_record};
+use super::request_binding::{
+    bind_body, browse_user, error, ok, query, sign_in, split, status, utc, utc_opt,
+};
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
 use crate::services::library::library_action_journal::action_name;
@@ -25,6 +31,7 @@ use crate::services::library::notice_queue::NamedEnum;
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/library-actions", get(get_library_actions))
+        .route("/api/admin/library-actions/allow-download", post(allow_download))
         .route("/api/admin/notices", get(get_notices))
         .route("/api/admin/duplicates/scan", post(scan_duplicates))
         .route("/api/admin/review-sweep", get(get_review_sweep))
@@ -85,6 +92,10 @@ async fn get_library_actions(State(state): State<AppState>, request: Request) ->
                 "quarantinePath": entry.quarantine_path,
                 "resolution": entry.resolution.map(path_source_name),
                 "atUtc": utc(&entry.at_utc),
+                "key": entry.key,
+                // A song removed from disk that a download would refuse; Allow downloading again
+                // lifts it.
+                "blocksDownloads": entry.blocks_downloads(),
             })
         })
         .collect();
@@ -99,6 +110,41 @@ async fn get_library_actions(State(state): State<AppState>, request: Request) ->
         ),
         "entries": entries,
     })))
+}
+
+/// `AllowDownloadRequest(string? Key)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AllowDownloadRequest {
+    key: Option<String>,
+}
+
+impl FromBody for AllowDownloadRequest {
+    const SHAPE: &'static Shape =
+        text_record!("Octo.Controllers.AdminController+AllowDownloadRequest", "key");
+}
+
+/// The history's Allow downloading again: a song removed with Delete from disk may be downloaded
+/// once more. Its file stays in the trash. Gated like the history it sits in.
+async fn allow_download(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, body) = split(request).await;
+    let request: AllowDownloadRequest = match bind_body(&parts, &body) {
+        Ok(r) => r,
+        Err(answer) => return *answer,
+    };
+    let browse = browse_user(&state, &parts);
+    if !browse.signed_in() {
+        return browse.finish(sign_in());
+    }
+    let key = request.key.filter(|key| !key.trim().is_empty());
+    if key.is_none_or(|key| state.library_action_journal.allow_downloads(&key) == 0) {
+        return browse.finish(error(
+            StatusCode::BAD_REQUEST,
+            "That song is not kept from downloading.",
+        ));
+    }
+    state.library_action_journal.flush();
+    browse.finish(ok(&json!({ "ok": true })))
 }
 
 /// What Octo has asked people about (#47, #53) and how they answered, newest first. Gated like

@@ -11,15 +11,13 @@ pub use i_notification_sink::INotificationSink;
 pub use notification_service::NotificationService;
 pub use ntfy_sink::NtfySink;
 
-/// `HttpResponseMessage.EnsureSuccessStatusCode()`, with its message: the admin test button
+/// `HttpResponseMessage.EnsureSuccessStatusCode()`, in plain words: the admin test button
 /// shows it verbatim.
 pub(crate) fn ensure_success_status_code(status: reqwest::StatusCode) -> anyhow::Result<()> {
     if status.is_success() {
         return Ok(());
     }
-    anyhow::bail!(
-        "Response status code does not indicate success: {} ({}).",
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("")
-    )
+    anyhow::bail!(crate::services::http_client_factory::status_failure_message(
+        status
+    ))
 }

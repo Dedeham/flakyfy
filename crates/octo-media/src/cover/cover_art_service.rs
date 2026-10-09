@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
-use super::cover_colours::{self, CoverMusic, Swatch};
+use super::cover_colors::{self, CoverMusic, Swatch};
 use super::cover_fonts::{self, CoverTypesetter};
 use super::cover_image;
 use super::cover_layout::{self, CoverSpec};
@@ -82,7 +82,7 @@ pub(crate) const MAX_COVER_SIZE: i32 = 1200;
 
 const SEED_WAIT: Duration = Duration::from_secs(4);
 const MUSIC_HIT: Duration = Duration::from_secs(12 * 60 * 60);
-const MUSIC_GREY: Duration = Duration::from_secs(10 * 60);
+const MUSIC_GRAY: Duration = Duration::from_secs(10 * 60);
 const MUSIC_MISS: Duration = Duration::from_secs(60);
 /// The list covers' JPEG: quality 92, no chroma subsampling (ImageSharp's YCbCrRatio444).
 const JPEG_QUALITY: u8 = 92;
@@ -430,7 +430,7 @@ impl CoverArtService {
     /// The cover as the server serves it: painted, then a JPEG.
     pub(crate) fn render(&self, spec: &CoverSpec, size: i32, draw_words: bool) -> anyhow::Result<Vec<u8>> {
         let image = self.paint(spec, size, draw_words)?;
-        cover_image::encode_jpeg(&DynamicImage::ImageRgb8(image), JPEG_QUALITY)
+        cover_image::encode_jpeg_444(&DynamicImage::ImageRgb8(image), JPEG_QUALITY)
             .ok_or_else(|| anyhow::anyhow!("the cover does not encode"))
     }
 
@@ -499,7 +499,7 @@ impl CoverArtService {
             let ttl = if music.is_some() {
                 MUSIC_HIT
             } else if !covers.is_empty() {
-                MUSIC_GREY
+                MUSIC_GRAY
             } else {
                 MUSIC_MISS
             };
@@ -518,7 +518,7 @@ impl CoverArtService {
     }
 
     /// A picture's main colors, read from a small copy of it.
-    pub(crate) fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
+    pub fn swatches_of(picture: &[u8]) -> Option<Vec<Swatch>> {
         let image = cover_image::decode(picture)?;
         // C# asked ImageSharp's decoder for a 64 by 64 target, which shrinks the picture to fit
         // inside it, keeping its shape, with a box filter; the triangle filter is the nearest
@@ -532,13 +532,10 @@ impl CoverArtService {
         let pixels: Vec<i32> = rgba
             .pixels()
             .map(|p| {
-                cover_colours::BLACK
-                    | (i32::from(p.0[0]) << 16)
-                    | (i32::from(p.0[1]) << 8)
-                    | i32::from(p.0[2])
+                cover_colors::BLACK | (i32::from(p.0[0]) << 16) | (i32::from(p.0[1]) << 8) | i32::from(p.0[2])
             })
             .collect();
-        Some(cover_colours::swatches(&pixels, 3, 6))
+        Some(cover_colors::swatches(&pixels, 3, 6))
     }
 
     /// A picture in the covers folder named after the playlist or its genre or decade. Only
@@ -583,7 +580,7 @@ impl CoverArtService {
         );
         let size = size.max(1) as u32;
         let sized = square.resize_exact(size, size, FilterType::CatmullRom);
-        cover_image::encode_jpeg(&sized, JPEG_QUALITY)
+        cover_image::encode_jpeg_444(&sized, JPEG_QUALITY)
     }
 }
 

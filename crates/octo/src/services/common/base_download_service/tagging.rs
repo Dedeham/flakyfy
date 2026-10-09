@@ -30,6 +30,7 @@ use tracing::{debug, error, info, warn};
 use super::placement::{get_directory_name, get_file_name, is_audio_file};
 use super::{BaseDownloadService, RequestedIdentity, get_extension};
 use crate::services::common::acquisition_tracker::acquisition_event_kinds;
+use crate::services::cover_art::CoversOnHand;
 use crate::services::library::navidrome_song_path_resolver::get_full_path;
 use crate::services::soulseek::soulseek_download_service::INCOMING_FOLDER_NAME;
 
@@ -478,6 +479,18 @@ impl BaseDownloadService {
     /// The C# held the file open across the genre and cover lookups; here what they need is read
     /// first, and the file opened again to write, so no file is held across a wait.
     pub async fn write_metadata(&self, file_path: &str, song: &mut Song) -> Option<Vec<u8>> {
+        self.write_metadata_replacing(file_path, song, None).await
+    }
+
+    /// [`Self::write_metadata`] for a download that replaces the library file at
+    /// `replacing_path` (the C# `ReplacingPath`, which flowed with the call): that copy's cover
+    /// is weighed first, since it is the picture the album shows now.
+    pub async fn write_metadata_replacing(
+        &self,
+        file_path: &str,
+        song: &mut Song,
+        replacing_path: Option<&str>,
+    ) -> Option<Vec<u8>> {
         info!("Writing metadata to: {file_path}");
         // A peer tags a file for the release it ripped. What it wrote about that release goes
         // before Octo writes its own, so the file never names two albums at once (a barcode, a
@@ -488,13 +501,9 @@ impl BaseDownloadService {
                 let arrived_album = file.album();
                 let filed_elsewhere =
                     release_fact_tags::filed_elsewhere(arrived_album.as_deref(), Some(&song.album));
-                // The art of the album the file was filed away from is not this album's, so it
-                // never outranks the chain; it stays on the file only when the chain finds nothing.
-                let embedded = if filed_elsewhere {
-                    None
-                } else {
-                    front_cover(&file).map(|picture| picture.data)
-                };
+                // The file's own cover is judged before the chain replaces it; whether it came
+                // from the album the file was filed away from goes with it.
+                let embedded = front_cover(&file).map(|picture| picture.data);
                 let existing = file.genres();
                 let dropped = release_fact_tags::tidy(&mut file, filed_elsewhere, song.joins_album.as_ref());
                 if !dropped.is_empty() {
@@ -594,34 +603,68 @@ impl BaseDownloadService {
         };
 
         // One chain (#51) instead of one Deezer URL: Apple's master of the album, the Cover Art
-        // Archive when a fingerprint named the release, the catalog's own cover, then Deezer,
-        // iTunes and Last.fm by name, then the file's own art; the largest wins. A cover that is
-        // not square counts as missing, and a letterboxed video frame gives up its center. The
-        // file gets it at 1500 px unless full size is asked for; cover.jpg gets it whole.
+        // Archive when a fingerprint named the release, the catalog's own cover, and a cover
+        // search by name when none of those is sharp. The file's own cover is judged before the
+        // chain replaces it: the same art at a good size stays. The art of the album the file
+        // was filed away from is not this album's, so it never outranks the chain; it stays on
+        // the file only when the chain finds nothing. A replacement of a library song also weighs
+        // the old copy's cover, which is the picture the album shows now. The file gets the
+        // chosen cover at 1500 px unless full size is asked for; cover.jpg gets it whole.
         let mut chosen_cover = None;
         let mut embed = None;
+        let library_copy = self.library_copy_cover(file_path, replacing_path);
         if let Some(resolver) = &self.services.cover_resolver
             && let Some(cover) = resolver
-                .resolve(song, embedded.as_deref(), &CancellationToken::new())
+                .choose(
+                    song,
+                    &CoversOnHand {
+                        arrived: embedded.as_deref(),
+                        arrived_from_other_album: filed_elsewhere,
+                        library_copy: library_copy.as_deref(),
+                    },
+                    &CancellationToken::new(),
+                )
                 .await
         {
-            if !cover.keeps_existing {
+            if cover.keeps_existing {
+                if let Some(kept) = cover.headline.as_deref() {
+                    info!(
+                        "Cover kept for {file_path}: {}",
+                        cover.note.as_deref().unwrap_or_default()
+                    );
+                    self.log_cover_step(song, kept, cover.note.as_deref());
+                }
+            } else {
                 let bytes = if self.settings.current().metadata.embed_full_size_covers {
                     cover.bytes.clone()
                 } else {
                     cover_image::fit_within(&cover.bytes, MetadataSettings::EMBEDDED_COVER_SIDE as u32)
                 };
                 info!("Cover art embedded from {}: {} bytes", cover.source, bytes.len());
-                let side = match cover_image::measure(&bytes) {
-                    Some((width, height)) => format!("{width} x {height} px, embedded in the song"),
-                    None => "Embedded in the song".to_string(),
+                let embedded_side = cover_image::measure(&bytes);
+                let place = match embedded_side {
+                    Some(side) if cover_image::measure(&cover.bytes) == Some(side) => {
+                        "embedded in the song".to_string()
+                    }
+                    Some((width, height)) => format!("embedded in the song at {width} x {height} px"),
+                    None => "embedded in the song".to_string(),
                 };
-                self.log_song_step(
-                    song,
-                    acquisition_event_kinds::COVER,
-                    &format!("Cover from {}", cover.source),
-                    Some(&side),
-                );
+                match cover.headline.as_deref() {
+                    Some(headline) => {
+                        let detail = match cover.note.as_deref() {
+                            Some(note) => format!("{note} Now {place}."),
+                            None => format!("Now {place}."),
+                        };
+                        self.log_cover_step(song, headline, Some(&detail));
+                    }
+                    None => {
+                        let detail = match embedded_side {
+                            Some((width, height)) => format!("{width} x {height} px, embedded in the song"),
+                            None => "Embedded in the song".to_string(),
+                        };
+                        self.log_cover_step(song, &format!("Cover from {}", cover.source), Some(&detail));
+                    }
+                }
                 embed = Some(bytes);
             }
             chosen_cover = Some(cover.bytes);
@@ -653,6 +696,33 @@ impl BaseDownloadService {
                 None
             }
         }
+    }
+
+    /// For a replacement of a library song (Better quality, wrong song, a picked copy): the
+    /// cover of the copy being replaced, still in place while the new one is tagged. None for an
+    /// ordinary download, or when that file cannot be read.
+    fn library_copy_cover(&self, new_path: &str, replacing_path: Option<&str>) -> Option<Vec<u8>> {
+        let original = replacing_path.filter(|path| !path.is_empty())?;
+        if !Path::new(original).is_file() || get_full_path(original) == get_full_path(new_path) {
+            return None;
+        }
+        match TagFile::open(original) {
+            Ok(file) => front_cover(&file).map(|picture| picture.data),
+            Err(e) => {
+                debug!("Could not read the cover of {original}: {e}");
+                None
+            }
+        }
+    }
+
+    /// One line in the download's log about its cover (`LogStep` with the cover kind). Tests
+    /// also read the lines back from the service.
+    fn log_cover_step(&self, song: &Song, text: &str, detail: Option<&str>) {
+        self.log_song_step(song, acquisition_event_kinds::COVER, text, detail);
+        #[cfg(test)]
+        self.cover_steps
+            .lock()
+            .push((text.to_string(), detail.map(str::to_string)));
     }
 
     /// The album gain and peak, written into every file the walk measured, once the walk ends.

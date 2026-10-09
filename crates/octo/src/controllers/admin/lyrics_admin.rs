@@ -20,7 +20,8 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use super::helpers_6b2::{
+use super::json_body::{FromBody, Kind, Member, Shape, text_record};
+use super::request_binding::{
     anonymous, bind_body, error, ok, query, required, sign_in, signed, split, status, utc, utc_opt,
 };
 use crate::app::AppState;
@@ -196,6 +197,31 @@ struct LibraryStartRequest {
     picked: Option<Vec<String>>,
 }
 
+impl FromBody for LibraryStartRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.LyricsAdminController+LibraryStartRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "upgrade",
+                kind: Kind::Bool,
+            },
+            Member {
+                name: "mode",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "scope",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "picked",
+                kind: Kind::TextList,
+            },
+        ],
+    };
+}
+
 async fn start_library_run(State(state): State<AppState>, request: Request) -> Response {
     let (parts, body) = split(request).await;
     let request: LibraryStartRequest = match bind_body(&parts, &body) {
@@ -205,7 +231,7 @@ async fn start_library_run(State(state): State<AppState>, request: Request) -> R
     if !signed(&state, &parts) {
         return sign_in();
     }
-    let mode = mode_from(super::helpers_6b2::enum_try_parse(
+    let mode = mode_from(super::request_binding::enum_try_parse(
         &MODES,
         request.mode.as_deref(),
     ));
@@ -287,6 +313,13 @@ async fn resume_library_run(State(state): State<AppState>, request: Request) -> 
 #[serde(default)]
 struct ReviewDismissRequest {
     path: Option<String>,
+}
+
+impl FromBody for ReviewDismissRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.LyricsAdminController+ReviewDismissRequest",
+        "path"
+    );
 }
 
 async fn dismiss_review(State(state): State<AppState>, request: Request) -> Response {
@@ -558,6 +591,15 @@ struct ChoiceRequest {
     id: Option<String>,
     path: Option<String>,
     candidate: Option<String>,
+}
+
+impl FromBody for ChoiceRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.LyricsAdminController+ChoiceRequest",
+        "id",
+        "path",
+        "candidate"
+    );
 }
 
 /// The download rule: beside Octo's own downloads, and beside everything only when "Write lyrics

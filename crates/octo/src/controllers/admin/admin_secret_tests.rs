@@ -10,12 +10,12 @@ use octo_core::json::dom::Node;
 use octo_core::settings::{AppSettings, JsonObject, LastFmUserSession};
 use serde_json::Value;
 
-use super::helpers_6b1::SECRET_PLACEHOLDER;
+use super::plumbing::SECRET_PLACEHOLDER;
 use super::secrets::{
     SECRET_FIELDS, SECRET_MAPS, keep_saved_secrets, redact_secrets, restore_secret_placeholders,
     secret_sent_elsewhere,
 };
-use super::test_support_6b1::{app, get};
+use super::test_app::{app, get};
 use crate::app::{AppState, TestServices};
 
 /// What a credential is called. A webhook address carries its own token.

@@ -168,7 +168,7 @@ async fn relay_http_error_throws_exception() {
 
     assert_eq!(
         error,
-        RelayError::Http("Response status code does not indicate success: 404 (Not Found).".into())
+        RelayError::Http("The server answered 404 (Not Found).".into())
     );
 }
 
@@ -269,7 +269,9 @@ async fn relay_stream_exception_returns_object_result_with_500() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         String::from_utf8_lossy(&body),
-        format!(r#"{{"error":"Error streaming from Subsonic: Connection refused ({address})"}}"#)
+        format!(
+            r#"{{"error":"Error streaming from Subsonic: Could not connect to {address}: the connection was refused."}}"#
+        )
     );
 }
 

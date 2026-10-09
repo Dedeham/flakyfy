@@ -234,7 +234,7 @@ fn by_artist_no_album_is_unaffected() {
 }
 
 #[test]
-fn empty_extension_is_honoured() {
+fn empty_extension_is_honored() {
     // The YouTube path passes no extension because the shim appends .mp3 itself.
     let path = PathHelper::build_layout_path(
         FolderStructure::ByArtist,

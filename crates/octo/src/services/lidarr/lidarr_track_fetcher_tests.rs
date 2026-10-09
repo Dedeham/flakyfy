@@ -432,7 +432,7 @@ async fn nothing_is_fetched_until_lidarr_is_set_up() {
 }
 
 #[tokio::test]
-async fn a_cancelled_fetch_still_cleans_up() {
+async fn a_canceled_fetch_still_cleans_up() {
     let f = Fixture::new().await;
     f.lidarr.on_search(&[(1, "Angel", "FLAC")]);
     let fetcher = f.fetcher(10);

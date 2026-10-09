@@ -15,9 +15,9 @@
 #                                        stop the run that holds the lock (the host watchdog)
 #
 # --prebuilt takes the binary lxc131.sh compiled (a static musl build, .parity-bin/octo in this
-# checkout) and builds the image from Dockerfile.rust's runtime stage around it: no compile on
+# checkout) and builds the image from Dockerfile's runtime stage around it: no compile on
 # the box, only Debian packages (cached after the first time) and a copy. lxc131.sh does this
-# by default. Without it the whole Dockerfile.rust builds here, compile included.
+# by default. Without it the whole Dockerfile builds here, compile included.
 #
 # --low-memory builds with one job and without LTO: the same program, but no 3 GB link, for
 # when the Proxmox host has too little memory to spare for the usual build (the host watchdog
@@ -439,14 +439,14 @@ fi
 
 # ---- The Rust image, built from this checkout.
 if [ "$build" = 2 ]; then
-  # Dockerfile.rust's runtime stage with the build stage swapped for the binary sent along.
+  # Dockerfile's runtime stage with the build stage swapped for the binary sent along.
   [ -x .parity-bin/octo ] || { echo "no .parity-bin/octo in the checkout; lxc131.sh sends it" >&2; exit 1; }
   old_id="$(docker image inspect -f '{{.Id}}' "$RS_IMAGE" 2> /dev/null || true)"
   say "building $RS_IMAGE around the binary built for $(git rev-parse --short HEAD)"
   {
     echo "FROM scratch AS build"
     echo "COPY .parity-bin/octo /out/octo"
-    sed -n '/^# ---- Runtime ----/,$p' Dockerfile.rust
+    sed -n '/^# ---- Runtime ----/,$p' Dockerfile
   } > .parity-bin/Dockerfile
   start=$(date +%s)
   docker build -q -f .parity-bin/Dockerfile -t "$RS_IMAGE" . > "$RUN/build.log" 2>&1 || {
@@ -469,7 +469,11 @@ elif [ "$build" = 1 ]; then
   old_id="$(docker image inspect -f '{{.Id}}' "$RS_IMAGE" 2> /dev/null || true)"
   say "building $RS_IMAGE from $(git rev-parse --short HEAD)"
   start=$(date +%s)
-  docker buildx build --builder "$BUILDER" --progress plain -f Dockerfile.rust \
+  # The harness compares with C# 2026.10.05, so the binary claims that release (build.rs reads
+  # OCTO_VERSION first). A VERSION ahead of it, as on a release branch, would otherwise differ in
+  # every answer that names the release. PARITY_OCTO_VERSION picks another.
+  docker buildx build --builder "$BUILDER" --progress plain -f Dockerfile \
+    --build-arg "OCTO_VERSION=${PARITY_OCTO_VERSION:-2026.10.05}" \
     "${build_args[@]}" -t "$RS_IMAGE" --load . > "$RUN/build.log" 2>&1 || {
     tail -n 40 "$RUN/build.log"
     echo "the Rust image did not build; the whole log is $RUN/build.log on the box" >&2

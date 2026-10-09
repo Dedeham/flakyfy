@@ -13,7 +13,7 @@ use image::{ImageFormat, Rgb, RgbImage};
 use super::*;
 use crate::cover::cover_backgrounds;
 use crate::cover::cover_book::CoverBook;
-use crate::cover::cover_colours::{self, CoverMusic, Swatch};
+use crate::cover::cover_colors::{self, CoverMusic, Swatch};
 use crate::cover::cover_fonts::{self, CoverTypesetter};
 use crate::cover::cover_layout::{self, CoverAlign, WordsRole};
 use crate::cover::cover_painter;
@@ -24,7 +24,7 @@ fn book() -> &'static CoverBook {
 }
 
 fn hex(text: &str) -> i32 {
-    cover_colours::hex(text).expect("a colour")
+    cover_colors::hex(text).expect("a colour")
 }
 
 // ================================================================ CoverColourTests
@@ -36,14 +36,14 @@ fn cover_hash_is_fnv1a_shifted_right() {
         ("", 0xcbf2_9ce4_8422_2325_u64 >> 1),
         ("a", 0xaf63_dc4c_8601_ec8c_u64 >> 1),
     ] {
-        assert_eq!(expected as i64, cover_colours::cover_hash(text), "{text:?}");
+        assert_eq!(expected as i64, cover_colors::cover_hash(text), "{text:?}");
     }
 }
 
 /// The design's check value for the pick hash, and the pick and turn it gives.
 #[test]
 fn cover_pick_is_fnv1a_then_fmix64_shifted_right() {
-    assert_eq!(0x098f_28ee_76f6_47ce_i64, cover_colours::cover_pick("pl-1"));
+    assert_eq!(0x098f_28ee_76f6_47ce_i64, cover_colors::cover_pick("pl-1"));
     assert_eq!(15, cover_backgrounds::choose(book(), None, "pl-1"));
     assert_eq!(0, cover_backgrounds::orientation(book(), "pl-1"));
 }
@@ -94,9 +94,9 @@ fn numbered_lists_look_apart() {
 }
 
 #[test]
-fn lch_has_the_oklab_hue_of_a_colour() {
+fn lch_has_the_oklab_hue_of_a_color() {
     for (text, hue) in [("#808080", 0.0), ("#ff0000", 29.2), ("#0000ff", 264.1)] {
-        let lch = cover_colours::to_lch(hex(text));
+        let lch = cover_colors::to_lch(hex(text));
         if lch.c > 0.01 {
             assert!((hue - 0.5..=hue + 0.5).contains(&lch.h), "{text}: hue {}", lch.h);
         } else {
@@ -106,7 +106,7 @@ fn lch_has_the_oklab_hue_of_a_colour() {
 }
 
 #[test]
-fn swatches_find_a_pictures_colours_by_share() {
+fn swatches_find_a_pictures_colors_by_share() {
     let pixels: Vec<i32> = (0..64 * 64)
         .map(|i| {
             if i % 4 == 0 {
@@ -117,7 +117,7 @@ fn swatches_find_a_pictures_colours_by_share() {
         })
         .collect();
 
-    let swatches = cover_colours::swatches(&pixels, 1, 6);
+    let swatches = cover_colors::swatches(&pixels, 1, 6);
 
     assert_eq!(2, swatches.len());
     assert_eq!(hex("#d9552b"), swatches[0].argb);
@@ -129,7 +129,7 @@ fn swatches_find_a_pictures_colours_by_share() {
 }
 
 #[test]
-fn music_from_colourful_covers_is_their_strongest_colour_rounded() {
+fn music_from_colorful_covers_is_their_strongest_color_rounded() {
     let warm = vec![
         vec![
             Swatch {
@@ -148,7 +148,7 @@ fn music_from_colourful_covers_is_their_strongest_colour_rounded() {
     ];
 
     let music = CoverMusic::from_covers(&warm).expect("colourful covers give a colour");
-    let orange = cover_colours::to_lch(hex("#D9552B"));
+    let orange = cover_colors::to_lch(hex("#D9552B"));
 
     assert_eq!((orange.h + 0.5).floor() as i32 % 360, music.hue);
     assert_eq!((orange.c * 1000.0 + 0.5).floor() / 1000.0, music.chroma);
@@ -156,7 +156,7 @@ fn music_from_colourful_covers_is_their_strongest_colour_rounded() {
 }
 
 #[test]
-fn music_from_grey_covers_or_none_is_nothing() {
+fn music_from_gray_covers_or_none_is_nothing() {
     assert_eq!(
         None,
         CoverMusic::from_covers(&[vec![Swatch {
@@ -208,7 +208,7 @@ fn background_for_dull_music_is_the_names_pick() {
 
 /// Music of a color gets one of a few backgrounds of that color, the same one for the same list.
 #[test]
-fn background_matches_the_musics_colour() {
+fn background_matches_the_musics_color() {
     for (r, g, b) in [
         (200, 30, 40),
         (30, 60, 200),
@@ -216,7 +216,7 @@ fn background_matches_the_musics_colour() {
         (240, 200, 30),
         (150, 40, 190),
     ] {
-        let lch = cover_colours::to_lch(cover_colours::BLACK | (r << 16) | (g << 8) | b);
+        let lch = cover_colors::to_lch(cover_colors::BLACK | (r << 16) | (g << 8) | b);
         let music = CoverMusic::of(lch.h, lch.c, lch.l);
 
         let picks: HashSet<usize> = (0..60)
@@ -234,7 +234,7 @@ fn background_matches_the_musics_colour() {
             let nearest = background
                 .hues()
                 .iter()
-                .map(|h| cover_colours::hue_distance(h.h, music.hue as f64))
+                .map(|h| cover_colors::hue_distance(h.h, music.hue as f64))
                 .fold(f64::INFINITY, f64::min);
             assert!(
                 nearest < 50.0,
@@ -447,12 +447,12 @@ fn pixel(jpeg: &[u8], x: u32, y: u32) -> Rgb<u8> {
     *decode(jpeg).get_pixel(x, y)
 }
 
-fn near(pixel: Rgb<u8>, colour: &str, tolerance: i32) -> bool {
-    let expected = hex(colour);
+fn near(pixel: Rgb<u8>, color: &str, tolerance: i32) -> bool {
+    let expected = hex(color);
     let channels = [
-        cover_colours::r(expected),
-        cover_colours::g(expected),
-        cover_colours::b(expected),
+        cover_colors::r(expected),
+        cover_colors::g(expected),
+        cover_colors::b(expected),
     ];
     (0..3).all(|k| (pixel.0[k] as i32 - channels[k]).abs() <= tolerance)
 }
@@ -477,23 +477,23 @@ fn changed(a: &[u8], b: &[u8], x0: u32, y0: u32, x1: u32, y1: u32) -> usize {
     changed
 }
 
-fn rgb(colour: &str) -> Rgb<u8> {
-    let c = hex(colour);
+fn rgb(color: &str) -> Rgb<u8> {
+    let c = hex(color);
     Rgb([
-        cover_colours::r(c) as u8,
-        cover_colours::g(c) as u8,
-        cover_colours::b(c) as u8,
+        cover_colors::r(c) as u8,
+        cover_colors::g(c) as u8,
+        cover_colors::b(c) as u8,
     ])
 }
 
-fn save_png(path: &Path, width: u32, height: u32, colour: Rgb<u8>) {
-    RgbImage::from_pixel(width, height, colour)
+fn save_png(path: &Path, width: u32, height: u32, color: Rgb<u8>) {
+    RgbImage::from_pixel(width, height, color)
         .save_with_format(path, ImageFormat::Png)
         .expect("saves");
 }
 
-fn picture(colour: &str, second: Option<&str>) -> Vec<u8> {
-    let mut image = RgbImage::from_pixel(120, 120, rgb(colour));
+fn picture(color: &str, second: Option<&str>) -> Vec<u8> {
+    let mut image = RgbImage::from_pixel(120, 120, rgb(color));
     if let Some(second) = second {
         for y in 80..120 {
             for x in 0..120 {
@@ -576,7 +576,7 @@ fn override_is_used_as_it_is_and_a_replacement_shows_without_a_restart() {
 
 /// A picture in the covers folder beats colors from the music too.
 #[tokio::test]
-async fn override_beats_seed_colours_and_is_sized_as_asked() {
+async fn override_beats_seed_colors_and_is_sized_as_asked() {
     let fixture = Fixture::new();
     save_png(
         &fixture.covers_directory().join("Daft Punk Radio.png"),
@@ -717,13 +717,13 @@ fn station_override_is_not_badged() {
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn seed_covers_colour_the_cover_and_a_new_seed_redraws_it() {
+async fn seed_covers_color_the_cover_and_a_new_seed_redraws_it() {
     let _heavy = HEAVY.read();
     let fixture = Fixture::new();
     let service = fixture.service();
-    let seeded = |colour: &str| {
+    let seeded = |color: &str| {
         let mut daft_punk = list("Daft Punk Radio", None, list_kinds::RADIO);
-        daft_punk.seeds = Some(seeds(vec![picture(colour, Some("#101010"))]));
+        daft_punk.seeds = Some(seeds(vec![picture(color, Some("#101010"))]));
         daft_punk
     };
     let plain = service
@@ -747,7 +747,7 @@ async fn seed_covers_colour_the_cover_and_a_new_seed_redraws_it() {
 /// Grey seeds, or seeds that cannot be fetched, leave the genre's color.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn grey_or_missing_seeds_fall_back() {
+async fn gray_or_missing_seeds_fall_back() {
     let _heavy = HEAVY.read();
     let fixture = Fixture::new();
     let service = fixture.service();
@@ -765,12 +765,12 @@ async fn grey_or_missing_seeds_fall_back() {
         })
     }));
     let failing = service.get_list_cover(&failing, None).await;
-    let mut grey = list("Rock Mix", Some("Rock"), list_kinds::MIX);
-    grey.seeds = Some(seeds(vec![picture("#808080", None)]));
-    let grey = service.get_list_cover(&grey, None).await;
+    let mut gray = list("Rock Mix", Some("Rock"), list_kinds::MIX);
+    gray.seeds = Some(seeds(vec![picture("#808080", None)]));
+    let gray = service.get_list_cover(&gray, None).await;
 
     assert_eq!(bare, failing);
-    assert_eq!(bare, grey);
+    assert_eq!(bare, gray);
 }
 
 #[test]
@@ -1106,12 +1106,12 @@ fn words_reach_their_contrast_on_every_pixel_behind_them() {
                             for y in (b[1].max(0.0) as u32)..(side as u32).min(b[3].ceil() as u32) {
                                 for x in (b[0].max(0.0) as u32)..(side as u32).min(b[2].ceil() as u32) {
                                     let p = backdrop.get_pixel(x, y).0;
-                                    let under = cover_colours::BLACK
+                                    let under = cover_colors::BLACK
                                         | (i32::from(p[0]) << 16)
                                         | (i32::from(p[1]) << 8)
                                         | i32::from(p[2]);
-                                    let ratio = cover_colours::contrast_ratio(
-                                        cover_colours::over(words.ink, under),
+                                    let ratio = cover_colors::contrast_ratio(
+                                        cover_colors::over(words.ink, under),
                                         under,
                                     );
                                     worst = worst.min(ratio);
@@ -1160,12 +1160,12 @@ fn words_still_read_after_jpeg() {
             for y in b[1] as u32..b[3] as u32 {
                 for x in b[0] as u32..b[2] as u32 {
                     let p = decoded.get_pixel(x, y).0;
-                    let under = cover_colours::BLACK
+                    let under = cover_colors::BLACK
                         | (i32::from(p[0]) << 16)
                         | (i32::from(p[1]) << 8)
                         | i32::from(p[2]);
                     assert!(
-                        cover_colours::contrast_ratio(cover_colours::over(words.ink, under), under) >= need,
+                        cover_colors::contrast_ratio(cover_colors::over(words.ink, under), under) >= need,
                         "{background} at {x},{y}"
                     );
                 }

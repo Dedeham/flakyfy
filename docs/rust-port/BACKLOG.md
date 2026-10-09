@@ -667,12 +667,277 @@ lyrics look runs in the background); the saved logs are compared unordered.
 No intentional diffs and no settings were added. `696cbff`'s import half waits for H, and
 `5d3f096`'s Recently removed and activity card for F and N.
 
+### G3 record: groups F and P (2026-10-08)
+
+Branch `port/g3-fp` (`c4ce8f1`: `port/g3-f` and `port/g3-p` merged, with `rust/main` up to
+`19db112`, so B, D, E, G, H and L are in). The whole corpus on the WSL lane with
+`parity/run.sh --rust-twice` against the cached C# recording (1,837 requests), then
+`--only '20-*' --rust-twice` to settle the Rust against Rust diffs.
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 260 unexplained, 1,524 explained, 53 identical |
+| Rust against Rust (whole corpus) | 1,835 identical, 2 unexplained (`20-library-edits/album-without-cafe`, `plant-copy-album`) |
+| Rust against Rust (`20-*` alone) | 152 identical, 1 unexplained (`plant-copy-album`) |
+
+| Group | Own before (G2 record) | Own after | Diffs before | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| F | 128 | 24 | 133 | 24 |
+| P | 68 | 15 | 99 | 15 |
+
+What is left in F is R's and G's:
+
+- **R** (14 requests): `plant-copy-seen` waits on Library health (`/api/admin/health`, 404 in
+  Rust) for the planted second copy of Café del Mar and captures its id there
+  (`song_cafe_copy`, `key_copy`). Without it every request about the copy fails or differs:
+  `plant-copy-album`, `retag-copy-isrc` and `-seen`, `tags-copy-isrc`, `undo-copy-isrc`,
+  `tags-copy-undone`, `remove-copy` and `-seen`, `folder-after-copy-removed`,
+  `trash-files-copy`, `admin-trash-copy`, `trash-admin-copy`, `allow-download-copy`.
+- **R, through the journals** (6): `admin-actions-off`, `-dryrun`, `-cafe`, `-final`,
+  `tag-edits-journal` and `library-actions-journal` list the fixes `19-health` made in the C#
+  run (the Kestrel Moor songs) and the copy's removal. Run alone (`20-*`), the first three match.
+- **G** (3): `extensions-on-json`, `-xml` and `extensions-off-again` differ only by
+  octoTopSongs at versions 1 and 2, G's proposed `charts-octo-top-songs-version-2`.
+- `album-without-cafe` (1): Navidrome's album genres while its scan of the removed song is still
+  going; it differed Rust against Rust in the whole run only, and matched C# and itself when
+  `20-*` ran alone (the timed-out health waits of `19-health` and `20-library-edits` move the
+  scans' timing).
+
+The two Rust against Rust diffs are the same thing: `plant-copy-album` lists the planted copy
+under Navidrome's own id, which changes every run and is normalized only through the capture
+`plant-copy-seen` makes from the health route. Both go once R is in.
+
+What is left in P is J's, R's knock-on and the proposed intentional diffs:
+
+- **Intentional, not reviewed** (3): `17-covers-explicit/covers-resumed-done`
+  (`cover-resume-counts-once`), `96-covers-explicit-writes/covers-scan-done`
+  (`cover-scan-leaves-the-trash-out`; the trash entry the C# listed, plus the copy below) and
+  `covers-apply-aurora-done` (`cover-run-reason-cleared`, plus the copy).
+- **J's `recovery-refused-on-library-files`** (2): `explicit-get-recovery`,
+  `explicit-cancel-recovery-idle`.
+- **R's knock-on** (9): the planted mp3 copy that `20-library-edits` could not remove without
+  the health capture is still in the library, so the explicit marking reads 12 songs against
+  11 (`explicit-preview-1-done`, `-2-done`, `explicit-apply-1-done`, `-2-done`,
+  `explicit-undo-1-done`, `-2-done`, `explicit-state-after-apply-1`) and the cover run
+  embeds into it too (`covers-journal-after-apply`, `covers-undo-done`).
+- **base** (1): `covers-start-bad-json`, the admin JSON binder's `$` against the C#'s `$.scope`
+  for a cut-off body (`plumbing.rs`).
+
+No other group moved because of F or P. The counts that differ from the earlier records come
+with `19db112` (G's charts plan): every settings answer carries `GeneratedPlaylists.Charts` and
+`ChartCountry`, which puts the settings reads of E (20), I (23) and base on those groups, and
+the dashboard files (`dashboard-files-2026-10-08`, not reviewed) put `21-static` on J and N.
+G's `charts-top-chart-says-which-chart` now matches its three `16-lists/top-chart-*` requests,
+as expected with P's `explicitStatus` in.
+
+Settled on the way:
+
+- D carried F's `ed0bd7c` too (`571de77`); the merge keeps D's copy and one test row.
+- P's cover line in the downloads log (`log_cover_step`) now writes through D's
+  `log_song_step`, which clears the cover line B and D were waiting on (B 0, D 2 in this run;
+  D's 2 are the extension lists, G's octoTopSongs version).
+- F changed shared `octo-media` code: an MP3 rewritten in place keeps its ID3v2 tag size while
+  the frames fit, as TagLib# did (`tag_file::taglib_padding`, known-diffs "Audio tags: ID3v2
+  padding"). No other group's count moved with it.
+
+No settings were added, and no route was added to `LIBRARY_FILE_ROUTES`: the new admin routes
+(`/api/admin/library-actions/allow-download`, `/api/admin/explicit/backfill/*`) sit under
+prefixes G1 already listed.
+
+### G4 record: group N (2026-10-08)
+
+Branch `port/g4-n`, on `rust/main` `cd89293` (group E and the WSL lanes merged in). Run on the
+WSL lane with `parity/run.sh`: first `--only '1[18]-*'` from `f6b9ee1` (C# recorded again for
+the subset, 195 compared), then the whole corpus with `--rust-twice` from `7d1f3f2` against
+the cached C# recording (1,837 requests, 1h04m).
+
+| Comparison | Structural |
+| --- | --- |
+| C# against Rust | 752 unexplained (768 after E), 1,060 explained, 25 identical |
+| Rust against Rust | 1,837 identical, 0 unexplained (bytes: the same) |
+
+| Group | Own before (phase 1) | Own after E | Own after | Diffs after |
+| --- | ---: | ---: | ---: | ---: |
+| N | 48 | 14 | 0 | 0 |
+
+All 14 are gone: `ambient-seeded` (and `-again-cached`, `-recovery`, `-alt-admin-unseeded`)
+light the page with the C# recording's colors exactly (the parity cover's palette is also a
+Rust test), and the ten `activity-*` requests, `11-signin/in-get-activity` and `in-get-ambient`
+match, `activity-rescan-starting` and `-done` included (E's two, now that the Sharing card is
+in). Base went from 29 to 27: the genre run's `pending` (`09-admin`), which phase 1 put on N.
+E is 2, the proposed `slskd-web-url-trimmed`. No group got worse: B 11, C 9, D 110, F 128, G
+47, H 201, I 3, J 3, L 45, O 17, P 68, Q 5, R 96; A, K and S 0. N has no proposed intentional
+diff.
+
+After `rust/main` `d83eb7c` (H and L) was merged in and the activity view read the Spotify read
+and the trickle (`16b07f0`), `parity/run.sh --only '1[128]-*'` (401 requests) had N at 0
+again. Its one new J diff, `11-signin/alt-admin-index`, is `aa504ee`'s edit of
+`octo/wwwroot/admin/index.html` (the dashboard served differs from the C# image's by one byte),
+not N's; `21-static` will show it too.
+
+Then `rust/main` `b4b33cd` (B and D) and `19db112` (G) were merged in, the activity view
+read Find songs (D), and the final run was `parity/run.sh --rust-twice` on the whole corpus from
+`d839fb7` (corpus `eb2c30598fe12590`, so C# was recorded again; 0h49m on the WSL lane):
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 469 unexplained, 1,337 explained, 31 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+No activity or ambient request differs. N's 10 are all `21-static` (`static-index`, `-css`,
+`-js` and their HEAD and `If-None-Match` forms): the dashboard files `rust/main` changed after
+2026.10.05 (`aa504ee`'s spelling and station previews, G's Charts card), covered by G's proposed
+`dashboard-files-2026-10-08` (`reviewed` unset, so still counted); with it reviewed N is 0.
+The rest is other groups' (E 18, I 23 and part of J are G's two new `GeneratedPlaylists`
+settings, `Charts` and `ChartCountry`, in every settings answer). Rust against Rust's one diff
+is `19-health/plant-wait` (R), the Navidrome scan timing the earlier records saw.
+
+After `rust/main` `61b1cfb` (F and P) was merged in, every crate file's test count matched
+`rust/main`'s apart from N's own additions (`git grep -c`), the gate passed (3,289 tests) and
+`parity/run.sh --only '1[128]-*'` (401 requests) had N at 0.
+
+### G4 record: group R (2026-10-08)
+
+Branch `port/g4-r`, on F's `port/g3-f` (`28cabef`), merged with `rust/main` up to `aeb3ed8` (B,
+D, F, G, H, L, N and P in). Final run on the WSL lane, `parity/run.sh --no-build --rust-twice`,
+of `65c9275`'s build, against the cached C# recording of corpus `eb2c30598fe12590` (1,837
+requests). Every crate file's `#[test]` count is at least `rust/main`'s (`git grep -c`), and
+the gate passed (3,320 tests; octo-subsonic 120).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| C# against Rust | 106 unexplained, 1,647 explained, 17 intentional, 67 identical | not run |
+| Rust against Rust | 1,836 identical, 1 unexplained | 1,836 identical, 1 unexplained |
+
+| Group | Own before (G2 E record) | Own after R | Diffs after R |
+| --- | ---: | ---: | ---: |
+| R | 96 | 0 | 0 |
+| F | 24 (G3 F and P record) | 5 | 5 |
+| P | 15 (G3 F and P record) | 6 | 6 |
+
+R is at 0. Rust against Rust's one diff is `19-health/plant-wait`, the Navidrome scan timing
+every record since phase 1 has seen: `search3` answered while Navidrome was still giving the
+planted albums their covers. A corpus fix (wait for the albums' `coverArt`) is for whoever
+owns the corpus. The build run just before (`parity/run.sh --rust-twice`, same commit) had 5
+Rust against Rust diffs, all in `19-health`: Navidrome's scans after planting and after the
+duplicate fix did not end within the corpus's 60 s while the lane was busy, and the requests
+that wait on them followed; the rerun had none of them.
+
+F's 17 requests that waited on R pass: `20-library-edits/plant-copy-seen` captures
+`{{song_cafe_copy}}` and `{{copy_dup_key}}` from `/api/admin/health`, and the `*-copy*` chain,
+`admin-actions-final`, `tag-edits-journal` and `library-actions-journal` match, and so do the
+journals' `admin-actions-off`, `-dryrun` and `-cafe` in the whole run. F's 5 are proposals:
+`isrc-clear-takes-the-tag-off` (`tags-copy-undone`, and now `remove-copy-seen`, whose only
+difference is Navidrome listing the copy without the code), and the three `extensions-*`
+requests, octoTopSongs at versions 1 and 2, which G's reviewed
+`charts-octo-top-songs-version-2` does not name in `20-library-edits` (nor D's two in
+`13-downloads`). P's 9 knock-on requests (the planted copy left in the library) pass; its 6 are
+its 3 proposals, J's 2 and the base binder's `covers-start-bad-json`, as in the F and P record.
+`album-without-cafe` and `plant-copy-album`, Rust against Rust in that record, match.
+
+The rest of the 106 is other groups', as the F and P and N records found them: G's `Charts` and
+`ChartCountry` in every settings answer (E 18, I 23, part of J and base), the shared dashboard
+files on `10-static-cors` (base), the update command (L), the extension lists (D, L), H's 17.
+
+Found and fixed on the way (to match the C#; known-diffs.md rows updated; Rust tests):
+
+- **FLAC padding.** TagLib#'s `Flac.File.Save` keeps the metadata's size on disk while its
+  blocks fit (the padding takes up the rest; 4096 bytes when they outgrow it); lofty kept the
+  old padding block, so every Library health fix changed a FLAC's size and Navidrome's
+  `getSong`/`getAlbum` sizes differed (`19-health/settle1-*`, `settle4-tidewater-bare`,
+  `cleanup-wait`). `tag_file::taglib_flac_padding`. B and D's `tagged-file-length` allowlist
+  entry now applies to one request instead of two (the FLAC relay matches; the M4A does not).
+- **The blank ID3v1 tag.** TagLib# gives every MP3 an ID3v1 tag, blank when it has nothing to
+  say. lofty's remove appends a blank one to a file that has none and takes it off one that has
+  it, so the first save added 128 bytes and the next took them away (`remove-copy-seen`'s size).
+  The tag is now written blank over the one there or after the audio.
+
+`5d3f096` is in pieces: its download log and Find songs routes came with D (`port/g2-bd`), the
+trash and Put back routes with F, their three Recently removed tests with R
+(`trash_tests.rs`), and its activity card with N. N's `STUB(R)` in `get_activity` is wired: a
+`HealthActivity` from the service's run (`From<&HealthRun>`) and its `checking_since()`, with
+the C# activity tests over a real run in `library_health_server_tests.rs`.
+
+No settings and no new intentional diffs (the ISRC entry gained a request). No "Fix in port"
+line was under R.
+
+## Final parity record (2026-10-08)
+
+Branch `port/integrate`, on `rust/main` `4ff2c86` (every gap group in: A to S but M and T, G
+from the charts session), then `harness/shards` (`20a37c0`) and `release/rust` (`f8c07ac`)
+merged in. Final run on the WSL lane, `parity/run.sh --rust-twice --bytes`, sharded, of
+`e2038cf`'s build, against C# 2026.10.05 recorded again for corpus `55ac89246e2d466e` (1,842
+requests); the diff was then taken again on the same recordings with this branch's last
+`intentional-diffs.json` (it adds `90-mutations/update-check` to `update-card-pulls-octo` and
+drops an entry the new C# recording no longer needs).
+
+| Comparison | Structural | Bytes |
+| --- | --- | --- |
+| Before: C# against Rust, `4ff2c86`, corpus `eb2c30598fe12590`, unsharded | 106 unexplained | 113 unexplained |
+| Before: the same build, sharded, corpus `55ac89246e2d466e` (the shards agent's gate) | 104 unexplained | 111 unexplained |
+| After: C# against Rust | 82 unexplained, every one covered by a proposed entry; 0 covered by none | the same |
+| After: Rust against Rust | 1,842 identical | 1,842 identical |
+
+The 82 are all proposals waiting for Brandon (`reviewed` unset): with every entry treated as
+reviewed, the diff is 0 in both modes. The three reviewed entries explain 39 more.
+
+**The causes, and what became of each:**
+
+| Cause | Requests | Handled |
+| --- | ---: | --- |
+| G's two settings (`GeneratedPlaylists.Charts`, `ChartCountry`) in every settings, Raw config and settings file answer, and two more keys in config-sources | 55 | Proposed `charts-settings-listed` (46). The 7 config-sources answers carry `config-sources-fixed-mask`'s change too, and one entry has to cover every line of an aspect, so that entry pins the moved keys; `slskd-web-url-trimmed` likewise pins the two settings on its 2 answers. |
+| `octoTopSongs` version 2 on the extension lists outside `16-lists` (`01-system`, `13-downloads`, `15-radio`, `20-library-edits`) | 12 | Reviewed `charts-octo-top-songs-version-2` names them, with the bytes mode's lines for the same change. |
+| The dashboard files read by `10-static-cors` and the second Octo (`11-signin/alt-admin-index`) | 10 | Reviewed `dashboard-files-2026-10-08` names them, with a range's `Content-Range`. |
+| `getTopChart`'s added fields in bytes mode | 3 | Reviewed `charts-top-chart-says-which-chart` gains the bytes mode's lines. |
+| The update card's hand commands | 3 | First ported as 2026.10.05 wrote them (`7f55c32`); then `release/rust`'s helper version 2 changed them on purpose: proposed `update-card-pulls-octo` (the release agent's), which now names `90-mutations/update-check` too. |
+| `covers-start-bad-json`: the shared body binder said `$` and "Expected a value" where System.Text.Json said `$.scope` and "Expected depth to be zero", and put the parameter's entry second | 1 | Fixed for every body endpoint (`e797b0a`): `controllers::admin::json_body` reads a body against each endpoint's C# record, so the path, the words, the position and the order match; tested across endpoints. |
+| `12-imports/cap-zip-too-big-unpacked`: the C# answered 500 under the stack's memory (it reads a zip's file whole into one string) | 1 | Gone with the shards agent's 1 GB memory limit for the C# stack: both answer the 400. |
+| `album-without-cafe`, `19-health` scan timing, `plant-wait` (the one Rust against Rust diff) | 1 to 5 | Gone with the shards agent's corpus fixes (genres ignored, scan waits, coverArt ignored). |
+| `09-admin/lidarr-test-unreachable`: .NET's "Connection refused (stubs:9)" | 1 (new) | Plain error words, an improvement (`8597aa7`): proposed `plain-error-words`. |
+| The proposals already on file (J, I, F, P, E, H) | 32 | Waiting for Brandon; unchanged but for their bytes mode's lines. |
+
+**Improvements done** (list above): the shared JSON binder matched to System.Text.Json, plain
+error words and no em dashes (`8597aa7`), US spelling in identifiers (`2b132e6`), no `.unwrap()`
+outside tests (`c5ebd77`), the wave modules named for what they hold (`a1d46d9`), and 4:2:0
+cover JPEGs where ImageSharp wrote them (`4ccc138`; the bytes already differed under
+`cover-jpeg-bytes`). Left for the release agent: the cutover items.
+
+**Gate** on `e2038cf`: `cargo test --workspace` 3,333 passed (octo 2,275 and 3, octo-core 769,
+octo-media 166, octo-subsonic 120); `#[test]` counts per crate at least `rust/main`'s (octo
+2,278 against 2,274, octo-media 166 against 162, octo-core and octo-subsonic equal); clippy
+`-D warnings` and fmt clean. One test flaked once under load and passed on three reruns:
+`scrobble_tests::a_repeated_finished_play_is_learned_once`. A play sent without a time is
+told apart from a repeat by the minute it arrived (`recent_scrobbles`, as the C#), so two
+sends that straddle a minute count twice.
+
+**Proposed entries for Brandon's review** (`reviewed` unset; what a person or an app would
+notice):
+
+| Entry | Group | Requests | What changes for a person or an app |
+| --- | --- | ---: | --- |
+| `charts-settings-listed` | G | 46 | The settings page, Raw config and the settings file show the two chart settings (which chart lists to make, and the chart country) like every other setting. |
+| `keep-as-playlist-navidrome-takes-it` | H | 16 | "Keep as playlist" on an import works: the playlist appears in Navidrome under the list's name with its songs, instead of an error and an empty playlist named after the time every 30 seconds. |
+| `config-sources-fixed-mask` | I | 7 | The configuration sources page shows every saved secret as eight dots, so it no longer gives away how long a password or key is (it also lists the two chart settings). |
+| `update-card-pulls-octo` | T | 3 | The update card's hand command pulls Octo with its sidecars instead of building it, and an update helper too old for that is asked to be reinstalled. |
+| `recovery-refused-on-library-files` | J | 2 | Signed in with the recovery code, the explicit marking is refused like every other page that touches music files; only a Navidrome admin can run it. |
+| `isrc-clear-takes-the-tag-off` | F | 2 | Undoing an ISRC edit takes the code off the file, as the undo already said it did. |
+| `slskd-web-url-trimmed` | E | 2 | The Open slskd link's address is saved without the spaces it was typed with. |
+| `lidarr-test-saved-key-stays-home` | I | 1 | Testing Lidarr at a new address asks for the key to be typed again instead of sending the saved key to that address. |
+| `plain-error-words` | base | 1 | A failed connection, timeout or error status reads in plain words ("Could not connect to stubs:9: the connection was refused.") instead of .NET's exception text. |
+| `cover-resume-counts-once` | P | 1 | A cover run resumed after a stop counts each album and song once ("3 of 3 albums", not "6 of 3"). |
+| `cover-scan-leaves-the-trash-out` | P | 1 | The cover scan no longer lists songs in Octo's trash folder as albums of their own. |
+| `cover-run-reason-cleared` | P | 0 | A finished cover run no longer keeps its last "barcodes 1 of 1" line by a race (the corpus now ignores that line, so no request uses the entry). |
+
+The reviewed entries this round extended (to other requests with the same change, and to the
+bytes mode's lines): `charts-octo-top-songs-version-2`, `charts-top-chart-says-which-chart`,
+`dashboard-files-2026-10-08`. Brandon may want to see those additions too.
+
 ## Gap groups
 
 Sizes from the migration plan § 2 (C# logic and test lines added, test
 methods). "Diffs now" is the latest "own" count (requests tagged with the
 group that differ from C# 2026.10.05): the G1 J and I record above (the G2 C, O
-and Q record for those three, the G3 H record for H), proposed
+and Q record for those three, the G3 H record for H, the G4 record for E and N), proposed
 intentional diffs counted as differing. Status: open, in progress, done, or no
 Rust change.
 
@@ -682,8 +947,8 @@ Rust change.
 | B Download matching | 8 | 644 | 46 | 0.75 | 2 | done (G2, `port/g2-bd`) |
 | C Tagging polish | 4 | 465 | 24 | 1.0 | 9 | done |
 | D Download log, drawer, Find songs picks | 13 | 2,146 | 53 | 1.5 | 12 | done but `696cbff`'s import half (H) (G2, `port/g2-bd`) |
-| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 4 | done (G2, `port/g2-eg`) |
-| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 128 | open |
+| E slskd sharing, Share switch | 8 | 1,084 | 29 | 1.0 | 2 | done (G2, `port/g2-eg`; the 2 are the proposed `slskd-web-url-trimmed`) |
+| F Library edits, delete, trash, put back | 10 | 1,345 | 35 | 1.25 | 24 | done (G3, `port/g3-fp`); what is left waits for R |
 | G Top songs, charts, Popular right now | 4 | 1,472 | 35 | 1.0 | 48 | done on `port/g-charts`, with the charts plan (parity pending) |
 | H Spotify import, trickle | 4 | 3,197 | 69 | 2.0 | 16 | done (G3) |
 | I Secret masking in the admin API | 3 | 207 | 7 | 0.25 | 3 | done (G1) |
@@ -691,11 +956,11 @@ Rust change.
 | K Lidarr stale guid, bare address 302 | 2 | 82 | 4 | 0.25 | 0 | done |
 | L Multi-source radio | 16 | 2,976 | 127 | 2.0 | 18 | done (G3) |
 | M octo-sonic and the shim's `/ytm` | 3 | 22 | 3 | 0 | 0 | no Rust change (own images) |
-| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 14 | open |
+| N Afterglow, activity view, toasts | 8 | 572 | 18 | 0.5 | 0 | done (G4, `port/g4-n`; R's job waits on R) |
 | O Search album ownership | 1 | 808 | 23 | 0.5 | 17 | done |
-| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 68 | open |
+| P Covers keep-or-replace, explicit marks | 4 | 1,739 | 50 | 1.25 | 15 | done (G3, `port/g3-fp`); what is left is R's knock-on and proposed intentional diffs |
 | Q Made for you lists | 3 | 887 | 26 | 0.75 | 5 | done |
-| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 97 | open |
+| R Library health on the server | 5 | 3,130 | 39 | 2.0 | 0 | done (G4, `port/g4-r`) |
 | S Estimated stream length fix | 1 | 153 | 12 | 0.5 | 0 | done |
 | T Starter stack, install, CI, images, updater | 15 | 10 | 0 | 1.5 | 0 | release phase |
 | U Shared case files, timing tests | 2 | 0 | 0 | 0 | 0 | no Rust change (Rust reads the files) |
@@ -825,18 +1090,18 @@ the slskd client's reads, rescan, settings file, scan cancel and upload cancel, 
   `clearing_an_isrc_takes_it_off_the_file`), and the proposed intentional diff
   is `isrc-clear-takes-the-tag-off`; F's tag edits only need to call it.
 
-- [ ] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
+- [x] `374dac8` feat(library): Library health fixes from the apps: tags written in place, albums joined, covers added, and a removed song put back
   (G2: `LibraryTagEdits.Set` must write through `tag_writer_extras::set_or_clear_text`, so a
   cleared field, an ISRC above all, leaves the file; the port-only fix and its intentional diff
   `isrc-clear-takes-the-tag-off` are in place)
-- [ ] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
-- [ ] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
-- [ ] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
-- [ ] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
-- [ ] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
-- [ ] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
-- [ ] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
-- [ ] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
+- [x] `8606390` test(library): joining a split album takes away a peer's stray album id, release date and version
+- [x] `15e3bb5` fix(library): removing a second copy leaves the song wanted, so the kept copy can still be upgraded
+- [x] `433acff` fix(library): Delete from disk takes the song's own lyrics files to the trash with it, and Put back returns them
+- [x] `a4238fa` fix(library): Put back links the outside song to its file again, as it was before the song was removed
+- [x] `3204161` feat(admin): Allow downloading again on the Library actions history, and a removed song's log says how to get it back
+- [x] `6b6b61d` fix(library): a removed song's outside link is found by its whole path, and the trash note's link is tested
+- [x] `f2c6a65` fix(library): getLibraryActions offers remove only to a Navidrome admin
+- [x] `a0fcecb` test(library): joining a song onto an album filed under another album artist takes that album artist, keeps its own artist, and undoes
 - [x] `ed0bd7c` fix(library): a library song's length is read from Navidrome's fractional seconds instead of always missing
   (ported with D in G2: Find songs reads a library song's length through it)
 
@@ -953,14 +1218,27 @@ No Rust server change: both are their own images.
 
 ### N. Afterglow dashboard, activity view, toasts
 
-- [ ] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
-- [ ] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
-- [ ] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
-- [ ] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
-- [ ] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
-- [ ] `d52ae54` feat(admin): Fetched songs in the Afterglow look
-- [ ] `ca47988` feat(admin): one activity view of everything Octo is working on
-- [ ] `af48eb1` feat(admin): live progress toasts for Octo's background work
+- [x] `77701bc` feat(admin): the dashboard's light comes from the fetched songs' covers, read with the station covers' colour rules
+- [x] `31e3715` feat(admin): Afterglow, the dashboard lit by a fetched song's cover
+- [x] `32d05af` fix(admin): Recently added offers one song per cover, so an album fetched whole is one choice of light
+- [x] `5a00fb1` fix(admin): choosing the newest fetched song lights the page with it, and a faintly tinted cover lights it quietly
+- [x] `2e4fdcf` fix(admin): Octo's own service card carries the octopus
+- [x] `d52ae54` feat(admin): Fetched songs in the Afterglow look
+- [x] `ca47988` feat(admin): one activity view of everything Octo is working on
+- [x] `af48eb1` feat(admin): live progress toasts for Octo's background work
+
+Done in G4 (`port/g4-n`): `31e3715`, `2e4fdcf`, `d52ae54` and the dashboard half of
+`5a00fb1`, `ca47988` and `af48eb1` are `octo/wwwroot`, which the Rust build serves as is. The
+server half is `GET /api/admin/ambient` (`controllers::admin::ambient`, over
+`services::admin::{cover_palette, ambient_palette_service}` and `cover_colors::from_lch`) and
+`GET /api/admin/activity` (`controllers::admin::activity`), with `pending` on the genre run,
+the duplicate scan's `is_scanning`/`is_requested`, and `getScanStatus` signed in. Neither route
+reads library files, so neither is in `LIBRARY_FILE_ROUTES` (the C# answered the recovery code
+on both). The activity view reads Library health (group R, not on `rust/main` yet) through a
+view of its own, `HealthActivity` (from `HealthRun`), with a `STUB` where it is read: a
+conversion and one call in `get_activity`; the word mapping and its tests are in already. The
+slskd rescan (E), the Spotify read and trickle (H, `ImportsActivity` from `ImportOverview`) and
+Find songs (D, `FindLook` from `FindSnapshot`) are read.
 
 ### O. Search album ownership
 
@@ -977,10 +1255,10 @@ No Rust server change: both are their own images.
   intentional diff.
 - The recovery-code explicit marks are already refused by the gate (G1).
 
-- [ ] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
-- [ ] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
-- [ ] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
-- [ ] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
+- [x] `5cea252` fix(covers): a download keeps the cover it came with when it is the same art and big enough
+- [x] `86ad6b8` fix(covers): every strict source is asked, and only a copy of the release's own art can win
+- [x] `4f2aeb6` feat(explicit): outside songs and albums say explicit or clean, and a clean copy has an id of its own
+- [x] `d80141f` feat(explicit): mark the songs already in the library explicit or clean
 
 ### Q. Made for you lists
 
@@ -1001,15 +1279,25 @@ No Rust server change: both are their own images.
 
 ### R. Library health on the server, dashboard parity (logs, Find songs, Recently removed)
 
-- [ ] `69f577f` feat(health): Library health findings and fixes on the server
-  (G2: `LibrarySnapshot` and `LibraryAlbumIndex` are O's, at `f49fb80`; R adds `ReadAtUtc`,
-  `RefreshAsync`, `Rows` and the song row's health fields)
-- [ ] `e36d823` fix(health): check songs in the order the apps read them
-- [ ] `c156710` feat(admin): Library health page on the dashboard
-- [ ] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
-  (its download log and Find songs routes are in, with D: `controllers/admin/downloads.rs`;
-  Recently removed, Put back and the activity card wait for F and N)
-- [ ] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard
+Done in G4 (`port/g4-r`): `services::health` (`library_health`, `health_words`, `health_fixes`,
+`server_song_fields`, `library_health_service`) and `controllers::admin::health`
+(`/api/admin/health` and its `run`, `preview`, `apply`, `lookup`, `stop`, `undo`), already in
+`LIBRARY_FILE_ROUTES` since G1. The shared cases (`docs/library-health-cases.json`) run as Rust
+tests.
+
+- [x] `69f577f` feat(health): Library health findings and fixes on the server
+  (the song row's health fields, `LibrarySnapshot::read_at_utc` and `refresh`,
+  `LibraryAlbumIndex::rows`; the duplicate scan groups by Library health's rule;
+  `LibraryRescan::hold` came with F; `ActivityController.Health` is N's)
+- [x] `e36d823` fix(health): check songs in the order the apps read them
+- [x] `c156710` feat(admin): Library health page on the dashboard (the shared dashboard files; the
+  controller's `?fresh=1` and slimmer song view)
+- [x] `5d3f096` feat(admin): download logs, Find songs and Recently removed for the dashboard
+  (download log and Find songs routes with D: `controllers/admin/downloads.rs`; trash and Put
+  back with F: `controllers/admin/trash.rs`; the Recently removed tests with R; the activity
+  card with N, wired to R's run in G4)
+- [x] `eef5fbd` feat(admin): download logs, Find songs and Recently removed on the dashboard (no
+  Rust change: the shared dashboard files)
 
 ### S. Estimated stream length fix
 
@@ -1017,23 +1305,31 @@ No Rust server change: both are their own images.
 
 ### T. Starter stack, install.sh, README, CI, sidecar images, updater
 
-Done in the release phase (plan § 9): the compose file, install.sh and the update helper move to the Rust image there.
+Done in the release phase (plan § 9) on `release/rust`: the compose file, install.sh and the update
+helper move to the Rust image there. These 2026.10.05 commits were already in the tree (`rust/main`
+holds 2026.10.05's compose, install.sh, README and workflows); what changed with them for Rust is the
+release branch's: the Rust server is the root `Dockerfile` and `ghcr.io/winters27/octo`, `docker.yml`
+builds it after `ci.yml` (Rust checks) passes, `VERSION` is the release number, and the C# bridge
+branch's packaging came across (Octo pulled with `octo-source`, helper version 2 and the dashboard's
+warning for an older helper, log rotation, quiet request lines, install.sh executable and waiting).
+The update card's hand command and `reinstallCommand` (from `610dba2`, `b2e5d9c` and the bridge) are
+ported with their tests (intentional diff `update-card-pulls-octo`).
 
-- [ ] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
-- [ ] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
-- [ ] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
-- [ ] `d1a7e67` fix(install): defaults apply on a fresh install, so pressing Enter no longer makes the Octo folder the music folder
-- [ ] `aba1743` fix(compose): the starter Navidrome is navidrome-starter, so a Navidrome of your own named navidrome in an override no longer merges with it and leaves Octo's dependency undefined
-- [ ] `76684ab` fix(install): a re-run keeps everything in .env, and a first install gets the defaults it shows
-- [ ] `b2e5d9c` ci(images): publish the yt-dlp shim beside Octo, and pull it on image installs
-- [ ] `610dba2` feat(images): updates pull the yt-dlp shim and octo-sonic instead of compiling them
-- [ ] `b2298f5` ci(images): native arm64 builds, latest on releases, and the release waits for its images
-- [ ] `94e30d1` ci(images): the release waits until every image can be pulled without signing in
-- [ ] `0d81d0b` ci(docker): octo's digests are collected apart from octo-sonic's
-- [ ] `c038b87` ci(docker): the Sounds alike image is ghcr.io/winters27/octo-sonic
-- [ ] `25ad530` docs(readme): a 20-second demo at the top, searching, playing and keeping a song
-- [ ] `0adc6b3` release: 2026.10.05
-- [ ] `ce63143` docs(readme): the apps' links point at 1.5.0 [skip ci]
+- [x] `73b83c4` feat: a starter stack with Navidrome, and a README that leads with the music service
+- [x] `6a2a477` docs(readme): say the best copy Octo can find, not lossless, since a kept song can be FLAC, MP3 or Opus
+- [x] `90df881` fix(install): a terminal that cannot clear the screen no longer ends the installer before it prints a word
+- [x] `d1a7e67` fix(install): defaults apply on a fresh install, so pressing Enter no longer makes the Octo folder the music folder
+- [x] `aba1743` fix(compose): the starter Navidrome is navidrome-starter, so a Navidrome of your own named navidrome in an override no longer merges with it and leaves Octo's dependency undefined
+- [x] `76684ab` fix(install): a re-run keeps everything in .env, and a first install gets the defaults it shows
+- [x] `b2e5d9c` ci(images): publish the yt-dlp shim beside Octo, and pull it on image installs
+- [x] `610dba2` feat(images): updates pull the yt-dlp shim and octo-sonic instead of compiling them
+- [x] `b2298f5` ci(images): native arm64 builds, latest on releases, and the release waits for its images
+- [x] `94e30d1` ci(images): the release waits until every image can be pulled without signing in
+- [x] `0d81d0b` ci(docker): octo's digests are collected apart from octo-sonic's
+- [x] `c038b87` ci(docker): the Sounds alike image is ghcr.io/winters27/octo-sonic
+- [x] `25ad530` docs(readme): a 20-second demo at the top, searching, playing and keeping a song
+- [x] `0adc6b3` release: 2026.10.05
+- [x] `ce63143` docs(readme): the apps' links point at 1.5.0 [skip ci]
 
 ### U. Shared case files, timing tests
 
@@ -1041,6 +1337,53 @@ The Rust tests read the shared case files as they are.
 
 - [ ] `aae574a` test(identity): the shared song cases gain drumless and other editions, karaoke in the style of, and mash-ups, as the apps have them
 - [ ] `97855f1` test: two timing tests wait for what they check instead of sleeping
+
+## Release packaging record (`release/rust`, 2026-10-08)
+
+Local only: nothing pushed, tagged or published; no workflow run. VERSION says 2026.10.08 as a
+placeholder for the real date.
+
+- **Gate:** `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace`: 3,325 passed,
+  0 failed (3,320 on `rust/main` plus the update card's and the helper's new tests).
+  `test-updater.sh` 66/66, `test-install.sh` all passed, shellcheck 0.11.0 clean, actionlint
+  1.7.12 clean apart from docker.yml's `concurrency.queue`.
+- **Image:** the root Dockerfile built cold in WSL (16 cores) in 297 s (cargo-chef cook 62 s,
+  the Octo crates 204 s); a rebuild with only `OCTO_VERSION` changed 215 s. 1.0 GB on disk,
+  302 MB compressed (C# 2026.10.05: 1.12 GB, 340 MB). The cargo-chef and bookworm-slim bases
+  publish linux/arm64 too; the arm64 build itself was not run (CI's native runners do it).
+- **Upgrade, WSL Docker** (own folder `/root/rr-test`, project names `rr<x>`, a `registry:2` on
+  127.0.0.1:5000 standing in for ghcr.io: each test tag is the real commit with
+  `ghcr.io/winters27/` changed to `localhost:5000/winters27/` in docker-compose.yml only; the
+  2026.10.05 install's own C# build is the published `ghcr.io/winters27/octo:2026.10.05` tagged
+  with the name compose gives the build). A 2026.10.05 clone with the starter Navidrome, the
+  10-song parity library, sign-in required and 2026.10.05's own helper (version 1, systemd):
+  Update now (a request file, as the dashboard writes it) to 2026.10.08 was done in 29 s
+  (`docker compose build octo` built nothing, `up -d` pulled the Rust image, the helper
+  reinstalled itself as version 2, `mode=git`). The dashboard cookie made on C# stayed signed in,
+  `settings.json`, `browse-sessions.json` and `admin-recovery-code` were untouched, the dashboard
+  files and Subsonic (ping, getArtists, getAlbumList2, search3, stream, getCoverArt) answered as
+  on C#. Version 2 then moved it to 2026.10.09 in 30 s (pulls only).
+- **Rollback:** `git checkout --detach 2026.10.05 && docker compose up -d` brought C# back in 5 s
+  on the same config folder: still signed in, settings the same, no state file warning in its log.
+  Update now from there to 2026.10.09 again: done in 29 s. A copied-compose rollback
+  (`OCTO_IMAGE_TAG=2026.10.05` in `.env`, `pull` + `up -d`) ran C# 2026.10.05 in 10 s.
+- **Fresh install:** a clone at 2026.10.08 and `./install.sh` with Enter for every answer
+  (starter Navidrome): pulled all three images, built nothing, everything up, helper version 2.
+  octo-sonic reads "not reachable" while the music folder is empty, as on 2026.10.05 (by design).
+- **Memory and start** (WSL, busy with other lanes, load 5 to 12; each Octo `--cpus 2 --memory
+  768m`, starter Navidrome, 10 songs, 12,000 requests at 16 threads, two runs in both orders):
+  C# 2026.10.05 idle 265 to 281 MiB, peak 367 to 441, 29 to 31 CPU-s, 1,863 log bytes per
+  request; Rust idle 67 MiB at 10 s and 90 to 94 at 2 min, peak 92 to 95, 6 CPU-s, 24 log bytes
+  per request (all of it the status probe's warning about the test's absent slskd; with slskd
+  up, 600 requests logged nothing). Process start to "Now listening on": C# 1.74 s median, Rust
+  0.89 s. Per path (2,000 requests each): Rust ahead on ping, getArtists, search3, status and
+  admin.js, level on getAlbumList2 (both wait on Navidrome). Against the plan's targets (LXC 131,
+  idle at most 60, peak at most 80, start at most 0.4 s) this box reads high for both builds
+  (C# idles 265 to 281 here against 213 there), so the targets are judged on the LXC 131 rerun.
+- **Parity** (WSL lane, built as 2026.10.05): `21-static` 0 unexplained with the re-pinned
+  dashboard entry; `09-admin` and `11-signin`'s update requests differ only by the update card
+  (entry `update-card-pulls-octo`, proposed, waiting for Brandon) and, in 09, the Charts settings
+  rows that `rust/main` already has.
 
 ## Improvements we want while porting
 
@@ -1064,36 +1407,52 @@ its reason when it changes an answer.
   `/api/admin/status` is slower than C# only because it probes five services
   on every call (group J). Done in G1, as the C# does it (ten seconds, one
   probe round at a time).
-- [ ] **Plain error words instead of .NET's.** The port copies .NET exception
+- [x] **Plain error words instead of .NET's.** The port copied .NET exception
   texts the apps can show ("The request was canceled due to the configured
   HttpClient.Timeout of 100 seconds elapsing.", "Connection refused
-  (host:port)"). Say what happened in plain words, in both builds while the
-  twin rule holds.
-- [ ] **Em dashes in answers.** Two messages shared with the C# app still
-  carry one (the "absolute URL" hint in `subsonic_proxy_service.rs`, the
-  music folder warning in `navidrome_identity_service.rs`). Change them in
-  both builds together.
-- [ ] **US spelling in identifiers.** Comments and the port notes are done;
-  names like `cover_colours`, `COLOURLESS` and `normalise_*` are not. Rename
-  inside the code only, never a stored key or a JSON field.
-- [ ] **`.unwrap()` outside tests** (about 92 in non-test files): turn the
-  reachable ones into errors that are logged and answered.
-- [ ] **Module names from the port's waves** (`tests_6a1`, `helpers_6b1`,
-  `test_support_6a2` and 13 more): name them for what they hold.
-- [ ] **Smaller list cover JPEGs.** The Rust encoder writes 4:4:4 (17.6 KB
-  against C#'s 11.8 KB on the 600 px placeholder); 4:2:0 should match the
-  size with no visible change.
+  (host:port)"). Done in the final parity round (`8597aa7`), in the port only
+  (the C# is frozen): `services::http_client_factory` says "No answer came
+  within 100 seconds, so Octo stopped waiting.", "Could not connect to
+  host:port: the connection was refused.", "Could not connect to host:port: no
+  address was found for host." and "The server answered 404 (Not Found).", and
+  every caller uses it. Proposed entry `plain-error-words`. Left as they were:
+  the cancellation texts ("The operation was canceled."), which reach the log,
+  not an answer, apart from a lookup the app stopped itself.
+- [x] **Em dashes in answers.** The not-configured message in
+  `subsonic_proxy_service.rs` and the music folder warning in
+  `navidrome_identity_service.rs` (`8597aa7`, port only). No corpus request
+  reaches either.
+- [x] **US spelling in identifiers** (`2b132e6`): `cover_colors`, `COLORLESS`,
+  `normalize`, `analyze`, `catalog_url`, `or_canceled` and 50 test names, on
+  identifier tokens only. Kept: tokio's `cancelled()`, the `Cancelled` types
+  and state variants (written to state files), `SonicStatus.analysed` (a JSON
+  field), the cover book's `lowChromaAsGrey`, `greyBelow` and `greyPenalty`
+  (read from the shared design file).
+- [x] **`.unwrap()` outside tests** (`c5ebd77`): four were left, none
+  reachable; each is now infallible. No `.unwrap()` is outside a test.
+- [x] **Module names from the port's waves** (`a1d46d9`): `tests_6a1`,
+  `helpers_6b1`, `test_support_6a2` and 13 more are `route_tests`, `plumbing`,
+  `test_app` and so on, and `routes_6b1`, `routes_6b2` and `routes_n` are
+  `admin_controller_routes`, `library_and_job_routes` and `activity_routes`.
+- [x] **Smaller cover JPEGs** (`4ccc138`). The placeholder, badged and shrunk
+  covers are 4:2:0 as ImageSharp wrote them (`octo_media::cover::jpeg_420`):
+  11.7 KB for the 600 px placeholder against C#'s 11.8 KB (17.6 KB before).
+  The list covers stay 4:4:4, as the C# asked for them (`YCbCrRatio444`).
 - [ ] **Cut the .NET compatibility helpers where tests prove the same
   answers** (`octo_core::common::dotnet`, the `XElement` replica), after the
   cutover, behind the tests.
 - [ ] **Split the `octo` crate** only if the loop gets slow again: today an
   edit there rebuilds the tests in 12 s.
-- [ ] **A `VERSION` file at the cutover.** `build.rs` reads it first; until
+- [x] **A `VERSION` file at the cutover.** `build.rs` reads it first; until
   then it reads `octo/octo.csproj`, so a release bump is one edit for both
-  builds.
+  builds. Done on `release/rust`: `VERSION` is the release (docker.yml checks a tag and the
+  compose image tags against it; install.sh and the update helper read it first). `octo.csproj`
+  stays at 2026.10.05, the last C# release, which the C# code in the tree still is, and is
+  `build.rs`'s fallback for a tree without `VERSION`.
 - [ ] **Move the shared files beside the crates at the cutover** (dashboard,
   Assets, cover design, appsettings, golden samples) and drop the `../../octo`
-  paths.
+  paths. Not at the release: the plan moves them with the C# app's removal (§ 6.4 phase 6,
+  "move `wwwroot` and assets into `crates/`"), since the C# app reads them from `octo/` until then.
 - [ ] **cargo-deny's two ignored advisories** (`paste` under lofty,
   `ttf-parser` under cosmic-text): drop each when its parent moves on.
 
@@ -1101,7 +1460,9 @@ its reason when it changes an answer.
 
 - Push `rust/main` so `rust.yml` and `ci.yml` run, then one manual run of
   `docker-rust.yml`; record the times and the cache sizes above. The
-  `octo-rust` package starts private on ghcr.io. (Nothing is pushed until
+  `octo-rust` package starts private on ghcr.io. Superseded on `release/rust`: `rust.yml`'s jobs are
+  in `ci.yml`, `docker-rust.yml` is gone (the `octo` entry of `docker.yml` builds the Rust server),
+  and no `octo-rust` package is needed; the first CI and image runs happen when Brandon ships. (Nothing is pushed until
   Brandon says so.)
 - The test box: LXC 131 had 11 GB free on its disk after the phase 1 runs (the
   parity builder's cache, about 6 GB at most, and one Rust image of 1 GB are

@@ -162,7 +162,7 @@ fn normalize_unmapped_genres_are_title_cased_but_acronyms_survive() {
 /// purely to capitalize "et". Tidying case is only worth a write when the source clearly
 /// did not bother.
 #[test]
-fn normalize_unmapped_genre_that_is_already_capitalised_keeps_its_own_spelling() {
+fn normalize_unmapped_genre_that_is_already_capitalized_keeps_its_own_spelling() {
     for raw in ["Alternatif et Indé", "Psychedelic Rock", "Hip Hop"] {
         assert_eq!(primary(raw, &shipped()).as_deref(), Some(raw));
     }
@@ -190,7 +190,7 @@ fn normalize_caps_at_max_genres_and_dedupes() {
 /// The whole point of the feature. Without a Clear, "People & Blogs" survives
 /// normalization and the library keeps it forever.
 #[test]
-fn plan_everything_normalises_away_clears() {
+fn plan_everything_normalizes_away_clears() {
     let plan = plan(&["People & Blogs", "Music"], None, &preset());
 
     assert_eq!(plan.action, GenreTagAction::Clear);
@@ -213,7 +213,7 @@ fn plan_on_empty_unknown_writes_the_label_instead() {
 }
 
 #[test]
-fn plan_on_empty_leave_is_the_old_behaviour() {
+fn plan_on_empty_leave_is_the_old_behavior() {
     assert_eq!(
         plan(&["Music"], None, &preset_with(1, GenreEmptyBehavior::Leave)).action,
         GenreTagAction::None

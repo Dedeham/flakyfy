@@ -8,7 +8,7 @@
 Search any song and play it right away. Keep the ones you love as files on your own server.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4)](https://dotnet.microsoft.com/)
+[![Rust](https://img.shields.io/badge/Rust-1.99-B7410E)](https://www.rust-lang.org/)
 [![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED)](https://docs.docker.com/compose/)
 [![CI](https://github.com/winters27/octo/actions/workflows/ci.yml/badge.svg)](https://github.com/winters27/octo/actions/workflows/ci.yml)
 
@@ -154,15 +154,17 @@ Octo checks GitHub every 6 hours for a newer release. When one is out, the dashb
 
 ### From the dashboard
 
-On Linux with systemd, the installer offers a small update helper. With it, **About → Update now** installs the new release: the helper fetches it, pulls the yt-dlp shim and octo-sonic images published for it, builds Octo, and restarts it, and the dashboard shows each step.
+On Linux with systemd, the installer offers a small update helper. With it, **About → Update now** installs the new release: the helper fetches it, pulls the Octo, yt-dlp shim and octo-sonic images published for it, and restarts them, and the dashboard shows each step. Nothing is compiled.
 
 - Octo itself never gets access to Docker. It can only ask, by writing a file in its config folder, and only for the newest published release.
-- The helper pulls and builds the new release before it stops anything, so a failed build leaves Octo running as it was. If the new release will not stay up, the helper goes back to the old one.
-- A sidecar whose image cannot be pulled (no network to `ghcr.io`) is built from the folder instead, as before.
-- It leaves the folder alone when Octo's own files have local changes. Your `.env`, `docker-compose.override.yml` and config are not Octo's files, so they never block it.
-- On an install that pulls Octo's images instead of building them (see [Published images](#published-images)), the helper pulls and restarts Octo and every sidecar Octo publishes, so the yt-dlp shim and octo-sonic move with Octo. Other images, such as slskd, are left alone.
+- The helper pulls the new release before it stops anything, so a failed pull leaves Octo running as it was. If the new release will not stay up, the helper goes back to the old one.
+- An image that cannot be pulled (no network to `ghcr.io`) is built from the folder instead, and the dashboard says so when it was Octo's.
+- It leaves the folder alone when Octo's own files have local changes, so it never pulls the published Octo over changes of your own. Your `.env`, `docker-compose.override.yml` and config are not Octo's files, so they never block it.
+- In a folder that is not a git clone (`docker-compose.yml` copied by hand), the helper pulls and restarts Octo and every sidecar Octo publishes. Set `OCTO_IMAGE_TAG=latest` in `.env` there: the copied file names the release it came with, and the helper says so rather than pull that same release again. Other images, such as slskd, are left alone.
 
-To add the helper to an existing install, or take it off again:
+Each update reinstalls the helper from the new release as its last step. If **About** says the helper is out of date (that step failed, or it came with Octo 2026.10.05 or earlier), Update now stays off until you run the first command below in the Octo folder: an old helper would restart the same Octo and call it an update.
+
+To add the helper to an existing install, reinstall it, or take it off again:
 
 ```bash
 scripts/updater/install-updater.sh
@@ -177,12 +179,14 @@ scripts/updater/install-updater.sh --remove
 Without the helper, **About** shows the command for the new release. From the Octo folder:
 
 ```bash
-git fetch --tags && git checkout --detach 2026.10.05
-docker compose pull yt-dlp-shim octo-sonic || docker compose build yt-dlp-shim-source octo-sonic-source
-docker compose build octo && docker compose up -d
+git fetch --tags && git checkout --detach 2026.10.08
+docker compose pull octo yt-dlp-shim octo-sonic || docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source
+docker compose up -d
 ```
 
-The yt-dlp shim and octo-sonic are pulled, already built, for the release you have checked out; the second line builds them from the folder only when the pull fails, for example with no network to `ghcr.io`. Octo itself builds from source, so the last line is what actually updates it. Re-running `./install.sh` also works: it does the same, and keeps your answers and every other line in `.env`, including ones you added or changed by hand.
+Octo, the yt-dlp shim and octo-sonic are pulled, already built, for the release you have checked out; the part after `||` builds them from the folder only when the pull fails, for example with no network to `ghcr.io`. Re-running `./install.sh` also works: it does the same, and keeps your answers and every other line in `.env`, including ones you added or changed by hand.
+
+Up to 2026.10.05 the last step was `docker compose build octo`. Octo is pulled now, so that builds nothing; if you changed Octo's own files and want them running, build it with `docker compose --profile source build octo-source && docker compose up -d` (see [Published images](#published-images)).
 
 If you track `main` instead of releases, `git checkout main && git pull && ./install.sh` still works.
 
@@ -208,24 +212,17 @@ Every release publishes three images on GitHub's container registry, each for am
 | `ghcr.io/winters27/octo-yt-dlp-shim` | the yt-dlp shim beside it |
 | `ghcr.io/winters27/octo-sonic` | octo-sonic, the Sounds alike reader |
 
-`docker-compose.yml` pulls the shim and octo-sonic, tagged with the release the folder holds, so no install compiles them. `OCTO_IMAGE_TAG` in `.env` picks another tag for both. To build them from the folder instead (no network to `ghcr.io`, or a sidecar you changed), build their `-source` services; the build takes the name the running service pulls, so `up -d` then uses it:
+`docker-compose.yml` pulls all three, tagged with the release the folder holds, so no install compiles anything. `OCTO_IMAGE_TAG` in `.env` picks another tag for all three, such as `latest`.
+
+To build one from the folder instead (changes of your own, or no network to `ghcr.io`), build its `-source` service. The build takes the name the running service pulls, so `up -d` then uses it:
 
 ```bash
-docker compose build yt-dlp-shim-source octo-sonic-source && docker compose up -d
+docker compose --profile source build octo-source && docker compose up -d
 ```
 
-The update helper and `install.sh` do this by themselves for a sidecar that will not pull, and `install.sh` also builds one whose folder changed since its release (on `main`, say).
+`octo-source` is Octo itself; `yt-dlp-shim-source` and `octo-sonic-source` are the sidecars. A later `docker compose pull`, or Update now, puts the published image back. The update helper and `install.sh` build an image that will not pull by themselves, and `install.sh` also builds one whose folder changed since its release (on `main`, or with changes of your own), and says so.
 
-To pull Octo instead of building it, for example on a small machine, put this in `docker-compose.override.yml`:
-
-```yaml
-services:
-  octo:
-    build: !reset null
-    image: ghcr.io/winters27/octo:${OCTO_IMAGE_TAG:-latest}
-```
-
-Then set `OCTO_IMAGE_TAG=latest` in `.env`, so the shim and octo-sonic follow the same tag, and start it with `docker compose pull && docker compose up -d`. The update helper sees there is nothing to build and pulls instead. `!reset` needs Docker Compose 2.24 or newer.
+An override from 2026.10.05 or earlier that made Octo pulled (`build: !reset null` and `image:` under `octo` in `docker-compose.override.yml`) is no longer needed. It does no harm; delete it when you like.
 
 ## Admin dashboard
 
@@ -324,7 +321,7 @@ Yes. Every download is identified before it is filed: the fingerprint service's 
 
 ### Can it run on a Raspberry Pi?
 
-Yes. Every image is published for amd64 and arm64, so a Pi pulls the yt-dlp shim and octo-sonic instead of compiling them; only Octo itself is built, unless you pull it too (see [Published images](#published-images)). The yt-dlp sidecar does most of the CPU work; a Pi 4 or Pi 5 handles a single household's listening fine.
+Yes. Every image is published for amd64 and arm64, so a Pi pulls Octo, the yt-dlp shim and octo-sonic instead of compiling them (see [Published images](#published-images)). The yt-dlp sidecar does most of the CPU work; a Pi 4 or Pi 5 handles a single household's listening fine.
 
 ---
 
@@ -394,7 +391,7 @@ Four Docker containers in one `docker compose` stack (the diagram leaves out oct
                               └────────────┘    └─────────┘
 ```
 
-- **`octo`** (port 5274): the proxy + admin UI. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Octo hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
+- **`octo`** (port 5274): the proxy + admin UI, written in Rust. Personalized Radio, its state store, recommendation queue, and refresh worker all run in this process. Octo hijacks the Subsonic endpoints that need enrichment and passes everything else through to Navidrome.
 - **`yt-dlp-shim`** (internal): wraps `yt-dlp` behind two HTTP endpoints. Process-isolation keeps yt-dlp's frequent extractor breakage from affecting the rest of the stack.
 - **`octo-sonic`** (internal): reads each song once and says how it sounds, for Sounds alike radio. `RADIO_SOUNDS_ALIKE=false` leaves it idle.
 - **`slskd`** (port 5030 for its web page, 50300 for other Soulseek users): Soulseek client with REST API. Octo authenticates and queues downloads, and slskd shares your library back, read-only (see [Sharing back on Soulseek](#sharing-back-on-soulseek)).
@@ -933,10 +930,23 @@ Yes. Existing snapshots are served first; Starter and pinned stations can fall b
 
 ### Development
 
+Octo is written in Rust (the workspace in `Cargo.toml`, under `crates/`). `rust-toolchain.toml` picks the toolchain, so `rustup` installs it on first use. Build and test on Linux or WSL; `cargo check` also works on Windows:
+
 ```bash
-dotnet restore
-dotnet build
-dotnet test
+cargo build
+cargo test --workspace
+cargo clippy --workspace --tests -- -D warnings
+cargo fmt --all
+```
+
+A debug build serves the dashboard and images from the C# folder they still live in: set `OCTO_WWWROOT=octo/wwwroot` and `OCTO_ASSETS=octo/Assets` when you run it from the repository.
+
+The C# Octo (2026.10.05 and earlier) is still in `octo/` and `octo.Tests/`, with `Dockerfile.csharp`, until it is removed after the Rust release; nothing ships it. The Rust server reads the files the two share from there: the dashboard (`octo/wwwroot`), images (`octo/Assets`), the list cover design and `appsettings.json`.
+
+To run your changes in the stack, build Octo from the folder; `docker-compose.yml` otherwise pulls the published image:
+
+```bash
+docker compose --profile source build octo-source && docker compose up -d
 ```
 
 To build and preview the admin UI locally in an isolated Docker container:
@@ -951,16 +961,20 @@ Project layout:
 
 | Path | What's there |
 |---|---|
-| `octo/Controllers/` | Subsonic API surface, admin API |
-| `octo/Services/Soulseek/` | slskd client, multi-peer download logic |
-| `octo/Services/Lidarr/` | Lidarr API, album submission, import reconciliation |
-| `octo/Services/YouTube/` | shim HTTP client |
-| `octo/Services/CoverArt/` | Deezer / iTunes / Last.fm aggregator |
-| `octo/Services/LastFm/` | Last.fm client, Radio state/recommendations, in-process refresh queue and worker |
-| `octo/Services/Subsonic/` | request parsing, response building |
-| `octo/Services/Admin/` | settings file writer (atomic, deep-merge) |
+| `crates/octo/src/controllers/` | Subsonic API surface, admin API |
+| `crates/octo/src/services/soulseek/` | slskd client, multi-peer download logic |
+| `crates/octo/src/services/lidarr/` | Lidarr API, album submission, import reconciliation |
+| `crates/octo/src/services/you_tube/` | shim HTTP client |
+| `crates/octo/src/services/cover_art/` | Deezer / iTunes / Last.fm aggregator |
+| `crates/octo/src/services/last_fm/`, `services/radio/` | Last.fm client, Radio state/recommendations, in-process refresh queue and worker |
+| `crates/octo/src/workers/` | the background workers |
+| `crates/octo-core/` | settings, models, tagging rules and the logic the server and its tests share |
+| `crates/octo-media/` | tags (lofty), audio checks, list covers |
+| `crates/octo-subsonic/` | request parsing, response building |
 | `octo/wwwroot/admin/` | the admin UI (vanilla JS, hand-rolled CSS, no build step) |
+| `parity/` | the harness that compares the Rust server's answers with the C# one's |
 | `yt-dlp-shim/` | Python/Flask sidecar (~200 lines) |
+| `sonic/` | octo-sonic, the Sounds alike reader (Rust) |
 
 </details>
 

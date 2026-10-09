@@ -17,7 +17,7 @@ use octo_core::settings::{
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
-use super::test_support_6b1::{Reply, app, send};
+use super::test_app::{Reply, app, send};
 use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 use crate::services::common::acquisition_tracker::{AcquisitionState, acquisition_event_kinds};

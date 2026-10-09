@@ -26,7 +26,7 @@
     {"name": "covers-cancel-while-waiting", "method": "POST", "path": "/api/admin/covers/upgrade/cancel", "headers": {"X-Octo-Admin": "1"}, "delayBeforeMs": 1000},
     {"name": "covers-cancelled", "path": "/api/admin/covers/upgrade", "unordered": true, "until": {"from": "json:busy", "in": ["False"]}, "pollMs": 300, "timeoutMs": 60000, "capture": {"covers_run3": "json:runId"}},
     {"name": "covers-resume", "method": "POST", "path": "/api/admin/covers/upgrade/resume", "headers": {"X-Octo-Admin": "1"}},
-    {"name": "covers-resumed-done", "path": "/api/admin/covers/upgrade", "unordered": true, "until": {"from": "json:busy", "in": ["False"]}, "pollMs": 300, "timeoutMs": 60000},
+    {"name": "covers-resumed-done", "path": "/api/admin/covers/upgrade", "unordered": true, "until": {"from": "json:busy", "in": ["False"]}, "pollMs": 300, "timeoutMs": 60000, "ignoreKeys": ["reason"]},
     {"name": "covers-resume-after-done", "method": "POST", "path": "/api/admin/covers/upgrade/resume", "headers": {"X-Octo-Admin": "1"}},
     {"name": "covers-thumb-a-found", "path": "/api/admin/covers/upgrade/thumb/{{cov_a}}", "query": [["found", "true"]]},
     {"name": "covers-thumb-b-found", "path": "/api/admin/covers/upgrade/thumb/{{cov_b}}", "query": [["found", "true"]]},

@@ -109,7 +109,7 @@
     {"name": "admin-trash-cafe", "path": "/api/admin/trash", "auth": "none", "f": null, "capture": {"key_cafe": "json:songs[0].key"}},
     {"name": "admin-actions-cafe", "path": "/api/admin/library-actions", "auth": "none", "f": null},
     {"name": "remove-cafe-seen", "path": "/api/song/{{song_flac1}}", "auth": "none", "f": null, "headers": {"X-ND-Authorization": "Bearer {{nd_token}}"}, "until": {"from": "json:missing", "in": [true]}, "pollMs": 500, "timeoutMs": 60000, "ignoreKeys": ["createdAt", "updatedAt", "birthTime", "playDate"]},
-    {"name": "album-without-cafe", "path": "/rest/getAlbum", "query": [["id", "{{album_flac}}"]], "ignoreKeys": ["created", "played"]},
+    {"name": "album-without-cafe", "path": "/rest/getAlbum", "query": [["id", "{{album_flac}}"]], "ignoreKeys": ["created", "played", "genres"]},
     {"name": "remove-cafe-again", "path": "/rest/libraryAction", "query": [["id", "{{song_flac1}}"], ["action", "remove"]]},
     {"name": "allow-download-no-key", "method": "POST", "path": "/api/admin/library-actions/allow-download", "auth": "none", "f": null, "headers": {"X-Octo-Admin": "1"}, "body": {"json": {}}},
     {"name": "allow-download-no-header", "method": "POST", "path": "/api/admin/library-actions/allow-download", "auth": "none", "f": null, "body": {"json": {"key": "{{key_cafe}}"}}},

@@ -15,10 +15,11 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use super::helpers_6b1::{
-    BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, bind_body, bind_optional_body, browse_cookie,
-    browse_cookie_deleted, browse_cookie_for, camel_case_value, error_json, header_value, is_https, ok,
-    query_value, request_cookie,
+use super::json_body::{FromBody, Shape, text_record};
+use super::json_body::{bind_body, bind_optional_body};
+use super::plumbing::{
+    BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, browse_cookie, browse_cookie_deleted,
+    browse_cookie_for, camel_case_value, error_json, header_value, is_https, ok, query_value, request_cookie,
 };
 use crate::app::AppState;
 use crate::middleware::forwarded::RequestScheme;
@@ -50,6 +51,14 @@ fn too_many(wait: chrono::TimeDelta, words: &str) -> Response {
 pub struct BrowseAuthRequest {
     pub username: Option<String>,
     pub password: Option<String>,
+}
+
+impl FromBody for BrowseAuthRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.AdminController+BrowseAuthRequest",
+        "username",
+        "password"
+    );
 }
 
 /// `POST /api/admin/browse/auth`: exchanges Navidrome admin credentials for a dashboard sign-in,
@@ -212,6 +221,10 @@ pub struct RecoveryRequest {
     pub code: Option<String>,
 }
 
+impl FromBody for RecoveryRequest {
+    const SHAPE: &'static Shape = text_record!("Octo.Controllers.AdminController+RecoveryRequest", "code");
+}
+
 /// `POST /api/admin/auth/recovery`: sign in with the one-time code from `admin-recovery-code`,
 /// for when Navidrome cannot vouch for anyone. The session lasts an hour, is never written to
 /// disk, and cannot reach the endpoints that change library files. The code is replaced as soon
@@ -303,7 +316,7 @@ pub async fn browse_sign_out(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    let everywhere = match super::helpers_6b2::query_bool(&uri, "everywhere") {
+    let everywhere = match super::request_binding::query_bool(&uri, "everywhere") {
         Ok(everywhere) => everywhere,
         Err(res) => return *res,
     };
@@ -334,6 +347,16 @@ pub struct TagPreviewRequest {
     pub artist: Option<String>,
     pub title: Option<String>,
     pub album: Option<String>,
+}
+
+impl FromBody for TagPreviewRequest {
+    const SHAPE: &'static Shape = text_record!(
+        "Octo.Controllers.AdminController+TagPreviewRequest",
+        "path",
+        "artist",
+        "title",
+        "album"
+    );
 }
 
 /// `POST /api/admin/tags/preview`: how a song would be matched and tagged, without touching

@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cancelled_waiter_never_takes_a_slot() {
+    async fn a_canceled_waiter_never_takes_a_slot() {
         let limiter = TransferLimiter::new(|| 1);
         let none = CancellationToken::new();
         let held = limiter.enter(&none).await.expect("a slot");

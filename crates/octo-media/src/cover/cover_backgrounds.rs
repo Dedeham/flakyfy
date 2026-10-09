@@ -8,7 +8,7 @@ use image::{RgbImage, imageops};
 use parking_lot::Mutex;
 
 use super::cover_book::{Background, BackgroundRule, CoverBook};
-use super::cover_colours::{self, CoverMusic};
+use super::cover_colors::{self, CoverMusic};
 use super::design;
 
 /// The background for a list, by cover-design.json "background": with its music's color,
@@ -16,7 +16,7 @@ use super::design;
 /// or with music too dull to say much (chroma under lowChromaAsGrey), any one, picked by the
 /// id alone. The same list with the same music always gets the same.
 pub fn choose(book: &CoverBook, music: Option<&CoverMusic>, id: &str) -> usize {
-    let pick = (cover_colours::cover_pick(id) as u64 >> 7) as usize;
+    let pick = (cover_colors::cover_pick(id) as u64 >> 7) as usize;
     let all = &book.backgrounds;
     let music = match music {
         Some(music) if music.chroma >= book.background_choice.low_chroma_as_grey => music,
@@ -38,7 +38,7 @@ pub fn choose(book: &CoverBook, music: Option<&CoverMusic>, id: &str) -> usize {
 /// v = (coverPick(id) >>> shift) mod count, from cover-design.json "orientation".
 pub fn orientation(book: &CoverBook, id: &str) -> i32 {
     let rule = &book.background_choice.orientation;
-    ((cover_colours::cover_pick(id) as u64 >> rule.shift) % rule.count as u64) as i32
+    ((cover_colors::cover_pick(id) as u64 >> rule.shift) % rule.count as u64) as i32
 }
 
 /// Turns a background in place: (v mod 4) quarter turns clockwise, then a mirror left to right when v >= 4.
@@ -70,7 +70,7 @@ pub(crate) fn distance(background: &Background, music: &CoverMusic, rule: &Backg
         hues.iter()
             .enumerate()
             .map(|(i, h)| {
-                cover_colours::hue_distance(h.h, music.hue as f64) / 180.0
+                cover_colors::hue_distance(h.h, music.hue as f64) / 180.0
                     + i as f64 * rule.hue_step
                     + if h.c < rule.grey_below {
                         rule.grey_penalty
@@ -192,7 +192,7 @@ fn area_average(source: &[Rgb], from: usize, side: usize) -> Vec<Rgb> {
             for (k, w) in weights.iter().enumerate() {
                 v += across[(start + k) * side + x][c] * w;
             }
-            cover_colours::round(v).clamp(0, 255) as u8
+            cover_colors::round(v).clamp(0, 255) as u8
         };
         *out = [channel(0), channel(1), channel(2)];
     }

@@ -1,4 +1,4 @@
-//! What the admin controllers of task 6-B2 add to 6-B1's helpers (`helpers_6b1`, which they
+//! What the admin controllers of task 6-B2 add to 6-B1's helpers (`plumbing`, which they
 //! reuse for the browse sign-in, the `ObjectResult` writers and `[FromBody]` binding): the
 //! `Validate` session check the cover-upgrade and lyrics controllers make (it does not re-issue
 //! the cookie), `[FromQuery] bool`, the implicit `[Required]` on members, `Enum.TryParse`, dates,
@@ -11,11 +11,10 @@ use axum::response::Response;
 use chrono::{DateTime, Utc};
 use octo_core::common::dotnet::eq_ignore_case;
 use octo_core::json::datetime::format_utc;
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-pub use super::helpers_6b1::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, ok, request_cookie};
-use super::helpers_6b1::{error_json, header_value, object_result, query_value};
+pub use super::plumbing::{BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, BrowseUser, ok, request_cookie};
+use super::plumbing::{error_json, header_value, object_result, query_value};
 use crate::app::AppState;
 use crate::http::error::{AppError, validation_problem};
 use crate::middleware::forwarded::RequestScheme;
@@ -112,8 +111,8 @@ pub async fn split(request: axum::extract::Request) -> (Parts, axum::body::Bytes
 
 /// `[FromBody] T request` under `[ApiController]`: 6-B1's binder, with the parameter named
 /// `request` as every 6-B2 action named it.
-pub fn bind_body<T: DeserializeOwned>(parts: &Parts, body: &[u8]) -> Result<T, Rejection> {
-    super::helpers_6b1::bind_body(&parts.headers, body, "request").map_err(Box::new)
+pub fn bind_body<T: super::json_body::FromBody>(parts: &Parts, body: &[u8]) -> Result<T, Rejection> {
+    super::json_body::bind_body(&parts.headers, body, "request").map_err(Box::new)
 }
 
 /// The implicit `[Required]` on a non-nullable string property: null, empty and whitespace all

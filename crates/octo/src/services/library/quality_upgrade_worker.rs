@@ -30,7 +30,7 @@ use crate::services::soulseek::ISoulseekLink;
 use crate::services::state_file;
 use crate::services::subsonic::NavidromeIdentityService;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LibrarySongRow {
     pub id: String,
     pub path: String,
@@ -47,6 +47,66 @@ pub struct LibrarySongRow {
     pub album_id: Option<String>,
     pub album_artist: Option<String>,
     pub isrcs: Vec<String>,
+
+    // What Library health reads besides, all from the same row of Navidrome's own song list.
+    /// The length as Navidrome keeps it, in seconds with a fraction (301.37).
+    pub seconds: Option<f64>,
+    pub genres: Vec<String>,
+    pub year: Option<i32>,
+    pub track: Option<i32>,
+    pub disc: Option<i32>,
+    pub bit_depth: Option<i32>,
+    pub sample_rate: Option<i32>,
+    /// A picture inside the file itself.
+    pub has_cover: bool,
+    /// MusicBrainz recording, release (album) and release group ids.
+    pub recording_id: Option<String>,
+    pub release_id: Option<String>,
+    pub release_group_id: Option<String>,
+    pub barcode: Option<String>,
+    pub labels: Vec<String>,
+    /// Every artist the song credits, and every album artist, as Navidrome lists them.
+    pub artists: Vec<String>,
+    pub album_artists: Vec<String>,
+    /// When Navidrome first saw the file: the order its Subsonic song list (search3) gives.
+    pub added_utc: Option<DateTime<Utc>>,
+}
+
+impl Default for LibrarySongRow {
+    /// The C# record's defaults: a song is taken to have a cover until the list says not.
+    fn default() -> Self {
+        LibrarySongRow {
+            id: String::new(),
+            path: String::new(),
+            library_path: None,
+            size: 0,
+            suffix: String::new(),
+            bit_rate: 0,
+            title: String::new(),
+            artist: String::new(),
+            duration: None,
+            album: None,
+            album_id: None,
+            album_artist: None,
+            isrcs: Vec::new(),
+            seconds: None,
+            genres: Vec::new(),
+            year: None,
+            track: None,
+            disc: None,
+            bit_depth: None,
+            sample_rate: None,
+            has_cover: true,
+            recording_id: None,
+            release_id: None,
+            release_group_id: None,
+            barcode: None,
+            labels: Vec::new(),
+            artists: Vec::new(),
+            album_artists: Vec::new(),
+            added_utc: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -581,27 +641,42 @@ pub fn parse_songs(root: &Value) -> Result<Option<(Vec<LibrarySongRow>, usize)>,
         if id.is_empty() || path.is_empty() {
             continue;
         }
+        // A float in Navidrome's native API, unlike Subsonic's whole seconds.
+        let seconds = match song.get("duration") {
+            Some(Value::Number(n)) => n.as_f64(),
+            _ => None,
+        };
         rows.push(LibrarySongRow {
             id,
             path,
             library_path: text(song, "libraryPath"),
             size: number(song, "size")?.and_then(|n| n.as_i64()).unwrap_or(0),
             suffix: text(song, "suffix").unwrap_or_default(),
-            bit_rate: number(song, "bitRate")?
-                .and_then(|n| n.as_i64())
-                .and_then(|n| i32::try_from(n).ok())
-                .unwrap_or(0),
+            bit_rate: int(song, "bitRate").unwrap_or(0),
             title: text(song, "title").unwrap_or_default(),
             artist: text(song, "artist").unwrap_or_default(),
-            // A float in Navidrome's native API, unlike Subsonic's whole seconds.
-            duration: match song.get("duration") {
-                Some(Value::Number(n)) => n.as_f64().map(|d| dotnet::round(d, 0) as i32),
-                _ => None,
-            },
+            duration: seconds.map(|length| dotnet::round(length, 0) as i32),
             album: text(song, "album"),
             album_id: text(song, "albumId"),
             album_artist: text(song, "albumArtist"),
             isrcs: isrcs_of(song),
+            seconds,
+            genres: genres_of(song),
+            year: int(song, "year"),
+            track: int(song, "trackNumber"),
+            disc: int(song, "discNumber"),
+            bit_depth: int(song, "bitDepth"),
+            sample_rate: int(song, "sampleRate"),
+            // Older Navidrome leaves it out; a song is then taken to have one, as before.
+            has_cover: song.get("hasCoverArt") != Some(&Value::Bool(false)),
+            recording_id: text(song, "mbzRecordingID").or_else(|| text(song, "mbzRecordingId")),
+            release_id: text(song, "mbzAlbumId"),
+            release_group_id: text(song, "mbzReleaseGroupId"),
+            barcode: tag_values(song, "barcode").into_iter().next(),
+            labels: tag_values(song, "recordlabel"),
+            artists: participants(song, "artist"),
+            album_artists: participants(song, "albumartist"),
+            added_utc: text(song, "createdAt").and_then(|created| added_utc(&created)),
         });
     }
     Ok(Some((rows, count)))
@@ -612,6 +687,79 @@ fn text(element: &Value, name: &str) -> Option<String> {
         Value::String(s) => Some(s.clone()),
         _ => None,
     }
+}
+
+/// `TryGetInt32` on a member that is a number: None for anything else, a fraction or a number
+/// past an int.
+fn int(element: &Value, name: &str) -> Option<i32> {
+    match element.get(name)? {
+        Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+        _ => None,
+    }
+}
+
+/// A song's genres: the list when Navidrome gives one, else its one genre.
+fn genres_of(song: &Value) -> Vec<String> {
+    let mut found: Vec<String> = match song.get("genres") {
+        Some(Value::Array(genres)) => genres
+            .iter()
+            .filter_map(|genre| text(genre, "name"))
+            .filter(|name| !name.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    if found.is_empty()
+        && let Some(one) = text(song, "genre").filter(|one| !dotnet::is_blank(one))
+    {
+        found.push(one);
+    }
+    found
+}
+
+/// The values of one of the song's tags, as Navidrome files them.
+fn tag_values(song: &Value, tag: &str) -> Vec<String> {
+    match song
+        .get("tags")
+        .and_then(|tags| tags.as_object())
+        .and_then(|tags| tags.get(tag))
+    {
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The names in one of the song's roles ("artist", "albumartist").
+fn participants(song: &Value, role: &str) -> Vec<String> {
+    match song
+        .get("participants")
+        .and_then(|all| all.as_object())
+        .and_then(|all| all.get(role))
+    {
+        Some(Value::Array(people)) => people
+            .iter()
+            .filter_map(|person| text(person, "name"))
+            .filter(|name| !name.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `DateTime.TryParse(created, InvariantCulture, AdjustToUniversal | AssumeUniversal)`: kept to
+/// .NET's 100 ns ticks, rounded, as the C# read Navidrome's nine digits.
+fn added_utc(created: &str) -> Option<DateTime<Utc>> {
+    let parsed = datetime::parse_utc(created)?;
+    let nanos = (parsed.timestamp_subsec_nanos() + 50) / 100 * 100;
+    let (seconds, nanos) = if nanos >= 1_000_000_000 {
+        (parsed.timestamp() + 1, nanos - 1_000_000_000)
+    } else {
+        (parsed.timestamp(), nanos)
+    };
+    DateTime::from_timestamp(seconds, nanos)
 }
 
 /// `TryGetInt64`/`TryGetInt32` on a member: absent is fine, a number is read, and any other

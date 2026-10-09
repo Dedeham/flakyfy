@@ -263,7 +263,7 @@ async fn pin_follows_the_song_to_its_new_id_and_automatic_clears_it() {
 }
 
 #[tokio::test]
-async fn a_cancelled_request_offers_nothing_it_had_not_fetched() {
+async fn a_canceled_request_offers_nothing_it_had_not_fetched() {
     let (choices, _) = service(kugou());
     let cancelled = CancellationToken::new();
     cancelled.cancel();

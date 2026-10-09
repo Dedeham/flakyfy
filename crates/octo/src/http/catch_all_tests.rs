@@ -212,7 +212,7 @@ async fn an_unreachable_navidrome_is_the_error_envelope() {
     assert_eq!(
         r.body,
         format!(
-            r#"{{"subsonic-response":{{"status":"failed","version":"1.16.1","error":{{"code":0,"message":"Error connecting to Subsonic server: Connection refused ({address})"}}}}}}"#
+            r#"{{"subsonic-response":{{"status":"failed","version":"1.16.1","error":{{"code":0,"message":"Error connecting to Subsonic server: Could not connect to {address}: the connection was refused."}}}}}}"#
         )
     );
 }

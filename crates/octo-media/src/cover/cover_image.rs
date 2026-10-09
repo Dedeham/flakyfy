@@ -42,9 +42,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<DynamicImage> {
         .ok()
 }
 
-/// A picture as a JPEG at `quality`, with no chroma subsampling (the only kind the `image`
-/// encoder writes).
+/// A picture as a JPEG at `quality` with 4:2:0 chroma, as ImageSharp wrote a JPEG whose color
+/// type was not set (`super::jpeg_420`).
 pub(crate) fn encode_jpeg(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
+    super::jpeg_420::encode(&image.to_rgb8(), quality)
+}
+
+/// A picture as a JPEG at `quality` with full-size chroma (4:4:4), for the list covers the C#
+/// encoded with `JpegEncodingColor.YCbCrRatio444`.
+pub(crate) fn encode_jpeg_444(image: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     JpegEncoder::new_with_quality(&mut output, quality)
         .encode_image(&image.to_rgb8())
@@ -110,9 +116,9 @@ pub fn fit_within(bytes: &[u8], max_side: u32) -> Vec<u8> {
 /// picture cannot be read.
 pub fn looks_hash(bytes: Option<&[u8]>) -> Option<u64> {
     let bytes = bytes.filter(|b| !b.is_empty())?;
-    let grey = decode(bytes)?.to_luma8();
+    let gray = decode(bytes)?.to_luma8();
     // ImageSharp's default resampler is bicubic (Catmull-Rom).
-    let small = image::imageops::resize(&grey, 9, 8, FilterType::CatmullRom);
+    let small = image::imageops::resize(&gray, 9, 8, FilterType::CatmullRom);
     let mut hash = 0u64;
     let mut bit = 0;
     for y in 0..8 {
@@ -131,6 +137,28 @@ pub(crate) const LIKENESS_TOLERANCE: u32 = 10;
 
 pub fn look_alike(a: u64, b: u64) -> bool {
     (a ^ b).count_ones() <= LIKENESS_TOLERANCE
+}
+
+/// How much fine detail the picture holds at `side` px: the average change, in grey levels, when
+/// it is shrunk to half that and grown back. A picture that was blown up from a small one has
+/// nothing at that scale to lose, so it scores near nothing, while the real artwork at the same
+/// size loses its edges and lettering. Only comparable between two pictures of the same art
+/// measured at the same side. None when it cannot be read.
+pub fn detail(bytes: &[u8], side: u32) -> Option<f64> {
+    if side < 16 {
+        return None;
+    }
+    let gray = decode(bytes)?.to_luma8();
+    // ImageSharp's bicubic resampler is Catmull-Rom.
+    let image = image::imageops::resize(&gray, side, side, FilterType::CatmullRom);
+    let half = image::imageops::resize(&image, side / 2, side / 2, FilterType::CatmullRom);
+    let round = image::imageops::resize(&half, side, side, FilterType::CatmullRom);
+    let total: u64 = image
+        .pixels()
+        .zip(round.pixels())
+        .map(|(a, b)| u64::from(a.0[0].abs_diff(b.0[0])))
+        .sum();
+    Some(total as f64 / f64::from(side * side))
 }
 
 const OCTO_MARK: &[u8] = b"Written by Octo";
@@ -198,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn marked_covers_are_recognised_and_marked_once() {
+    fn marked_covers_are_recognized_and_marked_once() {
         let plain = jpeg(200, 200);
         assert!(!is_octo_cover(&plain));
         let marked = mark_as_octo(&plain);

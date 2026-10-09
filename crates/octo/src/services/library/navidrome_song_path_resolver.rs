@@ -398,8 +398,8 @@ impl NavidromeSongPathResolver {
 
         // Navidrome reports '/' separators regardless of host. Convert to the platform's own
         // before combining, so a yielded path is not a mix of both and a log line is readable.
-        let normalised = raw_path.replace('\\', "/");
-        let segments: Vec<&str> = normalised
+        let normalized = raw_path.replace('\\', "/");
+        let segments: Vec<&str> = normalized
             .trim_start_matches('/')
             .split('/')
             .filter(|s| !s.is_empty())
@@ -529,8 +529,8 @@ pub(crate) fn get_full_path(path: &str) -> String {
 
 /// `IsInside`: the full path is strictly under the root (the root itself is not inside it).
 pub(crate) fn is_inside(full: &str, root: &str) -> bool {
-    let normalised = format!("{}/", get_full_path(root).trim_end_matches('/'));
-    full.starts_with(&normalised)
+    let normalized = format!("{}/", get_full_path(root).trim_end_matches('/'));
+    full.starts_with(&normalized)
 }
 
 /// `Path.GetExtension(path).TrimStart('.')`: the text after the file name's last dot, empty

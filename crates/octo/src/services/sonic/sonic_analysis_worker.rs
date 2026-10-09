@@ -347,7 +347,7 @@ impl SonicAnalysisWorker {
             return self.hold("Done", Some(DONE), IDLE_CHECK);
         };
 
-        let answer = match self.sonic.analyse(&file).await {
+        let answer = match self.sonic.analyze(&file).await {
             Ok(answer) => answer,
             Err(_) => {
                 // The connection dropped mid-file: octo-sonic restarted, or the file crashed its

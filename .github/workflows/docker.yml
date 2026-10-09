@@ -2,9 +2,10 @@ name: Docker Build & Push
 
 # Publishes Octo's three images (Octo, the yt-dlp shim, octo-sonic) for amd64 and arm64:
 # on every push to main (tagged main and the commit), and on every release tag (tagged with
-# the release, and latest for a dated release). Installs pull the sidecars at their own
-# release's tag, and the update helper pulls them on Update now, so they must be on ghcr.io
-# before anyone can see the release.
+# the release, and latest for a dated release). Octo is the Rust server (Dockerfile; the C#
+# app in octo/ is in no image). Installs pull all three at their own release's tag, and the
+# update helper pulls them on Update now, so they must be on ghcr.io before anyone can see
+# the release.
 #
 # Octo's update check reads GitHub releases, not tags. So, to cut a release:
 #   1. Make the release on GitHub as a draft (gh release create <tag> --draft ...). A draft
@@ -16,7 +17,8 @@ name: Docker Build & Push
 #      cannot be pulled without signing in: a new package on ghcr.io starts private, so the
 #      first time, make it public on GitHub and re-run the release job.
 # Never publish the release before this workflow is green: an install that updates first
-# would find no sidecar images for it (it then builds them, slowly, or fails without ghcr.io).
+# would find no images for it (it then builds them from source, Octo's Rust included, which
+# takes many minutes and gigabytes of memory, or fails without ghcr.io).
 
 on:
   workflow_dispatch:
@@ -46,69 +48,63 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOTNET_VERSION: "9.0.x"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-test:
+  # The release number is the VERSION file (the Rust build reads it; octo/octo.csproj names
+  # the last C# release and is not read once VERSION exists).
+  versions:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # A dated release must carry its own number in octo.csproj. Octo reports that
-      # number, and the dashboard's update check compares it with the newest tag, so a
-      # tag on a commit that was not bumped would leave every updated server offering
-      # the same update forever.
+      # A dated release must carry its own number in VERSION. Octo reports that number, and
+      # the dashboard's update check compares it with the newest tag, so a tag on a commit
+      # that was not bumped would leave every updated server offering the same update forever.
       - name: Release tag matches the version
         if: startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref_name, 'v')
         run: |
-          version="$(sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' octo/octo.csproj | head -n 1)"
+          version="$(tr -d ' \r\n' < VERSION)"
           if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME, but octo/octo.csproj says $version. Bump InformationalVersion before tagging."
+            echo "::error::Tag $GITHUB_REF_NAME, but VERSION says $version. Bump VERSION before tagging."
             exit 1
           fi
 
-      # docker-compose.yml pulls the sidecar images at Octo's own version unless
+      # docker-compose.yml pulls Octo and its sidecars at Octo's own version unless
       # OCTO_IMAGE_TAG says otherwise, so a release bump that missed it would leave
-      # installs pulling the last release's sidecars. Checked on main too, so a
+      # installs pulling the last release, Octo included. Checked on main too, so a
       # missed bump shows up before anyone tags it.
       - name: Compose pulls this version's images
         run: |
-          version="$(sed -n 's:.*<InformationalVersion>\(.*\)</InformationalVersion>.*:\1:p' octo/octo.csproj | head -n 1)"
+          version="$(tr -d ' \r\n' < VERSION)"
           stale="$(grep -o 'OCTO_IMAGE_TAG:-[^}]*' docker-compose.yml | sed 's/^OCTO_IMAGE_TAG:-//' | grep -Fvx "$version" | paste -sd ' ' || true)"
           if [ -n "$stale" ]; then
-            echo "::error::docker-compose.yml pulls images tagged $stale, but octo/octo.csproj says $version. Bump the OCTO_IMAGE_TAG defaults with it."
+            echo "::error::docker-compose.yml pulls images tagged $stale, but VERSION says $version. Bump the OCTO_IMAGE_TAG defaults with it."
             exit 1
           fi
+          for image in octo octo-yt-dlp-shim octo-sonic; do
+            if ! grep -Fq "image: ghcr.io/winters27/$image:\${OCTO_IMAGE_TAG:-$version}" docker-compose.yml; then
+              echo "::error::docker-compose.yml does not pull ghcr.io/winters27/$image at \${OCTO_IMAGE_TAG:-$version}."
+              exit 1
+            fi
+          done
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      # ffmpeg for the Radio transcoder; Noto CJK and Symbola, as in the
-      # image, so the cover tests can draw names in other scripts.
-      - name: Install Radio transcoder and cover fonts
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-symbola
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test --configuration Release --no-build --verbosity normal
+  # Every check in ci.yml (the Rust server, the shim, octo-sonic, the helper and the
+  # installer) before anything is published. The C# app's job is left out: no image holds it.
+  checks:
+    uses: ./.github/workflows/ci.yml
+    with:
+      csharp: false
 
   # Each image for each platform, built on a runner of that platform: arm64 on GitHub's own
   # arm64 runners (free for public repositories) rather than under QEMU, where compiling
   # octo-sonic (Rust and FFmpeg) took many times longer. Each pushes its image by digest
   # only; the merge job below puts the two platforms under the real tags.
   build:
-    needs: build-and-test
+    needs: [versions, checks]
     runs-on: ${{ matrix.platform.runner }}
 
     strategy:
@@ -118,6 +114,8 @@ jobs:
       matrix:
         # Each image is ghcr.io/<owner>/<repo> plus its suffix.
         image:
+          # The Rust server (Dockerfile at the top of the repo). Its Rust compile is most of
+          # this workflow's time; the cargo-chef layer of third-party crates is cached.
           - name: octo
             context: .
             suffix: ""

@@ -166,7 +166,7 @@ mod tests {
             let _ = self.0.wait_for(|open| *open).await;
         }
         /// `release.Task.WaitAsync(ct)`: the gate, or a cancellation error.
-        async fn wait_or_cancelled(self, token: CancellationToken) -> anyhow::Result<()> {
+        async fn wait_or_canceled(self, token: CancellationToken) -> anyhow::Result<()> {
             tokio::select! {
                 () = self.wait() => Ok(()),
                 () = token.cancelled() => Err(anyhow::anyhow!("The operation was canceled.")),
@@ -186,7 +186,7 @@ mod tests {
             let (started, release) = (started.clone(), release.clone());
             move |token: CancellationToken| async move {
                 started.open();
-                release.wait_or_cancelled(token).await?;
+                release.wait_or_canceled(token).await?;
                 Ok(100)
             }
         };
@@ -244,7 +244,7 @@ mod tests {
             "cage",
             move |token: CancellationToken| async move {
                 cage_started.open();
-                cage_release.wait_or_cancelled(token).await?;
+                cage_release.wait_or_canceled(token).await?;
                 Ok(1)
             },
             GENEROUS,

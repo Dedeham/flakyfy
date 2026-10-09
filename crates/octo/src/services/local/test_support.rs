@@ -73,8 +73,8 @@ impl ILocalLibraryService for FakeLocalLibrary {
             .map(|(.., m)| m.clone())
     }
 
-    async fn forget_mapping(&self, _: &str) -> anyhow::Result<bool> {
-        Ok(false)
+    async fn forget_mapping(&self, _: &str) -> anyhow::Result<Vec<crate::services::local::LocalSongMapping>> {
+        Ok(Vec::new())
     }
 
     async fn trigger_library_scan(&self, _force: bool) -> bool {

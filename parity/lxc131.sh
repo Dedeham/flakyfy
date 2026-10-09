@@ -5,7 +5,7 @@
 #   parity/lxc131.sh                      # build here, record, compare with C# 2026.10.05
 #   parity/lxc131.sh --only '13-*'        # just some corpus files (the C# side is recorded again)
 #   parity/lxc131.sh --no-build           # same image as last time (corpus or stub changes only)
-#   parity/lxc131.sh --box-build          # compile on the box instead (Dockerfile.rust whole)
+#   parity/lxc131.sh --box-build          # compile on the box instead (Dockerfile whole)
 #   parity/lxc131.sh --box-build --low-memory   # that, with one job and no LTO
 #   parity/lxc131.sh --bytes              # also the bytes-mode diff
 #   parity/lxc131.sh --rust-twice         # also Rust against Rust (the determinism gate)
@@ -21,7 +21,7 @@
 # x86_64-unknown-linux-musl; `rustup target add x86_64-unknown-linux-musl` and musl-tools once),
 # bundles HEAD (only the commits the box lacks), copies the bundle and the binary to the box
 # through the Proxmox host, checks it out in /opt/octo-parity/runs/<name>/src, and starts
-# parity/box-run.sh there (the image from Dockerfile.rust's runtime stage around that binary,
+# parity/box-run.sh there (the image from Dockerfile's runtime stage around that binary,
 # the corpus against both builds, the diff).
 #
 # Compiling here is the default because the box's compile is what hurts the shared Proxmox
@@ -262,7 +262,11 @@ if [ "$prebuilt" = 1 ]; then
   # never makes a fourth compile beside the port agents' own.
   slot=()
   if [ -x "$HOME/bin/cargo-slot" ]; then slot=("$HOME/bin/cargo-slot"); fi
-  "${slot[@]}" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
+  # The harness compares with C# 2026.10.05, so the binary claims that release (build.rs reads
+  # OCTO_VERSION first). A VERSION ahead of it, as on a release branch, would otherwise differ in
+  # every answer that names the release. PARITY_OCTO_VERSION picks another.
+  OCTO_VERSION="${PARITY_OCTO_VERSION:-2026.10.05}" \
+    "${slot[@]}" cargo build --release --locked --package octo --bin octo --target "$musl_target" --quiet
   echo "built $(du -h "$binary" | cut -f1) binary from $(git rev-parse --short HEAD)"
 fi
 

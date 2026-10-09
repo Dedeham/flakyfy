@@ -23,7 +23,7 @@ use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::helpers_6a2::{
+use super::caller_checks::{
     SubsonicCall, file, is_first_byte_request, is_successful_subsonic_response, refuse_unless_signed_in,
     requester_for, signed_in_user,
 };

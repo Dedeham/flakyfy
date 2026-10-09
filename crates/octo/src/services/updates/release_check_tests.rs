@@ -273,7 +273,7 @@ async fn checks_off_means_git_hub_is_never_asked() {
 }
 
 #[tokio::test]
-async fn check_now_is_honoured_once_a_minute() {
+async fn check_now_is_honored_once_a_minute() {
     let f = Fixture::new().await;
     f.answer(ok(RELEASES)).await;
     let check = f.check("2026.10.01");

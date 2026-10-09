@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};
 
-use super::test_support_6a2::{app, get, query_of};
+use super::test_app::{app, get, query_of};
 use crate::app::{AppState, TestServices};
 use crate::services::library::album_ownership::tests::drake_search as drake;
 use crate::services::library::library_snapshot::LibrarySnapshot;

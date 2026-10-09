@@ -280,7 +280,13 @@ async fn the_mappings_fixture_round_trips_byte_for_byte() {
     assert_eq!(mappings[1].source_peer, None);
 
     // A forget of a path nobody has writes nothing; registering again writes the same file.
-    assert!(!f.service.forget_mapping("/nowhere.flac").await.expect("no write"));
+    assert!(
+        f.service
+            .forget_mapping("/nowhere.flac")
+            .await
+            .expect("no write")
+            .is_empty()
+    );
     {
         let mut cached = f.service.mappings.lock();
         let map = f.service.loaded(&mut cached).expect("loaded");
@@ -304,13 +310,19 @@ async fn forget_mapping_drops_the_path_ignoring_case() {
             .expect("registered");
     }
 
-    assert!(
-        f.service
-            .forget_mapping(&f.path("TWO.FLAC"))
-            .await
-            .expect("written")
+    let forgotten = f
+        .service
+        .forget_mapping(&f.path("TWO.FLAC"))
+        .await
+        .expect("written");
+    assert_eq!(
+        forgotten
+            .iter()
+            .map(|m| m.external_id.as_str())
+            .collect::<Vec<_>>(),
+        ["2"]
     );
-    assert!(!f.service.forget_mapping("  ").await.expect("nothing"));
+    assert!(f.service.forget_mapping("  ").await.expect("nothing").is_empty());
     f.service
         .register_downloaded_song(
             &song("4", "four", Some("soulseek"), Some("4")),
@@ -468,4 +480,64 @@ async fn a_refused_scan_and_an_odd_status() {
     assert!(odd.service.get_scan_status().await.is_none());
     let bare = Fixture::answering(r#"{"subsonic-response":{"status":"ok"}}"#).await;
     assert!(bare.service.get_scan_status().await.is_none());
+}
+
+/// Navidrome answers getScanStatus only with a sign-in, so it carries the admin identity startScan
+/// uses (ca47988); without one it is the bare call.
+#[tokio::test]
+async fn get_scan_status_signs_in_as_the_admin_identity() {
+    let f = Fixture::new().await;
+    let store = SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            url: Some(f.server.uri()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    store.set_raw("Library:DownloadPath", Some(&f.dir.path().to_string_lossy()));
+    let settings = Arc::new(store);
+    let http = crate::services::http_client_factory::default_client();
+    let identity = NavidromeIdentityService::new(settings.clone(), http.clone());
+    identity.capture_login(
+        br#"{"token":"jwt-1","isAdmin":true,"username":"the admin","subsonicToken":"tok","subsonicSalt":"salt"}"#,
+    );
+    let service = LocalLibraryService::new(
+        settings,
+        http,
+        Arc::new(ExternalIdRegistry::in_memory()),
+        identity,
+    );
+    assert_eq!(
+        service.get_scan_status().await.expect("a status").count,
+        Some(100)
+    );
+    assert!(f.service.get_scan_status().await.is_some());
+
+    let asked: Vec<String> = crate::services::test_support::received(&f.server)
+        .await
+        .iter()
+        .filter(|r| r.url.path() == "/rest/getScanStatus")
+        .map(|r| r.url.query().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        asked,
+        ["f=json&c=octo&v=1.16.1&u=the%20admin&t=tok&s=salt", "f=json"]
+    );
+}
+
+/// `TryGetInt32`: a count past an Int32 or with a fraction is none, the scan still read; a
+/// count that is not a number at all fails the read.
+#[tokio::test]
+async fn a_scan_count_that_is_not_an_int32_is_none() {
+    for body in [
+        r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":3000000000}}}"#,
+        r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":1.5}}}"#,
+    ] {
+        let f = Fixture::answering(body).await;
+        let status = f.service.get_scan_status().await.expect("a status");
+        assert!(status.scanning, "{body}");
+        assert_eq!(status.count, None, "{body}");
+    }
+    let f = Fixture::answering(r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":"5"}}}"#).await;
+    assert!(f.service.get_scan_status().await.is_none());
 }

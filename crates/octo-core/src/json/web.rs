@@ -41,7 +41,7 @@ pub fn from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WebError> {
     from_value(&value)
 }
 
-fn normalise(name: &str) -> String {
+fn normalize(name: &str) -> String {
     name.chars()
         .filter(|c| *c != '_')
         .flat_map(|c| c.to_lowercase())
@@ -225,10 +225,10 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
         let Value::Object(m) = self.0 else {
             return Err(WebError(format!("expected an object, found {}", self.0)));
         };
-        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalise(f), *f)).collect();
+        let wanted: Vec<(String, &'static str)> = fields.iter().map(|f| (normalize(f), *f)).collect();
         let mut entries: Vec<(&'static str, &'a Value)> = Vec::new();
         for (k, v) in m {
-            let nk = normalise(k);
+            let nk = normalize(k);
             // Two spellings of one field: the later wins, as STJ sets the property twice.
             let field = fields
                 .iter()
@@ -271,10 +271,10 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
                     None => Err(WebError(format!("{n} is not a valid value"))),
                 }
             }
-            Value::Object(m) if m.len() == 1 => {
-                let (k, v) = m.iter().next().unwrap();
-                visitor.visit_enum(Enum { variant: k, value: v })
-            }
+            Value::Object(m) if m.len() == 1 => match m.iter().next() {
+                Some((k, v)) => visitor.visit_enum(Enum { variant: k, value: v }),
+                None => Err(WebError("expected an enum, found an empty object".into())),
+            },
             other => Err(WebError(format!("expected an enum, found {other}"))),
         }
     }

@@ -1,5 +1,10 @@
 //! `IHttpClientFactory.CreateClient()`, the default named client `Program.cs` registered with
-//! `AddHttpClient()`, and what its failures looked like.
+//! `AddHttpClient()`, and the words its failures are told in.
+//!
+//! The C# showed .NET's exception texts ("The request was canceled due to the configured
+//! HttpClient.Timeout of 100 seconds elapsing.", "Connection refused (host:port)", "Response
+//! status code does not indicate success: 404 (Not Found)."). The port says what happened in
+//! plain words instead (known-diffs "Plain error words").
 //!
 //! The .NET default client: a 100 second `Timeout` covering the whole buffered exchange, no
 //! automatic decompression (so no `Accept-Encoding` is sent and a body arrives as the server
@@ -32,7 +37,7 @@ pub fn builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().no_gzip().no_deflate()
 }
 
-/// The `TaskCanceledException` message of an `HttpClient` that gave up waiting.
+/// What a call that gave up waiting says (the C#'s `TaskCanceledException`).
 pub fn timeout_message(timeout: Duration) -> String {
     let seconds = timeout.as_secs_f64();
     let shown = if seconds.fract() == 0.0 {
@@ -40,13 +45,22 @@ pub fn timeout_message(timeout: Duration) -> String {
     } else {
         format!("{seconds}")
     };
-    format!("The request was canceled due to the configured HttpClient.Timeout of {shown} seconds elapsing.")
+    let unit = if shown == "1" { "second" } else { "seconds" };
+    format!("No answer came within {shown} {unit}, so Octo stopped waiting.")
 }
 
-/// The message .NET's `HttpRequestException` carried for a connection that failed, as far as
-/// it can be told from reqwest's error: `Connection refused (host:port)`, `Name or service not
-/// known (host:port)` (the resolver's own words, as .NET used getaddrinfo too). Anything else
-/// gets reqwest's description.
+/// What a call answered with a status that is not a success says (the C#'s
+/// `EnsureSuccessStatusCode`).
+pub fn status_failure_message(status: reqwest::StatusCode) -> String {
+    match status.canonical_reason() {
+        Some(reason) => format!("The server answered {} ({reason}).", status.as_u16()),
+        None => format!("The server answered {}.", status.as_u16()),
+    }
+}
+
+/// What a connection that failed says, as far as it can be told from reqwest's error: refused
+/// (nothing listening at that address) or a name that could not be looked up, with the address
+/// it tried. Anything else gets reqwest's description.
 pub fn connect_failure_message(error: &reqwest::Error) -> String {
     let endpoint = error.url().map(|url| {
         format!(
@@ -60,21 +74,21 @@ pub fn connect_failure_message(error: &reqwest::Error) -> String {
         if let Some(io) = cause.downcast_ref::<std::io::Error>()
             && io.kind() == std::io::ErrorKind::ConnectionRefused
         {
-            return with_endpoint("Connection refused", endpoint.as_deref());
+            return could_not_connect(endpoint.as_deref(), "the connection was refused");
         }
-        let text = cause.to_string();
-        if let Some(reason) = text.split("failed to lookup address information: ").nth(1) {
-            return with_endpoint(reason.trim(), endpoint.as_deref());
+        if cause.to_string().contains("failed to lookup address information") {
+            let host = error.url().and_then(|url| url.host_str()).unwrap_or("the server");
+            return could_not_connect(endpoint.as_deref(), &format!("no address was found for {host}"));
         }
         source = cause.source();
     }
     error.to_string()
 }
 
-fn with_endpoint(reason: &str, endpoint: Option<&str>) -> String {
+fn could_not_connect(endpoint: Option<&str>, why: &str) -> String {
     match endpoint {
-        Some(endpoint) => format!("{reason} ({endpoint})"),
-        None => reason.to_string(),
+        Some(endpoint) => format!("Could not connect to {endpoint}: {why}."),
+        None => format!("Could not connect: {why}."),
     }
 }
 
@@ -83,14 +97,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn timeout_messages_read_as_dotnet_wrote_them() {
+    fn a_timeout_says_how_long_octo_waited() {
         assert_eq!(
             timeout_message(DEFAULT_TIMEOUT),
-            "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing."
+            "No answer came within 100 seconds, so Octo stopped waiting."
         );
         assert_eq!(
             timeout_message(Duration::from_millis(300)),
-            "The request was canceled due to the configured HttpClient.Timeout of 0.3 seconds elapsing."
+            "No answer came within 0.3 seconds, so Octo stopped waiting."
+        );
+        assert_eq!(
+            timeout_message(Duration::from_secs(1)),
+            "No answer came within 1 second, so Octo stopped waiting."
+        );
+    }
+
+    #[test]
+    fn a_status_that_is_not_a_success_names_the_status() {
+        assert_eq!(
+            status_failure_message(reqwest::StatusCode::NOT_FOUND),
+            "The server answered 404 (Not Found)."
+        );
+        assert_eq!(
+            status_failure_message(reqwest::StatusCode::from_u16(599).expect("a status")),
+            "The server answered 599."
         );
     }
 
@@ -104,7 +134,7 @@ mod tests {
             .expect_err("nothing listens there");
         assert_eq!(
             connect_failure_message(&error),
-            format!("Connection refused ({address})")
+            format!("Could not connect to {address}: the connection was refused.")
         );
     }
 }

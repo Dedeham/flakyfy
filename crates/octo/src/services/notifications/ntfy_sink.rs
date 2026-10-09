@@ -214,7 +214,7 @@ mod tests {
                 .await
                 .expect_err("refused")
                 .to_string(),
-            "Response status code does not indicate success: 404 (Not Found)."
+            "The server answered 404 (Not Found)."
         );
     }
 }

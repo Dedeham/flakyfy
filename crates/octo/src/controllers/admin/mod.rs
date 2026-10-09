@@ -11,25 +11,31 @@
 //! write needs the `X-Octo-Admin` header, and behind the sign-in gate
 //! (`crate::middleware::admin_sign_in_gate`), which answers 401 to anyone not signed in apart
 //! from its few open endpoints. The endpoints that read files also need a Navidrome admin's own
-//! sign-in, never the recovery code ([`helpers_6b1::BrowseUser`]).
+//! sign-in, never the recovery code ([`plumbing::BrowseUser`]).
 
+pub mod activity;
+pub mod ambient;
 pub mod browse;
 pub mod charts;
 pub mod cover_upgrade;
 pub mod downloads;
+pub mod explicit_backfill;
 pub mod genre;
-pub mod helpers_6b1;
-pub mod helpers_6b2;
+pub mod health;
 pub mod imports;
+pub mod json_body;
 pub mod lastfm;
 pub mod library_actions;
 pub mod lyrics_admin;
+pub mod plumbing;
 pub mod radio_admin;
 pub mod raw_config;
+pub mod request_binding;
 pub mod secrets;
 pub mod settings;
 pub mod soulseek_sharing;
 pub mod system;
+pub mod trash;
 pub mod update;
 pub mod upgrades;
 
@@ -38,7 +44,7 @@ use axum::routing::{delete, get, post};
 use crate::http::routes::RouteSet;
 
 /// The routes of task 6-B1. `GET /admin` stays in [`crate::http::admin_root`].
-pub fn routes_6b1() -> RouteSet {
+pub fn admin_controller_routes() -> RouteSet {
     RouteSet::new()
         // Last.fm, ListenBrainz and radio.
         .route("/api/admin/lastfm/radio", get(lastfm::get_last_fm_radio))
@@ -109,18 +115,24 @@ pub fn routes_6b1() -> RouteSet {
 
 /// Every AdminController route.
 pub fn routes() -> RouteSet {
-    routes_6b1().merge(routes_6b2()).merge(imports::routes())
+    admin_controller_routes()
+        .merge(library_and_job_routes())
+        .merge(imports::routes())
+        .merge(activity_routes())
 }
 
 /// The routes of task 6-B2: the library actions, questions and checks, the Better quality page,
-/// genre normalization, and the `CoverUpgradeController`, `LyricsAdminController` and
-/// `UpdateController` routes.
-pub fn routes_6b2() -> RouteSet {
+/// genre normalization, and the `CoverUpgradeController`, `ExplicitBackfillController`,
+/// `LyricsAdminController` and `UpdateController` routes.
+pub fn library_and_job_routes() -> RouteSet {
     RouteSet::new()
         .merge(library_actions::routes())
+        .merge(trash::routes())
+        .merge(health::routes())
         .merge(upgrades::routes())
         .merge(genre::routes())
         .merge(cover_upgrade::routes())
+        .merge(explicit_backfill::routes())
         .merge(lyrics_admin::routes())
         .merge(update::routes())
         .merge(downloads::routes())
@@ -128,17 +140,27 @@ pub fn routes_6b2() -> RouteSet {
         .merge(radio_admin::routes())
 }
 
-#[cfg(test)]
-#[path = "tests_6b2.rs"]
-mod tests_6b2;
+/// The routes of group N: the activity view behind the progress toasts, and the Afterglow
+/// light (`ActivityController`, `AmbientController`).
+pub fn activity_routes() -> RouteSet {
+    RouteSet::new().merge(activity::routes()).merge(ambient::routes())
+}
 
 #[cfg(test)]
-#[path = "test_support_6b1.rs"]
-mod test_support_6b1;
+#[path = "endpoint_tests.rs"]
+mod endpoint_tests;
+
+#[cfg(test)]
+#[path = "test_app.rs"]
+pub(crate) mod test_app;
 
 #[cfg(test)]
 #[path = "admin_contract_tests.rs"]
 mod admin_contract_tests;
+
+#[cfg(test)]
+#[path = "library_action_allow_download_tests.rs"]
+mod library_action_allow_download_tests;
 
 #[cfg(test)]
 #[path = "lastfm_admin_tests.rs"]

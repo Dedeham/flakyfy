@@ -27,7 +27,7 @@ use tokio::sync::watch;
 use wiremock::matchers::{any, method};
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};
 
-use super::test_support_6a2::*;
+use super::test_app::*;
 use crate::app::AppState;
 use crate::http::pipeline::App;
 use crate::services::last_fm::{LastFmScrobbleService, ScrobbleTime, ScrobbleTuning};

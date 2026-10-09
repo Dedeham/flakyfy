@@ -12,7 +12,7 @@ use axum::http::{Method, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use super::test_support_6a2::*;
+use super::test_app::*;
 
 /// Navidrome as these requests see it: a 50,000 byte song. A transcode (any format but raw) is
 /// made live, so it says Accept-Ranges: none and, when asked for an estimate, announces 3% more

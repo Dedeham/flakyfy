@@ -28,7 +28,7 @@ use serde_json::json;
 use super::admin_guard::is_admin_path;
 use super::forwarded::RequestScheme;
 use crate::app::AppState;
-use crate::controllers::admin::helpers_6b1::{
+use crate::controllers::admin::plumbing::{
     BROWSE_COOKIE_NAME, BROWSE_TOKEN_HEADER, browse_cookie_for, header_value, is_https, request_cookie,
 };
 use crate::http::error::json_relaxed_response;

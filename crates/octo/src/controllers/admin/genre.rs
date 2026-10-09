@@ -14,7 +14,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::info;
 
-use super::helpers_6b2::{
+use super::json_body::{FromBody, Kind, Member, Shape};
+use super::request_binding::{
     bind_body, browse_user, enum_try_parse, error, ok, sign_in, split, status, utc_opt,
 };
 use crate::app::AppState;
@@ -77,6 +78,27 @@ struct GenreBackfillStartRequest {
     scope: Option<String>,
     dry_run: bool,
     confirm: Option<String>,
+}
+
+impl FromBody for GenreBackfillStartRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.AdminController+GenreBackfillStartRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "scope",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "dryRun",
+                kind: Kind::Bool,
+            },
+            Member {
+                name: "confirm",
+                kind: Kind::Text,
+            },
+        ],
+    };
 }
 
 /// Start a backfill, or a preview of one.
@@ -155,6 +177,7 @@ async fn get_genre_backfill(State(state): State<AppState>, request: Request) -> 
     browse.finish(ok(&json!({
         "runId": run.run_id,
         "status": status_name(run.status),
+        "pending": state.genre_backfill_worker.is_pending(),
         "scope": scope_name(run.scope),
         "dryRun": run.dry_run,
         "startedUtc": utc_opt(&run.started_utc),

@@ -13,8 +13,8 @@ use serde_json::Value;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::helpers_6b1::SECRET_PLACEHOLDER;
-use super::test_support_6b1::{Reply, admin_write, app, get, send};
+use super::plumbing::SECRET_PLACEHOLDER;
+use super::test_app::{Reply, admin_write, app, get, send};
 use crate::app::AppState;
 use crate::http::pipeline::App;
 
@@ -792,13 +792,13 @@ async fn status_reports_each_service() {
     assert_eq!(body["services"]["navidrome"]["ok"], false);
     assert_eq!(
         body["services"]["navidrome"]["detail"],
-        format!("Connection refused ({address})")
+        format!("Could not connect to {address}: the connection was refused.")
     );
     assert_eq!(body["services"]["lidarr"]["detail"], "Not set up. Optional.");
     assert_eq!(body["services"]["lidarr"]["configured"], false);
     assert_eq!(
         body["services"]["ytDlpShim"]["detail"],
-        format!("Connection refused ({address})")
+        format!("Could not connect to {address}: the connection was refused.")
     );
     assert_eq!(body["services"]["lastfm"]["configured"], false);
     let time = body["time"].as_str().expect("a time");

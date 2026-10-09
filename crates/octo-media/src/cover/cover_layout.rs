@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::cover_book::CoverBook;
-use super::cover_colours::{self, CoverMusic};
+use super::cover_colors::{self, CoverMusic};
 use super::text::{eq_ignore_case, is_letter, is_white_space};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,12 +125,12 @@ pub fn words(
         CoverAlign::Left
     };
     let name = spec.name.trim();
-    let white = cover_colours::WHITE;
+    let white = cover_colors::WHITE;
     // A tiny cover is its artwork only.
     if side < layout.tiny_below_px {
         return Vec::new();
     }
-    let margin = cover_colours::round_f32(s * layout.margin) as f32;
+    let margin = cover_colors::round_f32(s * layout.margin) as f32;
     let width = s - 2.0 * margin;
     let mut output = Vec::new();
 
@@ -157,7 +157,7 @@ pub fn words(
             top,
             width,
             align,
-            ink: cover_colours::alpha(white, f.opacity),
+            ink: cover_colors::alpha(white, f.opacity),
             measured: fit.measured,
             role: WordsRole::Footer,
         });

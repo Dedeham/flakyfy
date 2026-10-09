@@ -3,7 +3,7 @@ use octo_core::settings::{AppSettings, GeneratedPlaylistSettings, SubsonicSettin
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::super::test_support_6b1::{app, get};
+use super::super::test_app::{app, get};
 use crate::app::{AppState, TestServices};
 
 macro_rules! fixture {

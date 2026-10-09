@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_stopping_token_is_cancelled_by_shutdown() {
+    async fn the_stopping_token_is_canceled_by_shutdown() {
         let sup = WorkerSupervisor::new();
         let token = sup.stopping_token();
         sup.start();

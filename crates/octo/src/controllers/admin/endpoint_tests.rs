@@ -449,9 +449,13 @@ impl UpdateFixture {
     }
 
     fn helper(&self) {
+        self.helper_of("2", "git");
+    }
+
+    fn helper_of(&self, version: &str, mode: &str) {
         std::fs::write(
             self.update_dir().join("helper"),
-            "version=1\nmode=build\ndir=/opt/octo\n",
+            format!("version={version}\nmode={mode}\ndir=/opt/octo\n"),
         )
         .unwrap();
     }
@@ -500,9 +504,46 @@ async fn the_card_says_what_is_new_and_what_to_run() {
     assert_eq!(
         view["command"],
         json!(
-            "git fetch --tags && git checkout --detach 2026.10.02.1 && docker compose build && docker compose up -d"
+            "git fetch --tags && git checkout --detach 2026.10.02.1 && (docker compose pull octo yt-dlp-shim octo-sonic || docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source) && docker compose up -d"
         )
     );
+    assert_eq!(
+        view["imageCommand"],
+        json!(
+            "docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_old_helper_is_not_asked_and_the_card_says_to_reinstall_it() {
+    let f = UpdateFixture::start("2026.10.01").await;
+    // The helper of 2026.10.05 and before, left in place when reinstalling it failed.
+    f.helper_of("1", "build");
+    let reply = f.post("2026.10.02.1").await;
+    assert_eq!(reply.status, StatusCode::CONFLICT);
+    assert!(
+        reply.json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("scripts/updater/install-updater.sh")
+    );
+    assert!(!f.requested());
+    let view = f.get().await;
+    assert_eq!(view["helper"]["outdated"], json!(true));
+    assert_eq!(
+        view["reinstallCommand"],
+        json!("scripts/updater/install-updater.sh")
+    );
+}
+
+#[tokio::test]
+async fn the_current_helper_is_not_called_outdated() {
+    let f = UpdateFixture::start("2026.10.01").await;
+    f.helper();
+    let helper = f.get().await["helper"].clone();
+    assert_eq!(helper["outdated"], json!(false));
+    assert_eq!(helper["mode"], json!("git"));
 }
 
 #[tokio::test]
@@ -603,9 +644,10 @@ async fn a_failed_run_carries_the_end_of_the_log() {
     assert_eq!(log[39], json!("line 60"));
 }
 
-/// Rust-only: the card with checks off, byte for byte as the parity baseline has it
-/// (`09-admin/update`: an `ObjectResult`, so `&` and `<` go out unescaped), and the refusal it
-/// gives an update.
+/// Rust-only: the card with checks off, byte for byte (`09-admin/update`: an `ObjectResult`, so
+/// `&` and `<` go out unescaped), and the refusal it gives an update. The commands and
+/// `reinstallCommand` are the bridge release's (Octo pulled, helper version 2), so this answer
+/// differs from C# 2026.10.05's on purpose (intentional diff `update-card-pulls-octo`).
 #[tokio::test]
 async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     let mut settings = AppSettings::default();
@@ -617,7 +659,7 @@ async fn with_checks_off_the_card_and_the_refusal_match_the_baseline() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && docker compose build && docker compose up -d","imageCommand":"docker compose pull octo && docker compose up -d octo"}}"#
+            r#"{{"enabled":false,"repo":"winters27/octo","running":"{running}","latest":null,"newer":[],"updateAvailable":false,"standing":"unknown","checkedUtc":null,"error":null,"helper":{{"installed":false}},"reinstallCommand":"scripts/updater/install-updater.sh","pending":false,"pendingId":null,"unanswered":null,"run":null,"command":"git fetch --tags && git checkout --detach <release> && (docker compose pull octo yt-dlp-shim octo-sonic || docker compose --profile source build octo-source yt-dlp-shim-source octo-sonic-source) && docker compose up -d","imageCommand":"docker compose pull octo yt-dlp-shim octo-sonic && docker compose up -d octo yt-dlp-shim octo-sonic"}}"#
         )
     );
     let reply = send(
@@ -684,7 +726,8 @@ async fn only_admin_controller_endpoints_renew_the_cookie() {
     assert_eq!(send(&app, stale).await.status, StatusCode::UNAUTHORIZED);
 }
 
-/// The idle runs as the parity baseline has them (`09-admin/genre-backfill`, `covers-upgrade`),
+/// The idle runs as the parity baseline has them (`09-admin/genre-backfill`, `covers-upgrade`; the
+/// genre run says whether one is `pending` since ca47988),
 /// with the music path the configuration gives.
 #[tokio::test]
 async fn the_idle_runs_answer_the_baselines_shape() {
@@ -705,7 +748,7 @@ async fn the_idle_runs_answer_the_baselines_shape() {
     assert_eq!(
         reply.body,
         format!(
-            r#"{{"runId":"","status":"Idle","scope":"OctoDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
+            r#"{{"runId":"","status":"Idle","pending":false,"scope":"OctoDownloads","dryRun":true,"startedUtc":null,"finishedUtc":null,"total":0,"processed":0,"changed":0,"cleared":0,"skipped":0,"failed":0,"lastPath":null,"reason":null,"errors":[],"preview":[],"canResume":false,"canUndo":false,"settingsChanged":false,"musicPath":{}}}"#,
             octo_core::json::to_string(&music_path)
         )
     );
@@ -788,6 +831,85 @@ async fn the_cover_status_is_written() {
 /// Model binding runs before the action: a missing required member, a bad bool and an empty
 /// body are `[ApiController]`'s 400s whether or not anyone is signed in; a body that is not
 /// JSON is a 415.
+/// Every `[FromBody]` endpoint refuses a body as System.Text.Json read it into that endpoint's
+/// own C# record: the path it had reached, its words, where the reader stood, and the
+/// parameter's own entry first (a nullable parameter has none).
+#[tokio::test]
+async fn a_body_that_cannot_be_read_is_refused_as_each_endpoint_record_read_it() {
+    let state = AppState::for_tests(AppSettings::default());
+    let app = app(&state);
+    let depth = "Expected depth to be zero at the end of the JSON payload. There is an open JSON object or array that should be closed.";
+    let cases: [(&str, &str, Option<&str>, &str, String); 6] = [
+        // The C# recording (17-covers-explicit/covers-start-bad-json).
+        (
+            "/api/admin/covers/upgrade",
+            "{\"scope\": ",
+            Some("request"),
+            "$.scope",
+            format!("{depth} Path: $.scope | LineNumber: 0 | BytePositionInLine: 10."),
+        ),
+        (
+            "/api/admin/health/apply",
+            "{\"steps\": [{\"with\": {\"a\": 1}}]}",
+            Some("request"),
+            "$.steps[0].with.a",
+            "The JSON value could not be converted to System.String. Path: $.steps[0].with.a | LineNumber: 0 | BytePositionInLine: 27.".into(),
+        ),
+        (
+            "/api/admin/upgrades",
+            "{\"songs\": [{\"navidromeId\": \"x\", \"pick\": {\"size\": \"big\"}}]}",
+            Some("request"),
+            "$.songs[0].pick.size",
+            "The JSON value could not be converted to System.Int64. Path: $.songs[0].pick.size | LineNumber: 0 | BytePositionInLine: 54.".into(),
+        ),
+        (
+            "/api/admin/genre/backfill",
+            "{\"dryRun\": \"yes\"}",
+            Some("request"),
+            "$.dryRun",
+            "The JSON value could not be converted to Octo.Controllers.AdminController+GenreBackfillStartRequest. Path: $.dryRun | LineNumber: 0 | BytePositionInLine: 16.".into(),
+        ),
+        (
+            "/api/admin/browse/auth",
+            "{\"username\": [",
+            Some("req"),
+            "$.username",
+            format!("{depth} Path: $.username | LineNumber: 0 | BytePositionInLine: 14."),
+        ),
+        (
+            "/api/admin/find",
+            "[1]",
+            None,
+            "$",
+            "The JSON value could not be converted to Octo.Controllers.AdminDownloadsController+FindRequest. Path: $ | LineNumber: 0 | BytePositionInLine: 1.".into(),
+        ),
+    ];
+    for (uri, body, parameter, path, message) in cases {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("X-Octo-Admin", "1")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let reply = send(&app, request).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{uri}: {}", reply.body);
+        let errors = reply.json()["errors"].clone();
+        let keys: Vec<String> = errors.as_object().expect("errors").keys().cloned().collect();
+        let mut expected_keys: Vec<String> = parameter.map(str::to_string).into_iter().collect();
+        expected_keys.push(path.to_string());
+        assert_eq!(keys, expected_keys, "{uri}");
+        if let Some(parameter) = parameter {
+            assert_eq!(
+                errors[parameter][0],
+                format!("The {parameter} field is required."),
+                "{uri}"
+            );
+        }
+        assert_eq!(errors[path][0], message.as_str(), "{uri}");
+    }
+}
+
 #[tokio::test]
 async fn binding_failures_come_before_the_session() {
     let state = AppState::for_tests(AppSettings::default());

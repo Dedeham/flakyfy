@@ -52,7 +52,7 @@ pub trait ISonicClient: Send + Sync {
 
     /// The song's features, or an error to remember: octo-sonic could not read it. A dropped
     /// connection is `Err`; an answer Octo cannot read is that song's error.
-    async fn analyse(&self, path: &str) -> Result<SonicAnswer, SonicDropped>;
+    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped>;
 }
 
 /// The octo-sonic sidecar over HTTP.
@@ -153,7 +153,7 @@ impl ISonicClient for SonicClient {
         })
     }
 
-    async fn analyse(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
+    async fn analyze(&self, path: &str) -> Result<SonicAnswer, SonicDropped> {
         let url = format!("{}/analyse", self.base_url());
         let response = self
             .http
@@ -280,7 +280,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn analyse_reads_features_errors_and_odd_answers() {
+    async fn analyze_reads_features_errors_and_odd_answers() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/analyse"))
@@ -306,7 +306,7 @@ mod tests {
             .mount(&server)
             .await;
         let client = client(&server).await;
-        let ok = client.analyse("/music/a.flac").await.expect("an answer");
+        let ok = client.analyze("/music/a.flac").await.expect("an answer");
         assert_eq!(
             ok.features,
             Some(SonicFeatures {
@@ -314,14 +314,14 @@ mod tests {
                 version: 2
             })
         );
-        let refused = client.analyse("/music/a.flac").await.expect("an answer");
+        let refused = client.analyze("/music/a.flac").await.expect("an answer");
         assert_eq!(
             (refused.error.as_deref(), refused.status),
             (Some("too short"), 422)
         );
-        let bare = client.analyse("/music/a.flac").await.expect("an answer");
+        let bare = client.analyze("/music/a.flac").await.expect("an answer");
         assert_eq!(bare.error.as_deref(), Some("HTTP 500"));
-        let odd = client.analyse("/music/a.flac").await.expect("an answer");
+        let odd = client.analyze("/music/a.flac").await.expect("an answer");
         assert_eq!(
             odd.error.as_deref(),
             Some("octo-sonic answered something Octo could not read (HTTP 200)")
@@ -343,7 +343,7 @@ mod tests {
             },
             ..Default::default()
         })));
-        assert!(client.analyse("/music/a.flac").await.is_err());
+        assert!(client.analyze("/music/a.flac").await.is_err());
         assert_eq!(client.health().await, None);
     }
 }

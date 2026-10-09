@@ -4,6 +4,7 @@
 pub mod album_ownership;
 pub mod chart_playlist_service;
 pub mod duplicate_scan_worker;
+pub mod explicit_backfill;
 pub mod explicit_backfill_store;
 pub mod for_you_lists;
 pub mod generated_playlist_service;
@@ -14,10 +15,12 @@ pub mod library_action_playlist_provisioner;
 pub mod library_action_playlist_worker;
 pub mod library_action_quarantine;
 pub mod library_action_rating_worker;
+pub mod library_edit_service;
 pub mod library_ownership;
 pub mod library_review_sweep_worker;
 pub mod library_snapshot;
 pub mod library_tag_edits;
+pub mod library_walk;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;
@@ -48,6 +51,9 @@ pub use library_action_playlist_provisioner::LibraryActionPlaylistProvisioner;
 pub use library_action_playlist_worker::LibraryActionPlaylistWorker;
 pub use library_action_quarantine::{LibraryActionQuarantine, QuarantineManifest, QuarantineResult};
 pub use library_action_rating_worker::{LibraryActionRatingWorker, RatingActionRequest};
+pub use library_edit_service::{
+    LibraryEditOutcome, LibraryEditService, LibraryRescan, SongLookup, TrashedSong,
+};
 pub use library_ownership::{LibraryOwnership, OwnedCopy, OwnedDecision, OwnershipNavidrome};
 pub use library_review_sweep_worker::{
     FingerprintSweepVerifier, IReviewSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,

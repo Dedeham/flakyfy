@@ -106,7 +106,7 @@ impl DeezerRateLimitHandler {
         match tokio::time::timeout(Self::TIMEOUT, call).await {
             Ok(answer) => Ok(answer?),
             Err(_) => Err(anyhow!(
-                "The request was canceled due to the configured HttpClient.Timeout of 8 seconds elapsing."
+                "No answer came within 8 seconds, so Octo stopped waiting."
             )),
         }
     }

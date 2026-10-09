@@ -162,7 +162,7 @@ AcquisitionWorker`). Same behavior, nothing lost (the job resumes, see 2.1).
 - `cargo test --workspace` **3 runs, all green**: 2,465 tests each time (octo 1,569, octo-core
   648, octo-media 132, octo-subsonic 113, request-line integration 3). The first run overlapped
   three parity runs. A fourth run after the change below was also green.
-- **`tests_6a1::radio::published_stream_consumes_and_replenishes_three_track_session_pool`
+- **`route_tests::radio::published_stream_consumes_and_replenishes_three_track_session_pool`
   (reported flaky) hardened.** It did not fail here (radio tests 15× under 6 CPU burners, the
   whole `octo` suite 4× under 3 burners: 0 failures), but the cause is visible in the code:
   `RadioFixture::wait_for_calls` returned **silently** after 1 s, and the test's pool polls and
@@ -171,7 +171,7 @@ AcquisitionWorker`). Same behavior, nothing lost (the job resumes, see 2.1).
   in the pool and the counts were off by one. Now `wait_for_calls` waits up to 10 s and **panics**
   if the calls never come, the pool polls allow 10 s, and the "a transcode started" and
   first-bytes waits allow 10 s. Passing runs are as fast as before; only a starved run waits
-  longer. (`crates/octo/src/controllers/subsonic/tests_6a1/radio.rs`)
+  longer. (`crates/octo/src/controllers/subsonic/route_tests/radio.rs`)
 - No other flaky test was found.
 
 ## 5. Every residual difference

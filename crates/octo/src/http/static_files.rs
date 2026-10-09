@@ -688,7 +688,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ranges_normalise_as_asp_net_did() {
+    fn ranges_normalize_as_asp_net_did() {
         let cases: [(&str, u64, Option<(u64, u64)>, bool); 10] = [
             ("bytes=0-9", 100, Some((0, 9)), false),
             ("bytes=90-200", 100, Some((90, 99)), false),

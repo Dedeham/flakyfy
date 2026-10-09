@@ -8,7 +8,7 @@ This is the measurement behind the default lyrics source order, `LYRICS_SOURCES=
 - **Code:** each source was asked through Octo's own source classes (`KugouLyricsSource`, `LrclibLyricsSource`, `NeteaseLyricsSource`), with the same title cleanup and the same identity rule Octo uses in production. The harness is `octo.Tests/LyricsSourceEvaluation.cs`. It runs only when `OCTO_LYRICS_EVAL` names a sample file.
 - **Pace:** each service got at most one request a second. The three services ran side by side, and every request was a read.
 - **Retries:** a lookup the service could not answer (a 503, a timeout) was tried twice more, after the wait the service asked for, and counted as an error either way.
-- **Latency:** the time spent on the network for one lookup, all of that source's requests added up (KuGou needs two or three: a search, sometimes a catalogue search, and a download). The pacing is left out, because it is the harness being polite and not a cost Octo has.
+- **Latency:** the time spent on the network for one lookup, all of that source's requests added up (KuGou needs two or three: a search, sometimes a catalog search, and a download). The pacing is left out, because it is the harness being polite and not a cost Octo has.
 - **Runs:** LRCLIB and NetEase were measured once, on 2026-09-27. KuGou was measured three times on the same day, the last one with the final matching code. The KuGou numbers in the table come from that last run; its latency is lower than a cold start, because the same searches had been made that morning, so the first run's figures are also given.
 
 ## Results
@@ -27,7 +27,7 @@ Taken together:
 
 - **Coverage:** 283 of the 300 songs have lyrics from at least one source. KuGou and LRCLIB alone cover all 283, so NetEase adds nothing on this sample.
 - **KuGou first, then LRCLIB:** 259 songs get word-timed lyrics, and 280 get timed lyrics of some kind.
-- **Only LRCLIB:** 24 songs. KuGou missed them, mostly obscure uploads, a few where the library's tags name a different recording, and one where KuGou's catalogue credits the artist under another name.
+- **Only LRCLIB:** 24 songs. KuGou missed them, mostly obscure uploads, a few where the library's tags name a different recording, and one where KuGou's catalog credits the artist under another name.
 - **Only KuGou:** 15 songs. LRCLIB had nothing, and it had only plain text for 19 more that KuGou has word-timed.
 - **Uncertain matches:** 10 of KuGou's, 11 of LRCLIB's and 11 of NetEase's passed the check but either had no length to compare or were 2 to 3 seconds off. The library job puts these on its review list.
 

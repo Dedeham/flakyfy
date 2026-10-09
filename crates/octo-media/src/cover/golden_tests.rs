@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
-use super::cover_colours;
+use super::cover_colors;
 use super::cover_fonts::{self, CoverTypesetter};
 use super::cover_layout::{self, CoverAlign, CoverSpec, CoverType, CoverWords, Measured, WordsRole};
 use super::cover_painter::{self, CoverArt};
@@ -190,7 +190,7 @@ fn reference_boxes(golden: &Value, side: i32) -> Vec<CoverWords> {
                 top,
                 width: side as f32,
                 align: CoverAlign::Left,
-                ink: cover_colours::WHITE,
+                ink: cover_colors::WHITE,
                 measured: Measured {
                     lines: 1,
                     width: right - x,
@@ -284,9 +284,9 @@ const MIN_SSIM: f64 = 0.98;
 /// The background's decode, resampling and veil are the same maths in the same order.
 const VEIL_TOLERANCE: i64 = 1;
 
-fn reference_music(layout: &Value) -> Option<cover_colours::CoverMusic> {
+fn reference_music(layout: &Value) -> Option<cover_colors::CoverMusic> {
     let music = &layout["music"];
-    (!music.is_null()).then(|| cover_colours::CoverMusic {
+    (!music.is_null()).then(|| cover_colors::CoverMusic {
         hue: num(music, "hue") as i32,
         chroma: num(music, "chroma"),
         lightness: num(music, "lightness"),

@@ -10,8 +10,9 @@ use super::{SUBSONIC_VERSION, SubsonicReply, SubsonicResponseBuilder};
 /// The OpenSubsonic extension a client checks for before it offers a library action.
 pub const LIBRARY_ACTIONS_EXTENSION: &str = "octoLibraryActions";
 
-/// Version 2 adds the upgrade action and getUpgrades; version 1 is still listed.
-pub const LIBRARY_ACTIONS_EXTENSION_VERSION: i32 = 2;
+/// Version 2 adds the upgrade action and getUpgrades; version 3 the edits below,
+/// getLibraryTrash and the admin flag. Every older version is still listed.
+pub const LIBRARY_ACTIONS_EXTENSION_VERSION: i32 = 3;
 
 /// The Delete action, named for what a person sees: the song leaves the library, and the file
 /// waits in quarantine.
@@ -21,11 +22,40 @@ pub const REMOVE_ACTION: &str = "remove";
 /// song keeping its place. Queued, never run inside the request.
 pub const UPGRADE_ACTION: &str = "upgrade";
 
+/// Version 3: write tags into a song's file, in place.
+pub const RETAG_ACTION: &str = "retag";
+
+/// Version 3: put a song on the album another song is on, by copying that album's tags.
+pub const JOIN_ALBUM_ACTION: &str = "joinAlbum";
+
+/// Version 3: find a cover for a song's album and put it inside a file that has none.
+pub const COVER_ACTION: &str = "cover";
+
+/// Version 3: the tags a download of the song would get. Writes nothing.
+pub const LOOKUP_ACTION: &str = "lookup";
+
+/// Version 3: put back the last retag, joinAlbum or cover of a song.
+pub const UNDO_ACTION: &str = "undo";
+
+/// Version 3: put a removed song back from the trash.
+pub const RESTORE_ACTION: &str = "restore";
+
+pub const EDIT_ACTIONS: [&str; 6] = [
+    RETAG_ACTION,
+    JOIN_ALBUM_ACTION,
+    COVER_ACTION,
+    LOOKUP_ACTION,
+    UNDO_ACTION,
+    RESTORE_ACTION,
+];
+
 impl SubsonicResponseBuilder {
     /// getLibraryActions: what this server lets the caller do. Always JSON. The field names are a
     /// contract with the Octo app.
     ///
-    /// (C#'s defaults: `parallel` 1, `upgrade_ready` true, `upgrade_source` "Soulseek".)
+    /// (C#'s defaults: `parallel` 1, `upgrade_ready` true, `upgrade_source` "Soulseek", `admin`,
+    /// `edits` and `covers` false.)
+    #[allow(clippy::too_many_arguments)]
     pub fn create_library_actions_response(
         &self,
         settings: &LibraryActionSettings,
@@ -33,6 +63,9 @@ impl SubsonicResponseBuilder {
         parallel: i32,
         upgrade_ready: bool,
         upgrade_source: &str,
+        admin: bool,
+        edits: bool,
+        covers: bool,
     ) -> SubsonicReply {
         self.create_json_response(json!({
             "status": "ok",
@@ -43,7 +76,9 @@ impl SubsonicResponseBuilder {
                 "enabled": settings.enabled,
                 "allowed": settings.is_allowed(username),
                 "dryRun": settings.dry_run,
-                "actions": offered_actions(settings, upgrade_ready),
+                "actions": offered_actions(settings, upgrade_ready, edits, covers, admin),
+                // Whether the caller is a Navidrome admin. Removing and every edit need it.
+                "admin": admin,
                 // 0 means kept until someone removes it by hand.
                 "keepDays": settings.effective_quarantine_retention_days(),
                 // How many upgrades run at once, which is how many downloads may.
@@ -79,7 +114,13 @@ impl SubsonicResponseBuilder {
 }
 
 /// The actions offered, by the names the app knows them by.
-fn offered_actions(settings: &LibraryActionSettings, upgrade_ready: bool) -> Vec<&'static str> {
+fn offered_actions(
+    settings: &LibraryActionSettings,
+    upgrade_ready: bool,
+    edits: bool,
+    covers: bool,
+    admin: bool,
+) -> Vec<&'static str> {
     let enabled: Vec<LibraryAction> = settings
         .effective_actions()
         .into_iter()
@@ -87,11 +128,24 @@ fn offered_actions(settings: &LibraryActionSettings, upgrade_ready: bool) -> Vec
         .map(|action| action.action)
         .collect();
     let mut offered = Vec::new();
-    if enabled.contains(&LibraryAction::Delete) {
+    // Removing needs a Navidrome admin, which libraryAction checks again; offered only to one.
+    if enabled.contains(&LibraryAction::Delete) && admin {
         offered.push(REMOVE_ACTION);
     }
     if enabled.contains(&LibraryAction::BetterQuality) && upgrade_ready {
         offered.push(UPGRADE_ACTION);
+    }
+    if edits {
+        offered.extend([
+            RETAG_ACTION,
+            JOIN_ALBUM_ACTION,
+            LOOKUP_ACTION,
+            UNDO_ACTION,
+            RESTORE_ACTION,
+        ]);
+        if covers {
+            offered.push(COVER_ACTION);
+        }
     }
     offered
 }

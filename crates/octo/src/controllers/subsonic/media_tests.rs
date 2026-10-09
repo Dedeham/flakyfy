@@ -15,9 +15,9 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate};
 
-use super::helpers_6a2::is_first_byte_request;
+use super::caller_checks::is_first_byte_request;
 use super::media::draws_its_own_marks_in;
-use super::test_support_6a2::*;
+use super::test_app::*;
 
 /// Navidrome accepting every sign-in: these tests are about what plays, not who.
 async fn ping_ok() -> MockServer {

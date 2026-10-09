@@ -239,6 +239,40 @@ fn a_watch_stops_at_the_ceiling_even_while_moving() {
     assert!(watch.hit_ceiling(at(t0, 60)));
 }
 
+// A peer that accepts and then sends nothing is left at the first-byte wait, not the quiet window.
+#[test]
+fn a_watch_gives_up_soon_on_a_peer_that_never_starts() {
+    let t0 = Utc::now();
+    let mut watch = TransferWatch::new(t0, Duration::from_secs(180), Duration::from_secs(3600))
+        .with_first_byte(Some(Duration::from_secs(45)));
+    watch.saw(Some(0), at(t0, 30));
+    assert!(!watch.expired(at(t0, 44)));
+    assert!(watch.expired(at(t0, 45)));
+    assert!(watch.never_started());
+}
+
+#[test]
+fn once_bytes_arrive_the_full_quiet_window_applies() {
+    let t0 = Utc::now();
+    let mut watch = TransferWatch::new(t0, Duration::from_secs(180), Duration::from_secs(3600))
+        .with_first_byte(Some(Duration::from_secs(45)));
+    watch.saw(Some(1000), at(t0, 40));
+    assert!(!watch.never_started());
+    assert!(!watch.expired(at(t0, 200)));
+    assert!(watch.expired(at(t0, 220)));
+}
+
+#[test]
+fn the_first_byte_wait_is_never_longer_than_the_quiet_window() {
+    let t0 = Utc::now();
+    let watch = TransferWatch::new(t0, Duration::from_secs(10), Duration::from_secs(3600))
+        .with_first_byte(Some(Duration::from_secs(45)));
+    assert!(watch.expired(at(t0, 10)));
+    let plain =
+        TransferWatch::new(t0, Duration::from_secs(180), Duration::from_secs(3600)).with_first_byte(None);
+    assert!(!plain.expired(at(t0, 100)));
+}
+
 // ---- ParallelDownloadTests (slskd's batch API) -------------------------------------------
 
 const JOB: &str = ".octo-incoming/slskd/job";

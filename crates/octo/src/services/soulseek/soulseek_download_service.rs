@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
@@ -24,7 +25,9 @@ use octo_core::fingerprint::{InconclusiveReason, VerificationResult, Verificatio
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
 use octo_core::settings::{DownloadSource, SoulseekSettings};
-use octo_core::soulseek::soulseek_client::normalize_extension;
+use octo_core::soulseek::soulseek_client::{
+    FIRST_BYTE_WAIT, WAITING_NOTE_AFTER, contains_ignore_case, normalize_extension,
+};
 use octo_core::soulseek::soulseek_download_service::{
     BROWSE_TIMEOUT, CandidateWant, PEER_FOLDERS_TO_BROWSE, adds_version, album_search_text,
     duration_plausible, filename_plausibly_matches_title, folder_of_file, from_version_folder,
@@ -103,7 +106,7 @@ fn client_error(error: SoulseekClientError) -> anyhow::Error {
 
 /// The future, unless the caller gives up first: the C# passed its token to these calls, which
 /// threw `OperationCanceledException` when it was cancelled.
-async fn or_cancelled<T>(
+async fn or_canceled<T>(
     ct: &CancellationToken,
     work: impl Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
@@ -472,7 +475,7 @@ impl SoulseekDownloadService {
 
         // The shim answers only once the file is written, so there is nothing to count here.
         base.track(|t| t.transfer(&provider, &track_key, None, None, None, Some("YouTube")));
-        let path = or_cancelled(ct, async {
+        let path = or_canceled(ct, async {
             Ok(self
                 .youtube
                 .download(
@@ -1186,7 +1189,7 @@ impl SoulseekDownloadService {
                 let attempt_started_utc = album_copy.map_or_else(Utc::now, |p| p.queued_utc);
 
                 if !from_album {
-                    let enqueued = or_cancelled(ct, async {
+                    let enqueued = or_canceled(ct, async {
                         let batch = self
                             .slskd
                             .enqueue_batch(&hit.username, &[(hit.filename.clone(), hit.size)], &job_dir)
@@ -1276,8 +1279,33 @@ impl SoulseekDownloadService {
                 //
                 // slskd's size is the real one once the peer answers; the search's is
                 // what the peer advertised, kept for polls that leave it out.
+                // A peer that said it could send now gets FIRST_BYTE_WAIT to start; one that said
+                // it would queue us keeps the whole quiet window. While nothing moves, the row says
+                // whom it waits on, once, after WAITING_NOTE_AFTER.
+                let promised_now = hit.has_free_upload_slot == Some(true) || hit.queue_length == Some(0);
+                let first_byte = promised_now.then_some(FIRST_BYTE_WAIT);
+                let asked_at = Instant::now();
+                let moved = AtomicBool::new(false);
+                let waiting_told = AtomicBool::new(false);
                 let on_progress = |p: &SoulseekTransferProgress| {
+                    if !p.is_moving()
+                        && !moved.load(Ordering::Relaxed)
+                        && asked_at.elapsed() >= WAITING_NOTE_AFTER
+                        && !waiting_told.swap(true, Ordering::Relaxed)
+                    {
+                        let words = waiting_words(&hit.username, &p.state);
+                        base.track(|t| {
+                            t.stage(
+                                &provider,
+                                &track_key,
+                                AcquisitionState::Searching,
+                                Some("Soulseek"),
+                                Some(&words),
+                            )
+                        });
+                    }
                     if p.is_moving() {
+                        moved.store(true, Ordering::Relaxed);
                         base.track(|t| {
                             t.transfer(
                                 &provider,
@@ -1296,6 +1324,7 @@ impl SoulseekDownloadService {
                         &hit.username,
                         &hit.filename,
                         Some(self.settings.download_timeout_seconds),
+                        first_byte,
                         ct,
                         Some(&on_progress),
                         transfer_id.as_deref(),
@@ -1619,6 +1648,23 @@ impl SoulseekDownloadService {
                 info!(
                     "Soulseek attempt {attempt_idx} failed (state={state_text}, no file on disk), advancing"
                 );
+                let silent = !moved.load(Ordering::Relaxed)
+                    && first_byte.is_some_and(|wait| asked_at.elapsed() >= wait);
+                if silent {
+                    // Said on the row too, so its status stops naming the peer it waited on.
+                    let words = format!("{} never started sending, so Octo moved on", hit.username);
+                    base.track(|t| {
+                        t.stage(
+                            &provider,
+                            &track_key,
+                            AcquisitionState::Searching,
+                            Some("Soulseek"),
+                            Some(&words),
+                        )
+                    });
+                    last_error = Some("the peer never started sending".into());
+                    continue;
+                }
                 base.log_step(
                     &track_key,
                     acquisition_event_kinds::NOTE,
@@ -2125,7 +2171,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 .iter()
                 .map(|(_, file)| (file.filename.clone(), file.size))
                 .collect();
-            let batch = or_cancelled(cancellation_token, async {
+            let batch = or_canceled(cancellation_token, async {
                 self.slskd
                     .enqueue_batch(&choice.username, &files, &job_dir)
                     .await
@@ -2237,6 +2283,16 @@ pub fn candidate_allowed(
     match deny_list {
         Some(deny_list) if enabled => !deny_list.is_denied(Some(&hit.username), Some(&hit.filename)),
         _ => true,
+    }
+}
+
+/// Whom a transfer that has not started waits on, in words: in the peer's queue, or for
+/// the peer to start.
+pub fn waiting_words(peer: &str, state: &str) -> String {
+    if contains_ignore_case(state, "Queued") && contains_ignore_case(state, "Remotely") {
+        format!("Waiting in {peer}'s queue")
+    } else {
+        format!("Waiting for {peer} to start sending")
     }
 }
 

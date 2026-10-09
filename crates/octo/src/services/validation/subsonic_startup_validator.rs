@@ -156,7 +156,7 @@ mod tests {
 
         let address = crate::services::test_support::refused_address();
         let result = validate(Some(format!("http://{address}"))).await;
-        let refused = format!("Connection refused ({address})");
+        let refused = format!("Could not connect to {address}: the connection was refused.");
         assert_eq!(
             (result.status.as_str(), result.details.as_deref()),
             ("UNREACHABLE", Some(refused.as_str()))

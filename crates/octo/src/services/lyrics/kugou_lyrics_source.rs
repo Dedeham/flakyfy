@@ -61,7 +61,7 @@ pub struct KugouLyricsSource {
     /// `https://lyrics.kugou.com`: the lyric search and download.
     lyrics_url: String,
     /// `https://mobileservice.kugou.com`: the song catalog.
-    catalogue_url: String,
+    catalog_url: String,
     /// The one-at-a-time gate, holding when the last request went out.
     gate: tokio::sync::Mutex<Option<Instant>>,
     cool_down_until: Mutex<Option<Instant>>,
@@ -95,7 +95,7 @@ struct Song {
 impl KugouLyricsSource {
     pub const CLIENT_NAME: &'static str = super::lyrics_http::KUGOU_CLIENT_NAME;
     pub const DEFAULT_LYRICS_URL: &'static str = "https://lyrics.kugou.com";
-    pub const DEFAULT_CATALOGUE_URL: &'static str = "https://mobileservice.kugou.com";
+    pub const DEFAULT_CATALOG_URL: &'static str = "https://mobileservice.kugou.com";
 
     const MINIMUM_GAP: Duration = Duration::from_millis(300);
     const DEFAULT_COOLDOWN: Duration = Duration::from_secs(60);
@@ -107,15 +107,15 @@ impl KugouLyricsSource {
 
     /// The source over the `kugou` client ([`super::lyrics_http::kugou_http_client`]).
     pub fn new(client: reqwest::Client) -> Self {
-        Self::with_base_urls(client, Self::DEFAULT_LYRICS_URL, Self::DEFAULT_CATALOGUE_URL)
+        Self::with_base_urls(client, Self::DEFAULT_LYRICS_URL, Self::DEFAULT_CATALOG_URL)
     }
 
     /// The same against other addresses, for tests.
-    pub fn with_base_urls(client: reqwest::Client, lyrics_url: &str, catalogue_url: &str) -> Self {
+    pub fn with_base_urls(client: reqwest::Client, lyrics_url: &str, catalog_url: &str) -> Self {
         Self {
             client,
             lyrics_url: lyrics_url.trim_end_matches('/').to_string(),
-            catalogue_url: catalogue_url.trim_end_matches('/').to_string(),
+            catalog_url: catalog_url.trim_end_matches('/').to_string(),
             gate: tokio::sync::Mutex::new(None),
             cool_down_until: Mutex::new(None),
             failures: AtomicU32::new(0),
@@ -243,21 +243,21 @@ impl KugouLyricsSource {
             }
         }
 
-        let catalogue = self
+        let catalog = self
             .get_json(
                 &format!(
                     "{}/api/v3/search/song?format=json&page=1&pagesize=10&showtype=1&keyword={}",
-                    self.catalogue_url,
+                    self.catalog_url,
                     escape_data_string(&searches[0].text())
                 ),
                 ct,
             )
             .await;
-        if catalogue.transient {
+        if catalog.transient {
             return Ok(LyricsSearch::new(Self::distinct(candidates), true));
         }
 
-        let songs = Self::read_songs(catalogue.json.as_ref())?;
+        let songs = Self::read_songs(catalog.json.as_ref())?;
         // The catalog names some artists its own way ("Ye (侃爷)" for Kanye West), so a song
         // with the right title and length is asked about even when its artist reads otherwise;
         // its lyric entries then carry the lyric's own credit, and the identity check decides.

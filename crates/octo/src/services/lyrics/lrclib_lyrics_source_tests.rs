@@ -298,7 +298,7 @@ async fn lrclib_an_answer_that_is_not_json_or_not_an_object_is_not_now() {
 }
 
 #[tokio::test]
-async fn lrclib_a_cancelled_lookup_is_not_now() {
+async fn lrclib_a_canceled_lookup_is_not_now() {
     let http = FakeHttp::start(|_| status(404, "{}")).await;
     let cancelled = CancellationToken::new();
     cancelled.cancel();

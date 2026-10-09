@@ -24,7 +24,7 @@ pub enum MusicBrainzError {
     /// The client's timeout elapsed. HttpClient reports that as a `TaskCanceledException`, an
     /// `OperationCanceledException`, which `GetAsync`'s filter does not catch, so it reached
     /// the caller rather than reading as "nothing to say".
-    #[error("The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.")]
+    #[error("No answer came within 10 seconds, so Octo stopped waiting.")]
     TimedOut,
     /// A `JsonElement` accessor threw while the answer was read: a field of the wrong kind.
     #[error(transparent)]

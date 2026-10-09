@@ -1,17 +1,16 @@
 //! A small XML element tree: a writer with one exact layout, and a reader to match.
 //!
-//! Every Subsonic XML answer is written in that layout, byte for byte:
-//! two-space indentation with `\n` line breaks, no XML declaration, `<name />` for an element
-//! with no content and `<name></name>` for one holding an empty string, the namespace
-//! declaration after the element's own attributes, attribute values with `<`, `>`, `&`, `"`
-//! and line breaks escaped (but not `'`), text with `<`, `>` and `&` escaped and its line breaks
-//! normalized to `\n`, and an element holding text written inline.
+//! Every Subsonic XML answer is written in that layout, byte for byte: two-space indentation with
+//! `\n` line breaks, no XML declaration, `<name />` for an element with no content and
+//! `<name></name>` for one holding an empty string, the namespace declaration after the element's
+//! own attributes, attribute values with `<`, `>`, `&`, `"` and line breaks escaped (but not
+//! `'`), text with `<`, `>` and `&` escaped and its line breaks normalized to `\n`, and an
+//! element holding text written inline.
 //!
-//! Octo also re-serializes Navidrome's XML (the search merge, the OpenSubsonic extensions,
-//! the sync catalog page), so [`XElement::parse`] reads a document to suit that writer:
-//! whitespace-only text is dropped,
-//! `<a></a>` stays distinct from `<a/>`, attribute values are normalized, and an `xmlns`
-//! declaration is kept as an attribute in its place.
+//! Octo also re-serializes Navidrome's XML (the search merge, the OpenSubsonic extensions, the
+//! sync catalog page), so [`XElement::parse`] reads a document to suit that writer:
+//! whitespace-only text is dropped, `<a></a>` stays distinct from `<a/>`, attribute values are
+//! normalized, and an `xmlns` declaration is kept as an attribute in its place.
 
 use std::borrow::Cow;
 
@@ -32,9 +31,9 @@ pub enum XNode {
 
 /// An element: a local name, attributes in insertion order, and content.
 ///
-/// `namespace` is the element's namespace: `None` is no namespace.
-/// An element whose namespace differs from its parent's gets an `xmlns` declaration when
-/// written, unless it carries one already as an attribute (as a parsed element does).
+/// `namespace` is the element's namespace: `None` is no namespace. An element whose namespace
+/// differs from its parent's gets an `xmlns` declaration when written, unless it carries one
+/// already as an attribute (as a parsed element does).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct XElement {
     pub name: String,

@@ -1,6 +1,5 @@
-//! The library actions answers that need only settings.
-//! The answer for a `LibraryActionOutcome` and getUpgrades take app types and are in the
-//! `octo` crate.
+//! The library actions answers that need only settings. The answer for a `LibraryActionOutcome`
+//! and getUpgrades take app types and are in the `octo` crate.
 
 use octo_core::settings::library_action::{LibraryAction, LibraryActionSettings};
 use serde_json::json;

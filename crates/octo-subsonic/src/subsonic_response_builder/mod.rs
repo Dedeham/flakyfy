@@ -93,8 +93,8 @@ pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
 pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
 pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
-/// octoLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only
-/// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
+/// octoLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only playlists whose
+/// entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
 pub const LISTS_EXTENSION: &str = "octoLists";
 pub const LISTS_EXTENSION_VERSION: i32 = 1;
 
@@ -540,8 +540,7 @@ impl SubsonicResponseBuilder {
 
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
-    /// discovery being off hides, and octoRadioSources while radio can answer
-    /// (`radio_sources`).
+    /// discovery being off hides, and octoRadioSources while radio can answer (`radio_sources`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -1111,10 +1110,9 @@ pub(crate) fn text_of(value: Option<&Value>) -> Option<String> {
     }
 }
 
-/// A JSON value as the merge keeps it. Numbers become an `i32` when they are an integer that
-/// fits one, and an `f64` otherwise, which is how they are
-/// written back (`3000000000` and `1.0` come back as `3000000000` and `1`, and `1e20` as
-/// `1E+20`).
+/// A JSON value as the merge keeps it. Numbers become an `i32` when they are an integer that fits
+/// one, and an `f64` otherwise, which is how they are written back (`3000000000` and `1.0` come
+/// back as `3000000000` and `1`, and `1e20` as `1E+20`).
 pub fn convert_json_value(value: &Value) -> Value {
     match value {
         Value::Number(n) => match n.as_i64() {

@@ -1106,8 +1106,8 @@ fn library_actions_offer_what_is_enabled() {
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove"])
     );
-    // Version 3: remove only for a Navidrome admin; the edits whenever the
-    // server can make them, cover last and only with a cover finder.
+    // Version 3: remove only for a Navidrome admin; the edits whenever the server can make them,
+    // cover last and only with a cover finder.
     let json =
         json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
     assert_eq!(

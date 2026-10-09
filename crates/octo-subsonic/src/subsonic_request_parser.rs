@@ -4,12 +4,11 @@
 //! The parser reads a [`RequestParts`] (raw query string, content type, content length and the
 //! body bytes), so it stays free of any HTTP stack. The rules:
 //!
-//! - **Query**: split on `&` only (never `;`), empty segments skipped, a
-//!   segment without `=` is a key with an empty value, `=v` is the empty key. `+` is a space,
-//!   then `%XX` is decoded as UTF-8; an escape that is not valid UTF-8 (or not an escape at all)
-//!   is left as written (`%FF`, `%ZZ`, a lone `%`). Keys are matched **ignoring case**, keep
-//!   the spelling they were first sent with, and collect every value (`u=a&U=b` is one key `u`
-//!   holding `a` and `b`).
+//! - **Query**: split on `&` only (never `;`), empty segments skipped, a segment without `=` is a
+//!   key with an empty value, `=v` is the empty key. `+` is a space, then `%XX` is decoded as
+//!   UTF-8; an escape that is not valid UTF-8 (or not an escape at all) is left as written
+//!   (`%FF`, `%ZZ`, a lone `%`). Keys are matched **ignoring case**, keep the spelling they were
+//!   first sent with, and collect every value (`u=a&U=b` is one key `u` holding `a` and `b`).
 //! - **The dictionary** is ordinal (`F` is not `f`), keeps insertion order, and a repeated key
 //!   becomes its values joined with commas, leaving out the empty ones (`id=&id=B` reads `B`).
 //! - **Body**, read only when `Content-Length > 0` or a `Content-Type` is present:
@@ -28,8 +27,8 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
-/// The parameter dictionary: keys compared ordinally,
-/// insertion order kept, and an overwrite keeps the key where it first appeared.
+/// The parameter dictionary: keys compared ordinally, insertion order kept, and an overwrite
+/// keeps the key where it first appeared.
 pub type Parameters = IndexMap<String, String>;
 
 /// The parts of an HTTP request the parser reads.
@@ -113,8 +112,8 @@ pub fn parse_query(raw: &str) -> StringValuesCollection {
     collection
 }
 
-/// The same parse, after dropping one leading `?`. The form
-/// reader's fallback parses a body this way.
+/// The same parse, after dropping one leading `?`. The form reader's fallback parses a body this
+/// way.
 pub fn parse_query_helpers(text: &str) -> StringValuesCollection {
     parse_query(text.strip_prefix('?').unwrap_or(text))
 }
@@ -124,9 +123,8 @@ fn decode_component(text: &str) -> String {
     unescape_data_string(&text.replace('+', " "))
 }
 
-/// Percent-decoding: each run of `%XX` escapes is decoded as UTF-8, and any escape
-/// that does not form valid UTF-8 is left as written. A `%` not followed by two hex digits is
-/// left alone too.
+/// Percent-decoding: each run of `%XX` escapes is decoded as UTF-8, and any escape that does not
+/// form valid UTF-8 is left as written. A `%` not followed by two hex digits is left alone too.
 pub fn unescape_data_string(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -225,8 +223,8 @@ const VALUE_LENGTH_LIMIT: usize = 4 * 1024 * 1024;
 /// The longest multipart boundary.
 const BOUNDARY_LENGTH_LIMIT: usize = 70;
 
-/// The form of a request whose content type is a form type: the text fields
-/// (file parts are not form values), keys matched ignoring case. The body is read as UTF-8.
+/// The form of a request whose content type is a form type: the text fields (file parts are not
+/// form values), keys matched ignoring case. The body is read as UTF-8.
 pub fn read_form(content_type: &str, body: &[u8]) -> Result<StringValuesCollection, FormError> {
     let media_type = content_type.split(';').next().unwrap_or("").trim();
     if media_type.eq_ignore_ascii_case("multipart/form-data") {
@@ -472,10 +470,10 @@ pub fn extract_all_parameters(request: &RequestParts<'_>) -> Parameters {
     parameters
 }
 
-/// Every occurrence of a parameter, from
-/// the query and then the form, blank ones skipped. The dictionary joins a repeated key into
-/// one comma-separated value for lookups; this keeps them apart. The name is matched ignoring
-/// case, as the collections match it. A form that fails to read adds nothing.
+/// Every occurrence of a parameter, from the query and then the form, blank ones skipped. The
+/// dictionary joins a repeated key into one comma-separated value for lookups; this keeps them
+/// apart. The name is matched ignoring case, as the collections match it. A form that fails to
+/// read adds nothing.
 pub fn extract_parameter_values(request: &RequestParts<'_>, name: &str) -> Vec<String> {
     let mut values = Vec::new();
     let keep = |v: &&String| !dotnet::is_blank(v);

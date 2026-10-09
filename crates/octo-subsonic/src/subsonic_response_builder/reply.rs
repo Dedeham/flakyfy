@@ -15,8 +15,8 @@ use crate::xml::XElement;
 pub enum ReplyKind {
     /// JSON: `application/json; charset=utf-8`, with the default encoder's escaping.
     Json,
-    /// Text content: the content type exactly as given, no charset added
-    /// (`application/xml` for every Octo-built XML document).
+    /// Text content: the content type exactly as given, no charset added (`application/xml` for
+    /// every Octo-built XML document).
     Content,
     /// A file: bytes passed through as they came.
     File,

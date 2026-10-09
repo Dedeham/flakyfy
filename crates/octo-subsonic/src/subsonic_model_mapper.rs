@@ -298,8 +298,8 @@ impl SubsonicModelMapper {
         (merged_songs, merged_albums, merged_artists)
     }
 
-    /// The XML merge. Every library row here is an element, and a JSON row
-    /// cannot reach it (rows are read as JSON exactly when the merge is JSON), so one is skipped.
+    /// The XML merge. Every library row here is an element, and a JSON row cannot reach it (rows
+    /// are read as JSON exactly when the merge is JSON), so one is skipped.
     fn merge_search_results_xml(
         &self,
         local_songs: Vec<Row>,

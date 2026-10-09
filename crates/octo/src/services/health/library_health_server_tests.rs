@@ -908,3 +908,56 @@ async fn a_kept_report_lists_the_songs_as_the_library_read_them() {
     assert_eq!(ids_of(&kept.songs), ["a", "b"]);
     assert_eq!(library.reads.load(Ordering::SeqCst), 1);
 }
+
+// ---- Family ----------------------------------------------------------------------------------
+
+/// Library health over these rows, with Family on or off.
+async fn checked_with_family(family_on: bool, rows: Vec<LibrarySongRow>) -> HealthSnapshot {
+    let read_page: ReadPage = Arc::new(move |start, _| {
+        let rows = rows.clone();
+        async move {
+            let page = if start == 0 { rows.clone() } else { Vec::new() };
+            let held = page.len();
+            Some((page, held))
+        }
+        .boxed()
+    });
+    let clock = Clock::fixed(Utc.with_ymd_and_hms(2026, 10, 5, 12, 0, 0).unwrap());
+    let snapshot = Arc::new(LibrarySnapshot::with(read_page, clock.clone()));
+    let health = Arc::new(LibraryHealthService::new(
+        snapshot,
+        Arc::new(LibraryRescan::new(None)),
+        Arc::new(SettingsStore::for_tests(AppSettings::default())),
+        HealthServices {
+            scope: Some(crate::services::family::library_index::scope_for_tests(
+                family_on,
+                &[("alex", 3)],
+            )),
+            ..Default::default()
+        },
+        clock,
+    ));
+    health.report(false).await.expect("a report")
+}
+
+/// A member's own copy of a shared song is never a duplicate of it: Library health keeps to the
+/// shared library (Keep would remove the member's file). With Family off nothing changes.
+#[tokio::test]
+async fn health_never_sees_personal_libraries() {
+    let mut shared = song("a", "Song", "Album", "x", Some(2020), "flac");
+    shared.library_path = Some("/music".into());
+    shared.path = "Artist/Album/a.flac".into();
+    let mut alexs = song("b", "Song", "Album", "x", Some(2020), "mp3");
+    alexs.library_path = Some("/members/alex".into());
+    alexs.path = "Artist/Album/b.mp3".into();
+    let rows = vec![shared, alexs];
+
+    let on = checked_with_family(true, rows.clone()).await;
+    assert_eq!(on.report.checked, 1);
+    assert!(on.report.duplicates.is_empty());
+    assert_eq!(ids_of(&on.songs), ["a"]);
+
+    let off = checked_with_family(false, rows).await;
+    assert_eq!(off.report.checked, 2);
+    assert_eq!(ids_of(&off.report.duplicates[0].copies), ["a", "b"]);
+}

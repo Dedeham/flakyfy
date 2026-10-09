@@ -53,86 +53,99 @@ pub async fn list(
     else {
         return songs;
     };
-    let attempt = async {
-        let Some(jwt) = identity.ensure_admin_jwt().await.filter(|jwt| !jwt.is_empty()) else {
-            return anyhow::Ok(());
+    let walked = each_song(identity, http, base_url, |song| {
+        let text = |name: &str| {
+            song.get(name)
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
         };
-        const PAGE: usize = 1000;
-        let mut start = 0;
-        while start < 200_000 {
-            let url = format!(
-                "{}/api/song?_start={start}&_end={}&_sort=id&_order=ASC",
-                base_url.trim_end_matches('/'),
-                start + PAGE
-            );
-            let answer = HttpAnswer::read(
-                http.get(&url)
-                    .header("X-Nd-Authorization", format!("Bearer {jwt}"))
-                    .send()
-                    .await?,
-            )
-            .await?;
-            if !answer.is_success() {
-                break;
+        let Some(path) = text("path").filter(|path| !path.is_empty()) else {
+            return;
+        };
+        let relative = path
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+        let mut paths = Vec::new();
+        for base in [text("libraryPath"), Some(root.to_string())]
+            .into_iter()
+            .flatten()
+        {
+            if !base.is_empty() {
+                paths.push(full_path(&combine(&base, &relative)));
             }
-            let doc = parse_json(&answer.body)?;
-            let Some(page) = doc.as_array() else {
-                break;
-            };
-            for song in page {
-                let text = |name: &str| {
-                    song.get(name)
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                };
-                let Some(path) = text("path").filter(|path| !path.is_empty()) else {
-                    continue;
-                };
-                let relative = path
-                    .replace('\\', "/")
-                    .trim_start_matches('/')
-                    .split('/')
-                    .filter(|segment| !segment.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                let mut paths = Vec::new();
-                for base in [text("libraryPath"), Some(root.to_string())]
-                    .into_iter()
-                    .flatten()
-                {
-                    if !base.is_empty() {
-                        paths.push(full_path(&combine(&base, &relative)));
-                    }
-                }
-                // An older Navidrome reports the full path instead.
-                if path.starts_with('/') {
-                    paths.push(full_path(&path));
-                }
-                for full in paths {
-                    songs.entry(full.clone()).or_insert_with(|| NavidromeSongEntry {
-                        full_path: full,
-                        album_id: text("albumId"),
-                        artist: text("artist"),
-                        title: text("title"),
-                        album: text("album"),
-                        lyrics: text("lyrics"),
-                        id: text("id"),
-                        duration: song.get("duration").and_then(serde_json::Value::as_f64),
-                        explicit_status: text("explicitStatus"),
-                    });
-                }
-            }
-            if page.len() < PAGE {
-                break;
-            }
-            start += PAGE;
         }
-        Ok(())
-    };
-    if let Err(failure) = attempt.await {
+        // An older Navidrome reports the full path instead.
+        if path.starts_with('/') {
+            paths.push(full_path(&path));
+        }
+        for full in paths {
+            songs.entry(full.clone()).or_insert_with(|| NavidromeSongEntry {
+                full_path: full,
+                album_id: text("albumId"),
+                artist: text("artist"),
+                title: text("title"),
+                album: text("album"),
+                lyrics: text("lyrics"),
+                id: text("id"),
+                duration: song.get("duration").and_then(serde_json::Value::as_f64),
+                explicit_status: text("explicitStatus"),
+            });
+        }
+    })
+    .await;
+    if let Err(failure) = walked {
         info!("Could not list Navidrome's songs, so each file is read instead: {failure}");
     }
     songs
+}
+
+/// Walks Navidrome's native song list (`GET /api/song`, 1000 a page, as the admin), handing
+/// each song's JSON to `visit`. Answers false when there is no admin sign-in to ask with, and
+/// stops quietly at a page Navidrome refuses or that is not a list.
+pub(crate) async fn each_song(
+    identity: &NavidromeIdentityService,
+    http: &reqwest::Client,
+    base_url: &str,
+    mut visit: impl FnMut(&serde_json::Value),
+) -> anyhow::Result<bool> {
+    let Some(jwt) = identity.ensure_admin_jwt().await.filter(|jwt| !jwt.is_empty()) else {
+        return Ok(false);
+    };
+    const PAGE: usize = 1000;
+    let mut start = 0;
+    while start < 200_000 {
+        let url = format!(
+            "{}/api/song?_start={start}&_end={}&_sort=id&_order=ASC",
+            base_url.trim_end_matches('/'),
+            start + PAGE
+        );
+        let answer = HttpAnswer::read(
+            http.get(&url)
+                .header("X-Nd-Authorization", format!("Bearer {jwt}"))
+                .send()
+                .await?,
+        )
+        .await?;
+        if !answer.is_success() {
+            break;
+        }
+        let doc = parse_json(&answer.body)?;
+        let Some(page) = doc.as_array() else {
+            break;
+        };
+        for song in page {
+            visit(song);
+        }
+        if page.len() < PAGE {
+            break;
+        }
+        start += PAGE;
+    }
+    Ok(true)
 }
 
 /// `Path.Combine(base, relative)`.

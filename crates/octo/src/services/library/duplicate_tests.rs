@@ -825,3 +825,38 @@ async fn a_scan_request_is_seen_until_the_worker_takes_it() {
     stopping.cancel();
     running.await.expect("the worker ends").expect("cleanly");
 }
+
+/// With Family on, the duplicate scan never pairs a member's own copy with a shared song, and
+/// until the library index has been read the walk counts as unfinished (nothing is settled).
+#[test]
+fn duplicates_keep_to_the_shared_library() {
+    let worker_with = |family_on: bool| {
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
+        let http = reqwest::Client::new();
+        DuplicateScanWorker::new(
+            Arc::new(NoticeQueue::new()),
+            NavidromeIdentityService::new(settings.clone(), http.clone()),
+            http,
+            settings,
+            None,
+            None,
+        )
+        .with_library_scope(crate::services::family::library_index::scope_for_tests(
+            family_on,
+            &[("alex", 3)],
+        ))
+    };
+    let tracks = vec![track("a"), track("b")];
+
+    let (kept, complete) = worker_with(false).shared_only(tracks.clone(), true);
+    assert_eq!(ids(&kept), ["a", "b"]);
+    assert!(complete);
+
+    let (kept, complete) = worker_with(true).shared_only(tracks, true);
+    assert_eq!(
+        ids(&kept),
+        ["a", "b"],
+        "ids the index does not know count as shared"
+    );
+    assert!(!complete, "an index never read settles nothing");
+}

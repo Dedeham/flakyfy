@@ -541,3 +541,109 @@ async fn a_scan_count_that_is_not_an_int32_is_none() {
     let f = Fixture::answering(r#"{"subsonic-response":{"scanStatus":{"scanning":true,"count":"5"}}}"#).await;
     assert!(f.service.get_scan_status().await.is_none());
 }
+
+// ---- Scans of one library ----
+
+/// A Navidrome that signs the admin in and counts `startScan` calls per library.
+async fn scanning_navidrome() -> MockServer {
+    use wiremock::matchers::{method, path};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"token":"jwt","isAdmin":true,"username":"admin","subsonicToken":"tok","subsonicSalt":"salt"}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/startScan"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(SCAN_STATUS))
+        .mount(&server)
+        .await;
+    server
+}
+
+async fn scans_of(server: &MockServer, library: &str) -> usize {
+    server
+        .received_requests()
+        .await
+        .expect("recorded")
+        .iter()
+        .filter(|r| r.url.path() == "/rest/startScan")
+        .filter(|r| r.url.query_pairs().any(|(k, v)| k == "target" && v == library))
+        .count()
+}
+
+fn admin_service(url: &str, dir: &std::path::Path) -> LocalLibraryService {
+    let store = SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            url: Some(url.to_string()),
+            admin_username: Some("admin".into()),
+            admin_password: Some("pw".into()),
+            auto_detect_download_path: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    store.set_raw("Library:DownloadPath", Some(&dir.to_string_lossy()));
+    let settings = Arc::new(store);
+    let http = crate::services::http_client_factory::default_client();
+    LocalLibraryService::new(
+        settings.clone(),
+        http.clone(),
+        Arc::new(ExternalIdRegistry::new(None::<std::path::PathBuf>)),
+        NavidromeIdentityService::new(settings, http),
+    )
+}
+
+#[tokio::test]
+async fn targeted_scan_is_debounced_per_library() {
+    let server = scanning_navidrome().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let notice = Arc::new(tokio::sync::Notify::new());
+    let service = admin_service(&server.uri(), dir.path())
+        .with_scan_window(std::time::Duration::from_millis(300))
+        .with_scan_notice(notice.clone());
+
+    // The first call for a library scans at once; another library is not held up by it.
+    assert!(service.trigger_library_scan_of(3).await);
+    assert!(service.trigger_library_scan_of(4).await);
+    assert_eq!(scans_of(&server, "3:").await, 1);
+    assert_eq!(scans_of(&server, "4:").await, 1);
+    // The scan told the library index.
+    tokio::time::timeout(std::time::Duration::from_secs(1), notice.notified())
+        .await
+        .expect("notified");
+
+    // Calls inside the window are never dropped: they fold into one more scan after it.
+    assert!(service.trigger_library_scan_of(3).await);
+    assert!(service.trigger_library_scan_of(3).await);
+    assert_eq!(
+        scans_of(&server, "3:").await,
+        1,
+        "nothing more before the window ends"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert_eq!(
+        scans_of(&server, "3:").await,
+        2,
+        "one trailing scan for both calls"
+    );
+    assert_eq!(scans_of(&server, "4:").await, 1);
+
+    // After the trailing scan the window starts again from it.
+    assert!(service.trigger_library_scan_of(3).await);
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert_eq!(scans_of(&server, "3:").await, 3);
+}
+
+#[tokio::test]
+async fn a_full_scan_tells_the_library_index() {
+    let f = Fixture::new().await;
+    let notice = Arc::new(tokio::sync::Notify::new());
+    let service = service_for(&f.server.uri(), f.dir.path()).with_scan_notice(notice.clone());
+    assert!(service.trigger_library_scan(true).await);
+    tokio::time::timeout(std::time::Duration::from_secs(1), notice.notified())
+        .await
+        .expect("notified");
+}

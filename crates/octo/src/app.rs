@@ -55,7 +55,8 @@ use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::family::{
-    FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault, RequestStore, SavedStore,
+    FamilyPlaylistStore, FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, NavidromeAdmin,
+    RequestStore, SavedStore, ScopeResolver,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -488,6 +489,12 @@ pub struct AppInner {
     pub family_playlists: Arc<FamilyPlaylistStore>,
     /// `family-pool.json`: the one copy of each member download and who links it.
     pub family_pool: Arc<FamilyPoolStore>,
+    /// Octo's admin calls to Navidrome for the family (accounts, libraries, players, scans).
+    pub navidrome_admin: Arc<NavidromeAdmin>,
+    /// Which library every song is in, read from Navidrome while Family is on.
+    pub library_index: Arc<LibraryIndex>,
+    /// Whether a song is shared or a member's own, for work that must keep to one or the other.
+    pub library_scope: ScopeResolver,
     /// Whether Family's background work has been started (see [`AppInner::start_family`]).
     family_started: AtomicBool,
 }
@@ -501,6 +508,7 @@ fn library_health(
     edits: &Arc<LibraryEditService>,
     executor: &Arc<LibraryActionExecutor>,
     upgrade_sources: &Arc<UpgradeSources>,
+    scope: &ScopeResolver,
 ) -> Arc<LibraryHealthService> {
     Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
@@ -510,6 +518,7 @@ fn library_health(
             edits: Some(Arc::clone(edits)),
             executor: Some(Arc::clone(executor)),
             upgrade_sources: Some(Arc::clone(upgrade_sources)),
+            scope: Some(scope.clone()),
         },
         Clock::system(),
     ))
@@ -910,6 +919,9 @@ struct NavidromeServices {
     navidrome_song_path_resolver: Arc<NavidromeSongPathResolver>,
     navidrome_playlist_api: Arc<NavidromePlaylistApi>,
     startup_validation: Arc<StartupValidationOrchestrator>,
+    navidrome_admin: Arc<NavidromeAdmin>,
+    library_index: Arc<LibraryIndex>,
+    library_scope: ScopeResolver,
 }
 
 impl NavidromeServices {
@@ -924,12 +936,24 @@ impl NavidromeServices {
     ) -> Self {
         let http = http_client_factory::default_client();
         let navidrome_identity = NavidromeIdentityService::new(Arc::clone(settings), http.clone());
+        let library_index = Arc::new(LibraryIndex::new(
+            navidrome_identity.clone(),
+            http.clone(),
+            Arc::clone(settings),
+            Arc::new(tokio::sync::Notify::new()),
+        ));
+        let library_scope = ScopeResolver::new(
+            Arc::clone(settings),
+            Arc::clone(&stores.family_store),
+            Arc::clone(&library_index),
+        );
         let library = LocalLibraryService::new(
             Arc::clone(settings),
             http.clone(),
             Arc::clone(&stores.external_id_registry),
             navidrome_identity.clone(),
-        );
+        )
+        .with_scan_notice(library_index.scan_notice());
         if create_download_directory {
             library.create_download_directory();
         }
@@ -954,6 +978,13 @@ impl NavidromeServices {
                 Arc::clone(settings),
             )),
             startup_validation: Arc::new(StartupValidationOrchestrator::new(validators)),
+            navidrome_admin: Arc::new(NavidromeAdmin::new(
+                navidrome_identity.clone(),
+                http.clone(),
+                Arc::clone(settings),
+            )),
+            library_index,
+            library_scope,
             navidrome_identity,
             local_library,
             http,
@@ -1344,17 +1375,20 @@ impl GenreAndCoverJobs {
         let explicit_backfill_store = Arc::new(ExplicitBackfillStore::new(
             config_dir.map(|dir| dir.join("explicit-backfill.json")),
         ));
-        let explicit_backfill = Arc::new(ExplicitBackfill::new(
-            explicit_backfill_store.clone(),
-            tag_edit_journal.clone(),
-            Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
-            settings.clone(),
-            ExplicitBackfillServices {
-                identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
-                http: Some(navidrome.http.clone()),
-                library: Some(navidrome.local_library.clone()),
-            },
-        ));
+        let explicit_backfill = Arc::new(
+            ExplicitBackfill::new(
+                explicit_backfill_store.clone(),
+                tag_edit_journal.clone(),
+                Arc::new(DeezerExplicitCatalog::new(clients.deezer_metadata.clone())),
+                settings.clone(),
+                ExplicitBackfillServices {
+                    identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
+                    http: Some(navidrome.http.clone()),
+                    library: Some(navidrome.local_library.clone()),
+                },
+            )
+            .with_library_scope(navidrome.library_scope.clone()),
+        );
         GenreAndCoverJobs {
             genre_backfill_store,
             genre_backfill_journal,
@@ -1923,17 +1957,20 @@ impl LibraryJobs {
                 picks: Some(stores.download_picks.clone()),
             },
         ));
-        let quality_upgrade_worker = Arc::new(QualityUpgradeWorker::new(
-            stores.quality_upgrade_store.clone(),
-            executor.clone(),
-            acquisition.acquisition_activity.clone(),
-            navidrome.navidrome_playlist_api.clone(),
-            navidrome.navidrome_identity.clone(),
-            settings.clone(),
-            Some(soulseek_link),
-            Some(stores.upgrade_queue.clone()),
-            Some(acquisition.upgrade_sources.clone()),
-        ));
+        let quality_upgrade_worker = Arc::new(
+            QualityUpgradeWorker::new(
+                stores.quality_upgrade_store.clone(),
+                executor.clone(),
+                acquisition.acquisition_activity.clone(),
+                navidrome.navidrome_playlist_api.clone(),
+                navidrome.navidrome_identity.clone(),
+                settings.clone(),
+                Some(soulseek_link),
+                Some(stores.upgrade_queue.clone()),
+                Some(acquisition.upgrade_sources.clone()),
+            )
+            .with_library_scope(navidrome.library_scope.clone()),
+        );
         let notice_playlist_worker = Arc::new(NoticePlaylistWorker::new(
             stores.notice_queue.clone(),
             navidrome.navidrome_playlist_api.clone(),
@@ -1943,14 +1980,17 @@ impl LibraryJobs {
             clients.music_brainz.clone(),
             settings.clone(),
         ));
-        let duplicate_scan_worker = Arc::new(DuplicateScanWorker::new(
-            stores.notice_queue.clone(),
-            navidrome.navidrome_identity.clone(),
-            navidrome.http.clone(),
-            settings.clone(),
-            Some(navidrome.navidrome_song_path_resolver.clone()),
-            Some(Arc::new(SpectrumAnalyzer::new())),
-        ));
+        let duplicate_scan_worker = Arc::new(
+            DuplicateScanWorker::new(
+                stores.notice_queue.clone(),
+                navidrome.navidrome_identity.clone(),
+                navidrome.http.clone(),
+                settings.clone(),
+                Some(navidrome.navidrome_song_path_resolver.clone()),
+                Some(Arc::new(SpectrumAnalyzer::new())),
+            )
+            .with_library_scope(navidrome.library_scope.clone()),
+        );
         let fingerprint_sweep_verifier = Arc::new(FingerprintSweepVerifier::new());
         let resolver = navidrome.navidrome_song_path_resolver.clone();
         let library_review_sweep_worker = Arc::new(LibraryReviewSweepWorker::new(
@@ -2022,6 +2062,11 @@ impl AppInner {
         {
             tracing::warn!("FAMILY family.key could not be made: {e}");
         }
+        let index = self.library_index.clone();
+        let library = self.local_library.clone();
+        self.workers.register("LibraryIndex", move |token| {
+            index.clone().run(token, library.clone())
+        });
         let store = self.family_store.clone();
         self.workers.register("FamilyStore", move |token| {
             let store = store.clone();
@@ -2085,6 +2130,11 @@ impl AppState {
             share_switch.clone().run(stopping)
         });
         let navidrome = NavidromeServices::build(&settings, &stores, true, vec![soulseek.validator]);
+        let family_navidrome = (
+            navidrome.navidrome_admin.clone(),
+            navidrome.library_index.clone(),
+            navidrome.library_scope.clone(),
+        );
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, Some(&config_dir), &navidrome);
         lyrics_library.register_workers(&workers);
@@ -2190,6 +2240,7 @@ impl AppState {
             &library_edits,
             &library_actions.executor,
             &acquisition.upgrade_sources,
+            &family_navidrome.2,
         );
         let imports = Imports::build(
             &settings,
@@ -2338,6 +2389,9 @@ impl AppState {
             family_saved: stores.family_saved,
             family_playlists: stores.family_playlists,
             family_pool: stores.family_pool,
+            navidrome_admin: family_navidrome.0,
+            library_index: family_navidrome.1,
+            library_scope: family_navidrome.2,
             family_started: AtomicBool::new(false),
         };
         inner.start_family();
@@ -2397,6 +2451,11 @@ impl AppState {
             .clone()
             .unwrap_or_else(|| soulseek.metadata.clone());
         let navidrome = NavidromeServices::build(&settings, &stores, false, vec![soulseek.validator]);
+        let family_navidrome = (
+            navidrome.navidrome_admin.clone(),
+            navidrome.library_index.clone(),
+            navidrome.library_scope.clone(),
+        );
         lyrics.sidecar_writer.set_library(navidrome.local_library.clone());
         let lyrics_library = lyrics.library_job(&settings, None, &navidrome);
         // The genre backfill and the cover upgrade keep their runs in memory.
@@ -2508,6 +2567,7 @@ impl AppState {
             &library_edits,
             &library_actions.executor,
             &acquisition.upgrade_sources,
+            &family_navidrome.2,
         );
         // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
         let imports = Imports::build(
@@ -2656,6 +2716,9 @@ impl AppState {
             family_saved: stores.family_saved,
             family_playlists: stores.family_playlists,
             family_pool: stores.family_pool,
+            navidrome_admin: family_navidrome.0,
+            library_index: family_navidrome.1,
+            library_scope: family_navidrome.2,
             family_started: AtomicBool::new(false),
         };
         AppState {
@@ -3012,7 +3075,7 @@ mod tests {
         assert!(!dir.path().join("family.json").exists());
     }
 
-    /// Turning Family on makes the key and the store's flush worker, once.
+    /// Turning Family on makes the key, the store's flush worker and the library index worker, once.
     #[test]
     fn family_on_makes_the_key_and_the_flush_worker_once() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -3034,6 +3097,13 @@ mod tests {
             .filter(|s| s.name == "FamilyStore")
             .count();
         assert_eq!(flushers, 1);
+        let indexes = state
+            .workers
+            .status()
+            .into_iter()
+            .filter(|s| s.name == "LibraryIndex")
+            .count();
+        assert_eq!(indexes, 1);
         assert!(state.family_vault.has_key());
         assert_eq!(
             std::fs::read(dir.path().join("family.key")).expect("made").len(),

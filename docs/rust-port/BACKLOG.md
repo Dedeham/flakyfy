@@ -1347,7 +1347,7 @@ observable changes.
 - [x] G5-1 Pure model (`octo-core/src/family/`): abilities, policy, request, device (with the trusted-proxy client address), codes, endpoint classes and `docs/family/opensubsonic-endpoints.txt`
 - [x] G5-2 Settings: the `Family` section, appsettings.json, the dashboard document, compose `/members`, install.sh
 - [x] G5-3 Vault, passwords and stores: `family.key` (AEAD half and web JWT half), `family.json`, requests, saved songs and albums, family playlists, the family pool
-- [ ] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`
+- [x] G5-4 Navidrome admin client, targeted scans, `LibraryIndex` and `LibraryScope`. The shared scope is wired into Library health, the weekly quality upgrade, explicit marks and the duplicate scan; album ownership, heart ownership, outside dedupe, the review sweep and the sync catalog take it in G5-7 and G5-14
 - [ ] G5-5 Member bridge, family gate, web session (Octo JWT), device registry
 - [ ] G5-6 Request and answer rules, audio gate, library write gate, player cap sync, bypass suite, stream tracker
 - [ ] G5-7 Heart, save, family pool, personal library, requests, Request a copy playlists, Remove from my library

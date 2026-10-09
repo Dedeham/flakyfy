@@ -5,6 +5,8 @@
 pub mod family_playlist_store;
 pub mod family_pool_store;
 pub mod family_store;
+pub mod library_index;
+pub mod navidrome_admin;
 pub mod passwords;
 pub mod request_store;
 pub mod saved_store;
@@ -14,6 +16,8 @@ pub mod vault;
 pub use family_playlist_store::{FamilyPlaylist, FamilyPlaylistEntry, FamilyPlaylistStore};
 pub use family_pool_store::{FamilyPoolStore, PoolFile};
 pub use family_store::{FamilyStore, Member, PairOutcome, SharedLibraries};
+pub use library_index::{IndexedSong, LibraryIndex, LibraryScope, ScopeResolver};
+pub use navidrome_admin::{NavidromeAdmin, NdLibrary, NdPlayer, NdUser};
 pub use request_store::RequestStore;
 pub use saved_store::{SavedAlbum, SavedSong, SavedStore};
 pub use vault::FamilyVault;

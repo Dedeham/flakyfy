@@ -68,7 +68,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
 use crate::services::common::{
-    AcquisitionPlace, AcquisitionState, AcquisitionTracker, DownloadConcurrency, DownloadPicks,
+    AcquisitionPlace, AcquisitionState, AcquisitionTracker, DownloadArrivals, DownloadConcurrency, DownloadPicks,
 };
 use crate::services::cover_art::DownloadCoverResolver;
 use crate::services::family::FamilyPlacement;
@@ -277,6 +277,8 @@ pub struct DownloadServices {
     /// The family pool, where members' downloads land. `None`, or Family off, places every
     /// download in the shared library as always.
     pub family: Option<Arc<dyn FamilyPlacement>>,
+    /// Told of every song whose file lands in the music folder.
+    pub arrivals: Option<Arc<DownloadArrivals>>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -1074,6 +1076,9 @@ impl BaseDownloadService {
             .filter(|&seconds| seconds > 0)
         {
             self.metadata.remember_file_length(external_id, seconds);
+        }
+        if !is_cache && let Some(arrivals) = &self.services.arrivals {
+            arrivals.arrived(&key_of(external_provider, external_id), &local_path);
         }
 
         if let Some(info) = self.active_downloads.lock().get_mut(song_id) {

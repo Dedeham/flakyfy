@@ -393,10 +393,11 @@ services:
       # update outlive the next `docker compose up -d`.
       - ytdlp-bin:/opt/ytdlp
 
-  # Reads each song once and says how it sounds, for Sounds alike radio. Read-only on the
-  # music; each file is read by a child process, so a damaged one costs only itself.
-  # Always started, so an update brings it with no change to .env. RADIO_SOUNDS_ALIKE=false
-  # turns Sounds alike off: Octo stops asking, and octo-sonic waits without reading anything.
+  # Reads each song once: its transition profile, for the Octo apps' blends, and how it
+  # sounds, for Sounds alike radio. Read-only on the music; each file is read by a child
+  # process, so a damaged one costs only itself. Always started, so an update brings it with
+  # no change to .env. RADIO_SOUNDS_ALIKE=false turns Sounds alike radio off: octo-sonic
+  # still makes transition profiles, and no longer works out how songs sound.
   # An older .env with COMPOSE_PROFILES=sonic still works; the profile is simply not needed.
   # Pulled, not built, like the shim: compiling it (Rust and FFmpeg) takes minutes and more
   # memory than a small machine has. octo-sonic-source (below) builds it from this folder.

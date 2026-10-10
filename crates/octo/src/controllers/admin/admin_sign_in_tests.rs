@@ -35,8 +35,11 @@ struct FakeNavidrome {
     user_list_as_listener: AtomicBool,
     admin2_demoted: AtomicBool,
     non_admin_sees_self: AtomicBool,
-    /// octo-sonic with Sounds alike turned off in .env (RADIO_SOUNDS_ALIKE=false).
+    /// An octo-sonic from before transition profiles, with Sounds alike turned off in .env
+    /// (RADIO_SOUNDS_ALIKE=false): it reads nothing.
     sonic_off: AtomicBool,
+    /// octo-sonic with Sounds alike turned off in .env: it makes transition profiles only.
+    sonic_profiles_only: AtomicBool,
 }
 
 impl FakeNavidrome {
@@ -87,6 +90,8 @@ async fn navidrome(
                 r#"{"error":"Sounds alike is off (RADIO_SOUNDS_ALIKE=false)","featuresVersion":2,"off":true,"ok":false}"#,
             )
                 .into_response()
+        } else if fake.flag(&fake.sonic_profiles_only) {
+            answer(r#"{"featuresVersion":2,"ok":true,"soundsAlike":false,"transitionVersion":1}"#.into())
         } else {
             answer(r#"{"featuresVersion":2,"ok":true}"#.into())
         };
@@ -419,6 +424,42 @@ async fn octo_sonic_turned_off_in_env_is_off_not_down() {
         assert_eq!(sonic["configured"], configured, "{off}");
         assert_eq!(sonic["detail"], detail, "{off}");
     }
+}
+
+/// With Sounds alike off, in .env or on the Radio page, octo-sonic still runs for transition
+/// profiles, and the status page says so instead of calling it off.
+#[tokio::test]
+async fn octo_sonic_with_sounds_alike_off_shows_it_runs_for_transitions() {
+    let running = "running for transitions; Sounds alike is off";
+    let factory = SignInFactory::new().await;
+    factory
+        .navidrome
+        .sonic_profiles_only
+        .store(true, Ordering::SeqCst);
+    let token = factory.state.browse_sessions.create("admin");
+    let sonic = factory.get_with_token("/api/admin/status", &token).await.json()["services"]["sonic"].clone();
+    assert_eq!(
+        (sonic["ok"].clone(), sonic["configured"].clone()),
+        (json!(true), json!(true))
+    );
+    assert_eq!(sonic["detail"], running);
+
+    let factory = SignInFactory::new().await;
+    let mut settings = (*factory.state.settings.current()).clone();
+    settings.radio_sources.sounds_alike = false;
+    factory.state.settings.set(settings);
+    let token = factory.state.browse_sessions.create("admin");
+    let sonic = factory.get_with_token("/api/admin/status", &token).await.json()["services"]["sonic"].clone();
+    // An octo-sonic that does not say it makes profiles is plainly off.
+    assert_eq!(sonic["detail"], "Sounds alike is off");
+    assert_eq!(sonic["configured"], false);
+    factory
+        .navidrome
+        .sonic_profiles_only
+        .store(true, Ordering::SeqCst);
+    let sonic = factory.get_with_token("/api/admin/status", &token).await.json()["services"]["sonic"].clone();
+    assert_eq!(sonic["detail"], running);
+    assert_eq!(sonic["configured"], true);
 }
 
 // ---- signing in with Navidrome ------------------------------------------------------------------

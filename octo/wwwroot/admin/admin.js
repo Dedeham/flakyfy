@@ -2704,7 +2704,7 @@ ready.then(loadReviewSweep);
 // Not while the sign-in screen is up: every refused poll would wait behind it and fire at once after.
 setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadReviewSweep(); }, 30000);
 
-// Sounds alike: octo-sonic's analysis of every song, on the Last.fm radio page.
+// octo-sonic's analysis of every song (how it sounds, and its transition profile), on the radio page.
 const sonicStates = { Off: 'Off', Paused: 'Paused', Waiting: 'Waiting', Running: 'Analyzing', Done: 'Up to date' };
 
 async function loadSonic() {
@@ -2715,7 +2715,9 @@ async function loadSonic() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const s = await response.json();
     const parts = [`${sonicStates[s.state] || s.state}.`];
-    if (s.total > 0) parts.push(`${s.analysed} of ${s.total} songs analyzed (pass ${s.pass}).`);
+    if (s.total > 0 && s.readsSound === false) parts.push(`${s.profiled} of ${s.total} songs have a transition profile (pass ${s.pass}).`);
+    else if (s.total > 0) parts.push(`${s.analysed} of ${s.total} songs analyzed (pass ${s.pass}).`);
+    if (s.readsSound !== false && s.profiled > 0) parts.push(`${s.profiled} have a transition profile.`);
     if (s.failed > 0) parts.push(`${s.failed} could not be read.`);
     if (s.skipped > 0) parts.push(`${s.skipped} left out: Octo cannot find the file, or the song has no length or runs over 45 minutes.`);
     if (s.reason) parts.push(s.reason);

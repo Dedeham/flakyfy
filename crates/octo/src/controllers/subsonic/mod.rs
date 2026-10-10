@@ -11,6 +11,7 @@ pub mod playlists;
 pub mod search;
 pub mod similar_songs;
 pub mod top_songs;
+pub mod transitions;
 
 #[cfg(test)]
 pub(crate) mod route_tests;
@@ -59,6 +60,8 @@ mod scrobble_tests;
 mod search_album_ownership_tests;
 #[cfg(test)]
 mod stream_length_tests;
+#[cfg(test)]
+mod transitions_tests;
 
 use axum::routing::get;
 
@@ -150,4 +153,5 @@ pub fn routes() -> RouteSet {
         .merge(top_songs::routes())
         .merge(imports::routes())
         .merge(family::routes())
+        .merge(transitions::routes())
 }

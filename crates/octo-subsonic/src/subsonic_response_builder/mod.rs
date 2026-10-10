@@ -14,6 +14,7 @@ mod library_actions;
 mod lyrics;
 mod reply;
 mod top_songs;
+mod transition_profile;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -82,6 +83,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (IMPORTS_EXTENSION, &[1, IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
+    (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
@@ -98,6 +100,11 @@ pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 /// playlists whose entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
 pub const LISTS_EXTENSION: &str = "octoLists";
 pub const LISTS_EXTENSION_VERSION: i32 = 1;
+
+/// getTransitionProfile: each song's transition profile (where it can blend into the next
+/// song), made by octo-sonic. Listed while Sounds alike runs, since the same reading makes both.
+pub const TRANSITIONS_EXTENSION: &str = "octoTransitions";
+pub const TRANSITIONS_EXTENSION_VERSION: i32 = 1;
 
 /// Fields only a file in the library can truthfully have.
 pub const FILE_ONLY_FIELDS: &[&str] = &[
@@ -585,8 +592,9 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs and
-    /// octoRadioSources are left out; [`Self::merge_open_subsonic_extensions_with`] lists them.
+    /// (C#'s defaults: `lyrics_choices` true, `library_actions` false.) octoTopSongs,
+    /// octoRadioSources and octoTransitions are left out;
+    /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
         format: &str,
@@ -603,13 +611,15 @@ impl SubsonicResponseBuilder {
             library_actions,
             false,
             false,
+            false,
         )
     }
 
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
-    /// discovery being off hides, and octoRadioSources while radio can answer
-    /// (`radio_sources`). The C# defaults were true and false.
+    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`), and
+    /// octoTransitions while octo-sonic makes profiles (`transitions`). The C# defaults were
+    /// true and false.
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -619,6 +629,7 @@ impl SubsonicResponseBuilder {
         library_actions: bool,
         top_songs: bool,
         radio_sources: bool,
+        transitions: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
@@ -632,6 +643,7 @@ impl SubsonicResponseBuilder {
             .filter(|(name, _)| library_actions || *name != LIBRARY_ACTIONS_EXTENSION)
             .filter(|(name, _)| top_songs || *name != TOP_SONGS_EXTENSION)
             .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
+            .filter(|(name, _)| transitions || *name != TRANSITIONS_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {

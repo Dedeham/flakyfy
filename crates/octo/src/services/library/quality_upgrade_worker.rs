@@ -70,6 +70,8 @@ pub struct LibrarySongRow {
     pub album_artists: Vec<String>,
     /// When Navidrome first saw the file: the order its Subsonic song list (search3) gives.
     pub added_utc: Option<DateTime<Utc>>,
+    /// The tempo in the file's BPM tag, when it has one (Navidrome sends 0 for none).
+    pub bpm: Option<i32>,
 }
 
 impl Default for LibrarySongRow {
@@ -105,6 +107,7 @@ impl Default for LibrarySongRow {
             artists: Vec::new(),
             album_artists: Vec::new(),
             added_utc: None,
+            bpm: None,
         }
     }
 }
@@ -714,6 +717,7 @@ pub fn parse_songs(root: &Value) -> Result<Option<(Vec<LibrarySongRow>, usize)>,
             artists: participants(song, "artist"),
             album_artists: participants(song, "albumartist"),
             added_utc: text(song, "createdAt").and_then(|created| added_utc(&created)),
+            bpm: int(song, "bpm").filter(|&bpm| bpm > 0),
         });
     }
     Ok(Some((rows, count)))

@@ -47,6 +47,7 @@ public sealed class ImportsSubsonicController : ControllerBase
         var user = parameters.GetValueOrDefault("u");
         if (string.IsNullOrWhiteSpace(user))
             return (null, _responses.CreateError("json", 0, "Sign in with a username to import; an API key alone does not say who is asking."), parameters);
+        Octo.Services.Common.VerifiedRequests.Notify(HttpContext.RequestServices, parameters);
         return (user.Trim(), null, parameters);
     }
 

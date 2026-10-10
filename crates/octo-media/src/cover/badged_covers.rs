@@ -18,14 +18,68 @@ pub const MAX_BYTES: usize = 128 * 1024 * 1024;
 struct Kept {
     bytes: Arc<Vec<u8>>,
     until: Instant,
+    /// Which put this is, so a key put again leaves its older place in `order` stale.
+    seq: u64,
 }
 
 #[derive(Default)]
 struct State {
     entries: HashMap<String, Kept>,
-    /// Keys oldest first.
-    order: VecDeque<String>,
+    /// Keys oldest put first, each with the put it was; a place whose put is not the key's
+    /// current one is stale and skipped, so removing a key never searches this.
+    order: VecDeque<(u64, String)>,
     bytes: usize,
+    next_seq: u64,
+}
+
+impl State {
+    fn remove(&mut self, key: &str) {
+        if let Some(kept) = self.entries.remove(key) {
+            self.bytes -= kept.bytes.len();
+        }
+    }
+
+    fn is_current(&self, seq: u64, key: &str) -> bool {
+        self.entries.get(key).is_some_and(|kept| kept.seq == seq)
+    }
+
+    /// Removes the oldest cover kept; false when there is none.
+    fn remove_oldest(&mut self) -> bool {
+        while let Some((seq, key)) = self.order.pop_front() {
+            if self.is_current(seq, &key) {
+                self.remove(&key);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Removes the covers expired at `now`: every cover is kept as long, so they are the oldest.
+    fn remove_expired(&mut self, now: Instant) {
+        while let Some((seq, key)) = self.order.front() {
+            let expired = match self.entries.get(key) {
+                Some(kept) if kept.seq == *seq => kept.until <= now,
+                // Stale: dropped as it is reached.
+                _ => true,
+            };
+            if !expired {
+                break;
+            }
+            let (_, key) = self.order.pop_front().expect("a front");
+            if self.entries.get(&key).is_some_and(|kept| kept.until <= now) {
+                self.remove(&key);
+            }
+        }
+    }
+
+    /// Drops the stale places once they outnumber the covers, so `order` stays in proportion.
+    fn compact(&mut self) {
+        if self.order.len() > 2 * self.entries.len() + 16 {
+            let entries = &self.entries;
+            self.order
+                .retain(|(seq, key)| entries.get(key).is_some_and(|kept| kept.seq == *seq));
+        }
+    }
 }
 
 /// The badged covers, by key.
@@ -57,7 +111,7 @@ impl BadgedCovers {
         if fresh {
             return state.entries.get(key).map(|kept| Arc::clone(&kept.bytes));
         }
-        remove(&mut state, key);
+        state.remove(key);
         None
     }
 
@@ -67,32 +121,27 @@ impl BadgedCovers {
             return;
         }
         let mut state = self.state.lock();
-        remove(&mut state, &key);
+        state.remove(&key);
         // Expired covers go first, then the oldest, until the new one fits.
-        let expired: Vec<String> = state
-            .entries
-            .iter()
-            .filter(|(_, kept)| kept.until <= now)
-            .map(|(key, _)| key.clone())
-            .collect();
-        for old in expired {
-            remove(&mut state, &old);
-        }
+        state.remove_expired(now);
         while state.entries.len() >= self.max_entries || state.bytes + bytes.len() > self.max_bytes {
-            let Some(oldest) = state.order.front().cloned() else {
+            if !state.remove_oldest() {
                 break;
-            };
-            remove(&mut state, &oldest);
+            }
         }
+        let seq = state.next_seq;
+        state.next_seq += 1;
         state.bytes += bytes.len();
-        state.order.push_back(key.clone());
+        state.order.push_back((seq, key.clone()));
         state.entries.insert(
             key,
             Kept {
                 bytes,
                 until: now + KEEP_FOR,
+                seq,
             },
         );
+        state.compact();
     }
 
     pub fn len(&self) -> usize {
@@ -101,13 +150,6 @@ impl BadgedCovers {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-}
-
-fn remove(state: &mut State, key: &str) {
-    if let Some(kept) = state.entries.remove(key) {
-        state.bytes -= kept.bytes.len();
-        state.order.retain(|k| k != key);
     }
 }
 
@@ -144,6 +186,38 @@ mod tests {
         assert_eq!(covers.len(), 2);
         assert_eq!(covers.get("a", now), None);
         assert!(covers.get("b", now).is_some() && covers.get("c", now).is_some());
+    }
+
+    #[test]
+    fn keeping_one_cover_again_and_again_keeps_the_book_small() {
+        let covers = BadgedCovers::new(10, 1000);
+        let now = Instant::now();
+        covers.put("b".into(), cover(1), now);
+        for _ in 0..10_000 {
+            covers.put("a".into(), cover(1), now);
+        }
+
+        let state = covers.state.lock();
+        assert_eq!(state.entries.len(), 2);
+        assert!(
+            state.order.len() <= 2 * state.entries.len() + 16,
+            "{}",
+            state.order.len()
+        );
+    }
+
+    #[test]
+    fn a_cover_put_again_is_the_newest_and_outlives_older_ones() {
+        let covers = BadgedCovers::new(2, 1000);
+        let now = Instant::now();
+        covers.put("a".into(), cover(1), now);
+        covers.put("b".into(), cover(1), now);
+        covers.put("a".into(), cover(2), now);
+        covers.put("c".into(), cover(1), now);
+
+        assert_eq!(covers.get("b", now), None);
+        assert_eq!(covers.get("a", now), Some(cover(2)));
+        assert!(covers.get("c", now).is_some());
     }
 
     #[test]

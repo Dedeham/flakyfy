@@ -271,3 +271,13 @@ async fn recording_credits_answer_every_id_in_one_search() {
     assert_eq!(again, credits);
     assert_eq!(calls(&server).await.len(), 1);
 }
+
+#[test]
+fn the_kept_answers_are_dropped_before_they_outgrow_their_bound() {
+    let mut map: HashMap<String, u32> = (0..3).map(|i| (i.to_string(), i)).collect();
+    make_room(&mut map, 1, 4);
+    assert_eq!(map.len(), 3, "room for one more");
+    make_room(&mut map, 2, 4);
+    assert!(map.is_empty(), "no room for two: the old answers go");
+    assert_eq!(KNOWN_MAX, 10_000);
+}

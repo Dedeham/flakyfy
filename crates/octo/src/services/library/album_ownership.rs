@@ -49,11 +49,10 @@ pub struct LibraryAlbumIndex {
     rows: Vec<Arc<LibrarySongRow>>,
 }
 
-/// Lenient: a length within the ownership tolerance.
-static LENIENT: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
-    length_tolerance_seconds: Some(LibraryOwnership::DURATION_TOLERANCE_SECONDS),
-    ..Default::default()
-});
+/// A length within the ownership tolerance, and the lookup reading: a credit written another way
+/// or a title in another script is the same song, a typo is not.
+static LENIENT: LazyLock<SongMatchOptions> =
+    LazyLock::new(|| SongIdentity::owned(LibraryOwnership::DURATION_TOLERANCE_SECONDS));
 
 impl LibraryAlbumIndex {
     pub fn new(rows: impl IntoIterator<Item = LibrarySongRow>) -> Self {

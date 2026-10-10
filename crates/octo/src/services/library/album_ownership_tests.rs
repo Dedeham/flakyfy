@@ -707,3 +707,38 @@ async fn a_failed_read_is_not_tried_again_at_once() {
     pages.fail.store(false, Ordering::SeqCst);
     assert!(snapshot.current().await.is_some());
 }
+
+fn plain_row(id: &str, artist: &str, title: &str, seconds: i32) -> LibrarySongRow {
+    LibrarySongRow {
+        id: id.into(),
+        path: format!("{artist}/{title}.flac"),
+        suffix: "flac".into(),
+        bit_rate: 900,
+        title: title.into(),
+        artist: artist.into(),
+        duration: Some(seconds),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_catalog_credit_written_last_name_first_finds_the_librarys_song() {
+    let index = LibraryAlbumIndex::new([plain_row("1", "Luis Fonsi", "Despacito", 229)]);
+    let found = |artist: &str, seconds: i32| {
+        index
+            .find("Despacito", Some(artist), Some(seconds), &[], None)
+            .map(|row| row.id.clone())
+    };
+    assert_eq!(found("Fonsi, Luis", 230).as_deref(), Some("1"));
+    assert_eq!(found("Luis Fonsi Tribute Band", 229), None);
+}
+
+#[test]
+fn a_catalog_title_a_typo_away_is_not_the_librarys_song() {
+    let index = LibraryAlbumIndex::new([plain_row("1", "Imagine Dragons", "Believer", 204)]);
+    assert!(
+        index
+            .find("Beleiver", Some("Imagine Dragons"), Some(204), &[], None)
+            .is_none()
+    );
+}

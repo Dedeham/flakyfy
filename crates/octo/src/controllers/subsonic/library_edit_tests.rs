@@ -903,7 +903,7 @@ async fn lookup_an_unknown_song_is_unresolved_with_the_lookup_shape() {
 
 // ---- The dashboard's trash, and undoing a cleared tag ------------------------------------
 
-/// The Recently removed half of AdminDownloadsController, which answers from the same trash:
+/// The dashboard's Recently removed list, which answers from the same trash:
 /// signed out it is refused, signed in it lists the song with its own files and puts it back.
 #[tokio::test]
 async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {

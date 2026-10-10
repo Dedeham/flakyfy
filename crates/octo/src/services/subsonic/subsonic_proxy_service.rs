@@ -482,8 +482,8 @@ impl SubsonicProxyService {
 
     /// Relays a stream request to the Subsonic server, answering the client directly: the
     /// upstream status (206 for a range), the headers a player needs to seek, and the body
-    /// streamed as it arrives. A non-success status is a bare `StatusCodeResult` (which
-    /// `[ApiController]` turned into a ProblemDetails from 400 up); any failure is a 500
+    /// streamed as it arrives. A non-success status is a bare status answer (a ProblemDetails
+    /// from 400 up, an empty answer below); any failure is a 500
     /// `{"error": "Error streaming from Subsonic: ..."}`.
     pub async fn relay_stream<I, K, V>(&self, parameters: I) -> Response
     where
@@ -1089,8 +1089,7 @@ fn split_outside_quotes(line: &str) -> Vec<String> {
     parts
 }
 
-/// A bodiless `StatusCodeResult`, as `[ApiController]` rendered it: a ProblemDetails from 400
-/// up, an empty answer below.
+/// A bodiless status answer: a ProblemDetails from 400 up, an empty answer below.
 fn status_code_result(status: StatusCode) -> Response {
     if status.as_u16() >= 400 {
         problem(status)

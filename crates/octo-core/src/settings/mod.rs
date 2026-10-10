@@ -145,8 +145,8 @@ pub fn normalize_server_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
 }
 
-/// `Configuration.GetSection(name).Get<T>()`, collecting conversion warnings under the
-/// section's path. AdminController read `Updates` this way on every request.
+/// The config section `name` bound into `T`, collecting conversion warnings under the
+/// section's path. The dashboard reads `Updates` this way on every request.
 pub fn bind_section<T: DeserializeOwned + Default>(
     tree: &ConfigTree,
     name: &str,

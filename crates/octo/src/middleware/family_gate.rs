@@ -75,7 +75,7 @@ use crate::services::subsonic::IncomingRequest;
 mod reading;
 pub use reading::{GateReading, Unverified, Verified, credential_of};
 
-/// The largest body the gate reads (Kestrel's default request limit, as the handlers use).
+/// The largest body the gate reads (30 MB, the same limit the handlers use).
 const MAX_BODY: usize = 30_000_000;
 /// The largest body an `importFile` call may carry: the file reader's own limit, and room for
 /// the form around it.

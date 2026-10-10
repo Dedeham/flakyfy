@@ -807,10 +807,9 @@ fn kinds(ids: &[String]) -> String {
         .collect()
 }
 
-// Radio placement (port/radio-placement, 2026-10-08), no C# test: Octo's own apps
-// (octoMix=client) get the order of fit; every other app gets the same songs with the outside
-// ones placed at random at the radio's own mix (here 20 of 30), each kind still in its own
-// order. The Discovery balance, set to 90 here, plays no part. The draw is seeded, so the placed
+// Radio placement: Octo's own apps (octoMix=client) get the order of fit; every other app gets
+// the same songs with the outside ones placed at random at the radio's own mix (here 20 of 30),
+// each kind still in its own order. The Discovery balance, set to 90 here, plays no part. The draw is seeded, so the placed
 // order repeats exactly.
 #[tokio::test]
 async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit() {
@@ -868,9 +867,8 @@ async fn other_apps_get_outside_songs_placed_and_octos_apps_get_the_order_of_fit
 /// A seed with 120 songs like it on Last.fm, none of them in the library.
 const WIDE_SONGS: usize = 120;
 
-// "Ask for more songs" (the radio tuning Check Mode, Brandon 2026-10-08), no C# test: Octo's
-// own apps (octoMix=client) may ask for up to 100 songs, whatever RadioTrackCount is (50 here,
-// the default). Every other app is still cut to RadioTrackCount.
+// "Ask for more songs": Octo's own apps (octoMix=client) may ask for up to 100 songs, whatever
+// RadioTrackCount is (50 here, the default). Every other app is still cut to RadioTrackCount.
 #[tokio::test]
 async fn octos_apps_may_ask_for_100_songs_and_other_apps_get_the_configured_count() {
     let f = fixture(|_| {}).await;

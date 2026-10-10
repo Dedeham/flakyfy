@@ -839,6 +839,8 @@ struct LengthTables {
     requests: Arc<Mutex<Vec<String>>>,
     /// Background shim requests are held back this long, so a test can keep them in flight.
     hold_background: Arc<Mutex<Option<Duration>>>,
+    /// YouTube Music's answers by query: the status, the body and how long it takes.
+    ytm: Arc<Mutex<HashMap<String, (u16, String, Option<Duration>)>>>,
 }
 
 fn find_ignore_case(map: &HashMap<String, i32>, key: &str) -> Option<(String, i32)> {
@@ -899,6 +901,33 @@ impl Respond for ShimTable {
             .find(|(k, _)| k == "q")
             .map(|(_, v)| v.into_owned())
             .unwrap_or_default();
+        if request.url.path() == "/ytm/search" {
+            let found = self
+                .0
+                .ytm
+                .lock()
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == q.to_lowercase())
+                .map(|(_, answer)| answer.clone());
+            return match found {
+                Some((status, body, Some(delay))) => ResponseTemplate::new(status)
+                    .set_body_string(body)
+                    .set_delay(delay),
+                Some((status, body, None)) => ResponseTemplate::new(status).set_body_string(body),
+                None => ResponseTemplate::new(404),
+            };
+        }
+        if request.url.path() == "/facts" {
+            let id = request
+                .url
+                .query_pairs()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            return ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"video_id":"{id}","itag":"140","size":5000,"ext":"m4a","abr":128}}"#
+            ));
+        }
         let answer = match find_ignore_case(&self.0.video.lock(), &q) {
             Some((_, length)) if request.url.path() == "/meta" => ResponseTemplate::new(200)
                 .set_body_string(format!(r#"{{"video_id":"vid-{q}","duration":{length}}}"#)),
@@ -984,6 +1013,36 @@ impl LengthFixture {
 
     fn requests(&self) -> Vec<String> {
         self.tables.requests.lock().clone()
+    }
+
+    /// YouTube Music answers a songs search for `query` with `rows` (video id, title, artist,
+    /// seconds, video type), after `delay` when one is given.
+    fn ytm(&self, query: &str, rows: &[(&str, &str, &str, i32, &str)], delay: Option<Duration>) -> &Self {
+        let tracks: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(id, title, artist, seconds, kind)| {
+                serde_json::json!({
+                    "videoId": id, "title": title, "artists": [artist],
+                    "durationSeconds": seconds, "videoType": kind,
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "tracks": tracks }).to_string();
+        self.tables.ytm.lock().insert(query.into(), (200, body, delay));
+        self
+    }
+
+    /// YouTube Music answers a songs search for `query` with an error status.
+    fn ytm_fails(&self, query: &str, status: u16) -> &Self {
+        self.tables
+            .ytm
+            .lock()
+            .insert(query.into(), (status, r#"{"error":"busy"}"#.into(), None));
+        self
+    }
+
+    fn routing(&self, song: &Song) -> SoulseekRouting {
+        self.registry.lookup(&song.id).expect("registered").snapshot()
     }
 
     async fn search(&self, artist: &str, title: &str) -> Song {
@@ -1578,4 +1637,298 @@ async fn deezers_album_title_fills_a_blank_album_and_never_replaces_one() {
     assert_eq!(routed(&songs[1]).as_deref(), Some("Ed Banger Compilation"));
     // The length still comes from Deezer for both.
     assert_eq!(songs[0].duration, Some(234));
+}
+
+// ---- Videos from YouTube Music first -------------------------------------------------------
+
+const ATV: &str = "MUSIC_VIDEO_TYPE_ATV";
+const OMV: &str = "MUSIC_VIDEO_TYPE_OMV";
+
+/// A search row for `artist - title` with Deezer's length on it, as a search sends it.
+async fn enriched_row(fixture: &LengthFixture, artist: &str, title: &str, seconds: i32) -> Song {
+    fixture.deezer(&format!("{artist} {title}"), seconds);
+    let mut songs = vec![fixture.search(artist, title).await];
+    fixture.service.enrich_external_songs(&mut songs).await;
+    assert_eq!(songs[0].duration, Some(seconds));
+    songs.remove(0)
+}
+
+fn asked(fixture: &LengthFixture, prefix: &str) -> usize {
+    fixture
+        .requests()
+        .iter()
+        .filter(|url| url.starts_with(prefix))
+        .count()
+}
+
+#[tokio::test]
+async fn the_durations_pass_takes_youtube_musics_release_track_and_plays_that_video() {
+    let fixture = LengthFixture::new().await;
+    fixture.video("Adele Hello", 366).ytm(
+        "Adele Hello",
+        &[
+            ("omv", "Hello", "Adele", 366, OMV),
+            ("atv", "Hello", "Adele", 295, ATV),
+        ],
+        None,
+    );
+    let mut songs = vec![enriched_row(&fixture, "Adele", "Hello", 296).await];
+
+    fixture.service.resolve_top_durations(&mut songs, false).await;
+
+    assert_eq!(songs[0].duration, Some(295));
+    let routing = fixture.routing(&songs[0]);
+    assert_eq!(routing.you_tube_id.as_deref(), Some("atv"));
+    assert_eq!(routing.duration, Some(295));
+    assert_eq!(asked(&fixture, "shim/meta"), 0);
+    assert!(
+        fixture
+            .requests()
+            .iter()
+            .any(|url| url.starts_with("shim/ytm/search?")
+                && url.contains("filter=songs")
+                && url.contains("limit=5"))
+    );
+}
+
+#[tokio::test]
+async fn the_durations_pass_falls_back_to_yt_dlp_when_youtube_musics_length_is_off() {
+    let fixture = LengthFixture::new().await;
+    fixture
+        .video("Adele Hello", 297)
+        .ytm("Adele Hello", &[("long", "Hello", "Adele", 366, OMV)], None);
+    let mut songs = vec![enriched_row(&fixture, "Adele", "Hello", 296).await];
+
+    fixture.service.resolve_top_durations(&mut songs, false).await;
+
+    assert_eq!(songs[0].duration, Some(297));
+    assert_eq!(
+        fixture.routing(&songs[0]).you_tube_id.as_deref(),
+        Some("vid-Adele Hello")
+    );
+    assert_eq!(asked(&fixture, "shim/meta"), 1);
+}
+
+#[tokio::test]
+async fn the_durations_pass_falls_back_to_yt_dlp_when_youtube_music_is_busy() {
+    let fixture = LengthFixture::new().await;
+    fixture.video("Adele Hello", 297).ytm_fails("Adele Hello", 503);
+    let mut songs = vec![enriched_row(&fixture, "Adele", "Hello", 296).await];
+
+    fixture.service.resolve_top_durations(&mut songs, false).await;
+
+    assert_eq!(songs[0].duration, Some(297));
+    assert_eq!(
+        fixture.routing(&songs[0]).you_tube_id.as_deref(),
+        Some("vid-Adele Hello")
+    );
+}
+
+/// The rows found within the wait go out with their video's length; a slow one goes out with
+/// Deezer's and is found in the background, which writes the routing and never the answer.
+#[tokio::test]
+async fn a_bounded_wait_answers_in_time_with_deezers_length_and_fills_the_rest_later() {
+    let fixture = LengthFixture::new().await;
+    fixture
+        .ytm(
+            "Fast Band Quick",
+            &[("quick", "Quick", "Fast Band", 201, ATV)],
+            None,
+        )
+        .ytm(
+            "Slow Band Late",
+            &[("late", "Late", "Slow Band", 241, ATV)],
+            Some(Duration::from_millis(1500)),
+        );
+    let mut songs = vec![
+        enriched_row(&fixture, "Fast Band", "Quick", 200).await,
+        enriched_row(&fixture, "Slow Band", "Late", 240).await,
+    ];
+
+    let started = std::time::Instant::now();
+    let rest = fixture
+        .service
+        .resolve_top_durations_within(&mut songs, Duration::from_millis(400))
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(1200),
+        "{:?}",
+        started.elapsed()
+    );
+
+    assert_eq!(songs[0].duration, Some(201));
+    assert_eq!(songs[1].duration, Some(240));
+    let rest = rest.expect("the slow row is still being looked up");
+    rest.await.expect("the lookup ends");
+    assert_eq!(songs[1].duration, Some(240));
+    let late = fixture.routing(&songs[1]);
+    assert_eq!(late.you_tube_id.as_deref(), Some("late"));
+    assert_eq!(late.duration, Some(241));
+}
+
+/// A row resolved after the answer went out keeps the video a play pinned meanwhile.
+#[tokio::test]
+async fn a_row_resolved_after_the_answer_keeps_the_video_a_play_pinned() {
+    let fixture = LengthFixture::new().await;
+    fixture.ytm(
+        "Slow Band Late",
+        &[("late", "Late", "Slow Band", 241, ATV)],
+        Some(Duration::from_millis(800)),
+    );
+    let mut songs = vec![enriched_row(&fixture, "Slow Band", "Late", 240).await];
+
+    let rest = fixture
+        .service
+        .resolve_top_durations_within(&mut songs, Duration::from_millis(100))
+        .await
+        .expect("still looking");
+    fixture
+        .registry
+        .lookup(&songs[0].id)
+        .expect("registered")
+        .lock()
+        .you_tube_id = Some("playing-now".into());
+    rest.await.expect("the lookup ends");
+
+    assert_eq!(songs[0].duration, Some(240));
+    assert_eq!(
+        fixture.routing(&songs[0]).you_tube_id.as_deref(),
+        Some("playing-now")
+    );
+}
+
+#[tokio::test]
+async fn a_wait_every_row_beats_leaves_nothing_running() {
+    let fixture = LengthFixture::new().await;
+    fixture.ytm(
+        "Fast Band Quick",
+        &[("quick", "Quick", "Fast Band", 201, ATV)],
+        None,
+    );
+    let mut songs = vec![enriched_row(&fixture, "Fast Band", "Quick", 200).await];
+
+    let rest = fixture
+        .service
+        .resolve_top_durations_within(&mut songs, Duration::from_secs(5))
+        .await;
+
+    assert!(rest.is_none());
+    assert_eq!(songs[0].duration, Some(201));
+}
+
+/// A kept answer takes the pinned video's length once the background found it; a row with no
+/// video keeps its own, and a row with none takes the remembered one.
+#[tokio::test]
+async fn refreshed_rows_carry_the_pinned_videos_length() {
+    let fixture = LengthFixture::new().await;
+    let pinned = enriched_row(&fixture, "Fast Band", "Quick", 200).await;
+    let unpinned = enriched_row(&fixture, "Other Band", "Still", 180).await;
+    let mut blank = fixture.search("Blank Band", "Nothing").await;
+    blank.duration = None;
+    fixture
+        .registry
+        .remember_length(&blank.id, Some(150), LengthSource::LastFm);
+    {
+        let routing = fixture.registry.lookup(&pinned.id).expect("registered");
+        let mut r = routing.lock();
+        r.you_tube_id = Some("quick".into());
+        r.duration = Some(203);
+    }
+    // A pinned clip's length is no song's: the row keeps having none.
+    let mut clip = fixture.search("Clip Band", "Teaser").await;
+    clip.duration = None;
+    {
+        let routing = fixture.registry.lookup(&clip.id).expect("registered");
+        let mut r = routing.lock();
+        r.you_tube_id = Some("teaser".into());
+        r.duration = Some(3);
+    }
+    let mut songs = vec![pinned, unpinned, blank, clip];
+
+    fixture.service.refresh_song_lengths(&mut songs);
+
+    assert_eq!(songs[0].duration, Some(203));
+    assert_eq!(songs[1].duration, Some(180));
+    assert_eq!(songs[2].duration, Some(150));
+    assert_eq!(songs[3].duration, None);
+}
+
+#[tokio::test]
+async fn the_prewarm_pins_youtube_musics_video_and_resolves_its_stream() {
+    let fixture = LengthFixture::new().await;
+    fixture.ytm(
+        "Fast Band Quick",
+        &[("quick", "Quick", "Fast Band", 201, ATV)],
+        None,
+    );
+    let song = enriched_row(&fixture, "Fast Band", "Quick", 200).await;
+
+    fixture
+        .service
+        .prewarm_you_tube_ids_for_song_ids(std::slice::from_ref(&song.id), 8)
+        .await;
+
+    let routing = fixture.routing(&song);
+    assert_eq!(routing.you_tube_id.as_deref(), Some("quick"));
+    assert_eq!(routing.stream_size, Some(5000));
+    assert_eq!(asked(&fixture, "shim/search"), 0);
+    assert!(
+        fixture
+            .requests()
+            .iter()
+            .any(|url| url.starts_with("shim/facts?") && url.contains("id=quick") && url.contains("bg=1"))
+    );
+}
+
+/// The next three outside songs are readied in order: a pinned video whose stream was never
+/// resolved has it resolved, an unpinned song gets a video and its stream, a song already
+/// resolved is left alone, and the fourth waits for the regular prewarm.
+#[tokio::test]
+async fn the_next_three_songs_of_a_queue_get_their_stream_resolved() {
+    let fixture = LengthFixture::new().await;
+    fixture.ytm(
+        "Second Band Two",
+        &[("two", "Two", "Second Band", 201, ATV)],
+        None,
+    );
+    let first = fixture.search("First Band", "One").await;
+    let second = fixture.search("Second Band", "Two").await;
+    let third = fixture.search("Third Band", "Three").await;
+    let fourth = fixture.search("Fourth Band", "Four").await;
+    fixture
+        .registry
+        .lookup(&first.id)
+        .expect("registered")
+        .lock()
+        .you_tube_id = Some("one".into());
+    {
+        let routing = fixture.registry.lookup(&third.id).expect("registered");
+        let mut r = routing.lock();
+        r.you_tube_id = Some("three".into());
+        r.stream_size = Some(1234);
+    }
+    let queue = vec![
+        "a-library-song".to_string(),
+        first.id.clone(),
+        second.id.clone(),
+        third.id.clone(),
+        fourth.id.clone(),
+    ];
+
+    let readied = fixture.service.prewarm_next_streams(&queue, 3).await;
+
+    assert_eq!(readied, [first.id.clone(), second.id.clone(), third.id.clone()]);
+    assert_eq!(fixture.routing(&first).stream_size, Some(5000));
+    let second = fixture.routing(&second);
+    assert_eq!(second.you_tube_id.as_deref(), Some("two"));
+    assert_eq!(second.stream_size, Some(5000));
+    assert_eq!(fixture.routing(&third).stream_size, Some(1234));
+    assert_eq!(fixture.routing(&fourth).you_tube_id, None);
+    let facts: Vec<String> = fixture
+        .requests()
+        .into_iter()
+        .filter(|url| url.starts_with("shim/facts?"))
+        .collect();
+    assert_eq!(facts.len(), 2, "{facts:?}");
+    assert!(!fixture.requests().iter().any(|url| url.contains("Fourth")));
 }

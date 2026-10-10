@@ -30,6 +30,9 @@ use crate::services::subsonic::RelayError;
 use octo_core::family::abilities::RequestQuality;
 use octo_core::family::request::RequestKind;
 
+/// How many outside songs after a scrobbled one have their stream readied to play at once.
+const NEXT_STREAMS_WARMED: usize = 3;
+
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .subsonic("star", get(star).post(star))
@@ -581,8 +584,17 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
         if !upcoming.is_empty() {
             debug!("scrobble {id}: prewarming next {} from queue", upcoming.len());
             let metadata = state.music_metadata.clone();
+            // The next three outside songs first, with their streams resolved, so whichever
+            // plays next starts from the shim's cache; then videos for the rest.
             tokio::spawn(async move {
-                metadata.prewarm_you_tube_ids_for_song_ids(&upcoming, 8).await;
+                let readied = metadata
+                    .prewarm_next_streams(&upcoming, NEXT_STREAMS_WARMED)
+                    .await;
+                let rest: Vec<String> = upcoming
+                    .into_iter()
+                    .filter(|song| !readied.contains(song))
+                    .collect();
+                metadata.prewarm_you_tube_ids_for_song_ids(&rest, 8).await;
             });
         }
     };

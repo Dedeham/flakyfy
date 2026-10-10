@@ -8,6 +8,8 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use tracing::{debug, warn};
 
+use super::you_tube_music_client::{YouTubeMusicClient, pick_song};
+
 /// One video the shim found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct YouTubeHit {
@@ -47,6 +49,8 @@ pub struct YouTubeResolver {
     /// The last `/health` answer and when it was read (None inside when the shim did not
     /// answer). Held while a read is in flight, so callers at the same moment share one read.
     busy_cache: tokio::sync::Mutex<Option<(tokio::time::Instant, Option<ShimBusy>)>>,
+    /// YouTube Music through the same shim; off while the shim's address is not set.
+    music: YouTubeMusicClient,
 }
 
 /// How busy the shim is, from its `/health`.
@@ -85,6 +89,11 @@ impl YouTubeResolver {
 
     /// How long one `/health` answer is reused.
     pub const BUSY_CACHE: Duration = Duration::from_secs(5);
+    /// How long a YouTube Music lookup may take before the yt-dlp lookup is asked instead.
+    pub const MUSIC_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// Rows one YouTube Music lookup asks for.
+    pub const MUSIC_ROWS: i32 = 5;
 
     /// Reads `YouTube:ShimUrl` once: the address is deliberately captured at startup (it is a
     /// restart-only setting; see RestartTracker).
@@ -107,11 +116,13 @@ impl YouTubeResolver {
             .no_deflate()
             .build()
             .expect("a plain HTTP client builds");
+        let shim = configured.map(str::trim).filter(|c| !c.is_empty());
         YouTubeResolver {
             search_client,
             stream_client,
             base_url: Self::resolve_base_url(configured),
             busy_cache: tokio::sync::Mutex::new(None),
+            music: YouTubeMusicClient::with_shim_url(shim),
         }
     }
 
@@ -217,6 +228,48 @@ impl YouTubeResolver {
         outcome.unwrap_or_else(|e| {
             warn!("shim /search failed for '{query}': {e}");
             None
+        })
+    }
+
+    /// The video of `artist - title` on YouTube Music, with its length: the row of a songs search
+    /// that is the same song ([`pick_song`]), `length` being the length known for the song. None
+    /// when no row is, when YouTube Music cannot answer within [`Self::MUSIC_TIMEOUT`] (busy,
+    /// failed or unreachable), or when the shim's address is not set; the caller then asks
+    /// yt-dlp. The hit names no stream, since YouTube Music only searches.
+    pub async fn music_song(&self, artist: &str, title: &str, length: Option<i32>) -> Option<YouTubeHit> {
+        if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
+            return None;
+        }
+        let query = format!("{artist} {title}");
+        let lookup = self.music.search_limited(&query, "songs", Self::MUSIC_ROWS);
+        let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
+            Ok(Ok(Some(rows))) => rows,
+            Ok(Ok(None)) => {
+                debug!("YouTube Music could not answer for '{query}'");
+                return None;
+            }
+            Ok(Err(e)) => {
+                debug!("YouTube Music failed for '{query}': {e}");
+                return None;
+            }
+            Err(_) => {
+                debug!(
+                    "YouTube Music did not answer within {:?} for '{query}'",
+                    Self::MUSIC_TIMEOUT
+                );
+                return None;
+            }
+        };
+        let Some(row) = pick_song(artist, title, length, &rows) else {
+            debug!("no YouTube Music row is '{query}' (length {length:?})");
+            return None;
+        };
+        Some(YouTubeHit {
+            video_id: row.video_id.clone(),
+            title: Some(row.title.clone()),
+            duration: row.duration_seconds,
+            channel: None,
+            stream: StreamFacts::default(),
         })
     }
 
@@ -839,5 +892,84 @@ mod tests {
         assert_eq!(resolver.busy().await, None);
         assert_eq!(resolver.busy().await, None);
         assert_eq!(shim.received_requests().await.expect("recorded").len(), 1);
+    }
+
+    const HELLO_ROWS: &str = r#"{"tracks":[
+        {"videoId":"omv1","title":"Hello","artists":["Adele"],"durationSeconds":366,"videoType":"MUSIC_VIDEO_TYPE_OMV"},
+        {"videoId":"atv1","title":"Hello","artists":["Adele"],"durationSeconds":295,"videoType":"MUSIC_VIDEO_TYPE_ATV"}
+    ]}"#;
+
+    /// YouTube Music is asked for five songs rows, and its release track comes back with its
+    /// length, naming no stream.
+    #[tokio::test]
+    async fn music_song_reads_the_release_track_of_a_songs_search() {
+        let shim = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ytm/search"))
+            .and(query_param("q", "Adele Hello"))
+            .and(query_param("filter", "songs"))
+            .and(query_param("limit", "5"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(HELLO_ROWS))
+            .expect(1)
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let hit = resolver.music_song("Adele", "Hello", Some(296)).await;
+        assert_eq!(
+            hit,
+            Some(YouTubeHit {
+                video_id: "atv1".into(),
+                title: Some("Hello".into()),
+                duration: Some(295),
+                channel: None,
+                stream: StreamFacts::default(),
+            })
+        );
+    }
+
+    /// A busy or failed YouTube Music, a row too far from the known length, a slow answer and a
+    /// shim with no address set are all no hit, so the caller asks yt-dlp.
+    #[tokio::test]
+    async fn music_song_is_none_when_youtube_music_cannot_say() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("q", "Busy Song"))
+            .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"error":"busy"}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("q", "Broken Song"))
+            .respond_with(ResponseTemplate::new(502).set_body_string(r#"{"error":"ytm_failed"}"#))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("q", "Slow Song"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(
+                        r#"{"tracks":[{"videoId":"s","title":"Song","artists":["Slow"],"durationSeconds":200}]}"#,
+                    )
+                    .set_delay(YouTubeResolver::MUSIC_TIMEOUT + Duration::from_millis(500)),
+            )
+            .mount(&shim)
+            .await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("q", "Adele Hello"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(HELLO_ROWS))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        assert!(resolver.music_song("Busy", "Song", None).await.is_none());
+        assert!(resolver.music_song("Broken", "Song", None).await.is_none());
+        assert!(resolver.music_song("Adele", "Hello", Some(250)).await.is_none());
+        let started = std::time::Instant::now();
+        assert!(resolver.music_song("Slow", "Song", None).await.is_none());
+        assert!(started.elapsed() < YouTubeResolver::MUSIC_TIMEOUT + Duration::from_millis(400));
+        assert!(
+            YouTubeResolver::with_base_url(None)
+                .music_song("Adele", "Hello", None)
+                .await
+                .is_none()
+        );
     }
 }

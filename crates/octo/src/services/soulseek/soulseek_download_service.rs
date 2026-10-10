@@ -1985,11 +1985,28 @@ impl DownloadBackend for SoulseekDownloadService {
         let mut video_id = r.you_tube_id.clone().filter(|v| !v.is_empty());
         if video_id.is_none() && r.has_artist_title() {
             let (artist, title) = names(&r);
-            let hit = self
-                .youtube
-                .search(&format!("{artist} {title}"), r.duration, false)
-                .await
-                .filter(|h| !h.video_id.is_empty());
+            // YouTube Music's row for the song first: one quick search, and the stream is
+            // resolved as it opens. Else the shim's yt-dlp search, which resolves both at once.
+            let hit = match self.youtube.music_song(&artist, &title, r.duration).await {
+                Some(hit) => {
+                    debug!(
+                        "play of '{artist} - {title}': video {} from YouTube Music",
+                        hit.video_id
+                    );
+                    Some(hit)
+                }
+                None => {
+                    let hit = self
+                        .youtube
+                        .search(&format!("{artist} {title}"), r.duration, false)
+                        .await
+                        .filter(|h| !h.video_id.is_empty());
+                    if let Some(hit) = &hit {
+                        debug!("play of '{artist} - {title}': video {} from yt-dlp", hit.video_id);
+                    }
+                    hit
+                }
+            };
             // Pin it on the song so a second click on the same placeholder skips the
             // yt-dlp ytsearch1: round trip: that 3-8s saving is the difference between
             // Arpeggi (~10s HTTP timeout) playing the song or canceling and falling back

@@ -1,15 +1,16 @@
 //! Port of `Services/Common/ExternalSearchService.cs`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use octo_core::common::dotnet::{self, ordinal_ignore_case_key};
 use octo_core::common::{SongIdentity, SupersedableBuildCoordinator};
 use octo_core::last_fm::last_fm_search_cleanup::LastFmSearchCleanup;
 use octo_core::last_fm::last_fm_search_ranking::LastFmSearchRanking;
 use octo_core::models::domain::{Album, Song};
-use octo_core::settings::SettingsStore;
+use octo_core::settings::{SettingsStore, SubsonicSettings};
+use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
@@ -63,8 +64,12 @@ pub struct ExternalSearchService {
     album_builds: SupersedableBuildCoordinator<Arc<Vec<Album>>>,
     metadata: Arc<dyn IMusicMetadataService>,
     last_fm: Option<Arc<LastFmService>>,
-    /// `IOptionsMonitor<SubsonicSettings>?`: `WaitForSearchDurations`, read at every build.
+    /// `IOptionsMonitor<SubsonicSettings>?`: how long a build waits for lengths, read at every
+    /// build.
     settings: Option<Arc<SettingsStore>>,
+    /// The last finished builds, by query.
+    recent_songs: RecentResults<Song>,
+    recent_albums: RecentResults<Album>,
 }
 
 impl ExternalSearchService {
@@ -81,6 +86,8 @@ impl ExternalSearchService {
             metadata,
             last_fm,
             settings,
+            recent_songs: RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX),
+            recent_albums: RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX),
         }
     }
 
@@ -97,29 +104,50 @@ impl ExternalSearchService {
             return Arc::new(Vec::new());
         };
 
+        let key = recent_key(query);
+        if let Some(cached) = self.recent_songs.get(&key, Instant::now()) {
+            // A copy: the cached list is shared and frozen like any build's. Rows whose video
+            // was found after the build answered carry its length now.
+            let mut songs = cached.as_ref().clone();
+            self.metadata.refresh_song_lengths(&mut songs);
+            debug!(
+                "external search '{query}' answered from the last {} rows",
+                songs.len()
+            );
+            return Arc::new(songs);
+        }
+
         let metadata = self.metadata.clone();
-        let wait_for_durations = self
-            .settings
-            .as_ref()
-            .is_none_or(|s| s.current().subsonic.wait_for_search_durations);
+        let wait = self.settings.as_ref().map_or_else(
+            || SubsonicSettings::default().effective_search_duration_wait(),
+            |s| s.current().subsonic.effective_search_duration_wait(),
+        );
         let query_text = query.to_string();
-        self.song_builds
+        let songs = self
+            .song_builds
             .run(
                 query.trim(),
                 move |token: CancellationToken| async move {
                     tokio::select! {
-                        built = build(query_text, last_fm, metadata, wait_for_durations) => Ok(Arc::new(built)),
+                        built = build(query_text, last_fm, metadata, wait) => Ok(Arc::new(built)),
                         () = token.cancelled() => Err(anyhow::anyhow!("The operation was canceled.")),
                     }
                 },
-                BUILD_TIMEOUT,
+                // The wait for lengths is on top of the deadline, so a long one never times
+                // the whole build out.
+                BUILD_TIMEOUT + wait,
                 Arc::new(Vec::new()),
                 // Discovery is an addition to search, never a precondition for it. The
                 // steps inside the build are individually best-effort, but the deadline is
                 // not, and a timeout must not take local results down with it.
                 |q: &str, e: &anyhow::Error| debug!("external search '{q}' failed: {e}"),
             )
-            .await
+            .await;
+        // A failed, timed-out or superseded build answers an empty list, which is not kept.
+        if !songs.is_empty() {
+            self.recent_songs.put(key, songs.clone(), Instant::now());
+        }
+        songs
     }
 
     /// Up to `limit` external albums for this query, via the same prefix-supersession as
@@ -128,9 +156,14 @@ impl ExternalSearchService {
         if dotnet::is_blank(query) || limit <= 0 {
             return Arc::new(Vec::new());
         }
+        let key = format!("{}|{limit}", recent_key(query));
+        if let Some(cached) = self.recent_albums.get(&key, Instant::now()) {
+            return cached;
+        }
         let metadata = self.metadata.clone();
         let query_text = query.to_string();
-        self.album_builds
+        let albums = self
+            .album_builds
             .run(
                 query,
                 move |token: CancellationToken| async move {
@@ -143,7 +176,78 @@ impl ExternalSearchService {
                 Arc::new(Vec::new()),
                 |q: &str, e: &anyhow::Error| debug!("external album search '{q}' failed: {e}"),
             )
-            .await
+            .await;
+        if !albums.is_empty() {
+            self.recent_albums.put(key, albums.clone(), Instant::now());
+        }
+        albums
+    }
+}
+
+/// How long a finished build answers the same query again.
+pub const RECENT_RESULTS_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// How many queries' builds are kept; past it the oldest go first.
+pub const RECENT_RESULTS_MAX: usize = 256;
+
+/// The key a query's build is kept under: trimmed and lowercase, so "Adele " and "adele" share
+/// one.
+pub fn recent_key(query: &str) -> String {
+    query.trim().to_lowercase()
+}
+
+/// The builds of the last queries, each kept for [`RECENT_RESULTS_TTL`], at most
+/// [`RECENT_RESULTS_MAX`] of them. Typing the same words again, paging a result, or a client
+/// asking twice then answers at once instead of asking Last.fm, Deezer and YouTube again.
+pub struct RecentResults<T> {
+    entries: Mutex<RecentEntries<T>>,
+    ttl: Duration,
+    max: usize,
+}
+
+struct RecentEntries<T> {
+    by_key: HashMap<String, (Instant, Arc<Vec<T>>)>,
+    /// Keys oldest first, each once.
+    order: VecDeque<String>,
+}
+
+impl<T> RecentResults<T> {
+    pub fn new(ttl: Duration, max: usize) -> Self {
+        RecentResults {
+            entries: Mutex::new(RecentEntries {
+                by_key: HashMap::new(),
+                order: VecDeque::new(),
+            }),
+            ttl,
+            max,
+        }
+    }
+
+    /// The build kept for `key`, unless it is older than the time to live at `now`.
+    pub fn get(&self, key: &str, now: Instant) -> Option<Arc<Vec<T>>> {
+        let mut entries = self.entries.lock();
+        let (kept_at, value) = entries.by_key.get(key)?;
+        if now.saturating_duration_since(*kept_at) < self.ttl {
+            return Some(value.clone());
+        }
+        entries.by_key.remove(key);
+        entries.order.retain(|k| k != key);
+        None
+    }
+
+    /// Keeps `value` for `key` from `now`, replacing an older build of it; past the limit the
+    /// oldest query goes.
+    pub fn put(&self, key: String, value: Arc<Vec<T>>, now: Instant) {
+        let mut entries = self.entries.lock();
+        if entries.by_key.insert(key.clone(), (now, value)).is_some() {
+            entries.order.retain(|k| *k != key);
+        }
+        entries.order.push_back(key);
+        while entries.order.len() > self.max {
+            if let Some(oldest) = entries.order.pop_front() {
+                entries.by_key.remove(&oldest);
+            }
+        }
     }
 }
 
@@ -159,7 +263,7 @@ async fn build(
     query: String,
     last_fm: Arc<LastFmService>,
     metadata: Arc<dyn IMusicMetadataService>,
-    wait_for_durations: bool,
+    duration_wait: Duration,
 ) -> Vec<Song> {
     let build_size = BUILD_SIZE as usize;
     // HashSet<string>(OrdinalIgnoreCase) over the match keys.
@@ -217,11 +321,18 @@ async fn build(
 
     // Album/art/year from Deezer (fast), then the ACCURATE duration for the top of the
     // list from the real YouTube video (so the scrub bar matches the audio and the
-    // client advances correctly). Bounded + cached.
+    // client advances correctly), waited for at most `duration_wait`. Rows not resolved by
+    // then go out with Deezer's length and are resolved in the background. Bounded + cached.
     metadata.enrich_external_songs(&mut songs).await;
-    if wait_for_durations {
-        metadata.resolve_top_durations(&mut songs, false).await;
-    }
+    let durations = if duration_wait.is_zero() {
+        None
+    } else {
+        Some(
+            metadata
+                .resolve_top_durations_within(&mut songs, duration_wait)
+                .await,
+        )
+    };
 
     // Fire-and-forget: pre-resolve YouTube videoIds for the top hits so the first
     // /rest/stream click doesn't pay the cold yt-dlp double-call cost (ytsearch1: + -g,
@@ -236,13 +347,22 @@ async fn build(
     // the one played.
     //
     // The background work gets its own copy of the list: the songs this build returns stay
-    // frozen, and in background mode the durations pass writes only the routing.
+    // frozen, and in background mode the durations pass writes only the routing. The prewarm
+    // waits for the rows the durations pass is still resolving.
     let background = songs.clone();
     let prewarm = metadata.clone();
-    if wait_for_durations {
-        tokio::spawn(async move { prewarm.prewarm_you_tube_ids(&background, 12).await });
-    } else {
-        tokio::spawn(resolve_durations_then_prewarm(prewarm, background));
+    match durations {
+        None => {
+            tokio::spawn(resolve_durations_then_prewarm(prewarm, background));
+        }
+        Some(still_running) => {
+            tokio::spawn(async move {
+                if let Some(pass) = still_running {
+                    let _ = pass.await;
+                }
+                prewarm.prewarm_you_tube_ids(&background, 12).await;
+            });
+        }
     }
 
     // Same reasoning, for cover art: a client renders the first screen of results a

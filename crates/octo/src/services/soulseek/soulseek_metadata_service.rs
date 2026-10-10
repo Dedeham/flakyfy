@@ -21,6 +21,7 @@ use octo_core::models::subsonic::ExternalPlaylist;
 use octo_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting};
 use parking_lot::Mutex;
 use tokio::sync::Semaphore;
+use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use super::external_id_registry::{ExternalIdRegistry, SharedRouting};
@@ -29,7 +30,7 @@ use crate::services::framework::InFlight;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::metadata::DeezerMetadataService;
 use crate::services::metadata::deezer_metadata_service::fold_editions;
-use crate::services::you_tube::YouTubeResolver;
+use crate::services::you_tube::{YouTubeHit, YouTubeResolver};
 
 /// The two members of `LastFmService` the length lookup uses: whether it has an API key, and
 /// the duration `track.getInfo` gives a song, in seconds. A seam rather than the service, which
@@ -116,6 +117,23 @@ struct Inner {
     /// finished walk leaves this and the next visit reads the cache.
     release_walks: InFlight<Vec<AlbumHit>>,
     count_walks: InFlight<ArtistWalk>,
+}
+
+/// What the foreground durations pass settled before its answer went out: whether it went out,
+/// and the length each row resolved in time shows, by its place in the answer.
+#[derive(Default)]
+struct DurationsAnswer {
+    sent: bool,
+    lengths: Vec<(usize, i32)>,
+}
+
+/// Marks the answer sent when dropped, however the wait for it ends.
+struct SentOnDrop(Arc<Mutex<DurationsAnswer>>);
+
+impl Drop for SentOnDrop {
+    fn drop(&mut self) {
+        self.0.lock().sent = true;
+    }
 }
 
 /// Deezer's real ceiling is ~50 requests per 5 seconds, and this runs on search3's
@@ -485,46 +503,116 @@ impl Inner {
     /// song is already with the client, so only the routing is written and a video a play
     /// pinned meanwhile is kept.
     async fn resolve_video_length(&self, song: &mut Song, background: bool) {
-        let inner = self;
-        // Fast metadata-only lookup (flat search, no URL solve). Pass the
-        // Deezer duration as a hint so it picks the closest-length canonical
-        // video (not a long-form/compilation upload); playback reuses the
-        // stored videoId, so the shown length matches the audio.
-        let hit = inner
-            .youtube
-            .meta(
-                &format!("{} {}", song.artist, song.title),
-                song.duration,
-                background,
-            )
-            .await;
-        let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) else {
+        let Some(hit) = self
+            .find_video(&song.artist, &song.title, song.duration, background)
+            .await
+        else {
             return;
         };
-        let Some(d) = hit.duration.filter(|&d| d > 0) else {
-            return;
-        };
-        // Shown only inside the sane range. An hour-long upload is a mix or a
-        // live set, and its length is no better than the one the row has.
-        // Only the foreground pass may touch the Song. In the background the list is
-        // already with the client and cached for the next page, being serialized as this
-        // runs. getSong builds its answer from routing.Duration, so it still gets this length.
-        if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
+        if let Some(shown) = self.keep_video(&song.id, &hit, background) {
             song.duration = Some(shown);
         }
-        // Playback reuses this exact video. A play can pin a different video while this
-        // lookup runs; the next Range request has to get the same video, so in the
-        // background the pinned one wins.
-        if inner.id_registry.pin_video(&song.id, &hit.video_id, !background) {
-            if let Some(routing) = inner.lookup(&song.id) {
+    }
+
+    /// The video for `artist - title` and its length, without its stream: YouTube Music's row
+    /// for the song first, else the shim's metadata-only yt-dlp lookup (a flat search, no URL
+    /// solve). `length` is the length known for the song: YouTube Music keeps to rows within a
+    /// few seconds of it, and yt-dlp takes it as a hint for the closest-length video rather
+    /// than a long-form or compilation upload.
+    async fn find_video(
+        &self,
+        artist: &str,
+        title: &str,
+        length: Option<i32>,
+        background: bool,
+    ) -> Option<YouTubeHit> {
+        if let Some(hit) = self.youtube.music_song(artist, title, length).await {
+            debug!("'{artist} - {title}': video {} from YouTube Music", hit.video_id);
+            return Some(hit);
+        }
+        let hit = self
+            .youtube
+            .meta(&format!("{artist} {title}"), length, background)
+            .await
+            .filter(|h| !h.video_id.is_empty())?;
+        debug!("'{artist} - {title}': video {} from yt-dlp", hit.video_id);
+        Some(hit)
+    }
+
+    /// Pins `hit` on the song under `song_id` for playback and remembers its length as the
+    /// video's, so the video whose length a row shows is the video that plays. Returns the
+    /// length the song's row shows, only in the foreground and only inside the sane range (an
+    /// hour-long upload is a mix or a live set, and its length is no better than the one the
+    /// row has). `background`: the row is already with the client, so a video a play pinned
+    /// meanwhile is kept, since the next Range request has to get the same video. getSong
+    /// builds its answer from the routing's duration, so it gets this length either way.
+    fn keep_video(&self, song_id: &str, hit: &YouTubeHit, background: bool) -> Option<i32> {
+        let d = hit.duration.filter(|&d| d > 0)?;
+        if self.id_registry.pin_video(song_id, &hit.video_id, !background) {
+            if let Some(routing) = self.lookup(song_id) {
                 routing.lock().duration = Some(d);
             }
-        } else if background && inner.lookup(&song.id).is_some() {
+        } else if background && self.lookup(song_id).is_some() {
+            return None;
+        }
+        self.id_registry
+            .remember_length(song_id, Some(d), LengthSource::Video);
+        if background {
+            None
+        } else {
+            SongLength::sane_video_length(Some(d))
+        }
+    }
+
+    /// Picks the video for the song under `id` and pins it for playback, unless a play pinned
+    /// one meanwhile: YouTube Music's row for the song first, its stream then resolved through
+    /// the shim's facts, else the shim's yt-dlp search, which resolves the stream in the same
+    /// run. Either way a play of the video starts from the shim's cache. Background work.
+    async fn pick_and_warm_video(&self, id: &str, routing: &SharedRouting) {
+        let (artist, title, length) = {
+            let r = routing.lock();
+            (
+                r.artist.clone().unwrap_or_default(),
+                r.title.clone().unwrap_or_default(),
+                r.duration,
+            )
+        };
+        if let Some(hit) = self.youtube.music_song(&artist, &title, length).await {
+            debug!("'{artist} - {title}': video {} from YouTube Music", hit.video_id);
+            if !self.keep_prewarmed_video(id, routing, &hit) {
+                return;
+            }
+            if let Some(facts) = self.youtube.facts(&hit.video_id, true).await {
+                self.id_registry.remember_stream(id, &hit.video_id, &facts);
+            }
             return;
         }
-        inner
-            .id_registry
-            .remember_length(&song.id, Some(d), LengthSource::Video);
+        let Some(hit) = self
+            .youtube
+            .search(&format!("{artist} {title}"), length, true)
+            .await
+            .filter(|h| !h.video_id.is_empty())
+        else {
+            return;
+        };
+        debug!("'{artist} - {title}': video {} from yt-dlp", hit.video_id);
+        if self.keep_prewarmed_video(id, routing, &hit) {
+            self.id_registry.remember_stream(id, &hit.video_id, &hit.stream);
+        }
+    }
+
+    /// Pins a prewarmed video and remembers its length as the video's. False when a play
+    /// pinned another video meanwhile, which keeps it.
+    fn keep_prewarmed_video(&self, id: &str, routing: &SharedRouting, hit: &YouTubeHit) -> bool {
+        if !self.id_registry.pin_video(id, &hit.video_id, false) {
+            return false;
+        }
+        if let Some(d) = hit.duration {
+            routing.lock().duration = Some(d);
+        }
+        self.id_registry
+            .remember_length(id, hit.duration, LengthSource::Video);
+        true
     }
 
     /// Complete the rows below the first page from what is already known, then fetch the
@@ -1115,6 +1203,99 @@ impl IMusicMetadataService for SoulseekMetadataService {
         futures::future::join_all(tasks).await;
     }
 
+    async fn resolve_top_durations_within(
+        &self,
+        songs: &mut [Song],
+        budget: Duration,
+    ) -> Option<JoinHandle<()>> {
+        let targets: Vec<(usize, Song)> = songs
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.is_local)
+            .take(TOP_DURATION_RESOLVE_LIMIT)
+            .map(|(index, song)| (index, song.clone()))
+            .collect();
+        if targets.is_empty() {
+            return None;
+        }
+        // Each row is settled under this lock: either before the answer goes out, and then its
+        // length goes with the answer, or after, and then only the routing is written, as the
+        // background pass does.
+        let answer = Arc::new(Mutex::new(DurationsAnswer::default()));
+        // A caller that stops waiting (its search was superseded) leaves the rest to run as
+        // background lookups.
+        let _sent_when_dropped = SentOnDrop(answer.clone());
+        let this = self.clone();
+        let shared = answer.clone();
+        let mut pass = tokio::spawn(async move {
+            let inner = &this.inner;
+            let tasks = targets.into_iter().map(|(index, song)| {
+                let answer = shared.clone();
+                async move {
+                    let Some(_permit) = bounded_wait(&inner.prewarm_gate).await else {
+                        return;
+                    };
+                    // A row that starts its lookup after the answer went out is a background
+                    // lookup: a video a play pinned meanwhile is kept, and the shim's background
+                    // lane is used.
+                    let late = answer.lock().sent;
+                    if late
+                        && inner
+                            .lookup(&song.id)
+                            .is_some_and(|r| r.lock().you_tube_id.as_deref().is_some_and(|y| !y.is_empty()))
+                    {
+                        return;
+                    }
+                    let Some(hit) = inner
+                        .find_video(&song.artist, &song.title, song.duration, late)
+                        .await
+                    else {
+                        return;
+                    };
+                    let mut answer = answer.lock();
+                    let background = answer.sent;
+                    if let Some(shown) = inner.keep_video(&song.id, &hit, background) {
+                        answer.lengths.push((index, shown));
+                    }
+                }
+            });
+            futures::future::join_all(tasks).await;
+        });
+        let finished = tokio::time::timeout(budget, &mut pass).await.is_ok();
+        {
+            let mut answer = answer.lock();
+            answer.sent = true;
+            for &(index, shown) in &answer.lengths {
+                songs[index].duration = Some(shown);
+            }
+        }
+        (!finished).then_some(pass)
+    }
+
+    fn refresh_song_lengths(&self, songs: &mut [Song]) {
+        for song in songs.iter_mut() {
+            if song.is_local || song.id.is_empty() {
+                continue;
+            }
+            let Some(routing) = self.inner.lookup(&song.id) else {
+                continue;
+            };
+            let r = routing.lock();
+            if r.kind != RoutingKind::Song {
+                continue;
+            }
+            // A pinned video's length is the one the durations pass writes on the routing, shown
+            // only inside the sane range as that pass shows it. A row with no length takes the
+            // remembered one, as a new search row does; never a length nothing vouched for.
+            let pinned = r.you_tube_id.as_deref().is_some_and(|y| !y.is_empty());
+            if pinned && let Some(video) = SongLength::sane_video_length(r.duration) {
+                song.duration = Some(video);
+            } else if song.duration.is_none_or(|d| d <= 0) {
+                song.duration = SongLength::shown(&r).0.filter(|&d| d > 0);
+            }
+        }
+    }
+
     async fn resolve_song_length(&self, song: &mut Song) {
         if song.is_local || song.id.is_empty() || song.duration.is_some_and(|d| d > 0) {
             return;
@@ -1182,36 +1363,59 @@ impl IMusicMetadataService for SoulseekMetadataService {
             let Some(_permit) = bounded_wait(&inner.prewarm_gate).await else {
                 return;
             };
-            let (query, duration) = {
+            if routing
+                .lock()
+                .you_tube_id
+                .as_deref()
+                .is_some_and(|y| !y.is_empty())
+            {
+                return;
+            }
+            inner.pick_and_warm_video(&id, &routing).await;
+        });
+        futures::future::join_all(tasks).await;
+    }
+
+    async fn prewarm_next_streams(&self, song_ids: &[String], count: usize) -> Vec<String> {
+        let inner = &self.inner;
+        let next: Vec<(String, SharedRouting)> = song_ids
+            .iter()
+            .filter(|id| !id.is_empty())
+            .filter_map(|id| inner.lookup(id).map(|routing| (id.clone(), routing)))
+            .filter(|(_, routing)| {
                 let r = routing.lock();
-                if r.you_tube_id.as_deref().is_some_and(|y| !y.is_empty()) {
-                    return;
-                }
+                r.kind == RoutingKind::Song && r.has_artist_title()
+            })
+            .take(count)
+            .collect();
+        let readied: Vec<String> = next.iter().map(|(id, _)| id.clone()).collect();
+        let tasks = next.into_iter().map(|(id, routing)| async move {
+            let (pinned, resolved) = {
+                let r = routing.lock();
                 (
-                    format!(
-                        "{} {}",
-                        r.artist.as_deref().unwrap_or(""),
-                        r.title.as_deref().unwrap_or("")
-                    ),
-                    r.duration,
+                    r.you_tube_id.clone().filter(|y| !y.is_empty()),
+                    r.stream_size.is_some(),
                 )
             };
-            let hit = inner.youtube.search(&query, duration, true).await;
-            if let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) {
-                // A play that pinned a video meanwhile keeps it.
-                if !inner.id_registry.pin_video(&id, &hit.video_id, false) {
-                    return;
+            if pinned.is_some() && resolved {
+                return;
+            }
+            let Some(_permit) = bounded_wait(&inner.prewarm_gate).await else {
+                return;
+            };
+            match pinned {
+                // The video is known but its stream was never resolved: asking for its facts
+                // resolves it, as a play would.
+                Some(video) => {
+                    if let Some(facts) = inner.youtube.facts(&video, true).await {
+                        inner.id_registry.remember_stream(&id, &video, &facts);
+                    }
                 }
-                inner.id_registry.remember_stream(&id, &hit.video_id, &hit.stream);
-                if let Some(d) = hit.duration {
-                    routing.lock().duration = Some(d);
-                }
-                inner
-                    .id_registry
-                    .remember_length(&id, hit.duration, LengthSource::Video);
+                None => inner.pick_and_warm_video(&id, &routing).await,
             }
         });
         futures::future::join_all(tasks).await;
+        readied
     }
 
     /// Fire-and-forget background prewarm of cover art for the first `top_n`

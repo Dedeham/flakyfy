@@ -255,6 +255,11 @@ pub(crate) struct FakeMetadata {
     pub hits: Mutex<HashMap<(String, String), Song>>,
     pub durations: Mutex<Option<DurationsHook>>,
     pub prewarmed: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The length the registry holds for a song now, by title, for a refresh to read.
+    pub lengths_now: Mutex<HashMap<String, i32>>,
+    /// What every album search answers, and how many were made.
+    pub album_hits: Mutex<Vec<Album>>,
+    pub album_searches: Mutex<usize>,
 }
 
 #[async_trait]
@@ -285,6 +290,15 @@ impl IMusicMetadataService for FakeMetadata {
         }
     }
 
+    fn refresh_song_lengths(&self, songs: &mut [Song]) {
+        let lengths = self.lengths_now.lock();
+        for song in songs {
+            if let Some(&seconds) = lengths.get(&song.title) {
+                song.duration = Some(seconds);
+            }
+        }
+    }
+
     async fn prewarm_you_tube_ids(&self, _songs: &[Song], top_n: usize) {
         if top_n == 12
             && let Some(hook) = self.prewarmed.lock().clone()
@@ -294,7 +308,8 @@ impl IMusicMetadataService for FakeMetadata {
     }
 
     async fn search_albums(&self, _: &str, _: i32) -> Vec<Album> {
-        Vec::new()
+        *self.album_searches.lock() += 1;
+        self.album_hits.lock().clone()
     }
 
     async fn search_artists(&self, _: &str, _: i32) -> Vec<Artist> {

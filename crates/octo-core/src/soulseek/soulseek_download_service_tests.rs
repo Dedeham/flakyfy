@@ -566,3 +566,133 @@ fn the_folder_of_a_file_is_what_the_peer_names_it() {
         assert_eq!(folder_of_file(file), folder, "{file}");
     }
 }
+
+// ---- whole words in the file name ------------------------------------------
+
+/// A word of the title has to be a word of the file name, not the start of a longer one.
+#[test]
+fn a_title_word_is_not_found_inside_a_longer_word() {
+    assert!(!matches("Fourteen.flac", "Four"));
+    assert!(!matches("05 - Fourteen.flac", "Four"));
+    assert!(matches("05 - Four.flac", "Four"));
+    assert!(matches("Four.flac", "Four"));
+    assert!(!matches("Angels.flac", "Angel"));
+    assert!(matches("Massive Attack - Angel.flac", "Angel"));
+}
+
+/// A title of several words still matches a file that runs them together.
+#[test]
+fn a_run_together_title_still_matches() {
+    assert!(matches("BohemianRhapsody.flac", "Bohemian Rhapsody"));
+    assert!(matches("01-bohemian_rhapsody.mp3", "Bohemian Rhapsody"));
+    assert!(matches("01-bohemianrhapsody.mp3", "Bohemian Rhapsody"));
+    assert!(matches(
+        r"Queen\A Night at the Opera\11 BohemianRhapsody.flac",
+        "Bohemian Rhapsody"
+    ));
+    // Too short to trust run together.
+    assert!(!matches("Iamhere.flac", "I Am Here"));
+}
+
+/// Short numbered parts behave as they did: the phrase rule decides "Pt 2", and "Part" must be
+/// a word.
+#[test]
+fn numbered_parts_behave_as_before() {
+    assert!(!matches("Pt 2.flac", "Part 2"));
+    assert!(matches("Part 2.flac", "Part 2"));
+    assert!(matches("Pt 2.flac", "Pt 2"));
+    assert!(!matches("Part 2.flac", "Pt 2"));
+}
+
+/// A stylized title and a spelled-out file name still find each other, as whole words.
+#[test]
+fn stylized_titles_match_as_whole_words() {
+    assert!(matches("$uicideboy$ - $UICIDE.flac", "$UICIDE"));
+    assert!(matches("Suicideboys - Suicide.flac", "$UICIDE"));
+    assert!(!matches("Suicideboys - Suicidal.flac", "$UICIDE"));
+}
+
+// ---- the artist breaks ties within the same quality -------------------------
+
+fn named(filename: &str, extension: &str, queue: i32) -> SoulseekFileHit {
+    SoulseekFileHit {
+        username: format!("peer{queue}"),
+        filename: filename.into(),
+        extension: extension.into(),
+        size: 30_000_000,
+        length: Some(354),
+        queue_length: Some(queue),
+        ..Default::default()
+    }
+}
+
+fn ranked(hits: &[SoulseekFileHit]) -> Vec<String> {
+    rank(
+        hits,
+        &CandidateWant::new("Bohemian Rhapsody", Some(354)).artist(Some("Queen")),
+        "flac",
+        0,
+        |_| true,
+    )
+    .into_iter()
+    .map(|h| h.filename)
+    .collect()
+}
+
+#[test]
+fn at_the_same_quality_the_file_naming_the_artist_goes_first() {
+    let plain = named(r"music\Rips\11 - Bohemian Rhapsody.flac", "flac", 0);
+    let in_folder = named(
+        r"music\Queen\A Night at the Opera\11 - Bohemian Rhapsody.flac",
+        "flac",
+        5,
+    );
+    let in_name = named(r"music\Rips\Queen - Bohemian Rhapsody.flac", "flac", 9);
+    assert_eq!(
+        ranked(&[plain.clone(), in_folder.clone(), in_name.clone()]),
+        [in_folder.filename, in_name.filename, plain.filename]
+    );
+}
+
+#[test]
+fn quality_still_comes_before_the_artist() {
+    let mut hi_res = named(r"music\Queen\24-96\11 - Bohemian Rhapsody.flac", "flac", 0);
+    hi_res.bit_depth = Some(24);
+    hi_res.sample_rate = Some(96000);
+    let mut cd = named(r"music\Rips\11 - Bohemian Rhapsody.flac", "flac", 9);
+    cd.bit_depth = Some(16);
+    cd.sample_rate = Some(44100);
+    assert_eq!(
+        ranked(&[hi_res.clone(), cd.clone()]),
+        [cd.filename, hi_res.filename]
+    );
+}
+
+/// A FLAC without the artist still beats an MP3 that names it: the MP3 is not the format asked
+/// for at all.
+#[test]
+fn a_flac_without_the_artist_beats_an_mp3_with_it() {
+    let mp3 = named(r"music\Queen\Queen - Bohemian Rhapsody.mp3", "mp3", 0);
+    let flac = named(r"music\Rips\11 - Bohemian Rhapsody.flac", "flac", 9);
+    assert_eq!(ranked(&[mp3, flac.clone()]), [flac.filename]);
+}
+
+#[test]
+fn the_artist_is_looked_for_in_the_name_and_two_folders_only() {
+    let file = r"Queen\Albums\1975\Opera\11 - Bohemian Rhapsody.flac";
+    assert!(artist_missing(file, Some("Queen")));
+    assert!(!artist_missing(
+        r"Queen\Opera\11 - Bohemian Rhapsody.flac",
+        Some("Queen")
+    ));
+    assert!(!artist_missing(
+        r"Beatles\Abbey Road\Come Together.flac",
+        Some("The Beatles")
+    ));
+    assert!(!artist_missing(
+        r"x\Queen & David Bowie - Under Pressure.flac",
+        Some("Queen, David Bowie")
+    ));
+    assert!(!artist_missing(file, None));
+    assert!(!artist_missing(file, Some("  ")));
+}

@@ -417,7 +417,9 @@ services:
     command: ["./slskd"]
     environment:
       # Lets slskd's administrator (Octo signs in as it) change slskd.yml through
-      # slskd's API. The dashboard's Share my library switch needs it.
+      # slskd's API. The dashboard's Share my library switch needs it (Octo
+      # writes the share list through PUT /api/v0/options/yaml), so it stays on;
+      # slskd's API is private to this machine and behind the login above.
       SLSKD_REMOTE_CONFIGURATION: "true"
       # Completed downloads go to the shared /music mount so Octo can see and
       # relocate them. Without this slskd defaults to <app>/downloads, which the

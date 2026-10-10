@@ -459,6 +459,12 @@ impl KeepMarks {
         if !same_extension(&target.absolute_path, &audio.absolute_path) {
             return FixAnswer::new("failed", Some(FORMAT_DIFFERS));
         }
+        let Some(_claim) = self
+            .executor
+            .claim_songs(&[&target.absolute_path, &audio.absolute_path])
+        else {
+            return FixAnswer::new("skipped", Some(LibraryActionExecutor::BUSY_TEXT));
+        };
         if settings.dry_run {
             return FixAnswer::new(
                 "rehearsed",
@@ -667,6 +673,12 @@ impl KeepMarks {
     /// The marked copy back at its path and the best-sounding copy out of the trash. Only while
     /// the file moved in is exactly as the move left it: anything newer at the path stays.
     async fn put_back(&self, moved: &Moved, detail: &str) -> Result<(), String> {
+        let Some(_claim) = self
+            .executor
+            .claim_songs(&[&moved.target.absolute_path, &moved.audio.absolute_path])
+        else {
+            return Err(LibraryActionExecutor::BUSY_TEXT.to_string());
+        };
         let _share = self.write_share().await;
         let now = std::fs::metadata(&moved.target.absolute_path).ok();
         let unchanged = now

@@ -1057,3 +1057,53 @@ fn the_startup_sweep_removes_the_hidden_copies_a_stopped_move_left() {
     left.sort();
     assert_eq!(left, [".hidden-but-not-ours.flac", "03 Teardrop.flac"]);
 }
+
+#[tokio::test]
+async fn moving_the_sound_waits_for_no_library_action_on_either_copy() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let a_path = f.root.join("Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac");
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let keep = f.keep();
+
+    // A library action is running on the best-sounding copy.
+    let action = f
+        .state
+        .library_action_executor
+        .claim_songs(&[&a_path.to_string_lossy()])
+        .expect("free");
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "skipped", "{answer:?}");
+    assert_eq!(
+        answer.detail.as_deref(),
+        Some(crate::services::library::LibraryActionExecutor::BUSY_TEXT)
+    );
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("marked copy"));
+    assert!(a_path.exists());
+
+    drop(action);
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "applied", "{answer:?}");
+    // The move held both copies only while it ran.
+    assert!(
+        f.state
+            .library_action_executor
+            .claim_songs(&[&a_path.to_string_lossy(), &b_path.to_string_lossy()])
+            .is_some()
+    );
+}

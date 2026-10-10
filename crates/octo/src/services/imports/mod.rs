@@ -18,6 +18,7 @@ pub mod spotify_web_api;
 pub mod text_list;
 pub mod trickle_queue;
 pub mod trickle_worker;
+pub mod tunemymusic;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -33,6 +34,7 @@ pub use spotify_account_store::{SpotifyAccount, SpotifyAccountStore};
 pub use spotify_auth::SpotifyAuth;
 pub use spotify_link_reader::SpotifyLinkReader;
 pub use spotify_web_api::{ImportKeys, SpotifyException, SpotifyWebApi};
+pub use tunemymusic::ImportServices;
 pub use trickle_queue::TrickleQueue;
 pub use trickle_worker::{TrickleServices, TrickleWorker};
 

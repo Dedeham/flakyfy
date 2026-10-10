@@ -31,6 +31,7 @@ use super::spotify_link_reader::SpotifyLinkReader;
 use super::spotify_web_api::{SpotifyException, SpotifyPlaylistInfo, SpotifyWebApi};
 use super::trickle_queue::TrickleQueue;
 use super::trickle_worker::TrickleWorker;
+use super::tunemymusic::ImportServices;
 use super::{ImportList, ImportTrack, SpotifyAccount, TrickleJob};
 use crate::services::common::acquisition_tracker::{
     AcquisitionSnapshot, AcquisitionState, AcquisitionTracker, key_of,
@@ -196,6 +197,11 @@ impl ImportService {
             needed: true,
             by: gate.approver_name(),
         })
+    }
+
+    /// Where people can bring their music from, for the apps and pages.
+    pub fn services(&self) -> ImportServices {
+        ImportServices::new(&self.settings.current().imports.spotify_client_id)
     }
 
     pub fn detail(&self, user: &str, id: &str) -> Option<ListDetail> {

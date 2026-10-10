@@ -399,3 +399,281 @@ async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
 fn html_is_encoded_as_web_utility_did() {
     assert_eq!(html_encode("a<b>&\"c' é"), "a&lt;b&gt;&amp;&quot;c&#39; &#233;");
 }
+
+// ---- octoImports version 2 ------------------------------------------------------------------
+
+impl Rig {
+    /// A multipart POST to `uri` with one part named `field`, and text fields after it.
+    async fn post_form(
+        &self,
+        uri: &str,
+        field: &str,
+        file_name: Option<&str>,
+        text: &str,
+        extra: &[(&str, &str)],
+    ) -> Reply {
+        let boundary = "octo-test-boundary";
+        let disposition = match file_name {
+            Some(name) => format!("form-data; name=\"{field}\"; filename=\"{name}\""),
+            None => format!("form-data; name=\"{field}\""),
+        };
+        let mut body = format!("--{boundary}\r\nContent-Disposition: {disposition}\r\n\r\n{text}\r\n");
+        for (name, value) in extra {
+            body.push_str(&format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            ));
+        }
+        body.push_str(&format!("--{boundary}--\r\n"));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .expect("request");
+        let response = self.app.clone().oneshot(request).await.expect("infallible");
+        let (parts, body) = response.into_parts();
+        Reply {
+            status: parts.status,
+            headers: parts.headers,
+            body: body.collect().await.expect("body").to_bytes().to_vec(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_apps_get_the_export_services_and_whether_spotify_can_connect() {
+    let rig = rig("").await;
+    let answer = get(&rig.app, &format!("/rest/getImportServices.view?{AUTH}"))
+        .await
+        .json();
+    let envelope = &answer["subsonic-response"];
+    assert_eq!(envelope["status"], "ok");
+    assert_eq!(envelope["type"], "octo");
+    let services = envelope["importServices"]["services"]
+        .as_array()
+        .expect("services");
+    assert_eq!(services.len(), 10);
+    assert_eq!(services[0]["id"], "spotify");
+    assert_eq!(
+        services[4]["exportUrl"],
+        "https://www.tunemymusic.com/transfer/tidal-to-file"
+    );
+    assert_eq!(services[4]["tile"], "TIDAL");
+    assert_eq!(envelope["importServices"]["spotifyConnect"], false);
+
+    let connected = self::rig("client-1").await;
+    let answer = get(&connected.app, &format!("/rest/getImportServices?{AUTH}"))
+        .await
+        .json();
+    assert_eq!(
+        answer["subsonic-response"]["importServices"]["spotifyConnect"],
+        true
+    );
+
+    let wrong = get(
+        &rig.app,
+        "/rest/getImportServices?u=alice&t=bad&s=salt&v=1.16.1&c=Octo&f=json",
+    )
+    .await
+    .json();
+    assert_eq!(wrong["subsonic-response"]["error"]["code"], 40);
+}
+
+#[tokio::test]
+async fn an_app_pastes_a_list_and_reads_it_back() {
+    let rig = rig("").await;
+    let pasted = get(
+        &rig.app,
+        &format!(
+            "/rest/importText?{AUTH}&name=Gym&text=Massive%20Attack%20-%20Teardrop%0ANobody%20-%20Nothing"
+        ),
+    )
+    .await
+    .json();
+    let answer = &pasted["subsonic-response"]["importAction"];
+    assert_eq!(answer["ok"], true, "{pasted}");
+    assert_eq!(answer["message"], "Added Gym, 2 songs.");
+    let lists = get(&rig.app, &format!("/rest/getImports?{AUTH}"))
+        .await
+        .json();
+    let list = &lists["subsonic-response"]["imports"]["lists"][0];
+    assert_eq!(list["name"], "Gym");
+    assert_eq!(list["have"], 1);
+    assert!(lists["subsonic-response"]["imports"].get("approval").is_none());
+
+    let unnamed = rig
+        .post_form(
+            &format!("/rest/importText?{AUTH}"),
+            "text",
+            None,
+            "Massive Attack - Teardrop",
+            &[],
+        )
+        .await
+        .json();
+    assert_eq!(
+        unnamed["subsonic-response"]["importAction"]["message"],
+        "Added Pasted list, 1 songs."
+    );
+
+    let empty = get(&rig.app, &format!("/rest/importText?{AUTH}&text=%23%20nothing"))
+        .await
+        .json();
+    let answer = &empty["subsonic-response"]["importAction"];
+    assert_eq!(answer["ok"], false);
+    assert_eq!(
+        answer["message"],
+        "No songs found. Each line should read Artist - Title."
+    );
+
+    let missing = get(&rig.app, &format!("/rest/importText?{AUTH}"))
+        .await
+        .json();
+    assert_eq!(missing["subsonic-response"]["error"]["code"], 10);
+}
+
+#[tokio::test]
+async fn an_app_uploads_a_file_as_a_multipart_form() {
+    let rig = rig("").await;
+    let uri = format!("/rest/importFile.view?{AUTH}");
+    let csv = rig
+        .post_form(
+            &uri,
+            "file",
+            Some("Gym.csv"),
+            "Track Name,Artist Name(s)\nTeardrop,Massive Attack\nAngel,Massive Attack\n",
+            &[],
+        )
+        .await;
+    assert_eq!(csv.status, StatusCode::OK);
+    let reply = csv.json();
+    let answer = &reply["subsonic-response"]["importAction"];
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["message"], "Added Gym, 2 songs.");
+    assert_eq!(answer["count"], 2);
+
+    // A part with no file name takes the name parameter.
+    let txt = rig
+        .post_form(
+            &uri,
+            "file",
+            None,
+            "Teardrop - Massive Attack\n",
+            &[("name", "Mine.txt")],
+        )
+        .await
+        .json();
+    assert_eq!(
+        txt["subsonic-response"]["importAction"]["message"],
+        "Added Mine, 1 songs."
+    );
+
+    let unreadable = rig
+        .post_form(&uri, "file", Some("x.txt"), "\n\n", &[])
+        .await
+        .json();
+    let answer = &unreadable["subsonic-response"]["importAction"];
+    assert_eq!(answer["ok"], false);
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("No songs found. Each line should read Artist - Title."),
+        "{answer}"
+    );
+
+    let no_file = rig
+        .post_form(&uri, "other", Some("x.csv"), "a", &[])
+        .await
+        .json();
+    assert_eq!(
+        no_file["subsonic-response"]["importAction"]["message"],
+        "Choose a file first."
+    );
+
+    let wrong = rig
+        .post_form(
+            "/rest/importFile?u=alice&t=bad&s=salt&v=1.16.1&c=Octo&f=json",
+            "file",
+            Some("Other.csv"),
+            "Track Name,Artist Name(s)\nTeardrop,Massive Attack\n",
+            &[],
+        )
+        .await
+        .json();
+    assert_eq!(wrong["subsonic-response"]["error"]["code"], 40);
+    // Nothing was added for a refused caller.
+    assert_eq!(rig.state.imports.overview("alice").lists.len(), 2);
+}
+
+#[tokio::test]
+async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
+    let rig = rig("").await;
+    let token = rig.sign_in("alice");
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
+    let pasted = send(
+        &rig.app,
+        Method::POST,
+        "/api/admin/imports/text",
+        &auth,
+        Some(r#"{"name":"Road trip","text":"Massive Attack - Teardrop\nNobody - Nothing"}"#),
+    )
+    .await;
+    assert_eq!(pasted.status, StatusCode::OK, "{}", pasted.text());
+    assert_eq!(pasted.json()["message"], "Added Road trip, 2 songs.");
+
+    let empty = send(
+        &rig.app,
+        Method::POST,
+        "/api/admin/imports/text",
+        &auth,
+        Some(r#"{"text":"  "}"#),
+    )
+    .await;
+    assert_eq!(empty.status, StatusCode::BAD_REQUEST);
+    assert_eq!(empty.json()["message"], "Paste a list first.");
+
+    let services = send(
+        &rig.app,
+        Method::GET,
+        "/api/admin/imports/services",
+        &auth,
+        None,
+    )
+    .await;
+    assert_eq!(services.status, StatusCode::OK);
+    let services = services.json();
+    assert_eq!(services["services"].as_array().expect("services").len(), 10);
+    assert_eq!(services["spotifyConnect"], false);
+
+    for (verb, uri) in [
+        (Method::GET, "/api/admin/imports/services"),
+        (Method::POST, "/api/admin/imports/text"),
+    ] {
+        let body = (verb == Method::POST).then_some(r#"{"text":"A - B"}"#);
+        let reply = send(&rig.app, verb.clone(), uri, &[("X-Octo-Admin", "1")], body).await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{verb} {uri}");
+    }
+}
+
+#[tokio::test]
+async fn the_apps_are_told_imports_are_at_versions_one_and_two() {
+    let rig = rig("").await;
+    let doc = get(
+        &rig.app,
+        "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Octo",
+    )
+    .await
+    .json();
+    let imports = doc["subsonic-response"]["openSubsonicExtensions"]
+        .as_array()
+        .expect("extensions")
+        .iter()
+        .find(|e| e["name"] == "octoImports")
+        .cloned()
+        .expect("octoImports");
+    assert_eq!(imports["versions"], serde_json::json!([1, 2]));
+}

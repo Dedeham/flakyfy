@@ -79,15 +79,15 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     ("songLyrics", &[1, 2]),
     // After songLyrics, where the C# lists it.
     (TOP_SONGS_EXTENSION, &[1, TOP_SONGS_EXTENSION_VERSION]),
-    (IMPORTS_EXTENSION, &[IMPORTS_EXTENSION_VERSION]),
+    (IMPORTS_EXTENSION, &[1, IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
-/// getImport, importAction).
+/// getImport, importAction). Version 2: getImportServices, importFile and importText.
 pub const IMPORTS_EXTENSION: &str = "octoImports";
-pub const IMPORTS_EXTENSION_VERSION: i32 = 1;
+pub const IMPORTS_EXTENSION_VERSION: i32 = 2;
 
 /// Octo's radio answers name the source of each song (`octoSuggestedBy`): Last.fm, YouTube
 /// Music, ListenBrainz, Sounds alike or Your library.

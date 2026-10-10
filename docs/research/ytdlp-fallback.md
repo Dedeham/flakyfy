@@ -149,14 +149,28 @@ unreadable or corrupt, the module treats every song as `countedAttempts = 0`: no
 eligible from a store it cannot trust, so no yt-dlp download starts from a damaged file. A
 single corrupt entry is skipped and logged (sanitised) without crashing the worker and without
 dropping the other entries (and so without dropping other users' entries); a wholly unreadable
-file is moved aside (kept `0600`) and a new empty one is started.
+file is moved aside (kept `0600`, at most two kept, older ones deleted) and a new empty one is
+started.
+
+**What counts as a corrupt entry** (condition 20): a missing field, a count outside 0 to a sane
+maximum, an unknown enum value, or an unparseable time. Such an entry is skipped and logged
+(sanitised) and **never filled with defaults** (a missing time never becomes
+`DateTime.MinValue`).
+
+**Removal with the user and the song** (condition 17): a user's records (counting, parked,
+given-up, and moved-aside files) are deleted when the user is deleted and when the song is
+unhearted. A global size cap applies on top of the per-user caps, and the store is never part of
+a backup, diagnostics or support download reachable by the admin or another user.
 
 **Given-up list.** A song that is given up (72 h, or `NotFoundAnywhere`) is written to a
 separate persisted list in the same store (`givenUp`), so the dashboard has something to show.
 It holds only provider, externalId, `requestedBy`, `givenUpUtc`, `countedAttempts`, the
 reason (enum) and the last outcomes (enum names). No titles, no free text. It is kept for
 `GivenUpRetentionDays` (default 30, then pruned) and capped per user (`MaxGivenUpPerUser`,
-default 100, oldest dropped). A new heart of the same song clears its entry.
+default 100, oldest dropped). A new heart of the same song clears its given-up entry, but **never resets**
+`countedAttempts`, `lastCountedUtc` or `firstMissUtc` of a song that already has a counting or
+parked record: heart, unheart and heart again cannot bypass the spacing, and a run started
+before `lastCountedUtc + AttemptSpacingHours` does not count (condition 21).
 
 **Two users, one song.** The key includes `requestedBy`, so each user has a record. The
 download is one at a time and starts with the "already in the library" check, so the second
@@ -164,13 +178,27 @@ user's request finds the file and does not download it again; when the file land
 users' records for that song are removed.
 
 **Clock.** All times are UTC wall-clock. A stored timestamp in the future is clamped to now when
-read, and spacing and give-up are never computed from a future timestamp (a clock jump forward
-cannot satisfy the spacing or trigger the give-up early; a jump back only delays).
+read, and spacing and give-up are never computed from a future timestamp. The host clock is
+trusted (no user can move it): a forward step of the host clock does shorten a wait, a step back
+only delays. The store is written only when something changes (not on every 30 s poll), through
+a temporary file created `0600` and moved over the target.
 
 **Minimums.** The settings are clamped when read so the rejected "single miss" behaviour cannot
 come back by configuration: `FailedAttempts` at least 2, `AttemptSpacingHours` at least 1,
-`MaxWaitHours` at least `FailedAttempts * AttemptSpacingHours` plus 6 (24 at the defaults'
-minimum). Defaults are 3, 6 and 72.
+`MaxWaitHours` at least `FailedAttempts * AttemptSpacingHours` plus 6 (24 at the defaults
+3 x 6 + 6; the true floor is 8, from 2 x 1 + 6). Defaults are 3, 6 and 72. All other settings
+have a documented range too (condition 16, below).
+
+**Settings are validated on the server** (condition 15): they come only from env/appsettings or
+`/api/admin`, are validated and clamped at read and at write (never in the page), and none takes
+a URL, path or id. Clamp order, in 64-bit arithmetic: each setting to its own range first, then
+`MaxWaitHours >= FailedAttempts * AttemptSpacingHours + 6` from the clamped values. Ranges
+(minimum to maximum, default): `FailedAttempts` 2 to 10 (3); `AttemptSpacingHours` 1 to 72 (6);
+`MaxWaitHours` computed minimum to 720 (72); `PerHour` 1 to 120 (12); `PerUserPerHour` 1 to
+`PerHour` (4); `MaxParkedPerUser` 1 to 1000 (200); `MaxGivenUpPerUser` 1 to 1000 (100);
+`GivenUpRetentionDays` 1 to 365 (30); `MinFreeGb` 1 to 1000 (5); `MaxMinutes` 1 to 60 (15);
+`DurationTolerance` 1 to 60 (8). Zero, a negative or a non-numeric value is clamped to the
+minimum or the default and **never means "no limit"**.
 
 Zero applicable sources applies only to an **empty chain** (no enabled step at all, so no
 YouTube row either): there is nothing to count and the fallback is eligible at once. A person
@@ -178,7 +206,10 @@ whose chain contains the YouTube row has chosen YouTube themselves and the fallb
 (5.2).
 
 "Applicable" means in the enabled steps for this kind of heart (`EnabledSteps(albumHeart:false)`,
-`:289`) and set up.
+`:289`) **and not switched off**. "Not applicable" means the step is **switched off**. A step
+that is switched on but not set up (no slskd URL or key, or its settings cannot be read) counts
+as `Unavailable`: the song parks and the run is not counted, so a misconfiguration never unlocks
+yt-dlp. The empty-chain case also goes through `PerUserPerHour`, `PerHour` and `MinFreeGb`.
 
 ### 4.3 "A source is down"
 
@@ -365,7 +396,8 @@ unless 4.2 says the song is eligible. Otherwise it writes or updates a record in
 (`/app/config/ytdlp-fallback.json`, mode `0600` from the first byte, section 12 condition 9)
 with the fields in 4.2 and returns `Parked`.
 
-`YtDlpFallbackWorker` polls (30 s, like `SoulseekLink.PollEvery`). For each parked song:
+`YtDlpFallbackWorker` polls (30 s, like `SoulseekLink.PollEvery`; the store is written only on
+change). For each parked song:
 
 - `waiting-soulseek`: it checks that Soulseek now reads healthy (fresh) and then asks the
   coordinator to **run the chain again from the start** (`AcquireTrackAsync(..., heldSinceUtc)`),
@@ -387,7 +419,7 @@ new record.
   logged in. With Lidarr in the chain it does not hold (`TrickleWorker.cs:95`), and the chain's
   parking covers that case instead.
 - Nothing is parked or counted when the module is off.
-- **Who sees the lists (for Security to confirm).** The dashboard's parked and given-up lists
+- **Who sees the lists (Security condition 18).** The dashboard's parked and given-up lists
   are filtered per user: a person sees only their own entries, and another person's entry
   answers as "not there". An admin sees **counts only** (how many parked, how many given up),
   not other users' songs, unless Security decides otherwise.
@@ -532,7 +564,7 @@ YouTube step already makes:
 | F8 | The shim is compose-network only: `expose`, no `ports:` (`docker-compose.yml:328-329`). The module adds no port, no container, no endpoint, and no setting that lets a person type a URL or an id. The only trigger inputs are a signed-in person's heart or an import row they own. | R4.4, R3.8 | compose |
 | F9 | The switch is flipped from the dashboard only through the existing `/api/admin` path (state change with `X-Octo-Admin`, admin session). The module adds no controller unless it needs a status read, and then under `/api/admin`. | R3.1, R3.2 | module |
 | F10 | `ytdlp-fallback.json` holds usernames and ids of parked songs. It is written with a temporary file created `0600` and moved over the target, and it is removed entry by entry when a song is settled. No secret goes into it, the tags, the notification text, or logs. | R1.2, R1.4 | `YtDlpFallbackStore` |
-| F11 | Per-user data: a parked entry stores its `requestedBy`; the dashboard's parked list is filtered by the viewer (an admin sees all), as `ImportStore.Get(owner, id)` does. A user cannot park, release or read another user's entry by id; "not yours" answers like "not there". The module has the A/B isolation test. | R2.2, R2.3, R2.7 | store, any endpoint |
+| F11 | Per-user data: a parked entry stores its `requestedBy`; the dashboard's parked and given-up lists are filtered by the signed-in user taken from the session only, as `ImportStore.Get(owner, id)` does; **the admin read returns counts only** (no `requestedBy`, no provider id, no song), condition 18. A user cannot park, release or read another user's entry by id; "not yours" answers like "not there". The module has the A/B isolation test. | R2.2, R2.3, R2.7 | store, any endpoint |
 | F12 | What leaves the box: the same as the existing YouTube step: artist, title and duration of a song to YouTube (via yt-dlp). No new third party. The README paragraph for the switch says so, and states the default. | R1.x, `README.md:319` | README |
 
 ### 8.3 Residual risks the Security agent should weigh
@@ -657,8 +689,8 @@ Still open:
 
 ## 12. Conditions for the build (Security, FLA-14 sign-off)
 
-The Security agent approved the design with no Critical or High finding, subject to these 14
-conditions for FLA-21 and its PR review (Linear comment on FLA-14, "[Security agent] Approved
+The Security agent approved the design with no Critical or High finding, subject to these 21
+conditions (1 to 14 at the first sign-off, 15 to 21 added at the re-review of the attempt counting) for FLA-21 and its PR review (Linear comment on FLA-14, "[Security agent] Approved
 (design)", 2026-10-10). The sections above have been changed where they conflicted.
 
 1. **Video id**: F1 and F2 use exactly `^[A-Za-z0-9_-]{11}$` (full match, ASCII only) in Octo
@@ -692,8 +724,8 @@ conditions for FLA-21 and its PR review (Linear comment on FLA-14, "[Security ag
    switch is changed only via `/api/admin`.
 9. **Store and per-user data** (F10, F11): the store file and its temporary file are `0600` from
    the start, outside the library and Soulseek-shared folders; the parked list and every release
-   or read endpoint filter on the signed-in user (admin sees all); "not yours" answers as "not
-   there"; the A/B isolation test (R2.7); notification and history text are shown only to the
+   or read endpoint filter on the signed-in user (the admin sees counts only); "not yours"
+   answers as "not there"; the A/B isolation test (R2.7); notification and history text are shown only to the
    requesting user.
 10. **Tags and sharing**: `OCTO_SOURCE` and `OCTO_SOURCE_ID` carry only the constants and the
     validated id (never the username, `requestedBy`, host paths, timestamps or server ids), and
@@ -714,3 +746,39 @@ conditions for FLA-21 and its PR review (Linear comment on FLA-14, "[Security ag
 14. **Tests and review**: the F-series tests in 8.4, plus those above, are named in the PR with
     CI links (CI runs on PRs on this fork now; `docker.yml` stays disabled, so nothing is published);
     Security reviews the FLA-21 PR (external input, shim, files, per-user data).
+
+Added by the Security re-review of the attempt counting, the persisted state and the settings
+(Linear comment on FLA-14, "[Security agent] Changes requested (a992d36)", 2026-10-10):
+
+15. **Settings source and validation**: all `YtDlpFallback` settings come only from
+    env/appsettings or `/api/admin` (writes need the admin guard, F9). No setting takes a URL,
+    path or id (condition 8 stays). Every value is validated and clamped on the server, at read
+    and at write, never in the page.
+16. **Bounds**, applied in this order with 64-bit arithmetic: clamp each setting to a documented
+    range, then compute `MaxWaitHours >= FailedAttempts * AttemptSpacingHours + 6`. Minimum 1
+    for `PerHour`, `PerUserPerHour`, `MaxParkedPerUser`, `MaxGivenUpPerUser`,
+    `GivenUpRetentionDays` and `MinFreeGb`; 0 or a negative value never means "no limit"; a
+    documented maximum for each, `MaxMinutes` included; `PerUserPerHour` never above `PerHour`;
+    `FailedAttempts >= 2`, `AttemptSpacingHours >= 1`. A test per setting covers 0, negative,
+    huge and non-numeric input. (Ranges in section 4.2.)
+17. **Removal and retention**: a user's records (counting, parked, given-up, moved-aside files)
+    are deleted when the user is deleted and when the song is unhearted. The moved-aside
+    corrupt file is capped (one or two kept), kept `0600`, and covered by the same user-deletion
+    rule. A global size cap exists on top of the per-user caps. The store is never in a backup,
+    diagnostics or support download that the admin or another user can reach.
+18. **Visibility**: the parked and given-up lists, the notification and history text, and any
+    status read take the user from the authenticated session only (R2.1 to R2.3), never from a
+    request parameter. The admin read returns **counts only**: no `requestedBy`, no provider id,
+    no song. The A/B isolation test (R2.7) covers the parked list, the given-up list, the
+    counts and the notifications, and shows a non-admin cannot read the admin counts.
+19. **"Not applicable" means switched off**: a step that is on but not set up, or whose settings
+    cannot be read, is `Unavailable` (park, not counted). A test covers an enabled Soulseek step
+    with no slskd settings. The empty-chain "eligible at once" case also goes through
+    `PerUserPerHour`, `PerHour` and `MinFreeGb`.
+20. **Store entry validation**: an entry with a missing field, a count outside 0 to a sane
+    maximum, an unknown enum value or an unparseable time is skipped and logged (sanitised),
+    never filled with defaults. Tests cover each case.
+21. **No reset by re-heart**: a new heart or retry of a song that already has a record never
+    resets `countedAttempts`, `lastCountedUtc` or `firstMissUtc`. A run started before
+    `lastCountedUtc + AttemptSpacingHours` does not count. A test covers heart, unheart and
+    heart again in quick succession.

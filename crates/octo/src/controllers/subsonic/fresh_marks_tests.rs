@@ -318,3 +318,23 @@ async fn liked_songs_never_answers_a_caller_without_a_username() {
     assert!(seen.is_empty(), "{seen:?}");
     assert_eq!(upstream.calls_ending("getStarred2"), 0);
 }
+
+#[tokio::test]
+async fn liked_songs_changed_when_the_newest_heart_was_given() {
+    let (upstream, app) = setup().await;
+    heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
+    heart(&upstream, "alice", "big3", "2026-10-03T10:00:00.000Z");
+    heart(&upstream, "alice", "big2", "2026-10-02T10:00:00.000Z");
+
+    let row = playlists(&app).await[0].clone();
+    let id = row["id"].as_str().expect("an id").to_string();
+    let opened = get(&app, &format!("/rest/getPlaylist.view?{AUTH}&f=json&id={id}"))
+        .await
+        .json()["subsonic-response"]["playlist"]
+        .clone();
+
+    for answer in [&row, &opened] {
+        assert_eq!(answer["changed"], "2026-10-03T10:00:00.000Z", "{answer}");
+        assert_eq!(answer["created"], "2026-10-03T10:00:00.000Z", "{answer}");
+    }
+}

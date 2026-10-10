@@ -994,7 +994,14 @@ impl GeneratedPlaylistService {
         if marks.is_empty() {
             return None;
         }
-        let now = Utc::now();
+        // The list changed when its newest heart was given; now only when no heart says when.
+        let newest = marks
+            .values()
+            .filter_map(|mark| mark.starred.as_deref())
+            .filter_map(|starred| DateTime::parse_from_rfc3339(starred).ok())
+            .map(|starred| starred.with_timezone(&Utc))
+            .max()
+            .unwrap_or_else(Utc::now);
         let count = marks.len().min(settings.effective_liked_songs_max() as usize);
         Some(GeneratedPlaylist {
             id: self.liked_id(username),
@@ -1004,8 +1011,8 @@ impl GeneratedPlaylistService {
             name: settings.effective_liked_songs_name(),
             owner: username.trim().to_string(),
             pool_size: i32::try_from(count).unwrap_or(i32::MAX),
-            period_start_utc: now,
-            period_end_utc: now,
+            period_start_utc: newest,
+            period_end_utc: newest,
         })
     }
 

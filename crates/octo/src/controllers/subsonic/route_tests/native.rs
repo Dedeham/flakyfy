@@ -432,8 +432,8 @@ async fn a_native_song_detail_for_an_outside_song_is_answered_by_octo() {
     let object = reply.json();
     assert_eq!(object["path"], "Zephyr Echo/Unknown/Glass_Harbor.m4a");
     assert_eq!(object["albumId"], "ext-song-1-al");
-    // No estimate: the size is the stream's true one, and unknown until it is learned.
-    assert!(object.get("size").is_none());
+    // No estimate: the size is the stream's true one, 0 until it is learned.
+    assert_eq!(object["size"], 0);
     assert_eq!(object["bitRate"], 128);
     assert_eq!(object["year"], 2020);
     assert!(object.get("genre").is_none());
@@ -459,6 +459,50 @@ async fn a_native_song_detail_for_an_outside_song_is_answered_by_octo() {
     assert_eq!(object["size"], 7_012_345);
     assert_eq!(object["suffix"], "webm");
     assert_eq!(object["bitRate"], 160);
+}
+
+/// Typed native clients read size and bitRate as numbers, so an unknown one is 0, never missing.
+#[tokio::test]
+async fn a_native_song_with_an_unknown_size_or_bit_rate_says_zero() {
+    let metadata = TestMetadata::default();
+    let song = SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Zephyr Echo".into()),
+        title: Some("Undertow".into()),
+        ..Default::default()
+    };
+    let id = crate::services::soulseek::ExternalIdRegistry::make_short_id(&song);
+    metadata.songs.lock().insert(
+        id.clone(),
+        Song {
+            id: id.clone(),
+            title: "Undertow".into(),
+            artist: "Zephyr Echo".into(),
+            duration: Some(200),
+            ..Default::default()
+        },
+    );
+    let (_server, state, app) = plain_fixture(metadata).await;
+    assert_eq!(state.external_id_registry.register(song), id);
+    state.external_id_registry.set_you_tube_id(&id, "vid-b");
+    // Opus in webm, its bit rate not measured, its size not known yet.
+    state.external_id_registry.remember_stream(
+        &id,
+        "vid-b",
+        &StreamFacts {
+            itag: Some("251".into()),
+            ext: Some("webm".into()),
+            ..Default::default()
+        },
+    );
+
+    let object = get(&app, &format!("/api/song/ext-soulseek-song-{id}"))
+        .await
+        .json();
+
+    assert_eq!(object["suffix"], "webm");
+    assert_eq!(object["size"], 0);
+    assert_eq!(object["bitRate"], 0);
 }
 
 /// Step 5: a first-page native song search gains discovery rows, and X-Total-Count says so.

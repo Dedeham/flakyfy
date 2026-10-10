@@ -14,7 +14,7 @@
 //! songs first, on the MusicBrainz client's background lane, so a download being verified never
 //! waits behind it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -337,6 +337,36 @@ impl WalkedLibrary {
                 .map(|artist| countries[*artist].as_deref()),
             allowed,
         )
+    }
+
+    /// Songs per country mix among the songs with an id in `ids` (one listener's library), by
+    /// what `lookup` knows; only `allowed` countries when it names any.
+    pub fn counts_among(
+        &self,
+        lookup: &ArtistCountryLookup,
+        allowed: &[&str],
+        ids: &HashSet<String>,
+    ) -> IndexMap<String, i32> {
+        let countries = self.countries(lookup);
+        count_countries(
+            self.songs
+                .iter()
+                .zip(&self.artist_of_song)
+                .filter(|(song, _)| text(song, "id").is_some_and(|id| ids.contains(id)))
+                .map(|(_, artist)| countries[*artist].as_deref()),
+            allowed,
+        )
+    }
+
+    /// The ids of the songs whose artist is from `code`.
+    pub fn ids_from(&self, lookup: &ArtistCountryLookup, code: &str) -> HashSet<String> {
+        let countries = self.countries(lookup);
+        self.songs
+            .iter()
+            .zip(&self.artist_of_song)
+            .filter(|(_, artist)| countries[**artist].as_deref() == Some(code))
+            .filter_map(|(song, _)| text(song, "id").map(str::to_string))
+            .collect()
     }
 
     /// The songs whose artist is from `code`.

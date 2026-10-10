@@ -434,8 +434,10 @@ async fn get_playlist_inner(state: &AppState, req: Request, aborted: &RequestAbo
     let id = call.param_or("id", "").to_string();
     let username = call.param_or("u", "").to_string();
 
-    // Liked Songs: the listener's hearts as Navidrome holds them now, newest first.
+    // Liked Songs: the listener's hearts as Navidrome holds them now, newest first. Only for a
+    // caller that names its listener.
     if !id.is_empty()
+        && !octo_core::common::dotnet::is_blank(&username)
         && id == state.generated_playlists.liked_id(&username)
         && state.settings.current().generated_playlists.liked_songs
     {

@@ -45,6 +45,11 @@ pub fn strip_versions(title: &str) -> String {
     text
 }
 
+/// Whether `text` holds a word that marks a take of a song ("live", "version", "acoustic"...).
+pub fn has_variant_word(text: &str) -> bool {
+    VARIANT.is_match(text)
+}
+
 fn strip_one(text: &str) -> String {
     for pattern in [&*TRAILING_BRACKET, &*DASH_TAIL] {
         let Some(found) = pattern.captures(text) else {

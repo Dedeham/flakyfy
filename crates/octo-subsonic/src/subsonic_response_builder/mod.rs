@@ -377,6 +377,14 @@ impl SubsonicResponseBuilder {
         for entry in entries {
             let mut element = subsonic_element("entry");
             scalar_attributes(&mut element, entry);
+            // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+            if let Some(gain) = entry
+                .get("replayGain")
+                .map(Node::to_value)
+                .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+            {
+                element.push(json_shape_to_xml(Some(SUBSONIC_NAMESPACE), "replayGain", &gain));
+            }
             playlist.push(element);
         }
         SubsonicReply::xml(&envelope("ok").child(playlist))
@@ -1052,12 +1060,12 @@ fn build_artist_fields(artist: &Artist) -> Fields {
     fields
 }
 
-/// `new XElement(ns + "subsonic-response", status, version)`.
 /// A song's length for a list's total: an unknown length counts as nothing.
 fn known_seconds(duration: Option<i32>) -> i32 {
     duration.unwrap_or(0).max(0)
 }
 
+/// `new XElement(ns + "subsonic-response", status, version)`.
 fn envelope(status: &str) -> XElement {
     XElement::ns(SUBSONIC_NAMESPACE, "subsonic-response")
         .attr("status", status)

@@ -369,6 +369,8 @@ fn parse_stream(root: &Value) -> StreamFacts {
         // A peak means nothing without the gain it was measured with.
         track_peak: track_gain.and(number("track_peak")).filter(|peak| *peak > 0.0),
         size: root.get("size").and_then(Value::as_u64).filter(|size| *size > 0),
+        // Reported, not played: only the bytes of a play confirm it.
+        size_confirmed: false,
         itag: text("itag"),
         ext: text("ext"),
         bit_rate: root

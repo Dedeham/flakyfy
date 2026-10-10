@@ -292,3 +292,85 @@ async fn liked_songs_has_a_heart_cover() {
     assert_eq!(&cover.body[..3], &[0xFF, 0xD8, 0xFF]);
     assert_eq!(upstream.calls_ending("getCoverArt"), 0);
 }
+
+#[tokio::test]
+async fn liked_songs_never_answers_a_caller_without_a_username() {
+    let (upstream, app) = setup().await;
+    heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
+    let blank = octo_core::library::generated_playlist_service::playlist_id("", "liked");
+
+    let mut seen = Vec::new();
+    for key in ["alice-key", "bob-key"] {
+        let answer = get(
+            &app,
+            &format!("/rest/getPlaylist.view?apiKey={key}&v=1.16.1&c=test&f=json&id={blank}"),
+        )
+        .await
+        .json();
+        seen.extend(
+            answer["subsonic-response"]["playlist"]["entry"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+
+    assert!(seen.is_empty(), "{seen:?}");
+    assert_eq!(upstream.calls_ending("getStarred2"), 0);
+}
+
+#[tokio::test]
+async fn liked_songs_changed_when_the_newest_heart_was_given() {
+    let (upstream, app) = setup().await;
+    heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
+    heart(&upstream, "alice", "big3", "2026-10-03T10:00:00.000Z");
+    heart(&upstream, "alice", "big2", "2026-10-02T10:00:00.000Z");
+
+    let row = playlists(&app).await[0].clone();
+    let id = row["id"].as_str().expect("an id").to_string();
+    let opened = get(&app, &format!("/rest/getPlaylist.view?{AUTH}&f=json&id={id}"))
+        .await
+        .json()["subsonic-response"]["playlist"]
+        .clone();
+
+    for answer in [&row, &opened] {
+        assert_eq!(answer["changed"], "2026-10-03T10:00:00.000Z", "{answer}");
+        assert_eq!(answer["created"], "2026-10-03T10:00:00.000Z", "{answer}");
+    }
+}
+
+#[tokio::test]
+async fn an_unheart_navidrome_refused_keeps_the_hearts_already_read() {
+    let (upstream, app) = setup().await;
+    let id = list_id(&app, "deepCuts").await;
+    let song = library_song(&entries(&app, &id).await);
+    let read = upstream.calls_ending("getStarred2");
+
+    let refused = get(
+        &app,
+        &format!("/rest/unstar.view?u=alice&t=bad&s=salt&v=1.16.1&c=test&f=json&id={song}"),
+    )
+    .await;
+    assert_eq!(refused.json()["subsonic-response"]["status"], "failed");
+    entries(&app, &id).await;
+
+    assert_eq!(upstream.calls_ending("getStarred2"), read);
+}
+
+#[tokio::test]
+async fn an_unheart_signed_in_with_an_api_key_takes_the_heart_off_the_list() {
+    let (_upstream, app) = setup().await;
+    let id = list_id(&app, "deepCuts").await;
+    let song = library_song(&entries(&app, &id).await);
+    get(&app, &format!("/rest/star.view?{AUTH}&f=json&id={song}")).await;
+    assert!(entry(&entries(&app, &id).await, &song).get("starred").is_some());
+
+    let unstarred = get(
+        &app,
+        &format!("/rest/unstar.view?apiKey=alice-key&v=1.16.1&c=test&f=json&id={song}"),
+    )
+    .await;
+    assert_eq!(unstarred.json()["subsonic-response"]["status"], "ok");
+
+    assert!(entry(&entries(&app, &id).await, &song).get("starred").is_none());
+}

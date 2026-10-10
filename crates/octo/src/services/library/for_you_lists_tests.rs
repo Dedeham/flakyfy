@@ -209,6 +209,18 @@ fn starred_songs(upstream: &ForYouUpstream, user: &str) -> String {
     )
 }
 
+/// Who a call signs in as: `u`, else the owner of its API key (`<name>-key`).
+fn caller(query: &HashMap<String, String>) -> String {
+    match query.get("u").filter(|u| !u.is_empty()) {
+        Some(user) => user.clone(),
+        None => query
+            .get("apiKey")
+            .and_then(|key| key.strip_suffix("-key"))
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
 async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(raw): RawQuery) -> Response {
     let full = uri.path().trim_matches('/').to_string();
     let (host, path) = full.split_once('/').unwrap_or((full.as_str(), ""));
@@ -247,8 +259,16 @@ async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(
                 }
                 plain(&query, "")
             }
+            // Navidrome refuses a bad password with HTTP 200 and a failed envelope.
+            "rest/unstar" | "rest/unstar.view" if query.get("t").map(String::as_str) == Some("bad") => json_body(
+                r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"#.into(),
+            ),
+            "rest/tokenInfo" | "rest/tokenInfo.view" => json_body(format!(
+                r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1","tokenInfo":{{"username":"{}"}}}}}}"#,
+                caller(&query)
+            )),
             "rest/unstar" | "rest/unstar.view" => {
-                let user = query.get("u").cloned().unwrap_or_default();
+                let user = caller(&query);
                 let id = query.get("id").cloned().unwrap_or_default();
                 upstream
                     .hearts
@@ -262,10 +282,9 @@ async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(
                 upstream.ratings.lock().insert(id, rating);
                 plain(&query, "")
             }
-            "rest/getStarred2" | "rest/getStarred2.view" => json_body(starred_songs(
-                &upstream,
-                query.get("u").map_or("", String::as_str),
-            )),
+            "rest/getStarred2" | "rest/getStarred2.view" => {
+                json_body(starred_songs(&upstream, &caller(&query)))
+            }
             _ => json_body(r#"{"data":[]}"#.into()),
         };
     }

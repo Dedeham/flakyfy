@@ -756,7 +756,6 @@ struct Request {
     timeout: Option<Duration>,
 }
 
-/// What HttpClient threw for a request that got no answer: its timeout, or the connection.
 /// The artist id an album resource names: its `artistId`, else its artist's `id`; 0 when
 /// neither is there.
 fn artist_id_of(album: &JsonObject) -> Result<i32, LidarrError> {
@@ -769,6 +768,7 @@ fn artist_id_of(album: &JsonObject) -> Result<i32, LidarrError> {
     }
 }
 
+/// What HttpClient threw for a request that got no answer: its timeout, or the connection.
 fn transport_error(error: reqwest::Error, timeout: Duration) -> LidarrError {
     if error.is_timeout() {
         LidarrError::Canceled(http_client_factory::timeout_message(timeout))

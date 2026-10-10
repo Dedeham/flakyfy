@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::import_file_reader::{FileReadError, ImportFileReader};
+use super::import_file_reader::{FileList, FileRead, FileReadError, ImportFileReader};
+use super::text_list::{self, TextLine, TextList};
 use super::import_matcher::ImportMatcher;
 use super::import_models::{import_sources, import_track_states};
 use super::import_playlists::ImportPlaylists;
@@ -760,10 +761,12 @@ impl ImportService {
         )
     }
 
-    /// The lists in an exported file: CSV, Spotify's data export (JSON), or its zip.
+    /// The lists in an exported file: CSV, Spotify's data export (JSON), its zip, or a plain list
+    /// of one song a line, read whichever way round names more of the person's library.
     pub async fn add_file(&self, user: &str, file_name: &str, content: &[u8]) -> ImportActionResult {
-        let lists = match ImportFileReader::read(file_name, content) {
-            Ok(lists) => lists,
+        let lists = match ImportFileReader::read_parts(file_name, content) {
+            Ok(FileRead::Lists(lists)) => lists,
+            Ok(FileRead::Text(lines)) => self.oriented(user, lines).await,
             Err(e) => {
                 // Octo's own words for a file it refuses; a parser's are cut to their first
                 // plain sentence.
@@ -783,6 +786,51 @@ impl ImportService {
                 "That file held no songs Octo could read. It needs a title and an artist for each song.",
             );
         }
+        let source_ref = file_name.rsplit('/').next().unwrap_or(file_name).to_string();
+        self.save_file_lists(user, &source_ref, lists).await
+    }
+
+    /// The name a pasted list gets when it is given none.
+    pub const PASTED_LIST: &str = "Pasted list";
+
+    /// A pasted list, one song a line, read whichever way round names more of the person's
+    /// library. Kept as a list named `name`, like a file of that name.
+    pub async fn add_text(&self, user: &str, name: Option<&str>, text: &str) -> ImportActionResult {
+        let name = name
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(Self::PASTED_LIST);
+        if text.len() as u64 > ImportFileReader::MAX_BYTES {
+            return ImportActionResult::failed(
+                "That is more text than Octo reads at once. Split it into smaller lists.",
+            );
+        }
+        let lines = match text_list::read_lines(name, text) {
+            Ok(lines) => lines,
+            Err(e) => return ImportActionResult::failed(e.to_string()),
+        };
+        let lists = self.oriented(user, lines).await;
+        if lists.is_empty() {
+            return ImportActionResult::failed(text_list::NO_SONGS);
+        }
+        self.save_file_lists(user, name, lists).await
+    }
+
+    /// A plain list's lines read the way round that names more of `user`'s library.
+    async fn oriented(&self, user: &str, lists: Vec<TextList>) -> Vec<FileList> {
+        let sample: Vec<TextLine> = lists
+            .iter()
+            .flat_map(|list| list.lines.iter())
+            .filter(|line| line.right.is_some())
+            .take(text_list::ORIENTATION_SAMPLE)
+            .cloned()
+            .collect();
+        let orientation = self.matcher.orientation_for(user, &sample).await;
+        text_list::to_file_lists(lists, orientation)
+    }
+
+    /// Keeps lists read from a file or pasted text, each by its name, and matches them.
+    async fn save_file_lists(&self, user: &str, source_ref: &str, lists: Vec<FileList>) -> ImportActionResult {
         let gate = self.gate(user);
         let _held = gate.lock().await;
         let incoming: Vec<(String, usize)> = lists
@@ -793,7 +841,7 @@ impl ImportService {
             return ImportActionResult::failed(full);
         }
         let mut first: Option<String> = None;
-        let source_ref = file_name.rsplit('/').next().unwrap_or(file_name).to_string();
+        let source_ref = source_ref.to_string();
         let songs: usize = lists.iter().map(|list| list.tracks.len()).sum();
         let count = lists.len();
         let first_name = lists[0].name.clone();

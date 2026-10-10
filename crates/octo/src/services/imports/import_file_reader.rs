@@ -18,6 +18,15 @@ pub struct FileList {
     pub tracks: Vec<ImportTrack>,
 }
 
+/// What a file held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileRead {
+    /// Lists whose columns say which text is the artist.
+    Lists(Vec<FileList>),
+    /// A plain list's lines, either way round.
+    Text(Vec<text_list::TextList>),
+}
+
 /// Why a file could not be read, as the C# exception it was.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FileReadError {
@@ -59,12 +68,24 @@ impl ImportFileReader {
 
     pub const TOO_MANY_SONGS: &str = "It holds more than 50,000 songs. Split it into smaller files.";
 
+    /// The lists in a file, a plain list read Artist - Title.
     pub fn read(file_name: &str, content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
-        let lists = read_any(file_name, content)?;
-        if song_count(&lists) > Self::MAX_SONGS {
+        Ok(match Self::read_parts(file_name, content)? {
+            FileRead::Lists(lists) => lists,
+            FileRead::Text(lists) => text_list::to_file_lists(lists, text_list::Orientation::ArtistTitle),
+        })
+    }
+
+    /// What a file holds: its lists, or a plain list's lines, whose orientation the caller
+    /// decides ([`text_list::choose_orientation`]).
+    pub fn read_parts(file_name: &str, content: &[u8]) -> Result<FileRead, FileReadError> {
+        let read = read_any(file_name, content)?;
+        if let FileRead::Lists(lists) = &read
+            && song_count(lists) > Self::MAX_SONGS
+        {
             return Err(FileReadError::Format(Self::TOO_MANY_SONGS.to_string()));
         }
-        Ok(lists)
+        Ok(read)
     }
 
     /// A length in milliseconds, seconds, or m:ss.
@@ -162,21 +183,21 @@ fn decode(content: &[u8]) -> String {
     String::from_utf8_lossy(content).into_owned()
 }
 
-fn read_any(file_name_given: &str, content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
+fn read_any(file_name_given: &str, content: &[u8]) -> Result<FileRead, FileReadError> {
     let name = file_name(file_name_given);
     let extension = to_lower_invariant(extension(name));
     if extension == ".zip" {
-        return read_zip(content);
+        return read_zip(content).map(FileRead::Lists);
     }
     let text = decode(content);
     let start = text.trim_start();
     if extension == ".json" || start.starts_with('{') || start.starts_with('[') {
-        return read_json(without_extension(name), &text);
+        return read_json(without_extension(name), &text).map(FileRead::Lists);
     }
     if is_text_list(&extension, &text) {
-        return text_list::read_text(without_extension(name), &text);
+        return text_list::read_lines(without_extension(name), &text).map(FileRead::Text);
     }
-    read_csv(without_extension(name), &text)
+    read_csv(without_extension(name), &text).map(FileRead::Lists)
 }
 
 /// A `.txt` file is a plain list. A `.csv` file is a table. Anything else is a table only when
@@ -248,7 +269,10 @@ fn read_zip(content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
             }
             bytes.extend_from_slice(&buffer[..read]);
         }
-        lists.extend(read_any(&file, &bytes)?);
+        lists.extend(match read_any(&file, &bytes)? {
+            FileRead::Lists(read) => read,
+            FileRead::Text(read) => text_list::to_file_lists(read, text_list::Orientation::ArtistTitle),
+        });
         if song_count(&lists) > ImportFileReader::MAX_SONGS {
             return Err(FileReadError::Format(
                 ImportFileReader::TOO_MANY_SONGS.to_string(),

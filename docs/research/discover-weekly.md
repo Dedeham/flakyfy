@@ -8,6 +8,12 @@ Repo claims cite file and line on `origin/main` as of this branch. Lines drift; 
 symbol if one is off. Facts about outside projects were read on 2026-10-10 from the URLs given.
 Anything not confirmed is marked **unverified**.
 
+Two human decisions of 2026-10-10 shape this version (quoted on FLA-15): **D7**, no credential is held
+for any length of time; the list is built in the user's first live request of the week (4.3, 5.2, 5.4).
+**D8**, auto-downloads for each user, capped at 10 songs per user per week, the module switch off by
+default, and a starred artist does not exclude all of its songs (4.2, 4.3). Section 10 re-checks
+Security's 12 conditions against this design.
+
 ## 1. The rule and why nothing in the repo meets it today
 
 **Hard rule:** no song may appear that is already in any of that user's playlists or liked songs.
@@ -161,16 +167,16 @@ publish a violation:
    the studio version does not want the live one as a "discovery". This is the same call
    `ImportMatcher.cs:121` uses.
 3. **Re-check at the moment of writing.** Fetching takes minutes to hours; users keep liking songs.
-   Right before every add to the playlist the module re-reads both sets, by the downloaded file's
-   Navidrome id and again by identity, and skips the song if it matches. A weekly sweep also removes
-   from the live playlist any track the user has since liked or placed in another playlist (it
-   removes it from Discover Weekly only, never from their other lists). **If the held user
-   credential has expired by the time of the write, the add is skipped entirely** and retried when a
-   credential is held again; it is never checked against playlists alone, because the likes cannot be
-   read without it, and the admin identity cannot stand in for it (5.2).
+   Every write is made inside a run that has a fresh credential (5.2, 5.4). A run reads both sets
+   first, and a top-up run for songs that landed later reads them **again** before it adds them,
+   checking the downloaded file's Navidrome id and again by identity, and skips a song that matches.
+   A run also sweeps the live playlist and removes any track the user has since liked or placed in
+   another playlist (from Discover Weekly only, never from their other lists). Because no credential is
+   kept, a song that lands when the user is not active simply waits; it is never added without a
+   check, and the admin identity is not used to add (5.4).
 
 **Fail closed.** Unread means publish nothing. If either set is null (Navidrome error, partial
-page, a failed per-playlist or per-album call, expired credential), the module publishes nothing for that user that run and tries again later. An unread
+page, a failed per-playlist or per-album call, a refused credential), the module publishes nothing for that user that run and tries again at their next live request. An unread
 set is never treated as an empty one (compare `ReadAllTracksAsync`, which returns null on failure
 for this reason: `NavidromePlaylistApi.cs:195-196`).
 
@@ -185,32 +191,52 @@ are stubbed as the existing tests do):
 - Exclusion set unreadable (null, error, truncated page): no playlist is written, and the previous
   week's playlist is left as it was.
 - A song liked between selection and write is not added (layer 3).
-- Playlist-owned-by-another-user songs are not in this user's set, and this user's set is not used
-  for another (R2.7 in `docs/security-requirements.md`).
+- Isolation (R2.7 in `docs/security-requirements.md`): user A builds data; user B cannot read,
+  change or delete A's playlist id, ledger, picks or credential by id; the store holds no credential and has no
+  cross-user method reachable from a controller; and B's exclusion set never includes A's private
+  playlists.
+- A song that lands when the user is not active: not added until a live request, then re-checked
+  against both sets with that request's credential. The admin identity never writes to the playlist.
+- No credential is kept: after a run, no module type holds a `SubsonicCredential` (checked by
+  reflection over the module's types), and a request whose sign-in `CredentialCheck` refuses starts
+  no run.
+- Trigger: a user already built this week, an opted-out user, a name not allowed, an API-key sign-in
+  and a request with no `u` start nothing; a user not active that week gets no run.
+- A public Discover Weekly playlist after creation is refused and reported.
 - A final end-to-end check over the written playlist: read it back from the stubbed Navidrome and
   assert the invariant again.
 
 ### 4.3 Weekly schedule
 
-- A week is an ISO week in UTC. A hosted worker sweeps hourly (as `NoticePlaylistWorker` loops,
-  `NoticePlaylistWorker.cs:123-139`) and, for each opted-in user whose last build is not this week's
-  and who is due, runs a build. The list for a week lands after Monday 00:00 UTC; the first build may
-  start any time that week.
-- Fetching is spread out. The module hands songs to acquisition at no more than a set number per
-  hour and per user (the same idea as `TrickleQueue` for imports, `octo/Services/Imports/TrickleQueue.cs`).
-  Songs appear in the playlist as they land (Navidrome has to scan them first; the Notice worker
-  already resolves a downloaded file to a Navidrome id by path with
-  `NavidromeSongPathResolver.FindIdByPathAsync`, `NoticePlaylistWorker.cs:172`, so the module
-  reuses that call).
-- Default target 30 songs per user per week, at most 20 to fetch from outside, configurable. If fewer
-  than a minimum (default 10) land by Sunday, the playlist keeps what it has; it is never padded
-  with songs that fail the rule.
+- A week is an ISO week in UTC. **There is no timer that builds lists.** A user's weekly run starts in
+  their first live request of that week (5.2), so the list lands whenever they first open a client
+  after Monday 00:00 UTC. A user who is not active that week gets no new list, and last week's list
+  stays as it was.
+- Fetching is spread out. The run hands the cleared outside songs to acquisition at no more than a set
+  number per hour and per user (the same idea as `TrickleQueue` for imports,
+  `octo/Services/Imports/TrickleQueue.cs`). Songs appear in the playlist at the user's next live
+  request after they land (5.4); a credential-free worker resolves a downloaded file to a Navidrome
+  id by path with `NavidromeSongPathResolver.FindIdByPathAsync` (as `NoticePlaylistWorker.cs:172`
+  does) so a top-up only has to read the stored ids.
+- **Targets (D8).** Up to 30 songs per user per week, of which **at most 10 are fetched from outside
+  per user per week**; the rest come from library songs the user has never touched (4.1 item 4). The
+  10 is a setting. On top of it there is a **server-wide weekly cap**, a per-hour rate, a
+  free-disk-space floor that stops fetching when it is crossed, and a maximum file size and duration
+  through the existing acquisition checks (`docs/security-requirements.md` R4.8). Nothing is fetched
+  while the exclusion set is unread. If fewer than a minimum (default 10) are ready by Sunday, the
+  playlist keeps what it has; it is never padded with songs that fail the rule.
+- Auto-downloads apply to each allowed user when the module is on (D8). The module switch is **off by
+  default**. A per-user opt-out and the allow-list pattern of `LibraryActionPlaylistProvisioner`
+  (`settings.IsAllowed(username)`, `LibraryActionPlaylistProvisioner.cs:48`) decide who is covered.
 - A new week replaces the old contents in place. **Order:** first the old playlist's songs and the
   new picks are written to the ledger and saved, then the old playlist is replaced. A crash between
   the two steps leaves the old list showing and a ledger that already counts it, never a replaced
   playlist whose songs are missing from the ledger. The old songs stay recorded; they stay in the
   library (the module never deletes files; see 7).
-- All of the module's work stops with the switch off, including the worker's sweeps.
+- A failed run (an exclusion set unread, Navidrome unreachable) changes nothing, is recorded as a
+  count, and is retried at the user's next live request, no sooner than a back-off, never by a timer.
+- All of the module's work stops with the switch off, including the credential-free worker and any run
+  in flight.
 
 ### 4.4 How the list appears in Navidrome per user
 
@@ -219,7 +245,9 @@ therefore visible in every Subsonic client and in Navidrome's own UI, through th
 change to `SubSonicController` (unlike Made for you, which Octo injects into responses). Creation
 copies `LibraryActionPlaylistProvisioner` (`octo/Services/Library/LibraryActionPlaylistProvisioner.cs`
 header and its `rest/createPlaylist` call): created with the user's own credentials, so it is theirs
-and private, never public. Outside songs can be in a Navidrome playlist only once they are library
+and private, never public. The module then reads the playlist back and verifies the owner and that it is not
+public; if it is public, it fails closed and reports. It never writes another user's picks into it.
+Outside songs can be in a Navidrome playlist only once they are library
 files, which is why fetching comes first and the playlist fills as songs land.
 
 Cover and description: a description line "New this week, nothing you already have", set on creation.
@@ -236,11 +264,15 @@ Octo has no user database (`docs/architecture.md` section 4.1). Taste comes from
 - the user's **ListenBrainz account**, when they have one: the existing per-listener token
   (`ListenBrainzSettings.UserTokens`) identifies it; if `validate-token` does not return the name,
   the module has its own `DiscoverWeekly:ListenBrainzUsers` map from Navidrome name to ListenBrainz
-  name, set in the dashboard.
+  name. Ownership proved by `validate-token` for the user's own stored token is preferred. The map is
+  an admin-only setting under `/api/admin`, shows which name is mapped to whom, and validates length
+  and allowed characters (the name is URL-encoded in paths). A user cannot type their own
+  ListenBrainz name unproved, because a wrong entry would fill one person's list from another's
+  listening history. A mapping is used only for public ListenBrainz data.
 
 A user with neither still gets seeded-similarity candidates (4.1 item 3).
 
-### 5.2 The credential problem
+### 5.2 The credential problem and the trigger
 
 Likes of another user cannot be read with the admin identity: Navidrome keeps stars per user and
 Octo's admin token (`NavidromePlaylistApi.SendAsync`, :228) acts as the admin. (That the native
@@ -248,36 +280,108 @@ API has no way to read another user's stars is **unverified**; no call in the re
 Octo's own code reads stars with each user's sign-in.) Octo only sees a user's credentials during
 that user's requests.
 
-Proposal, in the pattern the repo already has: hold the user's sign-in **in memory only**, as a
-token never a password, and drop it after a day, exactly like `StarOnArrival`
-(`octo/Services/Common/StarOnArrival.cs:23, 56, class doc`). A build for a user starts when a held
-credential exists and their week is due. A user who does not open a client in a week gets the list
-the next time they do. It is not guaranteed to be ready on Monday morning; that trade-off is
-inherent to not storing passwords, and the alternative (storing a credential) conflicts with the
-secrets requirements in `docs/security-requirements.md` section 1.
+**Decision D7 (2026-10-10): no credential is held, not even for a day.** The list is built during the
+user's **first live request of the week**, with the credential that request carried and Navidrome has
+just accepted. The run uses it to read the user's likes and playlists as that user, then to create or
+update the private playlist as that user. When the run ends the credential is gone. A user who does
+not open a client in a given week gets no new list that week; the next time they do, the run happens.
+This removes the memory-resident token an earlier version of this design held: there is nothing for a memory read
+to find that a request in flight does not already hold, and `StarOnArrival`'s day-long holding is not
+copied.
 
-How the module gets the credential without editing the Subsonic controller is an open design point
-for FLA-23 (**unverified that it works**): register an ASP.NET `IStartupFilter` or a result filter
-from the module's own extension method. If that proves unworkable, the fallback is one call beside
-the existing `Popular()` and `_generatedPlaylists.ListAsync(...)` calls
-(`SubSonicController.cs:389-391`), which is a hotspot edit needing a claim first (`AGENTS.md`).
+**How a run starts, without a global `IStartupFilter` doing the work.** The module registers one small
+middleware from its own extension method (`AddDiscoverWeeklyModule`), restricted to `/rest/` paths
+with `UseWhen`. It does no work on the request path beyond one in-memory lookup:
+
+1. Read `u` and the sign-in parameters from the query string (`SubsonicCredential.From`,
+   `octo/Services/Subsonic/SubsonicCredential.cs`). No `u` (an API-key sign-in) means stop.
+2. Ask the module's store, in memory, whether this name is due: module on, name allowed and not
+   opted out, no run in flight for it, last build week is not the current ISO week (or there is
+   landed pending work for a top-up), and the last failed attempt was not within the back-off. This
+   uses the unverified `u` only to decide whether to bother; it acts on nothing.
+3. If due, hand a copy of the credential to a background task (through `WithoutPassword()`, so a
+   password is not kept) and let the request carry on. The request is never delayed.
+4. The task first asks `CredentialCheck.CheckAsync` (`octo/Services/Subsonic/CredentialCheck.cs`),
+   which pings Navidrome with that sign-in and answers Accepted, Refused or Unreachable. **Only
+   Accepted starts a run.** The user name is the `u` of that same accepted credential; it is never
+   taken from a header, a body field or another request (R2.1). A refused or unreachable answer
+   starts nothing and is not retried by the module (the next request tries again, and the existing
+   `SignInThrottle` and the 30-second refusal memory in `CredentialCheck` limit the cost).
+5. The run reads the sets, selects, creates or updates the playlist and queues downloads, all as that
+   user, then ends and drops the credential. It is cancelled at once if the switch goes off or the
+   user opts out, and has a time limit.
+
+What the credential may do: it is used for that user only and only inside the run; it is never put in
+a field of a store, worker, job record, log line, exception message, notification or dashboard
+answer, and is never serialized. A test (4.2) asserts that no module type keeps a `SubsonicCredential`
+after a run.
+
+What the first request must be: "first activity of the week" means the first request that passes the
+steps above, of any kind (a ping, a getPlaylists, a stream). It is not limited to one endpoint.
+
+**Why a module filter is expected to work without a hotspot edit (unverified).** The existing
+precedent for "act on the user's live, accepted request" is in the controller:
+`GetPlaylists` relays to Navidrome, checks the answer was successful, and then calls
+`_actionPlaylists.EnsureAsync(username, PlaylistNames(...), parameters)` without waiting
+(`SubSonicController.cs:361-381`); `LibraryActionPlaylistProvisioner.EnsureAsync` then creates the
+user's playlists with the user's own credentials. A module filter that does the same without touching
+that file is the preferred route (Security condition 3). Points the FLA-23 spike must settle:
+(a) that an `IStartupFilter` added to the service collection by the module extension runs under the
+`WebApplication` that `Program.cs` builds; (b) that reading the query string there does not disturb the
+body buffering middleware at `Program.cs:725`, so a POST'd form sign-in is simply not seen by the
+filter (such a client triggers a run on its next query-string request, or not at all, which the spike
+reports); (c) that the work is started in the background.
+
+**Fallback, a hotspot edit.** If (a) to (c) cannot be met, the fallback is one line beside the existing
+`EnsureAsync` call in `GetPlaylists` (`SubSonicController.cs:379-381`): it already has the parsed
+parameters (query and form) and a request Navidrome has just accepted, so no `CredentialCheck` ping
+is needed. It changes only that call and needs a claim on `SubSonicController*.cs` first (`AGENTS.md`
+hotspots). The earlier candidate, the lines beside `Popular()` and `_generatedPlaylists.ListAsync(...)`
+(`SubSonicController.cs:389-391`), is no longer the one to use: it belongs to the Made for you
+injection and the module should not sit in it.
+
+**API keys.** An OpenSubsonic API-key sign-in carries no `u` (`SubsonicCredential.User` is null), so
+the module cannot name the user without a further `tokenInfo` call (`RequestIdentity`). In v1 such a
+request starts nothing, and the module's status shows "your client signs in with an API key". This is
+the same outcome Security's condition 2 asked for, reached without a hold (section 8).
+
+**What this costs the user.** The list is not ready on Monday morning, and not at all in a week the
+user never opens a client. That is inherent to not storing a credential
+(`docs/security-requirements.md` section 1) and is accepted by the human (D7).
+
 
 ### 5.3 State
 
 Two files in `/app/config`, both owned by the module and keyed by user (R2.2): `discover-weekly.json`
 (per user: last build week, current playlist id, the week's picks and state) and a **ledger** of every
-song ever shown to that user, by identity, so a song never repeats. Bounded (for example the last
-2,000 entries per user).
+song ever shown to that user, by identity, so a song never repeats. Both are created with mode 0600
+from the start and written to a temporary file that is then moved over the old one, so a crash
+never leaves a half-written file or a window where it is readable by others. Each is bounded at 2,000
+entries per user. A user's rows are removed when they opt out, and all of them when the module is
+turned off and the admin chooses to clear. Neither holds tokens or credentials. Logs and the
+dashboard status carry counts, not song lists tied to a user name, unless shown only to that user.
 
 ### 5.4 Ownership and who writes the playlist
 
-R2.5 says playlist changes use the caller's own credentials, not an admin shortcut. The playlist
-creation and the first fill happen inside the build, with the held user credential. Songs that land
-hours later may arrive when that credential is gone; then the module follows what
-`NoticePlaylistWorker` already does (it fills user-owned private playlists as the admin, so the
-playlist stays the user's: `NavidromePlaylistApi.cs:10-16`, `NoticePlaylistWorker.cs:183-185`), and
-the code states why in a comment as R2.4 asks. This is an existing exception, not a new one, and
-Security should confirm it for this module in review.
+R2.5 says playlist changes use the caller's own credentials, not an admin shortcut. With the
+live-request design that holds with no exception: **every write to a user's Discover Weekly playlist
+is made as that user, inside a run that has just read both exclusion sets.** There is no admin fill
+and no gap between clearing a song and adding it.
+
+- A run creates or updates the playlist and adds the songs that are already in the library and passed
+  the check. For songs the module started to fetch, it stores only the candidate's identity (no
+  credential) in the user's pending list.
+- A small credential-free worker resolves landed files to Navidrome ids by path
+  (`NavidromeSongPathResolver.FindIdByPathAsync`, as `NoticePlaylistWorker.cs:172` does) and marks
+  them landed in the store. It never writes to the playlist.
+- A landed song is added at the user's **next live request**: a top-up run reads both sets again
+  with that request's fresh credential, drops any landed song that now matches, and adds the rest.
+  This is the "late-landing songs wait for the user's next live request" rule. A user who does not
+  open a client sees them the next time they do.
+- The admin identity (`NavidromePlaylistApi`) is used for nothing here beyond the credential-free
+  path lookup. The `NoticePlaylistWorker` exception (it fills user-owned playlists as the admin,
+  `NavidromePlaylistApi.cs:10-16`, `NoticePlaylistWorker.cs:183-185`) is not extended to this module.
+
 
 ## 6. Module boundary
 
@@ -290,10 +394,10 @@ Per `docs/modules.md` (on the FLA-8 branch; the file is not yet on `main`):
 | Registration | One line in `octo/Program.cs`: `builder.Services.AddDiscoverWeeklyModule(builder.Configuration);` |
 | Tests | `octo.Tests/DiscoverWeekly/` (section 4.2) |
 | Optional | Its own `octo/Controllers/DiscoverWeeklyController.cs` (admin and per-user "off"/status endpoints) and dashboard files under `octo/wwwroot` |
-| Off means off | No outgoing calls, no work, no files written; endpoints say "off", not 500 |
+| Off means off | No outgoing calls, no work, no runs, no files written; endpoints say "off", not 500 |
 | Made for you | **No edits.** The module reads nothing from `ForYouLists`, `GeneratedPlaylistService` or `NewReleasesBuilder`, and does not change `GeneratedPlaylistSettings`. It copies the "loved" thresholds rather than sharing them. Both can be on at once |
 | Shared code | Used through public services only: `NavidromePlaylistApi`, `ListenBrainzRadioClient`, `LastFmService`, `SongIdentity`, `NavidromeSongPathResolver`, `TrackAcquisitionQueue`. If one lacks a call the module needs, the module adds its own, or a separate issue proposes the change |
-| Hotspots to claim (expected) | `octo/Program.cs` (one line), `.env.example`, `docker-compose.yml`, `octo/appsettings.json`, `README.md` (one paragraph). `SubSonicController.cs` only if 5.2's fallback is needed |
+| Hotspots to claim (expected) | `octo/Program.cs` (one line), `.env.example`, `docker-compose.yml`, `octo/appsettings.json`, `README.md` (one paragraph). **`SubSonicController.cs` is not expected to need an edit**: the trigger is a filter the module registers itself (5.2). Only if the FLA-23 spike shows that fails, one line beside `EnsureAsync` in `GetPlaylists`, after a claim |
 
 The module is removable by the five steps in `docs/modules.md` "Removing a module".
 
@@ -309,36 +413,76 @@ The module is removable by the five steps in `docs/modules.md` "Removing a modul
   stay there, as hearted-then-unhearted songs do today. A clean-up of unwanted discoveries would be
   a deletion feature (R5.1-R5.8 apply: quarantine, dry-run first, hard cap, journal) and needs human
   approval before it runs on real data. It is a separate issue, not part of this module.
-- **Cost:** with a cap of 20 outside songs per user a week, a three-person server takes about 60
-  songs a week. The cap and the per-hour rate are settings.
+- **Cost:** with a cap of 10 outside songs per user a week, a three-person server takes about 30
+  songs a week, and only for users who open a client that week. The per-user cap, the server-wide
+  weekly cap, the per-hour rate and the disk floor are settings.
 - **Legal and terms:** automatic download of recommended songs has the same footing as the existing
-  heart-to-fetch path, but at a volume nobody chose song by song. The human should decide whether
-  that is acceptable before the switch defaults on. Default off, and the dashboard says what it does.
+  heart-to-fetch path, but at a volume nobody chose song by song. The human decided that it is on for
+  each user with a cap of 10 a week and the module switch off by default (D8). Default off, and the
+  dashboard says what it does.
 - **Rate limits:** ListenBrainz allows about one call a second (`ListenBrainzRadioClient.cs:22`);
   a ten-seed build is a few dozen calls. Fine.
 - **Deployment:** GitHub Actions is disabled on this fork, so no CI result backs this document.
 
 ## 8. What needs human approval or a decision
 
+Decided on 2026-10-10 (quoted on FLA-15) and no longer open: D7, no credential is held, the list is
+built in the user's first live request of the week (5.2); D8, auto-downloads for each user, capped at
+10 songs per user per week, switch off by default, and a starred artist does not exclude all of its
+songs (4.2, 4.3). Still open:
+
 1. **Nothing in the recommendation is a new service or container.** If a later phase wants Explo or
    Troi in the stack, that is a new container and needs written approval (`AGENTS.md` "Human
    approval"). Troi (GPL-2.0) could also be reviewed for licence fit before any linking.
-2. **Automatic downloading at a weekly volume** (4.3, 7): confirm the default caps and that the
-   feature ships off by default.
-3. **Credential holding** (5.2): confirm in-memory, one-day holding of a user token, as `StarOnArrival`
-   does, is acceptable; and whether the SubSonicController hotspot edit may be used if the
-   no-edit route fails.
-4. **ListenBrainz user names** (5.1): confirm a dashboard map is acceptable if `validate-token`
-   does not return one.
-5. **Starred artists** (4.2): confirm that a starred artist does not exclude all of its songs.
-6. **Admin fill of user-owned playlists** (5.4): Security to confirm it matches R2.4/R2.5 for this
-   module.
+2. **Server-wide caps** (4.3): confirm the defaults for the server-wide weekly cap, the per-hour rate
+   and the free-disk floor. The per-user cap of 10 is decided.
+3. **The SubSonicController hotspot** (5.2): may the one-line fallback beside `EnsureAsync` in
+   `GetPlaylists` be used if the no-edit filter route fails the FLA-23 spike?
+4. **ListenBrainz user names** (5.1): confirm an admin-only map is acceptable if `validate-token`
+   does not return a name.
+5. **Users whose client sends an API key** (5.2): they get no Discover Weekly in v1. Confirm that is
+   acceptable, or ask for a later issue to support them.
+6. **Opt-out** (D8 says "each user"): confirm that every allowed user is covered by default once the
+   module is on, with a per-user opt-out, rather than opt-in.
 
 ## 9. Open items for the build issue (FLA-23)
 
 - Confirm what `GET /1/validate-token` returns, and that created-for playlists can be listed for a
   user by name.
-- Spike the `IStartupFilter` route for capturing the credential without touching the controller.
+- Spike the trigger (5.2): that an `IStartupFilter` registered from the module's own extension method
+  runs under `WebApplication` in `Program.cs`, that its middleware sees the query string of a
+  Subsonic request without breaking the body buffering at `Program.cs:725`, and that a background
+  run started from it does not block the request. If not, use the one-line fallback beside
+  `EnsureAsync` in `GetPlaylists` (a hotspot claim first).
+- Confirm that Navidrome accepts the playlist calls with the credential a run holds, including the
+  explicit non-public flag on create and the `public` and `owner` fields on read-back.
 - Confirm Navidrome's playlist APIs behave as the existing workers assume when a track list is
   long (the helpers page at 500, `NavidromePlaylistApi.cs:200`).
+- Decide how long a run may last and how many may run at once, so a Monday morning does not start
+  every user's run in the same second.
 - Decide the playlist cover and description wording.
+
+## 10. Conditions for the build (Security, FLA-15 sign-off)
+
+Security approved the design with 12 conditions, binding on FLA-23 and checked in its PR review.
+Source: the `[Security agent] Approved (design).` comment on FLA-15
+(https://linear.app/cv-agent/issue/FLA-15/research-discover-weekly-as-a-separate-module). They were
+written for the first design, which held a sign-in token for up to 24 hours. The human decided
+(D7, 2026-10-10) that no credential is held, so each condition is re-checked below as **applies**,
+**moot** or **changed**. Security still needs to confirm the changed and moot rows when the FLA-23
+PR comes back to it (condition 12).
+
+| # | Condition (short) | Status | Under the live-request design |
+|---|---|---|---|
+| 1 | Credential holding (R1.2, R1.5): `t`/`s` only, memory only, never logged or serialized, expire at point of use, 24 h limit, wipe on off/opt-out/sign-out, cap the number held | **Changed** | Nothing is held between requests, so the 24 h limit, the wipe-on-sign-out and the cap on held credentials are **moot**. What still **applies**: the credential lives only in the run's own variables, is converted with `WithoutPassword()` at hand-off so a password is not kept even for the run, is never written to a file, log, exception text, notification, dashboard answer or job record, never serialized, and is logged only through `ToString()`. The run is cancelled, and the credential dropped, when the switch goes off or the user opts out |
+| 2 | Only opted-in users held; dashboard says a token is kept up to a day; API-key credentials skipped | **Changed** | The dashboard text becomes "Octo builds your list when you open a client and keeps no sign-in". When the module is on, every allowed user is covered unless they opt out (D8). **Applies:** an API-key sign-in has no `u`, so it is skipped in v1 (5.2); such users get no list and the status says why |
+| 3 | Capture only after Navidrome accepts, user from the verified request, Subsonic paths only, prefer a filter to a global `IStartupFilter`, claim the hotspot if the fallback is used, credential used only for its own user, never returned | **Applies, rewritten as the trigger rule** | Same rules, now for starting a run instead of storing a hold (5.2): start only after `CredentialCheck` says Accepted, user name from `u` of that same request, only `/rest/` paths, one run per user at a time, the credential used for that user only. "A later request must not replace a good hold" is **moot** (no hold) |
+| 4 | Resolve the 4.2 / 5.4 contradiction: no admin add after expiry unless cleared in the same run; documented residual risk if admin fill stays | **Moot** | There is no admin fill at all and no gap between clearing and writing: every write is made as the user in a run that has just read both sets (4.2 layer 3, 5.4). A song that lands later waits for the user's next live request. The residual risk is gone |
+| 5 | Playlist privacy (R2.5, R2.8): user credential, explicit non-public, read back, fail closed, never another user's picks, id from the store | **Applies** | Unchanged (4.4, 5.4) |
+| 6 | Isolation test (R2.7): A builds, B cannot reach A's playlist id, ledger, picks or credential; no cross-user store method reachable from a controller; B's exclusion set never has A's private playlists | **Applies** | Unchanged except that there is no stored credential to test. A new test asserts no module type has a field of type `SubsonicCredential` that outlives a run (4.2 tests) |
+| 7 | ListenBrainz mapping: `validate-token` proof preferred; admin-only map under `/api/admin`; shows the mapping; validated; public data only; tokens masked | **Applies** | Unchanged (5.1) |
+| 8 | External input (R4.1, R4.6, R4.7, R4.12): fixed hosts, no off-host redirects, timeout and size cap, MBID/ISRC validation, length and count caps, titles are data | **Applies** | Unchanged (7) |
+| 9 | Abuse caps: per-user cap, server-wide weekly cap, per-hour rate, disk floor, size and duration limits (R4.8), no download while the exclusion set is unread, no file deletion | **Changed** | The per-user cap is now **10 songs a week** (D8), not 20. The rest **applies** (4.3) |
+| 10 | Stored data (R1.4 spirit, R2.2): mode 0600, temp file then move, keyed by user, bounded, removed on opt-out, no tokens, counts only in logs | **Applies** | Unchanged (5.3). With no held credential, "no tokens" is also true by construction |
+| 11 | Ships off, documented in `README.md` and `.env.example`; off means no calls, no holds, no files; section 8 decisions recorded on the PR | **Applies** | Unchanged; "no holds" is now trivially true. D7 and D8 are recorded on FLA-15 and are to be quoted on the FLA-23 PR |
+| 12 | The FLA-23 PR returns to Security (auth, credentials, external input) | **Applies** | Unchanged. The credential-handling and trigger code in particular must be reviewed |

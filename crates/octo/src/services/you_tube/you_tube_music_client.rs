@@ -1,9 +1,11 @@
 //! Port of `Services/YouTube/YouTubeMusicClient.cs`: YouTube Music search and radio, through the
 //! yt-dlp shim's `/ytm` endpoints.
 
-use octo_core::common::dotnet;
+use octo_core::common::song_identity::{SongMatchOptions, SongRef};
+use octo_core::common::{SongIdentity, dotnet};
 use octo_core::json::element::{ElementResult, enumerate_array, get_int32, try_get_property};
 use octo_core::settings::SettingsStore;
+use octo_core::soulseek::SongLength;
 use serde_json::Value;
 use tracing::debug;
 
@@ -56,9 +58,19 @@ impl YouTubeMusicClient {
     /// could not answer, so a caller never keeps that as "nothing found". `Err` where the C#
     /// threw: the shim unreachable, or an answer that is not its JSON.
     pub async fn search(&self, query: &str, filter: &str) -> anyhow::Result<Option<Vec<YtmRow>>> {
+        self.search_limited(query, filter, 10).await
+    }
+
+    /// [`Self::search`] for at most `limit` rows.
+    pub async fn search_limited(
+        &self,
+        query: &str,
+        filter: &str,
+        limit: i32,
+    ) -> anyhow::Result<Option<Vec<YtmRow>>> {
         Ok(self
             .get_rows(&format!(
-                "/ytm/search?q={}&filter={filter}&limit=10",
+                "/ytm/search?q={}&filter={filter}&limit={limit}",
                 dotnet::escape_data_string(query)
             ))
             .await?
@@ -154,6 +166,49 @@ pub fn rows(root: &Value) -> ElementResult<Vec<YtmRow>> {
     Ok(rows)
 }
 
+/// `video_type` of a release's own audio track.
+pub const RELEASE: &str = "MUSIC_VIDEO_TYPE_ATV";
+/// `video_type` of a podcast episode, which is never a song.
+pub const PODCAST_EPISODE: &str = "MUSIC_VIDEO_TYPE_PODCAST_EPISODE";
+/// How far a row's length may sit from the known length and still be the same recording.
+pub const SAME_LENGTH_SECONDS: i32 = 5;
+
+/// The row of a songs search that is the song `artist - title`: the same title and artist
+/// ([`SongIdentity::same`]), a length that could be one song, within [`SAME_LENGTH_SECONDS`] of
+/// `length` when that is known, and no podcast episode. Of several, a release's own audio track
+/// comes first, then the closest length, then YouTube Music's order.
+pub fn pick_song<'a>(
+    artist: &str,
+    title: &str,
+    length: Option<i32>,
+    rows: &'a [YtmRow],
+) -> Option<&'a YtmRow> {
+    let options = SongMatchOptions {
+        length_tolerance_seconds: Some(SAME_LENGTH_SECONDS),
+        ..Default::default()
+    };
+    let length = length.filter(|&seconds| seconds > 0);
+    let wanted = SongRef::new(title, artist).with_seconds(length.map(f64::from));
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.video_type.as_deref() != Some(PODCAST_EPISODE))
+        .filter(|(_, row)| SongLength::sane_video_length(row.duration_seconds).is_some())
+        .filter(|(_, row)| {
+            let found = SongRef::new(row.title.clone(), row.artists.join(", "))
+                .with_seconds(row.duration_seconds.map(f64::from));
+            SongIdentity::same(&wanted, &found, Some(&options)).is_same()
+        })
+        .min_by_key(|(index, row)| {
+            let not_release = row.video_type.as_deref() != Some(RELEASE);
+            let apart = match (length, row.duration_seconds) {
+                (Some(want), Some(got)) => (want - got).abs(),
+                _ => 0,
+            };
+            (not_release, apart, *index)
+        })
+        .map(|(_, row)| row)
+}
+
 /// A non-empty string property.
 fn text(element: &Value, name: &str) -> ElementResult<Option<String>> {
     Ok(match try_get_property(element, name)? {
@@ -189,5 +244,66 @@ mod tests {
         assert!(!YouTubeMusicClient::with_shim_url(None).configured());
         assert!(!YouTubeMusicClient::with_shim_url(Some("")).configured());
         assert!(YouTubeMusicClient::with_shim_url(Some("http://shim:8080/")).configured());
+    }
+
+    fn row(id: &str, title: &str, artist: &str, seconds: Option<i32>, kind: Option<&str>) -> YtmRow {
+        YtmRow {
+            video_id: id.into(),
+            title: title.into(),
+            artists: vec![artist.into()],
+            album: None,
+            duration_seconds: seconds,
+            video_type: kind.map(str::to_string),
+        }
+    }
+
+    /// The release's own audio track wins over an official video of the same song, even one
+    /// listed first and closer in length.
+    #[test]
+    fn a_release_track_is_picked_before_a_music_video() {
+        let rows = [
+            row("omv", "Hello", "Adele", Some(366), Some("MUSIC_VIDEO_TYPE_OMV")),
+            row("atv", "Hello", "Adele", Some(295), Some(RELEASE)),
+        ];
+        assert_eq!(
+            pick_song("Adele", "Hello", Some(296), &rows).map(|r| r.video_id.as_str()),
+            Some("atv")
+        );
+        assert_eq!(
+            pick_song("Adele", "Hello", None, &rows).map(|r| r.video_id.as_str()),
+            Some("atv")
+        );
+    }
+
+    /// Of two releases of the song, the one closer to the known length.
+    #[test]
+    fn of_two_releases_the_closer_length_is_picked() {
+        let rows = [
+            row("far", "Teardrop", "Massive Attack", Some(334), Some(RELEASE)),
+            row("near", "Teardrop", "Massive Attack", Some(331), Some(RELEASE)),
+        ];
+        assert_eq!(
+            pick_song("Massive Attack", "Teardrop", Some(330), &rows).map(|r| r.video_id.as_str()),
+            Some("near")
+        );
+    }
+
+    /// A row more than five seconds off the known length, another song, another artist, a
+    /// podcast or a length no song has is no pick, so the caller falls back.
+    #[test]
+    fn a_row_that_is_not_the_same_song_is_no_pick() {
+        let off = [row("long", "Humble", "Kendrick Lamar", Some(190), Some(RELEASE))];
+        assert!(pick_song("Kendrick Lamar", "Humble", Some(177), &off).is_none());
+        assert!(pick_song("Kendrick Lamar", "Humble", Some(186), &off).is_some());
+        let others = [
+            row("a", "Humble Pie", "Kendrick Lamar", Some(177), Some(RELEASE)),
+            row("b", "Humble", "Someone Else", Some(177), Some(RELEASE)),
+            row("c", "Humble", "Kendrick Lamar", Some(177), Some(PODCAST_EPISODE)),
+            row("d", "Humble", "Kendrick Lamar", Some(3), Some(RELEASE)),
+            row("e", "Humble", "Kendrick Lamar", None, Some(RELEASE)),
+            row("f", "Humble (Live)", "Kendrick Lamar", Some(177), Some(RELEASE)),
+        ];
+        assert!(pick_song("Kendrick Lamar", "Humble", Some(177), &others).is_none());
+        assert!(pick_song("Kendrick Lamar", "Humble", None, &[]).is_none());
     }
 }

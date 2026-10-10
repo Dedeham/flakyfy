@@ -537,10 +537,11 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
         "hasCoverArt": true,
         "trackNumber": song.track.unwrap_or(0),
         "discNumber": song.disc_number.unwrap_or(1),
-        "size": facts.size,
+        // Typed native clients read these as numbers: an unknown one is 0, never missing.
+        "size": facts.size.unwrap_or(0),
         "suffix": suffix,
         "duration": duration,
-        "bitRate": bit_rate,
+        "bitRate": bit_rate.unwrap_or(0),
         "playCount": 0,
         // Fixed old timestamp: injected tracks are not "recently added" library
         // items, so they should never crowd a client's recently-added view.
@@ -548,12 +549,6 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
         "updatedAt": "2020-01-01T00:00:00Z",
     });
     let fields = object.as_object_mut().expect("an object");
-    if facts.size.is_none() {
-        fields.shift_remove("size");
-    }
-    if bit_rate.is_none() {
-        fields.shift_remove("bitRate");
-    }
     if let Some(year) = song.year.filter(|year| *year > 0) {
         fields.insert("year".into(), year.into());
     }

@@ -7,6 +7,8 @@ use crate::common::dotnet;
 /// What a track search tells about one song.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TrackMeta {
+    /// The catalog id of the album the track was found on, when it said.
+    pub album_id: Option<i64>,
     pub album_title: Option<String>,
     pub album_cover_url: Option<String>,
     pub year: Option<i32>,

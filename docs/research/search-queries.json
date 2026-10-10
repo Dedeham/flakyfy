@@ -1,0 +1,386 @@
+{
+  "about": [
+    "Example search queries for FLA-13 (docs/research/search.md) and the build task after it.",
+    "Each case has the query, what Octo does today, what Deezer's keyless track search returned when it was run for this research, and what a fixed search must do.",
+    "'deezer' was measured live on 2026-10-10 from one machine, one request per query (limit 25), so counts and order will drift. 'today' is traced from code, and the parts marked executed were run as unit-level code paths with stubbed upstream answers (see the doc). Nothing here records what Last.fm answers, because no API key was available."
+  ],
+  "defaults": {
+    "songCount": 20,
+    "discoveryEnabled": true,
+    "lastFmKeySet": true
+  },
+  "scenarios": [
+    {
+      "id": "no-last-fm-key",
+      "description": "Any query with no Last.fm API key.",
+      "today": "ExternalSearchService.GetAsync returns no songs and makes no calls (executed). Search is the library only.",
+      "expect": {
+        "note": "With the fix on, songs still appear for an exact query such as 'Blinding Lights' without a Last.fm key.",
+        "minSongs": 10
+      }
+    },
+    {
+      "id": "library-has-one-match",
+      "description": "Library holds exactly one song that matches; query 'daft punk'.",
+      "today": "Library returns 1 row. Page one gives the 11 unused library slots back to discovery (executed: external rows on page one = 19 at songCount 20).",
+      "expect": {
+        "note": "Page one should show the library row first, then at least 15 outside rows."
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact-title",
+      "category": "exact",
+      "query": "Blinding Lights",
+      "deezer": {
+        "returned": 25,
+        "total": 219,
+        "top": [
+          "The Weeknd | Blinding Lights",
+          "Victoria Voss | Blinding Lights (Acoustic Version)",
+          "Loi | Blinding Lights"
+        ]
+      },
+      "today": "Sent to Last.fm verbatim as track.search. Result count equals what Last.fm returns (executed: Octo adds nothing and drops nothing). If it returns under 20 rows, a second call asks for the top tracks of an artist called 'Blinding Lights' (executed URL), which finds nothing.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 3,
+          "song": [
+            "The Weeknd",
+            "Blinding Lights"
+          ]
+        }
+      }
+    },
+    {
+      "id": "exact-artist-title",
+      "category": "exact",
+      "query": "blinding lights the weeknd",
+      "deezer": {
+        "returned": 25,
+        "total": 68,
+        "top": [
+          "The Weeknd | Blinding Lights",
+          "Pancadão GD Som | Blinding Lights The Weeknd",
+          "Piano Off | Blinding lights The Weeknd (Piano arrangement)"
+        ]
+      },
+      "today": "Whole string goes to track.search as the track name. Whether Last.fm matches the artist words is not measured; the pad call would use the first hit's artist.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 3,
+          "song": [
+            "The Weeknd",
+            "Blinding Lights"
+          ]
+        }
+      }
+    },
+    {
+      "id": "exact-stylized",
+      "category": "exact",
+      "query": "$uicideboy$ kill yourself",
+      "deezer": {
+        "returned": 25,
+        "total": 84,
+        "top": [
+          "$uicideboy$ | Kill Yourself (Part III)",
+          "$uicideboy$ | Kill Yourself (Part IV)",
+          "$uicideboy$ | Kill Yourself V"
+        ]
+      },
+      "today": "Sent verbatim. MatchKey strips the dollar signs ('uicideboy'), so a library row spelled 'Suicideboys' does not dedupe against it (executed).",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 5,
+          "song": [
+            "$uicideboy$",
+            "Kill Yourself (Part III)"
+          ]
+        }
+      }
+    },
+    {
+      "id": "spelled-out-alias",
+      "category": "exact",
+      "query": "suicideboys kill yourself",
+      "deezer": {
+        "returned": 25,
+        "total": 84,
+        "top": [
+          "$uicideboy$ | Kill Yourself (Part IV)",
+          "$uicideboy$ | Kill Yourself (Part III)",
+          "$uicideboy$ | Kill Yourself V"
+        ]
+      },
+      "today": "Sent verbatim; no alias or stylized-name expansion on the query side (SongIdentity.LooseKey exists but is used for matching, not for querying).",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 5,
+          "song": [
+            "$uicideboy$",
+            "Kill Yourself (Part III)"
+          ]
+        }
+      }
+    },
+    {
+      "id": "partial-title",
+      "category": "partial",
+      "query": "bohemian rap",
+      "deezer": {
+        "returned": 25,
+        "total": 299,
+        "top": [
+          "Queen | Bohemian Rhapsody",
+          "Subze | Bohemian Rap",
+          "Queen | Bohemian Rhapsody (Live Aid)"
+        ]
+      },
+      "today": "Sent verbatim. Last.fm word-prefix behaviour on 'rap' is not measured. If it is thin, the pad asks for an artist called 'bohemian rap' (executed URL).",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 3,
+          "song": [
+            "Queen",
+            "Bohemian Rhapsody"
+          ]
+        }
+      }
+    },
+    {
+      "id": "partial-artist-word",
+      "category": "partial",
+      "query": "weeknd blinding",
+      "deezer": {
+        "returned": 25,
+        "total": 100,
+        "top": [
+          "The Weeknd | Blinding Lights (Remix)",
+          "The Weeknd | Blinding Lights",
+          "The Weeknd | Blinding Lights (Live)"
+        ]
+      },
+      "today": "Sent verbatim as the track name. No split into artist and title.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 5,
+          "song": [
+            "The Weeknd",
+            "Blinding Lights"
+          ]
+        }
+      }
+    },
+    {
+      "id": "typeahead-partial",
+      "category": "partial",
+      "query": "blinding li",
+      "songCount": 5,
+      "deezer": null,
+      "today": "songCount 5 is under the local floor of 12, so SearchBudget gives local=5, external=0 (executed). No outside call is made at all; the user sees library rows only.",
+      "expect": {
+        "note": "By design for per-keystroke type-ahead. The build task must keep external calls at zero here, or make a deliberate decision to change it (open question in docs/research/search.md).",
+        "maxExternalCalls": 0
+      }
+    },
+    {
+      "id": "misspelled-title",
+      "category": "misspelled",
+      "query": "Bohemain Rhapsody",
+      "deezer": {
+        "returned": 25,
+        "total": 300,
+        "top": [
+          "Queen | Bohemian Rhapsody (Live Aid)",
+          "Queen | Bohemian Rhapsody",
+          "Queen | Killer Queen"
+        ]
+      },
+      "today": "Sent verbatim. The typo changes the MatchKey ('bohemainrhapsody', executed), so a library copy of the song would also not dedupe. Last.fm's tolerance for the typo is not measured.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 3,
+          "song": [
+            "Queen",
+            "Bohemian Rhapsody"
+          ]
+        }
+      }
+    },
+    {
+      "id": "misspelled-artist",
+      "category": "misspelled",
+      "query": "dft punk",
+      "deezer": {
+        "returned": 25,
+        "total": 160,
+        "top": [
+          "Daft Punk | Instant Crush",
+          "The Weeknd | Starboy",
+          "The Weeknd | I Feel It Coming",
+          "Daft Punk | Get Lucky"
+        ]
+      },
+      "today": "If track.search is thin, the pad asks Last.fm for the top tracks of 'dft punk' with no autocorrect parameter (executed URL), so the typo is never corrected.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 6,
+          "song": [
+            "Daft Punk",
+            "Get Lucky"
+          ]
+        }
+      }
+    },
+    {
+      "id": "misspelled-artist-hard",
+      "category": "misspelled",
+      "query": "wekend",
+      "deezer": {
+        "returned": 25,
+        "total": 295,
+        "top": [
+          "MariaBeats | wekend",
+          "NHYX | Weekend Milliardaire",
+          "Wekend Producer | Candy Candy"
+        ]
+      },
+      "today": "Same as dft punk. Deezer does not recover this one either, so it is a stretch case.",
+      "expect": {
+        "minSongs": 1,
+        "bestEffort": true,
+        "note": "Do not fail the build on this one. It records that a one-word, one-letter-off artist is not solved by any source tried; a source that does solve it is a bonus."
+      }
+    },
+    {
+      "id": "artist-only-multiword",
+      "category": "artist-only",
+      "query": "daft punk",
+      "deezer": {
+        "returned": 25,
+        "total": 175,
+        "top": [
+          "Daft Punk | Instant Crush",
+          "The Weeknd | Starboy",
+          "The Weeknd | I Feel It Coming",
+          "Daft Punk | Get Lucky"
+        ]
+      },
+      "today": "track.search first; under 20 rows triggers the pad with the first hit's artist (executed: 1 hit plus 40 top tracks gave 41 songs). Works when the artist is spelled right and Last.fm knows it.",
+      "expect": {
+        "minSongs": 20,
+        "mustIncludeInTop": {
+          "n": 10,
+          "artist": "Daft Punk"
+        }
+      }
+    },
+    {
+      "id": "artist-only-single",
+      "category": "artist-only",
+      "query": "Radiohead",
+      "deezer": {
+        "returned": 25,
+        "total": 205,
+        "top": [
+          "Radiohead | Creep",
+          "Radiohead | Exit Music (For A Film)",
+          "Radiohead | No Surprises"
+        ]
+      },
+      "today": "Same path as daft punk.",
+      "expect": {
+        "minSongs": 20,
+        "mustIncludeInTop": {
+          "n": 10,
+          "artist": "Radiohead"
+        }
+      }
+    },
+    {
+      "id": "remix-no-artist",
+      "category": "remix",
+      "query": "Levitating remix",
+      "deezer": {
+        "returned": 25,
+        "total": 127,
+        "top": [
+          "Hijazi | Levitating Remix",
+          "Slow Sense | Levitating (Remix)",
+          "RÜFÜS DU SOL | Levitating (Chambord Remix)"
+        ]
+      },
+      "today": "Sent verbatim. The remix word is not understood as a version marker on the query side. Octo's dedupe keeps remixes apart (executed: 'dualipa|levitating|remix' differs from 'dualipa|levitating'), so Octo does not collapse them; fewer remixes come from the upstream's recall.",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 10,
+          "titleContains": "Remix"
+        }
+      }
+    },
+    {
+      "id": "remix-with-artist",
+      "category": "remix",
+      "query": "Kavinsky Nightcall",
+      "deezer": {
+        "returned": 22,
+        "total": 22,
+        "top": [
+          "Kavinsky | Nightcall",
+          "Kavinsky | Nightcall (Breakbot Remix)",
+          "Kavinsky | Nightcall",
+          "Kavinsky | Nightcall (Dustin N'Guyen Remix)"
+        ]
+      },
+      "today": "This is the example LastFmSearchCleanup was written for: Last.fm answers with mislabelled rows that the cleanup repairs. Versions stay separate rows after cleanup.",
+      "expect": {
+        "minSongs": 5,
+        "mustIncludeInTop": {
+          "n": 5,
+          "song": [
+            "Kavinsky",
+            "Nightcall"
+          ]
+        },
+        "note": "Rows must not be listed under artist 'Kavinsky Nightcall' or '[unknown]'."
+      }
+    },
+    {
+      "id": "live-version",
+      "category": "remix",
+      "query": "Mr. Brightside live",
+      "deezer": {
+        "returned": 25,
+        "total": 42,
+        "top": [
+          "VFF | Mr. Brightside (Live)",
+          "Ben Monteith | Mr. Brightside (Live)",
+          "The Killers | Mr. Brightside (Live From The Royal Albert Hall / 2009)"
+        ]
+      },
+      "today": "Sent verbatim. 'live' is treated as a title word, not a version. 'Live' rows stay separate in dedupe (executed).",
+      "expect": {
+        "minSongs": 10,
+        "mustIncludeInTop": {
+          "n": 10,
+          "song": [
+            "The Killers",
+            "Mr. Brightside"
+          ]
+        },
+        "note": "Deezer's own top rows are cover bands. Fusion should rank The Killers' rows above covers when a second source agrees."
+      }
+    }
+  ]
+}

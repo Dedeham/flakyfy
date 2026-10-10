@@ -184,3 +184,22 @@ fn a_broken_file_is_refused_in_the_words_dotnet_used() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_table_saved_as_text_is_still_read_as_a_table() {
+    let lists = ImportFileReader::read(
+        "songs.txt",
+        "Song,Artists\nLjós í myrkri,Bjørn Ålund\nUnknown Tune,Nobody Parity\n".as_bytes(),
+    )
+    .expect("read");
+    assert_eq!(lists.len(), 1);
+    let tracks: Vec<(&str, &str)> = lists[0]
+        .tracks
+        .iter()
+        .map(|t| (t.artist.as_str(), t.title.as_str()))
+        .collect();
+    assert_eq!(tracks, [("Bjørn Ålund", "Ljós í myrkri"), ("Nobody Parity", "Unknown Tune")]);
+    // A plain list in a text file stays a plain list, commas and all.
+    let plain = ImportFileReader::read("mine.txt", "Earth, Wind & Fire - September\n".as_bytes()).expect("read");
+    assert_eq!(plain[0].tracks[0].artist, "Earth, Wind & Fire");
+}

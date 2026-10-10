@@ -200,17 +200,18 @@ fn read_any(file_name_given: &str, content: &[u8]) -> Result<FileRead, FileReadE
     read_csv(without_extension(name), &text).map(FileRead::Lists)
 }
 
-/// A `.txt` file is a plain list. A `.csv` file is a table. Anything else is a table only when
-/// its first line names a title or an artist column among commas or semicolons: a comma alone
-/// proves nothing, since "Earth, Wind & Fire - September" has one.
+/// A `.csv` file is a table. Any other file, a `.txt` one included, is a table only when its
+/// first line names a title or an artist column among commas or semicolons (a table some tool
+/// saved as text), and a plain list otherwise: a comma alone proves nothing, since "Earth, Wind
+/// & Fire - September" has one.
 fn is_text_list(extension: &str, text: &str) -> bool {
-    match extension {
-        ".txt" => true,
-        ".csv" => false,
-        _ => text
-            .lines()
-            .find(|line| !line.trim().is_empty())
-            .is_some_and(|first| !is_csv_header(first)),
+    if extension == ".csv" {
+        return false;
+    }
+    match text.lines().find(|line| !line.trim().is_empty()) {
+        Some(first) => !is_csv_header(first),
+        // Nothing to go by: a text file reads as a list, anything else as a table.
+        None => extension == ".txt",
     }
 }
 

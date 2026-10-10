@@ -67,6 +67,7 @@ services:
       Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}
       Subsonic__EnableSearchDiscovery: ${ENABLE_SEARCH_DISCOVERY:-true}
       Subsonic__WaitForSearchDurations: ${WAIT_FOR_SEARCH_DURATIONS:-true}
+      Subsonic__StreamSizeWarmPerMinute: ${STREAM_SIZE_WARM_PER_MINUTE:-5}
       # Clients that sync the library and search offline (Symfonium) get your radio
       # stations' tracks appended to the sync, so discovery reaches them too.
       Subsonic__EnableSyncCatalog: ${ENABLE_SYNC_CATALOG:-true}

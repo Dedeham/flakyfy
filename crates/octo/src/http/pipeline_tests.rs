@@ -737,3 +737,64 @@ async fn exception_envelopes_use_the_relaxed_encoder() {
         r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Set SUBSONIC_URL: an absolute URL, isn't it"}}}"#
     );
 }
+
+fn outside_song(title: &str) -> octo_core::soulseek::SoulseekRouting {
+    octo_core::soulseek::SoulseekRouting {
+        kind: octo_core::soulseek::RoutingKind::Song,
+        artist: Some("Artist".into()),
+        title: Some(title.into()),
+        ..Default::default()
+    }
+}
+
+/// A route standing in for an answer that lists `rows` outside songs, none pinned or sized.
+fn listing_route(rows: usize) -> axum::routing::MethodRouter<AppState> {
+    get(
+        move |axum::extract::State(state): axum::extract::State<AppState>| async move {
+            use octo_subsonic::subsonic_response_builder::IdRegistry;
+            for i in 0..rows {
+                let id = state
+                    .external_id_registry
+                    .register(outside_song(&format!("{rows} {i}")));
+                state.stream_size_warmer.outside_listed(&id);
+                state.stream_size_warmer.size_wanted(&id);
+            }
+            "listed"
+        },
+    )
+}
+
+/// Each request is one listing for the stream size warmer: a short answer may have its songs
+/// searched for, a long one never.
+#[tokio::test]
+async fn each_answer_is_one_listing_for_the_stream_size_warmer() {
+    let state = AppState::for_tests(AppSettings::default());
+    let app = build_with(
+        state.clone(),
+        RouteSet::new()
+            .route("/test/few", listing_route(3))
+            .route("/test/many", listing_route(60)),
+    );
+    assert_eq!(
+        send_to(&app, Method::GET, "/test/few", &[]).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send_to(&app, Method::GET, "/test/many", &[]).await.status,
+        StatusCode::OK
+    );
+
+    let queued = |title: &str| {
+        let id = state.external_id_registry.register(outside_song(title));
+        // Queued already when it cannot be queued again.
+        !state.stream_size_warmer.want(&id, true)
+    };
+    assert!(
+        queued("3 0") && queued("3 2"),
+        "a short answer's songs are searched for"
+    );
+    assert!(
+        !queued("60 0") && !queued("60 59"),
+        "a long answer's songs are not"
+    );
+}

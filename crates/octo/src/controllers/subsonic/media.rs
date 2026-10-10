@@ -580,9 +580,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
     // plain, and a missing one is a 404 it draws its own empty tile for. Every other
     // client keeps the badge, the only sign it gets that a song came from Octo's search.
     let plain = draws_its_own_marks(&call);
-    let badged_key = state
-        .cover_art_service
-        .badged_key(&id, requested_cover_size(&call));
+    let badged_key = state.cover_art_service.badged_key(&id);
     if let Some(routing) = state.external_id_registry.lookup(&id) {
         if !plain && let Some(kept) = state.cover_art_service.kept_badged(&badged_key) {
             return Ok(file(kept, "image/jpeg"));
@@ -602,9 +600,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         let watermarked = if plain {
             raw.to_vec()
         } else {
-            let badged = badge(&state, raw.to_vec()).await;
-            state.cover_art_service.keep_badged(badged_key, &badged);
-            badged
+            match badge(&state, raw.to_vec()).await {
+                Some(badged) => {
+                    state.cover_art_service.keep_badged(badged_key, &badged);
+                    badged
+                }
+                None => raw.to_vec(),
+            }
         };
         return Ok(file(watermarked, "image/jpeg"));
     }
@@ -658,9 +660,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 let watermarked = if plain {
                     image_bytes
                 } else {
-                    let badged = badge(&state, image_bytes).await;
-                    state.cover_art_service.keep_badged(badged_key, &badged);
-                    badged
+                    match badge(&state, image_bytes.clone()).await {
+                        Some(badged) => {
+                            state.cover_art_service.keep_badged(badged_key, &badged);
+                            badged
+                        }
+                        None => image_bytes,
+                    }
                 };
                 return Ok(file(watermarked, "image/jpeg"));
             }
@@ -714,13 +720,14 @@ async fn missing_cover(state: &AppState, plain: bool) -> Response {
     }
 }
 
-/// `_coverArtService.AddOctoBadge(raw)`, off the async threads.
-async fn badge(state: &AppState, raw: Vec<u8>) -> Vec<u8> {
+/// `_coverArtService.AddOctoBadge(raw)`, off the async threads. None when the badge could not
+/// be drawn: the caller sends the picture as it came, and does not keep it.
+async fn badge(state: &AppState, raw: Vec<u8>) -> Option<Vec<u8>> {
     let service = Arc::clone(&state.cover_art_service);
-    let fallback = raw.clone();
-    tokio::task::spawn_blocking(move || service.add_octo_badge(&raw))
+    tokio::task::spawn_blocking(move || service.try_add_octo_badge(&raw))
         .await
-        .unwrap_or(fallback)
+        .ok()
+        .flatten()
 }
 
 /// The words a chart's cover shows in place of its name, when they differ: Popular right now

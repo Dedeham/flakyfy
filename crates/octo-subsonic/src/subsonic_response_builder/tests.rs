@@ -346,6 +346,7 @@ fn external_song_declares_lossless_when_waiting_for_lossless() {
 struct StreamIds {
     facts: std::collections::HashMap<String, StreamFacts>,
     wanted: std::sync::Mutex<Vec<String>>,
+    listed: std::sync::Mutex<Vec<String>>,
 }
 
 impl IdRegistry for StreamIds {
@@ -359,6 +360,13 @@ impl IdRegistry for StreamIds {
 
     fn size_wanted(&self, song_id: &str) {
         self.wanted
+            .lock()
+            .expect("not poisoned")
+            .push(song_id.to_string());
+    }
+
+    fn outside_listed(&self, song_id: &str) {
+        self.listed
             .lock()
             .expect("not poisoned")
             .push(song_id.to_string());
@@ -436,6 +444,25 @@ fn an_outside_song_without_a_known_stream_has_no_size_and_is_asked_about() {
     assert_eq!(row["suffix"], "m4a");
     assert_eq!(
         *ids.wanted.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+}
+
+/// The registry hears of every outside row an answer lists, sized or not, so it can tell a
+/// short list from a whole catalog.
+#[test]
+fn every_outside_row_is_counted_as_listed_sized_or_not() {
+    let sized = known_stream("140", "m4a", 6_755_585, Some(129));
+    builder_over(sized.clone(), false).convert_song_to_json(&external_song());
+    assert_eq!(
+        *sized.listed.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+
+    let unsized_ids = Arc::new(StreamIds::default());
+    builder_over(unsized_ids.clone(), false).convert_song_to_xml(&external_song(), NS);
+    assert_eq!(
+        *unsized_ids.listed.lock().expect("not poisoned"),
         vec!["abc123".to_string()]
     );
 }

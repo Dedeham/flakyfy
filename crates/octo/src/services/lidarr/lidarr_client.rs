@@ -399,10 +399,10 @@ impl LidarrClient {
     /// release against. A just-added artist or album gets its track list from Lidarr's own
     /// refresh: while a RefreshArtist or RefreshAlbum for it is queued or running, this waits
     /// for it. When none is running and the list is still empty, it asks for one RefreshAlbum
-    /// and waits for that. It gives up when that refresh ended without tracks, or once the
-    /// import timeout has passed; the search is started either way.
+    /// and waits for that. It gives up when that refresh ended without tracks, or once
+    /// [`track_list_wait`] has passed; the search is started either way.
     async fn wait_for_track_list(&self, album_id: i32, artist_id: i32, settings: &LidarrSettings) {
-        let deadline = Instant::now() + Duration::from_secs(settings.import_timeout_seconds.max(1) as u64);
+        let deadline = Instant::now() + track_list_wait(settings);
         let poll = Duration::from_millis(self.metadata_poll.load(Ordering::Relaxed));
         let mut refresh_asked = false;
         loop {
@@ -787,6 +787,15 @@ fn truncate(value: &str, max: usize) -> &str {
         }
     }
     value
+}
+
+/// The longest wait for Lidarr to list an album's tracks before its search starts.
+const TRACK_LIST_WAIT_MAX: Duration = Duration::from_secs(5 * 60);
+
+/// How long to wait for an album's track list: the import timeout, at most
+/// [`TRACK_LIST_WAIT_MAX`], so a long import timeout never holds the search back for as long.
+fn track_list_wait(settings: &LidarrSettings) -> Duration {
+    Duration::from_secs(settings.import_timeout_seconds.max(1) as u64).min(TRACK_LIST_WAIT_MAX)
 }
 
 #[cfg(test)]

@@ -288,7 +288,9 @@ impl MusicBrainzClient {
             return Ok(None);
         };
         let found = pure::parse_artists_named(&doc, wanted);
-        self.artists.lock().insert(wanted.to_lowercase(), found.clone());
+        let mut artists = self.artists.lock();
+        make_room(&mut artists, 1, KNOWN_MAX);
+        artists.insert(wanted.to_lowercase(), found.clone());
         Ok(Some(found))
     }
 
@@ -309,6 +311,8 @@ impl MusicBrainzClient {
             .map(|id| id.trim().to_lowercase())
             .filter(|id| pure::is_mbid(id) && self.known_credits(id).is_none())
             .collect();
+        // Room for every answer this call adds, so none of them is dropped before it is read.
+        make_room(&mut self.credits.lock(), wanted.len(), KNOWN_MAX);
         for batch in wanted.chunks(100) {
             let Some(url) = pure::recording_credits_url(batch) else {
                 continue;
@@ -449,6 +453,17 @@ impl ReleaseLookup for MusicBrainzClient {
 impl Default for MusicBrainzClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The most artist searches, and the most recording credits, kept in memory.
+const KNOWN_MAX: usize = 10_000;
+
+/// Drops every kept answer when `adding` more would pass `max`: answers MusicBrainz gives again,
+/// so the map stays bounded however long the process runs.
+fn make_room<K, V>(map: &mut HashMap<K, V>, adding: usize, max: usize) {
+    if map.len() + adding > max {
+        map.clear();
     }
 }
 

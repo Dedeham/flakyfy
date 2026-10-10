@@ -4,10 +4,14 @@
 //!
 //! Off until `Lidarr:WebhookSecret` is set: until then the address answers 404. Lidarr sends
 //! the secret as the password of HTTP Basic authentication (any user name); it is compared in
-//! constant time.
+//! constant time. Wrong passwords are throttled per address as dashboard sign-ins are: after ten
+//! in fifteen minutes the address gets 429 until the oldest is fifteen minutes old.
 
+use std::net::SocketAddr;
+
+use axum::Extension;
 use axum::body::{Body, Bytes};
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use axum::routing::post;
@@ -18,6 +22,8 @@ use tracing::{info, warn};
 
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
+use crate::services::admin::SignInThrottle;
+use crate::services::admin::sign_in_throttle::key_of;
 use crate::services::lidarr::{LidarrImportEvent, LidarrImportOutcome};
 
 /// The address Lidarr posts to.
@@ -27,7 +33,12 @@ pub fn routes() -> RouteSet {
     RouteSet::new().route(WEBHOOK_PATH, post(lidarr_webhook))
 }
 
-async fn lidarr_webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+async fn lidarr_webhook(
+    State(state): State<AppState>,
+    remote: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let secret = state
         .settings
         .current()
@@ -38,7 +49,25 @@ async fn lidarr_webhook(State(state): State<AppState>, headers: HeaderMap, body:
     if secret.trim().is_empty() {
         return plain(StatusCode::NOT_FOUND, Value::Null);
     }
+    let throttle = &state.lidarr_webhook_throttle;
+    let address = key_of(remote.map(|Extension(ConnectInfo(addr))| addr));
+    if let Some(wait) = throttle.retry_after(&address) {
+        let mut response = plain(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({
+                "error": format!(
+                    "Too many wrong webhook passwords. Try again in {}.",
+                    SignInThrottle::minutes(wait)
+                )
+            }),
+        );
+        if let Ok(value) = HeaderValue::from_str(&SignInThrottle::retry_after_seconds(wait).to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        return response;
+    }
     if !authorized(&headers, &secret) {
+        throttle.failed(&address);
         let mut response = plain(
             StatusCode::UNAUTHORIZED,
             json!({ "error": "Wrong webhook password." }),
@@ -49,6 +78,7 @@ async fn lidarr_webhook(State(state): State<AppState>, headers: HeaderMap, body:
         );
         return response;
     }
+    throttle.succeeded(&address);
     let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
         return plain(
             StatusCode::BAD_REQUEST,

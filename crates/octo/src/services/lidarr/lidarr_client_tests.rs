@@ -879,3 +879,16 @@ async fn a_refresh_that_never_ends_holds_the_search_only_until_the_import_timeou
     assert_eq!(log.last().map(String::as_str), Some("AlbumSearch"));
     assert!(!log.iter().any(|step| step == "RefreshAlbum"), "{log:?}");
 }
+
+#[test]
+fn the_wait_for_a_track_list_stops_at_five_minutes_whatever_the_import_timeout() {
+    let wait = |import_timeout_seconds: i32| {
+        track_list_wait(&LidarrSettings {
+            import_timeout_seconds,
+            ..Default::default()
+        })
+    };
+    assert_eq!(wait(3600), std::time::Duration::from_secs(5 * 60));
+    assert_eq!(wait(120), std::time::Duration::from_secs(120));
+    assert_eq!(wait(0), std::time::Duration::from_secs(1));
+}

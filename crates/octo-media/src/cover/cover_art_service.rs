@@ -199,9 +199,15 @@ impl CoverArtService {
     /// modified bytes as JPEG, or the original bytes unchanged if the logo is missing or the
     /// source image fails to decode.
     pub fn add_octo_badge(&self, original_art: &[u8]) -> Vec<u8> {
+        self.try_add_octo_badge(original_art)
+            .unwrap_or_else(|| original_art.to_vec())
+    }
+
+    /// [`Self::add_octo_badge`], None when the badge could not be drawn.
+    pub fn try_add_octo_badge(&self, original_art: &[u8]) -> Option<Vec<u8>> {
         let Some(image) = cover_image::decode(original_art) else {
             error!("Failed to composite Octo badge onto cover art");
-            return original_art.to_vec();
+            return None;
         };
         let mut image = image.to_rgba8();
         let image_size = image.width().min(image.height());
@@ -209,26 +215,19 @@ impl CoverArtService {
         // thumbnails most clients use for queue rows.
         let badge_size = (image_size as f64 * 0.28) as u32;
         let padding = (image_size as f64 * 0.03) as i64;
-        let Some(badge) = self.sized_logo(badge_size, badge_size) else {
-            return original_art.to_vec();
-        };
+        let badge = self.sized_logo(badge_size, badge_size)?;
         // Top-left placement: most album covers concentrate visual content and text along the
         // center/bottom (artist name, track titles, overlay UI from clients), so top-left is
         // consistently the "quietest" region. Also matches Western reading-order so it's the
         // first thing the eye picks up: exactly what a source indicator wants.
         image::imageops::overlay(&mut image, &badge, padding, padding);
         cover_image::encode_jpeg(&DynamicImage::ImageRgba8(image), 90)
-            .unwrap_or_else(|| original_art.to_vec())
     }
 
-    /// The key a badged outside cover is kept under: the cover design's version, the size asked
-    /// for, and the id.
-    pub fn badged_key(&self, id: &str, size: Option<i32>) -> String {
-        format!(
-            "{}|{}|{id}",
-            self.book.version,
-            size.map(|size| size.to_string()).unwrap_or_default()
-        )
+    /// The key a badged outside cover is kept under: the cover design's version and the id. The
+    /// badge goes on the same picture whatever size is asked, so the size is no part of it.
+    pub fn badged_key(&self, id: &str) -> String {
+        format!("{}|{id}", self.book.version)
     }
 
     /// A badged cover kept under `key`, while it is fresh.

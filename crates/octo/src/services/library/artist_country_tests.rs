@@ -112,7 +112,7 @@ async fn an_unknown_answer_is_kept_and_a_failure_is_asked_again() {
     let path = dir.path().join(STORE_FILE);
     let source = Arc::new(FakeMusicBrainz::with(
         &[("mb-down", None)],
-        &[("Nobody Knows", Some(""))],
+        &[("Nobody Knows", Some("")), ("Down", None)],
     ));
     let first = lookup(&source, Some(path.clone()));
     let mut asks = 10;
@@ -135,7 +135,16 @@ async fn an_unknown_answer_is_kept_and_a_failure_is_asked_again() {
     let mut asks = 10;
     assert_eq!(again.known("Nobody Knows", None).as_deref(), Some(""));
     assert_eq!(again.country("Down", Some("mb-down"), &mut asks).await, None);
-    assert_eq!(source.asked(), ["name Nobody Knows", "id mb-down", "id mb-down"]);
+    assert_eq!(
+        source.asked(),
+        [
+            "name Nobody Knows",
+            "id mb-down",
+            "name Down",
+            "id mb-down",
+            "name Down"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -368,4 +377,42 @@ async fn without_the_admin_sign_in_nothing_is_walked_and_the_pass_is_tried_again
     assert!(source.asked().is_empty());
     let retried_at = library.pass.lock().started.unwrap() + RETRY_AFTER_FAILURE;
     assert!(library.pass.lock().failed && retried_at > Utc::now());
+}
+
+#[tokio::test]
+async fn an_id_that_cannot_be_asked_falls_back_to_the_name_search() {
+    let source = Arc::new(FakeMusicBrainz::with(
+        &[("mb-down", None)],
+        &[("Rosalía", Some("ES"))],
+    ));
+    let lookup = lookup(&source, None);
+    let mut asks = 10;
+
+    let country = lookup.country("Rosalía", Some("mb-down"), &mut asks).await;
+
+    assert_eq!(country.as_deref(), Some("ES"));
+    assert_eq!(source.asked(), ["id mb-down", "name Rosalía"]);
+    assert_eq!(lookup.known("Rosalía", Some("mb-down")).as_deref(), Some("ES"));
+}
+
+#[tokio::test]
+async fn a_failed_lookup_is_not_asked_again_until_its_back_off_is_over() {
+    let source = Arc::new(FakeMusicBrainz::with(&[], &[("Down", None)]));
+    let lookup = lookup(&source, None);
+    let mut asks = 10;
+
+    assert_eq!(lookup.country("Down", None, &mut asks).await, None);
+    assert_eq!(lookup.country("Down", None, &mut asks).await, None);
+
+    assert_eq!(source.asked(), ["name Down"]);
+    assert_eq!(asks, 9, "a lookup backing off costs no ask");
+}
+
+#[test]
+fn the_back_off_doubles_from_an_hour_up_to_a_day() {
+    assert_eq!(back_off(1), Duration::from_secs(3600));
+    assert_eq!(back_off(2), Duration::from_secs(2 * 3600));
+    assert_eq!(back_off(4), Duration::from_secs(8 * 3600));
+    assert_eq!(back_off(6), Duration::from_secs(24 * 3600));
+    assert_eq!(back_off(60), Duration::from_secs(24 * 3600));
 }

@@ -667,8 +667,9 @@ impl crate::services::cover_art::ICoverArtSource for OnePicture {
     }
 }
 
-/// A badged outside cover is kept by id, size and cover design and served from memory the next
-/// time; the Octo app's plain covers are never the badged ones.
+/// A badged outside cover is kept by id and cover design and served from memory the next time,
+/// at any size asked (the badge is drawn on the same picture whatever the size); the Octo app's
+/// plain covers are never the badged ones.
 #[tokio::test]
 async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
     let navidrome = MockServer::start().await;
@@ -676,6 +677,10 @@ async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
         inner.cover_art_aggregator = Arc::new(crate::services::cover_art::CoverArtAggregator::new(vec![
             Arc::new(OnePicture),
         ]));
+        // The logo the badge is drawn from, as the image ships it.
+        let logo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../octo/Assets/octo_logo.png");
+        inner.cover_art_service =
+            Arc::new(octo_media::cover::CoverArtService::new(None).with_logo_paths(vec![logo]));
     });
     let id = state.external_id_registry.register(SoulseekRouting {
         kind: RoutingKind::Song,
@@ -684,7 +689,7 @@ async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
         ..Default::default()
     });
     let app = app(&state);
-    let key = state.cover_art_service.badged_key(&id, Some(300));
+    let key = state.cover_art_service.badged_key(&id);
 
     let first = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
     assert_eq!(first.status, StatusCode::OK);
@@ -697,24 +702,64 @@ async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
     state.cover_art_service.keep_badged(key.clone(), b"kept");
     let second = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
     assert_eq!(second.body.as_ref(), b"kept");
-    // Another size is its own.
+    // Another size is the same picture.
     let other = get(&app, &format!("/rest/getCoverArt?id={id}&size=600")).await;
-    assert_ne!(other.body.as_ref(), b"kept");
+    assert_eq!(other.body.as_ref(), b"kept");
     // The Octo app gets the plain picture, never the badged one.
     let plain = get(&app, &format!("/rest/getCoverArt?id={id}&size=300&c=Octo")).await;
     assert_ne!(plain.body.as_ref(), b"kept");
 }
 
 #[test]
-fn a_badged_cover_is_kept_by_design_version_size_and_id() {
+fn a_badged_cover_is_kept_by_design_version_and_id() {
     let service = octo_media::cover::CoverArtService::new(None);
     let version = octo_media::cover::CoverBook::shipped().version;
 
+    assert_eq!(service.badged_key("ext-1"), format!("{version}|ext-1"));
+}
+
+/// A picture that is not one the badge can be drawn on.
+struct NotAPicture;
+
+#[async_trait::async_trait]
+impl crate::services::cover_art::ICoverArtSource for NotAPicture {
+    fn name(&self) -> &str {
+        "broken"
+    }
+
+    async fn try_fetch(&self, _: &SoulseekRouting, _: bool) -> Option<bytes::Bytes> {
+        Some(bytes::Bytes::from_static(b"not a picture"))
+    }
+}
+
+/// A cover the badge could not be drawn on goes out as it came, and is not kept: the next
+/// request tries the badge again.
+#[tokio::test]
+async fn a_cover_the_badge_failed_on_is_not_kept() {
+    let navidrome = MockServer::start().await;
+    let state = state_with(settings(&navidrome.uri()), |inner| {
+        inner.cover_art_aggregator = Arc::new(crate::services::cover_art::CoverArtAggregator::new(vec![
+            Arc::new(NotAPicture),
+        ]));
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Artist".into()),
+        title: Some("Broken".into()),
+        ..Default::default()
+    });
+    let app = app(&state);
+
+    let reply = get(&app, &format!("/rest/getCoverArt?id={id}")).await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body.as_ref(), b"not a picture");
     assert_eq!(
-        service.badged_key("ext-1", Some(300)),
-        format!("{version}|300|ext-1")
+        state
+            .cover_art_service
+            .kept_badged(&state.cover_art_service.badged_key(&id)),
+        None
     );
-    assert_eq!(service.badged_key("ext-1", None), format!("{version}||ext-1"));
 }
 
 // ---- An outside stream that cannot play, or a range past its end ---------------------------

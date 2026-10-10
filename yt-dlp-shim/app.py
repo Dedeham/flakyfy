@@ -753,8 +753,8 @@ def _maybe_self_update(reason: str) -> bool:
 
 
 # ReplayGain for played videos. Measuring reads the whole audio once more, so it runs only on a
-# play, LOUDNESS_PER_MINUTE at most a minute, and only while a background gate slot is free at
-# once (it holds that slot, so it never makes a play or a resolve wait).
+# play, LOUDNESS_PER_MINUTE at most a minute, and one at a time under its own limit (never a
+# yt-dlp gate slot, so it never makes a play or a resolve wait).
 _LOUDNESS = LoudnessBook(per_minute=int(os.environ.get("LOUDNESS_PER_MINUTE", "2")))
 _LOUDNESS_TIMEOUT_SEC = int(os.environ.get("LOUDNESS_TIMEOUT_SEC", "120"))
 
@@ -779,24 +779,19 @@ def _measure_loudness(url: str) -> Optional[dict]:
 
 def _maybe_measure_loudness(video_id: str, url: str) -> bool:
     """Starts measuring a played video's loudness in the background. False when it is known,
-    already running, over the minute's cap, or the shim is busy."""
+    a measurement is running, or the minute's cap is reached."""
     if _LOUDNESS.get(video_id) is not None:
         return False
-    # A moment, not a wait: the gate spends one budget on its two semaphores, so 0 never succeeds.
-    if not _GATE.acquire(True, 0.05):
-        return False
     if not _LOUDNESS.begin(video_id):
-        _GATE.release(True)
         return False
 
     def run():
         measured = None
         try:
             measured = _measure_loudness(url)
-            log.info("loudness %s: %s", video_id, measured)
+            log.debug("loudness %s: %s", video_id, measured)
         finally:
             _LOUDNESS.finish(video_id, measured)
-            _GATE.release(True)
 
     threading.Thread(target=run, name=f"loudness-{video_id}", daemon=True).start()
     return True
@@ -915,6 +910,8 @@ def stream_facts():
     video_id = request.args.get("id", "").strip()
     if not video_id:
         abort(400, "missing id")
+    if not stream_info.is_video_id(video_id):
+        abort(400, "not a video id")
     known = _facts_get(video_id)
     if known.get("size") is None:
         if not _resolve_url(video_id, _is_bg()):

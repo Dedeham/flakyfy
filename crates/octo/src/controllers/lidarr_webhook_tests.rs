@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 
 use super::*;
 use crate::controllers::admin::test_app::{app, send};
+use crate::services::admin::SignInThrottle;
 use crate::services::lidarr::ILidarrHeartAcquisitionService;
 
 /// What Lidarr's Webhook connection posts after importing an album: the album is singular,
@@ -230,4 +231,55 @@ fn a_password_with_a_colon_is_read_whole() {
 
     assert!(authorized(&headers, "a:b"));
     assert!(!authorized(&headers, "b"));
+}
+
+/// Guessing the password is slowed down: after ten wrong ones from an address, it waits, and
+/// even the right password is turned away until then.
+#[tokio::test]
+async fn wrong_passwords_from_one_address_make_it_wait() {
+    let (app, hearts) = with_secret(Some(SECRET));
+    let wrong = basic("lidarr", "guess");
+    for _ in 0..SignInThrottle::MAX_FAILURES {
+        let reply = send(
+            &app,
+            Method::POST,
+            WEBHOOK_PATH,
+            &[("authorization", &wrong)],
+            Some(DOWNLOAD),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
+    }
+    let right = basic("lidarr", SECRET);
+
+    let reply = send(
+        &app,
+        Method::POST,
+        WEBHOOK_PATH,
+        &[("authorization", &right)],
+        Some(DOWNLOAD),
+    )
+    .await;
+
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(reply.header("retry-after").is_some());
+    assert!(hearts.events.lock().is_empty());
+}
+
+#[tokio::test]
+async fn the_right_password_is_never_counted_against_an_address() {
+    let (app, hearts) = with_secret(Some(SECRET));
+    let right = basic("lidarr", SECRET);
+    for _ in 0..SignInThrottle::MAX_FAILURES + 2 {
+        let reply = send(
+            &app,
+            Method::POST,
+            WEBHOOK_PATH,
+            &[("authorization", &right)],
+            Some(DOWNLOAD),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::OK);
+    }
+    assert_eq!(hearts.events.lock().len(), SignInThrottle::MAX_FAILURES + 2);
 }

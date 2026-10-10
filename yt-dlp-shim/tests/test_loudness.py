@@ -52,7 +52,7 @@ def test_replay_gain_is_relative_to_minus_18_and_the_peak_is_linear():
 def test_the_ffmpeg_run_measures_peak_and_reads_no_stdin():
     args = loudness.ffmpeg_args("https://example/x", "UA/1")
     assert args[0] == "ffmpeg" and "-nostdin" in args
-    assert args[args.index("-af") + 1] == "ebur128=peak=true"
+    assert args[args.index("-af") + 1].startswith("ebur128=peak=true")
     assert args[args.index("-user_agent") + 1] == "UA/1"
     assert "-user_agent" not in loudness.ffmpeg_args("https://example/x")
 
@@ -68,7 +68,10 @@ class Clock:
 def test_at_most_two_measurements_start_a_minute():
     clock = Clock()
     book = loudness.LoudnessBook(per_minute=2, clock=clock)
-    assert book.begin("a") and book.begin("b")
+    assert book.begin("a")
+    book.finish("a", None)
+    assert book.begin("b")
+    book.finish("b", None)
     assert not book.begin("c")
     clock.now += 59
     assert not book.begin("c")
@@ -105,24 +108,7 @@ def test_the_book_forgets_the_oldest_past_its_size():
 app = pytest.importorskip("app")
 
 
-class BusyGate:
-    def acquire(self, bg, timeout):
-        return False
-
-    def release(self, bg):
-        pytest.fail("nothing was taken")
-
-
-def test_a_busy_shim_skips_the_measurement(monkeypatch):
-    monkeypatch.setattr(app, "_GATE", BusyGate())
-    monkeypatch.setattr(app, "_LOUDNESS", loudness.LoudnessBook(clock=Clock()))
-    monkeypatch.setattr(app, "_measure_loudness", lambda url: pytest.fail("measured while busy"))
-    assert not app._maybe_measure_loudness("vid-busy", "https://example/x")
-    # The skipped play did not use up the minute.
-    assert app._LOUDNESS.begin("vid-busy")
-
-
-def test_a_measurement_holds_a_background_slot_and_lands_in_facts(monkeypatch):
+def test_a_measurement_lands_in_facts(monkeypatch):
     monkeypatch.setattr(app, "_LOUDNESS", loudness.LoudnessBook(clock=Clock()))
     monkeypatch.setattr(app, "_measure_loudness", lambda url: {"track_gain": -10.0, "track_peak": 1.135011})
     started = []
@@ -136,13 +122,13 @@ def test_a_measurement_holds_a_background_slot_and_lands_in_facts(monkeypatch):
             self.target()
 
     monkeypatch.setattr(app.threading, "Thread", InlineThread)
-    assert app._maybe_measure_loudness("vid-measured", "https://example/x")
+    assert app._maybe_measure_loudness("vidMeasured", "https://example/x")
     assert started
     # Known now: a second play measures nothing.
-    assert not app._maybe_measure_loudness("vid-measured", "https://example/x")
+    assert not app._maybe_measure_loudness("vidMeasured", "https://example/x")
 
-    app._facts_put("vid-measured", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
-    answer = app.app.test_client().get("/facts?id=vid-measured").get_json()
+    app._facts_put("vidMeasured", {"itag": "140", "size": 6755585, "ext": "m4a", "abr": 129})
+    answer = app.app.test_client().get("/facts?id=vidMeasured").get_json()
     assert answer["track_gain"] == -10.0 and answer["track_peak"] == 1.135011
 
 
@@ -166,3 +152,45 @@ def test_only_a_play_from_the_first_byte_measures(monkeypatch, range_header, mea
     headers = {"Range": range_header} if range_header else {}
     app.app.test_client().get("/stream?id=vid-play", headers=headers)
     assert bool(calls) == measured
+
+
+def test_the_ffmpeg_run_reads_only_https_and_prints_only_the_summary():
+    args = loudness.ffmpeg_args("https://example/x")
+    at = args.index("-protocol_whitelist")
+    assert args[at + 1] == "https,tls,tcp"
+    assert at < args.index("-i")
+    # Per-frame lines go to the verbose level, which ffmpeg does not print by default.
+    assert "framelog=verbose" in args[args.index("-af") + 1]
+
+
+def test_one_measurement_runs_at_a_time():
+    book = loudness.LoudnessBook(per_minute=10, clock=Clock())
+    assert book.begin("a")
+    assert not book.begin("b")
+    book.finish("a", None)
+    assert book.begin("b")
+
+
+class NoGate:
+    def acquire(self, bg, timeout):
+        pytest.fail("a measurement never takes a yt-dlp slot")
+
+    def release(self, bg):
+        pytest.fail("a measurement never takes a yt-dlp slot")
+
+
+def test_a_measurement_never_takes_a_yt_dlp_slot(monkeypatch):
+    monkeypatch.setattr(app, "_GATE", NoGate())
+    monkeypatch.setattr(app, "_LOUDNESS", loudness.LoudnessBook(clock=Clock()))
+    monkeypatch.setattr(app, "_measure_loudness", lambda url: {"track_gain": -1.0, "track_peak": None})
+
+    class InlineThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(app.threading, "Thread", InlineThread)
+    assert app._maybe_measure_loudness("vidNoGate01", "https://example/x")
+    assert app._LOUDNESS.get("vidNoGate01") == {"track_gain": -1.0, "track_peak": None}

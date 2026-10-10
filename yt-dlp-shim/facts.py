@@ -7,6 +7,7 @@ fallback. Kept free of any app.py import so it stays cheap to unit test.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
@@ -14,8 +15,16 @@ from urllib.parse import parse_qs, urlsplit
 # average bit rate in kbps, separated by bars. yt-dlp prints NA for a field it does not know.
 FORMAT_PRINT = "%(format_id)s|%(filesize)s|%(ext)s|%(abr)s"
 
+# A YouTube video id: eleven letters, digits, dashes or underscores.
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+
 # Containers by the MIME type googlevideo names in the URL.
 _EXT_BY_MIME = {"audio/mp4": "m4a", "audio/webm": "webm", "video/mp4": "mp4", "video/webm": "webm"}
+
+
+def is_video_id(value: Optional[str]) -> bool:
+    """Whether `value` is a YouTube video id, and so safe to hand yt-dlp as one."""
+    return bool(value) and _VIDEO_ID.fullmatch(value) is not None
 
 
 def _text(value: str) -> Optional[str]:

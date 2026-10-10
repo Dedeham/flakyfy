@@ -292,6 +292,8 @@ pub struct AppInner {
     pub browse_sessions: Arc<BrowseSessionStore>,
     /// `SignInThrottle`: ten wrong sign-ins per address per fifteen minutes, then a wait.
     pub sign_in_throttle: Arc<SignInThrottle>,
+    /// Wrong Lidarr webhook passwords, throttled per address like sign-ins (apart from them).
+    pub lidarr_webhook_throttle: Arc<SignInThrottle>,
     /// `AdminRecoveryCode`: the one-time way in when Navidrome cannot vouch for anyone,
     /// `<config>/admin-recovery-code`.
     pub admin_recovery_code: Arc<AdminRecoveryCode>,
@@ -1047,10 +1049,17 @@ impl Stores {
         });
         let you_tube_resolver = Arc::new(YouTubeResolver::new(settings));
         // Every row the response builder sends without a size asks this to learn one.
-        let stream_size_warmer = Arc::new(StreamSizeWarmer::new(
-            external_id_registry.clone(),
-            you_tube_resolver.clone(),
-        ));
+        let warm_settings = settings.clone();
+        let stream_size_warmer = Arc::new(
+            StreamSizeWarmer::new(external_id_registry.clone(), you_tube_resolver.clone()).with_per_minute(
+                Arc::new(move || {
+                    warm_settings
+                        .current()
+                        .subsonic
+                        .effective_stream_size_warm_per_minute()
+                }),
+            ),
+        );
         Stores {
             download_history: Arc::new(DownloadHistoryService::new(
                 config_dir.join("downloads-history.json"),
@@ -2364,6 +2373,7 @@ impl AppState {
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,
+            lidarr_webhook_throttle: Arc::new(SignInThrottle::new()),
             admin_recovery_code: admin_sign_in.recovery_code,
             admin_role_check: admin_sign_in.role_check,
             anonymous_status: Default::default(),
@@ -2700,6 +2710,7 @@ impl AppState {
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
             sign_in_throttle: admin_sign_in.throttle,
+            lidarr_webhook_throttle: Arc::new(SignInThrottle::new()),
             admin_recovery_code: admin_sign_in.recovery_code,
             admin_role_check: admin_sign_in.role_check,
             anonymous_status: Default::default(),

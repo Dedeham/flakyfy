@@ -442,18 +442,18 @@ impl LastFmService {
     async fn artist_listeners(&self, artist: &str) -> ElementResult<i64> {
         self.cached(&format!("artist-listeners|{artist}"), || async {
             let Some(doc) = self.get_document("artist.getInfo", &[("artist", artist)]).await else {
-                return Ok(0);
+                return Ok(None);
             };
             let Some(found) = try_get_property(&doc, "artist")? else {
-                return Ok(0);
+                return Ok(Some(0));
             };
             let Some(stats) = try_get_property(found, "stats")? else {
-                return Ok(0);
+                return Ok(Some(0));
             };
             let listeners = try_get_property(stats, "listeners")?
                 .map(element_text)
                 .unwrap_or_default();
-            Ok(parse_long(&listeners).unwrap_or(0))
+            Ok(Some(parse_long(&listeners).unwrap_or(0)))
         })
         .await
     }
@@ -470,21 +470,23 @@ impl LastFmService {
                     return Ok(None);
                 };
                 let Some(found) = try_get_property(&doc, "artist")? else {
-                    return Ok(None);
+                    return Ok(Some(None));
                 };
                 let answered = try_get_property(found, "name")?
                     .map(element_text)
                     .unwrap_or_default();
                 if SongIdentity::key(&answered) != SongIdentity::key(artist) {
-                    return Ok(None);
+                    return Ok(Some(None));
                 }
                 let Some(bio) = try_get_property(found, "bio")? else {
-                    return Ok(None);
+                    return Ok(Some(None));
                 };
                 let summary = try_get_property(bio, "summary")?
                     .map(element_text)
                     .unwrap_or_default();
-                Ok((!summary.trim().is_empty()).then(|| summary.trim().to_string()))
+                Ok(Some(
+                    (!summary.trim().is_empty()).then(|| summary.trim().to_string()),
+                ))
             })
             .await;
         read.unwrap_or_else(|e| {
@@ -509,9 +511,7 @@ impl LastFmService {
         }
         match self.top_tracks_from_similar_artists_inner(&name, limit).await {
             Ok(tracks) => {
-                self.radio_cache
-                    .lock()
-                    .insert(key, (self.cache_expiry(), tracks.clone().wrap()));
+                self.keep(key, tracks.clone().wrap());
                 tracks
             }
             Err(e) => {
@@ -664,29 +664,45 @@ impl LastFmService {
             dotnet::escape_data_string(artist),
             self.last_fm().api_key
         );
-        let result: anyhow::Result<Vec<SimilarTrack>> = async {
-            let doc = self.get_json(&url).await?;
-            let mut tracks = Vec::new();
-            if let Some(top) = try_get_property(&doc, "toptracks")?
-                && let Some(array @ Value::Array(_)) = try_get_property(top, "track")?
-            {
-                for t in enumerate_array(array)? {
-                    let name = match try_get_property(t, "name")? {
-                        Some(n) => get_string(n)?,
-                        None => None,
+        // Kept like the other radio answers, and asked through the same gate.
+        let read = self
+            .cached(&format!("artist-top-tracks|{artist}|{limit}"), || async {
+                let result: anyhow::Result<Vec<SimilarTrack>> = async {
+                    let doc = {
+                        let _permit = self
+                            .provider_gate
+                            .acquire()
+                            .await
+                            .expect("the gate is never closed");
+                        self.get_json(&url).await?
                     };
-                    if let Some(name) = name.filter(|n| !n.is_empty()) {
-                        tracks.push(SimilarTrack::new(artist, name, 1.0));
+                    let mut tracks = Vec::new();
+                    if let Some(top) = try_get_property(&doc, "toptracks")?
+                        && let Some(array @ Value::Array(_)) = try_get_property(top, "track")?
+                    {
+                        for t in enumerate_array(array)? {
+                            let name = match try_get_property(t, "name")? {
+                                Some(n) => get_string(n)?,
+                                None => None,
+                            };
+                            if let Some(name) = name.filter(|n| !n.is_empty()) {
+                                tracks.push(SimilarTrack::new(artist, name, 1.0));
+                            }
+                        }
                     }
+                    Ok(tracks)
                 }
-            }
-            Ok(tracks)
-        }
-        .await;
-        result.unwrap_or_else(|e| {
-            warn!(error = %e, "Last.fm artist.gettoptracks failed for '{artist}'");
-            Vec::new()
-        })
+                .await;
+                Ok(match result {
+                    Ok(tracks) => Some(tracks),
+                    Err(e) => {
+                        warn!(error = %e, "Last.fm artist.gettoptracks failed for '{artist}'");
+                        None
+                    }
+                })
+            })
+            .await;
+        read.unwrap_or_default()
     }
 
     /// `Err` where the C# let an exception out of the method: an element of Last.fm's answer
@@ -699,9 +715,9 @@ impl LastFmService {
                     &[("artist", artist), ("limit", &limit.to_string())],
                 )
                 .await;
-            let Some(doc) = doc else { return Ok(Vec::new()) };
+            let Some(doc) = doc else { return Ok(None) };
             let Some(values) = try_array(&doc, "similarartists", "artist")? else {
-                return Ok(Vec::new());
+                return Ok(Some(Vec::new()));
             };
             take_valid(values, limit, |item| {
                 let name = text(item, "name")?;
@@ -711,6 +727,7 @@ impl LastFmService {
                 };
                 Ok((!similar.name.is_empty()).then_some(similar))
             })
+            .map(Some)
         })
         .await
     }
@@ -745,15 +762,16 @@ impl LastFmService {
             let doc = self
                 .get_document("tag.gettoptracks", &[("tag", tag), ("limit", &limit.to_string())])
                 .await;
-            let Some(doc) = doc else { return Ok(Vec::new()) };
+            let Some(doc) = doc else { return Ok(None) };
             let Some(values) = try_array(&doc, "tracks", "track")? else {
-                return Ok(Vec::new());
+                return Ok(Some(Vec::new()));
             };
             take_valid(values, limit, |item| {
                 let track = SimilarTrack::new(text_in(item, "artist", "name")?, text(item, "name")?, 1.0)
                     .with_duration(duration_seconds(item)?);
                 Ok((!track.artist.is_empty() && !track.title.is_empty()).then_some(track))
             })
+            .map(Some)
         })
         .await
     }
@@ -765,7 +783,7 @@ impl LastFmService {
                 .await;
             let Some(doc) = doc else { return Ok(None) };
             let Some(track) = try_get_property(&doc, "track")? else {
-                return Ok(None);
+                return Ok(Some(None));
             };
             let mut tags = Vec::new();
             if let Some(values) = try_array(track, "toptags", "tag")? {
@@ -777,13 +795,13 @@ impl LastFmService {
                 }
             }
             let album = text_in(track, "album", "title")?;
-            Ok(Some(TrackInfo {
+            Ok(Some(Some(TrackInfo {
                 artist: text_in(track, "artist", "name")?,
                 title: text(track, "name")?,
                 album: (!album.is_empty()).then_some(album),
                 duration: duration_seconds(track)?,
                 tags,
-            }))
+            })))
         })
         .await
     }
@@ -797,24 +815,28 @@ impl LastFmService {
     ) -> ElementResult<Vec<String>> {
         self.cached(cache_key, || async {
             let Some(doc) = self.get_document(method, parameters).await else {
-                return Ok(Vec::new());
+                return Ok(None);
             };
             let Some(values) = try_array(&doc, "toptags", "tag")? else {
-                return Ok(Vec::new());
+                return Ok(Some(Vec::new()));
             };
             take_valid(values, limit, |item| {
                 let name = text(item, "name")?;
                 Ok((!name.is_empty()).then_some(name))
             })
+            .map(Some)
         })
         .await
     }
 
+    /// The answer kept under `key`, else `load`'s. `load` gives None for a call that failed
+    /// (no key, no answer, an error status): that reads as empty and is not kept, so the next
+    /// call asks again.
     async fn cached<T, F, Fut>(&self, key: &str, load: F) -> ElementResult<T>
     where
-        T: Cacheable,
+        T: Cacheable + Default,
         F: FnOnce() -> Fut,
-        Fut: Future<Output = ElementResult<T>>,
+        Fut: Future<Output = ElementResult<Option<T>>>,
     {
         let key = dotnet::to_lower_invariant(key);
         let hit = self
@@ -826,11 +848,19 @@ impl LastFmService {
         if let Some(typed) = hit {
             return Ok(typed);
         }
-        let value = load().await?;
-        self.radio_cache
-            .lock()
-            .insert(key, (self.cache_expiry(), value.clone().wrap()));
+        let Some(value) = load().await? else {
+            return Ok(T::default());
+        };
+        self.keep(key, value.clone().wrap());
         Ok(value)
+    }
+
+    /// Keeps an answer until the radio cache's lifetime is up, sweeping out the expired ones.
+    fn keep(&self, key: String, value: RadioValue) {
+        let now = Utc::now();
+        let mut cache = self.radio_cache.lock();
+        cache.retain(|_, (expiry, _)| *expiry > now);
+        cache.insert(key, (self.cache_expiry(), value));
     }
 
     async fn get_document(&self, method: &str, parameters: &[(&str, &str)]) -> Option<Value> {

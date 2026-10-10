@@ -38,6 +38,20 @@ pub trait IMusicMetadataService: Send + Sync {
     /// best-effort; does not block or fail the search if the provider is down.
     async fn enrich_external_songs(&self, _songs: &mut [Song]) {}
 
+    /// The catalog's own track search for free text: each hit's artist and title, in the
+    /// catalog's order, at most `limit`. Rows built from them need no lookup of their own. None
+    /// when the catalog could not answer.
+    async fn search_catalog_tracks(&self, _query: &str, _limit: i32) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// [`Self::enrich_external_songs`] for a search someone is waiting on: one track search
+    /// per row, no year. The rest of each row (the other queries for a row that search missed,
+    /// the year) is looked up after the answer, for the next answer that lists the row.
+    async fn enrich_search_rows(&self, songs: &mut [Song]) {
+        self.enrich_external_songs(songs).await;
+    }
+
     /// Gives external songs outside a search (stations, radio, a song read by its id) the
     /// lengths already known for them, and looks the rest up in the background so the next
     /// response has them. Never waits on the network: whatever is not known yet goes out
@@ -74,10 +88,11 @@ pub trait IMusicMetadataService: Send + Sync {
         None
     }
 
-    /// Gives outside rows from an earlier answer the length the registry now holds for them:
-    /// the pinned video's length once a lookup pinned one, else the remembered length for a
-    /// row that has none. Reads the registry only; nothing is looked up.
-    fn refresh_song_lengths(&self, _songs: &mut [Song]) {}
+    /// Gives outside rows from an earlier answer what has been found for them since: the
+    /// pinned video's length once a lookup pinned one, else the remembered length for a row
+    /// that has none, and the album, explicit word and year a row went out without. Reads
+    /// what is known only; nothing is looked up.
+    fn refresh_outside_songs(&self, _songs: &mut [Song]) {}
 
     /// Looks up the length of one outside song that has none known yet, right away and on the
     /// interactive lane, for a caller that answers with this one song (getSong). The video

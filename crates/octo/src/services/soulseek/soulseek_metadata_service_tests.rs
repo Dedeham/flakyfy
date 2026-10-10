@@ -1845,7 +1845,7 @@ async fn refreshed_rows_carry_the_pinned_videos_length() {
     }
     let mut songs = vec![pinned, unpinned, blank, clip];
 
-    fixture.service.refresh_song_lengths(&mut songs);
+    fixture.service.refresh_outside_songs(&mut songs);
 
     assert_eq!(songs[0].duration, Some(203));
     assert_eq!(songs[1].duration, Some(180));
@@ -1931,4 +1931,90 @@ async fn the_next_three_songs_of_a_queue_get_their_stream_resolved() {
         .collect();
     assert_eq!(facts.len(), 2, "{facts:?}");
     assert!(!fixture.requests().iter().any(|url| url.contains("Fourth")));
+}
+
+// ---- A search's rows: one track search each, the rest after the answer ----------------------
+
+const HELLO_HIT: &str = r#"{"data":[{"title":"Hello","duration":295,
+    "album":{"id":77,"title":"25"},"artist":{"name":"Adele"}}]}"#;
+const HELLO_COVER_ONLY: &str = r#"{"data":[{"title":"Hello (Reggae Cover)","duration":238,
+    "album":{"id":5,"title":"Covers"},"artist":{"name":"Conkarah"}}]}"#;
+const ALBUM_77: &str = r#"{"id":77,"title":"25","release_date":"2015-11-20","artist":{"name":"Adele"}}"#;
+
+async fn hello_row(h: &Harness) -> Song {
+    h.service
+        .search_songs_by_artist_title("Adele", "Hello", 1, None)
+        .await
+        .remove(0)
+}
+
+/// A row the first track search finds goes out with its album and length; its year is looked
+/// up after the answer, and the next answer for the row carries it.
+#[tokio::test]
+async fn a_search_row_found_at_once_gets_its_year_after_the_answer() {
+    let h = build_service(vec![
+        ("search?q=adele%20hello", HELLO_HIT),
+        ("/album/77", ALBUM_77),
+    ])
+    .await;
+    let mut songs = vec![hello_row(&h).await];
+
+    h.service.enrich_search_rows(&mut songs).await;
+
+    assert_eq!(songs[0].album, "25");
+    assert_eq!(songs[0].duration, Some(295));
+    assert_eq!(songs[0].year, None);
+    assert_eq!(h.calls("/album/77"), 0);
+
+    h.service.last_rows_finish().await;
+    assert_eq!(h.calls("/album/77"), 1);
+    let mut again = songs.clone();
+    h.service.refresh_outside_songs(&mut again);
+    assert_eq!(again[0].year, Some(2015));
+}
+
+/// A row the first track search misses goes out as it was, after that one search only; the
+/// other queries run after the answer and fill the row for the next answer.
+#[tokio::test]
+async fn a_search_row_the_first_search_misses_is_finished_after_the_answer() {
+    let h = build_service(vec![
+        ("search?q=adele%20hello", HELLO_COVER_ONLY),
+        ("search?q=hello", HELLO_HIT),
+        ("/album/77", ALBUM_77),
+    ])
+    .await;
+    let mut songs = vec![hello_row(&h).await];
+
+    h.service.enrich_search_rows(&mut songs).await;
+
+    assert_eq!(songs[0].album, "");
+    assert_eq!(songs[0].duration, None);
+    assert_eq!(h.calls("/search?"), 1);
+
+    h.service.last_rows_finish().await;
+    let routing = h.lookup(&songs[0].id);
+    assert_eq!(routing.album.as_deref(), Some("25"));
+    let mut again = songs.clone();
+    h.service.refresh_outside_songs(&mut again);
+    assert_eq!(again[0].album, "25");
+    assert_eq!(again[0].duration, Some(295));
+    assert_eq!(again[0].year, Some(2015));
+}
+
+/// The catalog's own track search gives rows that need no lookup of their own.
+#[tokio::test]
+async fn the_catalog_track_search_answers_its_rows_lookups() {
+    let h = build_service(vec![("search?q=hello&", HELLO_HIT)]).await;
+
+    let rows = h
+        .service
+        .search_catalog_tracks("hello", 50)
+        .await
+        .expect("answered");
+
+    assert_eq!(rows, [("Adele".to_string(), "Hello".to_string())]);
+    let mut songs = vec![hello_row(&h).await];
+    h.service.enrich_search_rows(&mut songs).await;
+    assert_eq!(songs[0].album, "25");
+    assert_eq!(h.calls("/search?"), 1);
 }

@@ -144,12 +144,17 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         .then(|| {
             let external_search = Arc::clone(&state.external_search);
             let query = clean_query.clone();
-            // What the library already holds of those albums, from their songs, judged as soon
-            // as they are found so it runs alongside the song build rather than after it.
+            // What the library already holds of those albums, from their songs. Its tracklists
+            // come from the same Deezer budget as the song rows, so they are read once the song
+            // build has looked its rows up; the album search itself goes at once.
+            let rows_looked_up = (external_target > 0).then(|| external_search.rows_looked_up(&query));
             let judging = state.clone();
             tokio::spawn(async move {
                 let albums = external_search.get_albums(&query, requested_albums.min(20)).await;
                 let found = started.elapsed();
+                if let Some(rows_looked_up) = rows_looked_up {
+                    rows_looked_up.await;
+                }
                 let standings = judge_albums(&judging, &albums).await;
                 (albums, standings, found, started.elapsed())
             })

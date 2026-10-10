@@ -589,6 +589,9 @@ async fn search3_rows_without_a_metadata_length_carry_one_in_the_next_response()
     let first = search3_lengths(&fixture).await;
     assert_eq!(first["Filler|Song1"], Some(201));
     assert_eq!(first["Daft Punk|Emotion"], None);
+    // A first-page row the search's one track search missed is finished after the answer,
+    // and only then handed to the length lookup.
+    fixture.state.music_metadata.last_rows_finish().await;
     fixture.state.music_metadata.last_length_warm().await;
 
     let next = search3_lengths(&fixture).await;

@@ -1,16 +1,19 @@
 //! Port of `Services/Common/ExternalSearchService.cs`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use octo_core::common::dotnet::{self, ordinal_ignore_case_key};
 use octo_core::common::{SongIdentity, SupersedableBuildCoordinator};
+use octo_core::last_fm::SimilarTrack;
 use octo_core::last_fm::last_fm_search_cleanup::LastFmSearchCleanup;
 use octo_core::last_fm::last_fm_search_ranking::LastFmSearchRanking;
 use octo_core::models::domain::{Album, Song};
 use octo_core::settings::{SettingsStore, SubsonicSettings};
 use parking_lot::Mutex;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
@@ -33,6 +36,9 @@ const THIN_SEARCH_THRESHOLD: usize = 20;
 /// Deadline for one build. Last.fm has no configured HTTP timeout of its own, so
 /// without this a single hung call would pin the query for every joined caller.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The longest album ownership waits for a song build's row lookups before reading its own.
+const ROWS_WAIT: Duration = Duration::from_secs(10);
 
 /// Deadline for one album build. Deezer's own client timeout already bounds
 /// the call inside it; this is the ceiling on the whole build.
@@ -60,7 +66,7 @@ pub struct ExternalSearchService {
     // where each keystroke is a distinct key racing the same rate-limited lane as the
     // query the user actually meant. SupersedableBuildCoordinator adds prefix-based
     // cancellation on top of that collapsing.
-    song_builds: SupersedableBuildCoordinator<Arc<Vec<Song>>>,
+    song_builds: SupersedableBuildCoordinator<(Arc<Vec<Song>>, SongSource)>,
     album_builds: SupersedableBuildCoordinator<Arc<Vec<Album>>>,
     metadata: Arc<dyn IMusicMetadataService>,
     last_fm: Option<Arc<LastFmService>>,
@@ -68,8 +74,11 @@ pub struct ExternalSearchService {
     /// build.
     settings: Option<Arc<SettingsStore>>,
     /// The last finished builds, by query.
-    recent_songs: RecentResults<Song>,
+    recent_songs: Arc<RecentResults<Song>>,
     recent_albums: RecentResults<Album>,
+    /// Last.fm answers that came too late for their search, for the next one.
+    last_fm_answers: Arc<RecentResults<SimilarTrack>>,
+    row_signals: RowSignals,
 }
 
 impl ExternalSearchService {
@@ -86,14 +95,34 @@ impl ExternalSearchService {
             metadata,
             last_fm,
             settings,
-            recent_songs: RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX),
+            recent_songs: Arc::new(RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX)),
             recent_albums: RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX),
+            last_fm_answers: Arc::new(RecentResults::new(RECENT_RESULTS_TTL, RECENT_RESULTS_MAX)),
+            row_signals: RowSignals::default(),
         }
     }
 
     /// Up to [`BUILD_SIZE`] enriched external songs for this query. Callers take
     /// the prefix they need; the list is shared and must not be mutated.
     pub async fn get(&self, query: &str) -> Arc<Vec<Song>> {
+        let key = recent_key(query);
+        let songs = self.songs(query, &key).await;
+        // However the songs were had, nothing more of this query's rows will be looked up.
+        self.row_signals.done(&key);
+        songs
+    }
+
+    /// Resolves once the song build for `query` has looked its rows up on Deezer (at once
+    /// when there is nothing to wait for, and after [`ROWS_WAIT`] at the latest). Taken before
+    /// [`Self::get`] is called for the query, so the build cannot finish unseen.
+    pub fn rows_looked_up(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
+        let mut done = self.row_signals.subscribe(&recent_key(query));
+        async move {
+            let _ = tokio::time::timeout(ROWS_WAIT, done.wait_for(|done| *done)).await;
+        }
+    }
+
+    async fn songs(&self, query: &str, key: &str) -> Arc<Vec<Song>> {
         if dotnet::is_blank(query) {
             return Arc::new(Vec::new());
         }
@@ -104,12 +133,12 @@ impl ExternalSearchService {
             return Arc::new(Vec::new());
         };
 
-        let key = recent_key(query);
+        let key = key.to_string();
         if let Some(cached) = self.recent_songs.get(&key, Instant::now()) {
             // A copy: the cached list is shared and frozen like any build's. Rows whose video
             // was found after the build answered carry its length now.
             let mut songs = cached.as_ref().clone();
-            self.metadata.refresh_song_lengths(&mut songs);
+            self.metadata.refresh_outside_songs(&mut songs);
             debug!(
                 "external search '{query}' answered from the last {} rows",
                 songs.len()
@@ -118,34 +147,49 @@ impl ExternalSearchService {
         }
 
         let metadata = self.metadata.clone();
-        let wait = self.settings.as_ref().map_or_else(
-            || SubsonicSettings::default().effective_search_duration_wait(),
-            |s| s.current().subsonic.effective_search_duration_wait(),
-        );
+        let subsonic = self
+            .settings
+            .as_ref()
+            .map_or_else(SubsonicSettings::default, |s| s.current().subsonic.clone());
+        let wait = subsonic.effective_search_duration_wait();
+        let last_fm_wait = subsonic.effective_search_last_fm_wait();
         let query_text = query.to_string();
-        let songs = self
+        let shared = BuildShared {
+            key: key.clone(),
+            last_fm_answers: Arc::clone(&self.last_fm_answers),
+            recent_songs: Arc::clone(&self.recent_songs),
+        };
+        let rows_done = RowsDone {
+            signals: self.row_signals.clone(),
+            key: key.clone(),
+        };
+        let (songs, source) = self
             .song_builds
             .run(
                 query.trim(),
                 move |token: CancellationToken| async move {
                     tokio::select! {
-                        built = build(query_text, last_fm, metadata, wait) => Ok(Arc::new(built)),
+                        (built, source) = build(query_text, last_fm, metadata, wait, last_fm_wait, shared, rows_done) => Ok((Arc::new(built), source)),
                         () = token.cancelled() => Err(anyhow::anyhow!("The operation was canceled.")),
                     }
                 },
-                // The wait for lengths is on top of the deadline, so a long one never times
-                // the whole build out.
-                BUILD_TIMEOUT + wait,
-                Arc::new(Vec::new()),
+                // The waits for Last.fm and for lengths are on top of the deadline, so long
+                // ones never time the whole build out.
+                BUILD_TIMEOUT + wait + last_fm_wait,
+                (Arc::new(Vec::new()), SongSource::Nothing),
                 // Discovery is an addition to search, never a precondition for it. The
                 // steps inside the build are individually best-effort, but the deadline is
                 // not, and a timeout must not take local results down with it.
                 |q: &str, e: &anyhow::Error| debug!("external search '{q}' failed: {e}"),
             )
             .await;
-        // A failed, timed-out or superseded build answers an empty list, which is not kept.
+        // A failed, timed-out or superseded build answers an empty list, which is not kept. A
+        // build from Deezer's rows gives way to Last.fm's answer once that is in.
         if !songs.is_empty() {
-            self.recent_songs.put(key, songs.clone(), Instant::now());
+            self.recent_songs.put(key.clone(), songs.clone(), Instant::now());
+            if source == SongSource::Deezer && self.last_fm_answers.get(&key, Instant::now()).is_some() {
+                self.recent_songs.remove(&key);
+            }
         }
         songs
     }
@@ -235,6 +279,14 @@ impl<T> RecentResults<T> {
         None
     }
 
+    /// Forgets what is kept for `key`.
+    pub fn remove(&self, key: &str) {
+        let mut entries = self.entries.lock();
+        if entries.by_key.remove(key).is_some() {
+            entries.order.retain(|k| k != key);
+        }
+    }
+
     /// Keeps `value` for `key` from `now`, replacing an older build of it; past the limit the
     /// oldest query goes.
     pub fn put(&self, key: String, value: Arc<Vec<T>>, now: Instant) {
@@ -251,62 +303,66 @@ impl<T> RecentResults<T> {
     }
 }
 
+/// Where a build's song rows came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongSource {
+    /// Nothing was built (a failed or superseded build).
+    Nothing,
+    /// Last.fm's track.search, answered in time.
+    LastFm,
+    /// Last.fm's answer to an earlier search of the same words, which came too late for it.
+    LastFmKept,
+    /// Deezer's own track search: Last.fm did not answer in time.
+    Deezer,
+    /// Last.fm, waited for after all: it did not answer in time and Deezer had nothing.
+    LastFmLate,
+}
+
+impl SongSource {
+    fn describe(self) -> &'static str {
+        match self {
+            SongSource::Nothing => "nothing",
+            SongSource::LastFm => "Last.fm",
+            SongSource::LastFmKept => "Last.fm (kept from an earlier search)",
+            SongSource::Deezer => "Deezer's track search (Last.fm did not answer in time)",
+            SongSource::LastFmLate => "Last.fm (late; Deezer's track search had nothing)",
+        }
+    }
+}
+
+/// What a build shares with the service: Last.fm answers kept for the next search, the
+/// finished builds, and who waits for its row lookups.
+struct BuildShared {
+    key: String,
+    last_fm_answers: Arc<RecentResults<SimilarTrack>>,
+    recent_songs: Arc<RecentResults<Song>>,
+}
+
 /// Fans out to Last.fm, then fills in the metadata a client needs to render and play
 /// the rows. Order:
 ///   1. track.search hits for the query as typed, most listened first
 ///   2. canonical artist's top tracks (in case (1) was thin: common for
 ///      single-word artist queries)
 ///
+/// When Last.fm has not answered within `last_fm_wait`, the rows are Deezer's own track search
+/// for the query instead, in Deezer's order, and Last.fm's answer is kept for the next search
+/// of the same words.
+///
 /// Deduped by `SongIdentity::match_key`, so the same track cannot appear twice however its
 /// artist and title are written.
+#[allow(clippy::too_many_arguments)]
 async fn build(
     query: String,
     last_fm: Arc<LastFmService>,
     metadata: Arc<dyn IMusicMetadataService>,
     duration_wait: Duration,
-) -> Vec<Song> {
+    last_fm_wait: Duration,
+    shared: BuildShared,
+    rows_done: RowsDone,
+) -> (Vec<Song>, SongSource) {
     let started = Instant::now();
-    let build_size = BUILD_SIZE as usize;
-    // HashSet<string>(OrdinalIgnoreCase) over the match keys.
-    let mut seen = HashSet::new();
-    let mut collected: Vec<(String, String)> = Vec::new();
-
-    // Last.fm's search carries rows from mislabelled scrobbles; put their names right first,
-    // or they reach the results, the player and each listener's Last.fm as they are. Then
-    // most listened first: track.search orders by fuzzy relevance, which puts a side project's
-    // song ahead of the hit everybody means. Repeated versions of a song are one row, and rows
-    // in another script than the query go last (see LastFmSearchRanking).
-    let tracks = LastFmSearchRanking::rank(
-        &query,
-        LastFmSearchCleanup::clean(&last_fm.search_tracks(&query, 50.min(BUILD_SIZE * 2)).await),
-    );
+    let (collected, source) = song_rows(&query, &last_fm, &metadata, last_fm_wait, &shared).await;
     let searched = started.elapsed();
-    for t in &tracks {
-        let key = SongIdentity::match_key(&t.artist, &t.title);
-        if seen.insert(ordinal_ignore_case_key(&key)) {
-            collected.push((t.artist.clone(), t.title.clone()));
-        }
-        if collected.len() >= build_size {
-            break;
-        }
-    }
-
-    if collected.len() < THIN_SEARCH_THRESHOLD {
-        // Use the first track-search hit's artist as the canonical anchor
-        // for top-tracks padding. Falls back to the raw query string when
-        // track.search came back empty.
-        let anchor = tracks.first().map_or(query.as_str(), |t| t.artist.as_str());
-        let top_tracks = last_fm.search_artist_top_tracks(anchor, BUILD_SIZE * 2).await;
-        for t in &top_tracks {
-            let key = SongIdentity::match_key(&t.artist, &t.title);
-            if seen.insert(ordinal_ignore_case_key(&key)) {
-                collected.push((t.artist.clone(), t.title.clone()));
-            }
-            if collected.len() >= build_size {
-                break;
-            }
-        }
-    }
 
     let mut songs = Vec::with_capacity(collected.len());
     for (artist, title) in &collected {
@@ -329,8 +385,10 @@ async fn build(
     // The video lookups start now, so they run while Deezer answers; the pick still waits
     // for Deezer's length.
     metadata.prefetch_top_videos(&songs);
-    metadata.enrich_external_songs(&mut songs).await;
+    metadata.enrich_search_rows(&mut songs).await;
     let enriched = started.elapsed();
+    // Album ownership reads tracklists from the same Deezer budget; they start now.
+    rows_done.mark();
     let before: Vec<Option<i32>> = songs.iter().map(|song| song.duration).collect();
     let durations = if duration_wait.is_zero() {
         None
@@ -343,8 +401,9 @@ async fn build(
     };
     let lengthened = started.elapsed();
     info!(
-        "External search '{query}' built in {} ms: Last.fm {} ms, rows {} ms, Deezer {} ms, YouTube lengths {} ms ({} rows changed{})",
+        "External search '{query}' built in {} ms from {}: songs {} ms, rows {} ms, Deezer {} ms, YouTube lengths {} ms ({} rows changed{})",
         lengthened.as_millis(),
+        source.describe(),
         searched.as_millis(),
         (placed - searched).as_millis(),
         (enriched - placed).as_millis(),
@@ -399,7 +458,144 @@ async fn build(
     let covers = songs.clone();
     tokio::spawn(async move { metadata.prewarm_cover_art(&covers, 24).await });
 
-    songs
+    (songs, source)
+}
+
+/// The artist and title of each row, deduped, at most [`BUILD_SIZE`]: Last.fm's, or Deezer's
+/// when Last.fm is late (see [`build`]).
+async fn song_rows(
+    query: &str,
+    last_fm: &Arc<LastFmService>,
+    metadata: &Arc<dyn IMusicMetadataService>,
+    last_fm_wait: Duration,
+    shared: &BuildShared,
+) -> (Vec<(String, String)>, SongSource) {
+    if let Some(kept) = shared.last_fm_answers.get(&shared.key, Instant::now()) {
+        return (last_fm_rows(query, &kept, last_fm).await, SongSource::LastFmKept);
+    }
+    let asking = Arc::clone(last_fm);
+    let asked = query.to_string();
+    let mut answer = tokio::spawn(async move { asking.search_tracks(&asked, 50.min(BUILD_SIZE * 2)).await });
+    let in_time = if last_fm_wait.is_zero() {
+        Some((&mut answer).await)
+    } else {
+        tokio::time::timeout(last_fm_wait, &mut answer).await.ok()
+    };
+    if let Some(tracks) = in_time {
+        return (
+            last_fm_rows(query, &tracks.unwrap_or_default(), last_fm).await,
+            SongSource::LastFm,
+        );
+    }
+
+    match metadata.search_catalog_tracks(query, BUILD_SIZE).await {
+        Some(rows) if !rows.is_empty() => {
+            // Last.fm's answer, when it comes, is the next search's, and the build kept from
+            // this one gives way to it.
+            let key = shared.key.clone();
+            let answers = Arc::clone(&shared.last_fm_answers);
+            let recent = Arc::clone(&shared.recent_songs);
+            tokio::spawn(async move {
+                if let Ok(tracks) = answer.await
+                    && !tracks.is_empty()
+                {
+                    answers.put(key.clone(), Arc::new(tracks), Instant::now());
+                    recent.remove(&key);
+                }
+            });
+            (deduped(rows.into_iter()), SongSource::Deezer)
+        }
+        _ => (
+            last_fm_rows(query, &answer.await.unwrap_or_default(), last_fm).await,
+            SongSource::LastFmLate,
+        ),
+    }
+}
+
+/// Rows from Last.fm's track.search answer: names put right, most listened first, padded with
+/// the artist's top tracks when thin.
+async fn last_fm_rows(
+    query: &str,
+    answer: &[SimilarTrack],
+    last_fm: &LastFmService,
+) -> Vec<(String, String)> {
+    // Last.fm's search carries rows from mislabelled scrobbles; put their names right first,
+    // or they reach the results, the player and each listener's Last.fm as they are. Then
+    // most listened first: track.search orders by fuzzy relevance, which puts a side project's
+    // song ahead of the hit everybody means. Repeated versions of a song are one row, and rows
+    // in another script than the query go last (see LastFmSearchRanking).
+    let tracks = LastFmSearchRanking::rank(query, LastFmSearchCleanup::clean(answer));
+    let mut collected = deduped(tracks.iter().map(|t| (t.artist.clone(), t.title.clone())));
+
+    if collected.len() < THIN_SEARCH_THRESHOLD {
+        // Use the first track-search hit's artist as the canonical anchor
+        // for top-tracks padding. Falls back to the raw query string when
+        // track.search came back empty.
+        let anchor = tracks.first().map_or(query, |t| t.artist.as_str());
+        let top_tracks = last_fm.search_artist_top_tracks(anchor, BUILD_SIZE * 2).await;
+        collected = deduped(
+            collected
+                .into_iter()
+                .chain(top_tracks.iter().map(|t| (t.artist.clone(), t.title.clone()))),
+        );
+    }
+    collected
+}
+
+/// Artist and title pairs, each song once by `SongIdentity::match_key`, at most [`BUILD_SIZE`].
+fn deduped(rows: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    // HashSet<string>(OrdinalIgnoreCase) over the match keys.
+    let mut seen = HashSet::new();
+    let mut collected = Vec::new();
+    for (artist, title) in rows {
+        if collected.len() >= BUILD_SIZE as usize {
+            break;
+        }
+        let key = SongIdentity::match_key(&artist, &title);
+        if seen.insert(ordinal_ignore_case_key(&key)) {
+            collected.push((artist, title));
+        }
+    }
+    collected
+}
+
+/// Who waits for each query's row lookups: album ownership reads its tracklists from the same
+/// Deezer budget, so it starts once the song build's rows are looked up.
+#[derive(Clone, Default)]
+pub struct RowSignals(Arc<Mutex<HashMap<String, watch::Sender<bool>>>>);
+
+impl RowSignals {
+    fn subscribe(&self, key: &str) -> watch::Receiver<bool> {
+        self.0
+            .lock()
+            .entry(key.to_string())
+            .or_insert_with(|| watch::channel(false).0)
+            .subscribe()
+    }
+
+    fn done(&self, key: &str) {
+        if let Some(sender) = self.0.lock().remove(key) {
+            sender.send_replace(true);
+        }
+    }
+}
+
+/// Says a build's rows are looked up, when told or, at the latest, when the build ends.
+struct RowsDone {
+    signals: RowSignals,
+    key: String,
+}
+
+impl RowsDone {
+    fn mark(&self) {
+        self.signals.done(&self.key);
+    }
+}
+
+impl Drop for RowsDone {
+    fn drop(&mut self) {
+        self.mark();
+    }
 }
 
 /// The durations pass search did not wait for, then the videoId prewarm, in that order

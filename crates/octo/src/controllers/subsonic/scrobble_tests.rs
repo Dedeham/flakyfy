@@ -19,6 +19,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::{TimeDelta, Utc};
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
+use octo_core::common::Clock;
 use octo_core::last_fm::last_fm_scrobble_service::sign;
 use octo_core::settings::{AppSettings, LastFmUserSession};
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
@@ -32,7 +33,7 @@ use crate::app::AppState;
 use crate::http::pipeline::App;
 use crate::services::last_fm::{LastFmScrobbleService, ScrobbleTime, ScrobbleTuning};
 use crate::services::listen_brainz::ListenBrainzService;
-use crate::services::subsonic::RequestIdentity;
+use crate::services::subsonic::{RecentScrobbles, RequestIdentity};
 
 const API_KEY: &str = "0123456789abcdef0123456789abcdef";
 const SECRET: &str = "s3cr3t";
@@ -253,12 +254,14 @@ impl Fixture {
         identity: Option<RequestIdentity>,
     ) -> Fixture {
         let upstream = Upstream::default();
-        let navidrome = MockServer::start().await;
+        // Servers of their own, never wiremock's shared pool: a pooled server can still be
+        // answering requests another test sent it before it was handed over here.
+        let navidrome = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(upstream.clone())
             .mount(&navidrome)
             .await;
-        let listen_brainz = MockServer::start().await;
+        let listen_brainz = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(navidrome_json(r#"{"status":"ok"}"#))
             .mount(&listen_brainz)
@@ -315,6 +318,8 @@ impl Fixture {
                 &lb_url,
                 inner.settings.clone(),
             ));
+            // One minute for the whole test, so plays sent without a time never straddle two.
+            inner.recent_scrobbles = Arc::new(RecentScrobbles::with_clock(Clock::fixed(Utc::now())));
             if let Some(identity) = identity {
                 inner.request_identity = Arc::new(identity);
             }

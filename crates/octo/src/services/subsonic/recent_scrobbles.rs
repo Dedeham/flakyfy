@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
-use octo_core::common::dotnet;
+use octo_core::common::{Clock, dotnet};
 use parking_lot::Mutex;
 
 /// The completed plays each listener reported in the last few minutes, so a play a client sends
@@ -19,6 +19,8 @@ use parking_lot::Mutex;
 pub struct RecentScrobbles {
     /// Keyed by `StringComparer.OrdinalIgnoreCase`.
     listeners: Mutex<IndexMap<String, Plays>>,
+    /// What [`now`](Self::now) reads: the time a report arrived.
+    clock: Clock,
 }
 
 impl RecentScrobbles {
@@ -33,6 +35,19 @@ impl RecentScrobbles {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reads arrival times from `clock` instead of the system clock.
+    pub fn with_clock(clock: Clock) -> Self {
+        Self {
+            clock,
+            ..Self::default()
+        }
+    }
+
+    /// The time a report arriving now arrived at, for [`first_report`](Self::first_report).
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
     }
 
     /// True the first time this listener reports this play inside the window, false for a repeat.

@@ -1462,7 +1462,7 @@ impl DeezerMetadataService {
             if r.transient {
                 return Ok((true, Vec::new()));
             }
-            let hits = all_matches(r.doc.as_ref(), artist, title)?;
+            let hits = all_matches(r.doc.as_ref(), artist, title, None)?;
             if !hits.is_empty() {
                 return Ok((false, hits));
             }
@@ -1508,7 +1508,8 @@ enum FieldVerdict {
 
 /// Compare the titles by `SongIdentity`: the same key, or the same key once stylized
 /// characters are read as letters, or one key containing the other, because Deezer decorates
-/// titles in ways no list names. Never another version: a live take or a remix carries its
+/// titles in ways no list names. Containment counts only for a long enough shorter key, so
+/// "Home" is not found in "Homecoming". Never another version: a live take or a remix carries its
 /// own album and length, and attaching those to the original is wrong.
 ///
 /// A field either side left empty is Absent, never a mismatch. Absent evidence is not
@@ -1523,15 +1524,15 @@ fn compare_titles(want: &str, got: Option<&str>) -> FieldVerdict {
     if SongIdentity::distinct_versions(&a, None) != SongIdentity::distinct_versions(&b, None) {
         return FieldVerdict::Mismatch;
     }
-    if a.key == b.key || a.loose_key == b.loose_key || a.key.contains(&b.key) || b.key.contains(&a.key) {
+    if a.key == b.key || a.loose_key == b.loose_key || one_holds_the_other(&a.key, &b.key) {
         FieldVerdict::Match
     } else {
         FieldVerdict::Mismatch
     }
 }
 
-/// The artists by `SongIdentity`, and one key containing the other, since Deezer credits
-/// guests in the artist field.
+/// The artists by `SongIdentity`, and one key containing the other (a long enough one), since
+/// Deezer credits guests in the artist field.
 fn compare_artists(want: &str, got: Option<&str>) -> FieldVerdict {
     let got = got.unwrap_or("");
     let a = SongIdentity::key(want);
@@ -1539,12 +1540,29 @@ fn compare_artists(want: &str, got: Option<&str>) -> FieldVerdict {
     if a.is_empty() || b.is_empty() {
         return FieldVerdict::Absent;
     }
-    if SongIdentity::artists_agree(want, got) || a.contains(&b) || b.contains(&a) {
+    if SongIdentity::artists_agree(want, got) || one_holds_the_other(&a, &b) {
         FieldVerdict::Match
     } else {
         FieldVerdict::Mismatch
     }
 }
+
+/// The shortest key that may count as held inside a longer one. Shorter keys turn up inside
+/// unrelated names too often.
+const MIN_CONTAINED_KEY: usize = 6;
+
+/// One key containing the other, the shorter at least [`MIN_CONTAINED_KEY`] characters long.
+fn one_holds_the_other(a: &str, b: &str) -> bool {
+    let (short, long) = if a.chars().count() <= b.chars().count() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    short.chars().count() >= MIN_CONTAINED_KEY && long.contains(short)
+}
+
+/// Lengths further apart than this are different recordings.
+const LENGTH_TOLERANCE_SECONDS: i32 = 8;
 
 /// The first hit that positively matches on artist or title and contradicts on
 /// neither. This is the guard that makes a plain query safe to use in place of the
@@ -1552,12 +1570,19 @@ fn compare_artists(want: &str, got: Option<&str>) -> FieldVerdict {
 /// as fact. Requiring at least one positive match is what stops a hit that states
 /// nothing at all from matching everything.
 fn best_match(doc: Option<&Value>, artist: &str, title: &str) -> ElementResult<Option<Value>> {
-    Ok(all_matches(doc, artist, title)?.into_iter().next())
+    Ok(all_matches(doc, artist, title, None)?.into_iter().next())
 }
 
 /// Every hit that positively matches on artist or title and contradicts on neither,
-/// in the catalog's order. The first is what [`best_match`] returns.
-fn all_matches(doc: Option<&Value>, artist: &str, title: &str) -> ElementResult<Vec<Value>> {
+/// in the catalog's order. The first is what [`best_match`] returns. Given the song's length,
+/// a hit whose own length is known and more than [`LENGTH_TOLERANCE_SECONDS`] away is another
+/// recording.
+fn all_matches(
+    doc: Option<&Value>,
+    artist: &str,
+    title: &str,
+    seconds: Option<i32>,
+) -> ElementResult<Vec<Value>> {
     let mut hits = Vec::new();
     let Some(data) = data_array(doc)? else {
         return Ok(hits);
@@ -1571,6 +1596,13 @@ fn all_matches(doc: Option<&Value>, artist: &str, title: &str) -> ElementResult<
         let artist_verdict = compare_artists(artist, hit_artist);
 
         if title_verdict == FieldVerdict::Mismatch || artist_verdict == FieldVerdict::Mismatch {
+            continue;
+        }
+        if let (Some(want), Some(got)) = (
+            seconds.filter(|s| *s > 0),
+            int(hit, "duration")?.filter(|s| *s > 0),
+        ) && (want - got).abs() > LENGTH_TOLERANCE_SECONDS
+        {
             continue;
         }
         if title_verdict == FieldVerdict::Match || artist_verdict == FieldVerdict::Match {
@@ -1642,7 +1674,7 @@ pub(crate) fn song_explicitness(
         Ok(SongIdentity::distinct_versions(&parsed, None))
     };
     let version = versions_of(matched)?;
-    for hit in all_matches(doc, artist, title)? {
+    for hit in all_matches(doc, artist, title, None)? {
         if versions_of(&hit)? != version {
             continue;
         }

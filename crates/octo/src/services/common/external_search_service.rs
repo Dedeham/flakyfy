@@ -265,6 +265,7 @@ async fn build(
     metadata: Arc<dyn IMusicMetadataService>,
     duration_wait: Duration,
 ) -> Vec<Song> {
+    let started = Instant::now();
     let build_size = BUILD_SIZE as usize;
     // HashSet<string>(OrdinalIgnoreCase) over the match keys.
     let mut seen = HashSet::new();
@@ -279,6 +280,7 @@ async fn build(
         &query,
         LastFmSearchCleanup::clean(&last_fm.search_tracks(&query, 50.min(BUILD_SIZE * 2)).await),
     );
+    let searched = started.elapsed();
     for t in &tracks {
         let key = SongIdentity::match_key(&t.artist, &t.title);
         if seen.insert(ordinal_ignore_case_key(&key)) {
@@ -294,7 +296,7 @@ async fn build(
         // for top-tracks padding. Falls back to the raw query string when
         // track.search came back empty.
         let anchor = tracks.first().map_or(query.as_str(), |t| t.artist.as_str());
-        let top_tracks = last_fm.get_artist_top_tracks(anchor, BUILD_SIZE * 2).await;
+        let top_tracks = last_fm.search_artist_top_tracks(anchor, BUILD_SIZE * 2).await;
         for t in &top_tracks {
             let key = SongIdentity::match_key(&t.artist, &t.title);
             if seen.insert(ordinal_ignore_case_key(&key)) {
@@ -317,13 +319,19 @@ async fn build(
             songs.push(hit);
         }
     }
+    let placed = started.elapsed();
     info!("External search '{query}' -> {} placeholder songs", songs.len());
 
     // Album/art/year from Deezer (fast), then the ACCURATE duration for the top of the
     // list from the real YouTube video (so the scrub bar matches the audio and the
     // client advances correctly), waited for at most `duration_wait`. Rows not resolved by
     // then go out with Deezer's length and are resolved in the background. Bounded + cached.
+    // The video lookups start now, so they run while Deezer answers; the pick still waits
+    // for Deezer's length.
+    metadata.prefetch_top_videos(&songs);
     metadata.enrich_external_songs(&mut songs).await;
+    let enriched = started.elapsed();
+    let before: Vec<Option<i32>> = songs.iter().map(|song| song.duration).collect();
     let durations = if duration_wait.is_zero() {
         None
     } else {
@@ -333,6 +341,25 @@ async fn build(
                 .await,
         )
     };
+    let lengthened = started.elapsed();
+    info!(
+        "External search '{query}' built in {} ms: Last.fm {} ms, rows {} ms, Deezer {} ms, YouTube lengths {} ms ({} rows changed{})",
+        lengthened.as_millis(),
+        searched.as_millis(),
+        (placed - searched).as_millis(),
+        (enriched - placed).as_millis(),
+        (lengthened - enriched).as_millis(),
+        songs
+            .iter()
+            .zip(&before)
+            .filter(|(song, before)| song.duration != **before)
+            .count(),
+        match &durations {
+            Some(Some(_)) => ", the rest in the background",
+            Some(None) => "",
+            None => ", all in the background",
+        }
+    );
 
     // Fire-and-forget: pre-resolve YouTube videoIds for the top hits so the first
     // /rest/stream click doesn't pay the cold yt-dlp double-call cost (ytsearch1: + -g,

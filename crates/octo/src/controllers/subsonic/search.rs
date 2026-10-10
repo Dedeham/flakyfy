@@ -1,7 +1,7 @@
 //! `search3` and `search2` (L954): the search hijack, its later song pages, and the sync walk.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -44,6 +44,7 @@ const SYNC_CATALOG_WAIT: Duration = Duration::from_secs(15);
 /// Empty queries do still pass through so a Subsonic client's "browse all" fallback isn't
 /// broken; with a query, we hijack.
 pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Response, AppError> {
+    let started = Instant::now();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -148,8 +149,9 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
             let judging = state.clone();
             tokio::spawn(async move {
                 let albums = external_search.get_albums(&query, requested_albums.min(20)).await;
+                let found = started.elapsed();
                 let standings = judge_albums(&judging, &albums).await;
-                (albums, standings)
+                (albums, standings, found, started.elapsed())
             })
         });
 
@@ -163,7 +165,10 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         .then(|| {
             let metadata = Arc::clone(&state.metadata_service);
             let query = clean_query.clone();
-            tokio::spawn(async move { metadata.search_artists(&query, requested_artists.min(20)).await })
+            tokio::spawn(async move {
+                let artists = metadata.search_artists(&query, requested_artists.min(20)).await;
+                (artists, started.elapsed())
+            })
         });
 
     // One build per query, shared by every caller. Started here rather than awaited, so it
@@ -172,7 +177,10 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     let external_task = (external_target > 0).then(|| {
         let external_search = Arc::clone(&state.external_search);
         let query = clean_query.clone();
-        tokio::spawn(async move { external_search.get(&query).await })
+        tokio::spawn(async move {
+            let songs = external_search.get(&query).await;
+            (songs, started.elapsed())
+        })
     });
 
     // Local pass-through. Albums/artists always get the full requested counts;
@@ -182,6 +190,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     local_params.insert("albumCount".into(), requested_albums.to_string());
     local_params.insert("artistCount".into(), requested_artists.to_string());
     let local_result = call.proxy.relay_safe(search_endpoint, &local_params).await;
+    let library_done = started.elapsed();
     let local_body = local_result.as_ref().map(|r| r.body.as_ref());
     let local_type = local_result.as_ref().and_then(|r| r.content_type.as_deref());
 
@@ -207,9 +216,12 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
     // Hand the slots the library did not fill to discovery. A query the user owns
     // nothing for is the one most worth answering with suggestions, and the local
     // target is a reservation rather than a promise: Navidrome returns what it has.
-    let built: Arc<Vec<Song>> = match external_task {
-        Some(task) => task.await.unwrap_or_default(),
-        None => Arc::new(Vec::new()),
+    let (built, songs_done): (Arc<Vec<Song>>, Option<Duration>) = match external_task {
+        Some(task) => match task.await {
+            Ok((songs, done)) => (songs, Some(done)),
+            Err(_) => (Arc::new(Vec::new()), None),
+        },
+        None => (Arc::new(Vec::new()), None),
     };
     let external_slice = SearchSongOrder::page_one_external_count(
         built.len() as i32,
@@ -255,9 +267,13 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
 
     // Degrade to no albums rather than failing the whole search if Deezer is slow,
     // throttled or unreachable.
+    let mut albums_done = None;
     let (external_albums, standings): (Vec<Album>, Vec<Standing>) = match album_task {
         Some(task) => match task.await {
-            Ok((albums, standings)) => (albums.as_ref().clone(), standings),
+            Ok((albums, standings, found, judged)) => {
+                albums_done = Some((found, judged));
+                (albums.as_ref().clone(), standings)
+            }
             Err(error) => {
                 debug!("external album search failed for '{clean_query}': {error}");
                 (Vec::new(), Vec::new())
@@ -265,9 +281,13 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         },
         None => (Vec::new(), Vec::new()),
     };
+    let mut artists_done = None;
     let external_artists: Vec<Artist> = match artist_task {
         Some(task) => match task.await {
-            Ok(artists) => artists,
+            Ok((artists, done)) => {
+                artists_done = Some(done);
+                artists
+            }
             Err(error) => {
                 debug!("external artist search failed for '{clean_query}': {error}");
                 Vec::new()
@@ -307,7 +327,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         albums: settled_albums,
         artists: external_artists,
     };
-    Ok(merge_search_results(
+    let answer = merge_search_results(
         &state,
         &mapper,
         local_parsed,
@@ -317,7 +337,26 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
         format,
         envelope,
         None,
-    ))
+    );
+    info!(
+        "{} '{clean_query}' answered in {} ms; parts done at (ms): library {}, outside songs {}, outside albums {}, artists {}",
+        if is_search2 { "search2" } else { "search3" },
+        started.elapsed().as_millis(),
+        millis(Some(library_done)),
+        millis(songs_done),
+        albums_done.map_or_else(
+            || "-".to_string(),
+            |(found, judged)| format!("{} (counted at {})", found.as_millis(), judged.as_millis())
+        ),
+        millis(artists_done),
+    );
+    Ok(answer)
+}
+
+/// When a part of a search was done, in milliseconds from the start of the request; "-" for
+/// a part the search did not run.
+fn millis(done: Option<Duration>) -> String {
+    done.map_or_else(|| "-".to_string(), |done| done.as_millis().to_string())
 }
 
 /// Page one's library rows and its own share of outside rows, from the budget's split. Every

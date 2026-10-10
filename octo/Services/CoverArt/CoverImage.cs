@@ -11,11 +11,55 @@ internal static class CoverImage
     private const double SquareTolerance = 0.03;
     private const int MinSide = 150;
 
+    /// <summary>Largest cover file read for decoding. Real covers are well under 10 MB.</summary>
+    internal const int MaxBytes = 30 * 1024 * 1024;
+    /// <summary>Longest side and total pixels a cover may have before it is decoded.</summary>
+    internal const int MaxSide = 10_000;
+    internal const long MaxPixels = 50_000_000;
+
+    /// <summary>
+    /// True when the picture is small enough to decode: its size in bytes and the dimensions in
+    /// its header are within the limits. Covers come from the network and from file tags, so
+    /// this is checked before anything decodes the pixels. False when the header cannot be read.
+    /// </summary>
+    public static bool WithinLimits(byte[]? bytes)
+    {
+        if (bytes is not { Length: > 0 and <= MaxBytes }) return false;
+        try
+        {
+            return WithinLimits(Image.Identify(bytes));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The same check for a picture on disk, without reading it into memory first.</summary>
+    public static bool WithinLimits(string path)
+    {
+        try
+        {
+            var length = new FileInfo(path).Length;
+            return length is > 0 and <= MaxBytes && WithinLimits(Image.Identify(path));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool WithinLimits(ImageInfo info) =>
+        info.Width > 0 && info.Height > 0 && info.Width <= MaxSide && info.Height <= MaxSide
+        && (long)info.Width * info.Height <= MaxPixels;
+
     public static (int Width, int Height)? Measure(byte[] bytes)
     {
         try
         {
+            if (bytes is not { Length: > 0 and <= MaxBytes }) return null;
             var info = Image.Identify(bytes);
+            if (!WithinLimits(info)) return null;
             return (info.Width, info.Height);
         }
         catch
@@ -46,6 +90,7 @@ internal static class CoverImage
     {
         try
         {
+            if (!WithinLimits(bytes)) return null;
             using var image = Image.Load(bytes);
             var side = Math.Min(image.Width, image.Height);
             var x = (image.Width - side) / 2;
@@ -66,7 +111,7 @@ internal static class CoverImage
     {
         try
         {
-            if (Image.DetectFormat(bytes).Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase)) return bytes;
+            if (Image.DetectFormat(bytes).Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase) || !WithinLimits(bytes)) return bytes;
             using var image = Image.Load(bytes);
             using var output = new MemoryStream();
             image.Save(output, new JpegEncoder { Quality = 90 });
@@ -115,7 +160,7 @@ internal static class CoverImage
     /// </summary>
     public static ulong? LooksHash(byte[]? bytes)
     {
-        if (bytes is not { Length: > 0 }) return null;
+        if (!WithinLimits(bytes)) return null;
         try
         {
             using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(bytes);
@@ -147,7 +192,7 @@ internal static class CoverImage
     /// </summary>
     public static double? Detail(byte[] bytes, int side)
     {
-        if (side < 16) return null;
+        if (side < 16 || !WithinLimits(bytes)) return null;
         try
         {
             using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(bytes);

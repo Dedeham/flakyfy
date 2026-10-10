@@ -481,6 +481,8 @@ struct SlskdState {
     enqueued: Vec<String>,
     /// What the yt-dlp shim was asked to fetch.
     you_tube_downloads: Vec<String>,
+    /// The rows YouTube Music answers a songs search with; none answers 404.
+    ytm_tracks: Option<Value>,
     /// Files written with some audio after the STREAMINFO. TagLib# (and the tag reader after it)
     /// gives a FLAC with no audio no length at all, so only these have one to check.
     with_audio: HashSet<String>,
@@ -603,6 +605,12 @@ impl Respond for FakeSlskd {
                 state.transfers.entry(user.clone()).or_default().push(transfer);
             }
             return json_answer(&json!({}), 201);
+        }
+        if path == "/ytm/search" {
+            return match self.state.lock().ytm_tracks.clone() {
+                Some(tracks) => json_answer(&json!({"tracks": tracks}), 200),
+                None => ResponseTemplate::new(404),
+            };
         }
         if path == "/search" {
             return json_answer(
@@ -1363,6 +1371,68 @@ async fn a_play_pins_the_found_video_and_learns_its_true_size_from_the_stream() 
     assert_eq!(facts.size, Some(12_345));
     assert_eq!(facts.itag.as_deref(), Some("140"));
     assert_eq!(facts.bit_rate, Some(130));
+}
+
+#[tokio::test]
+async fn a_play_takes_youtube_musics_video_for_the_song_before_the_yt_dlp_search() {
+    let root = Root::new("octo-stream-");
+    let walk = build(&root, false, |_| Arc::new(|_: &str| Vec::new())).await;
+    let song = walk.songs[0].clone();
+    let id = song.external_id.clone().expect("an id");
+    let length = walk.registry.lookup(&id).expect("known").snapshot().duration;
+    walk.slskd.state.lock().ytm_tracks = Some(json!([{
+        "videoId": "ytm-atv", "title": song.title, "artists": [song.artist],
+        "durationSeconds": length.unwrap_or(200), "videoType": "MUSIC_VIDEO_TYPE_ATV",
+    }]));
+
+    walk.service
+        .get_direct_stream("soulseek", &id, Some("bytes=0-1"), &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("ytm-atv"));
+    assert!(routing.shown_duration.is_some());
+    let asked: Vec<String> = walk
+        ._server
+        .received_requests()
+        .await
+        .expect("recording")
+        .iter()
+        .map(|r| r.url.path().to_string())
+        .collect();
+    assert!(asked.iter().any(|p| p == "/ytm/search"), "{asked:?}");
+    assert!(!asked.iter().any(|p| p == "/search"), "{asked:?}");
+    // The stream opened is the picked video.
+    assert!(
+        walk._server
+            .received_requests()
+            .await
+            .expect("recording")
+            .iter()
+            .any(|r| r.url.path() == "/stream" && r.url.query().unwrap_or("").contains("id=ytm-atv"))
+    );
+}
+
+#[tokio::test]
+async fn a_play_falls_back_to_the_yt_dlp_search_when_youtube_music_has_no_such_song() {
+    let root = Root::new("octo-stream-");
+    let walk = build(&root, false, |_| Arc::new(|_: &str| Vec::new())).await;
+    let id = walk.songs[0].external_id.clone().expect("an id");
+    walk.slskd.state.lock().ytm_tracks = Some(json!([{
+        "videoId": "other", "title": "Another Song", "artists": ["Someone Else"],
+        "durationSeconds": 200, "videoType": "MUSIC_VIDEO_TYPE_ATV",
+    }]));
+
+    walk.service
+        .get_direct_stream("soulseek", &id, Some("bytes=0-1"), &CancellationToken::new())
+        .await
+        .expect("no error")
+        .expect("a stream");
+
+    let routing = walk.registry.lookup(&id).expect("known").snapshot();
+    assert_eq!(routing.you_tube_id.as_deref(), Some("vid123"));
 }
 
 #[tokio::test]

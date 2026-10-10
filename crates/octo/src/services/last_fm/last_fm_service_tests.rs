@@ -575,3 +575,60 @@ async fn keeping_an_answer_sweeps_out_the_expired_ones() {
     assert!(!cache.contains_key("stale"));
     assert_eq!(cache.len(), 1);
 }
+
+#[tokio::test]
+async fn an_artists_top_tracks_are_kept_and_not_asked_for_twice() {
+    let server = serve(answer(|_| {
+        r#"{"toptracks":{"track":[{"name":"One More Time"}]}}"#.to_string()
+    }))
+    .await;
+    let last_fm = service(&server);
+
+    let first = last_fm.get_artist_top_tracks("Daft Punk", 10).await;
+    let second = last_fm.get_artist_top_tracks("Daft Punk", 10).await;
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    assert_eq!(received(&server).await.len(), 1);
+}
+
+/// Notes when each call arrived, and answers it slowly.
+struct SlowArrivals {
+    arrived: Arc<Mutex<Vec<std::time::Instant>>>,
+}
+
+impl Respond for SlowArrivals {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        self.arrived.lock().push(std::time::Instant::now());
+        ResponseTemplate::new(200)
+            .set_body_string(r#"{"toptracks":{"track":[]}}"#)
+            .set_delay(Duration::from_millis(400))
+    }
+}
+
+#[tokio::test]
+async fn top_track_calls_take_turns_at_the_provider_gate() {
+    let arrived = Arc::new(Mutex::new(Vec::new()));
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(SlowArrivals {
+            arrived: Arc::clone(&arrived),
+        })
+        .mount(&server)
+        .await;
+    let last_fm = service(&server);
+    let start = std::time::Instant::now();
+
+    futures::future::join_all((0..8).map(|i| {
+        let last_fm = &last_fm;
+        async move { last_fm.get_artist_top_tracks(&format!("Artist {i}"), 5).await }
+    }))
+    .await;
+
+    let early = arrived
+        .lock()
+        .iter()
+        .filter(|at| at.duration_since(start) < Duration::from_millis(200))
+        .count();
+    assert_eq!(early, 4, "four at once, the rest after");
+}

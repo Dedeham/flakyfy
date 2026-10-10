@@ -664,29 +664,45 @@ impl LastFmService {
             dotnet::escape_data_string(artist),
             self.last_fm().api_key
         );
-        let result: anyhow::Result<Vec<SimilarTrack>> = async {
-            let doc = self.get_json(&url).await?;
-            let mut tracks = Vec::new();
-            if let Some(top) = try_get_property(&doc, "toptracks")?
-                && let Some(array @ Value::Array(_)) = try_get_property(top, "track")?
-            {
-                for t in enumerate_array(array)? {
-                    let name = match try_get_property(t, "name")? {
-                        Some(n) => get_string(n)?,
-                        None => None,
+        // Kept like the other radio answers, and asked through the same gate.
+        let read = self
+            .cached(&format!("artist-top-tracks|{artist}|{limit}"), || async {
+                let result: anyhow::Result<Vec<SimilarTrack>> = async {
+                    let doc = {
+                        let _permit = self
+                            .provider_gate
+                            .acquire()
+                            .await
+                            .expect("the gate is never closed");
+                        self.get_json(&url).await?
                     };
-                    if let Some(name) = name.filter(|n| !n.is_empty()) {
-                        tracks.push(SimilarTrack::new(artist, name, 1.0));
+                    let mut tracks = Vec::new();
+                    if let Some(top) = try_get_property(&doc, "toptracks")?
+                        && let Some(array @ Value::Array(_)) = try_get_property(top, "track")?
+                    {
+                        for t in enumerate_array(array)? {
+                            let name = match try_get_property(t, "name")? {
+                                Some(n) => get_string(n)?,
+                                None => None,
+                            };
+                            if let Some(name) = name.filter(|n| !n.is_empty()) {
+                                tracks.push(SimilarTrack::new(artist, name, 1.0));
+                            }
+                        }
                     }
+                    Ok(tracks)
                 }
-            }
-            Ok(tracks)
-        }
-        .await;
-        result.unwrap_or_else(|e| {
-            warn!(error = %e, "Last.fm artist.gettoptracks failed for '{artist}'");
-            Vec::new()
-        })
+                .await;
+                Ok(match result {
+                    Ok(tracks) => Some(tracks),
+                    Err(e) => {
+                        warn!(error = %e, "Last.fm artist.gettoptracks failed for '{artist}'");
+                        None
+                    }
+                })
+            })
+            .await;
+        read.unwrap_or_default()
     }
 
     /// `Err` where the C# let an exception out of the method: an element of Last.fm's answer

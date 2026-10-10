@@ -1125,3 +1125,50 @@ async fn a_genre_station_leads_with_artists_the_listener_does_not_know() {
     let first: Vec<&str> = genre.tracks.iter().take(5).map(|t| t.artist.as_str()).collect();
     assert!(first.iter().all(|a| a.starts_with("Chart Artist")), "{first:?}");
 }
+
+/// The walk's similar-artist calls never answer in time; everything else answers at once.
+#[derive(Clone)]
+struct StuckWalk;
+
+impl Respond for StuckWalk {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let query = query(request);
+        let walking = query.get("method").map(String::as_str) == Some("artist.getsimilar")
+            && query.get("limit").map(String::as_str) == Some(&FRONTIER_NEIGHBOURS.to_string());
+        if walking {
+            return ResponseTemplate::new(200)
+                .set_body_string("{}")
+                .set_delay(std::time::Duration::from_secs(30));
+        }
+        FrontierHandler { walk: true }.respond(request)
+    }
+}
+
+/// A slow similar-artist walk costs Discovery Mix its own few seconds, never the artist and
+/// genre stations, which are built first.
+#[tokio::test]
+async fn a_slow_discovery_walk_never_starves_the_artist_and_genre_stations() {
+    let fixture = fixture(
+        LastFmSettings {
+            radio_track_count: 10,
+            ..learned()
+        },
+        StuckWalk,
+    )
+    .await;
+    record_twelve(&fixture.state);
+    let started = std::time::Instant::now();
+
+    let stations = build(&fixture.service).await;
+
+    assert!(
+        started.elapsed() < DISCOVERY_WALK_BUDGET + std::time::Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(stations.iter().any(|s| s.kind == LastFmRadioStationKind::Artist));
+    assert!(stations.iter().any(|s| s.kind == LastFmRadioStationKind::Genre));
+    // The walk found nothing in its time, so the tag charts make the mix.
+    assert!(discovery_of(&stations).is_some());
+    assert_eq!(DISCOVERY_WALK_BUDGET, std::time::Duration::from_secs(8));
+}

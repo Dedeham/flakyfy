@@ -511,3 +511,67 @@ async fn find_similar_tracks_says_how_the_list_was_found() {
     assert_eq!(style_versions(Some("Faded (Nightcore)")), ["nightcore"]);
     assert!(style_versions(Some("Faded (Remastered)")).is_empty());
 }
+
+/// Fails the first call, then answers every call with `body`; counts the calls.
+struct FailsOnce {
+    calls: Arc<Mutex<u32>>,
+    body: &'static str,
+}
+
+impl Respond for FailsOnce {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        let mut calls = self.calls.lock();
+        *calls += 1;
+        if *calls == 1 {
+            ResponseTemplate::new(500)
+        } else {
+            ResponseTemplate::new(200).set_body_string(self.body)
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_failed_call_is_not_kept_as_an_empty_answer() {
+    let calls = Arc::new(Mutex::new(0));
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(FailsOnce {
+            calls: Arc::clone(&calls),
+            body: r#"{"similarartists":{"artist":[{"name":"Justice","match":"1"}]}}"#,
+        })
+        .mount(&server)
+        .await;
+    let last_fm = service(&server);
+
+    let failed = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+    let answered = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+    let kept = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+
+    assert!(failed.is_empty());
+    assert_eq!(answered.len(), 1);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        *calls.lock(),
+        2,
+        "asked again after the failure, then answered from the cache"
+    );
+}
+
+#[tokio::test]
+async fn keeping_an_answer_sweeps_out_the_expired_ones() {
+    let server = serve(answer(|_| {
+        r#"{"toptags":{"tag":[{"name":"house"}]}}"#.to_string()
+    }))
+    .await;
+    let last_fm = service(&server);
+    last_fm.radio_cache.lock().insert(
+        "stale".into(),
+        (Utc::now() - TimeDelta::minutes(1), RadioValue::Count(1)),
+    );
+
+    last_fm.get_artist_top_tags("Daft Punk", 3).await.expect("reads");
+
+    let cache = last_fm.radio_cache.lock();
+    assert!(!cache.contains_key("stale"));
+    assert_eq!(cache.len(), 1);
+}

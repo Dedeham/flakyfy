@@ -91,7 +91,7 @@ type ArtistTitle = Box<dyn Fn(&str, &str, Option<i32>) -> Vec<Song> + Send + Syn
 
 /// `Mock<IMusicMetadataService>`: answers what a test sets, records what the controller asked.
 #[derive(Default)]
-pub(super) struct TestMetadata {
+pub(crate) struct TestMetadata {
     /// `SearchSongsByArtistTitleAsync`; nothing when unset (the C# setups answered `[]`).
     pub by_artist_title: Mutex<Option<ArtistTitle>>,
     /// The `topN` of every `PrewarmYouTubeIdsAsync` call.
@@ -99,6 +99,8 @@ pub(super) struct TestMetadata {
     /// The query of every `SearchAlbumsAsync` call.
     pub album_searches: Mutex<Vec<String>>,
     pub songs: Mutex<HashMap<String, Song>>,
+    /// When set, every `get_song` first waits for a permit from it (and gives it back).
+    pub song_gate: Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
 }
 
 impl TestMetadata {
@@ -146,6 +148,10 @@ impl IMusicMetadataService for TestMetadata {
     }
 
     async fn get_song(&self, _: &str, id: &str) -> Option<Song> {
+        let gate = self.song_gate.lock().clone();
+        if let Some(gate) = gate {
+            let _permit = gate.acquire().await;
+        }
         self.songs.lock().get(id).cloned()
     }
 

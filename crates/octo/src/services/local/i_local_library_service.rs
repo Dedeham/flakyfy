@@ -81,6 +81,13 @@ pub trait ILocalLibraryService: Send + Sync {
     /// swallowed trigger. (The C# default was `false`.)
     async fn trigger_library_scan(&self, force: bool) -> bool;
 
+    /// Starts a scan of one Navidrome library. A call is never dropped: one made while that
+    /// library's last scan is still recent is folded into one more scan, which starts once the
+    /// wait is over. (By default, a forced scan of everything.)
+    async fn trigger_library_scan_of(&self, _library_id: i64) -> bool {
+        self.trigger_library_scan(true).await
+    }
+
     /// Gets the current scan status
     async fn get_scan_status(&self) -> Option<ScanStatus>;
 }

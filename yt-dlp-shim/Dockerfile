@@ -54,9 +54,10 @@ COPY app.py gate.py ytm.py /app/
 
 EXPOSE 8080
 
-# Single worker, threaded — yt-dlp is the bottleneck not Python; threading is fine.
+# Single worker, threaded: yt-dlp is the bottleneck, not Python, so threading is fine.
 # Threads are sized well above MAX_CONCURRENT_YTDLP deliberately: /stream holds
 # its thread for the whole song, so at 8 threads a few simultaneous playbacks
 # could consume the worker and leave gate slots idle with nobody able to reach
 # them. A thread parked on a socket read costs a stack and nothing else.
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "-w", "1", "--threads", "32", "--timeout", "120", "app:app"]
+# SHIM_THREADS sets the count (128 by default), room for a whole family playing at once.
+CMD ["sh", "-c", "exec gunicorn -b 0.0.0.0:8080 -w 1 --threads ${SHIM_THREADS:-128} --timeout 120 app:app"]

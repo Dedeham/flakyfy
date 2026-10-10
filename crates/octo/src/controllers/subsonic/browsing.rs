@@ -15,7 +15,7 @@ use octo_core::models::domain::Album;
 use serde_json::Value;
 use tracing::{debug, error};
 
-use super::album_ownership::{outside_album_with_owned_songs, settle_artist_albums};
+use super::album_ownership::{outside_album_with_owned_songs, scope_of, settle_artist_albums};
 use super::caller_checks::{SubsonicCall, as_json, file};
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
@@ -75,6 +75,7 @@ pub async fn get_song(State(state): State<AppState>, req: Request) -> AppResult 
 
 /// Merges local and Deezer albums.
 pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResult {
+    let scope = scope_of(crate::services::family::family_caller(req.extensions()));
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -115,7 +116,7 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
 
         // Each says how much of it the library holds. None is left out: the page lists no
         // library album to stand in for one.
-        let albums = settle_artist_albums(&state, albums, &[]).await;
+        let albums = settle_artist_albums(&state, albums, &[], scope.clone()).await;
 
         return Ok(builder
             .create_artist_response(&format, &artist, &albums)
@@ -217,7 +218,7 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
 
     // Each outside album says how much of it the library holds; one the page's own albums hold
     // whole, or by name, is left out.
-    let deezer_albums = settle_artist_albums(&state, deezer_albums, &local_albums).await;
+    let deezer_albums = settle_artist_albums(&state, deezer_albums, &local_albums, scope.clone()).await;
 
     let mut merged_albums = local_albums;
     for deezer_album in &deezer_albums {
@@ -239,6 +240,7 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
 
 /// Enriches local albums with Deezer songs.
 pub async fn get_album(State(state): State<AppState>, req: Request) -> AppResult {
+    let scope = scope_of(crate::services::family::family_caller(req.extensions()));
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -300,8 +302,15 @@ pub async fn get_album(State(state): State<AppState>, req: Request) -> AppResult
         };
 
         // The songs the library already holds go out as the library's own copies.
-        if let Some(owned) =
-            outside_album_with_owned_songs(&state, &call.proxy, &call.parameters, &mut album, &format).await
+        if let Some(owned) = outside_album_with_owned_songs(
+            &state,
+            &call.proxy,
+            &call.parameters,
+            &mut album,
+            &format,
+            scope.clone(),
+        )
+        .await
         {
             return Ok(owned);
         }

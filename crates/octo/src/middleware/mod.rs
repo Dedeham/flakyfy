@@ -12,8 +12,12 @@
 //! 7. [`cors`]: `UseCors()` with the default policy.
 //! 8. [`exception`]: `UseExceptionHandler` + `GlobalExceptionHandler` for panics, inside CORS
 //!    so error responses keep the CORS headers as they did in C#.
-//! 9. Path canonicalisation, then the routes (static files are routes, as `MapStaticAssets`
-//!    endpoints were), falling back to the catch-all.
+//! 9. Path canonicalisation.
+//! 10. [`family_gate`]: with Family on, who is asking, members signed in to Navidrome with
+//!     their hidden passwords, and the family rules. With Family off it hands every request
+//!     on untouched.
+//! 11. The routes (static files are routes, as `MapStaticAssets` endpoints were), falling back
+//!     to the catch-all.
 //!
 //! The C# raw-body middleware (`HttpContext.Items["Octo.RawBody"]` for every POST, PUT and
 //! PATCH) has no counterpart: an axum handler that needs the raw body extracts it as `Bytes`
@@ -26,5 +30,10 @@ pub mod admin_port_split;
 pub mod admin_sign_in_gate;
 pub mod cors;
 pub mod exception;
+#[cfg(test)]
+mod family_bypass_tests;
+pub mod family_gate;
+#[cfg(test)]
+mod family_reading_tests;
 pub mod forwarded;
 pub mod request_log;

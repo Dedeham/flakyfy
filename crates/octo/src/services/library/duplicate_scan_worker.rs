@@ -216,6 +216,9 @@ pub struct DuplicateScanWorker {
     /// Spectrum verdicts by track id, size and modification time, so a file is decoded once and
     /// not again on every scan. A replaced or re-tagged file has a new key and is looked at again.
     spectra: Mutex<HashMap<String, SpectrumReport>>,
+    /// With Family on, the duplicate scan keeps to the shared library (Keep removes files, and
+    /// a member's own copy is never the shared song's duplicate).
+    scope: Option<crate::services::family::ScopeResolver>,
 }
 
 impl DuplicateScanWorker {
@@ -253,6 +256,40 @@ impl DuplicateScanWorker {
             last_scan_utc: Mutex::new(datetime::min_value()),
             last_result: Mutex::new(None),
             spectra: Mutex::new(HashMap::new()),
+            scope: None,
+        }
+    }
+
+    /// Keeps the scan to the shared library while Family is on.
+    pub fn with_library_scope(mut self, scope: crate::services::family::ScopeResolver) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// The tracks the scan may pair: all of them, or the shared library's while members have
+    /// libraries of their own (Family on, or turned off with their libraries still there).
+    /// Until the library index has been read no track can be told apart, so none is paired
+    /// and the walk counts as unfinished: nothing is asked or settled from it.
+    fn shared_only(&self, tracks: Vec<LibraryTrack>, complete: bool) -> (Vec<LibraryTrack>, bool) {
+        match &self.scope {
+            Some(scope) if scope.keeps_shared() => {
+                if !scope.ready() {
+                    return (Vec::new(), false);
+                }
+                let view = scope.shared_view();
+                let shared = tracks
+                    .into_iter()
+                    .filter(|track| {
+                        view.allows(
+                            &crate::services::family::LibraryScope::Shared,
+                            Some(&track.id),
+                            None,
+                        )
+                    })
+                    .collect();
+                (shared, complete)
+            }
+            _ => (tracks, complete),
         }
     }
 
@@ -327,6 +364,7 @@ impl DuplicateScanWorker {
 
     async fn scan(&self, settings: &LibraryActionSettings) -> anyhow::Result<()> {
         let (tracks, complete) = self.walk().await?;
+        let (tracks, complete) = self.shared_only(tracks, complete);
         let mut groups = Self::find_groups(&tracks);
         let detect = self.settings.current().soulseek.detect_transcodes;
         if self.resolver.is_some() && self.spectrum.is_some() && detect {

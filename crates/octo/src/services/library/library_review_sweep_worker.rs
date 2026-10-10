@@ -27,6 +27,7 @@ use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, set_aside};
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
+use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
 use crate::services::library::library_walk;
@@ -357,6 +358,9 @@ pub struct LibraryReviewSweepWorker {
     lookup_failures: AtomicI32,
     unfingerprinted: AtomicI32,
     hold: Mutex<(String, Option<String>)>,
+    /// With Family on, the sweep keeps to the shared library: a member's own songs are never
+    /// asked about.
+    scope: Option<ScopeResolver>,
 }
 
 impl LibraryReviewSweepWorker {
@@ -386,7 +390,29 @@ impl LibraryReviewSweepWorker {
             lookup_failures: AtomicI32::new(0),
             unfingerprinted: AtomicI32::new(0),
             hold: Mutex::new(("Off".to_string(), None)),
+            scope: None,
         }
+    }
+
+    /// Keeps the sweep to the shared library while Family is on.
+    pub fn with_library_scope(mut self, scope: ScopeResolver) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// The scopes one pass of the sweep asks: None when every file may be asked about, else
+    /// the shared library's while members have libraries of their own (Family on, or turned
+    /// off with their libraries still there).
+    fn shared_view(&self) -> Option<ScopeView> {
+        self.scope
+            .as_ref()
+            .filter(|scope| scope.keeps_shared())
+            .map(ScopeResolver::shared_view)
+    }
+
+    /// Whether the sweep may ask about the file at `full`, by the pass's `view`.
+    fn in_shared(view: Option<&ScopeView>, full: &str) -> bool {
+        view.is_none_or(|view| view.allows(&LibraryScope::Shared, None, Some(full)))
     }
 
     pub fn store(&self) -> &Arc<ReviewSweepStore> {
@@ -515,6 +541,7 @@ impl LibraryReviewSweepWorker {
             return Duration::ZERO;
         };
         let octo_files = self.octo_files.lock().clone();
+        let scope_view = self.shared_view();
         let reviewed = self.notices.reviewed_paths();
         let cursor = self.store.read(|s| s.cursor.clone());
         let (mut target, mut stamp, mut passed): (Option<String>, Option<String>, String) =
@@ -532,7 +559,8 @@ impl LibraryReviewSweepWorker {
             let skip = match &file_stamp {
                 None => true,
                 Some(file_stamp) => {
-                    octo_files.contains(&full)
+                    !Self::in_shared(scope_view.as_ref(), &full)
+                        || octo_files.contains(&full)
                         || reviewed.contains(&full)
                         || self
                             .store

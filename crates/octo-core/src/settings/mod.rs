@@ -7,6 +7,7 @@
 //! section. `Effective*` properties are methods that clamp at read time, as the C# did.
 
 pub mod admin;
+pub mod family;
 pub mod generated_playlist;
 pub mod genre;
 pub mod import;
@@ -32,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{BindWarning, ConfigTree, bind};
 
 pub use admin::AdminSettings;
+pub use family::FamilySettings;
 pub use generated_playlist::GeneratedPlaylistSettings;
 pub use genre::{
     GenreEmptyBehavior, GenreFallbackSource, GenreMappingSettings, GenreMatchMode, GenreSettings,
@@ -80,11 +82,12 @@ pub struct AppSettings {
     pub updates: UpdateSettings,
     pub admin: AdminSettings,
     pub imports: ImportSettings,
+    pub family: FamilySettings,
 }
 
 impl AppSettings {
     /// The configuration section names, in `Program.cs` registration order.
-    pub const SECTIONS: [&'static str; 15] = [
+    pub const SECTIONS: [&'static str; 16] = [
         "Genre",
         "LibraryActions",
         "GeneratedPlaylists",
@@ -100,6 +103,7 @@ impl AppSettings {
         "Updates",
         "Admin",
         "Imports",
+        "Family",
     ];
 
     /// Binds every section from the merged configuration. A value that does not convert
@@ -123,6 +127,7 @@ impl AppSettings {
             updates: bind_section(tree, "Updates", &mut warnings),
             admin: bind_section(tree, "Admin", &mut warnings),
             imports: bind_section(tree, "Imports", &mut warnings),
+            family: bind_section(tree, "Family", &mut warnings),
         };
         // A port fix: Navidrome's address is read without the spaces and trailing slashes it
         // may have been typed with, so every upstream URL Octo builds from it has one slash

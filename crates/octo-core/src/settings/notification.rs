@@ -48,6 +48,12 @@ pub struct NotificationSettings {
     /// One summary per album walk (tracks fetched, how many lossless)
     /// instead of a ping per track.
     pub notify_album_completed: bool,
+
+    /// Family: a member asked for a copy that waits for approval, or a request failed.
+    pub notify_family_requests: bool,
+
+    /// Family: a member's device, or a new app of the owner, was seen for the first time.
+    pub notify_family_devices: bool,
 }
 
 impl Default for NotificationSettings {
@@ -61,6 +67,8 @@ impl Default for NotificationSettings {
             notify_lossless_fallback: true,
             notify_download_failed: true,
             notify_album_completed: true,
+            notify_family_requests: true,
+            notify_family_devices: true,
         }
     }
 }

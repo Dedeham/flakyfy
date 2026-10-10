@@ -78,7 +78,15 @@ fn missing_from(document: &Value) -> Vec<String> {
         if NOT_LISTED.contains(&section.as_str()) {
             continue;
         }
+        // Family is listed only once it is in use (effective_document_keeps_family).
+        if section == "Family" && document.get("Family").is_none() {
+            continue;
+        }
         for name in names {
+            // The family notices are listed with the Family section.
+            if name.starts_with("NotifyFamily") && document.get("Family").is_none() {
+                continue;
+            }
             if document.get(&section).and_then(|s| s.get(&name)).is_none() {
                 missing.push(format!("{section}.{name}"));
             }
@@ -101,6 +109,38 @@ async fn get_raw_config_exposes_every_settings_property() {
     assert_eq!(reply.header("content-type"), Some("application/json"));
     assert!(reply.text().starts_with("{\n  \"Subsonic\": {\n    \"Url\": "));
     assert_eq!(missing_from(&reply.json()), Vec::<String>::new());
+}
+
+/// With Family at its defaults neither document lists it; once it is on (or saved in
+/// settings.json) both list every Family property, so a save never drops it.
+#[tokio::test]
+async fn effective_document_keeps_family() {
+    let (_, off) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&off, path).await.json();
+        assert!(document.get("Family").is_none(), "{path}");
+    }
+
+    let mut settings = factory_settings();
+    settings.family.enabled = true;
+    let on = app(AppState::for_tests(settings));
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&on, path).await.json();
+        assert_eq!(document["Family"]["Enabled"], Value::Bool(true), "{path}");
+        assert_eq!(document["Family"]["MembersPath"], "Auto", "{path}");
+        assert_eq!(missing_from(&document), Vec::<String>::new(), "{path}");
+    }
+
+    let (state, saved) = factory();
+    let mut file = octo_core::settings::JsonObject::new();
+    file.insert(
+        "Family".into(),
+        super::plumbing::n_obj([("Enabled", octo_core::json::dom::Node::Bool(false))]),
+    );
+    state.settings_writer.replace(&file).expect("writes");
+    let document = get(&saved, "/api/admin/raw-config").await.json();
+    assert_eq!(document["Family"]["Enabled"], Value::Bool(false));
+    assert_eq!(missing_from(&document), Vec::<String>::new());
 }
 
 /// The factory configures a synthetic admin password. Neither GET may return it; both return

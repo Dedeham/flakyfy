@@ -6,8 +6,10 @@
 //! aside to `.mappings.json.corrupt-<UtcTicks>` and the service starts empty, where the C# threw
 //! the `JsonException` to every caller until the file was fixed by hand.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
@@ -26,6 +28,7 @@ use tracing::{debug, error, info, warn};
 
 use super::ILocalLibraryService;
 use super::i_local_library_service::{ParsedExternalId, ParsedSongId};
+use crate::services::family::NavidromeAdmin;
 use crate::services::framework::DotnetDictionary;
 use crate::services::soulseek::ExternalIdRegistry;
 use crate::services::state_file;
@@ -120,6 +123,20 @@ pub struct LocalLibraryService {
     mappings: Mutex<Option<DotnetDictionary<LocalSongMapping>>>,
     /// Debounce to avoid triggering too many scans
     last_scan_trigger: Mutex<Option<DateTime<Utc>>>,
+    /// Scans of one library: Octo's admin calls, when each library was last scanned and
+    /// whether one more scan is already waiting.
+    admin: NavidromeAdmin,
+    targeted: Arc<Mutex<HashMap<i64, TargetedScan>>>,
+    scan_window: Duration,
+    /// Told whenever Octo starts a scan, so the library index can be read again after it.
+    scan_notice: Option<Arc<tokio::sync::Notify>>,
+}
+
+/// One library's scans.
+#[derive(Debug, Default, Clone, Copy)]
+struct TargetedScan {
+    last: Option<tokio::time::Instant>,
+    trailing: bool,
 }
 
 impl LocalLibraryService {
@@ -143,6 +160,7 @@ impl LocalLibraryService {
                 .into_owned()
         });
         let mapping_file_path = Path::new(&download_directory).join(".mappings.json");
+        let admin = NavidromeAdmin::new(nav_identity.clone(), http.clone(), Arc::clone(&settings));
         LocalLibraryService {
             mapping_file_path,
             download_directory,
@@ -152,6 +170,41 @@ impl LocalLibraryService {
             nav_identity,
             mappings: Mutex::new(None),
             last_scan_trigger: Mutex::new(None),
+            admin,
+            targeted: Arc::new(Mutex::new(HashMap::new())),
+            scan_window: Self::SCAN_DEBOUNCE_INTERVAL
+                .to_std()
+                .unwrap_or(Duration::from_secs(30)),
+            scan_notice: None,
+        }
+    }
+
+    /// Notifies `notice` whenever this service starts a scan.
+    pub fn with_scan_notice(mut self, notice: Arc<tokio::sync::Notify>) -> Self {
+        self.scan_notice = Some(notice);
+        self
+    }
+
+    /// How long after a library's scan another call for it waits (tests shorten it).
+    pub fn with_scan_window(mut self, window: Duration) -> Self {
+        self.scan_window = window;
+        self
+    }
+
+    /// Starts a scan of one library now, and tells the scan notice.
+    async fn scan_one(admin: &NavidromeAdmin, notice: Option<&tokio::sync::Notify>, library_id: i64) -> bool {
+        match admin.scan_library(library_id).await {
+            Ok(()) => {
+                info!("Started a scan of Navidrome library {library_id}");
+                if let Some(notice) = notice {
+                    notice.notify_one();
+                }
+                true
+            }
+            Err(e) => {
+                warn!("Could not start a scan of Navidrome library {library_id}: {e}");
+                false
+            }
         }
     }
 
@@ -514,6 +567,9 @@ impl ILocalLibraryService for LocalLibraryService {
             if status.is_success() {
                 let content = response.text().await?;
                 info!("Subsonic scan triggered successfully: {content}");
+                if let Some(notice) = &self.scan_notice {
+                    notice.notify_one();
+                }
                 Ok(true)
             } else {
                 warn!("Failed to trigger Subsonic scan: {status} - Server may require authentication");
@@ -525,6 +581,45 @@ impl ILocalLibraryService for LocalLibraryService {
             error!(error = %e, "Error triggering Subsonic library scan");
             false
         })
+    }
+
+    async fn trigger_library_scan_of(&self, library_id: i64) -> bool {
+        let now = tokio::time::Instant::now();
+        let wait = {
+            let mut scans = self.targeted.lock();
+            let scan = scans.entry(library_id).or_default();
+            match scan.last {
+                Some(last) if now.duration_since(last) < self.scan_window => {
+                    if scan.trailing {
+                        // One more scan is already waiting; it starts after this call.
+                        return true;
+                    }
+                    scan.trailing = true;
+                    Some(self.scan_window - now.duration_since(last))
+                }
+                _ => {
+                    scan.last = Some(now);
+                    None
+                }
+            }
+        };
+        let Some(wait) = wait else {
+            return Self::scan_one(&self.admin, self.scan_notice.as_deref(), library_id).await;
+        };
+        let admin = self.admin.clone();
+        let targeted = Arc::clone(&self.targeted);
+        let notice = self.scan_notice.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            {
+                let mut scans = targeted.lock();
+                let scan = scans.entry(library_id).or_default();
+                scan.trailing = false;
+                scan.last = Some(tokio::time::Instant::now());
+            }
+            Self::scan_one(&admin, notice.as_deref(), library_id).await;
+        });
+        true
     }
 
     async fn get_scan_status(&self) -> Option<ScanStatus> {

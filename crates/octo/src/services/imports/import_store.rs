@@ -99,6 +99,7 @@ impl ImportStore {
             read.playlist_id = existing.playlist_id.clone();
             read.playlist_note = existing.playlist_note.clone();
             read.get_missing = existing.get_missing;
+            read.family_approved = existing.family_approved;
             read.matched_utc = existing.matched_utc;
             for track in &mut read.tracks {
                 if track.library_id.is_none()

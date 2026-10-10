@@ -360,23 +360,23 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"yjR4ryJm9lY6bGoVZNFSXKKejskPwMRhybCcQCj3hF0=\"'\\]$",
+        "^B:\\ \\['\"epVoOPtrtLeGrLro/K1bGkzpRzcHDsbmP5/yj67AyTY=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ ca3478af2266f6563a6c6a1564d1525ca29e8ec90fc0c461c9b09c4028f7845d\\ \\(194962\\ bytes,\\ text\\)$",
+        "^B:\\ 7a956838fb6bb4b786acbae8fcad5b1a4ce94737070ec6e63f9ff28faec0c936\\ \\(197452\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"xSqbbTYY/VFFLx8P7sZ3aOk3FR5gDMFqUHalu3TCXW4=\"'\\]$",
+        "^B:\\ \\['\"n8vxRHv\\+QazwDBOU1nsMYC1wRtsf5gylaTbDF3aJdE8=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ c52a9b6d3618fd51452f1f0feec67768e937151e600cc16a5076a5bb74c25d6e\\ \\(376499\\ bytes,\\ text\\)$",
+        "^B:\\ 9fcbf1447bfe41acf00c1394d67b0c602d7046db1fe60ca56936c3177689744f\\ \\(389200\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"FnxtuSHIv503E2td0ee\\+1JM5x09YrKdZckZJrgZ\\+wxs=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ 167c6db921c8bf9d37136b5dd1e7bed49339c74f58aca759724649ae067ec31b\\ \\(116170\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/194962'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/197452'\\]$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo).",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo). Re-pinned for Octo Family (index.html, admin.js): the dashboard's Family entry, shown only on a server that answers /api/admin/family, so it stays hidden on a server without Family. Re-pinned again for Octo Family (index.html, admin.js): the Family pane's outside-address notice, the choice of where members' music lives, and Open Family signing the owner in.",
       "knownDiff": "Dashboard Charts card",
-      "reviewed": "Brandon 2026-10-08"
+      "reviewed": "Brandon 2026-10-08; Family re-pins Brandon 2026-10-09"
     },
     {
       "id": "update-card-pulls-octo",

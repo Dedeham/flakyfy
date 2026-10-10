@@ -153,6 +153,7 @@ function activateTab(name, { focus = false } = {}) {
   if (name === 'lastfm' && typeof loadLastFmAccount === 'function') loadLastFmAccount();
   if (name === 'about' && typeof loadUpdate === 'function') loadUpdate();
   if (name === 'soulseek' && typeof loadSharing === 'function') loadSharing();
+  if (name === 'family' && typeof loadFamily === 'function') loadFamily();
   if (focus) {
     window.scrollTo({ top: 0 });
     const heading = document.querySelector(`section[data-pane="${name}"] h1`);
@@ -175,9 +176,23 @@ navItems.forEach(btn => btn.addEventListener('click', () => openTab(btn.dataset.
 // Back/forward, and a typed or linked #pane. Both events can fire for one change, and
 // activating the active pane again is harmless.
 function followHash() {
-  const target = location.hash.slice(1) || 'status';
+  const [target, spot] = (location.hash.slice(1) || 'status').split('/');
   const pane = document.querySelector(`section[data-pane="${target}"]`);
   if (pane && !pane.classList.contains('active')) activateTab(target);
+  else if (pane && spot) history.replaceState(null, '', `#${target}`);
+  if (pane && spot) showSpot(spot);
+}
+
+// #pane/spot scrolls to one control on the pane and puts the keyboard on it:
+// #status/public-address is the outside address the Family page links to.
+function showSpot(spot) {
+  const place = document.querySelector(`[data-spot="${spot}"]`);
+  if (!place) return;
+  requestAnimationFrame(() => {
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    place.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+    place.querySelector('input, button')?.focus({ preventScroll: true });
+  });
 }
 window.addEventListener('popstate', followHash);
 window.addEventListener('hashchange', followHash);
@@ -483,6 +498,7 @@ async function refreshStatus() {
     }
     lastStatus = data;
     renderSetupChecklist();
+    detectFamily();
   } catch (e) {
     document.querySelectorAll('.status-card').forEach(card => {
       card.classList.add('bad');
@@ -3478,6 +3494,7 @@ async function browseAuthenticate(result) {
 // The footer says who this browser is signed in as. The sign-in is remembered across restarts
 // and lapses only after 90 days without a visit (an hour for the recovery code); Sign out ends it now.
 function showSignedIn(user, recovery = false) {
+  forgetFamilySupport(user || null);
   const line = document.getElementById('signed-in');
   if (!line) return;
   line.hidden = !user;
@@ -7382,6 +7399,250 @@ document.getElementById('health-body')?.addEventListener('keydown', event => {
   event.preventDefault();
   pickHealthCheck(names[(to + names.length) % names.length], true);
 });
+
+// ────────────────────────────────────────────────────────────────
+// Family: shown only on a server that answers /api/admin/family
+// ────────────────────────────────────────────────────────────────
+// A server without Family (an older build serving these same files) answers that route with a
+// 404, so the entry stays hidden there. The answer is asked for once per sign-in: only "sign in
+// first" (401) or no answer at all is asked again on the next status read. A refusal (403) or
+// a 404 stands until someone signs in again.
+let familySupport = null;
+let familySupportFor;
+
+function detectFamily() {
+  if (familySupport) return familySupport;
+  familySupport = fetch('/api/admin/family', { credentials: 'same-origin' })
+    .then(r => {
+      if (r.status === 401) familySupport = null;
+      return r.ok;
+    })
+    .catch(() => {
+      familySupport = null;
+      return false;
+    })
+    .then(supported => {
+      updateFamilyEntry(supported);
+      return supported;
+    });
+  return familySupport;
+}
+
+// A new sign-in may see what the last one could not.
+function forgetFamilySupport(user) {
+  if (familySupportFor === user) return;
+  familySupportFor = user;
+  familySupport = null;
+}
+
+function updateFamilyEntry(supported) {
+  const nav = document.getElementById('family-nav');
+  const pane = document.getElementById('family-pane');
+  if (nav) nav.hidden = !supported;
+  if (pane) pane.hidden = !supported;
+}
+
+function familyEl(tag, props, ...children) {
+  const node = document.createElement(tag);
+  Object.entries(props || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === false) return;
+    if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key === 'class') node.className = value;
+    else node.setAttribute(key, value === true ? '' : String(value));
+  });
+  children.flat().forEach(child => {
+    if (child === null || child === undefined || child === false) return;
+    node.append(typeof child === 'string' || typeof child === 'number' ? String(child) : child);
+  });
+  return node;
+}
+
+const familyRoles = { CoAdmin: 'Co-admin', Member: 'Member', Listener: 'Listener', Kid: 'Kid' };
+
+async function loadFamily() {
+  const box = document.getElementById('family-card');
+  const notices = document.getElementById('family-notices');
+  if (!box) return;
+  let data;
+  try {
+    const r = await api('/api/admin/family');
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    box.replaceChildren(familyEl('p', { class: 'notice notice-error', role: 'alert' }, `Octo could not read the family: ${e.message}`));
+    return;
+  }
+  const result = familyEl('p', { class: 'set-info-d', id: 'family-result', 'aria-live': 'polite' });
+  // Where members' music goes, chosen before Family is turned on (a server that does not say
+  // keeps its members folder setting, shown as before).
+  const place = data.membersPlace || null;
+  let where = place && place.mode === 'Custom' ? 'Custom' : 'NextToMusic';
+  const customPath = familyEl('input', {
+    class: 'set-input', id: 'family-members-path', placeholder: '/members', autocomplete: 'off', spellcheck: 'false',
+    value: place && place.mode === 'Custom' ? place.path : null,
+  });
+  const turn = async (on) => {
+    if (!on) {
+      const names = data.members.map(m => m.displayName);
+      const who = names.length
+        ? `${names.join(', ')} will not be able to sign in or listen until it is on again.`
+        : 'No one is in the family yet.';
+      if (!confirm(`Turn Family off? ${who}`)) return;
+    }
+    const request = { enabled: on };
+    if (on && place) {
+      if (where === 'Custom') {
+        const path = customPath.value.trim();
+        if (!path.startsWith('/')) {
+          result.className = 'notice notice-error';
+          result.textContent = 'Type the folder’s full path, starting with /.';
+          customPath.focus();
+          return;
+        }
+        request.membersPath = path;
+      } else {
+        request.membersPath = 'NextToMusic';
+      }
+    }
+    const r = await api('/api/admin/family/enable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      result.className = 'notice notice-error';
+      result.textContent = body.error || `HTTP ${r.status}`;
+      return;
+    }
+    await loadFamily();
+    const after = document.getElementById('family-result');
+    if (after) {
+      after.className = body.links === 'Copy' ? 'notice notice-warn' : 'set-info-d';
+      after.textContent = body.message;
+    }
+    refreshStatus();
+  };
+
+  const children = [];
+  children.push(familyEl('h3', { class: 'info-card-title' }, data.enabled ? 'Family is on' : 'Family is off'));
+  if (data.enabled) {
+    const waiting = data.pendingRequests;
+    children.push(familyEl('p', null,
+      `${data.members.length} ${data.members.length === 1 ? 'member' : 'members'}, `,
+      `${data.devices} signed-in ${data.devices === 1 ? 'device' : 'devices'}, `,
+      `${waiting} ${waiting === 1 ? 'request' : 'requests'} waiting, ${data.liveStreams} playing now. Owner: `,
+      familyEl('strong', null, data.owner || 'nobody yet'), '.'));
+    if (data.members.length) {
+      children.push(familyEl('ul', { class: 'family-members' }, data.members.map(m =>
+        familyEl('li', null,
+          familyEl('strong', null, m.displayName), ` (${m.username}) · ${familyRoles[m.role] || m.role}`,
+          m.suspended ? ' · paused' : '', m.joined ? '' : ' · has not joined yet',
+          ` · ${m.devices} ${m.devices === 1 ? 'device' : 'devices'}`))));
+    }
+    if (place) {
+      // Where members' music is, and whether each song is one copy (linked) or copied.
+      const copies = (place.linkMode || data.links) === 'Copy';
+      children.push(familyEl('p', null,
+        'Members’ music: ', familyEl('code', null, place.path), copies ? ' · Copies, ' : ' · One copy per song',
+        copies ? familyEl('a', { href: '#family', onclick: (e) => { e.preventDefault(); fix.hidden = !fix.hidden; } }, 'see how to fix') : null));
+      const fix = familyEl('p', { class: 'notice notice-warn', hidden: true }, place.message || data.linksMessage || '');
+      if (copies) children.push(fix);
+    } else if (data.linksMessage) {
+      children.push(familyEl('p', { class: 'notice notice-warn' }, data.linksMessage));
+    }
+  } else if (place) {
+    const customRow = familyEl('div', { class: 'set-row stack', hidden: where !== 'Custom' },
+      familyEl('label', { class: 'set-info', for: 'family-members-path' },
+        familyEl('span', { class: 'set-info-t' }, 'Folder for members’ music'),
+        familyEl('span', { class: 'set-info-d' }, 'Mount this folder at the same path in both Octo and Navidrome.')),
+      customPath);
+    const option = (value, title, desc) => {
+      const input = familyEl('input', { type: 'radio', name: 'family-place', value, checked: where === value });
+      input.addEventListener('change', () => { where = value; customRow.hidden = value !== 'Custom'; });
+      return familyEl('label', { class: 'set-row' },
+        familyEl('span', { class: 'set-info' }, familyEl('span', { class: 'set-info-t' }, title), familyEl('span', { class: 'set-info-d' }, desc)),
+        input);
+    };
+    const nextToMusic = place.mode === 'NextToMusic' ? place.path : 'A .octo-family folder in your music folder';
+    children.push(familyEl('p', null, 'Where members’ music goes. Each member gets their own folder there.'));
+    children.push(familyEl('div', { class: 'set-card', role: 'radiogroup', 'aria-label': 'Where members’ music goes' },
+      option('NextToMusic', 'Next to your music (recommended)', familyEl('code', null, nextToMusic)),
+      option('Custom', 'Somewhere else', 'A folder you mount yourself.'),
+      customRow));
+    if (data.navidromeSkipsDotFolders === false) {
+      children.push(familyEl('p', { class: 'notice notice-warn' },
+        'This Navidrome reads folders whose names start with a dot, so members’ music next to yours could show up twice. Choose Somewhere else, or update Navidrome.'));
+    }
+  } else {
+    children.push(familyEl('p', null,
+      'Turning Family on makes a folder for each member at ', familyEl('code', null, data.membersPath),
+      '. Octo checks it can write there first. Navidrome needs the same folder at the same path, which the first member you add checks.'));
+  }
+  // The outside address, which invite links and device codes use away from home.
+  if ('publicUrl' in data) {
+    children.push(data.publicUrl
+      ? familyEl('p', { class: 'set-info-d' }, 'Invite links and device codes work away from home at ', familyEl('code', null, data.publicUrl), '.')
+      : familyEl('div', { class: 'notice notice-warn' },
+        familyEl('strong', null, 'Set your outside address. '),
+        'Without it, invite links and device codes only work on your home network. ',
+        familyEl('a', { href: '#status/public-address' }, 'Set it on the Status page'),
+        data.suggestedPublicUrl ? [' (your reverse proxy uses ', familyEl('code', null, data.suggestedPublicUrl), ')'] : null,
+        '.'));
+  }
+  if (data.loadWarning) children.push(familyEl('p', { class: 'notice notice-warn' }, data.loadWarning));
+  children.push(result);
+  // Open Family signs this dashboard's admin in there too, with a single-use token in the
+  // address's fragment; without one it opens the page's own sign-in.
+  const openFamily = async (event) => {
+    event.preventDefault();
+    const page = data.familyPage || '/family/';
+    const tab = window.open('', '_blank');
+    let url = page;
+    try {
+      const r = await api('/api/admin/family/open', { method: 'POST' });
+      const body = await r.json().catch(() => ({}));
+      if (r.ok && body.token) url = `${page}#handoff=${encodeURIComponent(body.token)}`;
+    } catch { /* the page's own sign-in */ }
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = url;
+    } else {
+      location.href = url;
+    }
+  };
+  children.push(familyEl('div', { class: 'update-actions' },
+    data.enabled
+      ? familyEl('a', { class: 'btn btn-primary', href: data.familyPage || '/family/', target: '_blank', rel: 'noopener', onclick: openFamily }, 'Open Family')
+      : familyEl('button', { class: 'btn btn-primary', type: 'button', onclick: () => turn(true) }, 'Turn on Family'),
+    data.enabled ? familyEl('button', { class: 'btn btn-ghost', type: 'button', onclick: () => turn(false) }, 'Turn off') : null));
+  if (data.enabled) {
+    children.push(familyEl('p', { class: 'set-info-d' },
+      'Members, requests and devices are managed on the Family page, which also works away from home.'));
+  }
+  box.replaceChildren(...children);
+
+  if (notices) {
+    notices.hidden = !data.enabled;
+    const requests = document.getElementById('f-family-notify-requests');
+    const devices = document.getElementById('f-family-notify-devices');
+    requests.checked = !!data.notifyRequests;
+    devices.checked = !!data.notifyDevices;
+    const save = async (key, input) => {
+      const r = await api('/api/admin/family/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: input.checked }),
+      });
+      if (!r.ok) {
+        input.checked = !input.checked;
+        toast('Octo could not save that.', 'error');
+      }
+    };
+    requests.onchange = () => save('requests', requests);
+    devices.onchange = () => save('devices', devices);
+  }
+}
 
 // ────────────────────────────────────────────────────────────────
 // Boot

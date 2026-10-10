@@ -115,6 +115,15 @@ _URL_CACHE_TTL = int(os.environ.get("URL_CACHE_TTL", "3600"))  # 1 hour, well un
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT: "dict[str, threading.Lock]" = {}
 
+# What /health reports: /stream bodies being sent now, and yt-dlp processes running now.
+_COUNTS_LOCK = threading.Lock()
+_COUNTS = {"active_streams": 0, "ytdlp_running": 0}
+
+
+def _count(name: str, change: int) -> None:
+    with _COUNTS_LOCK:
+        _COUNTS[name] += change
+
 # One pooled HTTPS session for all upstream googlevideo byte-proxying. Reuses
 # the TCP+TLS connection across an iOS client's `Range: bytes=0-1` probe and
 # the real range GET that follows, instead of a fresh handshake per request.
@@ -229,13 +238,17 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
         full = [YTDLP, "--no-warnings", "--no-playlist", *args]
         t_run = time.monotonic()
         try:
-            cp = subprocess.run(
-                full,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
+            _count("ytdlp_running", 1)
+            try:
+                cp = subprocess.run(
+                    full,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+            finally:
+                _count("ytdlp_running", -1)
         except subprocess.TimeoutExpired:
             log.warning("yt-dlp timed out (%s, gate_wait_ms=%.0f): %s", label, gate_ms, " ".join(args))
             return None
@@ -260,7 +273,11 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
 
 @app.get("/health")
 def health():
-    return jsonify(ok=True)
+    """Up, plus how busy: /stream bodies being sent now, yt-dlp processes running now, and how
+    many yt-dlp may run at once. Octo's family load view reads these."""
+    with _COUNTS_LOCK:
+        active, running = _COUNTS["active_streams"], _COUNTS["ytdlp_running"]
+    return jsonify(ok=True, active_streams=active, ytdlp_running=running, ytdlp_limit=_GATE.total)
 
 
 def _is_bg() -> bool:
@@ -881,6 +898,7 @@ def stream():
     @stream_with_context
     def generator():
         first = True
+        _count("active_streams", 1)
         try:
             for chunk in upstream.iter_content(chunk_size=64 * 1024):
                 if chunk:
@@ -891,6 +909,7 @@ def stream():
                         first = False
                     yield chunk
         finally:
+            _count("active_streams", -1)
             try:
                 upstream.close()
             except Exception:

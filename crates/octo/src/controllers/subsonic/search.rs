@@ -21,7 +21,7 @@ use super::action_helpers::{
     SubsonicCall, extract_local_song_ids, int_param, int_try_parse, is_failed_subsonic_body,
     queue_refresh_if_stale, visible_stations,
 };
-use super::album_ownership::{judge_albums, settle_search_albums};
+use super::album_ownership::{judge_albums, scope_of, settle_search_albums};
 use crate::app::AppState;
 use crate::http::error::AppError;
 use crate::services::library::Standing;
@@ -43,6 +43,7 @@ const SYNC_CATALOG_WAIT: Duration = Duration::from_secs(15);
 /// Empty queries do still pass through so a Subsonic client's "browse all" fallback isn't
 /// broken; with a query, we hijack.
 pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Response, AppError> {
+    let scope = scope_of(crate::services::family::family_caller(req.extensions()));
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -144,7 +145,7 @@ pub async fn search3(State(state): State<AppState>, req: Request) -> Result<Resp
             let judging = state.clone();
             tokio::spawn(async move {
                 let albums = external_search.get_albums(&query, requested_albums.min(20)).await;
-                let standings = judge_albums(&judging, &albums).await;
+                let standings = judge_albums(&judging, &albums, scope).await;
                 (albums, standings)
             })
         });

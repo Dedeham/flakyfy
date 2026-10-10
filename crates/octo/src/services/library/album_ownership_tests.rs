@@ -430,7 +430,7 @@ fn service(
     let asked = Arc::clone(asked);
     let tracklist = Arc::new(tracklist);
     AlbumOwnership::new(
-        Arc::new(|| Box::pin(async { Some(index()) })),
+        Arc::new(|_| Box::pin(async { Some(index()) })),
         Arc::new(move |album: Album, background| {
             asked.lock().push((album.title.clone(), background));
             tracklist(&album)
@@ -598,7 +598,7 @@ async fn judge_leaves_library_albums_alone_and_gives_up_on_a_slow_library() {
     assert!(service.judge(&[local], Duration::from_secs(1)).await.is_empty());
 
     let slow = AlbumOwnership::new(
-        Arc::new(|| Box::pin(futures::future::pending())),
+        Arc::new(|_| Box::pin(futures::future::pending())),
         Arc::new(|_, _| Box::pin(async { None })),
         Arc::new(|_| None),
     );

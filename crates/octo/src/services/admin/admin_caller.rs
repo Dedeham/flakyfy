@@ -13,6 +13,10 @@ pub enum AdminCallerKind {
     Listener,
     /// ADMIN_SIGN_IN is off, so nobody was asked.
     SignInOff,
+    /// Signed in on the Family page as a family member.
+    FamilyMember,
+    /// Signed in on the Family page as someone who manages the family.
+    FamilyManager,
 }
 
 /// Who the gate let in, kept on the request (as an extension) for the endpoints that answer
@@ -29,9 +33,13 @@ impl AdminCaller {
         AdminCaller { user, kind }
     }
 
-    /// Everyone but a listener may see and change everything the dashboard shows.
+    /// Everyone but a listener and the Family page's sign-ins may see and change everything
+    /// the dashboard shows.
     pub fn is_admin(&self) -> bool {
-        self.kind != AdminCallerKind::Listener
+        !matches!(
+            self.kind,
+            AdminCallerKind::Listener | AdminCallerKind::FamilyMember | AdminCallerKind::FamilyManager
+        )
     }
 
     /// Who made a change, in words for the log: the audit trail of who saved the settings or
@@ -88,5 +96,7 @@ mod tests {
         }
         assert!(!caller(Some("bob"), AdminCallerKind::Listener).is_admin());
         assert!(caller(None, AdminCallerKind::SignInOff).is_admin());
+        assert!(!caller(Some("alex"), AdminCallerKind::FamilyMember).is_admin());
+        assert!(!caller(Some("sam"), AdminCallerKind::FamilyManager).is_admin());
     }
 }

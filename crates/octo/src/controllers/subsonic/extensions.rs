@@ -24,6 +24,7 @@ use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
 use crate::services::common::song_finder::UpgradeGate;
+use crate::services::family::{audio_gate, family_caller};
 use crate::services::library::library_tag_edits::song_tag_fields;
 use crate::services::library::{
     LibraryActionOutcome, LibraryActionRequest, LibraryActionState, LibraryEditOutcome, SongLookup,
@@ -93,7 +94,11 @@ pub async fn get_acquisitions(State(state): State<AppState>, req: Request) -> Ap
 /// Navidrome's extension list with octoAcquisitions added, so a client can tell this server
 /// answers getAcquisitions before it asks, and octoLibraryActions while library actions are
 /// on. Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
+///
+/// A caller whose audio has a ceiling (a family limit, or their own quality for where they
+/// are) is not offered `transcoding`: its decisions would let a client play a file as it is.
 pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Request) -> Response {
+    let capped = family_caller(req.extensions()).is_some_and(|caller| audio_gate::ceiling(caller).is_some());
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return response,
@@ -104,7 +109,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
         .relay_safe("rest/getOpenSubsonicExtensions", &call.parameters)
         .await;
     let settings = state.settings.current();
-    state
+    let mut reply = state
         .subsonic_response_builder
         .merge_open_subsonic_extensions_with(
             &format,
@@ -114,8 +119,16 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             settings.library_actions.enabled,
             settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
-        )
-        .into_response()
+        );
+    if capped && let Some(body) = audio_gate::without_extension(&reply.body, format == "json", "transcoding")
+    {
+        reply.body = body;
+    }
+    // octoFamily is listed only while Family is on.
+    if settings.family.enabled {
+        return super::family::with_family_extension(reply, &format).into_response();
+    }
+    reply.into_response()
 }
 
 /// Whether a source Better quality searches (Soulseek, Lidarr) is set up here at all.
@@ -230,6 +243,7 @@ pub async fn get_upgrades(State(state): State<AppState>, req: Request) -> Respon
 /// Never through a rating: where rating actions are on, one star can remove a song, and this
 /// is how an app removes one without giving it a rating.
 pub async fn apply_library_action(State(state): State<AppState>, req: Request) -> AppResult {
+    let caller = crate::services::family::family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -246,6 +260,11 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
         return Ok(builder
             .create_error(FORMAT, 10, "Required parameter is missing: id and action")
             .into_response());
+    }
+    // A family member's library actions: remove takes a song out of their own library only,
+    // and a better copy of a shared song is asked for.
+    if let Some(member) = caller.filter(|c| c.managed) {
+        return Ok(member_library_action(&state, &member.user, &id, &action).await);
     }
     if dotnet::eq_ignore_case(&action, UPGRADE_ACTION) {
         return Ok(queue_upgrade(&state, &id, call.param_opt("u")));
@@ -323,6 +342,61 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
     Ok(builder
         .create_library_action_outcome_response(&id, &outcome, REMOVE_ACTION)
         .into_response())
+}
+
+/// `libraryAction` for a family member. `remove` takes a song out of their own library (a
+/// shared song answers error 50); `upgrade` asks for a better copy of a shared song, unless
+/// their account only saves songs; every other action is for the server owner.
+async fn member_library_action(state: &AppState, user: &str, id: &str, action: &str) -> Response {
+    const FORMAT: &str = "json";
+    let builder = &state.subsonic_response_builder;
+    if dotnet::eq_ignore_case(action, REMOVE_ACTION) {
+        return match state.personal_library.remove_from_my_library(user, id).await {
+            Ok(()) => builder
+                .create_library_action_outcome_response(
+                    id,
+                    &LibraryActionOutcome::new(
+                        LibraryActionState::Applied,
+                        Some("Removed from your library.".into()),
+                    ),
+                    REMOVE_ACTION,
+                )
+                .into_response(),
+            Err(e) => builder.create_error(FORMAT, e.code, &e.message).into_response(),
+        };
+    }
+    if dotnet::eq_ignore_case(action, UPGRADE_ACTION) {
+        if let crate::services::family::WriteDecision::Refuse { message, .. } =
+            state.library_write_gate.decide(Some(user))
+        {
+            return builder.create_error(FORMAT, 50, &message).into_response();
+        }
+        return match state
+            .family_request_service
+            .create(
+                user,
+                id,
+                octo_core::family::abilities::RequestQuality::Best,
+                Some(octo_core::family::request::RequestKind::Upgrade),
+            )
+            .await
+        {
+            Ok(request) => builder
+                .create_library_action_outcome_response(
+                    id,
+                    &LibraryActionOutcome::new(
+                        LibraryActionState::Pending,
+                        Some(format!("Asked for a better copy ({}).", request.id)),
+                    ),
+                    UPGRADE_ACTION,
+                )
+                .into_response(),
+            Err(e) => builder.create_error(FORMAT, e.code, &e.message).into_response(),
+        };
+    }
+    builder
+        .create_error(FORMAT, 50, "Only the server owner changes library files.")
+        .into_response()
 }
 
 /// octoLibraryActions v3: change a song's file without removing it, or put a removed one back.

@@ -32,14 +32,17 @@ pub use download_concurrency::{DownloadConcurrency, TransferLimiter, TransferSlo
 pub use download_log_keeper::DownloadLogKeeper;
 pub use download_picks::{DownloadPicks, PickedCopy};
 pub use external_search_service::ExternalSearchService;
-pub use heart_acquisition_coordinator::{HeartAcquisitionCoordinator, HeartCoordinatorExtras};
+pub use heart_acquisition_coordinator::{
+    FamilyHooks, HeartAcquisitionCoordinator, HeartCoordinatorExtras, TrackOutcome,
+};
 pub use song_finder::{SongFinder, SongFinderServices};
 pub use soulseek_hold_resumer::SoulseekHoldResumer;
 pub use soulseek_hold_store::{HeldAcquisition, HeldKind, SoulseekHoldStore};
 pub use star_on_arrival::{StarNavidrome, StarOnArrival};
 pub use top_songs_service::{ChartFetch, TopList, TopSong, TopSongsService};
 pub use track_acquisition_queue::{
-    AcquisitionOutcome, AcquisitionRequest, Completion, TrackAcquisitionQueue,
+    AcquisitionOutcome, AcquisitionPlace, AcquisitionRequest, AcquisitionTarget, Completion,
+    TrackAcquisitionQueue,
 };
 
 #[cfg(test)]

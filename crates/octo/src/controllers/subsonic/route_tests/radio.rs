@@ -768,6 +768,72 @@ async fn playlist_materialization_applies_configured_explicit_filter() {
 }
 
 #[tokio::test]
+async fn kid_station_is_clean() {
+    let metadata = TestMetadata::answering(|artist, title, duration| {
+        vec![Song {
+            id: if title == "Song One" { "explicit" } else { "clean" }.into(),
+            artist: artist.into(),
+            title: title.into(),
+            album: title.into(),
+            duration,
+            is_local: false,
+            explicit_content_lyrics: Some(if title == "Song One" { 1 } else { 0 }),
+            ..Default::default()
+        }]
+    });
+    // The server lets everything through; the station's owner is a kid profile.
+    let fixture = RadioFixture::with_metadata(Options::default(), metadata).await;
+    fixture
+        .upstream
+        .return_no_local_matches
+        .store(true, Ordering::SeqCst);
+    fixture.install_station("");
+    let state = &fixture.state;
+    let station = state
+        .last_fm_radio_state
+        .find_station("alice", &fixture.station_id())
+        .expect("installed");
+    let auth: octo_subsonic::subsonic_request_parser::Parameters =
+        [("u", "alice"), ("t", "token"), ("s", "salt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+    let materialized = |songs: Vec<Song>| songs.into_iter().map(|song| song.id).collect::<Vec<_>>();
+
+    let mut kid = crate::services::family::member_credentials::tests::member("alice", String::new());
+    kid.preset = octo_core::family::abilities::Preset::Kid;
+    state.family_store.upsert_member(kid);
+    let everyone = materialized(
+        crate::controllers::subsonic::action_helpers::materialize_station(
+            state,
+            &state.subsonic_proxy,
+            &station,
+            &auth,
+        )
+        .await,
+    );
+    assert!(
+        everyone.contains(&"explicit".to_string()),
+        "Family off: {everyone:?}"
+    );
+
+    let mut on = state.settings.current().as_ref().clone();
+    on.family.enabled = true;
+    state.settings.set(on);
+    let clean = materialized(
+        crate::controllers::subsonic::action_helpers::materialize_station(
+            state,
+            &state.subsonic_proxy,
+            &station,
+            &auth,
+        )
+        .await,
+    );
+    assert!(!clean.contains(&"explicit".to_string()), "{clean:?}");
+    assert!(clean.contains(&"clean".to_string()), "{clean:?}");
+}
+
+#[tokio::test]
 async fn internet_radio_list_merges_ordinary_and_generated_stations_with_opaque_stream_url() {
     for format in ["json", "xml"] {
         let fixture = RadioFixture::new(Options::default()).await;
@@ -1042,7 +1108,21 @@ async fn published_stream_consumes_and_replenishes_three_track_session_pool() {
     let path = fixture.your_mix_stream_path().await;
     let token = RadioFixture::token_of(&path);
     fixture.wait_for_calls(READY_POOL_SIZE).await;
+    // A transcode counts as a call when it starts, so the runway's last song may still be on
+    // its way into the cache. The stream takes what is cached when it opens; wait for all of it.
+    let session = fixture
+        .state
+        .last_fm_radio_stream_sessions
+        .get(&token, None)
+        .expect("a session");
+    for _ in 0..1000 {
+        if fixture.state.last_fm_radio_streams.get_ready_pool(&session).len() >= READY_POOL_SIZE {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let original = fixture.pool_keys(&token);
+    let calls_before = fixture.transcoder.calls();
     assert_eq!(original.len(), 1, "{original:?}");
 
     fixture.transcoder.reset_started();
@@ -1067,7 +1147,12 @@ async fn published_stream_consumes_and_replenishes_three_track_session_pool() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let consumed = fixture.pool_keys(&token);
-    assert_eq!(consumed.len(), READY_POOL_SIZE - 1, "{consumed:?}");
+    assert_eq!(
+        consumed.len(),
+        READY_POOL_SIZE - 1,
+        "{consumed:?} after {} transcodes ({calls_before} before the stream)",
+        fixture.transcoder.calls()
+    );
     assert!(!consumed.contains(&original[0]));
 
     gate.set();

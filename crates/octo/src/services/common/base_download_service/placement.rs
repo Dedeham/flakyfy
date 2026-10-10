@@ -120,7 +120,29 @@ impl BaseDownloadService {
         requested: &RequestedIdentity,
         current_path: &str,
     ) -> Placement {
-        match self.try_place(song, requested, current_path).await {
+        self.place_under(song, requested, current_path, None).await
+    }
+
+    /// [`Self::place_in_library`] under another root with the same layout: the family pool,
+    /// where members' downloads are filed.
+    pub async fn place_in_root(
+        &self,
+        song: &Song,
+        requested: &RequestedIdentity,
+        current_path: &str,
+        root: &str,
+    ) -> Placement {
+        self.place_under(song, requested, current_path, Some(root)).await
+    }
+
+    async fn place_under(
+        &self,
+        song: &Song,
+        requested: &RequestedIdentity,
+        current_path: &str,
+        root: Option<&str>,
+    ) -> Placement {
+        match self.try_place(song, requested, current_path, root).await {
             Ok(placement) => placement,
             Err(e) => {
                 warn!(
@@ -136,14 +158,16 @@ impl BaseDownloadService {
         song: &Song,
         requested: &RequestedIdentity,
         current_path: &str,
+        root: Option<&str>,
     ) -> std::io::Result<Placement> {
         let download_path = self.download_path();
-        if download_path.is_empty() || !file_exists(current_path) {
+        let layout_root = root.map_or_else(|| download_path.clone(), str::to_string);
+        if layout_root.is_empty() || !file_exists(current_path) {
             return Ok(Placement::new(current_path, false));
         }
 
         let structure = self.settings.current().subsonic.folder_structure;
-        let mut target = self.layout_target(song, requested, get_extension(current_path));
+        let mut target = self.layout_target_in(&layout_root, song, requested, get_extension(current_path));
 
         if dotnet::eq_ignore_case(&get_full_path(&target), &get_full_path(current_path)) {
             return Ok(Placement::new(current_path, false));
@@ -182,6 +206,17 @@ impl BaseDownloadService {
 
     /// Where the configured layout files this song, before any clash is looked at.
     fn layout_target(&self, song: &Song, requested: &RequestedIdentity, extension: &str) -> String {
+        self.layout_target_in(&self.download_path(), song, requested, extension)
+    }
+
+    /// [`Self::layout_target`] under `root`.
+    fn layout_target_in(
+        &self,
+        root: &str,
+        song: &Song,
+        requested: &RequestedIdentity,
+        extension: &str,
+    ) -> String {
         let current = self.settings.current();
         let choice = Self::choose_layout(song, requested, current.soulseek.name_from_match);
         let structure = current.subsonic.folder_structure;
@@ -193,7 +228,7 @@ impl BaseDownloadService {
         };
         PathHelper::build_layout_path(
             structure,
-            &self.download_path(),
+            root,
             if dotnet::is_blank(artist) {
                 "Unknown Artist"
             } else {

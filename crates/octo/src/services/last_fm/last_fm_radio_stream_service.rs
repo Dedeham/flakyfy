@@ -4,7 +4,7 @@
 //! `octo_core::last_fm::last_fm_radio_stream_service`.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use chrono::{TimeDelta, Utc};
 use futures::FutureExt;
@@ -19,7 +19,7 @@ use octo_core::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioT
 use octo_core::settings::SettingsStore;
 use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::Semaphore;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -39,6 +39,7 @@ use super::last_fm_radio_track_cache::{LastFmRadioTrackCache, Producer};
 use super::last_fm_radio_track_resolver::LastFmRadioTrackResolver;
 use super::radio_tune_in_selector::IRadioTuneInSelector;
 use super::{LastFmScrobbleService, LastFmService};
+use crate::services::family::AudioGate;
 use crate::services::i_download_service::{DirectStreamInfo, IDownloadService};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::listen_brainz::ListenBrainzService;
@@ -46,8 +47,51 @@ use crate::services::local::ILocalLibraryService;
 use crate::services::soulseek::{ExternalIdRegistry, RadioQueueStore, SoulseekMetadataService};
 use crate::services::subsonic::SubsonicProxyService;
 
-/// `static SemaphoreSlim ConcurrentStreams = new(8, 8)`: process-wide.
-static CONCURRENT_STREAMS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
+/// The radio streams playing at once, process-wide: 8, or more with Family on (see
+/// [`LastFmRadioStreamService::stream_cap`]).
+static STREAM_SLOTS: LazyLock<StreamSlots> = LazyLock::new(StreamSlots::default);
+
+/// A count of playing radio streams with a limit read each time a stream asks to start.
+#[derive(Default)]
+pub struct StreamSlots {
+    playing: Mutex<usize>,
+    freed: Notify,
+}
+
+impl StreamSlots {
+    /// Waits until fewer than `cap()` streams play, then counts this one until the slot is
+    /// dropped.
+    pub async fn take(&self, cap: impl Fn() -> usize) -> StreamSlot<'_> {
+        loop {
+            let freed = self.freed.notified();
+            {
+                let mut playing = self.playing.lock();
+                if *playing < cap().max(1) {
+                    *playing += 1;
+                    return StreamSlot { slots: self };
+                }
+            }
+            freed.await;
+        }
+    }
+
+    /// How many streams play now.
+    pub fn playing(&self) -> usize {
+        *self.playing.lock()
+    }
+}
+
+/// One playing radio stream's place in [`StreamSlots`].
+pub struct StreamSlot<'a> {
+    slots: &'a StreamSlots,
+}
+
+impl Drop for StreamSlot<'_> {
+    fn drop(&mut self) {
+        *self.slots.playing.lock() -= 1;
+        self.slots.freed.notify_waiters();
+    }
+}
 
 /// What a warm of a listener's stored stations managed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +138,8 @@ struct Shared_ {
     last_fm: Option<Arc<LastFmService>>,
     listen_brainz: Option<Arc<ListenBrainzService>>,
     last_fm_scrobbles: Option<Arc<LastFmScrobbleService>>,
+    /// The audio gate's rules, once the app hands them over.
+    family: OnceLock<Arc<AudioGate>>,
 }
 
 /// A snapshot track with a resolved id, its place among those, and its cache key.
@@ -175,6 +221,7 @@ impl LastFmRadioStreamService {
                 last_fm: parts.last_fm,
                 listen_brainz: parts.listen_brainz,
                 last_fm_scrobbles: parts.last_fm_scrobbles,
+                family: OnceLock::new(),
             }),
             proxy: parts.proxy,
             resolver,
@@ -212,6 +259,34 @@ impl LastFmRadioStreamService {
         &self.resolver
     }
 
+    /// Hands over the audio gate's rules: the stream limit grows with the family, and each
+    /// stream follows its listener's family rules.
+    pub fn use_audio_gate(&self, gate: Arc<AudioGate>) {
+        let _ = self.shared.family.set(gate);
+    }
+
+    /// The radio streams that may play at once now: 8, or the family's share when Family is on
+    /// and that is more.
+    pub fn stream_cap(&self) -> usize {
+        self.shared.family.get().map_or(8, |gate| gate.radio_cap())
+    }
+
+    /// Whether the listener's clean-only profile keeps this track out.
+    async fn keeps_out(&self, session: &LastFmRadioStreamSession, track: &LastFmRadioTrack) -> bool {
+        let (Some(gate), Some(id)) = (self.shared.family.get(), track.resolved_id.as_deref()) else {
+            return false;
+        };
+        gate.radio_keeps_out(
+            &session.username,
+            id,
+            &session.authentication,
+            &self.proxy,
+            self.shared.metadata.as_ref(),
+            self.shared.library.as_ref(),
+        )
+        .await
+    }
+
     /// The session's station while radio streams are on and its kind is switched on, if it still
     /// has tracks.
     pub fn resolve(&self, session: &LastFmRadioStreamSession) -> Option<LastFmRadioStation> {
@@ -245,11 +320,16 @@ impl LastFmRadioStreamService {
         cancellation_token: &CancellationToken,
         include_icy_metadata: bool,
     ) -> anyhow::Result<()> {
-        let _permit = tokio::select! {
+        let _slot = tokio::select! {
             biased;
             () = cancellation_token.cancelled() => return Err(OperationCanceled.into()),
-            permit = CONCURRENT_STREAMS.acquire() => permit.expect("the semaphore is never closed"),
+            slot = STREAM_SLOTS.take(|| self.stream_cap()) => slot,
         };
+        if let Some(gate) = self.shared.family.get()
+            && let Some(refusal) = gate.radio_refusal(&session.username, &session.token)
+        {
+            anyhow::bail!("{refusal}");
+        }
         let mut stream_output = if include_icy_metadata {
             RadioOutput::Icy(IcyMetadataStream::new(output, DEFAULT_INTERVAL))
         } else {
@@ -302,6 +382,7 @@ impl LastFmRadioStreamService {
         let mut next_index = (ready[ready.len() - 1].index + 1) % tracks.len();
         let mut queue: VecDeque<PreparedRadioTrack> = ready.into();
         let mut failures = 0usize;
+        let mut kept_out = 0usize;
 
         while !cancellation_token.is_cancelled() {
             if queue.is_empty() {
@@ -319,6 +400,15 @@ impl LastFmRadioStreamService {
             self.shared
                 .sessions
                 .consume_ready_track(&session.token, &prepared.cache_key);
+            // A clean-only profile skips explicit songs; a station of nothing else ends.
+            if self.keeps_out(session, &prepared.track).await {
+                kept_out += 1;
+                if kept_out >= tracks.len() {
+                    anyhow::bail!("No songs in this Radio station are available on this profile");
+                }
+                continue;
+            }
+            kept_out = 0;
             let reserved: HashSet<String> = queue.iter().map(|item| item.cache_key.clone()).collect();
             let replenishment = self.start_replenishment(
                 session,
@@ -1000,3 +1090,52 @@ fn set_ignore_case(parameters: &mut IndexMap<String, String>, key: &str, value: 
 #[cfg(test)]
 #[path = "last_fm_radio_stream_service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_stream_waits_for_a_free_slot() {
+        let slots = Arc::new(StreamSlots::default());
+        let cap = Arc::new(AtomicUsize::new(1));
+        let first = slots.take(|| cap.load(Ordering::SeqCst)).await;
+        assert_eq!(slots.playing(), 1);
+        let waiting = {
+            let (slots, cap) = (Arc::clone(&slots), Arc::clone(&cap));
+            tokio::spawn(async move {
+                let _slot = slots.take(|| cap.load(Ordering::SeqCst)).await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!waiting.is_finished(), "the second stream waits");
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .expect("it starts once the first ends")
+            .expect("joins");
+        assert_eq!(slots.playing(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_larger_family_lets_more_streams_play() {
+        let slots = StreamSlots::default();
+        let mut held = Vec::new();
+        for _ in 0..12 {
+            held.push(
+                tokio::time::timeout(Duration::from_secs(1), slots.take(|| 12))
+                    .await
+                    .expect("a slot"),
+            );
+        }
+        assert_eq!(slots.playing(), 12);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), slots.take(|| 12))
+                .await
+                .is_err(),
+            "the thirteenth waits"
+        );
+    }
+}

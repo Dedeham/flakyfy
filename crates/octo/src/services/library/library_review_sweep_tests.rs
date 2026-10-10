@@ -821,3 +821,45 @@ async fn reset_and_pause_reach_the_disk_at_once() {
     );
     assert_eq!(worker.status().state, "Running");
 }
+
+fn scoped_sweep(family_on: bool) -> LibraryReviewSweepWorker {
+    LibraryReviewSweepWorker::new(
+        LibraryReviewSweepParts {
+            store: Arc::new(ReviewSweepStore::new(None)),
+            notices: Arc::new(NoticeQueue::new()),
+            verifier: FakeVerifier::confirming(),
+            activity: Arc::new(FakeActivity::default()),
+            library: Arc::new(FakeLibrary::default()),
+            settings: Arc::new(SettingsStore::for_tests(AppSettings::default())),
+            music_root: Box::new(|| "/music".to_string()),
+        },
+        Clock::system(),
+    )
+    .with_library_scope(crate::services::family::library_index::scope_for_tests(
+        family_on,
+        &[("alex", 3)],
+    ))
+}
+
+/// While members have libraries of their own the sweep keeps to the shared library: a member's
+/// own songs and the family pool are never asked about, with Family on or turned off since.
+#[test]
+fn the_sweep_never_asks_about_a_family_members_own_songs() {
+    for family_on in [true, false] {
+        let sweep = scoped_sweep(family_on);
+        let view = sweep.shared_view();
+        let asks = |full: &str| LibraryReviewSweepWorker::in_shared(view.as_ref(), full);
+        assert!(asks("/music/Massive Attack/Mezzanine/01 Angel.flac"));
+        assert!(!asks("/members/alex/Massive Attack/Mezzanine/01 Angel.flac"));
+        assert!(!asks("/members/.pool/Massive Attack/Mezzanine/01 Angel.flac"));
+    }
+    let never_family = scoped_sweep(false).with_library_scope(
+        crate::services::family::library_index::scope_for_tests(false, &[]),
+    );
+    let view = never_family.shared_view();
+    assert!(view.is_none());
+    assert!(LibraryReviewSweepWorker::in_shared(
+        view.as_ref(),
+        "/members/alex/Massive Attack/Mezzanine/01 Angel.flac"
+    ));
+}

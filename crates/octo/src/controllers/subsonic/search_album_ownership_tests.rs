@@ -485,3 +485,167 @@ async fn outside_album_the_library_holds_none_of_is_as_before_with_its_count() {
             .all(|s| s["isExternal"] == true)
     );
 }
+
+/// The drake library with MAID OF HONOUR whole in Alex's own family library, which Navidrome
+/// shows Alex (and its admin) but never Sam.
+#[derive(Clone)]
+struct WithAlexsAlbum;
+
+const ALEXS_MAID_ID: &str = "al-maid-alex";
+
+fn alexs_maid_rows() -> Vec<LibrarySongRow> {
+    drake::maid_of_honour()
+        .iter()
+        .enumerate()
+        .map(|(at, track)| LibrarySongRow {
+            id: format!("s-maid-alex-{at}"),
+            path: format!("/members/alex/Drake/MAID OF HONOUR/{}.flac", track.title),
+            size: 1,
+            suffix: "flac".into(),
+            bit_rate: 900,
+            title: track.title.clone(),
+            artist: "Drake".into(),
+            duration: track.duration,
+            album: Some("MAID OF HONOUR".into()),
+            album_id: Some(ALEXS_MAID_ID.into()),
+            album_artist: Some("Drake".into()),
+            ..Default::default()
+        })
+        .collect()
+}
+
+impl Respond for WithAlexsAlbum {
+    fn respond(&self, request: &MockRequest) -> ResponseTemplate {
+        let query = query_of(request);
+        if request.url.path().ends_with("/rest/getAlbum")
+            && query.get("id").map(String::as_str) == Some(ALEXS_MAID_ID)
+        {
+            let rows = alexs_maid_rows();
+            return json_reply(
+                json!({"subsonic-response": {"status": "ok", "version": "1.16.1", "album": {
+                    "id": ALEXS_MAID_ID, "name": "MAID OF HONOUR", "artist": "Drake", "songCount": rows.len(),
+                }}}),
+            );
+        }
+        FakeNavidrome.respond(request)
+    }
+}
+
+#[tokio::test]
+async fn a_members_own_album_stands_in_for_its_outside_version_in_their_own_search() {
+    use crate::services::family::library_index::scope_for_tests;
+    use crate::services::family::member_credentials::tests::member;
+    use octo_core::family::abilities::Preset;
+    use octo_core::family::device::{Device, NetworkPlace};
+    use octo_core::settings::FamilySettings;
+
+    let navidrome = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(WithAlexsAlbum)
+        .mount(&navidrome)
+        .await;
+    let deezer = MockServer::start().await;
+    Mock::given(any()).respond_with(FakeDeezer).mount(&deezer).await;
+    let mut rows = drake::LIBRARY.clone();
+    rows.extend(alexs_maid_rows());
+    let snapshot = Arc::new(
+        LibrarySnapshot::with(
+            Arc::new(move |start, count| {
+                let rows = rows.clone();
+                Box::pin(async move {
+                    let page: Vec<LibrarySongRow> = rows
+                        .iter()
+                        .skip(start as usize)
+                        .take(count as usize)
+                        .cloned()
+                        .collect();
+                    let held = page.len();
+                    Some((page, held))
+                })
+            }),
+            Clock::system(),
+        )
+        .with_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)])),
+    );
+    let state = AppState::for_tests_with(
+        AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(navidrome.uri()),
+                auto_detect_download_path: false,
+                ..Default::default()
+            },
+            family: FamilySettings {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        TestServices {
+            deezer_base_url: Some(deezer.uri()),
+            library_snapshot: Some(snapshot),
+            ..Default::default()
+        },
+    );
+    assert!(state.family_vault.create_key_if_missing().expect("a key"));
+    state.family_store.set_owner("winters");
+    for (name, library) in [("alex", 3), ("sam", 4)] {
+        let mut person = member(name, state.family_vault.seal("hidden").expect("sealed"));
+        person.preset = Preset::Listener;
+        person.personal_library_id = Some(library);
+        person.account_password =
+            crate::services::family::passwords::seal(&state.family_vault, &format!("{name}-secret"))
+                .expect("sealed");
+        state.family_store.upsert_member(person);
+        state.family_store.add_device(Device {
+            id: format!("d_{name}"),
+            username: name.into(),
+            name: String::new(),
+            created: chrono::Utc::now(),
+            last_seen: None,
+            app: String::new(),
+            place: NetworkPlace::Home,
+            seen_apps: Vec::new(),
+            navidrome_jwt: None,
+            quality: Default::default(),
+        });
+    }
+    let search = |user: &'static str| {
+        let state = state.clone();
+        async move {
+            let uri = format!(
+                "/rest/search3.view?u={user}&p={user}-secret&v=1.16.1&c=test&f=json&query=drake&songCount=0&artistCount=0&albumCount=20"
+            );
+            let reply = get(&app(&state), &uri).await;
+            assert!(reply.status.is_success(), "{uri}: {}", reply.text());
+            let body: Value = serde_json::from_str(&reply.text()).expect("JSON");
+            body["subsonic-response"]["searchResult3"]["album"]
+                .as_array()
+                .expect("albums")
+                .clone()
+        }
+    };
+    let maid = |albums: &[Value]| -> Vec<(String, bool)> {
+        albums
+            .iter()
+            .filter(|a| text_of(a, "name") == "MAID OF HONOUR")
+            .map(|a| {
+                (
+                    text_of(a, "id").to_string(),
+                    a["isExternal"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect()
+    };
+
+    // Alex's own copy is the one Alex's search lists, not the outside album.
+    let alex = search("alex").await;
+    assert_eq!(maid(&alex), [(ALEXS_MAID_ID.to_string(), false)], "{alex:?}");
+    // For Sam the album is not in any library they see: the outside version, none of it held.
+    let sam = search("sam").await;
+    let sams = sam
+        .iter()
+        .find(|a| text_of(a, "name") == "MAID OF HONOUR")
+        .expect("listed for Sam");
+    assert_eq!(sams["isExternal"], true, "{sams}");
+    assert_eq!(sams["ownedCount"], 0, "{sams}");
+}

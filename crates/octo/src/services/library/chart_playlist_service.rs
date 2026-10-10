@@ -40,6 +40,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use crate::services::common::{TopSong, TopSongsService, top_songs_service::LIBRARY_SEARCHES_AT_ONCE};
+use crate::services::family::{FamilyStore, kid_filter};
 use crate::services::framework::InFlight;
 use crate::services::library::GeneratedPlaylist;
 use crate::services::soulseek::external_id_registry::ExternalIdRegistry;
@@ -104,6 +105,8 @@ struct Inner {
     made: Mutex<HashMap<String, HashMap<String, Made>>>,
     failed_at: Mutex<HashMap<String, DateTime<Utc>>>,
     builds: InFlight<bool>,
+    /// The family, whose kid profiles get clean lists.
+    family: Option<Arc<FamilyStore>>,
 }
 
 impl ChartPlaylistService {
@@ -126,8 +129,28 @@ impl ChartPlaylistService {
                 made: Mutex::new(HashMap::new()),
                 failed_at: Mutex::new(HashMap::new()),
                 builds: InFlight::new(),
+                family: None,
             }),
         }
+    }
+
+    /// The service with the family, so a kid profile's lists are clean. Call it before the
+    /// service is cloned.
+    pub fn with_family(mut self, family: Arc<FamilyStore>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.family = Some(family);
+        }
+        self
+    }
+
+    /// The explicit filter for one listener's lists: the server's, or clean only for a kid
+    /// profile.
+    fn explicit_filter_for(&self, username: &str) -> ExplicitFilter {
+        kid_filter::explicit_filter_for(
+            &self.inner.settings.current(),
+            self.inner.family.as_deref(),
+            Some(username),
+        )
     }
 
     /// The charts that are lists, in their order: Popular right now first while it is on, then
@@ -372,8 +395,8 @@ impl ChartPlaylistService {
     }
 
     /// What decides whether a made list still holds: outside songs shown or not, which of them
-    /// the explicit filter lets through, and whose charts they are.
-    async fn rule(&self) -> String {
+    /// the listener's explicit filter lets through, and whose charts they are.
+    async fn rule(&self, username: &str) -> String {
         let subsonic = self.inner.settings.current().subsonic.clone();
         let country = self
             .inner
@@ -383,7 +406,8 @@ impl ChartPlaylistService {
             .unwrap_or_else(|| "auto".into());
         format!(
             "{}|{:?}|{country}",
-            subsonic.enable_search_discovery, subsonic.explicit_filter
+            subsonic.enable_search_discovery,
+            self.explicit_filter_for(username)
         )
     }
 
@@ -399,7 +423,7 @@ impl ChartPlaylistService {
         let user = user_key(username);
         let now = self.inner.clock.now();
         let period = period_index(now, REFRESH_HOURS);
-        let rule = self.rule().await;
+        let rule = self.rule(username).await;
         // Only the lists the country has: a genre it lacks is never made, and must not make the
         // others due on every request.
         let on: Vec<String> = self
@@ -448,6 +472,7 @@ impl ChartPlaylistService {
     async fn make(&self, username: &str, auth: Parameters, period: i64, rule: String) -> bool {
         let user = user_key(username);
         let subsonic = self.inner.settings.current().subsonic.clone();
+        let explicit_filter = self.explicit_filter_for(username);
         let mut searched: HashMap<String, Option<Vec<Value>>> = HashMap::new();
         let mut trouble = false;
         let mut any = false;
@@ -521,7 +546,7 @@ impl ChartPlaylistService {
                 &rows,
                 &library,
                 subsonic.enable_search_discovery,
-                subsonic.explicit_filter,
+                explicit_filter,
                 |song| Value::Object(self.inner.responses.convert_song_to_json(song)),
             );
             let hash = entries_hash(&entries);

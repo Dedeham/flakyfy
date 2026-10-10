@@ -40,6 +40,20 @@ pub struct YouTubeResolver {
     /// client timeout would kill the read mid-track.
     stream_client: reqwest::Client,
     base_url: String,
+    /// The last `/health` answer and when it was read (None inside when the shim did not
+    /// answer). Held while a read is in flight, so callers at the same moment share one read.
+    busy_cache: tokio::sync::Mutex<Option<(tokio::time::Instant, Option<ShimBusy>)>>,
+}
+
+/// How busy the shim is, from its `/health`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShimBusy {
+    /// `/stream` bodies being sent now.
+    pub active_streams: u32,
+    /// yt-dlp processes running now.
+    pub ytdlp_running: u32,
+    /// How many yt-dlp processes may run at once.
+    pub ytdlp_limit: u32,
 }
 
 /// `Uri.EscapeDataString`: everything but the RFC 3986 unreserved characters.
@@ -61,6 +75,12 @@ impl YouTubeResolver {
     pub const DEFAULT_BASE_URL: &'static str = "http://yt-dlp-shim:8080";
 
     pub const SEARCH_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// How long a `/health` read may take before the shim counts as not answering.
+    pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+
+    /// How long one `/health` answer is reused.
+    pub const BUSY_CACHE: Duration = Duration::from_secs(5);
 
     /// Reads `YouTube:ShimUrl` once: the address is deliberately captured at startup (it is a
     /// restart-only setting; see RestartTracker).
@@ -87,7 +107,54 @@ impl YouTubeResolver {
             search_client,
             stream_client,
             base_url: Self::resolve_base_url(configured),
+            busy_cache: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// How busy the shim is now, from its `/health`; None when it does not answer within
+    /// [`Self::HEALTH_TIMEOUT`] or answers something else. One answer, either way, is reused
+    /// for [`Self::BUSY_CACHE`].
+    pub async fn busy(&self) -> Option<ShimBusy> {
+        let mut cache = self.busy_cache.lock().await;
+        if let Some((at, busy)) = *cache
+            && at.elapsed() < Self::BUSY_CACHE
+        {
+            return busy;
+        }
+        let busy = self.read_health().await;
+        *cache = Some((tokio::time::Instant::now(), busy));
+        busy
+    }
+
+    async fn read_health(&self) -> Option<ShimBusy> {
+        let url = format!("{}/health", self.base_url);
+        let outcome: anyhow::Result<ShimBusy> = async {
+            let resp = self
+                .search_client
+                .get(&url)
+                .timeout(Self::HEALTH_TIMEOUT)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                anyhow::bail!("HTTP {}", resp.status().as_u16());
+            }
+            let root: Value = serde_json::from_str(&resp.text().await?)?;
+            let count = |name: &str| {
+                root.get(name)
+                    .and_then(Value::as_u64)
+                    .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+            };
+            Ok(ShimBusy {
+                active_streams: count("active_streams")
+                    .ok_or_else(|| anyhow::anyhow!("no active_streams"))?,
+                ytdlp_running: count("ytdlp_running").unwrap_or_default(),
+                ytdlp_limit: count("ytdlp_limit").unwrap_or_default(),
+            })
+        }
+        .await;
+        outcome
+            .inspect_err(|e| debug!("shim /health did not answer: {e}"))
+            .ok()
     }
 
     /// The shim address every request is built on. Falls back to the compose
@@ -495,5 +562,114 @@ mod tests {
                 .is_none()
         );
         assert!(resolver.download("", "/x", None, None).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn busy_reads_the_counts_from_the_shims_health() {
+        let shim = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"ok":true,"active_streams":3,"ytdlp_running":2,"ytdlp_limit":128}"#),
+            )
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        assert_eq!(
+            resolver.busy().await,
+            Some(ShimBusy {
+                active_streams: 3,
+                ytdlp_running: 2,
+                ytdlp_limit: 128,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn busy_is_none_when_the_shim_does_not_answer() {
+        let closed = format!("http://{}", crate::services::test_support::refused_address());
+        assert_eq!(YouTubeResolver::with_base_url(Some(&closed)).busy().await, None);
+
+        let failing = MockServer::start().await;
+        Mock::given(path("/health"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&failing)
+            .await;
+        assert_eq!(
+            YouTubeResolver::with_base_url(Some(&failing.uri())).busy().await,
+            None
+        );
+
+        let not_counts = MockServer::start().await;
+        Mock::given(path("/health"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+            .mount(&not_counts)
+            .await;
+        assert_eq!(
+            YouTubeResolver::with_base_url(Some(&not_counts.uri()))
+                .busy()
+                .await,
+            None
+        );
+
+        let slow = MockServer::start().await;
+        Mock::given(path("/health"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"ok":true,"active_streams":1,"ytdlp_running":0,"ytdlp_limit":5}"#)
+                    .set_delay(YouTubeResolver::HEALTH_TIMEOUT + Duration::from_secs(3)),
+            )
+            .mount(&slow)
+            .await;
+        let started = std::time::Instant::now();
+        assert_eq!(
+            YouTubeResolver::with_base_url(Some(&slow.uri())).busy().await,
+            None
+        );
+        assert!(
+            started.elapsed() < YouTubeResolver::HEALTH_TIMEOUT + Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn busy_reuses_one_answer_until_it_is_five_seconds_old() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/health"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"ok":true,"active_streams":1,"ytdlp_running":1,"ytdlp_limit":5}"#),
+            )
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let reads = || async { shim.received_requests().await.expect("recorded").len() };
+        let first = resolver.busy().await;
+        assert!(first.is_some());
+        for _ in 0..3 {
+            assert_eq!(resolver.busy().await, first);
+        }
+        assert_eq!(reads().await, 1);
+
+        tokio::time::pause();
+        tokio::time::advance(YouTubeResolver::BUSY_CACHE + Duration::from_secs(1)).await;
+        tokio::time::resume();
+        assert_eq!(resolver.busy().await, first);
+        assert_eq!(reads().await, 2);
+    }
+
+    #[tokio::test]
+    async fn busy_reuses_a_missing_answer_too() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/health"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        assert_eq!(resolver.busy().await, None);
+        assert_eq!(resolver.busy().await, None);
+        assert_eq!(shim.received_requests().await.expect("recorded").len(), 1);
     }
 }

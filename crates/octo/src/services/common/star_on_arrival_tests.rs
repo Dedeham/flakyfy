@@ -521,3 +521,62 @@ async fn dropping_it_stops_listening() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(f.calls.lock().is_empty());
 }
+
+/// A member's heart that joined a download landing in a shared library they cannot see: the
+/// favorite goes on their own pool copy, signed as them, never on the shared song.
+#[tokio::test]
+async fn the_member_heart_stars_their_own_linked_song() {
+    use crate::services::family::test_support::{World, member, navidrome_with_songs, song_row, write_file};
+    use crate::services::family::{FamilyPlacement, SharedLibraries};
+    use octo_core::family::abilities::Preset;
+
+    let f = Fixture::new();
+    let world = World::new(None);
+    let mut alex = member("alex", Preset::Member, 3);
+    alex.shared_libraries = SharedLibraries::Ids(vec![2]);
+    world.family.upsert_member(alex);
+    let relative = "Artist/Album/1.flac";
+    let navidrome = navidrome_with_songs(serde_json::json!([
+        song_row("shared-1", 1, &world.music(), relative, 10),
+        song_row("alex-1", 3, &format!("{}/alex", world.members()), relative, 10),
+    ]))
+    .await;
+    world.point_at(&navidrome.uri());
+    world.index.refresh().await.expect("read");
+    let shared = format!("{}/{relative}", world.music());
+    write_file(&shared, 10);
+    // As the worker settles the owner's download that Alex's heart joined.
+    world
+        .pool
+        .settle(&shared, &["alex".to_string()], true, Some("test:1"))
+        .await;
+
+    // Navidrome shows the download as the shared library's song.
+    let tracker = Arc::new(AcquisitionTracker::new(None, Clock::system()));
+    tracker.configure_watch(|watch| {
+        watch.visibility_poll = Duration::from_millis(10);
+        watch.library_lookup = Some(Arc::new(|_, _, _| {
+            async { Ok(Some("shared-1".to_string())) }.boxed()
+        }));
+    });
+    let stars = f.stars(&tracker, Clock::system());
+    stars.use_member_copies(world.pool.clone());
+    tracker.begin(
+        "test",
+        "1",
+        Some("1"),
+        Some("alex"),
+        Some("Artist"),
+        Some("Song"),
+        None,
+    );
+    stars.hold_song("test", "1", &credential("alex"), Some("alex"));
+    tracker.imported("test", "1", Some("Artist"), Some("Song"), Some(&shared));
+
+    until(|| f.star_count() == 1).await;
+    let star = &f.calls_to("rest/star")[0];
+    assert_eq!(star["id"], "alex-1", "their own linked song");
+    assert_eq!(star["u"], "alex");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(f.star_count(), 1, "the shared song is never starred");
+}

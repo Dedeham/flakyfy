@@ -486,3 +486,38 @@ async fn status_says_when_the_next_run_is_due() {
     assert_eq!(after.last_outcome.as_deref(), Some("Failed"));
     assert_eq!(after.tried, 1);
 }
+
+/// While members have libraries of their own (Family on, or turned off since), the weekly
+/// upgrade never walks a member's own library.
+#[tokio::test]
+async fn quality_upgrades_keep_to_the_shared_library() {
+    let worker_with = |family_on: bool, members: &[(&str, i64)]| {
+        let mut shared = row("a", "Artist/a.mp3");
+        shared.library_path = Some("/music".into());
+        let mut alexs = row("b", "Artist/b.mp3");
+        alexs.library_path = Some("/members/alex".into());
+        let seams = QualityUpgradeSeams {
+            list_songs: Arc::new(move || {
+                let rows = vec![shared.clone(), alexs.clone()];
+                async move { (rows, true) }.boxed()
+            }),
+            ..QualityUpgradeSeams::idle()
+        };
+        QualityUpgradeWorker::with_seams(
+            Arc::new(QualityUpgradeStore::new()),
+            Arc::new(SettingsStore::for_tests(AppSettings::default())),
+            None,
+            seams,
+        )
+        .with_library_scope(crate::services::family::library_index::scope_for_tests(
+            family_on, members,
+        ))
+    };
+    for family_on in [true, false] {
+        let (songs, complete) = worker_with(family_on, &[("alex", 3)]).list_songs().await;
+        assert_eq!(songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert!(complete);
+    }
+    let (songs, _) = worker_with(false, &[]).list_songs().await;
+    assert_eq!(songs.len(), 2);
+}

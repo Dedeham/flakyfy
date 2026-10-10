@@ -14,6 +14,7 @@ use tracing::debug;
 
 use super::NavidromeSongPathResolver;
 use super::duplicate_scan_worker::is_lossless_file;
+use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::local::ILocalLibraryService;
 use crate::services::subsonic::NavidromeIdentityService;
 
@@ -84,6 +85,9 @@ struct Seams {
     search: Option<SearchFn>,
     resolve: Option<ResolveFn>,
     clock: Clock,
+    /// Which library each song is in, while Family is on: a family member's own songs are
+    /// never the shared library's, nor another member's.
+    scope: Option<ScopeResolver>,
 }
 
 impl LibraryOwnership {
@@ -104,8 +108,15 @@ impl LibraryOwnership {
                 search: None,
                 resolve: None,
                 clock: Clock::system(),
+                scope: None,
             }),
         }
+    }
+
+    /// Tells songs apart by library while Family is on (see [`Self::find_in`]).
+    pub fn set_scope(&self, scope: ScopeResolver) {
+        self.seams.lock().scope = Some(scope);
+        self.forget();
     }
 
     /// The `Search` seam: answer from a list instead of a Navidrome.
@@ -127,7 +138,8 @@ impl LibraryOwnership {
         self.seams.lock().clock.now()
     }
 
-    /// The library's copy of this song, the best one when there are several, or `None`.
+    /// The library's copy of this song, the best one when there are several, or `None`. With
+    /// Family on, only the shared library counts.
     pub async fn find(
         &self,
         artist: Option<&str>,
@@ -135,14 +147,47 @@ impl LibraryOwnership {
         duration_seconds: Option<i32>,
         album: Option<&str>,
     ) -> Option<OwnedCopy> {
+        self.find_in(&LibraryScope::Shared, artist, title, duration_seconds, album)
+            .await
+    }
+
+    /// [`Self::find`] in one scope: the shared library, or the shared library and one member's
+    /// own (never another member's). The shared library leaves members' own songs out for as
+    /// long as members have libraries of their own; a member's view only while Family is on.
+    /// With neither, every song counts, as always.
+    pub async fn find_in(
+        &self,
+        scope: &LibraryScope,
+        artist: Option<&str>,
+        title: Option<&str>,
+        duration_seconds: Option<i32>,
+        album: Option<&str>,
+    ) -> Option<OwnedCopy> {
         let artist = artist.filter(|a| !dotnet::is_blank(a))?;
         let title = title.filter(|t| !dotnet::is_blank(t))?;
+        let resolver = self.seams.lock().scope.clone();
+        let resolver = resolver
+            .map(|resolver| match scope {
+                LibraryScope::Shared => resolver.shared_view(),
+                LibraryScope::Viewer(_) => resolver.view(),
+            })
+            .filter(ScopeView::apart);
+        let scope_key = match (&resolver, scope) {
+            (None, _) => String::new(),
+            (Some(_), LibraryScope::Shared) => "|shared".to_string(),
+            (Some(_), LibraryScope::Viewer(user)) => format!("|viewer:{}", to_lower_invariant(user)),
+        };
         let key = format!(
-            "{}|{}|{}",
+            "{}|{}|{}{scope_key}",
             SongIdentity::match_key(artist, title),
             duration_seconds.map(|d| d.to_string()).unwrap_or_default(),
             SongIdentity::key(album.unwrap_or_default())
         );
+        let in_scope = |id: Option<&str>, path: &str| {
+            resolver
+                .as_ref()
+                .is_none_or(|resolver| resolver.allows(scope, id, Some(path)))
+        };
         if let Some((at, copy)) = self.cache.lock().get(&key).cloned()
             && self.now() - at < Self::CACHE_FOR
         {
@@ -150,10 +195,16 @@ impl LibraryOwnership {
         }
 
         let found: anyhow::Result<Option<OwnedCopy>> = async {
-            if let Some(copy) = self.in_navidrome(artist, title, duration_seconds, album).await? {
+            if let Some(copy) = self
+                .in_navidrome(artist, title, duration_seconds, album, &in_scope)
+                .await?
+            {
                 return Ok(Some(copy));
             }
-            Ok(self.in_own_downloads(artist, title, album).await)
+            Ok(self
+                .in_own_downloads(artist, title, album)
+                .await
+                .filter(|copy| in_scope(None, &copy.absolute_path)))
         }
         .await;
         let copy = found.unwrap_or_else(|e| {
@@ -232,6 +283,7 @@ impl LibraryOwnership {
         title: &str,
         duration: Option<i32>,
         album: Option<&str>,
+        in_scope: &(dyn Fn(Option<&str>, &str) -> bool + Send + Sync),
     ) -> anyhow::Result<Option<OwnedCopy>> {
         let (search, resolve) = {
             let seams = self.seams.lock();
@@ -264,6 +316,9 @@ impl LibraryOwnership {
             let Some(path) = path.filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file())) else {
                 continue;
             };
+            if !in_scope(Some(&candidate.id), &path) {
+                continue;
+            }
             return Ok(Some(OwnedCopy {
                 navidrome_id: Some(candidate.id.clone()),
                 absolute_path: path,

@@ -52,6 +52,11 @@
             <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>
             <span>Library folder</span>
           </button>
+          <!-- Shown only when this server reports Octo Family in /api/admin/status. -->
+          <button class="sidebar-nav-item" data-tab="family" id="family-nav" hidden>
+            <svg class="icon" aria-hidden="true" viewBox="0 0 256 256"><path d="M117.25,157.92a60,60,0,1,0-66.5,0A95.83,95.83,0,0,0,3.53,195.63a8,8,0,1,0,13.4,8.74,80,80,0,0,1,134.14,0,8,8,0,0,0,13.4-8.74A95.83,95.83,0,0,0,117.25,157.92ZM40,108a44,44,0,1,1,44,44A44.05,44.05,0,0,1,40,108Zm210.14,98.7a8,8,0,0,1-11.07-2.33A79.83,79.83,0,0,0,172,168a8,8,0,0,1,0-16,44,44,0,1,0-16.34-84.87,8,8,0,1,1-5.94-14.85,60,60,0,0,1,55.53,105.64,95.83,95.83,0,0,1,47.22,37.71A8,8,0,0,1,250.14,206.7Z"/></svg>
+            <span>Family</span>
+          </button>
         </div>
 
         <div class="sidebar-nav-section">
@@ -225,7 +230,7 @@
             Sign in with your usual Navidrome username and password. An app pointed straight at
             Navidrome skips Octo, so it gets no discovery and no downloads on heart.
           </p>
-          <form data-section="server" class="callout-form">
+          <form data-section="server" class="callout-form" id="public-address" data-spot="public-address">
             <label class="callout-address-label" for="f-public-url">
               Reachable from outside your network? Save that address here to keep it to hand.
             </label>
@@ -2667,6 +2672,37 @@
         <div class="info-card">
           <h3 class="info-card-title">When a restart is needed</h3>
           <p>Settings marked <span class="restart-badge restart-badge-inline">Restart</span> take effect after Octo restarts; everything else applies within about a second of saving. Anything waiting on a restart is listed at the top of every page, and <strong>Restart</strong> in the sidebar applies it.</p>
+        </div>
+      </section>
+
+      <!-- Family: shown only when this server reports Octo Family in /api/admin/status. -->
+      <section data-pane="family" id="family-pane" hidden>
+        <header class="page-header">
+          <div>
+            <h1>Family</h1>
+            <p>Accounts for the people you share your music with: each gets their own sign-in, library and devices, and you choose what they can do.</p>
+          </div>
+        </header>
+        <div class="info-card" id="family-card" aria-live="polite">
+          <p>Loading…</p>
+        </div>
+        <div class="info-card" id="family-notices" hidden>
+          <h3 class="info-card-title">Family notifications</h3>
+          <p>Sent through the channels on the Notifications page. Members get their own pushes on topics they choose.</p>
+          <div class="set-row">
+            <div class="set-info">
+              <div class="set-info-t">New requests and failed requests</div>
+              <div class="set-info-d">When someone asks for a copy that waits for you, or a request could not be met.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="f-family-notify-requests" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-info">
+              <div class="set-info-t">New devices</div>
+              <div class="set-info-d">When a member signs in a new device, or one of your own apps is seen for the first time.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="f-family-notify-devices" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+          </div>
         </div>
       </section>
     </main>

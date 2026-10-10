@@ -25,6 +25,8 @@ use tracing::{info, warn};
 use super::acquisition_tracker::{AcquisitionState, AcquisitionTracker, acquisition_kinds, key_of};
 use super::download_picks::{DownloadPicks, LIDARR_SOURCE, PickedCopy, SOULSEEK_SOURCE};
 use super::track_acquisition_queue::TrackAcquisitionQueue;
+use crate::services::common::AcquisitionTarget;
+use crate::services::family::LibraryWriteGate;
 use crate::services::library::upgrade_queue::{AudioSummary, UpgradeAsk, UpgradeQueue};
 use crate::services::library::{NavidromeSongPathResolver, UpgradeSources};
 use crate::services::lidarr::{LidarrClient, LidarrTrackFetcher};
@@ -145,7 +147,7 @@ impl PickOutcome {
         }
     }
 
-    fn skipped(detail: impl Into<String>) -> Self {
+    pub fn skipped(detail: impl Into<String>) -> Self {
         Self::new(library_action_states::SKIPPED, detail)
     }
 }
@@ -246,6 +248,9 @@ pub struct SongFinderServices {
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     pub lidarr_fetcher: Option<Arc<LidarrTrackFetcher>>,
     pub lidarr_client: Option<Arc<LidarrClient>>,
+    /// Family's write gate, once Family's services exist: a family member's pick lands in
+    /// their own library. Unset, or with Family off, every pick fills the shared library.
+    pub family: std::sync::OnceLock<Arc<LibraryWriteGate>>,
 }
 
 impl SongFinderServices {
@@ -365,6 +370,20 @@ impl SongFinder {
 
     pub fn new(services: SongFinderServices) -> Self {
         Self::with_clock(services, Clock::system())
+    }
+
+    /// Gives Find songs Family's write gate. Once only.
+    pub fn use_family(&self, gate: Arc<LibraryWriteGate>) {
+        let _ = self.services.family.set(gate);
+    }
+
+    /// The song one of `user`'s looks is for, while the look is kept.
+    pub fn look_of(&self, id: &str, user: &str) -> Option<FindTarget> {
+        self.jobs
+            .lock()
+            .get(id)
+            .filter(|job| job.same_user(user))
+            .map(|job| job.target.clone())
     }
 
     pub fn with_clock(services: SongFinderServices, clock: Clock) -> Self {
@@ -1196,7 +1215,15 @@ fn fetch(services: &SongFinderServices, target: &FindTarget, copy: &FoundCopy, u
         target.artist,
         target.title
     );
-    let download = acquisitions.enqueue(
+    // A family member's pick lands in their own library.
+    let destination = services
+        .family
+        .get()
+        .and_then(|gate| gate.decide(Some(user)).target())
+        .unwrap_or(AcquisitionTarget::Shared);
+    let download = acquisitions.enqueue_for(
+        &destination,
+        false,
         provider,
         &external_id,
         true,

@@ -337,7 +337,8 @@ echo
 # slskd web UI admin — auto-generate on first run, preserve on re-run
 SLSKD_USERNAME="$(existing SLSKD_USERNAME "admin")"
 SLSKD_PASSWORD="$(existing SLSKD_PASSWORD)"
-if [ -z "$SLSKD_PASSWORD" ]; then
+if [ -z "$SLSKD_PASSWORD" ] || [ "$SLSKD_PASSWORD" = "slskd" ]; then
+  # Empty, or the stock slskd/slskd copied from an old .env.example: slskd refuses it.
   SLSKD_PASSWORD="$(random_password)"
   green "  ✓ generated random slskd web admin password (saved in .env)"
 fi
@@ -575,7 +576,7 @@ else
   echo "     the YouTube preview. Heart it to download via Soulseek."
 fi
 echo
-dim "  slskd web UI:    http://<this-host>:5030    (SLSKD_USERNAME and SLSKD_PASSWORD in .env; or Open slskd on the dashboard)"
+dim "  slskd web UI:    http://localhost:5030, on this machine only    (SLSKD_USERNAME and SLSKD_PASSWORD in .env; SLSKD_BIND opens it wider)"
 dim "  Sharing:         forward TCP 50300 to this machine; the dashboard's Soulseek page tests it"
 if [ "$STARTER" = true ]; then
   dim "  Navidrome:       http://<this-host>:4533   (add people, change passwords; music apps use 5274)"

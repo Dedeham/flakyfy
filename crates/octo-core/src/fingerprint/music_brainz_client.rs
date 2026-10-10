@@ -215,10 +215,11 @@ pub fn artist_country(artist: &Value) -> String {
         .to_string()
 }
 
-/// The country of the artist a name search found: the first result scoring at least 90 whose
+/// The country of the artist a name search found: the one result scoring at least 90 whose
 /// name, or one of whose aliases, is the same name as `name` ([`SongIdentity::key`]). Empty
-/// when no result is that artist: a near name is another artist, and a wrong country is worse
-/// than none.
+/// when no result is that artist, or when two artists of that name both qualify: a near name is
+/// another artist, a shared name cannot tell which is meant, and a wrong country is worse than
+/// none.
 pub fn searched_artist_country(root: &Value, name: &str) -> String {
     let wanted = SongIdentity::key(name);
     let Some(artists) = root.get("artists").and_then(Value::as_array) else {
@@ -229,6 +230,7 @@ pub fn searched_artist_country(root: &Value, name: &str) -> String {
             .and_then(Value::as_str)
             .is_some_and(|text| SongIdentity::key(text) == wanted)
     };
+    let mut found: Option<(&str, &Value)> = None;
     for artist in artists {
         let score = artist.get("score").and_then(Value::as_i64).unwrap_or(0);
         if score < 90 {
@@ -238,11 +240,19 @@ pub fn searched_artist_country(root: &Value, name: &str) -> String {
             .get("aliases")
             .and_then(Value::as_array)
             .is_some_and(|aliases| aliases.iter().any(|alias| same(alias.get("name"))));
-        if same(artist.get("name")) || aliased {
-            return artist_country(artist);
+        if !(same(artist.get("name")) || aliased) {
+            continue;
+        }
+        let id = artist.get("id").and_then(Value::as_str).unwrap_or("");
+        match found {
+            None => found = Some((id, artist)),
+            Some((known, _)) if !id.is_empty() && known.eq_ignore_ascii_case(id) => {}
+            Some(_) => return String::new(),
         }
     }
-    String::new()
+    found
+        .map(|(_, artist)| artist_country(artist))
+        .unwrap_or_default()
 }
 
 /// Whether a release date ("2009", "2009-09" or "2009-09-08") is earlier than a known one.

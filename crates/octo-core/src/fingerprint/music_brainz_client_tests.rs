@@ -447,3 +447,25 @@ fn a_recording_credit_without_a_last_join_phrase_reads_as_empty() {
     );
     assert!(credits["r2"].is_empty());
 }
+
+/// Two artists of the same name both scoring 90 or more: which one is meant cannot be told, so
+/// no country is taken.
+#[test]
+fn a_name_search_takes_no_country_when_two_artists_share_the_name() {
+    let answer = json(
+        r#"{"artists":[
+            {"id":"a","name":"Nirvana","score":100,"country":"US"},
+            {"id":"b","name":"Nirvana","score":98,"country":"GB"}
+        ]}"#,
+    );
+    assert_eq!(searched_artist_country(&answer, "Nirvana"), "");
+    // The same artist listed twice is still one artist.
+    let twice = json(
+        r#"{"artists":[
+            {"id":"a","name":"Nirvana","score":100,"country":"US"},
+            {"id":"a","name":"Nirvana","score":100,"country":"US"},
+            {"id":"c","name":"Nirvana","score":80,"country":"GB"}
+        ]}"#,
+    );
+    assert_eq!(searched_artist_country(&twice, "Nirvana"), "US");
+}

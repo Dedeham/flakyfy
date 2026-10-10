@@ -34,7 +34,7 @@ impl Fixture {
         Fixture {
             _dir: dir,
             cache_path,
-            github: MockServer::start().await,
+            github: MockServer::builder().start().await,
             now: Arc::new(Mutex::new(Utc.with_ymd_and_hms(2026, 10, 3, 12, 0, 0).unwrap())),
         }
     }

@@ -32,7 +32,7 @@ struct Harness {
 
 /// Navidrome accepts the token "good"; its library has Quebec by Drake.
 async fn navidrome() -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(|request: &MockRequest| {
             let query = query_of(request);

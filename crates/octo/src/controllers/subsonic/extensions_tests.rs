@@ -154,7 +154,7 @@ struct AcquisitionApp {
 
 impl AcquisitionApp {
     async fn new(change: impl FnOnce(&mut AppSettings)) -> AcquisitionApp {
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(AcquisitionNavidrome)
             .mount(&navidrome)
@@ -856,7 +856,7 @@ impl LibraryApp {
         std::fs::create_dir_all(song.parent().expect("a folder")).expect("folders");
         std::fs::write(&song, SONG_BYTES).expect("written");
 
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         let admin = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         Mock::given(any())
             .respond_with(LibraryNavidrome {

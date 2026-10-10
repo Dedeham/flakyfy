@@ -309,7 +309,7 @@ impl Fixture {
 /// The defaults leave every radio source but Last.fm off, so a test switches on the ones it is
 /// about.
 async fn fixture(change: impl FnOnce(&mut AppSettings)) -> Fixture {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let upstream = Upstream::default();
     Mock::given(wiremock::matchers::any())
         .respond_with(upstream.clone())

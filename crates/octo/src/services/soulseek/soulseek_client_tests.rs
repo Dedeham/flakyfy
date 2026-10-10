@@ -31,7 +31,7 @@ fn session() -> ResponseTemplate {
 }
 
 async fn serve(responder: impl Respond + 'static) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any()).respond_with(responder).mount(&server).await;
     server
 }

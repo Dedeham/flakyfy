@@ -84,7 +84,7 @@ fn the_endpoint_is_the_decoded_path_but_an_encoded_slash() {
 
 #[tokio::test]
 async fn an_unknown_subsonic_call_is_relayed_with_its_status_body_and_allowlisted_headers() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getNothingAtAll"))
         .respond_with(
@@ -140,7 +140,7 @@ async fn a_method_the_routes_do_not_take_is_relayed_with_that_method() {
 
 #[tokio::test]
 async fn a_json_body_is_forwarded_as_sent_with_the_parameters_in_the_query() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/rest/getUser"))
         .and(query_param("username", "admin"))
@@ -219,7 +219,7 @@ async fn an_unreachable_navidrome_is_the_error_envelope() {
 
 #[tokio::test]
 async fn octo_owned_paths_and_the_root_are_never_relayed() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let app = app(state(&server.uri()));
 
     assert_eq!(
@@ -244,7 +244,7 @@ async fn octo_owned_paths_and_the_root_are_never_relayed() {
 /// to Navidrome's own root, as the C# went on past the redirect.
 #[tokio::test]
 async fn a_post_to_the_bare_address_is_relayed() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/"))
         .respond_with(ResponseTemplate::new(405).set_body_raw("nope", "text/plain"))

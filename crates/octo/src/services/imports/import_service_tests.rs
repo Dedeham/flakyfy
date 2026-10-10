@@ -93,7 +93,7 @@ fn settings(client_id: &str) -> AppSettings {
 }
 
 async fn rig() -> Rig {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let token_error = Arc::new(Mutex::new(String::new()));
     let refreshes = Arc::new(Mutex::new(0));
     let fault = Arc::new(Mutex::new(false));

@@ -38,7 +38,7 @@ impl Respond for TokenInfo {
 }
 
 async fn navidrome(fails: bool, delay: Duration) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/rest/tokenInfo"))
         .respond_with(TokenInfo { fails, delay })

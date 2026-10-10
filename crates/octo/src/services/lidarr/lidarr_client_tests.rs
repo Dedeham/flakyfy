@@ -22,7 +22,7 @@ impl Respond for Handler {
 }
 
 async fn serve(respond: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(Handler(Box::new(respond)))
         .mount(&server)
@@ -562,7 +562,7 @@ async fn a_picked_release_is_grabbed_instead_of_an_album_search() {
 /// trimmed) and size, and a size that differs is another release.
 #[tokio::test]
 async fn a_forgotten_pick_is_grabbed_again_under_its_new_guid() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/api/v1/release"))
         .and(wiremock::matchers::body_partial_json(json!({ "guid": "stale" })))

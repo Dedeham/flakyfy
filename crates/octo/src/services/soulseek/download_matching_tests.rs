@@ -1049,7 +1049,7 @@ pub(crate) async fn star(answer: Answer, services: DownloadServices) -> Star {
         answer,
         state: Arc::new(Mutex::new(MatchingState::default())),
     };
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(slskd.clone())
         .mount(&server)

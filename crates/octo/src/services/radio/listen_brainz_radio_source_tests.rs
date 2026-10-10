@@ -69,7 +69,7 @@ fn live(request: &wiremock::Request) -> (u16, String) {
 }
 
 async fn source(token: &str, answer: Option<Answer>) -> (ListenBrainzRadioSource, Labs, MockServer) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let labs = Labs(Arc::new(LabsState {
         requests: Mutex::new(Vec::new()),
         answer: answer.unwrap_or_else(|| Box::new(live)),
@@ -287,7 +287,7 @@ async fn an_odd_score_leaves_the_rest_of_the_answer() {
 /// Rust-only: a call that would wait past the longest queue wait is skipped as nothing.
 #[tokio::test]
 async fn a_call_too_far_back_in_the_queue_is_skipped() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let labs = Labs(Arc::new(LabsState {
         requests: Mutex::new(Vec::new()),
         answer: Box::new(live),

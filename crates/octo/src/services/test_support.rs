@@ -89,7 +89,7 @@ impl Routes {
 
     /// A mock server answering with these routes.
     pub async fn serve(&self) -> MockServer {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any()).respond_with(self.clone()).mount(&server).await;
         server
     }

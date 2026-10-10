@@ -415,7 +415,7 @@ impl RadioFixture {
     async fn with_metadata(options: Options, metadata: TestMetadata) -> RadioFixture {
         let dir = TempDir::new().expect("temp dir");
         let upstream = RadioUpstream::default();
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(upstream.clone())
             .mount(&navidrome)

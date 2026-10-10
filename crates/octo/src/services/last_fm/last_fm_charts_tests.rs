@@ -7,7 +7,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use super::*;
 
 async fn last_fm(api_key: &str) -> (MockServer, LastFmService) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let settings = Arc::new(SettingsStore::for_tests(AppSettings {
         last_fm: LastFmSettings {
             api_key: api_key.to_string(),

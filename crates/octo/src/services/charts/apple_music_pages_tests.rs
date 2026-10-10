@@ -21,7 +21,7 @@ fn html(body: &str) -> ResponseTemplate {
 }
 
 async fn apple() -> (MockServer, AppleMusicPages) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let pages = AppleMusicPages::with_base_url(&server.uri(), Duration::ZERO);
     (server, pages)
 }

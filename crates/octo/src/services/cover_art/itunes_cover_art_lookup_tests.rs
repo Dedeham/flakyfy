@@ -78,7 +78,7 @@ fn an_unreadable_file_is_an_empty_cache() {
 #[tokio::test]
 async fn a_master_is_matched_strictly_remembered_and_kept_on_disk() {
     set_apple_interval(Duration::ZERO);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let art = |name: &str| format!("{}/image/{name}/100x100bb.jpg", server.uri());
     let results = format!(
         r#"{{"results":[
@@ -151,7 +151,7 @@ async fn a_master_is_matched_strictly_remembered_and_kept_on_disk() {
 #[tokio::test]
 async fn priming_by_barcode_matches_albums_back_by_name() {
     set_apple_interval(Duration::ZERO);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let results = format!(
         r#"{{"results":[
             {{"wrapperType":"collection","artistName":"Air","collectionName":"Moon Safari","artworkUrl100":"{0}/a/100x100bb.jpg"}},

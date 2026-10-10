@@ -155,7 +155,7 @@ struct Hosts {
 
 impl Hosts {
     async fn start(answer: impl Fn(&str, &Request) -> ResponseTemplate + Send + Sync + 'static) -> Hosts {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let calls = Arc::new(Mutex::new(Vec::new()));
         let fake = Fake {
             answer: Arc::new(answer),

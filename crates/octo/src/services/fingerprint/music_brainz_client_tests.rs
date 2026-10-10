@@ -28,7 +28,7 @@ const NIGHT_AT_THE_OPERA: &str = r#"
 "#;
 
 async fn client(answer: ResponseTemplate) -> (MusicBrainzClient, MockServer) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any()).respond_with(answer).mount(&server).await;
     let base = Url::parse(&format!("{}/ws/2/", server.uri())).expect("parses");
     (MusicBrainzClient::with_base_url(base), server)

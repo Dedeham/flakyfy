@@ -78,7 +78,7 @@ async fn relay_successful_request_returns_body_and_content_type() {
 
 #[tokio::test]
 async fn relay_builds_correct_url() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
@@ -101,8 +101,8 @@ async fn relay_builds_correct_url() {
 /// admin UI, reading the live settings, happily showed the new value as if it had taken effect.
 #[tokio::test]
 async fn relay_picks_up_a_settings_change_without_being_rebuilt() {
-    let first = MockServer::start().await;
-    let moved = MockServer::start().await;
+    let first = MockServer::builder().start().await;
+    let moved = MockServer::builder().start().await;
     for server in [&first, &moved] {
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200))
@@ -133,7 +133,7 @@ async fn relay_picks_up_a_settings_change_without_being_rebuilt() {
 
 #[tokio::test]
 async fn relay_encodes_special_characters() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
@@ -292,7 +292,7 @@ async fn relay_stream_default_content_type_uses_audio_mpeg() {
 
 #[tokio::test]
 async fn relay_stream_with_range_header_forwards_range_to_upstream() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(header_is("Range", "bytes=0-1023"))
         .respond_with(
@@ -317,7 +317,7 @@ async fn relay_stream_with_range_header_forwards_range_to_upstream() {
 
 #[tokio::test]
 async fn relay_stream_with_if_range_header_forwards_if_range_to_upstream() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1u8, 2, 3]))
         .mount(&server)
@@ -435,7 +435,7 @@ fn unchanged_form_fields_stay_in_a_forwarded_body() {
 
 #[tokio::test]
 async fn the_faithful_relay_keeps_method_body_status_and_allowlisted_headers() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/auth/login"))
         .respond_with(
@@ -508,7 +508,7 @@ async fn the_faithful_relay_keeps_method_body_status_and_allowlisted_headers() {
 
 #[tokio::test]
 async fn a_forwarded_form_body_is_not_repeated_in_the_query() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)

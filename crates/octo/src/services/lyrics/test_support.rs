@@ -27,7 +27,7 @@ impl FakeHttp {
     where
         F: Fn(&str) -> ResponseTemplate + Send + Sync + 'static,
     {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(move |request: &Request| respond(&unescaped(request)))
             .mount(&server)

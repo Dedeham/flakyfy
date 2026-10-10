@@ -330,7 +330,7 @@ struct Fixture {
 
 async fn fixture(stations: &[LastFmRadioStation]) -> Fixture {
     let navidrome = Navidrome::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(navidrome.clone())
         .mount(&server)

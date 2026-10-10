@@ -163,7 +163,7 @@ async fn an_api_key_sign_in_is_named_without_the_key_reaching_the_log() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let log = log();
-    let navidrome = MockServer::start().await;
+    let navidrome = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/rest/tokenInfo"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(

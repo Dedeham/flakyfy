@@ -38,7 +38,7 @@ impl Respond for FakeCatalog {
 async fn catalog(
     json: impl FnOnce(&str) -> HashMap<&'static str, String>,
 ) -> (MockServer, DeezerCoverArtLookup) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let cdn = format!("http://localhost:{}/cdn", server.address().port());
     Mock::given(any())
         .respond_with(FakeCatalog { json: json(&cdn) })
@@ -178,7 +178,7 @@ async fn a_songs_cover_comes_from_a_plain_track_search() {
 /// artist's picture is taken from the best-named hit.
 #[tokio::test]
 async fn an_artists_picture_is_the_best_named_hit_and_the_language_is_sent() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let cdn = format!("http://localhost:{}/cdn", server.address().port());
     Mock::given(any())
         .respond_with(FakeCatalog {

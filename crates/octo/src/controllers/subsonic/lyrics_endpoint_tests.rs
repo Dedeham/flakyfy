@@ -285,7 +285,7 @@ impl Factory {
         order: Option<&str>,
         prefer_words: bool,
     ) -> Factory {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let navidrome = FakeNavidrome::default();
         Mock::given(any())
             .respond_with(navidrome.clone())

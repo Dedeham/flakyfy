@@ -129,7 +129,7 @@ mod tests {
     /// is missing or not a web address left without color, and the log never touched.
     #[tokio::test]
     async fn the_endpoint_lights_the_newest_songs_from_their_covers() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let cover = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../parity/stubs/bodies/cover.jpg"

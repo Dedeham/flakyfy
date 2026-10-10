@@ -1582,6 +1582,24 @@ impl DeezerMetadataService {
             let Some(data) = data_array(r.doc.as_ref())? else {
                 return Ok(found);
             };
+            // A song is explicit when any hit of it in the same version is: each hit's song and
+            // version key read once, rather than every hit compared with every other.
+            let song_key = |hit: &Value| -> ElementResult<Option<String>> {
+                let title = str_prop(hit, "title")?.unwrap_or("");
+                let artist = match try_get_property(hit, "artist")? {
+                    Some(a) => str_prop(a, "name")?.unwrap_or(""),
+                    None => "",
+                };
+                Ok((!is_blank(title)).then(|| SongIdentity::match_key(artist, title)))
+            };
+            let mut explicit_songs = std::collections::HashSet::new();
+            for hit in enumerate_array(data)? {
+                if catalog_explicit(hit)? == Some(explicit_status::EXPLICIT)
+                    && let Some(key) = song_key(hit)?
+                {
+                    explicit_songs.insert(key);
+                }
+            }
             for hit in enumerate_array(data)? {
                 let Some(title) = str_prop(hit, "title")?.filter(|t| !is_blank(t)) else {
                     continue;
@@ -1619,7 +1637,11 @@ impl DeezerMetadataService {
                         duration,
                         artist_name: Some(artist.to_string()),
                         artist_image_url: art_img.map(str::to_string),
-                        explicit_content: song_explicitness(r.doc.as_ref(), artist, title, hit)?,
+                        explicit_content: if song_key(hit)?.is_some_and(|key| explicit_songs.contains(&key)) {
+                            Some(explicit_status::EXPLICIT)
+                        } else {
+                            catalog_explicit(hit)?
+                        },
                     };
                     self.put(key, Cached::Track(Some(meta)), POSITIVE_TTL);
                 }

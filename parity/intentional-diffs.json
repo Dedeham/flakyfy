@@ -2367,6 +2367,24 @@
       "reason": "Library health looks up every song a check found (up to 5,000, or the songs named), where C# 2026.10.05 took at most 25 a run (a16c33e; Brandon asked for uncapped lookups on 2026-10-08). So the health answer no longer carries lookupBatch, and 19-health/lookup-too-many (26 songs) starts a lookup (202) instead of the 400 \"At most 25 songs at a time.\" That lookup is still running for the corpus's next busy-state requests, so they answer for it: lookup-slow, apply-busy, lookup-busy and undo-busy see the 26-song run (409, or the run they then start), the run reads that follow show its label, totals and lookups, and the tag-edit journal (read in 19-health and again, cumulatively, in 20-library-edits) holds the same edits in another order. The health answers' fixMeaning and duplicate-set note are the duplicates-keep-marks change on the same answers, pinned here because one entry explains one answer. Lines are the union of two Rust recordings, since the busy states depend on timing.",
       "knownDiff": "Library health: lookups without a cap",
       "reviewed": "Brandon 2026-10-10"
+    },
+    {
+      "id": "search-years-after-the-answer",
+      "backlog": "P",
+      "requests": [
+        "17-covers-explicit/search3-velvet-json",
+        "08-catchall-native/native-song-external"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic\\-response\\.searchResult3\\.song\\[\\d+\\]\\.year:\\ only\\ in\\ A\\ \\(\\d{4}\\)$",
+        "^\\$\\.year:\\ only\\ in\\ A\\ \\(\\d{4}\\)$",
+        "^\\$\\.size:\\ 3856000\\ !=\\ 12245$"
+      ],
+      "reason": "A search answers with one Deezer track lookup per row and no album year; the years are looked up after the answer on the background lane and go on the routing and in the cache, so a repeated search of the words shows them. An outside song read from the native detail endpoint before that lookup lands has no year either (its size line is outside-song-true-size, pinned here because one entry explains one answer).",
+      "knownDiff": "Search: album years after the answer"
     }
   ]
 }

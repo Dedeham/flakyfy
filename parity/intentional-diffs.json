@@ -2383,6 +2383,25 @@
       "reason": "A search answers with one Deezer track lookup per row and no album year; the years are looked up after the answer on the background lane and go in the cache, so a repeated search of the words shows them. A single song's answer (getSong, the native song detail) still looks its year up.",
       "knownDiff": "Search: album years after the answer",
       "reviewed": "Brandon 2026-10-10"
+    },
+    {
+      "id": "get-song-outside-year",
+      "backlog": "base",
+      "requests": [
+        "02-browsing/song-external-json",
+        "02-browsing/song-external-xml",
+        "17-covers-explicit/song-velvet-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic\\-response\\.song\\.year:\\ only\\ in\\ B\\ \\(\\d{4}\\)$",
+        "^/subsonic\\-response\\[0\\]/song@year:\\ \\(absent\\)\\ !=\\ \\d{4}$"
+      ],
+      "reason": "getSong for an outside song carries its album year: from what is known, else one album lookup on the interactive lane waited for at most 1.5 s. C# 2026.10.05 sent no year there. Only the year is pinned.",
+      "knownDiff": "getSong: outside songs carry their year",
+      "reviewed": "Brandon 2026-10-10"
     }
   ]
 }

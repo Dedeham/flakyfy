@@ -13,6 +13,7 @@ use octo_core::models::subsonic::ScanStatus;
 use octo_core::settings::AppSettings;
 
 use super::*;
+use crate::services::library::explicit_backfill_store::{ExplicitBackfillRow, ExplicitBackfillSong};
 use crate::services::library::library_tag_edits::TagEditEntry;
 use crate::services::local::{LocalSongMapping, ParsedExternalId, ParsedSongId, ScanHold};
 use crate::services::metadata::GenreJournalEntry;
@@ -146,6 +147,9 @@ struct Rig {
     genre: Arc<GenreBackfillJournal>,
     tag_edits: Arc<TagEditJournal>,
     history: Arc<DownloadHistoryService>,
+    covers: Arc<CoverUpgradeJournal>,
+    lyrics_undo: Arc<LyricsUndoJournal>,
+    explicit: Arc<ExplicitBackfillStore>,
     songs: Arc<Mutex<HashMap<String, NavidromeSongEntry>>>,
     flac: Vec<u8>,
 }
@@ -171,8 +175,11 @@ impl Rig {
         let root = dir.path().join("music");
         let config = dir.path().join("config");
         std::fs::create_dir_all(&root).expect("made");
-        let settings = SettingsStore::for_tests(AppSettings::default());
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
         settings.set_raw("Library:DownloadPath", Some(&root.to_string_lossy()));
+        let covers = Arc::new(CoverUpgradeJournal::new(Some(config.join("cover-journal.jsonl"))));
+        let lyrics_undo = Arc::new(LyricsUndoJournal::new(Some(config.join("lyrics-undo.jsonl"))));
+        let explicit = Arc::new(ExplicitBackfillStore::new(Some(config.join("explicit.json"))));
         let navidrome = Arc::new(FakeNavidrome::new());
         let notices = Arc::new(NoticeQueue::new());
         let genre = Arc::new(GenreBackfillJournal::new(Some(config.join("genre.jsonl"))));
@@ -190,7 +197,7 @@ impl Rig {
                 Some(config.join("tidy-plan.json")),
             )),
             Arc::new(TidyJournal::new(Some(config.join("tidy-journal.jsonl")))),
-            Arc::new(settings),
+            settings.clone(),
             TidyServices {
                 library: Some(navidrome.clone()),
                 music_brainz,
@@ -200,6 +207,10 @@ impl Rig {
                 actions: None,
                 history: Some(history.clone()),
                 list_songs: Some(list_songs),
+                cover_journal: Some(covers.clone()),
+                lyrics_undo: Some(lyrics_undo.clone()),
+                explicit: Some(explicit.clone()),
+                quarantine: Some(Arc::new(LibraryActionQuarantine::new(settings.clone()))),
             },
         )
         .with_timing(quick());
@@ -214,6 +225,9 @@ impl Rig {
             genre,
             tag_edits,
             history,
+            covers,
+            lyrics_undo,
+            explicit,
             songs,
             flac,
         }
@@ -521,6 +535,90 @@ async fn apply_octos_records_follow_the_file() {
         target
     );
     assert_eq!(rig.history.get_recent(10)[0].path, target);
+}
+
+#[tokio::test]
+async fn apply_the_cover_lyrics_explicit_and_trash_records_follow_the_file() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    let source = rig.song("Beyonce/A/01 - S.flac", "Beyonc\u{e9}", &[], "S");
+    let target = rig.at("Beyonc\u{e9}/A/01 - S.flac");
+    let gone = rig.at("Beyonce/A/02 - Gone.flac");
+    let moved_gone = rig.at("Beyonc\u{e9}/A/02 - Gone.flac");
+    let lyrics = rig.at("Beyonce/A/01 - S.lrc");
+
+    assert!(
+        rig.covers
+            .record(&source, CoverUpgradeJournal::EMBEDDED, Some(b"old"), "c1")
+    );
+    rig.lyrics_undo
+        .record(&lyrics, LyricsUndoJournal::BESIDE, None, "l1")
+        .expect("recorded");
+    rig.explicit.update(|run| {
+        run.rows.push(ExplicitBackfillRow {
+            path: source.clone(),
+            ..ExplicitBackfillRow::default()
+        });
+        run.queue.push(ExplicitBackfillSong {
+            path: source.clone(),
+            ..ExplicitBackfillSong::default()
+        });
+    });
+    // A song of the album removed earlier waits in the trash with its note.
+    let trashed = rig.at(".octo-trash/2026-10-01/Beyonce/A/02 - Gone.flac");
+    std::fs::create_dir_all(Path::new(&trashed).parent().expect("a folder")).expect("made");
+    std::fs::write(&trashed, &rig.flac).expect("written");
+    std::fs::write(
+        format!("{trashed}{}", LibraryActionQuarantine::MANIFEST_SUFFIX),
+        serde_json::json!({
+            "OriginalPath": gone,
+            "NavidromeId": "nd-2",
+            "Action": "Delete",
+            "Username": "alice",
+            "AtUtc": "2026-10-01T00:00:00Z",
+        })
+        .to_string(),
+    )
+    .expect("written");
+
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+
+    assert_eq!(
+        rig.run_state().status,
+        TidyStatus::Completed,
+        "{:?}",
+        rig.run_state().reason
+    );
+    assert!(exists(&target));
+    assert_eq!(rig.covers.read_all()[0].path, target);
+    assert_eq!(
+        rig.lyrics_undo.read_all().expect("read")[0].path,
+        rig.at("Beyonc\u{e9}/A/01 - S.lrc")
+    );
+    let run = ExplicitBackfillStore::new(Some(rig.config.join("explicit.json"))).current();
+    assert_eq!(run.rows[0].path, target);
+    assert_eq!(run.queue[0].path, target);
+    let quarantine = LibraryActionQuarantine::new(Arc::new(SettingsStore::for_tests(AppSettings::default())));
+    assert_eq!(
+        quarantine.read_manifest(&trashed).expect("a note").original_path,
+        moved_gone
+    );
+}
+
+#[test]
+fn a_hidden_file_beside_the_songs_is_not_one_of_the_albums_songs() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let album = dir.path().join("A");
+    std::fs::create_dir_all(album.join(".hidden")).expect("made");
+    std::fs::write(album.join("01 - S.flac"), b"x").expect("written");
+    std::fs::write(album.join(".octo-keep-0a1b.flac"), b"x").expect("written");
+    std::fs::write(album.join(".hidden/02 - T.flac"), b"x").expect("written");
+
+    let contents = walk_all(&album).expect("walked");
+    assert_eq!(
+        contents.audio,
+        [album.join("01 - S.flac").to_string_lossy().into_owned()]
+    );
 }
 
 #[tokio::test]

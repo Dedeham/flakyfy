@@ -213,7 +213,7 @@ fn stage(
         .map(|ext| ext.to_string_lossy().into_owned())
         .unwrap_or_default();
     let staged = folder.join(format!(
-        ".octo-keep-{}.{extension}",
+        "{STAGING_PREFIX}{}.{extension}",
         uuid::Uuid::new_v4().simple()
     ));
     let made = (|| {
@@ -678,7 +678,7 @@ impl KeepMarks {
         let root = self.resolver.music_root();
         let path = Path::new(&moved.target.absolute_path);
         let aside = path.with_file_name(format!(
-            ".octo-keep-back-{}.{}",
+            "{STAGING_PREFIX}back-{}.{}",
             uuid::Uuid::new_v4().simple(),
             path.extension()
                 .map(|e| e.to_string_lossy().into_owned())
@@ -736,6 +736,15 @@ impl KeepMarks {
             moved.target.absolute_path, moved.audio.absolute_path
         );
         Ok(())
+    }
+
+    /// Removes the hidden copies a move makes beside a song (`.octo-keep-…`), which a stop part
+    /// way leaves behind. Run at startup, when no move is going. Answers how many went.
+    pub async fn sweep_staging(&self) -> usize {
+        let root = PathBuf::from(self.resolver.music_root());
+        tokio::task::spawn_blocking(move || sweep_staging_under(&root))
+            .await
+            .unwrap_or(0)
     }
 
     // ---- the end of a run -----------------------------------------------------------------
@@ -962,6 +971,38 @@ fn rewrite_notes(title: &str, rewrite: &Rewrite) -> Vec<String> {
         ));
     }
     notes
+}
+
+/// The hidden copies a move makes beside a song.
+const STAGING_PREFIX: &str = ".octo-keep-";
+
+/// Every `.octo-keep-…` file under `root`, removed; links are never followed. Answers how many.
+pub fn sweep_staging_under(root: &Path) -> usize {
+    let mut removed = 0;
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if kind.is_dir() {
+                folders.push(path);
+            } else if kind.is_file() && entry.file_name().to_string_lossy().starts_with(STAGING_PREFIX) {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) => warn!("Could not remove {}: {e}", path.display()),
+                }
+            }
+        }
+    }
+    if removed > 0 {
+        info!("Removed {removed} copy(ies) a stopped move left beside songs");
+    }
+    removed
 }
 
 fn file_name(path: &str) -> String {

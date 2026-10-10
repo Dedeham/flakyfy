@@ -34,14 +34,18 @@ use super::planner::{
 };
 use super::store::{TidyMode, TidyPlanFile, TidyRun, TidyScope, TidyStatus, TidyStore, TidyWork};
 use crate::services::common::base_download_service::BaseDownloadService;
+use crate::services::cover_art::CoverUpgradeJournal;
 use crate::services::fingerprint::music_brainz_client::MusicBrainzClient;
+use crate::services::library::explicit_backfill::ExplicitBackfillStore;
 use crate::services::library::library_action_journal::LibraryActionJournal;
+use crate::services::library::library_action_quarantine::LibraryActionQuarantine;
 use crate::services::library::library_tag_edits::TagEditJournal;
 use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::navidrome_song_list::NavidromeSongEntry;
 use crate::services::library::notice_queue::NoticeQueue;
 use crate::services::local::scan_wait::{self, ScanWaitError, ScanWaitTiming};
 use crate::services::local::{DownloadHistoryService, ILocalLibraryService};
+use crate::services::lyrics::LyricsUndoJournal;
 use crate::services::metadata::genre_backfill_journal::GenreBackfillJournal;
 use crate::services::subsonic::navidrome_version::{self, TidyGate};
 
@@ -75,6 +79,10 @@ pub struct TidyServices {
     pub actions: Option<Arc<LibraryActionJournal>>,
     pub history: Option<Arc<DownloadHistoryService>>,
     pub list_songs: Option<ListSongs>,
+    pub cover_journal: Option<Arc<CoverUpgradeJournal>>,
+    pub lyrics_undo: Option<Arc<LyricsUndoJournal>>,
+    pub explicit: Option<Arc<ExplicitBackfillStore>>,
+    pub quarantine: Option<Arc<LibraryActionQuarantine>>,
 }
 
 /// How one change went.
@@ -829,6 +837,20 @@ impl TidyWorker {
         if let Some(history) = &self.services.history {
             history.move_paths(from, to);
         }
+        if let Some(journal) = &self.services.cover_journal {
+            journal.move_paths(from, to);
+        }
+        if let Some(journal) = &self.services.lyrics_undo
+            && let Err(failure) = journal.move_paths(from, to)
+        {
+            warn!("Library tidy moved {from} but the lyrics undo could not follow: {failure}");
+        }
+        if let Some(store) = &self.services.explicit {
+            store.move_paths(from, to);
+        }
+        if let Some(quarantine) = &self.services.quarantine {
+            quarantine.move_paths(&self.music_root(), from, to);
+        }
     }
 
     /// Playlist files under the music folder that name a moved song name it where it is now.
@@ -1329,6 +1351,8 @@ struct Contents {
     links: bool,
 }
 
+/// Dot folders and dot files are left out, as [`walk`] leaves them out: a half-made copy Octo
+/// keeps hidden beside a song is not one of the album's songs.
 fn walk_all(folder: &Path) -> std::io::Result<Contents> {
     let mut contents = Contents {
         audio: Vec::new(),
@@ -1338,6 +1362,9 @@ fn walk_all(folder: &Path) -> std::io::Result<Contents> {
     while let Some(folder) = folders.pop() {
         for entry in std::fs::read_dir(&folder)? {
             let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             let kind = entry.file_type()?;
             let path = entry.path();
             if kind.is_symlink() {

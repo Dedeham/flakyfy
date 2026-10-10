@@ -1032,3 +1032,28 @@ async fn a_move_navidrome_does_not_keep_is_never_put_back_over_newer_content() {
     assert!(failed[0].1.contains("changed since"), "{}", failed[0].1);
     assert_eq!(std::fs::read(&b_path).expect("still there"), b"newer");
 }
+
+#[test]
+fn the_startup_sweep_removes_the_hidden_copies_a_stopped_move_left() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let album = dir.path().join("Massive Attack/Mezzanine");
+    std::fs::create_dir_all(&album).expect("made");
+    for name in [
+        "03 Teardrop.flac",
+        ".octo-keep-0a1b.flac",
+        ".octo-keep-back-2c3d.flac",
+        ".hidden-but-not-ours.flac",
+    ] {
+        std::fs::write(album.join(name), b"x").expect("written");
+    }
+
+    assert_eq!(sweep_staging_under(dir.path()), 2);
+
+    let mut left: Vec<String> = std::fs::read_dir(&album)
+        .expect("listed")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, [".hidden-but-not-ours.flac", "03 Teardrop.flac"]);
+}

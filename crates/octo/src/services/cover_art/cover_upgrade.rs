@@ -591,6 +591,27 @@ impl CoverUpgradeJournal {
         }
     }
 
+    /// Follow a folder the library tidy moved: each entry names where its file is now. Answers
+    /// how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut entries = self.read_all();
+        let mut moved = 0;
+        for entry in &mut entries {
+            if let Some(now) = octo_core::common::PathHelper::moved_path(&entry.path, from, to) {
+                entry.path = now;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            entries.reverse();
+            if let Err(failure) = self.rewrite(&entries) {
+                warn!("cover upgrade journal could not follow {from}: {failure}");
+                return 0;
+            }
+        }
+        moved
+    }
+
     /// Newest first. A run killed mid-line costs that one file's undo.
     pub fn read_all(&self) -> Vec<CoverUpgradeJournalEntry> {
         let Some(path) = self.path.as_ref().filter(|path| path.exists()) else {

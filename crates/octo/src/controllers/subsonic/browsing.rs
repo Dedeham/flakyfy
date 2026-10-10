@@ -77,6 +77,8 @@ pub async fn get_song(State(state): State<AppState>, req: Request) -> AppResult 
     if one[0].duration.is_none_or(|d| d <= 0) {
         state.music_metadata.resolve_song_length(&mut one[0]).await;
     }
+    // A search answers before its rows' album years; this one song gets its year now.
+    state.music_metadata.complete_song_year(&mut one[0]).await;
     let [song] = one;
 
     Ok(builder.create_song_response(&format, &song).into_response())

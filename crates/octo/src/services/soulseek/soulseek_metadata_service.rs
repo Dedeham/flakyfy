@@ -129,6 +129,9 @@ struct DurationsAnswer {
     lengths: Vec<(usize, i32)>,
 }
 
+/// How long a single song's answer waits for its album year before going out without it.
+const SONG_YEAR_WAIT: Duration = Duration::from_millis(1500);
+
 /// A search row left for after the answer: one its single track search missed, or the
 /// album whose year it skipped.
 enum RowToFinish {
@@ -676,6 +679,39 @@ impl Inner {
             this.warm_lengths(still_missing);
         });
         *self.last_rows_finish.lock() = Some(task.map(|_| ()).boxed().shared());
+    }
+
+    /// The album year of one outside song without one: the year its track lookup found, else
+    /// the album's year already known, else one album lookup on the interactive lane waited for
+    /// at most `wait`. A lookup still going by then is left to finish on the background lane,
+    /// where it fills the cache for the next answer, and the song keeps no year.
+    async fn complete_song_year(&self, song: &mut Song, wait: Duration) {
+        if song.is_local || song.year.is_some_and(|y| y > 0) {
+            return;
+        }
+        let Some(meta) = self.deezer.cached_track(&song.artist, &song.title) else {
+            return;
+        };
+        if let Some(year) = meta.year {
+            song.year = Some(year);
+            return;
+        }
+        let Some(album_id) = meta.album_id.filter(|&id| id > 0) else {
+            return;
+        };
+        if let Some(known) = self.deezer.cached_album_year(album_id) {
+            song.year = known;
+            return;
+        }
+        match tokio::time::timeout(wait, self.deezer.album_year_now(album_id)).await {
+            Ok(year) => song.year = year,
+            Err(_) => {
+                let deezer = Arc::clone(&self.deezer);
+                tokio::spawn(async move {
+                    deezer.warm_album_year(album_id).await;
+                });
+            }
+        }
     }
 
     /// Complete the rows below the first page from what is already known, then fetch the
@@ -1390,6 +1426,10 @@ impl IMusicMetadataService for SoulseekMetadataService {
             }
         }
         (!finished).then_some(pass)
+    }
+
+    async fn complete_song_year(&self, song: &mut Song) {
+        self.inner.complete_song_year(song, SONG_YEAR_WAIT).await;
     }
 
     fn refresh_outside_songs(&self, songs: &mut [Song]) {

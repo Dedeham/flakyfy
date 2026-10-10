@@ -1998,6 +1998,78 @@ async fn a_search_row_the_first_search_misses_is_finished_after_the_answer() {
     assert_eq!(again[0].year, Some(2015));
 }
 
+/// One outside song from a search that answered before its album year (getSong, the native
+/// song detail) gets the year looked up for it, on the interactive lane, and remembered.
+#[tokio::test]
+async fn a_single_outside_song_gets_its_album_year_looked_up() {
+    let h = build_service(vec![
+        ("search?q=adele%20hello", HELLO_HIT),
+        ("/album/77", ALBUM_77),
+    ])
+    .await;
+    let mut song = hello_row(&h).await;
+    let meta = h
+        .service
+        .inner
+        .deezer
+        .enrich_track_quick("Adele", "Hello")
+        .await
+        .expect("found");
+    assert_eq!(meta.year, None);
+    assert_eq!(h.calls("/album/77"), 0);
+
+    h.service.complete_song_year(&mut song).await;
+
+    assert_eq!(song.year, Some(2015));
+    assert_eq!(h.calls("/album/77"), 1);
+    assert_eq!(h.service.inner.deezer.cached_album_year(77), Some(Some(2015)));
+    let mut again = hello_row(&h).await;
+    h.service.complete_song_year(&mut again).await;
+    assert_eq!(again.year, Some(2015));
+    assert_eq!(h.calls("/album/77"), 1);
+}
+
+/// An album year that takes longer than the song's answer can wait is left out of that
+/// answer; the lookup goes on in the background and the next answer has the year.
+#[tokio::test]
+async fn a_slow_album_year_is_answered_without_and_filled_in_the_background() {
+    let h = build_service_with_delay(
+        vec![("search?q=adele%20hello", HELLO_HIT), ("/album/77", ALBUM_77)],
+        Some(Duration::from_millis(400)),
+    )
+    .await;
+    let mut song = hello_row(&h).await;
+    h.service
+        .inner
+        .deezer
+        .enrich_track_quick("Adele", "Hello")
+        .await
+        .expect("found");
+
+    let started = std::time::Instant::now();
+    h.service
+        .inner
+        .complete_song_year(&mut song, Duration::from_millis(50))
+        .await;
+
+    assert_eq!(song.year, None);
+    assert!(
+        started.elapsed() < Duration::from_millis(350),
+        "{:?}",
+        started.elapsed()
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while h.service.inner.deezer.cached_album_year(77).is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the background lookup remembered the year");
+    let mut again = hello_row(&h).await;
+    h.service.complete_song_year(&mut again).await;
+    assert_eq!(again.year, Some(2015));
+}
+
 /// The catalog's own track search gives rows that need no lookup of their own.
 #[tokio::test]
 async fn the_catalog_track_search_answers_its_rows_lookups() {

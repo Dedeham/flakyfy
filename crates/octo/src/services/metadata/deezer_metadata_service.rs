@@ -1395,6 +1395,18 @@ impl DeezerMetadataService {
             .and_then(|(year, _)| year)
     }
 
+    /// Looks an album's release year up on the interactive lane and remembers it where
+    /// [`Self::warm_album_year`] does, for a single song someone is waiting on.
+    pub async fn album_year_now(&self, album_id: i64) -> Option<i32> {
+        if album_id <= 0 {
+            return None;
+        }
+        self.album_year_on(album_id, false)
+            .await
+            .ok()
+            .and_then(|(year, _)| year)
+    }
+
     async fn fetch_album_year(&self, album_id: i64, background: bool) -> ElementResult<(Option<i32>, bool)> {
         let r = self
             .get_json(&format!("{}/album/{album_id}", self.base()), background)

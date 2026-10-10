@@ -94,6 +94,12 @@ pub trait IMusicMetadataService: Send + Sync {
     /// what is known only; nothing is looked up.
     fn refresh_outside_songs(&self, _songs: &mut [Song]) {}
 
+    /// Gives one outside song its album year when it has none, for a caller that answers with
+    /// this one song (getSong, the native song detail): from what is already known, else one
+    /// album lookup on the interactive lane, waited for a moment only. A lookup that takes
+    /// longer goes on in the background, and the song is answered without a year.
+    async fn complete_song_year(&self, _song: &mut Song) {}
+
     /// Looks up the length of one outside song that has none known yet, right away and on the
     /// interactive lane, for a caller that answers with this one song (getSong). The video
     /// found is pinned for playback, so the length shown is the length that plays. A song

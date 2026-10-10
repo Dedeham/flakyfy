@@ -336,6 +336,9 @@ async fn try_serve_native_external_song(state: &AppState, endpoint: &str) -> Opt
     // album. Cached, so this is cheap after the initial search.
     let mut one = vec![song];
     state.metadata_service.enrich_external_songs(&mut one).await;
+    // A search answers before its rows' album years, and the track lookup it remembered has
+    // none; this one song gets its year now.
+    state.metadata_service.complete_song_year(&mut one[0]).await;
 
     // Lazy-resolve the accurate YouTube duration at play. Navidrome-mode clients re-fetch
     // this endpoint when a track starts, so this is where the scrub bar gets the real length

@@ -1269,8 +1269,25 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
   .lossy-row > span:nth-child(3), .lossy-row > span:nth-child(5) { grid-column: 2 / -1; }
 }
 
-/* ── Spotify import: lists, one list's songs, the trickle ── */
+/* ── Import: the services, one list's songs, the trickle ── */
 .imp-actions { display: flex; flex-wrap: wrap; gap: var(--s-m); justify-content: flex-end; }
+.imp-svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-m); }
+.imp-svc {
+  display: flex; align-items: center; gap: var(--s-m); min-height: 44px; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: var(--r-control); background: var(--accent-tonal);
+  color: var(--ink); font-weight: 500; text-align: left; cursor: pointer;
+  transition: background var(--t-hover), border-color var(--t-hover);
+}
+.imp-svc:hover { border-color: var(--border-strong); }
+.imp-svc-name { overflow-wrap: anywhere; }
+.imp-svc-check { display: none; flex: none; }
+.imp-svc.selected { background: var(--accent-fill); color: var(--accent-ink); border-color: var(--accent-fill); }
+.imp-svc.selected .imp-svc-check { display: inline-flex; }
+.imp-svc.selected .imp-svc-check .icon { color: var(--accent-ink); }
+.imp-guide { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-m); }
+.fam-card .imp-guide { margin-top: var(--s-l); }
+.imp-guide .lfm-steps { margin: 0; }
+.imp-paste-box { width: 100%; min-height: 120px; }
 .imp-card { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
 .set-card.imp-card > :not([hidden]):not([type="hidden"]) ~ :not([type="hidden"]) { border-top: 0; }
 .imp-card > .set-row { padding: 0; }

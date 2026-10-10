@@ -252,6 +252,7 @@
     requests: ['Requests', 'tray'],
     saved: ['Saved', 'heart'],
     library: ['My library', 'folder'],
+    import: ['Import', 'playlist'],
     quality: ['Audio quality', 'sliders'],
     account: ['Account', 'key'],
     members: ['Members', 'users'],
@@ -263,6 +264,7 @@
 
   function navFor(s) {
     var you = s.managed ? ['overview', 'devices', 'requests', 'saved', 'library', 'quality', 'account'] : ['overview', 'devices', 'quality'];
+    if (s.managed && s.familyEnabled && s.importPlaylists) you.splice(you.indexOf('library') + 1, 0, 'import');
     var family = [];
     if (s.familyEnabled) {
       if (s.manager) family = ['members', 'inbox', 'all-devices', 'playlists', 'activity'];
@@ -768,6 +770,142 @@
       pageHeader('heart', 'Saved', 'Songs and albums you hearted from outside the library. They play from where Octo found them' + (mayAsk ? ', and you can ask for a copy of your own.' : '.')),
       card(null, null, null, saved.songs.length || saved.albums.length ? songs
         : empty('heart', 'Nothing saved yet. Heart a song Octo found outside the library, in any app, and it shows up here.'))
+    ]);
+  }
+
+  // ── You: Import ──────────────────────────────────────────────────────────────────────
+  // Only TuneMyMusic's own https pages are opened from the guide.
+  function exportUrl(url) {
+    try {
+      var parsed = new URL(url);
+      return parsed.protocol === 'https:' && (parsed.hostname === 'tunemymusic.com' || parsed.hostname === 'www.tunemymusic.com') ? parsed.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function approvalLine(approval) {
+    return 'Your lists are in. ' + ((approval && approval.by) || 'The owner') + ' approves downloads before Octo fetches the missing songs.';
+  }
+
+  async function viewImport(main) {
+    var reply = await api('GET', '/me/imports');
+    if (!reply.ok) return failed(main, reply);
+    var data = reply.data;
+    var services = (data.services || []).filter(function (s) { return exportUrl(s.exportUrl); });
+    var picked = null;
+
+    var grid = el('div', { class: 'imp-svc-grid', role: 'group', 'aria-label': 'Your music service' });
+    var steps = el('ol', { class: 'lfm-steps' });
+    var open = el('a', { class: 'btn btn-primary fam-big', target: '_blank', rel: 'noopener noreferrer', href: 'https://www.tunemymusic.com/' }, F.icon('out'), el('span', null, 'Open TuneMyMusic'));
+    var guide = el('div', { class: 'imp-guide', hidden: true }, steps, open);
+    function drawServices() {
+      F.clear(grid);
+      services.forEach(function (service) {
+        var on = picked === service.id;
+        grid.appendChild(el('button', {
+          type: 'button',
+          class: 'imp-svc' + (on ? ' selected' : ''),
+          'aria-pressed': on ? 'true' : 'false',
+          onclick: function () { picked = on ? null : service.id; drawServices(); }
+        }, el('span', { class: 'imp-svc-check', 'aria-hidden': 'true' }, F.icon('check')), el('span', { class: 'imp-svc-name' }, service.name)));
+      });
+      var service = services.filter(function (s) { return s.id === picked; })[0];
+      guide.hidden = !service;
+      if (!service) return;
+      F.clear(steps);
+      [
+        'Tap Open TuneMyMusic below.',
+        'Tap the ' + service.tile + ' tile and sign in to ' + service.name + '.',
+        'Pick your playlists or Liked songs.',
+        'Export to file, as CSV.',
+        'Come back here and upload the file.'
+      ].forEach(function (step) { steps.appendChild(el('li', null, step)); });
+      open.href = exportUrl(service.exportUrl);
+      open.querySelector('span').textContent = 'Open TuneMyMusic for ' + service.name;
+    }
+    drawServices();
+
+    var notice = el('p', { class: 'notice', role: 'status', hidden: !(data.approval && data.lists && data.lists.length) }, approvalLine(data.approval));
+
+    async function added(answer) {
+      F.toast(answer.message || 'Imported');
+      if (data.approval) {
+        notice.hidden = false;
+        notice.textContent = approvalLine(data.approval);
+      }
+      var again = await api('GET', '/me/imports');
+      if (again.ok) drawLists(again.data.lists || []);
+    }
+
+    var file = el('input', { class: 'set-input', type: 'file', id: 'fam-imp-file', accept: '.csv,.txt,.json,.zip,text/csv,text/plain,application/json,application/zip' });
+    var upload = el('button', { class: 'btn btn-primary btn-block fam-big', type: 'button', onclick: async function () {
+      var chosen = file.files && file.files[0];
+      if (!chosen) return F.toast('Choose a file first.', true);
+      var form = new FormData();
+      form.append('file', chosen, chosen.name);
+      upload.disabled = true;
+      upload.textContent = 'Reading the file';
+      var res = null;
+      var answer = {};
+      try {
+        res = await fetch('/api/family/me/imports/file', { method: 'POST', credentials: 'same-origin', headers: { 'X-Octo-Family': '1' }, body: form });
+        answer = await res.json().catch(function () { return {}; });
+      } catch (e) {
+        answer = { error: 'Octo did not answer. Check your connection and try again.' };
+      }
+      upload.disabled = false;
+      upload.textContent = 'Upload the file';
+      if (!res || !res.ok) return F.toast(answer.message || answer.error || 'Octo could not read that file.', true);
+      file.value = '';
+      added(answer);
+    } }, 'Upload the file');
+
+    var name = el('input', { class: 'set-input', type: 'text', id: 'fam-imp-name', autocomplete: 'off', placeholder: 'Pasted list' });
+    var text = el('textarea', { class: 'set-input imp-paste-box', id: 'fam-imp-text', rows: '6', spellcheck: 'false', placeholder: 'Massive Attack - Teardrop' });
+    var paste = el('button', { class: 'btn btn-block fam-big', type: 'button', onclick: async function () {
+      if (!text.value.trim()) return F.toast('Paste a list first.', true);
+      paste.disabled = true;
+      var r = await api('POST', '/me/imports/text', { name: name.value.trim(), text: text.value });
+      paste.disabled = false;
+      if (!r.ok) return F.toast((r.data && r.data.message) || F.errorOf(r), true);
+      text.value = '';
+      name.value = '';
+      added(r.data);
+    } }, 'Import the list');
+
+    var lists = el('ul', { class: 'fam-list' });
+    var listsCard = card('Your lists', 'What Octo has of each list you brought in.', null, lists);
+    function drawLists(rows) {
+      F.clear(lists);
+      if (!rows.length) {
+        lists.appendChild(el('li', { class: 'fam-quiet' }, 'Nothing imported yet.'));
+        return;
+      }
+      rows.forEach(function (list) {
+        lists.appendChild(el('li', { class: 'fam-row' },
+          el('span', { class: 'fam-row-ico', 'aria-hidden': 'true' }, F.icon('playlist')),
+          el('div', { class: 'fam-row-main' },
+            el('div', { class: 'fam-row-title' }, list.name),
+            el('div', { class: 'fam-row-meta' }, list.have + ' in the library · ' + list.missing + ' missing'))));
+      });
+    }
+    drawLists(data.lists || []);
+
+    F.clear(main);
+    F.append(main, [
+      pageHeader('playlist', 'Import', 'Bring your playlists and liked songs from any music service.'),
+      data.libraryProblem ? el('p', { class: 'notice notice-warn' }, data.libraryProblem) : null,
+      notice,
+      card('Get my music', 'TuneMyMusic exports your music from any service to a file for free. Pick your service for the steps.', null, grid, guide),
+      card('Upload the file', 'The CSV or TXT file TuneMyMusic made. On a phone it is in your Downloads.', null,
+        el('div', { class: 'fam-form' }, el('label', { class: 'fam-label', for: 'fam-imp-file' }, 'File', file), upload)),
+      card('Paste a list', 'One song a line, written Artist - Title.', null,
+        el('div', { class: 'fam-form' },
+          el('label', { class: 'fam-label', for: 'fam-imp-name' }, 'Name', name),
+          el('label', { class: 'fam-label', for: 'fam-imp-text' }, 'Songs', text),
+          paste)),
+      listsCard
     ]);
   }
 
@@ -1729,6 +1867,7 @@
     requests: viewRequests,
     saved: viewSaved,
     library: viewLibrary,
+    import: viewImport,
     quality: viewQuality,
     account: viewAccount,
     members: viewMembers,

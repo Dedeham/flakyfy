@@ -66,8 +66,8 @@
             <span>Streams &amp; hearts</span>
           </button>
           <button class="sidebar-nav-item" data-tab="imports">
-            <svg class="icon" aria-hidden="true"><use href="#i-spotify-logo"/></svg>
-            <span>Spotify import</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-playlist"/></svg>
+            <span>Import</span>
           </button>
           <button class="sidebar-nav-item" data-tab="soulseek">
             <svg class="icon brand" aria-hidden="true"><use href="#b-slskd"/></svg>
@@ -2009,12 +2009,48 @@
       <section data-pane="imports">
         <header class="page-header">
           <div>
-            <h1>Spotify import</h1>
-            <p>See which of your Spotify songs are missing here, keep your playlists as Navidrome playlists, and let Octo fetch the rest a few songs an hour.</p>
+            <h1>Import</h1>
+            <p>Bring your playlists and liked songs from any music service, see which songs are missing here, keep your playlists as Navidrome playlists, and let Octo fetch the rest a few songs an hour.</p>
           </div>
         </header>
 
         <div class="notice notice-warn" id="imp-library-problem" hidden></div>
+
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title">Get my music</h3>
+            <p class="set-desc">TuneMyMusic exports your music from any service to a file for free. Pick your service for the steps, then bring the file back here.</p>
+          </div>
+          <div class="set-card imp-card">
+            <div class="imp-svc-grid" id="imp-services" role="group" aria-label="Your music service"></div>
+            <div class="imp-guide" id="imp-guide-steps" hidden>
+              <ol class="lfm-steps" id="imp-guide-list"></ol>
+              <a class="btn btn-primary" id="imp-guide-open" href="https://www.tunemymusic.com/" target="_blank" rel="noopener noreferrer"><svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"/></svg><span>Open TuneMyMusic</span></a>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Upload the file</div>
+                <div class="set-info-d">The CSV or TXT from TuneMyMusic, a CSV from <a href="https://exportify.app" target="_blank" rel="noopener">Exportify</a> or Soundiiz, or the zip from Spotify's own <a href="https://www.spotify.com/account/privacy/" target="_blank" rel="noopener">Download your data</a>, which holds every playlist whole.</div>
+                <div class="set-info-more">Any CSV with a title column and an artist column works, and so does a plain list with one Artist - Title a line. Importing a newer file updates the list of the same name.</div>
+              </div>
+              <div class="lfm-connect-row">
+                <input class="set-input" id="imp-file" type="file" accept=".csv,.txt,.json,.zip,text/csv,text/plain,application/json,application/zip" aria-label="File to import" />
+                <button class="btn" id="imp-file-add" type="button">Import</button>
+              </div>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Paste a list</div>
+                <div class="set-info-d">One song a line, written Artist - Title. Octo reads Title - Artist too when that names more of your library.</div>
+              </div>
+              <input class="set-input" id="imp-paste-name" type="text" autocomplete="off" placeholder="Pasted list" aria-label="Name for the pasted list" />
+              <textarea class="set-input imp-paste-box" id="imp-paste-text" rows="6" spellcheck="false" placeholder="Massive Attack - Teardrop" aria-label="Songs, one a line"></textarea>
+              <div class="imp-actions">
+                <button class="btn" id="imp-paste-add" type="button">Import the list</button>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="set-section">
           <div class="set-head">
@@ -2094,8 +2130,8 @@
 
         <div class="set-section">
           <div class="set-head">
-            <h3 class="set-title">Without signing in</h3>
-            <p class="set-desc">A public playlist or album by its link, or a file another tool exported.</p>
+            <h3 class="set-title">From a Spotify link</h3>
+            <p class="set-desc">A public playlist or album by its link, with no sign-in.</p>
           </div>
           <div class="set-card">
             <div class="set-row stack">
@@ -2108,24 +2144,13 @@
                 <button class="btn" id="imp-link-add" type="button">Add</button>
               </div>
             </div>
-            <div class="set-row stack">
-              <div class="set-info">
-                <div class="set-info-t">A file</div>
-                <div class="set-info-d">A CSV from <a href="https://exportify.app" target="_blank" rel="noopener">Exportify</a>, TuneMyMusic or Soundiiz, or the zip from Spotify's own <a href="https://www.spotify.com/account/privacy/" target="_blank" rel="noopener">Download your data</a>, which holds every playlist whole.</div>
-                <div class="set-info-more">Any CSV with a title column and an artist column works. Importing a newer file updates the list of the same name.</div>
-              </div>
-              <div class="lfm-connect-row">
-                <input class="set-input" id="imp-file" type="file" accept=".csv,.json,.zip,text/csv,application/json,application/zip" aria-label="File to import" />
-                <button class="btn" id="imp-file-add" type="button">Import</button>
-              </div>
-            </div>
           </div>
         </div>
 
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Your lists</h3>
-            <p class="set-desc"><strong>Keep as playlist</strong> makes a Navidrome playlist of the songs you have, in Spotify's order, and adds the rest as they arrive. <strong>Get missing songs</strong> hands the rest to the trickle below, and every song added to the list later too.</p>
+            <p class="set-desc"><strong>Keep as playlist</strong> makes a Navidrome playlist of the songs you have, in the list's order, and adds the rest as they arrive. <strong>Get missing songs</strong> hands the rest to the trickle below, and every song added to the list later too.</p>
           </div>
           <div class="set-card imp-card">
             <p class="set-info-d imp-reading" id="imp-reading" hidden></p>

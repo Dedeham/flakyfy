@@ -6364,10 +6364,11 @@ document.getElementById('share-rescan')?.addEventListener('click', async event =
 });
 
 // ────────────────────────────────────────────────────────────────
-// Spotify import: lists from a Spotify account, a link or a file, what the library has of each,
-// playlists kept in Navidrome, and the trickle that fetches the rest
+// Import: lists from a Spotify account, a link, a file or a pasted list, the services TuneMyMusic
+// exports from, what the library has of each list, playlists kept in Navidrome, and the trickle
+// that fetches the rest
 // ────────────────────────────────────────────────────────────────
-const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, waitingForPaste: false };
+const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, waitingForPaste: false, services: null, service: null };
 const impEl = id => document.getElementById(id);
 const impStateWords = {
   have: 'In your library', missing: 'Missing', queued: 'Queued', downloading: 'Fetching',
@@ -6397,8 +6398,61 @@ async function impPost(path, body, anchor) {
   return { ok: response.ok, answer };
 }
 
+// Only TuneMyMusic's own https pages are opened from the guide.
+function impExportUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && ['tunemymusic.com', 'www.tunemymusic.com'].includes(parsed.hostname) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadImportServices() {
+  if (imp.services) return;
+  const response = await impFetch('/api/admin/imports/services').catch(() => null);
+  const body = await response?.json().catch(() => null);
+  if (!response?.ok || !Array.isArray(body?.services)) {
+    impEl('imp-services').innerHTML = `<p class="set-info-d">${esc(body?.error || 'Octo could not list the services. Reload the page to try again.')}</p>`;
+    return;
+  }
+  imp.services = body.services.filter(service => impExportUrl(service.exportUrl));
+  renderImportServices();
+}
+
+function renderImportServices() {
+  const grid = impEl('imp-services');
+  if (!grid || !imp.services) return;
+  grid.innerHTML = imp.services.map(service => {
+    const on = imp.service === service.id;
+    return `<button type="button" class="imp-svc${on ? ' selected' : ''}" data-imp-service="${esc(service.id)}" aria-pressed="${on}">
+      <span class="imp-svc-check" aria-hidden="true">${icon('i-check')}</span><span class="imp-svc-name">${esc(service.name)}</span></button>`;
+  }).join('');
+  const service = imp.services.find(s => s.id === imp.service);
+  const guide = impEl('imp-guide-steps');
+  guide.hidden = !service;
+  if (!service) return;
+  impEl('imp-guide-list').innerHTML = [
+    'Open TuneMyMusic with the button below.',
+    `Tap the <strong>${esc(service.tile)}</strong> tile and sign in to ${esc(service.name)}.`,
+    'Pick your playlists or Liked songs.',
+    'Export to file, as CSV.',
+    'Come back here and upload the file below.',
+  ].map(step => `<li>${step}</li>`).join('');
+  impEl('imp-guide-open').href = impExportUrl(service.exportUrl);
+  impEl('imp-guide-open').querySelector('span').textContent = `Open TuneMyMusic for ${service.name}`;
+}
+
+impEl('imp-services')?.addEventListener('click', event => {
+  const tile = event.target.closest('[data-imp-service]');
+  if (!tile) return;
+  imp.service = imp.service === tile.dataset.impService ? null : tile.dataset.impService;
+  renderImportServices();
+});
+
 async function loadImports() {
   clearTimeout(imp.timer);
+  loadImportServices();
   if (!imp.view) impEl('imp-lists').innerHTML = stateBlock('loading', 'Reading your lists…');
   try {
     const response = await impFetch('/api/admin/imports');
@@ -6688,6 +6742,22 @@ impEl('imp-file-add')?.addEventListener('click', async event => {
   event.currentTarget.disabled = false;
   if (ok) {
     impEl('imp-file').value = '';
+    await loadImports();
+    if (answer.listId) await loadImportDetail(answer.listId);
+  }
+});
+
+impEl('imp-paste-add')?.addEventListener('click', async event => {
+  const text = impEl('imp-paste-text').value;
+  if (!text.trim()) { note(event.currentTarget, 'Paste a list first.', 'error'); return; }
+  const name = impEl('imp-paste-name').value.trim();
+  event.currentTarget.disabled = true;
+  note(event.currentTarget, 'Reading the list…', 'busy');
+  const { ok, answer } = await impPost('/api/admin/imports/text', { name, text }, event.currentTarget);
+  event.currentTarget.disabled = false;
+  if (ok) {
+    impEl('imp-paste-text').value = '';
+    impEl('imp-paste-name').value = '';
     await loadImports();
     if (answer.listId) await loadImportDetail(answer.listId);
   }

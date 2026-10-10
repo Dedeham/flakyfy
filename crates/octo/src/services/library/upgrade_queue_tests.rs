@@ -440,7 +440,10 @@ fn the_upgrades_fixture_round_trips_byte_for_byte() {
     let path = dir.path().join("upgrades.json");
     std::fs::write(&path, &original).expect("copied");
 
-    let queue = UpgradeQueue::with_path(Some(path.clone()));
+    // The fixture was written on 2026-10-03; read it on that day, so its finished jobs are
+    // still inside the keep window whatever day the test runs.
+    let written = Utc.with_ymd_and_hms(2026, 10, 3, 12, 0, 0).unwrap();
+    let queue = UpgradeQueue::with_path(Some(path.clone())).with_clock(Clock::fixed(written));
     // Add always writes, even when nothing was asked.
     queue.add(Vec::new(), "nobody", "app");
     assert_eq!(

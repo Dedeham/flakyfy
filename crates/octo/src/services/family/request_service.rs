@@ -1419,13 +1419,7 @@ impl RequestCatalog for LiveRequestCatalog {
 
     async fn shared_copy(&self, song: &Song) -> Option<OwnedCopy> {
         self.ownership
-            .find_in(
-                &super::LibraryScope::Shared,
-                Some(&song.artist),
-                Some(&song.title),
-                song.duration,
-                Some(&song.album),
-            )
+            .find_song_in(&super::LibraryScope::Shared, song)
             .await
     }
 }

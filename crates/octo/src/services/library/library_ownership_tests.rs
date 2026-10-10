@@ -33,6 +33,7 @@ fn c(id: &str, artist: &str, title: &str, seconds: Option<i32>) -> Candidate {
         duration: seconds,
         suffix: "flac".into(),
         bit_rate: 900,
+        isrcs: Vec::new(),
     }
 }
 
@@ -375,4 +376,169 @@ fn better_quality_needs_every_gate() {
         ..on.clone()
     };
     assert!(!LibraryOwnership::upgrade_allowed(&rehearsing, Some("alice")));
+}
+
+// ---- Lookups beyond the MatchKey ------------------------------------------------------------
+
+fn coded(mut candidate: Candidate, isrc: &str) -> Candidate {
+    candidate.isrcs = vec![isrc.to_string()];
+    candidate
+}
+
+fn song(artist: &str, title: &str, seconds: Option<i32>, isrc: Option<&str>) -> Song {
+    Song {
+        artist: artist.into(),
+        title: title.into(),
+        duration: seconds,
+        isrc: isrc.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_shared_isrc_is_the_same_song_whatever_the_words() {
+    let root = Root::new();
+    let ownership = ownership(
+        &root,
+        Some(vec![coded(c("coded", "Elizabeth Fraser", "Tear Drop (Demo)", Some(400)), "GBAAA9800003")]),
+        None,
+    );
+    let owned = ownership
+        .find_song_in(
+            &LibraryScope::Shared,
+            &song("Massive Attack", "Teardrop", Some(330), Some("GB-AAA-98-00003")),
+        )
+        .await
+        .expect("owned by its ISRC");
+    assert_eq!(owned.navidrome_id.as_deref(), Some("coded"));
+    // Without the ISRC the words decide, and these are another song.
+    assert_eq!(
+        ownership.find(Some("Massive Attack"), Some("Teardrop"), Some(330), None).await,
+        None
+    );
+}
+
+#[test]
+fn a_credit_written_another_way_needs_both_lengths() {
+    let fonsi = c("1", "Luis Fonsi", "Despacito", Some(229));
+    assert!(LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", Some(230), None));
+    assert!(!LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", None, None));
+    assert!(!LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", Some(260), None));
+    assert!(!LibraryOwnership::same_song(&fonsi, "Luis Miguel", "Despacito", Some(229), None));
+}
+
+#[test]
+fn a_typo_or_a_tribute_is_never_owned() {
+    let believer = c("1", "Imagine Dragons", "Believer", Some(204));
+    assert!(!LibraryOwnership::same_song(&believer, "Imagine Dragons", "Beleiver", Some(204), None));
+    let tribute = c("2", "Queen Tribute Band", "Bohemian Rhapsody", Some(354));
+    assert!(!LibraryOwnership::same_song(&tribute, "Queen", "Bohemian Rhapsody", Some(354), None));
+}
+
+#[test]
+fn a_title_in_another_script_is_the_same_song_at_the_same_length() {
+    let latin = c("1", "Emin", "Kamin", Some(210));
+    assert!(LibraryOwnership::same_song(&latin, "Эмин", "Камин", Some(211), None));
+    assert!(!LibraryOwnership::same_song(&latin, "Эмин", "Камин", Some(250), None));
+}
+
+/// A search that answers only `query`, and remembers every query it was asked.
+fn answers_only(query: &'static str, library: Vec<Candidate>, asked: Arc<parking_lot::Mutex<Vec<String>>>) -> SearchFn {
+    Arc::new(move |q: String| {
+        asked.lock().push(q.clone());
+        let found = if q == query { library.clone() } else { Vec::new() };
+        async move { Ok(Some(found)) }.boxed()
+    })
+}
+
+#[tokio::test]
+async fn a_song_in_another_script_is_searched_again_in_latin_letters() {
+    let root = Root::new();
+    let ownership = ownership(&root, None, None);
+    let asked = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    ownership.set_search(answers_only(
+        "emin kamin",
+        vec![c("latin", "Emin", "Kamin", Some(210))],
+        asked.clone(),
+    ));
+    let owned = ownership
+        .find(Some("Эмин"), Some("Камин"), Some(210), None)
+        .await
+        .expect("found by the second search");
+    assert_eq!(owned.navidrome_id.as_deref(), Some("latin"));
+    assert_eq!(*asked.lock(), ["Эмин Камин", "emin kamin"]);
+
+    // Plain Latin text is searched once.
+    asked.lock().clear();
+    assert_eq!(ownership.find(Some("Adele"), Some("Hello"), Some(295), None).await, None);
+    assert_eq!(*asked.lock(), ["Adele Hello"]);
+}
+
+#[tokio::test]
+async fn the_second_search_keeps_to_the_same_scope() {
+    use crate::services::family::library_index::ScopeResolver;
+    use crate::services::family::test_support::{World, write_file};
+
+    let world = World::new(None);
+    let sams = format!("{}/sam/Emin/Kamin.flac", world.members());
+    write_file(&sams, 10);
+    let ownership = LibraryOwnership::new(world.settings.clone(), None, world.library.clone());
+    let asked = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    ownership.set_search(answers_only(
+        "emin kamin",
+        vec![c("sam-1", "Emin", "Kamin", Some(210))],
+        asked,
+    ));
+    ownership.set_resolve(Arc::new(move |_| {
+        let path = sams.clone();
+        async move { Ok(Some(path)) }.boxed()
+    }));
+    ownership.set_scope(ScopeResolver::new(
+        world.settings.clone(),
+        world.family.clone(),
+        world.index.clone(),
+    ));
+    let find = |scope: LibraryScope| {
+        let ownership = &ownership;
+        async move {
+            ownership
+                .find_in(&scope, Some("Эмин"), Some("Камин"), Some(210), None)
+                .await
+                .and_then(|copy| copy.navidrome_id)
+        }
+    };
+    assert_eq!(find(LibraryScope::Viewer("sam".into())).await.as_deref(), Some("sam-1"));
+    assert_eq!(find(LibraryScope::Viewer("alex".into())).await, None);
+    assert_eq!(find(LibraryScope::Shared).await, None);
+}
+
+#[tokio::test]
+async fn search3_isrcs_are_read() {
+    let server = MockServer::start().await;
+    Mock::given(path("/rest/search3"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[
+              {"id":"a","title":"T","artist":"A","isrc":["GBAAA9800003","USRC17607839"]},
+              {"id":"b","title":"T","artist":"A","isrc":"GBAAA9800004"},
+              {"id":"c","title":"T","artist":"A"}]}}}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+    let body: serde_json::Value = reqwest::get(format!("{}/rest/search3", server.uri()))
+        .await
+        .expect("answered")
+        .json()
+        .await
+        .expect("json");
+    let read = read_search(&body).expect("read");
+    let isrcs: Vec<Vec<String>> = read.into_iter().map(|c| c.isrcs).collect();
+    assert_eq!(
+        isrcs,
+        vec![
+            vec!["GBAAA9800003".to_string(), "USRC17607839".to_string()],
+            vec!["GBAAA9800004".to_string()],
+            Vec::new()
+        ]
+    );
 }

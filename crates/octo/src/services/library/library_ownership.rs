@@ -6,7 +6,10 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::BoxFuture;
 use octo_core::common::dotnet::{self, escape_data_string, to_lower_invariant};
+use octo_core::common::romanize::{has_non_ascii_letters, romanized_words};
+use octo_core::common::song_identity::SongRef;
 use octo_core::common::{Clock, SongIdentity};
+use octo_core::models::domain::Song;
 use octo_core::settings::{LibraryAction, LibraryActionSettings, SettingsStore};
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -36,7 +39,7 @@ pub enum OwnedDecision {
 }
 
 /// One library song as search3 answers it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Candidate {
     pub id: String,
     pub artist: String,
@@ -45,6 +48,17 @@ pub struct Candidate {
     pub duration: Option<i32>,
     pub suffix: String,
     pub bit_rate: i32,
+    /// The ISRCs the file is tagged with, as search3 lists them.
+    pub isrcs: Vec<String>,
+}
+
+/// The song an ownership check asks about.
+struct Wanted<'a> {
+    artist: &'a str,
+    title: &'a str,
+    duration: Option<i32>,
+    album: Option<&'a str>,
+    isrcs: &'a [String],
 }
 
 /// Finds the library's candidates for a query ("{artist} {title}"): `Ok(None)` when Navidrome
@@ -163,6 +177,35 @@ impl LibraryOwnership {
         duration_seconds: Option<i32>,
         album: Option<&str>,
     ) -> Option<OwnedCopy> {
+        self.find_coded_in(scope, artist, title, duration_seconds, album, &[])
+            .await
+    }
+
+    /// [`Self::find_in`] for a catalog song: its ISRCs, when it has any, find the library's copy
+    /// first, whatever its title says.
+    pub async fn find_song_in(&self, scope: &LibraryScope, song: &Song) -> Option<OwnedCopy> {
+        let mut isrcs = song.isrcs.clone();
+        isrcs.extend(song.isrc.clone());
+        self.find_coded_in(
+            scope,
+            Some(&song.artist),
+            Some(&song.title),
+            song.duration,
+            Some(&song.album),
+            &isrcs,
+        )
+        .await
+    }
+
+    async fn find_coded_in(
+        &self,
+        scope: &LibraryScope,
+        artist: Option<&str>,
+        title: Option<&str>,
+        duration_seconds: Option<i32>,
+        album: Option<&str>,
+        isrcs: &[String],
+    ) -> Option<OwnedCopy> {
         let artist = artist.filter(|a| !dotnet::is_blank(a))?;
         let title = title.filter(|t| !dotnet::is_blank(t))?;
         let resolver = self.seams.lock().scope.clone();
@@ -177,11 +220,13 @@ impl LibraryOwnership {
             (Some(_), LibraryScope::Shared) => "|shared".to_string(),
             (Some(_), LibraryScope::Viewer(user)) => format!("|viewer:{}", to_lower_invariant(user)),
         };
+        let isrcs: Vec<String> = SongIdentity::isrcs(isrcs).into_iter().collect();
         let key = format!(
-            "{}|{}|{}{scope_key}",
+            "{}|{}|{}{scope_key}|{}",
             SongIdentity::match_key(artist, title),
             duration_seconds.map(|d| d.to_string()).unwrap_or_default(),
-            SongIdentity::key(album.unwrap_or_default())
+            SongIdentity::key(album.unwrap_or_default()),
+            isrcs.join(",")
         );
         let in_scope = |id: Option<&str>, path: &str| {
             resolver
@@ -195,11 +240,29 @@ impl LibraryOwnership {
         }
 
         let found: anyhow::Result<Option<OwnedCopy>> = async {
+            let wanted = Wanted {
+                artist,
+                title,
+                duration: duration_seconds,
+                album,
+                isrcs: &isrcs,
+            };
             if let Some(copy) = self
-                .in_navidrome(artist, title, duration_seconds, album, &in_scope)
+                .in_navidrome(&format!("{artist} {title}"), &wanted, &in_scope)
                 .await?
             {
                 return Ok(Some(copy));
+            }
+            // A song written in another script may be in the library spelled in Latin letters,
+            // which a search for the original words never finds.
+            let text = format!("{artist} {title}");
+            if has_non_ascii_letters(&text) {
+                let latin = format!("{} {}", romanized_words(artist), romanized_words(title));
+                if !latin.trim().is_empty()
+                    && let Some(copy) = self.in_navidrome(latin.trim(), &wanted, &in_scope).await?
+                {
+                    return Ok(Some(copy));
+                }
             }
             Ok(self
                 .in_own_downloads(artist, title, album)
@@ -262,44 +325,68 @@ impl LibraryOwnership {
         duration_seconds: Option<i32>,
         album: Option<&str>,
     ) -> bool {
-        if SongIdentity::match_key(&candidate.artist, &candidate.title)
-            != SongIdentity::match_key(artist, title)
-        {
-            return false;
+        Self::same_wanted(
+            candidate,
+            &Wanted {
+                artist,
+                title,
+                duration: duration_seconds,
+                album,
+                isrcs: &[],
+            },
+        )
+    }
+
+    /// The same song: an ISRC in common; or the same MatchKey and a length within 8 seconds (the
+    /// same album when a length is unknown); or, with both lengths known and within 8 seconds,
+    /// [`SongIdentity::same`] with [`SongIdentity::owned`], which reads a title in another script
+    /// and a credit written another way.
+    fn same_wanted(candidate: &Candidate, wanted: &Wanted<'_>) -> bool {
+        if SongIdentity::shares_isrc(wanted.isrcs, &candidate.isrcs) {
+            return true;
         }
-        if let (Some(wanted), Some(theirs)) = (
-            duration_seconds.filter(|d| *d > 0),
+        let lengths = (
+            wanted.duration.filter(|d| *d > 0),
             candidate.duration.filter(|d| *d > 0),
-        ) {
-            return (theirs - wanted).abs() <= Self::DURATION_TOLERANCE_SECONDS;
+        );
+        if SongIdentity::match_key(&candidate.artist, &candidate.title)
+            == SongIdentity::match_key(wanted.artist, wanted.title)
+        {
+            if let (Some(want), Some(theirs)) = lengths {
+                return (theirs - want).abs() <= Self::DURATION_TOLERANCE_SECONDS;
+            }
+            let album = SongIdentity::key(wanted.album.unwrap_or_default());
+            return !album.is_empty()
+                && SongIdentity::key(candidate.album.as_deref().unwrap_or_default()) == album;
         }
-        let wanted = SongIdentity::key(album.unwrap_or_default());
-        !wanted.is_empty() && SongIdentity::key(candidate.album.as_deref().unwrap_or_default()) == wanted
+        let (Some(want), Some(theirs)) = lengths else {
+            return false;
+        };
+        let a = SongRef::new(wanted.title, wanted.artist).with_seconds(f64::from(want));
+        let b = SongRef::new(candidate.title.as_str(), candidate.artist.as_str()).with_seconds(f64::from(theirs));
+        SongIdentity::same(&a, &b, Some(&SongIdentity::owned(Self::DURATION_TOLERANCE_SECONDS))).is_same()
     }
 
     async fn in_navidrome(
         &self,
-        artist: &str,
-        title: &str,
-        duration: Option<i32>,
-        album: Option<&str>,
+        query: &str,
+        wanted: &Wanted<'_>,
         in_scope: &(dyn Fn(Option<&str>, &str) -> bool + Send + Sync),
     ) -> anyhow::Result<Option<OwnedCopy>> {
         let (search, resolve) = {
             let seams = self.seams.lock();
             (seams.search.clone(), seams.resolve.clone())
         };
-        let query = format!("{artist} {title}");
         let candidates = match search {
-            Some(search) => search(query).await?,
-            None => self.search_navidrome(&query).await?,
+            Some(search) => search(query.to_string()).await?,
+            None => self.search_navidrome(query).await?,
         };
         let Some(candidates) = candidates else {
             return Ok(None);
         };
         let mut same: Vec<&Candidate> = candidates
             .iter()
-            .filter(|c| Self::same_song(c, artist, title, duration, album))
+            .filter(|c| Self::same_wanted(c, wanted))
             .collect();
         // OrderByDescending(lossless).ThenByDescending(bit rate), stable.
         same.sort_by(|a, b| {
@@ -421,6 +508,15 @@ fn read_search(doc: &Value) -> anyhow::Result<Vec<Candidate>> {
             duration: int(song, "duration")?,
             suffix: string(song, "suffix")?.unwrap_or_default(),
             bit_rate: int(song, "bitRate")?.unwrap_or(0),
+            isrcs: match property(song, "isrc")? {
+                Some(Value::Array(codes)) => codes
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect(),
+                Some(Value::String(code)) => vec![code.clone()],
+                _ => Vec::new(),
+            },
         });
     }
     Ok(candidates)

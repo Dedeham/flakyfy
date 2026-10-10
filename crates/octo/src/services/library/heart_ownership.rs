@@ -61,16 +61,7 @@ impl HeartOwnership {
             return None;
         }
         let song = self.metadata.get_song(provider, external_id).await?;
-        let owned = self
-            .ownership
-            .find_in(
-                scope,
-                Some(&song.artist),
-                Some(&song.title),
-                song.duration,
-                Some(&song.album),
-            )
-            .await?;
+        let owned = self.ownership.find_song_in(scope, &song).await?;
         Some((song, owned))
     }
 
@@ -98,12 +89,7 @@ impl HeartOwnership {
             // `song.Album ?? album.Title`: the song's own album, which is never null here.
             let owned = self
                 .ownership
-                .find(
-                    Some(&song.artist),
-                    Some(&song.title),
-                    song.duration,
-                    Some(&song.album),
-                )
+                .find_song_in(&LibraryScope::Shared, song)
                 .await?;
             found.push((song.clone(), owned));
         }

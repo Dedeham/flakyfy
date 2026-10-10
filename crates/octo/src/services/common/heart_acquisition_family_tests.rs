@@ -69,6 +69,7 @@ fn chain(world: World) -> Chain {
         duration: Some(200),
         suffix: "flac".into(),
         bit_rate: 900,
+        isrcs: Vec::new(),
     }])));
     ownership.set_resolve(Arc::new(move |_| {
         let path = alex_copy.clone();

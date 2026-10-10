@@ -6,7 +6,7 @@
 //! and the service asks it in place of api.deezer.com. As in the C# harness, the rate limiter
 //! never meters these requests (the handler meters api.deezer.com only).
 
-use octo_core::settings::{AppSettings, MetadataSettings};
+use octo_core::settings::{AppSettings, ExplicitFilter, MetadataSettings, SubsonicSettings};
 use tracing::Level;
 use wiremock::MockServer;
 
@@ -1274,4 +1274,30 @@ async fn artist_page_of_a_release_in_two_copies_lists_the_explicit_one() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].deezer_id, "100");
     assert_eq!(hits[0].explicit_lyrics, Some(true));
+}
+
+#[tokio::test]
+async fn get_artist_albums_on_a_clean_only_server_keeps_the_clean_edition() {
+    let json = r#"{"data":[
+        {"id":1,"title":"Views","record_type":"album","release_date":"2016-04-29","nb_tracks":20,"explicit_lyrics":true},
+        {"id":2,"title":"Views","record_type":"album","release_date":"2016-04-29","nb_tracks":20,"explicit_lyrics":false},
+        {"id":3,"title":"Scorpion","record_type":"album","release_date":"2018-06-29","nb_tracks":25,"explicit_lyrics":true},
+        {"id":4,"title":"Scorpion (Clean)","record_type":"album","release_date":"2018-06-29","nb_tracks":25,"explicit_lyrics":false}
+    ]}"#;
+    let routes = Routes::single(vec![("/artist/9/albums", json)]);
+    let server = routes.serve().await;
+    let settings = SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            explicit_filter: ExplicitFilter::CleanOnly,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let http = Arc::new(DeezerRateLimitHandler::new(Arc::new(DeezerRateLimiter::new())));
+    let service = DeezerMetadataService::with_base_url(http, Arc::new(settings), server.uri());
+
+    let hits = service.get_artist_albums("9", "Drake").await;
+
+    let ids: Vec<&str> = hits.iter().map(|hit| hit.deezer_id.as_str()).collect();
+    assert_eq!(ids, ["4", "2"]);
 }

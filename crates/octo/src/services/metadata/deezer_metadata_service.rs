@@ -17,7 +17,7 @@ pub use octo_core::metadata::deezer_metadata_service::{
     FullTrackMeta, TrackMeta, release_rank, release_types,
 };
 use octo_core::models::domain::explicit_status;
-use octo_core::settings::SettingsStore;
+use octo_core::settings::{ExplicitFilter, SettingsStore};
 use octo_core::tagging::CatalogLookup;
 use regex::Regex;
 use serde_json::Value;
@@ -777,13 +777,15 @@ impl DeezerMetadataService {
     /// be left out unless there was nothing else, which hid half of a career that is mostly
     /// singles; grouped after the records, they no longer bury them. Repeat editions of one
     /// record (deluxe, remastered, explicit and clean copies) are one row (see
-    /// [`fold_editions`]). The artist's name is not on this listing, so every hit carries the
-    /// one given.
+    /// [`fold_editions`]); a server that plays clean songs only shows the clean copy of a record
+    /// that has one. The artist's name is not on this listing, so every hit carries the one
+    /// given.
     pub async fn get_artist_albums(&self, deezer_artist_id: &str, artist_name: &str) -> Vec<AlbumHit> {
         let releases = self
             .get_artist_albums_on(deezer_artist_id, artist_name, false, 1)
             .await;
-        let mut hits = fold_editions(releases, false);
+        let clean_only = self.inner.settings.current().subsonic.explicit_filter == ExplicitFilter::CleanOnly;
+        let mut hits = fold_editions_preferring(releases, false, clean_only);
         sort_releases(&mut hits);
         hits
     }
@@ -804,11 +806,17 @@ impl DeezerMetadataService {
             return Vec::new();
         }
         let pages = pages.clamp(1, 5);
-        let key = dotnet::to_lower_invariant(&if pages > 1 {
-            format!("ara|{deezer_artist_id}|p{pages}")
-        } else {
-            format!("ara|{deezer_artist_id}")
-        });
+        // A server that plays clean songs only keeps the clean copy of a title that has one.
+        let clean_only = self.inner.settings.current().subsonic.explicit_filter == ExplicitFilter::CleanOnly;
+        let key = dotnet::to_lower_invariant(&format!(
+            "ara|{deezer_artist_id}{}{}",
+            if pages > 1 {
+                format!("|p{pages}")
+            } else {
+                String::new()
+            },
+            if clean_only { "|clean" } else { "" }
+        ));
         if let Some(Cached::AlbumHits(cached)) = self.get_cached(&key) {
             return cached;
         }
@@ -899,10 +907,10 @@ impl DeezerMetadataService {
                             if rank < known
                                 // Of a clean and an explicit copy of one release, the explicit
                                 // one: the original, and the one a search row of its songs
-                                // stands for.
+                                // stands for. A clean only server keeps the clean one.
                                 || (rank == known
-                                    && hit.explicit_lyrics == Some(true)
-                                    && releases[at].explicit_lyrics != Some(true))
+                                    && (hit.explicit_lyrics == Some(true)) != clean_only
+                                    && (releases[at].explicit_lyrics == Some(true)) == clean_only)
                             {
                                 releases[at] = hit;
                             }
@@ -1698,6 +1706,16 @@ fn edition_key(hit: &AlbumHit) -> String {
 /// keeps one clean copy right after it, the one of the row's own title when there is one: a
 /// search lists both, an artist's page one.
 pub fn fold_editions(hits: Vec<AlbumHit>, keep_clean_copies: bool) -> Vec<AlbumHit> {
+    fold_editions_preferring(hits, keep_clean_copies, false)
+}
+
+/// [`fold_editions`], where `prefer_clean` makes the row a copy that is not explicit when the
+/// record has one, ahead of an explicit copy.
+fn fold_editions_preferring(
+    hits: Vec<AlbumHit>,
+    keep_clean_copies: bool,
+    prefer_clean: bool,
+) -> Vec<AlbumHit> {
     let mut groups: Vec<Vec<AlbumHit>> = Vec::new();
     let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for hit in hits {
@@ -1714,7 +1732,7 @@ pub fn fold_editions(hits: Vec<AlbumHit>, keep_clean_copies: bool) -> Vec<AlbumH
     let rank = |hit: &AlbumHit| {
         (
             release_rank(hit.record_type.as_deref()),
-            hit.explicit_lyrics != Some(true),
+            (hit.explicit_lyrics == Some(true)) == prefer_clean,
             std::cmp::Reverse(hit.track_count),
         )
     };

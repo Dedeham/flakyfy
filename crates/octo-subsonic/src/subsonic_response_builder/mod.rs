@@ -1055,12 +1055,12 @@ fn build_artist_fields(artist: &Artist) -> Fields {
     fields
 }
 
-/// `new XElement(ns + "subsonic-response", status, version)`.
 /// A song's length for a list's total: an unknown length counts as nothing.
 fn known_seconds(duration: Option<i32>) -> i32 {
     duration.unwrap_or(0).max(0)
 }
 
+/// `new XElement(ns + "subsonic-response", status, version)`.
 fn envelope(status: &str) -> XElement {
     XElement::ns(SUBSONIC_NAMESPACE, "subsonic-response")
         .attr("status", status)

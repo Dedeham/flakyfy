@@ -776,3 +776,42 @@ async fn pasted_text_is_a_list_of_its_own_name_and_says_what_it_needs() {
     assert!(!empty.ok);
     assert_eq!(empty.message, crate::services::imports::text_list::NO_SONGS);
 }
+
+#[tokio::test]
+async fn the_overview_says_who_approves_only_when_a_member_waits_for_approval() {
+    use crate::services::family::test_support::{World, member};
+    use crate::services::imports::ImportFamily;
+    use octo_core::family::abilities::Preset;
+
+    let rig = rig().await;
+    let world = World::new(None);
+    world.family.upsert_member(member("alice", Preset::Listener, 6));
+    world.family.upsert_member(member("bob", Preset::Member, 7));
+    let mut quick = member("cara", Preset::Listener, 8);
+    quick.edits.insert("AutoApprove".into(), serde_json::json!(true));
+    world.family.upsert_member(quick);
+    let (requests, _fetcher) = world.list_requests();
+    rig.service.use_family(ImportFamily {
+        gate: world.gate(),
+        requests: Arc::downgrade(&requests),
+    });
+
+    let alice = serde_json::to_value(rig.service.overview("alice")).expect("json");
+    assert_eq!(alice["approval"], serde_json::json!({"needed": true, "by": "winters"}));
+    for (user, why) in [
+        ("bob", "adds songs at once"),
+        ("cara", "requests approved at once"),
+        ("winters", "the owner"),
+        ("stranger", "outside the family"),
+    ] {
+        let view = serde_json::to_value(rig.service.overview(user)).expect("json");
+        assert!(view.get("approval").is_none(), "{user} ({why}): {view}");
+    }
+
+    // With Family off, nobody waits.
+    let mut off = (*world.settings.current()).clone();
+    off.family.enabled = false;
+    world.settings.set(off);
+    let alice = serde_json::to_value(rig.service.overview("alice")).expect("json");
+    assert!(alice.get("approval").is_none(), "{alice}");
+}

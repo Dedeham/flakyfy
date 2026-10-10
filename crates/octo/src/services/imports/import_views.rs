@@ -16,6 +16,17 @@ pub struct ImportOverview {
     pub lists: Vec<ListSummary>,
     pub trickle: TrickleView,
     pub library_problem: Option<String>,
+    /// Only for a family member whose missing songs wait for approval; absent for everyone else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalView>,
+}
+
+/// A family member's lists fetch their missing songs only once `by` approves them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalView {
+    pub needed: bool,
+    pub by: String,
 }
 
 /// The Spotify sign-in. Configured: a Client ID is set. OctoFinishes: the redirect URI is Octo's

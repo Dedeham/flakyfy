@@ -125,6 +125,25 @@ impl LibraryWriteGate {
         }
     }
 
+    /// Whether what `user` asks for waits for someone to approve it: a member who asks for
+    /// copies, unless their requests are approved at once and their library has room.
+    pub fn waits_for_approval(&self, user: &str) -> bool {
+        if !matches!(self.decide(Some(user)), WriteDecision::Request { .. }) {
+            return false;
+        }
+        let Some(member) = self.family.member(user.trim()) else {
+            return false;
+        };
+        let abilities = member.abilities();
+        !(abilities.auto_approve
+            && storage_full(&abilities, self.personal.storage_used(&member.username)).is_none())
+    }
+
+    /// Who approves members' requests, as the family knows them: the owner.
+    pub fn approver_name(&self) -> String {
+        self.family.owner()
+    }
+
     /// [`Self::decide`] for the person behind a request: only a member the family gate signed
     /// in is ever stopped.
     pub fn decide_for(&self, caller: Option<&FamilyCaller>) -> WriteDecision {

@@ -22,7 +22,7 @@ use super::import_models::{import_sources, import_track_states};
 use super::import_playlists::ImportPlaylists;
 use super::import_store::ImportStore;
 use super::import_views::{
-    ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView, TrackView,
+    ApprovalView, ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView, TrackView,
     TrickleView,
 };
 use super::spotify_account_store::SpotifyAccountStore;
@@ -185,7 +185,17 @@ impl ImportService {
             lists: lists.iter().map(|list| summary(list, &jobs)).collect(),
             trickle: self.trickle_view(user, &jobs),
             library_problem: self.matcher.problem(),
+            approval: self.approval_for(user),
         }
+    }
+
+    /// Who approves the missing songs of `user` before they are fetched, when someone must.
+    fn approval_for(&self, user: &str) -> Option<ApprovalView> {
+        let gate = &self.family.get()?.gate;
+        gate.waits_for_approval(user).then(|| ApprovalView {
+            needed: true,
+            by: gate.approver_name(),
+        })
     }
 
     pub fn detail(&self, user: &str, id: &str) -> Option<ListDetail> {

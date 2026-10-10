@@ -55,6 +55,10 @@ pub trait IMusicMetadataService: Send + Sync {
     /// pinned is kept, and the shim's background lane is used.
     async fn resolve_top_durations(&self, _songs: &mut [Song], _background: bool) {}
 
+    /// Starts, without waiting, the video lookups [`Self::resolve_top_durations`] will make for
+    /// these songs, so they run while the songs are still being enriched.
+    fn prefetch_top_videos(&self, _songs: &[Song]) {}
+
     /// [`Self::resolve_top_durations`] for a caller that waits at most `budget`: the rows
     /// resolved by then carry their video's length, and the others keep the length they have
     /// and are resolved in the background, as when `background` is true, without `songs` being

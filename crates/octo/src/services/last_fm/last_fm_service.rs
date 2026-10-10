@@ -655,6 +655,17 @@ impl LastFmService {
     /// returns thin results (e.g. one-word artist queries) and as the primary
     /// data source for "play this artist" radio behaviors.
     pub async fn get_artist_top_tracks(&self, artist: &str, limit: i32) -> Vec<SimilarTrack> {
+        self.artist_top_tracks(artist, limit, true).await
+    }
+
+    /// [`Self::get_artist_top_tracks`] for a search someone is waiting on: it never queues
+    /// behind the radio's Last.fm calls, which hold the gate for as long as a station takes to
+    /// build. Same answers, same cache.
+    pub async fn search_artist_top_tracks(&self, artist: &str, limit: i32) -> Vec<SimilarTrack> {
+        self.artist_top_tracks(artist, limit, false).await
+    }
+
+    async fn artist_top_tracks(&self, artist: &str, limit: i32, gated: bool) -> Vec<SimilarTrack> {
         if dotnet::is_blank(artist) {
             return Vec::new();
         }
@@ -664,16 +675,22 @@ impl LastFmService {
             dotnet::escape_data_string(artist),
             self.last_fm().api_key
         );
-        // Kept like the other radio answers, and asked through the same gate.
+        // Kept like the other radio answers, and asked through the same gate unless a search
+        // is waiting.
         let read = self
             .cached(&format!("artist-top-tracks|{artist}|{limit}"), || async {
                 let result: anyhow::Result<Vec<SimilarTrack>> = async {
                     let doc = {
-                        let _permit = self
-                            .provider_gate
-                            .acquire()
-                            .await
-                            .expect("the gate is never closed");
+                        let _permit = if gated {
+                            Some(
+                                self.provider_gate
+                                    .acquire()
+                                    .await
+                                    .expect("the gate is never closed"),
+                            )
+                        } else {
+                            None
+                        };
                         self.get_json(&url).await?
                     };
                     let mut tracks = Vec::new();

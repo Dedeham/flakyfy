@@ -412,6 +412,9 @@ impl AlbumOwnership {
     pub const MAX_READS: usize = 8;
     pub const MAX_BACKGROUND_READS: usize = 4;
 
+    /// How long a request with only background reads running waits for them.
+    pub const WARMING_GRACE: Duration = Duration::from_millis(100);
+
     pub fn new(library: LibrarySource, tracklist: TracklistSource, cached: CachedTracklist) -> Self {
         Self {
             library,
@@ -512,6 +515,9 @@ impl AlbumOwnership {
         enum Read {
             Cached(Vec<CatalogTrack>),
             Running(Running),
+            /// Read for the next request: counted only when it is back by the time the reads
+            /// this request waits for are.
+            Warming(Running),
         }
         let mut reads: HashMap<usize, Read> = HashMap::new();
         let (mut asked, mut warming) = (0, 0);
@@ -531,19 +537,33 @@ impl AlbumOwnership {
                 reads.insert(*at, Read::Running(self.read(album, false)));
             } else if warming < Self::MAX_BACKGROUND_READS {
                 warming += 1;
-                reads.insert(*at, Read::Running(self.read(album, true)));
+                reads.insert(*at, Read::Warming(self.read(album, true)));
             }
         }
 
         // Every read in time, or as many as are back when the wait is up; the rest run on and
-        // are cached for the next request.
-        let left = wait.saturating_sub(clock.elapsed());
-        if !reads.is_empty() && !left.is_zero() {
-            let running = reads.values().filter_map(|read| match read {
-                Read::Running(running) => Some(running.clone()),
-                Read::Cached(_) => None,
-            });
-            let _ = tokio::time::timeout(left, futures::future::join_all(running)).await;
+        // are cached for the next request. With only reads for the next request running (the
+        // albums this request needs are cached), the wait is a short grace, so a repeated
+        // search is not held up by tracklists it only warms.
+        let running = |warming: bool| -> Vec<Running> {
+            reads
+                .values()
+                .filter_map(|read| match read {
+                    Read::Running(running) => Some(running.clone()),
+                    Read::Warming(running) if warming => Some(running.clone()),
+                    Read::Cached(_) | Read::Warming(_) => None,
+                })
+                .collect()
+        };
+        let asked_now = !running(false).is_empty();
+        let left = if asked_now {
+            wait.saturating_sub(clock.elapsed())
+        } else {
+            wait.saturating_sub(clock.elapsed()).min(Self::WARMING_GRACE)
+        };
+        let all = running(true);
+        if !all.is_empty() && !left.is_zero() {
+            let _ = tokio::time::timeout(left, futures::future::join_all(all)).await;
         }
         let asked_count = reads.len();
         let mut tracklists: HashMap<usize, Vec<CatalogTrack>> = HashMap::new();
@@ -552,7 +572,7 @@ impl AlbumOwnership {
                 Read::Cached(tracks) => {
                     tracklists.insert(at, tracks);
                 }
-                Read::Running(running) => {
+                Read::Running(running) | Read::Warming(running) => {
                     if let Some(Some(tracks)) = running.peek() {
                         tracklists.insert(at, tracks.clone());
                     }

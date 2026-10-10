@@ -576,6 +576,26 @@ async fn judge_sends_what_is_not_read_in_time_uncounted() {
     assert_eq!(standings[1].owned, None);
 }
 
+/// A request whose own albums are all cached waits only a short grace for the reads it starts
+/// for the next request (albums by an artist the library knows), and answers them uncounted.
+#[tokio::test]
+async fn judge_never_waits_for_reads_meant_for_the_next_request() {
+    let asked: Asked = Arc::default();
+    let service = service(|_| Box::pin(futures::future::pending()), &asked);
+
+    let started = std::time::Instant::now();
+    let standings = service
+        .judge(
+            &[drake::outside("MAID OF HONOUR", "Drake", 14)],
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(asked.lock().clone(), [("MAID OF HONOUR".to_string(), true)]);
+    assert_eq!(standings[0].owned, None);
+}
+
 #[tokio::test]
 async fn judge_without_the_library_counts_nothing() {
     let service = AlbumOwnership::empty();

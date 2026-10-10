@@ -747,6 +747,47 @@ async fn an_unplayable_outside_stream_is_a_404_with_the_subsonic_error() {
 }
 
 #[tokio::test]
+async fn a_size_no_play_has_confirmed_never_refuses_a_range() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::default());
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Daft Punk".into()),
+        title: Some("Veridis Quo".into()),
+        ..Default::default()
+    });
+    state.external_id_registry.set_you_tube_id(&id, "vid-b");
+    // A size a lookup reported, before any of the stream was played.
+    state.external_id_registry.remember_stream(
+        &id,
+        "vid-b",
+        &octo_core::soulseek::StreamFacts {
+            size: Some(1000),
+            ..Default::default()
+        },
+    );
+    library.add_external("external-track", "soulseek", &id);
+    let app = app(&state);
+
+    let past = send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=1000-")],
+        Body::empty(),
+    )
+    .await;
+
+    assert_ne!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(downloads.stream_calls().len(), 1, "relayed");
+}
+
+#[tokio::test]
 async fn a_range_past_the_end_of_a_known_stream_is_a_416_with_its_size() {
     let navidrome = ping_ok().await;
     let downloads = Arc::new(FakeStreams::default());
@@ -762,11 +803,13 @@ async fn a_range_past_the_end_of_a_known_stream_is_a_416_with_its_size() {
         ..Default::default()
     });
     state.external_id_registry.set_you_tube_id(&id, "vid-a");
+    // A size the bytes of a play confirmed.
     state.external_id_registry.remember_stream(
         &id,
         "vid-a",
         &octo_core::soulseek::StreamFacts {
             size: Some(1000),
+            size_confirmed: true,
             ..Default::default()
         },
     );

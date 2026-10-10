@@ -85,6 +85,10 @@ pub struct SoulseekRouting {
     /// the id.
     pub stream_size: Option<u64>,
 
+    /// Whether [`SoulseekRouting::stream_size`] came from bytes that were played. Written only
+    /// when true, so a routing is written exactly as before until a play confirms its size.
+    pub stream_size_confirmed: bool,
+
     /// The pinned video's audio format id (140 is AAC in mp4, 251 Opus in webm).
     pub stream_itag: Option<String>,
 
@@ -113,6 +117,7 @@ impl SoulseekRouting {
     pub fn stream_facts(&self) -> StreamFacts {
         StreamFacts {
             size: self.stream_size,
+            size_confirmed: self.stream_size_confirmed,
             itag: self.stream_itag.clone(),
             ext: self.stream_ext.clone(),
             bit_rate: self.stream_bit_rate,
@@ -126,6 +131,7 @@ impl SoulseekRouting {
         let mut known = self.stream_facts();
         known.merge(facts);
         self.stream_size = known.size;
+        self.stream_size_confirmed = known.size_confirmed;
         self.stream_itag = known.itag;
         self.stream_ext = known.ext;
         self.stream_bit_rate = known.bit_rate;
@@ -141,6 +147,7 @@ impl SoulseekRouting {
         }
         self.you_tube_id = Some(video.to_string());
         self.stream_size = None;
+        self.stream_size_confirmed = false;
         self.stream_itag = None;
         self.stream_ext = None;
         self.stream_bit_rate = None;
@@ -162,6 +169,7 @@ impl Serialize for SoulseekRouting {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let stream_fields = [
             self.stream_size.is_some(),
+            self.stream_size_confirmed,
             self.stream_itag.is_some(),
             self.stream_ext.is_some(),
             self.stream_bit_rate.is_some(),
@@ -190,6 +198,9 @@ impl Serialize for SoulseekRouting {
         s.serialize_field("Version", &self.version)?;
         if let Some(size) = &self.stream_size {
             s.serialize_field("StreamSize", size)?;
+        }
+        if self.stream_size_confirmed {
+            s.serialize_field("StreamSizeConfirmed", &true)?;
         }
         if let Some(itag) = &self.stream_itag {
             s.serialize_field("StreamItag", itag)?;
@@ -271,6 +282,33 @@ mod tests {
         assert_eq!(routing.stream_size, Some(10));
         assert!(routing.pin_video("b"));
         assert_eq!(routing.you_tube_id.as_deref(), Some("b"));
+        assert_eq!(routing.stream_facts(), StreamFacts::default());
+    }
+
+    #[test]
+    fn a_confirmed_stream_size_is_saved_and_a_new_video_forgets_it() {
+        let mut routing = SoulseekRouting {
+            kind: RoutingKind::Song,
+            you_tube_id: Some("vid-a".into()),
+            ..Default::default()
+        };
+        let unconfirmed = serde_json::to_string(&routing).unwrap();
+        assert!(!unconfirmed.contains("StreamSizeConfirmed"));
+        routing.merge_stream_facts(&StreamFacts {
+            size: Some(1000),
+            size_confirmed: true,
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&routing).unwrap();
+        assert!(
+            json.contains(r#""StreamSize":1000,"StreamSizeConfirmed":true"#),
+            "{json}"
+        );
+        let read: SoulseekRouting = serde_json::from_str(&json).unwrap();
+        assert!(read.stream_facts().size_confirmed);
+
+        routing.pin_video("vid-b");
         assert_eq!(routing.stream_facts(), StreamFacts::default());
     }
 }

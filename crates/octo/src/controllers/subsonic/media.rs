@@ -277,11 +277,13 @@ async fn try_direct_stream(
     // every external song from the queue.
     let range_header = call.header("Range");
 
-    // A range that starts past the end of a stream whose size is known is refused here, the way
-    // a file would refuse it, so a player probing the end learns the length without a relay.
+    // A range that starts past the end of a stream whose size a play confirmed is refused here,
+    // the way a file would refuse it, so a player probing the end learns the length without a
+    // relay. A size a lookup only reported is not refused on.
     if let Some(size) = state
         .external_id_registry
         .stream_facts(external_id)
+        .filter(|facts| facts.size_confirmed)
         .and_then(|facts| facts.size)
         && let Some(range) = range_header.as_deref()
         && matches!(parse_range(range, size), RangeOutcome::Unsatisfiable)

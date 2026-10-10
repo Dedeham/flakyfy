@@ -7,6 +7,9 @@
 pub struct StreamFacts {
     /// The exact byte count of the whole stream.
     pub size: Option<u64>,
+    /// Whether `size` came from bytes that were played (their Content-Length or Content-Range)
+    /// rather than from a lookup that only reported it.
+    pub size_confirmed: bool,
     /// YouTube's format id: "140" is AAC in mp4, "251" Opus in webm.
     pub itag: Option<String>,
     /// The container, as yt-dlp names it ("m4a", "webm").
@@ -45,6 +48,9 @@ impl StreamFacts {
     /// Fills what `other` knows; what it does not know is kept.
     pub fn merge(&mut self, other: &StreamFacts) {
         if other.size.is_some() {
+            // The same size again keeps a confirmation; another size is only as sure as its
+            // own answer.
+            self.size_confirmed = other.size_confirmed || (other.size == self.size && self.size_confirmed);
             self.size = other.size;
         }
         if other.itag.is_some() {
@@ -174,5 +180,32 @@ mod tests {
         assert_eq!(known.itag.as_deref(), Some("140"));
         assert!(StreamFacts::default().is_empty());
         assert!(!known.is_empty());
+    }
+
+    #[test]
+    fn a_played_size_stays_confirmed_until_another_size_replaces_it() {
+        let mut known = StreamFacts {
+            size: Some(10),
+            size_confirmed: true,
+            ..Default::default()
+        };
+        // A lookup reporting the same size keeps the confirmation.
+        known.merge(&StreamFacts {
+            size: Some(10),
+            ..Default::default()
+        });
+        assert!(known.size_confirmed);
+        // A lookup reporting another size is only reported.
+        known.merge(&StreamFacts {
+            size: Some(12),
+            ..Default::default()
+        });
+        assert_eq!((known.size, known.size_confirmed), (Some(12), false));
+        // An answer without a size changes nothing about it.
+        known.merge(&StreamFacts {
+            itag: Some("140".into()),
+            ..Default::default()
+        });
+        assert_eq!((known.size, known.size_confirmed), (Some(12), false));
     }
 }

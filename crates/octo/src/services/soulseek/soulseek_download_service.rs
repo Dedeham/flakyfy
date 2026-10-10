@@ -2024,6 +2024,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 &video_id,
                 &StreamFacts {
                     size: Some(size),
+                    size_confirmed: true,
                     ..Default::default()
                 },
             );

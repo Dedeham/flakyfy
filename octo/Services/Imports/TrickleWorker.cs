@@ -90,9 +90,9 @@ public sealed class TrickleWorker : BackgroundService
             if (subsonic is null || soulseek is null) return false;
             var steps = subsonic.CurrentValue.EffectiveHeartDownloadSources().Where(step => step.SongEnabled == true)
                 .Select(step => step.Source).ToList();
-            // With Lidarr in the chain an outage still leaves a source; without it the heart chain would
-            // hold or fall back to YouTube, and a trickle that is in no hurry waits instead.
-            if (!steps.Contains(HeartDownloadSource.Soulseek) || steps.Contains(HeartDownloadSource.Lidarr)) return false;
+            // The heart chain holds for Soulseek whatever follows it (Lidarr included), so a trickle
+            // that is in no hurry waits too, rather than start a song that would only sit in that hold.
+            if (!steps.Contains(HeartDownloadSource.Soulseek)) return false;
             return (await soulseek.ReadAsync(fresh: false, ct))?.Link == SoulseekLinkState.NotLoggedIn;
         };
     }

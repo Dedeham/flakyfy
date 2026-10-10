@@ -2372,19 +2372,17 @@
       "id": "search-years-after-the-answer",
       "backlog": "P",
       "requests": [
-        "17-covers-explicit/search3-velvet-json",
-        "08-catchall-native/native-song-external"
+        "17-covers-explicit/search3-velvet-json"
       ],
       "aspects": [
         "body"
       ],
       "lines": [
-        "^\\$\\.subsonic\\-response\\.searchResult3\\.song\\[\\d+\\]\\.year:\\ only\\ in\\ A\\ \\(\\d{4}\\)$",
-        "^\\$\\.year:\\ only\\ in\\ A\\ \\(\\d{4}\\)$",
-        "^\\$\\.size:\\ 3856000\\ !=\\ 12245$"
+        "^\\$\\.subsonic\\-response\\.searchResult3\\.song\\[\\d+\\]\\.year:\\ only\\ in\\ A\\ \\(\\d{4}\\)$"
       ],
-      "reason": "A search answers with one Deezer track lookup per row and no album year; the years are looked up after the answer on the background lane and go on the routing and in the cache, so a repeated search of the words shows them. An outside song read from the native detail endpoint before that lookup lands has no year either (its size line is outside-song-true-size, pinned here because one entry explains one answer).",
-      "knownDiff": "Search: album years after the answer"
+      "reason": "A search answers with one Deezer track lookup per row and no album year; the years are looked up after the answer on the background lane and go in the cache, so a repeated search of the words shows them. A single song's answer (getSong, the native song detail) still looks its year up.",
+      "knownDiff": "Search: album years after the answer",
+      "reviewed": "Brandon 2026-10-10"
     }
   ]
 }

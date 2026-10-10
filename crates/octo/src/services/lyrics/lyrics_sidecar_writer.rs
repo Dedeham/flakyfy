@@ -498,6 +498,10 @@ impl LyricsSidecarWriter {
         if !audio_path.exists() || (!chosen.has_synced() && !chosen.has_plain()) {
             return Ok(false);
         }
+        let _share = match self.write_gate.get() {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        };
         let has = self.song_lyrics(audio_path);
         if has.place != SongLyricsPlace::None && !has.octos {
             return Ok(false);

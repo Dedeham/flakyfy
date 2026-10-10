@@ -27,6 +27,7 @@ use super::health_fixes::{self as fixes, DuplicateFix, FixAnswer};
 use super::library_health::{DuplicateSet, IHealthFields};
 use super::library_health_service::Row;
 use crate::services::library::library_tag_edits::{self as tag_edits, song_tag_fields};
+use crate::services::library::library_write_gate::{LibraryWrite, LibraryWriteGate};
 use crate::services::library::navidrome_playlist_api::{PlaylistKind, SongMarks};
 use crate::services::library::{
     LibraryActionEntry, LibraryActionExecutor, LibraryActionJournal, LibraryActionQuarantine,
@@ -280,6 +281,7 @@ pub struct KeepMarks {
     executor: Arc<LibraryActionExecutor>,
     settings: Arc<SettingsStore>,
     members: Option<Arc<dyn MemberMarks>>,
+    write_gate: Option<LibraryWriteGate>,
     moves: Mutex<HashMap<String, Moved>>,
     returning: Mutex<HashMap<String, Moved>>,
 }
@@ -294,6 +296,9 @@ pub struct KeepMarksParts {
     pub executor: Arc<LibraryActionExecutor>,
     pub settings: Arc<SettingsStore>,
     pub members: Option<Arc<dyn MemberMarks>>,
+    /// The music folder's one-writer gate: each move takes a share, so it waits while a job
+    /// rewrites the folder.
+    pub write_gate: Option<LibraryWriteGate>,
 }
 
 impl KeepMarks {
@@ -307,6 +312,7 @@ impl KeepMarks {
             executor: parts.executor,
             settings: parts.settings,
             members: parts.members,
+            write_gate: parts.write_gate,
             moves: Mutex::new(HashMap::new()),
             returning: Mutex::new(HashMap::new()),
         }
@@ -373,6 +379,14 @@ impl KeepMarks {
     }
 
     // ---- the move -------------------------------------------------------------------------
+
+    /// A share of the music folder's gate for one move: waits while a job holds it.
+    async fn write_share(&self) -> Option<LibraryWrite> {
+        match &self.write_gate {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        }
+    }
 
     fn entry(
         key: &str,
@@ -460,6 +474,7 @@ impl KeepMarks {
             })
             .collect();
 
+        let _share = self.write_share().await;
         let staged = {
             let (audio_path, target_path) = (
                 PathBuf::from(&audio.absolute_path),

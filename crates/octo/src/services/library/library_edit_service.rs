@@ -32,6 +32,7 @@ use super::library_tag_edits::{
     self as tag_edits, TagEditEntry, TagEditJournal, TagEditResult, TagValues, song_tag_fields as fields,
     tag_edit_kinds,
 };
+use super::library_write_gate::LibraryWriteGate;
 use super::navidrome_song_path_resolver::{
     NavidromeSongPathResolver, PathSource, ResolvedSongFile, get_full_path, is_inside,
 };
@@ -118,6 +119,9 @@ pub struct LibraryEditServices {
     pub verification: Option<Arc<DownloadVerificationService>>,
     /// `IAlbumCoverFinder`: the cover action.
     pub cover_finder: Option<Arc<dyn IAlbumCoverFinder>>,
+    /// The music folder's one-writer gate: each change takes a share, so it waits while a job
+    /// rewrites the folder.
+    pub write_gate: Option<LibraryWriteGate>,
 }
 
 /// A file this service wrote, by Navidrome id: the path and what the file was right after.
@@ -702,9 +706,14 @@ impl LibraryEditService {
         if !self.busy.lock().insert(key.clone()) {
             return LibraryEditOutcome::new("skipped", BUSY_TEXT);
         }
+        let share = match &self.services.write_gate {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        };
         let this = Arc::clone(self);
         let file = file.clone();
         let done = tokio::task::spawn_blocking(move || work(&this, &file)).await;
+        drop(share);
         self.busy.lock().remove(&key);
         done.unwrap_or_else(|e| LibraryEditOutcome::new("failed", format!("Could not change the song: {e}.")))
     }

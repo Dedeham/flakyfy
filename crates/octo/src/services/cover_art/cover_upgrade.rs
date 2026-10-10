@@ -28,6 +28,7 @@ use tracing::{debug, error, info, warn};
 use super::album_cover_finder::{AlbumCoverQuery, IAlbumCoverFinder, RejectedCovers};
 use crate::services::framework::HttpAnswer;
 use crate::services::library::library_walk;
+use crate::services::library::library_write_gate::{LibraryWrite, LibraryWriteGate};
 use crate::services::library::navidrome_song_list::{self, full_path};
 use crate::services::local::ILocalLibraryService;
 use crate::services::state_file::{self, null_as_default};
@@ -673,6 +674,9 @@ pub struct CoverUpgradeServices {
     pub identity: Option<Arc<NavidromeIdentityService>>,
     /// `IHttpClientFactory.CreateClient()`.
     pub http: Option<reqwest::Client>,
+    /// The music folder's one-writer gate: a run that writes holds it whole, and a single
+    /// album's cover takes a share for each file.
+    pub write_gate: Option<LibraryWriteGate>,
 }
 
 /// One song as a run reads it.
@@ -767,6 +771,9 @@ impl CoverUpgradeWorker {
     /// own 1000 px.
     pub const DEFAULT_SMALLER_THAN: i32 = 1000;
 
+    /// What the dashboard calls a run that writes when another job has to wait for it.
+    pub const JOB_NAME: &'static str = "The cover upgrade";
+
     /// Albums a scan reads at once.
     pub const SCAN_PARALLELISM: usize = 6;
 
@@ -855,6 +862,20 @@ impl CoverUpgradeWorker {
                 break;
             };
             self.cancel.store(false, Ordering::SeqCst);
+            let writes = request.undo || request.mode == CoverUpgradeMode::Apply;
+            let _job = match &self.services.write_gate {
+                Some(gate) if writes => match gate.begin_job(Self::JOB_NAME).await {
+                    Ok(job) => Some(job),
+                    Err(holder) => {
+                        let busy = LibraryWriteGate::busy_message(&holder);
+                        warn!("Cover upgrade did not start: {busy}");
+                        self.store.update(|run| run.reason = Some(busy));
+                        self.pending.store(false, Ordering::SeqCst);
+                        continue;
+                    }
+                },
+                _ => None,
+            };
             let result = if request.undo {
                 self.undo(&stopping).await
             } else {
@@ -1689,6 +1710,7 @@ impl CoverUpgradeWorker {
         let mut files = 0;
         let mut failures = Vec::new();
         for path in &album.paths {
+            let _share = self.write_share().await;
             match self.try_write_embedded(path, embed.clone(), &run_id).await {
                 Ok(true) => files += 1,
                 Ok(false) => failures.push(format!("{path}: the old cover could not be kept")),
@@ -1697,6 +1719,7 @@ impl CoverUpgradeWorker {
         }
         let mut folder_cover = false;
         if let Some(path) = &album.folder_cover {
+            let _share = self.write_share().await;
             match self.try_write_folder_cover(path, &found.bytes, &run_id).await {
                 Ok(true) => folder_cover = true,
                 Ok(false) => failures.push(format!("{path}: the old cover could not be kept")),
@@ -1718,6 +1741,14 @@ impl CoverUpgradeWorker {
             files,
             folder_cover,
         }))
+    }
+
+    /// A share of the music folder's gate for one file's write: waits while a job holds it.
+    async fn write_share(&self) -> Option<LibraryWrite> {
+        match &self.services.write_gate {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        }
     }
 
     /// A write's failure goes on the run, as the C# catch put it there.

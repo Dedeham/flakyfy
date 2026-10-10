@@ -509,6 +509,7 @@ fn library_health(
         executor: Arc::clone(executor),
         settings: Arc::clone(settings),
         members: None,
+        write_gate: Some(stores.library_write_gate.clone()),
     }));
     Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
@@ -547,6 +548,7 @@ fn library_edits(
             identifier: Some(tagging.release_identifier.clone()),
             verification: Some(tagging.download_verification.clone()),
             cover_finder: Some(cover_finder),
+            write_gate: Some(stores.library_write_gate.clone()),
         },
     ));
     (rescan, edits)
@@ -1421,6 +1423,7 @@ impl GenreAndCoverJobs {
                 library: Some(navidrome.local_library.clone()),
                 identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
                 http: Some(navidrome.http.clone()),
+                write_gate: Some(write_gate.clone()),
             },
         ));
         // Marking the library explicit or clean: a preview, then the writes it found, journaled

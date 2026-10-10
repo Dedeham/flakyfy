@@ -959,3 +959,42 @@ fn the_keep_marks_words_are_plain_and_use_no_dash() {
         Some("Moved the best sound into 1 song, put back the copies of 1 song.")
     );
 }
+
+#[tokio::test]
+async fn moving_the_sound_waits_while_a_job_writes_the_music_folder() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let tidy = f
+        .state
+        .library_write_gate
+        .begin_job("Tidy artists")
+        .await
+        .expect("free");
+
+    let keep = f.keep();
+    let moving = tokio::spawn(async move { keep.move_sound("B", "A", "alice", &IndexMap::new()).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!moving.is_finished(), "the sound moved during a job");
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("marked copy"));
+
+    drop(tidy);
+    let answer = moving.await.expect("joined");
+    assert_eq!(answer.state, "applied", "{answer:?}");
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("best copy"));
+}

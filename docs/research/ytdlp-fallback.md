@@ -1,7 +1,9 @@
 # Design: yt-dlp fallback for songs no source has
 
 Written for FLA-14. It is the design FLA-21 ("Build the yt-dlp fallback") builds from, and it is
-read by the Security agent before that. No code changes are made here. Every claim about
+read by the Security agent before that. No code changes are made here. The Security sign-off
+conditions for the build are in section 12; the human decisions of 2026-10-10 (Linear comment on
+FLA-14) shape sections 1, 4, 5.4 and 9. Every claim about
 today's behavior cites the file (and line) it was read from, on the commit this branch is cut
 from (`0be6564`). Line numbers drift; search for the symbol if one is off.
 
@@ -13,10 +15,17 @@ module is), `docs/security-requirements.md` (R4.1 to R4.6, SEC-8), and the READM
 
 - Some songs, often remixes, are on YouTube and on no other source. Today the only way to get
   one is to put YouTube in the heart priority list, and then YouTube is tried **in its place in
-  the list**, before Lidarr in every legacy shape, and a Soulseek outage can fall through to it.
-- The new rule: **YouTube is tried last, only when every source that could have had the song has
-  positively said "not found", and never because a source was down.** A Soulseek outage keeps
-  being waited out, exactly as the README promises (`README.md:728-730`, `:873`).
+  the list**. No legacy `DOWNLOAD_SOURCE` shape turns on YouTube and Lidarr together
+  (`SubsonicSettings.cs:424-429`), so the order only matters for an explicit priority list,
+  where it is the person's choice. With such a list a Soulseek outage can fall through to
+  YouTube today (filed as FLA-31).
+- The human's rule (2026-10-10): **Soulseek, and Lidarr if it is configured, are tried first.
+  After several failed fetch attempts (not one miss), the song is fetched with yt-dlp and
+  stored as MP3.** "Several" is a counted, stored number (section 4.2, default 3 attempts at
+  least 6 hours apart). Lidarr failing, or Lidarr being unable to prove that nothing was
+  grabbed, **never blocks the fallback forever**: it counts as a failed attempt. A Soulseek
+  **outage** is still waited out, as the README promises (`README.md:728-730`, `:873`), and
+  attempts made during an outage do not count.
 - It is a **module** (`octo/Services/YtDlpFallback/`, switch `YTDLP_FALLBACK_ENABLED`) that
   plugs into the end of the existing chain through one small extension point. It reuses the
   existing YouTube download, identification, tagging and placement code; it adds the decision
@@ -24,7 +33,9 @@ module is), `docs/security-requirements.md` (R4.1 to R4.6, SEC-8), and the READM
 - The hard part is not the download. It is that **today no source can say "not found" and
   "I could not look" apart**. Section 3 lists the four places where an outage looks like a miss,
   and the small changes that make the signals trustworthy.
-- Default recommendation: switch **off** in the first release (a human decides, section 11).
+- The switch stays **off** by default. Whether it may default to on later is pending a human
+  decision after more context on Security condition 11 (section 12). A song that is given up
+  after 72 hours is shown on the dashboard, not dropped silently.
 
 ## 2. How the chain behaves today
 
@@ -37,11 +48,11 @@ From `docs/architecture.md` 3.2, rechecked against the code.
    moves to the next step. The last failure marks the row failed (`:232`).
 2. Heart, import trickle and (optionally) play all end in this one method
    (`TrickleWorker.cs` calls `hearts.AcquireTrackAsync`, `octo/Services/Imports/TrickleWorker.cs:83`).
-3. **The fixed order is Soulseek, YouTube, Lidarr** in every legacy `DOWNLOAD_SOURCE` shape
-   (`SubsonicSettings.cs:424-429`, rows built at `:436-438`). The default is Soulseek only
-   (`SubsonicSettings.cs:387`). So where YouTube is on at all, it is tried **before** Lidarr.
-   The project brief wants it last. The dashboard list can reorder them, but a person has to
-   know to do it.
+3. **The legacy rows are built in the order Soulseek, YouTube, Lidarr**
+   (`SubsonicSettings.cs:436-438`), but no legacy `DOWNLOAD_SOURCE` shape enables YouTube and
+   Lidarr together (`SubsonicSettings.cs:424-429`). The default is Soulseek only
+   (`SubsonicSettings.cs:387`). The ordering therefore only matters for an explicit priority
+   list on the dashboard, where the order is the person's choice. The fallback does not touch it.
 4. **Soulseek waits out an outage.** `HoldForSoulseekAsync` (`:368`) waits while slskd says it
    is not logged in, up to `Soulseek:OutageHoldHours` (default 6, `SoulseekSettings.cs:236`,
    clamped to 48 at `:283`), saved in `soulseek-holds.json` so a restart carries on.
@@ -73,7 +84,7 @@ the places in the current code where that is not what an exception or an empty a
 |---|---|---|---|
 | G1 | `SoulseekClient.StartSearchAsync` (`SoulseekClient.cs:446-459`) | If slskd refuses or fails to start a search, it logs a warning and returns `false`; `SearchWithEndAsync` then returns **no hits** (`:393-397`). | The caller sees an empty result and throws `No Soulseek ... found` (`SoulseekDownloadService.cs:782`). A failed search and a search that found nothing are the same exception. |
 | G2 | `SoulseekClient.ReadServerAsync` (`:137-150`) and `ParseServerReading` (`:158`) | `null` (slskd unreachable, 401, timeout) and `Unknown` (state shape not understood) are **not** `NotLoggedIn`. | The hold only waits on `NotLoggedIn` (`HoldForSoulseekAsync` `:368`; `WaitForLoginAsync` returns on `null`/`Unknown`). A crashed slskd container does not hold; it falls through. Correct for the chain today (a broken slskd should not block hearts forever), wrong for a rule that says "never use YouTube while a source is down". |
-| G3 | The chain's catch (`HeartAcquisitionCoordinator.cs:211`) | Any exception from a step, of any kind, is "this source failed" and moves on. `FileNotFoundException` is used for "nothing found" (`:782`), for "your picked copy was refused" (`:694`), for "Lidarr's file is gone" (`:234`) and for "YouTube download failed" (`:345`). | A type check on the exception cannot tell a miss from an error. |
+| G3 | The chain's catch (`HeartAcquisitionCoordinator.cs:209`) | Any exception from a step, of any kind, is "this source failed" and moves on. `FileNotFoundException` is used for "nothing found" (`:782`), for "your picked copy was refused" (`:694`), for "Lidarr's file is gone" (`:234`) and for "YouTube download failed" (`:345`). | A type check on the exception cannot tell a miss from an error. |
 | G4 | `LidarrHeartAcquisitionService.TryAcquireAsync` (`:583-608`) | Catches **every** exception, logs it, returns `false`. Lidarr unreachable, bad key, no album match and "grabbed but not imported in time" all return `false`. `ResolveAlbumAsync` throws a plain `InvalidOperationException` for "no match" (`LidarrClient.cs:102-109`). | The chain cannot tell "Lidarr does not have it" from "Lidarr is down". |
 | G5 | `YouTubeResolver.SearchAsync` (`octo/Services/YouTube/YouTubeResolver.cs:67`) | Any non-success status is `null`. The shim answers **404 `no_hit`** for "YouTube has nothing" (`yt-dlp-shim/app.py:296`) and **502 `search_failed`** for "yt-dlp failed, timed out or the gate was full" (`:294`). | Octo cannot tell "no such video" from "the shim could not look". |
 
@@ -93,25 +104,56 @@ on exceptions as before (section 5.3).
 |---|---|---|
 | `NotApplicable` | The source is not in this heart's enabled steps, or is not set up (`UpgradeSources.SoulseekSetUp` / `LidarrSetUp`, `UpgradeSources.cs:19-29`). | Ignored. It neither blocks nor satisfies the rule. |
 | `Obtained` | A file landed. | Chain ends; no fallback. |
-| `NotFound` | The source was healthy before and after, did a complete look, and had no acceptable candidate. Definitions per source below. | **Yes. The only outcome that counts.** |
-| `FoundNotObtained` | It had candidates but every transfer or check failed (`SoulseekDownloadService.cs:1163`), or Lidarr grabbed a release that has not imported. | No. Retry the chain later. |
-| `Unavailable` | The source was down, not logged in, unreachable, rate limited, or the look could not complete (G1, G2, G4, G5). | No. Park and retry (section 5.4). |
+| `NotFound` | The source was healthy before and after, did a complete look, and had no acceptable candidate. Definitions per source below. | Yes. Counts as a failed fetch attempt. |
+| `FoundNotObtained` | It had candidates but every transfer or check failed (`SoulseekDownloadService.cs:1163`), or Lidarr grabbed a release that has not imported. | Yes, for the attempt count: the fetch failed (a peer offline tonight is still a failed fetch). It does not by itself prove the song is absent. |
+| `Unavailable` | The source was down, not logged in, unreachable, rate limited, or the look could not complete (G1, G2, G4, G5). | **Soulseek: no, the attempt is not counted** (outage, section 5.4). **Lidarr: yes, counted as a failed attempt** (it must not block forever). |
 
-### 4.2 "Not found anywhere"
+### 4.2 "Several failed fetch attempts"
 
-> A song is **not found anywhere** when, in one run of the chain, **every applicable source
-> returned `NotFound`**, and a final health check at the end of that run says every one of
-> those sources is still healthy.
+The earlier draft required one run in which every source said `NotFound`. The human decided
+that a single miss is not enough, but that Lidarr trouble must not stop the fallback forever. The
+rule is now a count.
+
+> A **fetch attempt** is one complete run of the chain for a song (every applicable source
+> looked, `AcquireTrackAsync` reached the end without `Obtained`). It is **counted** when
+> **Soulseek was verified up for the whole run** (or Soulseek is not applicable). It is **not
+> counted** when Soulseek was `Unavailable` at any point (an outage): that run is parked and
+> repeated (section 5.4). Lidarr never decides whether an attempt counts: its
+> `NotFound`, `FoundNotObtained` and `Unavailable` (down, bad key, no album match, or "cannot
+> prove nothing was grabbed") all count as a failed attempt.
+>
+> The song becomes **fallback eligible** when it has at least `FailedAttempts` counted attempts
+> (default **3**) and each counted attempt was at least `AttemptSpacingHours` after the previous
+> one (default **6**, so at least 12 hours from the first counted attempt to the third).
+
+How it is counted and stored, per song (`ytdlp-fallback.json`, section 5.4):
+
+| Field | Meaning |
+|---|---|
+| key | `provider` + `externalId` + `requestedBy` (per user, section 12 condition 9) |
+| `firstMissUtc` | when the first run ended without a file; starts the `MaxWaitHours` clock |
+| `countedAttempts` | number of counted attempts so far (an integer, not a list of raw text) |
+| `lastCountedUtc` | time of the last counted attempt; the next one waits until `lastCountedUtc + AttemptSpacingHours` |
+| `lastOutcomes` | the last run's outcome per source (enum names only), for the dashboard |
+| `parkedReason` | `waiting-soulseek`, `waiting-spacing`, `rate-limit`, `shim-unavailable` |
+
+The record is removed when the song is obtained (by any source, including a later Soulseek
+hit) or when it is given up. An attempt that ends in `Obtained` never counts. The worker owns the
+counter; the coordinator only reports outcomes (section 5.3). With the defaults that is three
+Soulseek/Lidarr tries, then yt-dlp.
+
+Zero applicable sources is allowed (a person who turned off Soulseek and Lidarr and wants only
+YouTube): there is nothing to count, so the fallback is eligible at once. This is the "YouTube
+only" shape, and it is the person's choice.
 
 "Applicable" means in the enabled steps for this kind of heart (`EnabledSteps(albumHeart:false)`,
-`:289`) and set up. Zero applicable sources is allowed (a person who turned off Soulseek and
-Lidarr and wants only YouTube): nothing can be down, so the fallback is eligible at once. This
-is the "YouTube only" shape, and it is the person's choice.
+`:289`) and set up.
 
 ### 4.3 "A source is down"
 
 > A source is **down** when, at any point in the run or in the final check, its health probe
-> is not a clear "up", or one of its looks could not complete.
+> is not a clear "up", or one of its looks could not complete. A **Soulseek** outage parks the
+> song and the run does not count. A **Lidarr** outage counts as a failed attempt.
 
 The signals, per source:
 
@@ -148,37 +190,38 @@ The signals, per source:
 | something grabbed or queued, not yet imported | a download is in progress or stuck | `FoundNotObtained` |
 
 Lidarr is the weakest signal, because it fetches whole albums and a remix will often have no
-album at all, which is a legitimate `NotFound`. FLA-21 has to confirm that
+album at all, which is a legitimate `NotFound`. FLA-21 should check whether
 `GetAlbumImportStateAsync` (`LidarrClient.cs:371`) and the queue/history endpoints can prove
-"nothing grabbed"; **if they cannot, the rule is: Lidarr's answer is `Unavailable`, not
-`NotFound`**, so the fallback errs toward not firing.
+"nothing grabbed". **If they cannot, Lidarr's answer is recorded as `Unavailable`, and that is
+a failed attempt, not a block.** This replaces the earlier recommendation that an unavailable
+Lidarr means the fallback never fires: Lidarr is optional, and the human decided it must not
+hold a song back forever. Lidarr being down for good costs only the attempt count, not the
+fallback.
 
 **YouTube (the fallback's own source)**
 
 | Signal | Reading |
 |---|---|
-| shim `/search` 404 `no_hit` (`app.py:296`) | **YouTube has no match.** The song is "not found anywhere". End: mark failed (section 5.5). |
+| shim `/search` 404 `no_hit` (`app.py:296`) | **YouTube has no match.** The song is not found anywhere. End: mark failed (section 5.5). |
 | shim `/search` 502 `search_failed` (`:294`), `/download` 502 `download_failed`, timeout, gate full | shim or YouTube **unavailable**. Park and retry later; this is not a miss. |
 | search hit with a duration far from the song's | treated as no hit (section 6.2) |
 
 ### 4.4 Decision table
 
-| Soulseek | Lidarr | Result |
+| Soulseek (this run) | Lidarr (this run) | Result |
 |---|---|---|
-| NotFound | NotFound | **Fallback eligible** |
-| NotFound | NotApplicable | Fallback eligible |
-| NotApplicable | NotFound | Fallback eligible |
-| NotApplicable | NotApplicable | Fallback eligible (YouTube-only person) |
-| Unavailable (any reason) | anything | **Park.** Re-run the whole chain when Soulseek is up. |
-| NotFound | Unavailable | **Park.** Re-run when Lidarr is up. |
-| FoundNotObtained | anything | Not a miss. Normal retry rules; no fallback. |
-| Obtained | | Done |
+| `NotFound` or `FoundNotObtained` | `NotFound`, `FoundNotObtained` or `Unavailable` | **Counted attempt.** If `countedAttempts >= FailedAttempts` and the spacing is met, **fallback eligible**; otherwise park until `lastCountedUtc + AttemptSpacingHours` and run the chain again. |
+| `NotFound` or `FoundNotObtained` | `NotApplicable` | Same: counted attempt. |
+| `NotApplicable` | any except `Obtained` | Counted attempt, same rule. |
+| `NotApplicable` | `NotApplicable` | Fallback eligible at once (YouTube-only person). |
+| **`Unavailable`** (any reason) | anything | **Not counted. Park.** Re-run the whole chain when Soulseek is up. |
+| `Obtained` or Lidarr `Obtained` | | Done; the record is removed. |
 
-The case that matters most is row 5 with Lidarr configured: Soulseek is down, **the hold is
-skipped because Lidarr is later** (`:358`), the Soulseek step fails fast with G1's empty result
-(a false `NotFound`), Lidarr says no, and today's chain would go to YouTube. Under this design
-the Soulseek outcome is `Unavailable` (login not `LoggedIn`, section 4.3), so the result is
-Park, not fallback.
+The case that matters most is Soulseek down with Lidarr configured: the hold is skipped because
+Lidarr is later (`:358`), the Soulseek step fails fast with G1's empty result (a false
+`NotFound` today), and Lidarr says no. Under this design the Soulseek outcome is `Unavailable`
+(login not `LoggedIn`, section 4.3), so the run is **not counted** and the song waits. Only
+Soulseek outages are waited out like this; a Lidarr failure just adds to the count.
 
 ## 5. Where it plugs in
 
@@ -189,7 +232,7 @@ Per `docs/modules.md`:
 | Part | Value |
 |---|---|
 | Code | `octo/Services/YtDlpFallback/` (`YtDlpFallbackModule.cs`, `YtDlpFallbackSettings.cs`, `YtDlpFallbackService.cs`, `YtDlpFallbackStore.cs`, `YtDlpFallbackWorker.cs`) |
-| Switch | `YTDLP_FALLBACK_ENABLED`, default `false` (recommended, section 11). Four places: `.env.example`; `docker-compose.yml` `YtDlpFallback__Enabled: ${YTDLP_FALLBACK_ENABLED:-false}`; `appsettings.json` `"YtDlpFallback": { "Enabled": false }`; `YtDlpFallbackSettings.Enabled`. README paragraph. |
+| Switch | `YTDLP_FALLBACK_ENABLED`, default `false` (decided, section 11). Four places: `.env.example`; `docker-compose.yml` `YtDlpFallback__Enabled: ${YTDLP_FALLBACK_ENABLED:-false}`; `appsettings.json` `"YtDlpFallback": { "Enabled": false }`; `YtDlpFallbackSettings.Enabled`. README paragraph. |
 | Tests | `octo.Tests/YtDlpFallback/` |
 | Registration | one line in `octo/Program.cs`: `builder.Services.AddYtDlpFallbackModule(builder.Configuration);` |
 | Checked at run time | the service reads `IOptionsMonitor<YtDlpFallbackSettings>.CurrentValue.Enabled` when it runs. Registered always. |
@@ -200,10 +243,15 @@ Other settings (all in `YtDlpFallbackSettings`, env names in the same four place
 | Setting | Env | Default | Purpose |
 |---|---|---|---|
 | `Enabled` | `YTDLP_FALLBACK_ENABLED` | `false` | the switch |
-| `MaxWaitHours` | `YTDLP_FALLBACK_MAX_WAIT_HOURS` | `72` | how long a parked song waits for sources to recover before it is given up (section 5.4) |
-| `PerHour` | `YTDLP_FALLBACK_PER_HOUR` | `12` | most fallback downloads started per hour |
+| `FailedAttempts` | `YTDLP_FALLBACK_FAILED_ATTEMPTS` | `3` | counted failed fetch attempts before yt-dlp is used (section 4.2) |
+| `AttemptSpacingHours` | `YTDLP_FALLBACK_ATTEMPT_SPACING_HOURS` | `6` | least time between two counted attempts of the same song |
+| `MaxWaitHours` | `YTDLP_FALLBACK_MAX_WAIT_HOURS` | `72` | how long a parked song waits (outage, spacing, rate limit) before it is given up and shown on the dashboard (section 5.4) |
+| `PerHour` | `YTDLP_FALLBACK_PER_HOUR` | `12` | most fallback downloads started per hour, **globally**; the hard cap |
+| `PerUserPerHour` | `YTDLP_FALLBACK_PER_USER_PER_HOUR` | `4` | most per signed-in user per hour (Security condition 7, 13) |
+| `MaxParkedPerUser` | `YTDLP_FALLBACK_MAX_PARKED_PER_USER` | `200` | parked/counting songs per user; rows over it are dropped with a plain message |
+| `MinFreeGb` | `YTDLP_FALLBACK_MIN_FREE_GB` | `5` | no download starts below this free space on the download volume (condition 6) |
 | `DurationTolerance` | `YTDLP_FALLBACK_DURATION_TOLERANCE` | `8` (seconds) | search hit must be within this of the song's length (same as library matching, `README.md:867`) |
-| `MaxMinutes` | `YTDLP_FALLBACK_MAX_MINUTES` | `15` | refuse longer videos (mixes, albums in one upload) |
+| `MaxMinutes` | `YTDLP_FALLBACK_MAX_MINUTES` | `15` (`10` when the registry says the song is under 6 minutes) | refuse longer videos (mixes, albums in one upload) |
 | `RetryBetterDays` | `YTDLP_FALLBACK_RETRY_BETTER_DAYS` | `7` | how soon Better quality looks again for a fallback copy (section 7.3) |
 
 ### 5.2 Order, and its relation to the YouTube row
@@ -218,8 +266,7 @@ Other settings (all in `YtDlpFallbackSettings`, env names in the same four place
   recorded) and **declines**. The settings page shows a one-line note: "YouTube is already in
   your priority list; the fallback adds nothing while it is."
 - The recommended setup is Soulseek, then Lidarr, with the YouTube row **off** and the fallback
-  **on**. That is the brief's "YouTube last", and it fixes the legacy "before Lidarr" order for
-  anyone who switches.
+  **on**. That is the brief's "YouTube last".
 - Scope: **song hearts and import-trickle songs** (both enter through `AcquireTrackAsync`).
   Not album hearts (`AcquireAlbumAsync`), where one failing track is routine and a mass of
   YouTube MP3s would be surprising. Not play (`QueuePlay`): a played outside song already
@@ -263,11 +310,12 @@ The coordinator's changes, all inside `AcquireTrackAsync`:
      reading the status code it already has.
 2. Any other exception type keeps today's meaning for the **chain** (move to the next step) but
    counts as `Unavailable` for the **fallback** (the safe direction).
-3. After the loop, if the chain ended without `Obtained`, call
+3. After the loop, if the chain ended without `Obtained`, hand the recorded outcomes to the
+   module, which counts the attempt (4.2), and call
    `_fallbacks.OfferAsync(...)` for each registered fallback, then fail the row as today if
    none returned `Obtained`. If a fallback returns `Parked` the row is **not** failed; it shows
    "Waiting for <source> to come back" using the tracker the same way the Soulseek hold does
-   (`_tracker?.Stage(... AcquisitionState.Queued ...)`, `HeartAcquisitionCoordinator.cs:372`).
+   (`_tracker?.Stage(... AcquisitionState.Queued ...)`, `HeartAcquisitionCoordinator.cs:377`).
 4. The constructor gains one optional parameter, `IEnumerable<IAcquisitionFallback>? fallbacks = null`
    (the existing constructor already takes optional services). With none registered nothing changes.
 
@@ -277,46 +325,54 @@ what 5.3 item 1 and section 7 list; those edits are a prerequisite, and FLA-21's
 commit(s) should be the typed outcomes (valuable on their own: they also fix the false
 "No Soulseek found" row text during an outage), merged before the module.
 
-### 5.4 Parking: outages wait, then the *whole chain* runs again
+### 5.4 Parking: outages wait, failed attempts are counted, then the *whole chain* runs again
 
-When `OfferAsync` sees `Unavailable` (or `FoundNotObtained`), it does not try YouTube. It writes
-a record to its own store (`/app/config/ytdlp-fallback.json`, created `0600` per R1.4 style
-even though it holds no secret, because it holds usernames):
+When `OfferAsync` is called after a run that ended without a file, it does not try YouTube
+unless 4.2 says the song is eligible. Otherwise it writes or updates a record in its own store
+(`/app/config/ytdlp-fallback.json`, mode `0600` from the first byte, section 12 condition 9)
+with the fields in 4.2 and returns `Parked`.
 
-`{ provider, externalId, requestedBy, firstMissUtc, lastCheckUtc, reason }`
+`YtDlpFallbackWorker` polls (30 s, like `SoulseekLink.PollEvery`). For each parked song:
 
-`YtDlpFallbackWorker` polls (30 s, like `SoulseekLink.PollEvery`). For each parked song it
-checks that every source that was `Unavailable` now reads healthy (fresh), and then asks the
-coordinator to **run the chain again from the start** (`AcquireTrackAsync(..., heldSinceUtc)`),
-not to jump to YouTube. The reason: after an outage Soulseek may well have the song. The
-fallback only fires when a complete run ends in 4.2's "not found anywhere".
-
+- `waiting-soulseek`: it checks that Soulseek now reads healthy (fresh) and then asks the
+  coordinator to **run the chain again from the start** (`AcquireTrackAsync(..., heldSinceUtc)`),
+  not to jump to YouTube. After an outage Soulseek may well have the song. This run is a
+  normal attempt and counts if Soulseek stayed up.
+- `waiting-spacing`: it re-runs the chain when `lastCountedUtc + AttemptSpacingHours` has passed.
+- When a run ends and the count has reached `FailedAttempts`, the next step is the YouTube
+  download (5.5), not another chain run.
 - A parked song survives a restart (the store is read at start, like `SoulseekHoldStore`).
-- It is given up after `MaxWaitHours` (default 72, longer than the 6 hour Soulseek hold on
-  purpose: the hold is about not wasting a lossless chance on a short outage; this is about
-  not taking a lossy copy at all). The row is failed with the plain text "A source was
-  unavailable the whole time, so no YouTube copy was taken. Try again later."
+
+**Give up after `MaxWaitHours`** (default 72, from `firstMissUtc`; longer than the 6 hour
+Soulseek hold on purpose). The row is failed with a plain text that says why ("Soulseek was
+unavailable the whole time" or "only N of 3 attempts could be made"), no YouTube copy is taken
+for an outage-only history, and the song is **listed on the dashboard** as given up (with its
+count and last outcomes), not dropped silently. The person can heart it again, which starts a
+new record.
+
 - The import trickle needs no change: `SoulseekOut` already holds songs while Soulseek is not
-  logged in. With Lidarr in the chain it does not hold (`TrickleWorker.cs:94`), and the chain's parking covers
-  that case instead.
-- Nothing is parked when the module is off.
+  logged in. With Lidarr in the chain it does not hold (`TrickleWorker.cs:94`), and the chain's
+  parking covers that case instead.
+- Nothing is parked or counted when the module is off.
 
 ### 5.5 When the fallback itself runs
 
-`OfferAsync` with all outcomes `NotFound`/`NotApplicable`:
+`OfferAsync` once the song is eligible (4.2):
 
-1. Take the per-hour budget (`PerHour`); if exhausted, `Parked` with reason "rate limit" and
-   retry next hour. Concurrency is one fallback download at a time (the shim also gates: the
+1. Take the budgets: per user (`PerUserPerHour`) and global (`PerHour`); if either is
+   exhausted, `Parked` with reason "rate limit" and retry next hour. Also refuse to start below
+   `MinFreeGb` free space. Concurrency is one fallback download at a time (the shim also gates: the
    download runs as background work, `app.py:970`).
 2. Call the existing `DownloadSongInternalAsync` pipeline with `sourceOverride = YouTube` and a
    new `FallbackProvenance` hint (section 6), through `TrackAcquisitionQueue.Enqueue`, the same
-   call the chain makes (`HeartAcquisitionCoordinator.cs:203`). That reuses staging in
+   call the chain makes (`HeartAcquisitionCoordinator.cs:201`). That reuses staging in
    `.octo-incoming`, AcoustID, tags, covers, lyrics, placement and the Navidrome rescan, and
    the "already mapped" and "already in the library" checks.
 3. YouTube `no_hit` (4.3): return `NotFoundAnywhere`; the coordinator fails the row with the
-   plain text "Not found on Soulseek, Lidarr or YouTube." Shim or download failure: `Parked`
-   (retry, bounded by `MaxWaitHours`).
-4. Success: `Obtained`.
+   plain text "Not found on Soulseek, Lidarr or YouTube." and the dashboard lists it. Shim or
+   download failure: `Parked` (retry, bounded by `MaxWaitHours`); these retries are not fetch
+   attempts of the Soulseek/Lidarr chain and are not counted there.
+4. Success: `Obtained`, the record is removed, the file is stored as MP3.
 
 ## 6. Tagging and marking a YouTube-sourced file
 
@@ -329,7 +385,7 @@ three places:
 
 | Where | What | Why |
 |---|---|---|
-| **File tags** (TagLib, `TagWriterExtras` like `SetRecordingId`, `BaseDownloadService.cs:1585`) | custom frame `OCTO_SOURCE = youtube-fallback`; `OCTO_SOURCE_ID = <video id>` | Survives moving files, a rescan, and a lost `.mappings.json`. Lets a person or a script see what is a stopgap. Standard tags (artist, title, album, MusicBrainz ids) are written exactly as for any download. |
+| **File tags** (TagLib, `TagWriterExtras` like `SetRecordingId`, `BaseDownloadService.cs:1585`) | custom frame `OCTO_SOURCE = youtube-fallback`; `OCTO_SOURCE_ID = <video id>` | Survives moving files, a rescan, and a lost `.mappings.json`. Lets a person or a script see what is a stopgap. Standard tags (artist, title, album, MusicBrainz ids) are written exactly as for any download. The values are constants plus the validated id only (no username, no `requestedBy`, no path, no timestamp). |
 | **`LocalSongMapping`** (`LocalLibraryService.cs:390`) | two new optional fields: `Provenance` (`"youtube-fallback"`) and `SourceId` (video id), beside `SourcePeer`/`SourceFile` | Optional, so old `.mappings.json` entries load (the same pattern as `TranscodedFrom`). This is what Better quality and "Wrong song" read. |
 | **`DownloadHistoryEntry`** (Fetched songs, `DownloadHistoryEntry.cs:20`) | `Source = "YouTube"` (unchanged) plus a `Fallback = true` flag and the reason text "Not on Soulseek or Lidarr" | The Fetched songs page and the download notification say why a lossy file arrived. |
 
@@ -338,7 +394,10 @@ does not say; the fallback sets it, and FLA-21 should stop `SourceLabel` guessin
 
 The artist and title written come from the song's identity (the registry or the import), not
 from the YouTube video title (R4.6; the shim retags with the clean values Octo passes,
-`app.py:994-1010`).
+`app.py:994-1010`). **YouTube-supplied free-text tags (comment, description, source URL,
+uploader) are dropped**, with `-map_metadata -1` or an allowlist instead of
+`-map_metadata 0`: only artist, album artist, title and the cover are set (Security condition 10).
+The same constants-only rule applies to the `.mappings.json` fields.
 
 ### 6.2 Making sure it is the right video
 
@@ -354,7 +413,7 @@ AcoustID will often have no fingerprint for a remix. In order:
    second copy); a file with no decodable audio is deleted and the attempt is a failure.
 4. If a person marks the file "Wrong song", the video id is remembered per song and not
    picked again (the Soulseek blacklist mechanism, `RejectedPeerRegistry`, keyed by
-   `youtube:<id>`).
+   `youtube:<id>`; the entry holds only the song key and the id, never a username).
 
 ### 6.3 Not marked as owned music
 
@@ -425,11 +484,11 @@ YouTube step already makes:
 |---|---|---|---|
 | F1 | A video id is validated against `^[A-Za-z0-9_-]{11}$` **in Octo before** it is used in a path (`:339`), a log, the registry, or a request; a non-matching id from the shim is treated as `no_hit`. | R4.2, SEC-8 | `YouTubeResolver`, `SoulseekDownloadService` |
 | F2 | The same check **in the shim**, at the edge of `/download`, `/stream` and the URL builders (`app.py:806-807`, `:563-569`, `:931-953`), before the id reaches cache, log, URL or path. 400 on mismatch. This closes SEC-8 and must land before or with the module. | R4.2, SEC-8 | `yt-dlp-shim/app.py` |
-| F3 | The `-o` output template: `dest` is canonicalised (`realpath`, as now), must be inside `<DOWNLOAD_ROOT>/.octo-incoming/` (tightened from "inside the root", `app.py:940`), and every `%` in it is escaped (`%` to `%%`) before it is placed in `-o f"{full_dest}.%(ext)s"` (`:952`), so no part of `dest` can be read by yt-dlp as a template field. Octo's own `dest` never contains `%`; the shim must not rely on that. | R4.3, SEC-8 | `app.py` |
-| F4 | Every argument is one `argv` list element, no shell (`_run` uses `subprocess.run(list)`, `app.py:205-235`; keep it). Free text goes only behind the fixed `ytsearch1:` prefix (`:316`), so it can never be read as an option. Nothing from a request becomes an option name or a yt-dlp/ffmpeg flag; no `--exec`, `--config-location`, `--proxy`, cookies or `-o` piece other than `dest` is ever accepted. The video URL is rebuilt by the shim from the validated id; a URL is never accepted from Octo. | R4.1, R4.12 | `app.py` |
-| F5 | Text passed as `q`, `artist`, `title` is cleaned by Octo (control characters and newlines removed, length capped at 200) and the shim rejects empty and over-long values. The `-metadata key=value` ffmpeg arguments are list elements with a fixed `key=` prefix (`:996-998`), so a value cannot start a new option. | R4.1, R4.6 | Octo, `app.py` |
-| F6 | YouTube-supplied text (video title, channel, description) is never used as a path, command, or log format string. File names in the library come from the song's identity through `PathHelper` after identification, not from the video (R4.6). Log lines include the video id (validated) and song identity (sanitised), never raw YouTube text. | R4.6, R4.9 | pipeline |
-| F7 | Limits: shim search 15 s and download 300 s timeouts (existing, `app.py:316-322`, `:970`), the background concurrency gate (existing); **new:** reject a hit over `MaxMinutes` before download and pass a hard `--max-filesize` cap to the download, so one bad upload cannot fill the disk; the module's `PerHour` and one-at-a-time limit. | R4.5 | Octo, `app.py` |
+| F3 | The `-o` output template: `dest` is canonicalised (`realpath`, as now), must be inside `<DOWNLOAD_ROOT>/.octo-incoming/` (tightened from "inside the root", `app.py:940`), and every `%` in it is escaped (`%` to `%%`) before it is placed in `-o f"{full_dest}.%(ext)s"` (`:952`), so no part of `dest` can be read by yt-dlp as a template field. Octo's own `dest` never contains `%`; the shim must not rely on that. The `.octo-incoming` directory is created by the shim or Octo and is never a symlink (condition 2). | R4.3, SEC-8 | `app.py` |
+| F4 | Every argument is one `argv` list element, no shell (`_run` uses `subprocess.run(list)`, `app.py:205-235`; keep it). Free text goes only behind the fixed `ytsearch1:` prefix (`:316`), so it can never be read as an option. Nothing from a request becomes an option name or a yt-dlp/ffmpeg flag; no `--exec`, `--config-location`, `--proxy`, cookies or `-o` piece other than `dest` is ever accepted. The video URL is rebuilt by the shim from the validated id; a URL is never accepted from Octo, and `--` is placed before the URL in `/download` as defence in depth (condition 3). | R4.1, R4.12 | `app.py` |
+| F5 | Text passed as `q`, `artist`, `title` is cleaned in **one place that every path uses**, `YouTubeResolver` (search, meta, download), not only the fallback module (control characters and newlines removed, length capped at 200). Import text (Spotify, CSV) is attacker input at that point; there is no route from import text to the shim that bypasses it, and there is a test per entry point: heart, import trickle, parked retry, Better quality retry. The shim independently rejects empty, over-long and control-character values with 400 for `q`, `artist`, `title`, `id`, and bounds `duration` (ASCII digits only, sane maximum). The `-metadata key=value` ffmpeg arguments are list elements with a fixed `key=` prefix (`:996-998`), so a value cannot start a new option. | R4.1, R4.6 | Octo, `app.py` |
+| F6 | YouTube-supplied text (video title, channel, description) is never used as a path, command, or log format string. File names in the library come from the song's identity through `PathHelper` after identification, not from the video (R4.6). Log lines include the video id (validated) and song identity (sanitised), never raw YouTube text; this includes the existing lines in `YouTubeResolver.cs` (`:67`, `:85`) and the shim. | R4.6, R4.9 | pipeline |
+| F7 | Limits: shim search 15 s and download 300 s timeouts (existing, `app.py:316-322`, `:970`), the background concurrency gate (existing); **new, enforced in the shim's `/download` itself** (the Octo-side check is not trusted; `--max-filesize` does not apply when the size is unknown and the mp3 re-encode can grow the output): `--match-filters` for `duration <= MaxMinutes*60 & !is_live`, `--max-filesize`, and a check of the final mp3 size that deletes the file and fails when over a cap; `.octo-incoming` is swept of partials after a failure; the module refuses to start below `MinFreeGb` free space; and its `PerHour`/`PerUserPerHour` and one-at-a-time limits. | R4.5 | `app.py`, Octo |
 | F8 | The shim is compose-network only: `expose`, no `ports:` (`docker-compose.yml:328-329`). The module adds no port, no container, no endpoint, and no setting that lets a person type a URL or an id. The only trigger inputs are a signed-in person's heart or an import row they own. | R4.4, R3.8 | compose |
 | F9 | The switch is flipped from the dashboard only through the existing `/api/admin` path (state change with `X-Octo-Admin`, admin session). The module adds no controller unless it needs a status read, and then under `/api/admin`. | R3.1, R3.2 | module |
 | F10 | `ytdlp-fallback.json` holds usernames and ids of parked songs. It is written with a temporary file created `0600` and moved over the target, and it is removed entry by entry when a song is settled. No secret goes into it, the tags, the notification text, or logs. | R1.2, R1.4 | `YtDlpFallbackStore` |
@@ -440,15 +499,19 @@ YouTube step already makes:
 
 1. **SEC-7** (unpinned yt-dlp, runtime self-update) matters more once the module exists: the
    fallback increases how often yt-dlp runs on attacker-influenced search text. Not fixed here.
+   It blocks default-on, not the build (Security condition 11, section 12).
 2. **SEC-11** (shim runs as root with a read-write `/music`): a yt-dlp or ffmpeg parsing bug on
    a downloaded media file runs with that privilege. F3 and F7 narrow what can be written,
    not what runs. A non-root shim is the real fix.
 3. **Import rows are attacker-influenced** (a public Spotify playlist or a CSV). The fallback is
    a new route from such a row to a YouTube search and a download. F1 to F7 and the per-hour
-   cap are the controls; a shared playlist cannot cause more than `PerHour` downloads.
+   caps are the controls; a shared playlist cannot cause more than `PerHour` downloads. `PerHour`
+   is global *and* per user, so one user's large import cannot use up everyone's budget, and
+   parked/counting entries have a per-user cap (`MaxParkedPerUser`) so a 10k-row import is not
+   10k records.
 4. **A wrong video kept as the song.** Mitigated by duration, length cap and AcoustID/Review
    (6.2), not eliminated.
-5. **Rate limiting or blocking by YouTube** if the cap is set high. Default 12 an hour.
+5. **Rate limiting or blocking by YouTube** if the cap is set high. Default 12 an hour globally, 4 per user.
 
 ### 8.4 Tests the Security agent should expect (in `octo.Tests/YtDlpFallback/` and `yt-dlp-shim/tests`)
 
@@ -466,25 +529,37 @@ YouTube step already makes:
 
 The module's tests encode these; a change that breaks one is a regression.
 
-1. **No fallback while Soulseek is not verified up.** If Soulseek is applicable and its fresh
-   reading is not `LoggedIn` (including `null` and `Unknown`), at the start, at the end, or
-   anywhere in between, the fallback does not run. (Stricter than the hold on purpose, G2.)
+1. **A Soulseek outage is waited out and never counts.** If Soulseek is applicable and its
+   fresh reading is not `LoggedIn` (including `null` and `Unknown`), at the start, at the end,
+   or anywhere in between, the run is not a counted attempt and the fallback does not run.
+   (Stricter than the hold on purpose, G2.)
 2. **A hold timing out never becomes a fallback.** When `HoldForSoulseekAsync` gives up after
-   `OutageHoldHours` and the chain goes on, the Soulseek outcome is `Unavailable`, so the
-   result is Park. Only an actual search that ran while logged in can say `NotFound`.
+   `OutageHoldHours` and the chain goes on, the Soulseek outcome is `Unavailable`, so the run
+   is parked and uncounted. Only a search that ran while logged in can count as an attempt.
 3. **Lidarr being later does not hide an outage.** With Lidarr after Soulseek the hold is
-   skipped (`:358`), but the Soulseek outcome is still `Unavailable`, so Lidarr may be tried
-   and the fallback still waits (section 4.4, row 5).
-4. **The import trickle and the heart behave alike.** Both use the same entry and the same
+   skipped (`:358`), but the Soulseek outcome is still `Unavailable`, so the run does not count
+   (section 4.4, first rows).
+4. **Lidarr trouble never blocks the fallback.** A Lidarr failure, or "cannot prove nothing was
+   grabbed", counts as a failed attempt. A permanently broken Lidarr delays a song by the
+   attempt count only.
+5. **One miss is not enough.** The fallback needs `FailedAttempts` counted attempts spaced
+   `AttemptSpacingHours` apart (4.2); the count is stored, survives a restart, and is cleared
+   when the song is obtained or given up.
+6. **The import trickle and the heart behave alike.** Both use the same entry and the same
    decision; the trickle's own `SoulseekOut` wait is untouched.
-5. **After an outage the whole chain re-runs.** A parked song is re-offered to Soulseek first.
-6. **Existing behavior is unchanged with the switch off**, and for people who put YouTube in
+7. **After an outage the whole chain re-runs.** A parked song is re-offered to Soulseek first.
+8. **Give-up is visible.** After `MaxWaitHours` the song is failed with a plain reason and listed
+   on the dashboard.
+9. **Existing behavior is unchanged with the switch off**, and for people who put YouTube in
    the list themselves.
 
 Test cases (scripted `ISoulseekLink`, as the existing hold tests do): Soulseek `NotLoggedIn`
-throughout with Lidarr set up and failing; Soulseek `null` reading; Soulseek login drops mid
-search; search start failure (G1); Soulseek has candidates that all fail transfer; both
-`NotFound` and the shim `no_hit`; both `NotFound` and the shim 502; Lidarr unreachable; zero
+throughout with Lidarr set up and failing (nothing counted); three failed runs with Lidarr
+down (counted, then yt-dlp); two failed runs then Soulseek has it (YouTube never called);
+attempts closer than `AttemptSpacingHours` (not counted twice); give-up at 72 h with the
+dashboard entry; counter survives restart; Soulseek `null` reading; Soulseek login drops mid
+search; search start failure (G1); Soulseek has candidates that all fail transfer; eligible
+and the shim `no_hit`; eligible and the shim 502; Lidarr unreachable; zero
 applicable sources; YouTube row already on; restart while parked; parked song whose Soulseek
 returns and finds it (YouTube never called).
 
@@ -493,7 +568,8 @@ returns and finds it (YouTube never called).
 Suggested commits, each building:
 
 1. `fix(shim)`: video id validation at the edge, `%` escaping, `dest` confined to
-   `.octo-incoming` (F2, F3; closes SEC-8), with shim tests. Independent of the module.
+   `.octo-incoming`, `--` before the URL, input limits and the F7 limits in `/download`
+   (F2 to F7; closes SEC-8), with shim tests. Independent of the module; lands before or with it.
 2. `feat(acquisition)`: typed source outcomes (G1 to G5): `SoulseekSearchOutcome.Completed`,
    `SourceNothingFoundException` / `SourceUnavailableException` / `FoundNotObtainedException`,
    Lidarr outcome on the job, `YouTubeResolver` `NoHit` versus `Failed`. Existing chain behavior
@@ -502,7 +578,8 @@ Suggested commits, each building:
 3. `feat(acquisition)`: `IAcquisitionFallback`, `StepOutcome`, the post-loop call, the optional
    constructor parameter.
 4. `feat(ytdlp-fallback)`: the module folder, switch (four places + README), decision logic
-   (section 4.4), store, worker, per-hour budget, tags and mapping fields, tests, one
+   (sections 4.2 and 4.4), attempt counting, store, worker, per-hour and per-user budgets,
+   dashboard list of parked and given-up songs, tags and mapping fields, tests, one
    `Program.cs` line.
 5. `feat(library)`: `RetryBetterDays` for fallback songs and the "YouTube copy" label.
 
@@ -515,13 +592,84 @@ Claims FLA-21 needs: `octo/Program.cs` (one line), `docker-compose.yml`, `.env.e
 
 ## 11. Decisions and open questions for a human
 
+Decided by the human on 2026-10-10 (Linear comment on FLA-14):
+
+| # | Question | Decision |
+|---|---|---|
+| D1 | When does yt-dlp run? | Soulseek and (if configured) Lidarr first; after **several failed fetch attempts**, not one miss, yt-dlp fetches and stores MP3 (sections 4.2, 4.4). |
+| D2 | Lidarr trouble? | Must not block the fallback forever; it counts as a failed attempt. This replaces the earlier "Lidarr unavailable means never fall back". |
+| D3 | Soulseek outage? | Still waited out; attempts during an outage do not count. |
+| D4 | Default of `YTDLP_FALLBACK_ENABLED`. | **Off** for now. Whether it defaults on later is pending, after the human has more context on Security condition 11. |
+| D5 | Give up after `MaxWaitHours` (72)? | Yes, shown on the dashboard, not silent. |
+| D6 | One small coordinator edit (the extension point)? | Accepted, as commits inside FLA-21 (section 10, items 2 and 3). |
+| D7 | Album hearts? | Later, separate switch, separate issue. |
+| D8 | The legacy order? | Unchanged. |
+| D9 | The current outage fall-through with an explicit priority list | Filed separately as **FLA-31** (not part of this design). |
+
+Still open:
+
 | # | Question | Recommendation |
 |---|---|---|
-| Q1 | Default of `YTDLP_FALLBACK_ENABLED`. | **Off** in the first release (a lossy source, `docs/architecture.md` finding 5: defaults hide features). A later release can turn it on once it has run for a while. |
-| Q2 | Give up a parked song after `MaxWaitHours` (72), or wait indefinitely? | Give up with a plain message; the person can heart again. Indefinite waiting hides a broken Soulseek. |
-| Q3 | Treat "Lidarr cannot prove nothing was grabbed" as `Unavailable` (fallback never fires with such a Lidarr)? | Yes (4.3). Revisit after FLA-21 checks what Lidarr's API shows. |
-| Q4 | Keep a clear AcoustID mismatch (Review playlist, as today) or reject it? | Keep, as the existing YouTube step does, because remixes often fingerprint as something else. |
-| Q5 | Extend to album hearts later? | Separate switch, separate issue. |
-| Q6 | Is one small edit to `HeartAcquisitionCoordinator` (the extension point) acceptable inside FLA-21, or should it be its own issue first? | Its own commits inside FLA-21 (items 2 and 3 of section 10), listed in the claim; they are the smallest change that keeps the module's boundary. |
-| Q7 | Should the legacy `DOWNLOAD_SOURCE=SoulseekThenYouTube` shape, which takes YouTube before Lidarr, be changed? | No. Not in scope; it is the person's stated order. The settings page nudges to the fallback instead. |
-| Q8 | `PerHour` default 12 and `MaxMinutes` 15. | Reasonable defaults; the Security agent may lower them. |
+| Q1 | Default of `FailedAttempts` (3) and `AttemptSpacingHours` (6): are they the right balance between patience and a stopgap for remix-only songs? | Keep; configurable. |
+| Q2 | Default-on later (D4): needs SEC-7 addressed for yt-dlp (section 12, condition 11) and a Security re-review. | A human decides after the condition is met. |
+| Q3 | Keep a clear AcoustID mismatch (Review playlist, as today) or reject it? | Keep, as the existing YouTube step does, because remixes often fingerprint as something else. |
+| Q4 | `PerHour` 12 global, `PerUserPerHour` 4, `MaxMinutes` 15 (10 for songs under 6 minutes). | Security suggested these (condition 13). |
+
+## 12. Conditions for the build (Security, FLA-14 sign-off)
+
+The Security agent approved the design with no Critical or High finding, subject to these 14
+conditions for FLA-21 and its PR review (Linear comment on FLA-14, "[Security agent] Approved
+(design)", 2026-10-10). The sections above have been changed where they conflicted.
+
+1. **Video id**: F1 and F2 use exactly `^[A-Za-z0-9_-]{11}$` (full match, ASCII only) in Octo
+   (`YouTubeResolver`, `SoulseekDownloadService`) and in the shim on `/download`, `/stream`,
+   `/meta` and the URL builders, before any cache, log, path or URL use. The shim answers 400.
+   Lands in the first (shim) commit, before or with the module.
+2. **`dest`**: must resolve under `<root>/.octo-incoming/` (`realpath` plus `os.sep`, so
+   `/music-evil` and symlinks fail); `%` is escaped to `%%` in the `-o` template; the shim does
+   not rely on Octo's `dest`; `.octo-incoming` is created by the shim or Octo, never a symlink.
+   Tests: symlinked `dest`, symlinked parent, sibling-prefix directory, `%(...)s` (F3).
+3. **Arguments**: nothing but the fixed `ytsearch1:`/`ytsearch5:` prefix plus cleaned text is
+   built from a request; a test asserts the argv for queries starting with `-` or `--`,
+   containing a URL, another extractor prefix, quotes and newlines; no new yt-dlp flag from a
+   request; `--` before the video URL in `/download` (F4).
+4. **One place for query cleaning** (F5): Octo's `YouTubeResolver` (search, meta, download), not
+   only the module; strips control characters and newlines, caps at 200; the shim rejects empty,
+   over-long and control-character values with 400 and bounds `duration`; no route from import
+   text bypasses it; **a test per entry point** (heart, import trickle, parked retry, Better
+   quality retry).
+5. **Sanitised logs** (F6): raw `q`, artist and title never appear in any log line on the
+   fallback path, including the existing lines in `YouTubeResolver.cs` and the shim.
+6. **Limits enforced in the shim** (F7): `--match-filters` for `duration <= MaxMinutes*60 &
+   !is_live`, `--max-filesize`, and a final mp3 size check that deletes the file and fails;
+   `.octo-incoming` swept of partials after failure; the module refuses to start below a
+   free-space floor.
+7. **Fairness**: `PerHour` applies **per user** and also globally (the global value stays the
+   hard cap); parked entries have a per-user cap and the `MaxWaitHours` expiry; over the cap,
+   rows are dropped with a plain message; a test shows a large import cannot exhaust another
+   user's budget.
+8. **No new surface** (F8, F9): no new port, endpoint, URL or id setting, or shim parameter; the
+   switch is changed only via `/api/admin`.
+9. **Store and per-user data** (F10, F11): the store file and its temporary file are `0600` from
+   the start, outside the library and Soulseek-shared folders; the parked list and every release
+   or read endpoint filter on the signed-in user (admin sees all); "not yours" answers as "not
+   there"; the A/B isolation test (R2.7); notification and history text are shown only to the
+   requesting user.
+10. **Tags and sharing**: `OCTO_SOURCE` and `OCTO_SOURCE_ID` carry only the constants and the
+    validated id (never the username, `requestedBy`, host paths, timestamps or server ids), and
+    so do the `.mappings.json` fields; the re-tag step drops YouTube-supplied free-text tags
+    (comment, description, purl, uploader) with `-map_metadata -1` or an allowlist and sets only
+    artist, album artist, title and cover; `.octo-incoming` stays out of the share list (R4.11),
+    with a test; the "Wrong song" registry entry stores only the key and id.
+11. **SEC-7 precondition for default-on**: FLA-21 may merge with the switch **off**. The
+    default must not be switched on, and the README must not recommend it, until yt-dlp is
+    **pinned and checksum-verified** (or the runtime self-update can be turned off) **and the
+    dependency scan runs in CI**. The README paragraph for the switch says the fallback runs
+    yt-dlp more often and that the self-update is a known risk until then. Security re-reviews
+    when the default changes. (The human's decision D4 waits on this.)
+12. **SEC-11 residual** accepted for now: a non-root shim is not required for this PR, but the
+    PR comment links the SEC-11 issue; the F7 size limit is the only mitigation.
+13. **Lowered defaults**: `PerHour` 12 plus a per-user share of 4; `MaxMinutes` 15, with 10 for
+    songs the registry says are shorter than 6 minutes.
+14. **Tests and review**: the F-series tests in 8.4, plus those above, are named in the PR with
+    CI links; Security reviews the FLA-21 PR (external input, shim, files, per-user data).

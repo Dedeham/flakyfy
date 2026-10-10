@@ -235,6 +235,10 @@ are stubbed as the existing tests do):
   library (the module never deletes files; see 7).
 - A failed run (an exclusion set unread, Navidrome unreachable) changes nothing, is recorded as a
   count, and is retried at the user's next live request, no sooner than a back-off, never by a timer.
+  A user with landed pending work is "due" for a top-up, but the same back-off bounds how often that
+  makes a check, and **pending items expire after a set age**, so a song that never lands cannot keep
+  a user due forever. Every cap and counter here is keyed by the canonical user key (5.2 step 1), so
+  differently typed spellings of one name share one cap of 10.
 - All of the module's work stops with the switch off, including the credential-free worker and any run
   in flight.
 
@@ -293,20 +297,41 @@ copied.
 middleware from its own extension method (`AddDiscoverWeeklyModule`), restricted to `/rest/` paths
 with `UseWhen`. It does no work on the request path beyond one in-memory lookup:
 
-1. Read `u` and the sign-in parameters from the query string (`SubsonicCredential.From`,
-   `octo/Services/Subsonic/SubsonicCredential.cs`). No `u` (an API-key sign-in) means stop.
-2. Ask the module's store, in memory, whether this name is due: module on, name allowed and not
-   opted out, no run in flight for it, last build week is not the current ISO week (or there is
-   landed pending work for a top-up), and the last failed attempt was not within the back-off. This
-   uses the unverified `u` only to decide whether to bother; it acts on nothing.
-3. If due, hand a copy of the credential to a background task (through `WithoutPassword()`, so a
-   password is not kept) and let the request carry on. The request is never delayed.
+1. Read `u` and the sign-in parameters from the **query string only** (`SubsonicCredential.From`,
+   `octo/Services/Subsonic/SubsonicCredential.cs`). Stop unless the credential is exactly `u` with
+   `t` and `s`, or `u` with `p`. No `u` (an API-key sign-in) stops, and so does any credential that
+   also carries `apiKey` or `jwt`: `From` keeps those next to `u` (`SubsonicCredential.cs:16, 45-50`),
+   and a request Navidrome authenticated by a key while `u` names someone else would otherwise run as
+   the key's owner under the named user's key. Trim and case-fold `u` once into the **canonical user
+   key**; Navidrome user names are case-insensitive (`LibraryActionSettings.IsAllowed` compares
+   ignoring case for that reason), so "Alice" and "alice" are one user with one store row, one ledger,
+   one cap and one in-flight guard.
+2. Decide in memory whether to bother checking, reading only state that is safe before verification:
+   the module is on, the canonical key is allowed and not opted out (read, not written), and a bounded
+   dedupe **keyed by the credential's fingerprint** (not by the name) says this exact sign-in was not
+   checked a moment ago. The unverified `u` is only read here. **Nothing keyed by the name is written
+   before Accepted**: no in-flight flag, back-off, store row, opt-out row or counter. Otherwise a
+   caller could send junk tokens for a real name, make it look "in flight" or "recently failed" and
+   suppress that user's run, or create rows for names that do not exist.
+3. If a check is worth making, copy the credential **values synchronously** (through
+   `WithoutPassword()`, so a password is not kept) into a background task and let the request carry
+   on, never capturing `HttpContext`. The request is never delayed. A global cap bounds the checks and
+   runs pending at once; **when it is full the trigger is dropped, not queued**, because a queue that
+   waits for a free slot would hold the credential for an unbounded time, which D7 forbids. A
+   per-source and per-name budget on checks sits beside the global cap.
 4. The task first asks `CredentialCheck.CheckAsync` (`octo/Services/Subsonic/CredentialCheck.cs`),
    which pings Navidrome with that sign-in and answers Accepted, Refused or Unreachable. **Only
-   Accepted starts a run.** The user name is the `u` of that same accepted credential; it is never
-   taken from a header, a body field or another request (R2.1). A refused or unreachable answer
-   starts nothing and is not retried by the module (the next request tries again, and the existing
-   `SignInThrottle` and the 30-second refusal memory in `CredentialCheck` limit the cost).
+   Accepted starts a run, and only then is per-name state written** (in flight, back-off, store
+   rows). The user name is the canonical key of the `u` of that same accepted credential; it is never
+   taken from a header, a body field or another request (R2.1). A cached Accepted (kept ten minutes,
+   `CredentialCheck.cs:25`) is not the authority: the run's first call to Navidrome is its own proof,
+   and a refusal there ends the run with nothing published. A refused or unreachable answer starts
+   nothing and is not retried by the module; the next request tries again. **The cost of checks is
+   not limited by `SignInThrottle`**: that class serves the admin sign-in only and is keyed by remote
+   address (`AdminSignInGate.cs:69`, `octo/Services/Admin/SignInThrottle.cs`), and the 30-second
+   refusal memory in `CredentialCheck` is per fingerprint, so a flood of distinct junk tokens costs one
+   Navidrome ping each. The module therefore needs its own global cap and per-source and per-name
+   check budget, as in step 3.
 5. The run reads the sets, selects, creates or updates the playlist and queues downloads, all as that
    user, then ends and drops the credential. It is cancelled at once if the switch goes off or the
    user opts out, and has a time limit.
@@ -327,10 +352,12 @@ precedent for "act on the user's live, accepted request" is in the controller:
 user's playlists with the user's own credentials. A module filter that does the same without touching
 that file is the preferred route (Security condition 3). Points the FLA-23 spike must settle:
 (a) that an `IStartupFilter` added to the service collection by the module extension runs under the
-`WebApplication` that `Program.cs` builds; (b) that reading the query string there does not disturb the
-body buffering middleware at `Program.cs:725`, so a POST'd form sign-in is simply not seen by the
-filter (such a client triggers a run on its next query-string request, or not at all, which the spike
-reports); (c) that the work is started in the background.
+`WebApplication` that `Program.cs` builds; (b) that the filter is registered to run **after** `UseAdminPortSplit` (or applies the same port
+rule), so it never sees a request the port split later refuses, and that it reads the query string
+only and never `Request.Form` or `Request.Body`, so the body buffering at `Program.cs:725` and the
+proxy behave exactly as before. A POST'd form sign-in is therefore not seen by the filter (such a
+client triggers a run on its next query-string request, or not at all, which the spike reports), and
+response bytes and timing are unchanged with the module on and off; (c) that the work is started in the background.
 
 **Fallback, a hotspot edit.** If (a) to (c) cannot be met, the fallback is one line beside the existing
 `EnsureAsync` call in `GetPlaylists` (`SubSonicController.cs:379-381`): it already has the parsed
@@ -352,7 +379,7 @@ user never opens a client. That is inherent to not storing a credential
 
 ### 5.3 State
 
-Two files in `/app/config`, both owned by the module and keyed by user (R2.2): `discover-weekly.json`
+Two files in `/app/config`, both owned by the module and keyed by the canonical user key, the trimmed and case-folded name (R2.2, 5.2 step 1): `discover-weekly.json`
 (per user: last build week, current playlist id, the week's picks and state) and a **ledger** of every
 song ever shown to that user, by identity, so a song never repeats. Both are created with mode 0600
 from the start and written to a temporary file that is then moved over the old one, so a crash
@@ -373,9 +400,15 @@ and no gap between clearing a song and adding it.
   credential) in the user's pending list.
 - A small credential-free worker resolves landed files to Navidrome ids by path
   (`NavidromeSongPathResolver.FindIdByPathAsync`, as `NoticePlaylistWorker.cs:172` does) and marks
-  them landed in the store. It never writes to the playlist.
+  them landed in the store. The marker comes only from the module's own path lookup, for a path inside
+  the music root, never from a request value, and no endpoint accepts a path or a landed marker. Each
+  pending entry carries the owner's canonical key and an age limit. The worker never writes to the
+  playlist.
 - A landed song is added at the user's **next live request**: a top-up run reads both sets again
-  with that request's fresh credential, drops any landed song that now matches, and adds the rest.
+  with that request's fresh credential, and reads only that user's own pending entries. It checks the
+  identity of **the file that actually landed** (its Navidrome tags for that id), not the candidate's
+  description, because a peer's file can differ from what was asked for. It drops any landed song that
+  matches either set under that identity, and adds the rest to that user's own playlist only.
   This is the "late-landing songs wait for the user's next live request" rule. A user who does not
   open a client sees them the next time they do.
 - The admin identity (`NavidromePlaylistApi`) is used for nothing here beyond the credential-free
@@ -442,8 +475,15 @@ songs (4.2, 4.3). Still open:
    does not return a name.
 5. **Users whose client sends an API key** (5.2): they get no Discover Weekly in v1. Confirm that is
    acceptable, or ask for a later issue to support them.
-6. **Opt-out** (D8 says "each user"): confirm that every allowed user is covered by default once the
-   module is on, with a per-user opt-out, rather than opt-in.
+6. **Opt-out or opt-in** (D8 says "each user"): confirm that every allowed user is covered by default
+   once the module is on, with a per-user opt-out, rather than opt-in. **Security's view (input, not a
+   decision):** opt-out is acceptable now that no credential is held; the old reason for opt-in is
+   gone. It is acceptable only if all of these hold: the module switch is off by default (D8, kept);
+   no outbound call carries a user's data unless that user has a linked service of their own
+   (a ListenBrainz or Last.fm token they set), or the call uses only library-derived seeds with no
+   user name; the user can see and use the opt-out without an admin; the first list tells them what
+   it does; and opting out stops runs at once and deletes their rows. If any of these cannot be
+   built, fall back to opt-in. Security does not require opt-in.
 
 ## 9. Open items for the build issue (FLA-23)
 
@@ -464,18 +504,19 @@ songs (4.2, 4.3). Still open:
 
 ## 10. Conditions for the build (Security, FLA-15 sign-off)
 
-Security approved the design with 12 conditions, binding on FLA-23 and checked in its PR review.
+Security approved the design with 12 conditions, binding on FLA-23 and checked in its PR review, and
+re-approved it at 334ac4b with seven more (13 to 19), added below.
 Source: the `[Security agent] Approved (design).` comment on FLA-15
 (https://linear.app/cv-agent/issue/FLA-15/research-discover-weekly-as-a-separate-module). They were
 written for the first design, which held a sign-in token for up to 24 hours. The human decided
 (D7, 2026-10-10) that no credential is held, so each condition is re-checked below as **applies**,
-**moot** or **changed**. Security still needs to confirm the changed and moot rows when the FLA-23
-PR comes back to it (condition 12).
+**moot** or **changed**. Security agreed the statuses of 1 to 12 in its re-approval. Condition 19 asked for the corrections to
+5.2 that are now made.
 
 | # | Condition (short) | Status | Under the live-request design |
 |---|---|---|---|
-| 1 | Credential holding (R1.2, R1.5): `t`/`s` only, memory only, never logged or serialized, expire at point of use, 24 h limit, wipe on off/opt-out/sign-out, cap the number held | **Changed** | Nothing is held between requests, so the 24 h limit, the wipe-on-sign-out and the cap on held credentials are **moot**. What still **applies**: the credential lives only in the run's own variables, is converted with `WithoutPassword()` at hand-off so a password is not kept even for the run, is never written to a file, log, exception text, notification, dashboard answer or job record, never serialized, and is logged only through `ToString()`. The run is cancelled, and the credential dropped, when the switch goes off or the user opts out |
-| 2 | Only opted-in users held; dashboard says a token is kept up to a day; API-key credentials skipped | **Changed** | The dashboard text becomes "Octo builds your list when you open a client and keeps no sign-in". When the module is on, every allowed user is covered unless they opt out (D8). **Applies:** an API-key sign-in has no `u`, so it is skipped in v1 (5.2); such users get no list and the status says why |
+| 1 | Credential holding (R1.2, R1.5): `t`/`s` only, memory only, never logged or serialized, expire at point of use, 24 h limit, wipe on off/opt-out/sign-out, cap the number held | **Changed** | Nothing is held between requests, so the 24 h limit, the wipe-on-sign-out and the cap on held credentials are **moot**. What still **applies**: the credential lives only in the run's own variables, is converted with `WithoutPassword()` at hand-off so a password is not kept even for the run, is never written to a file, log, exception text or data, log scope, notification, dashboard answer, job record or queue, never serialized, and is logged only through `ToString()`. No module type has a field or captured variable of type `SubsonicCredential` that outlives the run, tested by reflection and by a log-capture test that includes failure paths The run is cancelled, and the credential dropped, when the switch goes off or the user opts out |
+| 2 | Only opted-in users held; dashboard says a token is kept up to a day; API-key credentials skipped | **Changed** | The dashboard text becomes "Octo builds your list when you open a client and keeps no sign-in". When the module is on, every allowed user is covered unless they opt out (D8). **Applies, tightened by 15:** an API-key sign-in has no `u`, so it is skipped in v1 (5.2); such users get no list and the status says why |
 | 3 | Capture only after Navidrome accepts, user from the verified request, Subsonic paths only, prefer a filter to a global `IStartupFilter`, claim the hotspot if the fallback is used, credential used only for its own user, never returned | **Applies, rewritten as the trigger rule** | Same rules, now for starting a run instead of storing a hold (5.2): start only after `CredentialCheck` says Accepted, user name from `u` of that same request, only `/rest/` paths, one run per user at a time, the credential used for that user only. "A later request must not replace a good hold" is **moot** (no hold) |
 | 4 | Resolve the 4.2 / 5.4 contradiction: no admin add after expiry unless cleared in the same run; documented residual risk if admin fill stays | **Moot** | There is no admin fill at all and no gap between clearing and writing: every write is made as the user in a run that has just read both sets (4.2 layer 3, 5.4). A song that lands later waits for the user's next live request. The residual risk is gone |
 | 5 | Playlist privacy (R2.5, R2.8): user credential, explicit non-public, read back, fail closed, never another user's picks, id from the store | **Applies** | Unchanged (4.4, 5.4) |
@@ -486,3 +527,10 @@ PR comes back to it (condition 12).
 | 10 | Stored data (R1.4 spirit, R2.2): mode 0600, temp file then move, keyed by user, bounded, removed on opt-out, no tokens, counts only in logs | **Applies** | Unchanged (5.3). With no held credential, "no tokens" is also true by construction |
 | 11 | Ships off, documented in `README.md` and `.env.example`; off means no calls, no holds, no files; section 8 decisions recorded on the PR | **Applies** | Unchanged; "no holds" is now trivially true. D7 and D8 are recorded on FLA-15 and are to be quoted on the FLA-23 PR |
 | 12 | The FLA-23 PR returns to Security (auth, credentials, external input) | **Applies** | Unchanged. The credential-handling and trigger code in particular must be reviewed |
+| 13 | **Per-name state only after Accepted.** Nothing keyed by the unverified `u` (in flight, back-off, store rows, opt-out rows, counters) is written before `CredentialCheck` says Accepted; before that only a bounded dedupe by fingerprint. Test: a refused request for a real name cannot delay or suppress that user's run and creates no row | **New, applies** | 5.2 steps 2 and 4 |
+| 14 | **Trigger cost and holding.** Global cap on pending checks and runs; when full, drop the trigger, keep nothing; per-source and per-name check budget; never queue a credential; copy values synchronously, never capture `HttpContext`; a cached Accepted is not authority, the run's first call to Navidrome is; do not rely on `SignInThrottle` | **New, applies** | 5.2 steps 3 and 4 |
+| 15 | **Credential shape.** Only `u` with `t` and `s`, or `u` with `p`; refuse any credential that also carries `apiKey` or `jwt`; the name is never taken from `u` alone for a key | **New, applies** | 5.2 step 1 |
+| 16 | **One user key.** Trim and case-fold once at the trigger; use it for the store, ledger, caps, opt-out, allow-list (`IsAllowed`) and in-flight guard; verify the owner on read-back case-insensitively. Test: "Alice" and "alice" are one user with one cap | **New, applies** | 4.3, 5.2 step 1, 5.3 |
+| 17 | **Filter position and body.** Run after `UseAdminPortSplit` or apply the same port rule; query string only, never `Request.Form`, `Request.Body`, headers or body values; the spike shows POST sign-ins and the proxy are untouched, response bytes and timing are unchanged, and module off makes the filter a no-op | **New, applies** | 5.2 (b), 9 |
+| 18 | **Late-landing songs.** The landed marker is written only by the module's worker from its own path lookup inside the music root; pending entries carry the owner key and expire; a top-up checks the identity of the file that actually landed (Navidrome tags) against both sets and adds only to that user's own playlist; repeat checks are bounded by the back-off | **New, applies** | 4.3, 5.4 |
+| 19 | **Doc corrections.** Fix the 5.2 claim about `SignInThrottle`; step 2's "due" check may read only state that is safe before verification | **New, done in this version** | 5.2 steps 2 and 4 |

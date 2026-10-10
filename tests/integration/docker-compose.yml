@@ -1,0 +1,62 @@
+# Integration harness stack (FLA-12): Navidrome + Octo, nothing else.
+# Start it with ./run.sh (generates the library, starts the stack, seeds it, runs the tests).
+# External sources (slskd, the yt-dlp shim, sonic, Lidarr, Last.fm, update checks) are not
+# started; Octo's settings below point them at nothing or switch them off, so a test never
+# reaches the internet or a real account.
+name: ${HARNESS_PROJECT:-fla12-it}
+
+services:
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: ${HARNESS_PROJECT:-fla12-it}-navidrome
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_SCANSCHEDULE: "0"
+      ND_LOGLEVEL: info
+      ND_ENABLEINSIGHTSCOLLECTOR: "false"
+      ND_ENABLEUSEREDITING: "true"
+    ports:
+      - "127.0.0.1:${HARNESS_NAVIDROME_PORT:-14533}:4533"
+    volumes:
+      - ./.data/music:/music:ro
+      - navidrome-data:/data
+
+  octo:
+    build:
+      context: ../..
+    container_name: ${HARNESS_PROJECT:-fla12-it}-octo
+    depends_on:
+      - navidrome
+    ports:
+      - "127.0.0.1:${HARNESS_OCTO_PORT:-15274}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Subsonic__Url: http://navidrome:4533
+      Subsonic__AdminUsername: ${HARNESS_ADMIN_USER:-admin}
+      Subsonic__AdminPassword: ${HARNESS_ADMIN_PASSWORD:-harness-admin-pw}
+      Subsonic__EnableExternalPlaylists: "false"
+      Subsonic__EnableSearchDiscovery: "false"
+      Subsonic__EnableSyncCatalog: "false"
+      Library__DownloadPath: /music
+      # Stubbed external sources: unreachable on purpose, so any call fails fast and offline.
+      YouTube__ShimUrl: http://stub.invalid:8080
+      Soulseek__BaseUrl: http://stub.invalid:5030
+      RadioSources__SonicUrl: http://stub.invalid:8080
+      RadioSources__YouTubeMusic: "false"
+      RadioSources__ListenBrainz: "false"
+      RadioSources__SoundsAlike: "false"
+      LastFm__ApiKey: ""
+      LastFm__ApiSecret: ""
+      Lidarr__BaseUrl: ""
+      Updates__Check: "false"
+      Metadata__UseCoverArtArchive: "false"
+      Metadata__ReleaseDetailsLookup: "false"
+    volumes:
+      - octo-music:/music
+      - octo-config:/app/config
+
+volumes:
+  navidrome-data:
+  octo-music:
+  octo-config:

@@ -926,7 +926,52 @@ fn a_far_off_length_does_not_confirm() {
 
     let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
 
+    assert_ne!(verdict.verdict, VerificationVerdict::Confirmed);
+}
+
+/// The right song and artist whose only doubt is the length is a question for a person, never
+/// a mismatch that calls the requested song another one.
+#[test]
+fn a_right_song_off_only_in_length_needs_a_look_and_is_never_called_another_song() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 5, Some(171))],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Inconclusive);
+    assert_eq!(verdict.reason, InconclusiveReason::LengthOff);
+    assert!(verdict.needs_review());
+    assert_eq!(verdict.deny_reason, "");
+    assert_eq!(verdict.matched_title.as_deref(), Some("my boy"));
+    assert_eq!(
+        verdict.r#match.as_ref().and_then(|m| m.duration_seconds),
+        Some(171)
+    );
+}
+
+#[test]
+fn a_tagged_isrc_never_settles_a_length_doubt() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 5, Some(171))],
+    )]);
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    let kept = DownloadVerificationService::with_tagged_isrc(verdict, Some("USUM71900764"), true);
+
+    assert_eq!(kept.verdict, VerificationVerdict::Inconclusive);
+    assert_eq!(kept.reason, InconclusiveReason::LengthOff);
+}
+
+/// A stray link stays a mismatch even when its length is off too: the stronger song is named.
+#[test]
+fn a_stray_link_with_an_off_length_is_still_a_mismatch() {
+    let verdict = decide_at(&bury_a_friend(), "Billie Eilish", "my boy", 240);
+
     assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(verdict.matched_title.as_deref(), Some("bury a friend"));
 }
 
 #[test]

@@ -185,7 +185,8 @@ impl DownloadVerificationService {
     /// better could be established: AcoustID off, down, without an entry or below the threshold.
     /// A confident fingerprint of something else is not overruled by a tag, since tags are
     /// copied and audio is not, and neither is a fingerprint that named a recording whose ISRCs
-    /// were not found (that one goes to a person).
+    /// were not found, or the right recording at a length far from the file's (those go to a
+    /// person).
     pub fn with_tagged_isrc(
         verdict: VerificationResult,
         isrc: Option<&str>,
@@ -194,6 +195,7 @@ impl DownloadVerificationService {
         if !tagged_match
             || verdict.verdict != VerificationVerdict::Inconclusive
             || verdict.reason == InconclusiveReason::SourceDisagreed
+            || verdict.reason == InconclusiveReason::LengthOff
         {
             return verdict;
         }
@@ -627,6 +629,11 @@ const LENGTH_SLACK: f64 = 0.07;
 /// radio edit) with very different counts. A lone weak link still counts, and so does a
 /// length nobody knows.
 pub(crate) fn trustworthy(agreed: &AcoustIdRecording, result: &AcoustIdResult, file_seconds: i32) -> bool {
+    !is_stray(agreed, result) && !length_off(agreed, file_seconds)
+}
+
+/// Whether a recording is dwarfed by a recording of another song in the same result.
+fn is_stray(agreed: &AcoustIdRecording, result: &AcoustIdResult) -> bool {
     let song = SongIdentity::key(&strip_versions(&agreed.title));
     let strongest_other = result
         .recordings
@@ -635,18 +642,19 @@ pub(crate) fn trustworthy(agreed: &AcoustIdRecording, result: &AcoustIdResult, f
         .map(|r| r.sources)
         .max()
         .unwrap_or(0);
-    if strongest_other > 0 && agreed.sources.saturating_mul(STRAY_RATIO) < strongest_other {
+    strongest_other > 0 && agreed.sources.saturating_mul(STRAY_RATIO) < strongest_other
+}
+
+/// Whether a recording's known length is far from the file's known length.
+fn length_off(agreed: &AcoustIdRecording, file_seconds: i32) -> bool {
+    let Some(length) = agreed.duration_seconds.filter(|l| *l > 0) else {
+        return false;
+    };
+    if file_seconds <= 0 {
         return false;
     }
-    if let Some(length) = agreed.duration_seconds.filter(|l| *l > 0)
-        && file_seconds > 0
-    {
-        let slack = MIN_LENGTH_SLACK.max((f64::from(file_seconds) * LENGTH_SLACK).round() as i32);
-        if (length - file_seconds).abs() > slack {
-            return false;
-        }
-    }
-    true
+    let slack = MIN_LENGTH_SLACK.max((f64::from(file_seconds) * LENGTH_SLACK).round() as i32);
+    (length - file_seconds).abs() > slack
 }
 
 fn decide_core(
@@ -724,6 +732,27 @@ fn decide_core(
 
     if let Some(agreed) = agreed {
         return confirm(best, agreed, tags_authoritative);
+    }
+
+    // The right song and artist, believed but for its length: a person can tell whether it is a
+    // different cut, and the requested song is never named as another one.
+    if let Some(doubted) = best.recordings.iter().find(|r| {
+        TrackMatchComparer::title_matches(requested_title, &r.title)
+            && TrackMatchComparer::artist_matches(requested_artist, &r.artist_credit(), &r.artists)
+            && !is_stray(r, best)
+    }) {
+        return VerificationResult {
+            verdict: VerificationVerdict::Inconclusive,
+            reason: InconclusiveReason::LengthOff,
+            score: best.score,
+            matched_title: Some(doubted.title.clone()),
+            matched_artist: Some(doubted.artist_credit()),
+            matched_album: doubted.album_title.clone(),
+            matched_year: doubted.year,
+            recording_id: Some(doubted.recording_id.clone()),
+            r#match: Some(doubted.clone()),
+            ..Default::default()
+        };
     }
 
     // The recording most submissions tie this audio to, the first listed on a tie.

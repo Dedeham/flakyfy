@@ -432,3 +432,141 @@ async fn nothing_to_search_with_is_no_results() {
     assert!(search.get_albums("", 5).await.is_empty());
     assert!(search.get_albums("song", 0).await.is_empty());
 }
+
+/// A Last.fm whose track.search answers one row, Artist - Song, after `delay`.
+async fn slow_last_fm(delay: Duration) -> (Arc<LastFmService>, MockServer) {
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"results":{"trackmatches":{"track":[{"name":"Song","artist":"Artist"}]}}}"#,
+                )
+                .set_delay(delay),
+        )
+        .mount(&server)
+        .await;
+    let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+        last_fm: LastFmSettings {
+            api_key: "key".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    (
+        Arc::new(LastFmService::with_base_url(
+            settings,
+            &format!("{}/", server.uri()),
+        )),
+        server,
+    )
+}
+
+fn last_fm_wait(ms: i32) -> Option<Arc<SettingsStore>> {
+    Some(Arc::new(SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            wait_for_search_durations: false,
+            search_last_fm_wait_ms: ms,
+            ..Default::default()
+        },
+        ..Default::default()
+    })))
+}
+
+fn catalog_metadata() -> Arc<FakeMetadata> {
+    let metadata = one_song_metadata();
+    metadata.hits.lock().insert(
+        ("Deezer Artist".into(), "Deezer Song".into()),
+        Song {
+            artist: "Deezer Artist".into(),
+            title: "Deezer Song".into(),
+            ..Default::default()
+        },
+    );
+    *metadata.catalog_tracks.lock() = Some(vec![
+        ("Deezer Artist".into(), "Deezer Song".into()),
+        ("deezer artist".into(), "DEEZER SONG".into()),
+    ]);
+    metadata
+}
+
+/// Last.fm late: the rows are the catalog's own track search, deduped, without waiting for
+/// Last.fm. Its answer is kept, and the next search of the words uses it without asking again.
+#[tokio::test]
+async fn a_late_last_fm_gives_way_to_the_catalog_track_search_and_is_kept_for_next_time() {
+    let metadata = catalog_metadata();
+    let (last_fm, server) = slow_last_fm(Duration::from_millis(800)).await;
+    let search = ExternalSearchService::new(metadata, Some(last_fm), last_fm_wait(150));
+
+    let started = std::time::Instant::now();
+    let first = search.get("song").await;
+    assert!(
+        started.elapsed() < Duration::from_millis(700),
+        "{:?}",
+        started.elapsed()
+    );
+    let titles: Vec<&str> = first.iter().map(|song| song.title.as_str()).collect();
+    assert_eq!(titles, ["Deezer Song"]);
+
+    // Once Last.fm has answered, the kept build gives way and the next search uses its answer.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let next = search.get("song").await;
+    let titles: Vec<&str> = next.iter().map(|song| song.title.as_str()).collect();
+    assert_eq!(titles, ["Song"]);
+    assert_eq!(track_searches(&server).await, 1);
+}
+
+/// Last.fm late and the catalog with nothing: Last.fm is waited for after all.
+#[tokio::test]
+async fn a_late_last_fm_is_waited_for_when_the_catalog_has_nothing() {
+    let metadata = one_song_metadata();
+    let (last_fm, _server) = slow_last_fm(Duration::from_millis(400)).await;
+    let search = ExternalSearchService::new(metadata, Some(last_fm), last_fm_wait(100));
+
+    let songs = search.get("song").await;
+
+    assert_eq!(songs.len(), 1);
+    assert_eq!(songs[0].title, "Song");
+}
+
+/// A wait of 0 waits for Last.fm however long it takes.
+#[tokio::test]
+async fn a_last_fm_wait_of_zero_never_uses_the_catalog_search() {
+    let metadata = catalog_metadata();
+    let (last_fm, _server) = slow_last_fm(Duration::from_millis(300)).await;
+    let search = ExternalSearchService::new(metadata, Some(last_fm), last_fm_wait(0));
+
+    let songs = search.get("song").await;
+
+    assert_eq!(songs[0].title, "Song");
+}
+
+/// Album ownership is let go once the song build has looked its rows up, while the build
+/// still waits for lengths; with the songs kept from before, at once.
+#[tokio::test]
+async fn row_lookups_are_done_before_the_wait_for_lengths_and_at_once_from_the_kept_build() {
+    let metadata = one_song_metadata();
+    let gate = gate_durations(&metadata);
+    let (last_fm, _server) = one_hit_last_fm().await;
+    let search = Arc::new(ExternalSearchService::new(
+        metadata,
+        Some(last_fm),
+        waiting_ms(5000),
+    ));
+
+    let looked_up = search.rows_looked_up("song");
+    let running = search.clone();
+    let build = tokio::spawn(async move { running.get("song").await });
+    tokio::time::timeout(Duration::from_secs(3), looked_up)
+        .await
+        .expect("let go while the lengths are still awaited");
+    assert!(!build.is_finished());
+    gate.open.send_replace(true);
+    build.await.expect("built");
+
+    let again = search.rows_looked_up("song");
+    search.get("song").await;
+    tokio::time::timeout(Duration::from_millis(200), again)
+        .await
+        .expect("at once from the kept build");
+}

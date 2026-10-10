@@ -238,6 +238,27 @@ impl DeezerMetadataService {
         include_year: bool,
         background: bool,
     ) -> Option<TrackMeta> {
+        self.look_up_track(artist, title, include_year, background, false)
+            .await
+    }
+
+    /// [`Self::enrich_track`] for a search someone is waiting on: one track search (the first
+    /// query [`Self::enrich_track`] would try), no year, on the interactive lane. A hit is the
+    /// hit the full lookup would find, and is remembered as it would be. A miss is not
+    /// remembered: the full lookup's other queries may still find the song, and are left to
+    /// a caller that is not waiting ([`Self::enrich_track`] on the background lane).
+    pub async fn enrich_track_quick(&self, artist: &str, title: &str) -> Option<TrackMeta> {
+        self.look_up_track(artist, title, false, false, true).await
+    }
+
+    async fn look_up_track(
+        &self,
+        artist: &str,
+        title: &str,
+        include_year: bool,
+        background: bool,
+        first_query_only: bool,
+    ) -> Option<TrackMeta> {
         if is_blank(artist) && is_blank(title) {
             return None;
         }
@@ -252,9 +273,16 @@ impl DeezerMetadataService {
         // be cached as "this track has no year" for the life of the entry.
         let mut year_unresolved = false;
         let attempt = async {
-            let (transient, found) = self.find_track(artist, title, background).await?;
+            let (transient, found) = if first_query_only {
+                self.find_track_first_query(artist, title).await?
+            } else {
+                self.find_track(artist, title, background).await?
+            };
             if transient {
                 return anyhow::Ok(Flow::Return(None));
+            }
+            if first_query_only && found.is_none() {
+                return Ok(Flow::Return(None));
             }
             if let Some((t, doc)) = found {
                 let (mut alb_title, mut cover, mut art_name, mut art_img) = (None, None, None, None);
@@ -276,7 +304,7 @@ impl DeezerMetadataService {
                 };
                 let mut year = None;
                 if include_year && alb_id > 0 {
-                    let (y, year_transient) = self.album_year(alb_id).await?;
+                    let (y, year_transient) = self.album_year_on(alb_id, background).await?;
                     // Degrade to "no year", never to "no track". Returning null here threw
                     // away an album title and duration the search had already fetched, so a
                     // throttled year left the song with no length at all.
@@ -284,6 +312,7 @@ impl DeezerMetadataService {
                     year_unresolved = year_transient;
                 }
                 meta = Some(TrackMeta {
+                    album_id: (alb_id > 0).then_some(alb_id),
                     album_title: alb_title.map(str::to_string),
                     album_cover_url: cover.map(str::to_string),
                     year,
@@ -1326,7 +1355,7 @@ impl DeezerMetadataService {
 
     /// The album's release year, and whether it could not be told this time. Shared across
     /// concurrent callers for the same album id (single-flight).
-    async fn album_year(&self, album_id: i64) -> ElementResult<(Option<i32>, bool)> {
+    async fn album_year_on(&self, album_id: i64, background: bool) -> ElementResult<(Option<i32>, bool)> {
         if let Some(Cached::Number(year)) = self.get_cached(&format!("y|{album_id}")) {
             return Ok((year, false));
         }
@@ -1335,7 +1364,7 @@ impl DeezerMetadataService {
             .inner
             .album_year_tasks
             .run(&album_id.to_string(), async move {
-                this.fetch_album_year(album_id).await.ok()
+                this.fetch_album_year(album_id, background).await.ok()
             })
             .await;
         // The fetch failed (an album record of the wrong shape): the awaiting caller gets the
@@ -1345,9 +1374,30 @@ impl DeezerMetadataService {
         ))
     }
 
-    async fn fetch_album_year(&self, album_id: i64) -> ElementResult<(Option<i32>, bool)> {
+    /// An album's release year when it is already known: `Some(None)` when the album has none,
+    /// None when it was never looked up.
+    pub fn cached_album_year(&self, album_id: i64) -> Option<Option<i32>> {
+        match self.get_cached(&format!("y|{album_id}")) {
+            Some(Cached::Number(year)) => Some(year),
+            _ => None,
+        }
+    }
+
+    /// Looks an album's release year up on the background lane and remembers it, for the
+    /// rows a search sent without one.
+    pub async fn warm_album_year(&self, album_id: i64) -> Option<i32> {
+        if album_id <= 0 {
+            return None;
+        }
+        self.album_year_on(album_id, true)
+            .await
+            .ok()
+            .and_then(|(year, _)| year)
+    }
+
+    async fn fetch_album_year(&self, album_id: i64, background: bool) -> ElementResult<(Option<i32>, bool)> {
         let r = self
-            .get_json(&format!("{}/album/{album_id}", self.base()), false)
+            .get_json(&format!("{}/album/{album_id}", self.base()), background)
             .await;
 
         // This used to be a raw indexer write after a bare catch, so it bypassed the
@@ -1493,6 +1543,128 @@ impl DeezerMetadataService {
     /// or one whose search shows only a demo while the original is among the artist's top
     /// songs. A miss gets one bounded extra step for those: the album named after the song,
     /// then the top songs of the artist the searches named, at most four more requests.
+    /// The first query [`Self::find_track`] tries, alone, on the interactive lane.
+    async fn find_track_first_query(
+        &self,
+        artist: &str,
+        title: &str,
+    ) -> ElementResult<(bool, Option<(Value, Option<Value>)>)> {
+        let Some(variant) = SongIdentity::query_variants(title, artist).into_iter().next() else {
+            return Ok((false, None));
+        };
+        let url = format!(
+            "{}/search?q={}&limit={MATCH_CANDIDATES}",
+            self.base(),
+            escape_data_string(&variant.text())
+        );
+        let r = self.get_json(&url, false).await;
+        if r.transient {
+            return Ok((true, None));
+        }
+        Ok((
+            false,
+            best_match(r.doc.as_ref(), artist, title)?.map(|hit| (hit, r.doc)),
+        ))
+    }
+
+    /// Deezer's own track search for a free-text query, in Deezer's order: each hit's artist
+    /// and title, its track remembered as [`Self::enrich_track`] would remember it (without a
+    /// year) so the rows built from it need no lookup of their own. None when Deezer could not
+    /// answer.
+    pub async fn search_tracks(&self, query: &str, limit: i32) -> Option<Vec<(String, String)>> {
+        if is_blank(query) || limit <= 0 {
+            return Some(Vec::new());
+        }
+        let url = format!(
+            "{}/search?q={}&limit={limit}",
+            self.base(),
+            escape_data_string(query.trim())
+        );
+        let r = self.get_json(&url, false).await;
+        if r.transient {
+            return None;
+        }
+        let read = || -> ElementResult<Vec<(String, String)>> {
+            let mut found = Vec::new();
+            let Some(data) = data_array(r.doc.as_ref())? else {
+                return Ok(found);
+            };
+            // A song is explicit when any hit of it in the same version is: each hit's song and
+            // version key read once, rather than every hit compared with every other.
+            let song_key = |hit: &Value| -> ElementResult<Option<String>> {
+                let title = str_prop(hit, "title")?.unwrap_or("");
+                let artist = match try_get_property(hit, "artist")? {
+                    Some(a) => str_prop(a, "name")?.unwrap_or(""),
+                    None => "",
+                };
+                Ok((!is_blank(title)).then(|| SongIdentity::match_key(artist, title)))
+            };
+            let mut explicit_songs = std::collections::HashSet::new();
+            for hit in enumerate_array(data)? {
+                if catalog_explicit(hit)? == Some(explicit_status::EXPLICIT)
+                    && let Some(key) = song_key(hit)?
+                {
+                    explicit_songs.insert(key);
+                }
+            }
+            for hit in enumerate_array(data)? {
+                let Some(title) = str_prop(hit, "title")?.filter(|t| !is_blank(t)) else {
+                    continue;
+                };
+                let artist = match try_get_property(hit, "artist")? {
+                    Some(a) => str_prop(a, "name")?,
+                    None => None,
+                };
+                let Some(artist) = artist.filter(|a| !is_blank(a)) else {
+                    continue;
+                };
+                let (mut alb_title, mut cover, mut alb_id) = (None, None, 0);
+                if let Some(alb) = try_get_property(hit, "album")? {
+                    alb_title = str_prop(alb, "title")?;
+                    cover = str_prop(alb, "cover_xl")?.or(str_prop(alb, "cover_medium")?);
+                    if let Some(aid @ Value::Number(_)) = try_get_property(alb, "id")? {
+                        alb_id = get_int64(aid)?;
+                    }
+                }
+                let art_img = match try_get_property(hit, "artist")? {
+                    Some(a) => str_prop(a, "picture_xl")?.or(str_prop(a, "picture_medium")?),
+                    None => None,
+                };
+                let duration = match try_get_property(hit, "duration")? {
+                    Some(du @ Value::Number(_)) => Some(get_int32(du)?),
+                    _ => None,
+                };
+                let key = Self::track_key(artist, title);
+                if self.get_cached(&key).is_none() {
+                    let meta = TrackMeta {
+                        album_id: (alb_id > 0).then_some(alb_id),
+                        album_title: alb_title.map(str::to_string),
+                        album_cover_url: cover.map(str::to_string),
+                        year: None,
+                        duration,
+                        artist_name: Some(artist.to_string()),
+                        artist_image_url: art_img.map(str::to_string),
+                        explicit_content: if song_key(hit)?.is_some_and(|key| explicit_songs.contains(&key)) {
+                            Some(explicit_status::EXPLICIT)
+                        } else {
+                            catalog_explicit(hit)?
+                        },
+                    };
+                    self.put(key, Cached::Track(Some(meta)), POSITIVE_TTL);
+                }
+                found.push((artist.to_string(), title.to_string()));
+            }
+            Ok(found)
+        };
+        match read() {
+            Ok(found) => Some(found),
+            Err(e) => {
+                debug!("deezer track search '{query}' could not be read: {e}");
+                None
+            }
+        }
+    }
+
     async fn find_track(
         &self,
         artist: &str,

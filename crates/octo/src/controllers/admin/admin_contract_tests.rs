@@ -179,6 +179,7 @@ async fn settings_list_how_long_search_waits_for_lengths() {
     let (_, app) = factory();
     let document = get(&app, "/api/admin/settings").await.json();
     assert_eq!(document["Subsonic"]["SearchDurationWaitMs"], 1000);
+    assert_eq!(document["Subsonic"]["SearchLastFmWaitMs"], 1000);
 }
 
 #[tokio::test]
@@ -740,11 +741,12 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, the
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
     // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
-    // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute and
-    // Subsonic:SearchDurationWaitMs.
-    assert_eq!(rows.len(), 191);
+    // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
+    // Subsonic:SearchDurationWaitMs and Subsonic:SearchLastFmWaitMs.
+    assert_eq!(rows.len(), 192);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("Subsonic:SearchDurationWaitMs")["IsSecret"], false);
+    assert_eq!(row("Subsonic:SearchLastFmWaitMs")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
     assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
     assert_eq!(row("RadioSources:ListenBrainzRadioMode")["IsSecret"], false);

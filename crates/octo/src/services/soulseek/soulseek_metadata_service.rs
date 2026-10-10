@@ -82,6 +82,9 @@ struct Inner {
     /// The most recent background lookup, so a test can wait for it.
     last_length_warm: Mutex<Option<Shared<BoxFuture<'static, ()>>>>,
 
+    /// The most recent pass finishing a search's rows, so a test can wait for it.
+    last_rows_finish: Mutex<Option<Shared<BoxFuture<'static, ()>>>>,
+
     // Shared across ALL invocations, not created per call. The shim runs 5
     // yt-dlp processes at a time; per-invocation semaphores let the three
     // prewarm triggers (radio, scrobble, external search) stack to 12
@@ -124,6 +127,17 @@ struct Inner {
 struct DurationsAnswer {
     sent: bool,
     lengths: Vec<(usize, i32)>,
+}
+
+/// A search row left for after the answer: one its single track search missed, or the
+/// album whose year it skipped.
+enum RowToFinish {
+    Missed {
+        id: String,
+        artist: String,
+        title: String,
+    },
+    Year(i64),
 }
 
 /// Marks the answer sent when dropped, however the wait for it ends.
@@ -328,6 +342,7 @@ impl SoulseekMetadataService {
                 last_fm,
                 length_lookups: Mutex::new(HashSet::new()),
                 last_length_warm: Mutex::new(None),
+                last_rows_finish: Mutex::new(None),
                 prewarm_gate: Semaphore::new(3),
                 cover_art_prewarm_gate: Semaphore::new(6),
                 background_duration_gate: Semaphore::new(2),
@@ -335,6 +350,14 @@ impl SoulseekMetadataService {
                 release_walks: InFlight::new(),
                 count_walks: InFlight::new(),
             }),
+        }
+    }
+
+    /// The most recent pass finishing a search's rows, for a test to wait on.
+    pub async fn last_rows_finish(&self) {
+        let finish = self.inner.last_rows_finish.lock().clone();
+        if let Some(finish) = finish {
+            finish.await;
         }
     }
 
@@ -611,6 +634,48 @@ impl Inner {
         self.id_registry
             .remember_length(id, hit.duration, LengthSource::Video);
         true
+    }
+
+    /// After a search answered: every other query for the rows its one track search missed,
+    /// and the album years it skipped, one at a time on the catalog's background lane. What
+    /// is found goes on the routing and in the catalog's cache, where the next answer for the
+    /// rows reads it. Rows still without a length then join the length lookup.
+    fn finish_rows(self: &Arc<Self>, rows: Vec<RowToFinish>) {
+        if rows.is_empty() {
+            return;
+        }
+        let this = Arc::clone(self);
+        let task = tokio::spawn(async move {
+            let mut still_missing = Vec::new();
+            for row in rows {
+                match row {
+                    RowToFinish::Missed { id, artist, title } => {
+                        let meta = tokio::time::timeout(
+                            LENGTH_LOOKUP_TIMEOUT,
+                            this.deezer.enrich_track(&artist, &title, true, true),
+                        )
+                        .await
+                        .ok()
+                        .flatten();
+                        if let Some(meta) = &meta {
+                            this.reflect_on_routing(&id, meta);
+                        }
+                        if !meta.and_then(|m| m.duration).is_some_and(|d| d > 0) {
+                            still_missing.push((id, artist, title));
+                        }
+                    }
+                    RowToFinish::Year(album_id) => {
+                        let _ = tokio::time::timeout(
+                            LENGTH_LOOKUP_TIMEOUT,
+                            this.deezer.warm_album_year(album_id),
+                        )
+                        .await;
+                    }
+                }
+            }
+            this.warm_lengths(still_missing);
+        });
+        *self.last_rows_finish.lock() = Some(task.map(|_| ()).boxed().shared());
     }
 
     /// Complete the rows below the first page from what is already known, then fetch the
@@ -1123,6 +1188,53 @@ impl IMusicMetadataService for SoulseekMetadataService {
         inner.warm_lengths(first_missed.chain(cold));
     }
 
+    async fn search_catalog_tracks(&self, query: &str, limit: i32) -> Option<Vec<(String, String)>> {
+        self.inner.deezer.search_tracks(query, limit).await
+    }
+
+    async fn enrich_search_rows(&self, songs: &mut [Song]) {
+        let inner = &self.inner;
+        let mut external: Vec<&mut Song> = songs.iter_mut().filter(|s| !s.is_local).collect();
+        let rest = external.split_off(external.len().min(SEARCH_ENRICH_LIMIT));
+
+        // One track search per row while the search waits; the year and every other query for
+        // a row it missed run after the answer, on the background lane.
+        let finish: Mutex<Vec<RowToFinish>> = Mutex::new(Vec::new());
+        futures::stream::iter(external)
+            .for_each_concurrent(8, |song| {
+                let finish = &finish;
+                async move {
+                    let meta = inner.deezer.enrich_track_quick(&song.artist, &song.title).await;
+                    let (id, artist, title) = key_of(song);
+                    let Some(meta) = meta else {
+                        finish.lock().push(RowToFinish::Missed { id, artist, title });
+                        return;
+                    };
+                    inner.apply_track_meta(song, &meta);
+                    if let Some(y) = meta.year {
+                        song.year = Some(y);
+                    }
+                    inner.reflect_on_routing(&song.id, &meta);
+                    if !meta.duration.is_some_and(|d| d > 0) {
+                        finish.lock().push(RowToFinish::Missed { id, artist, title });
+                    } else if meta.year.is_none()
+                        && let Some(album_id) = meta.album_id
+                    {
+                        finish.lock().push(RowToFinish::Year(album_id));
+                    }
+                }
+            })
+            .await;
+
+        let rest: Vec<&mut Song> = rest
+            .into_iter()
+            .take(BACKGROUND_ENRICH_LIMIT - SEARCH_ENRICH_LIMIT)
+            .collect();
+        let cold = inner.enrich_remaining(rest);
+        inner.warm_lengths(cold);
+        inner.finish_rows(finish.into_inner());
+    }
+
     fn remember_file_length(&self, external_id: &str, seconds: i32) {
         self.inner
             .id_registry
@@ -1280,7 +1392,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
         (!finished).then_some(pass)
     }
 
-    fn refresh_song_lengths(&self, songs: &mut [Song]) {
+    fn refresh_outside_songs(&self, songs: &mut [Song]) {
         for song in songs.iter_mut() {
             if song.is_local || song.id.is_empty() {
                 continue;
@@ -1291,6 +1403,29 @@ impl IMusicMetadataService for SoulseekMetadataService {
             let r = routing.lock();
             if r.kind != RoutingKind::Song {
                 continue;
+            }
+            // What the background found for a row the search sent without it: the album and
+            // the explicit word on the routing, the year from the catalog's cache.
+            if dotnet::is_blank(&song.album)
+                && let Some(album) = r.album.as_deref().filter(|a| !dotnet::is_blank(a))
+            {
+                song.album = album.to_string();
+            }
+            if song.explicit_content_lyrics.is_none() {
+                song.explicit_content_lyrics = r.explicit_content;
+            }
+            if song.year.is_none() {
+                song.year = self
+                    .inner
+                    .deezer
+                    .cached_track(&song.artist, &song.title)
+                    .and_then(|meta| {
+                        meta.year.or_else(|| {
+                            meta.album_id
+                                .and_then(|id| self.inner.deezer.cached_album_year(id))
+                                .flatten()
+                        })
+                    });
             }
             // A pinned video's length is the one the durations pass writes on the routing, shown
             // only inside the sane range as that pass shows it. A row with no length takes the

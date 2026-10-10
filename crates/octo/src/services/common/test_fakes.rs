@@ -259,6 +259,8 @@ pub(crate) struct FakeMetadata {
     /// What every album search answers, and how many were made.
     pub album_hits: Mutex<Vec<Album>>,
     pub album_searches: Mutex<usize>,
+    /// What the catalog's own track search answers; None is "could not answer".
+    pub catalog_tracks: Mutex<Option<Vec<(String, String)>>>,
 }
 
 #[async_trait]
@@ -289,7 +291,11 @@ impl IMusicMetadataService for FakeMetadata {
         }
     }
 
-    fn refresh_song_lengths(&self, songs: &mut [Song]) {
+    async fn search_catalog_tracks(&self, _: &str, _: i32) -> Option<Vec<(String, String)>> {
+        self.catalog_tracks.lock().clone()
+    }
+
+    fn refresh_outside_songs(&self, songs: &mut [Song]) {
         let lengths = self.lengths_now.lock();
         for song in songs {
             if let Some(&seconds) = lengths.get(&song.title) {

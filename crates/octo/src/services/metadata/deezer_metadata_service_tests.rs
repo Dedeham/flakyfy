@@ -470,6 +470,47 @@ async fn the_same_call_asked_twice_at_once_is_one_request() {
     assert_eq!(h.calls("/search"), 1);
 }
 
+/// Rust-only: the free-text track search answers its hits in Deezer's order and remembers each
+/// one's track; a song is explicit when any hit of it in the same version is.
+#[tokio::test]
+async fn the_track_search_remembers_each_hit_and_its_explicit_word() {
+    let json = r#"{"data":[
+        {"title":"Dracula","duration":210,"explicit_lyrics":false,"explicit_content_lyrics":3,
+         "artist":{"name":"Tame Impala"},"album":{"id":5,"title":"Dracula"}},
+        {"title":"Dracula","duration":210,"explicit_lyrics":true,"explicit_content_lyrics":1,
+         "artist":{"name":"Tame Impala"},"album":{"id":6,"title":"Dracula"}},
+        {"title":"Borderline","duration":237,"explicit_lyrics":false,"explicit_content_lyrics":0,
+         "artist":{"name":"Tame Impala"},"album":{"id":7,"title":"The Slow Rush"}}]}"#;
+    let h = Harness::new(vec![("/search", json)]).await;
+
+    let rows = h
+        .service
+        .search_tracks("tame impala", 50)
+        .await
+        .expect("answered");
+
+    assert_eq!(
+        rows,
+        [
+            ("Tame Impala".to_string(), "Dracula".to_string()),
+            ("Tame Impala".to_string(), "Dracula".to_string()),
+            ("Tame Impala".to_string(), "Borderline".to_string()),
+        ]
+    );
+    let dracula = h
+        .service
+        .cached_track("Tame Impala", "Dracula")
+        .expect("remembered");
+    assert_eq!(dracula.explicit_content, Some(explicit_status::EXPLICIT));
+    assert_eq!(dracula.album_id, Some(5));
+    let borderline = h
+        .service
+        .cached_track("Tame Impala", "Borderline")
+        .expect("remembered");
+    assert_eq!(borderline.duration, Some(237));
+    assert_eq!(borderline.explicit_content, Some(explicit_status::NOT_EXPLICIT));
+}
+
 // ---- Plain-query regression (Deezer dropped field-qualified search) ------
 // Octo used to ask for artist:"X" track:"Y". Deezer now reads that as free text, so
 // the literal words "artist" and "track" had to appear in the record and nothing ever

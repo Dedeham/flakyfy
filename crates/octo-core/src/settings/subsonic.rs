@@ -204,6 +204,15 @@ pub struct SubsonicSettings {
     /// search for the same words pick it up. WaitForSearchDurations off means 0.
     pub search_duration_wait_ms: i32,
 
+    /// How long a search waits for Last.fm's track search, in milliseconds (default: 1000,
+    /// range 0-10000). 0 waits for Last.fm however long it takes.
+    /// Environment variable: SEARCH_LASTFM_WAIT_MS
+    ///
+    /// When Last.fm has not answered in time, the outside songs come from Deezer's own track
+    /// search for the words instead, in Deezer's order. Last.fm's answer, when it arrives, is
+    /// kept, and the next search for the same words uses it.
+    pub search_last_fm_wait_ms: i32,
+
     /// Give clients that sync the library to the device a discovery catalog (default: true).
     /// Environment variable: ENABLE_SYNC_CATALOG
     ///
@@ -360,6 +369,7 @@ impl Default for SubsonicSettings {
             enable_search_discovery: true,
             wait_for_search_durations: true,
             search_duration_wait_ms: 1000,
+            search_last_fm_wait_ms: 1000,
             enable_sync_catalog: true,
             sync_catalog_clients: "Symfonium".to_string(),
             sync_catalog_max_songs: 1000,
@@ -394,6 +404,12 @@ impl SubsonicSettings {
             return std::time::Duration::ZERO;
         }
         std::time::Duration::from_millis(self.search_duration_wait_ms.clamp(0, 10_000) as u64)
+    }
+
+    /// How long a search waits for Last.fm's track search before using Deezer's: none (wait
+    /// for Last.fm) at 0, else SearchLastFmWaitMs within 0 to 10 seconds.
+    pub fn effective_search_last_fm_wait(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.search_last_fm_wait_ms.clamp(0, 10_000) as u64)
     }
 
     pub fn effective_stream_size_warm_per_minute(&self) -> usize {
@@ -581,6 +597,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(off.effective_search_duration_wait(), Duration::ZERO);
+    }
+
+    #[test]
+    fn search_waits_a_second_for_last_fm_by_default_within_ten_seconds() {
+        use std::time::Duration;
+        assert_eq!(
+            SubsonicSettings::default().effective_search_last_fm_wait(),
+            Duration::from_millis(1000)
+        );
+        for (configured, expected) in [(0, 0), (-1, 0), (400, 400), (20_000, 10_000)] {
+            let s = SubsonicSettings {
+                search_last_fm_wait_ms: configured,
+                ..Default::default()
+            };
+            assert_eq!(
+                s.effective_search_last_fm_wait(),
+                Duration::from_millis(expected),
+                "{configured}"
+            );
+        }
     }
 
     #[test]

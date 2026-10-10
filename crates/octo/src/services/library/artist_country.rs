@@ -2,10 +2,11 @@
 //!
 //! [`ArtistCountryLookup`] asks MusicBrainz once per artist and keeps every answer in
 //! `artist-countries.json`: `{"mbid:<id>" | "name:<key>": "ES" | ""}`, where "" means MusicBrainz
-//! was asked and names no country. A failure is never kept, so the artist is asked again next
-//! time. An artist with a MusicBrainz id is asked by that id; one without is searched by its
-//! full credit, then by the credit's first artist, and a search only counts when it finds the
-//! same name scoring 90 or more.
+//! was asked and names no country. A failure is never kept, so the artist is asked again, after
+//! a back-off held in memory that doubles from an hour up to a day. An artist with a
+//! MusicBrainz id is asked by that id, and searched by name when the id cannot be asked; one
+//! without is searched by its full credit, then by the credit's first artist, and a search only
+//! counts when it finds exactly one artist of the same name scoring 90 or more.
 //!
 //! [`CountryLibrary`] is the one walk of the whole library the country mixes share, read as the
 //! Navidrome admin at most every six hours, with each artist's MusicBrainz id from one
@@ -16,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
@@ -50,6 +51,17 @@ const PERSONAL_FIELDS: &[&str] = &["starred", "userRating", "playCount", "played
 /// How often a pass writes what it has learned so far.
 const SAVE_EVERY: usize = 25;
 
+/// How long a lookup that failed is left alone after its first failure; each failure in a row
+/// doubles it, up to [`BACK_OFF_MAX`].
+const BACK_OFF_FIRST: Duration = Duration::from_secs(60 * 60);
+const BACK_OFF_MAX: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long a lookup is left alone after `failures` failures in a row.
+fn back_off(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    BACK_OFF_FIRST.saturating_mul(1 << doublings).min(BACK_OFF_MAX)
+}
+
 /// Where an artist is from, as a two-letter country, "" when the answer is that none is known,
 /// None when it could not be asked.
 #[async_trait::async_trait]
@@ -74,6 +86,8 @@ pub struct ArtistCountryLookup {
     source: Arc<dyn CountrySource>,
     path: Option<PathBuf>,
     known: Mutex<BTreeMap<String, String>>,
+    /// Lookups that failed: until when each is left alone, and how many failed in a row.
+    failed: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
 impl ArtistCountryLookup {
@@ -83,6 +97,7 @@ impl ArtistCountryLookup {
             source,
             path: path.filter(|path| !dotnet::is_blank(&path.to_string_lossy())),
             known: Mutex::new(BTreeMap::new()),
+            failed: Mutex::new(HashMap::new()),
         };
         lookup.load();
         lookup
@@ -93,7 +108,18 @@ impl ArtistCountryLookup {
     pub fn known(&self, name: &str, mbid: Option<&str>) -> Option<String> {
         let known = self.known.lock();
         if let Some(mbid) = mbid.filter(|mbid| !dotnet::is_blank(mbid)) {
-            return known.get(&mbid_key(mbid)).cloned();
+            if let Some(country) = known.get(&mbid_key(mbid)) {
+                return Some(country.clone());
+            }
+            // An id that could not be asked may have been found by name; only a country counts,
+            // so the id is still asked when the name search named none.
+            let key = name_key(name)?;
+            let full = known.get(&key).filter(|country| !country.is_empty());
+            let primary = || {
+                let key = name_key(&primary_of(name)?)?;
+                known.get(&key).filter(|country| !country.is_empty())
+            };
+            return full.or_else(primary).cloned();
         }
         let Some(key) = name_key(name) else {
             return Some(String::new());
@@ -109,15 +135,18 @@ impl ArtistCountryLookup {
     }
 
     /// The country of an artist credit, asking MusicBrainz for what is not known yet while
-    /// `asks_left` lasts. By MusicBrainz id when there is one; else the full credit by name,
-    /// then its first artist. Some("") when MusicBrainz names none, None when it could not be
-    /// asked (or the asks ran out).
+    /// `asks_left` lasts. By MusicBrainz id when there is one; else, or when the id cannot be
+    /// asked, the full credit by name, then its first artist. Some("") when MusicBrainz names
+    /// none, None when it could not be asked (or the asks ran out).
     pub async fn country(&self, name: &str, mbid: Option<&str>, asks_left: &mut u32) -> Option<String> {
         if let Some(mbid) = mbid.filter(|mbid| !dotnet::is_blank(mbid)) {
             let key = mbid_key(mbid);
-            return self
+            let by_id = self
                 .answer(key, asks_left, || self.source.by_mbid(mbid.trim()))
                 .await;
+            if by_id.is_some() {
+                return by_id;
+            }
         }
         let full = self.by_name(name, asks_left).await?;
         if !full.is_empty() {
@@ -137,7 +166,8 @@ impl ArtistCountryLookup {
             .await
     }
 
-    /// What is kept under `key`, else one ask, kept when it was answered.
+    /// What is kept under `key`, else one ask, kept when it was answered. A failed ask is left
+    /// alone for its back-off, without spending an ask.
     async fn answer<F, Fut>(&self, key: String, asks_left: &mut u32, ask: F) -> Option<String>
     where
         F: FnOnce() -> Fut,
@@ -146,11 +176,25 @@ impl ArtistCountryLookup {
         if let Some(known) = self.known.lock().get(&key) {
             return Some(known.clone());
         }
+        if self
+            .failed
+            .lock()
+            .get(&key)
+            .is_some_and(|(until, _)| Instant::now() < *until)
+        {
+            return None;
+        }
         if *asks_left == 0 {
             return None;
         }
         *asks_left -= 1;
-        let answer = ask().await?;
+        let Some(answer) = ask().await else {
+            let mut failed = self.failed.lock();
+            let failures = failed.get(&key).map_or(0, |(_, failures)| *failures) + 1;
+            failed.insert(key, (Instant::now() + back_off(failures), failures));
+            return None;
+        };
+        self.failed.lock().remove(&key);
         self.known.lock().insert(key, answer.clone());
         Some(answer)
     }

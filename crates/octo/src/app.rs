@@ -1575,7 +1575,10 @@ impl Imports {
             store: Arc::new(ImportStore::new(file("imports.json"))),
             queue,
             trickle: trickle.clone(),
-            matcher: Arc::new(ImportMatcher::new(navidrome.navidrome_playlist_api.clone())),
+            matcher: Arc::new(
+                ImportMatcher::new(navidrome.navidrome_playlist_api.clone())
+                    .with_library_scope(navidrome.library_scope.clone()),
+            ),
             playlists: ImportPlaylists::new(Arc::new(NavidromePlaylists {
                 api: navidrome.navidrome_playlist_api.clone(),
                 identity: navidrome.navidrome_identity.clone(),

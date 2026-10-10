@@ -12,6 +12,8 @@ use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 use super::ImportTrack;
+use crate::services::family::library_index::row_full_path;
+use crate::services::family::{LibraryScope, ScopeResolver};
 use crate::services::library::NavidromePlaylistApi;
 use crate::services::library::duplicate_scan_worker::is_lossless_file;
 use crate::services::library::library_ownership::LibraryOwnership;
@@ -28,13 +30,16 @@ pub type ReadPage =
 /// a credit written another way ("A, B" against "B feat. A", an accent, a renamed artist).
 ///
 /// The whole library is read once, through Navidrome's own song list, and kept a few minutes, so
-/// a list of thousands is matched in one pass rather than a search per song.
+/// a list of thousands is matched in one pass rather than a search per song. With Family on, a
+/// person's list is matched only against the songs they can see: the shared library and their
+/// own, never another member's.
 pub struct ImportMatcher {
     gate: tokio::sync::Mutex<()>,
     index: Mutex<Option<(Arc<LibraryIndex>, DateTime<Utc>)>>,
     problem: Mutex<Option<String>>,
     read_page: Mutex<ReadPage>,
     clock: Mutex<Clock>,
+    scope: Option<ScopeResolver>,
 }
 
 impl ImportMatcher {
@@ -59,7 +64,14 @@ impl ImportMatcher {
             problem: Mutex::new(None),
             read_page: Mutex::new(read_page),
             clock: Mutex::new(Clock::system()),
+            scope: None,
         }
+    }
+
+    /// Matches each person's lists against their own scope of the library.
+    pub fn with_library_scope(mut self, scope: ScopeResolver) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     pub fn set_read_page(&self, read_page: ReadPage) {
@@ -92,6 +104,34 @@ impl ImportMatcher {
         };
         for track in tracks.iter_mut() {
             track.library_id = index.find(track).map(|row| row.id.clone());
+        }
+        true
+    }
+
+    /// [`Self::match_tracks`] for one person's lists: only songs that person can see count as
+    /// theirs, so a song in another member's own library is still missing for them.
+    pub async fn match_tracks_for(&self, owner: &str, tracks: &mut [ImportTrack]) -> bool {
+        let Some(index) = self.library_index().await else {
+            return false;
+        };
+        let view = self
+            .scope
+            .as_ref()
+            .map(ScopeResolver::view)
+            .filter(|view| view.apart());
+        let Some(view) = view else {
+            for track in tracks.iter_mut() {
+                track.library_id = index.find(track).map(|row| row.id.clone());
+            }
+            return true;
+        };
+        let scope = LibraryScope::Viewer(owner.to_string());
+        let visible = |row: &LibrarySongRow| {
+            let full = row_full_path(row.library_path.as_deref(), &row.path);
+            view.allows(&scope, Some(&row.id), Some(&full))
+        };
+        for track in tracks.iter_mut() {
+            track.library_id = index.find_where(track, &visible).map(|row| row.id.clone());
         }
         true
     }
@@ -163,11 +203,22 @@ impl LibraryIndex {
 
     /// The library's best copy of this song, or None.
     pub fn find(&self, track: &ImportTrack) -> Option<&LibrarySongRow> {
+        self.find_where(track, &|_| true)
+    }
+
+    /// The best copy among the songs `visible` keeps, or None.
+    pub fn find_where(
+        &self,
+        track: &ImportTrack,
+        visible: &dyn Fn(&LibrarySongRow) -> bool,
+    ) -> Option<&LibrarySongRow> {
         if let Some(same) = self
             .by_key
             .get(&SongIdentity::match_key(&track.artist, &track.title))
             && let Some(exact) = best(
-                same.iter().filter(|row| length_fits(track.seconds, row.duration)),
+                same.iter()
+                    .filter(|row| visible(row))
+                    .filter(|row| length_fits(track.seconds, row.duration)),
                 track,
             )
         {
@@ -186,7 +237,7 @@ impl LibraryIndex {
             ..Default::default()
         };
         best(
-            titled.iter().filter(|row| {
+            titled.iter().filter(|row| visible(row)).filter(|row| {
                 let theirs = SongRef::new(row.title.clone(), row.artist.clone())
                     .with_seconds(row.duration.map(f64::from));
                 SongIdentity::same(&wanted, &theirs, Some(&lenient)).is_same()

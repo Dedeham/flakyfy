@@ -1127,7 +1127,7 @@ impl ImportService {
     pub async fn match_and_follow(&self, user: &str) {
         let lists = self.store.lists_of(user);
         let mut tracks: Vec<ImportTrack> = lists.into_iter().flat_map(|list| list.tracks).collect();
-        if !self.matcher.match_tracks(&mut tracks).await {
+        if !self.matcher.match_tracks_for(user, &mut tracks).await {
             return;
         }
         let mut found: HashMap<String, Option<String>> = HashMap::new();

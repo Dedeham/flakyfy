@@ -161,3 +161,104 @@ async fn a_library_that_cannot_be_read_keeps_what_the_last_match_found() {
         Some(ImportMatcher::CANNOT_READ_LIBRARY)
     );
 }
+
+fn matcher_over(rows: Vec<LibrarySongRow>) -> ImportMatcher {
+    let rows = Arc::new(rows);
+    ImportMatcher::with_pages(Arc::new(move |start, count| {
+        let page: Vec<LibrarySongRow> = rows
+            .iter()
+            .skip(start as usize)
+            .take(count as usize)
+            .cloned()
+            .collect();
+        let n = page.len();
+        Box::pin(async move { Some((page, n)) })
+    }))
+}
+
+fn at(mut song: LibrarySongRow, path: &str) -> LibrarySongRow {
+    song.path = path.into();
+    song
+}
+
+fn family_library() -> Vec<LibrarySongRow> {
+    vec![
+        at(
+            r("shared", "Adele", "Hello", 295),
+            "/music/Adele/25/01 Hello.flac",
+        ),
+        at(
+            r("sam-own", "Lorde", "Royals", 190),
+            "/members/sam/Lorde/Royals.flac",
+        ),
+        at(
+            r("alex-own", "Sia", "Chandelier", 216),
+            "/members/alex/Sia/Chandelier.flac",
+        ),
+    ]
+}
+
+fn family_tracks() -> Vec<ImportTrack> {
+    vec![
+        track("Adele", "Hello", Some(295), None),
+        track("Lorde", "Royals", Some(190), None),
+        track("Sia", "Chandelier", Some(216), None),
+    ]
+}
+
+#[tokio::test]
+async fn with_family_on_a_member_has_the_shared_library_and_their_own_songs_only() {
+    use crate::services::family::library_index::scope_for_tests;
+
+    let matcher =
+        matcher_over(family_library()).with_library_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+    let mut tracks = family_tracks();
+    assert!(matcher.match_tracks_for("alex", &mut tracks).await);
+    let ids: Vec<Option<&str>> = tracks.iter().map(|t| t.library_id.as_deref()).collect();
+    // Sam's own copy of Royals is not Alex's, so Alex's list still fetches it.
+    assert_eq!(ids, vec![Some("shared"), None, Some("alex-own")]);
+
+    let mut tracks = family_tracks();
+    assert!(matcher.match_tracks_for("Sam", &mut tracks).await);
+    let ids: Vec<Option<&str>> = tracks.iter().map(|t| t.library_id.as_deref()).collect();
+    assert_eq!(ids, vec![Some("shared"), Some("sam-own"), None]);
+}
+
+#[tokio::test]
+async fn with_family_off_every_song_counts_as_before() {
+    use crate::services::family::library_index::scope_for_tests;
+
+    let matcher =
+        matcher_over(family_library()).with_library_scope(scope_for_tests(false, &[("alex", 3), ("sam", 4)]));
+    let mut scoped = family_tracks();
+    assert!(matcher.match_tracks_for("alex", &mut scoped).await);
+    let mut whole = family_tracks();
+    assert!(matcher_over(family_library()).match_tracks(&mut whole).await);
+    let ids = |tracks: &[ImportTrack]| -> Vec<Option<String>> {
+        tracks.iter().map(|t| t.library_id.clone()).collect()
+    };
+    assert_eq!(ids(&scoped), ids(&whole));
+    assert_eq!(
+        ids(&scoped),
+        vec![
+            Some("shared".to_string()),
+            Some("sam-own".to_string()),
+            Some("alex-own".to_string())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_hidden_copy_never_stands_in_for_a_visible_one() {
+    use crate::services::family::library_index::scope_for_tests;
+
+    // Sam's own copy is the closer length, but Alex can only play the shared one.
+    let library = vec![
+        at(r("sam-own", "Adele", "Hello", 295), "/members/sam/Hello.flac"),
+        at(r("shared", "Adele", "Hello", 299), "/music/Adele/Hello.flac"),
+    ];
+    let matcher = matcher_over(library).with_library_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+    let mut tracks = vec![track("Adele", "Hello", Some(295), None)];
+    assert!(matcher.match_tracks_for("alex", &mut tracks).await);
+    assert_eq!(tracks[0].library_id.as_deref(), Some("shared"));
+}

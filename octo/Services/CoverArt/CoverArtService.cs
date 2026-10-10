@@ -119,7 +119,8 @@ public class CoverArtService
     {
         try
         {
-            using var image = Image.Load<Rgba32>(originalArt);
+            if (!CoverImage.WithinLimits(originalArt)) return originalArt;
+            using var image = Image.Load<Rgba32>(CoverImage.Decoding(), originalArt);
 
             var imageSize = Math.Min(image.Width, image.Height);
             // Logo footprint as a fraction of the cover. 28% reads clearly even
@@ -378,7 +379,8 @@ public class CoverArtService
     {
         try
         {
-            using var image = Image.Load<Rgba32>(new DecoderOptions { TargetSize = new Size(64, 64) }, picture);
+            if (!CoverImage.WithinLimits(picture)) return null;
+            using var image = Image.Load<Rgba32>(CoverImage.Decoding(new Size(64, 64)), picture);
             if (image.Width > 64 || image.Height > 64) image.Mutate(ctx => ctx.Resize(64, 64));
             var pixels = new int[image.Width * image.Height];
             image.ProcessPixelRows(access =>
@@ -427,7 +429,8 @@ public class CoverArtService
     {
         try
         {
-            using var image = Image.Load<Rgba32>(path);
+            if (!CoverImage.WithinLimits(path)) return null;
+            using var image = Image.Load<Rgba32>(CoverImage.Decoding(), path);
             var side = Math.Min(image.Width, image.Height);
             image.Mutate(ctx => ctx
                 .Crop(new Rectangle((image.Width - side) / 2, (image.Height - side) / 2, side, side))

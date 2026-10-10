@@ -1,5 +1,9 @@
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Gif;
 using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.Processing;
 
 namespace Octo.Services.CoverArt;
@@ -11,11 +15,68 @@ internal static class CoverImage
     private const double SquareTolerance = 0.03;
     private const int MinSide = 150;
 
+    /// <summary>Largest cover file read for decoding. Real covers are well under 10 MB.</summary>
+    internal const int MaxBytes = 30 * 1024 * 1024;
+    /// <summary>Longest side and total pixels a cover may have before it is decoded.</summary>
+    internal const int MaxSide = 10_000;
+    internal const long MaxPixels = 50_000_000;
+
+    /// <summary>
+    /// The only formats a cover from outside is decoded as: JPEG, PNG, WebP and GIF. The default
+    /// configuration also reads TIFF, BMP, TGA, PBM and QOI, which no cover needs and which
+    /// would put their parsers in reach of anything the network or a file tag hands us.
+    /// </summary>
+    private static readonly Configuration CoverFormats = new(
+        new JpegConfigurationModule(), new PngConfigurationModule(),
+        new WebpConfigurationModule(), new GifConfigurationModule());
+
+    /// <summary>Decoder options for covers from outside; use for every load of one.</summary>
+    internal static DecoderOptions Decoding(Size? targetSize = null) =>
+        new() { Configuration = CoverFormats, TargetSize = targetSize };
+
+    /// <summary>
+    /// True when the picture is small enough to decode: its size in bytes and the dimensions in
+    /// its header are within the limits. Covers come from the network and from file tags, so
+    /// this is checked before anything decodes the pixels. False when the header cannot be read.
+    /// </summary>
+    public static bool WithinLimits(byte[]? bytes)
+    {
+        if (bytes is not { Length: > 0 and <= MaxBytes }) return false;
+        try
+        {
+            return WithinLimits(Image.Identify(Decoding(), bytes));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The same check for a picture on disk, without reading it into memory first.</summary>
+    public static bool WithinLimits(string path)
+    {
+        try
+        {
+            var length = new FileInfo(path).Length;
+            return length is > 0 and <= MaxBytes && WithinLimits(Image.Identify(Decoding(), path));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool WithinLimits(ImageInfo info) =>
+        info.Width > 0 && info.Height > 0 && info.Width <= MaxSide && info.Height <= MaxSide
+        && (long)info.Width * info.Height <= MaxPixels;
+
     public static (int Width, int Height)? Measure(byte[] bytes)
     {
         try
         {
-            var info = Image.Identify(bytes);
+            if (bytes is not { Length: > 0 and <= MaxBytes }) return null;
+            var info = Image.Identify(Decoding(), bytes);
+            if (!WithinLimits(info)) return null;
             return (info.Width, info.Height);
         }
         catch
@@ -46,7 +107,8 @@ internal static class CoverImage
     {
         try
         {
-            using var image = Image.Load(bytes);
+            if (!WithinLimits(bytes)) return null;
+            using var image = Image.Load(Decoding(), bytes);
             var side = Math.Min(image.Width, image.Height);
             var x = (image.Width - side) / 2;
             var y = (image.Height - side) / 2;
@@ -66,8 +128,8 @@ internal static class CoverImage
     {
         try
         {
-            if (Image.DetectFormat(bytes).Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase)) return bytes;
-            using var image = Image.Load(bytes);
+            if (Image.DetectFormat(Decoding(), bytes).Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase) || !WithinLimits(bytes)) return bytes;
+            using var image = Image.Load(Decoding(), bytes);
             using var output = new MemoryStream();
             image.Save(output, new JpegEncoder { Quality = 90 });
             return output.ToArray();
@@ -89,7 +151,7 @@ internal static class CoverImage
         try
         {
             if (Measure(bytes) is not { } size || Math.Max(size.Width, size.Height) <= maxSide) return bytes;
-            using var image = Image.Load(bytes);
+            using var image = Image.Load(Decoding(), bytes);
             image.Mutate(ctx => ctx.Resize(new ResizeOptions
             {
                 Size = new Size(maxSide, maxSide),
@@ -115,10 +177,10 @@ internal static class CoverImage
     /// </summary>
     public static ulong? LooksHash(byte[]? bytes)
     {
-        if (bytes is not { Length: > 0 }) return null;
+        if (!WithinLimits(bytes)) return null;
         try
         {
-            using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(bytes);
+            using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(Decoding(), bytes);
             image.Mutate(ctx => ctx.Resize(9, 8));
             ulong hash = 0;
             var bit = 0;
@@ -147,10 +209,10 @@ internal static class CoverImage
     /// </summary>
     public static double? Detail(byte[] bytes, int side)
     {
-        if (side < 16) return null;
+        if (side < 16 || !WithinLimits(bytes)) return null;
         try
         {
-            using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(bytes);
+            using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.L8>(Decoding(), bytes);
             image.Mutate(ctx => ctx.Resize(side, side, KnownResamplers.Bicubic));
             using var round = image.Clone(ctx => ctx
                 .Resize(side / 2, side / 2, KnownResamplers.Bicubic)
@@ -216,7 +278,7 @@ internal static class CoverImage
     {
         try
         {
-            return Image.DetectFormat(bytes).DefaultMimeType;
+            return Image.DetectFormat(Decoding(), bytes).DefaultMimeType;
         }
         catch
         {

@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use super::lyrics_models::LyricsQuery;
 use crate::common::dotnet::{format_optional_decimals, is_null_or_white_space};
-use crate::common::{SongIdentity, SongMatchOptions, SongQuery};
+use crate::common::{Lookup, SongIdentity, SongMatchOptions, SongQuery};
 
 /// Lengths are compared by [`LyricsIdentity::length_fits`], where a source knows one. A clean
 /// edit counts as the song here: its lyrics are the same words at the same times, with a few
@@ -13,6 +13,13 @@ static TITLES: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
     length_tolerance_seconds: None,
     also_neutral: vec!["clean".to_string()],
     ..SongMatchOptions::default()
+});
+
+/// [`TITLES`] for a whole song, where both artists are known: the same title written in another
+/// script and the same artists credited another way count too ([`Lookup::Owned`]).
+static SONGS: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
+    lookup: Lookup::Owned,
+    ..TITLES.clone()
 });
 
 /// Whether a lyrics entry is the song asked for. Strict on purpose: a lyrics search is loose and
@@ -26,6 +33,9 @@ static TITLES: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
 ///    the original, nor the original for them. A remaster is the same recording.
 /// 3. The same artist: a primary artist of one side is credited on the other, and the two do
 ///    not name different guests. KuGou's "、" and its "Ye (侃爷)" read as they should.
+///
+/// For a whole song the title may also be written in another script ("Камин" for "Kamin"), and
+/// the credit another way ("Fonsi, Luis" for "Luis Fonsi"); never a title a typo away.
 ///
 /// The length is checked separately ([`LyricsIdentity::length_fits`]), because not every source
 /// knows it.
@@ -55,7 +65,7 @@ impl LyricsIdentity {
             want_artist,
             got_title,
             credit.as_deref().unwrap_or(""),
-            Some(&TITLES),
+            Some(&SONGS),
         )
         .is_same()
     }
@@ -189,6 +199,31 @@ mod tests {
                 "{title} / {artist} against {got_title} / {got_artist}"
             );
         }
+    }
+
+    #[test]
+    fn identity_reads_another_script_and_a_credit_written_another_way() {
+        let none: Option<&[&str]> = None;
+        for (title, artist, got_title, got_artist, same) in [
+            ("Kamin", "EMIN", "Камин", "EMIN", true),
+            ("Despacito", "Luis Fonsi", "Despacito", "Fonsi, Luis", true),
+            ("Kamin", "EMIN", "Камин (Live)", "EMIN", false),
+            ("Despacito", "Luis Fonsi", "Despacito", "Luis Miguel", false),
+            ("Bohemian Rhapsody", "Queen", "Bohemian Rapsody", "Queen", false),
+            ("Hello", "Adele", "Hello", "Adele Karaoke", false),
+        ] {
+            assert_eq!(
+                LyricsIdentity::same_song(title, artist, Some(got_title), Some(got_artist), none),
+                same,
+                "{title} / {artist} against {got_title} / {got_artist}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_title_alone_reads_no_other_script() {
+        assert!(!LyricsIdentity::same_title("Kamin", Some("Камин")));
+        assert!(LyricsIdentity::same_title("Kamin", Some("kamin")));
     }
 
     /// LyricsWordTimingTests.Identity_AnotherCreditedArtistCounts.

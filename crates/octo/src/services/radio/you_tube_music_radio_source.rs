@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use octo_core::common::SongIdentity;
-use octo_core::common::song_identity::{SongMatchOptions, SongRef};
+use octo_core::common::song_identity::SongRef;
 use octo_core::last_fm::SimilarTrack;
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use octo_core::radio::radio_provider::YOU_TUBE_MUSIC;
@@ -93,25 +93,27 @@ fn tracks<'a>(rows: impl Iterator<Item = &'a YtmRow>, count: i32) -> Vec<Similar
     .collect()
 }
 
-/// The same recording first; else the same song in another version, whose radio is still close
-/// (the original for a nightcore seed, or the other way round).
+/// The same recording first, the best of those by [`SongIdentity::pick_best`] (a title in another
+/// script, a credit written another way and a typo at the same length count; two different
+/// songs too close to tell apart pick neither); else the same song in another version, whose
+/// radio is still close (the original for a nightcore seed, or the other way round).
 pub fn pick(seed: &RadioSeed, rows: &[YtmRow]) -> Option<SeedVideo> {
-    let strict = SongMatchOptions {
-        length_tolerance_seconds: Some(5),
-        ..Default::default()
-    };
     let seed_ref =
         SongRef::new(seed.title.clone(), seed.artist.clone()).with_seconds(seed.duration.map(f64::from));
-    for row in rows {
-        let row_ref = SongRef::new(row.title.clone(), row.artists.join(", "))
-            .with_seconds(row.duration_seconds.map(f64::from));
-        if SongIdentity::same(&seed_ref, &row_ref, Some(&strict)).is_same() {
-            return Some(SeedVideo {
-                video_id: row.video_id.clone(),
-                video_type: row.video_type.clone(),
-                exact: true,
-            });
-        }
+    let row_refs: Vec<SongRef> = rows
+        .iter()
+        .map(|row| {
+            SongRef::new(row.title.clone(), row.artists.join(", "))
+                .with_seconds(row.duration_seconds.map(f64::from))
+        })
+        .collect();
+    if let Some(best) = SongIdentity::pick_best(&seed_ref, &row_refs, &SongIdentity::pick(5)) {
+        let row = &rows[best];
+        return Some(SeedVideo {
+            video_id: row.video_id.clone(),
+            video_type: row.video_type.clone(),
+            exact: true,
+        });
     }
     let core = SongIdentity::parse_title(&seed.title, Some(&seed.artist)).key;
     let artist = SongIdentity::key(&SongIdentity::primary_artist(&seed.artist));
@@ -450,5 +452,50 @@ mod tests {
         assert_eq!(ids, ["a", "b"]);
         assert_eq!(rows[1].artists, ["X"]);
         assert_eq!(rows[1].duration_seconds, None);
+    }
+
+    fn ytm_row(id: &str, title: &str, artist: &str, seconds: i32) -> YtmRow {
+        YtmRow {
+            video_id: id.into(),
+            title: title.into(),
+            artists: vec![artist.into()],
+            album: None,
+            duration_seconds: Some(seconds),
+            video_type: Some(ATV.into()),
+        }
+    }
+
+    #[test]
+    fn pick_takes_the_closest_copy_of_the_recording_not_the_first() {
+        let rows = [
+            ytm_row("far", "Teardrop", "Massive Attack", 334),
+            ytm_row("near", "Teardrop", "Massive Attack", 330),
+        ];
+        let found = pick(&seed("Massive Attack", "Teardrop", Some(330)), &rows).expect("a pick");
+        assert_eq!((found.video_id.as_str(), found.exact), ("near", true));
+    }
+
+    #[test]
+    fn pick_reads_another_script_and_a_typo_at_the_same_length() {
+        let cyrillic = [ytm_row("k", "Камин", "EMIN", 200)];
+        let found = pick(&seed("EMIN", "Kamin", Some(201)), &cyrillic).expect("a pick");
+        assert_eq!((found.video_id.as_str(), found.exact), ("k", true));
+
+        let typo = [ytm_row("b", "Bohemian Rapsody", "Queen", 355)];
+        let found = pick(&seed("Queen", "Bohemian Rhapsody", Some(354)), &typo).expect("a pick");
+        assert_eq!((found.video_id.as_str(), found.exact), ("b", true));
+
+        // A typo whose length is far off is not the recording, nor the song in another version.
+        let far = [ytm_row("b", "Bohemian Rapsody", "Queen", 380)];
+        assert_eq!(pick(&seed("Queen", "Bohemian Rhapsody", Some(354)), &far), None);
+    }
+
+    #[test]
+    fn pick_takes_neither_of_two_different_songs_too_close_to_tell_apart() {
+        let rows = [
+            ytm_row("y", "Bohemian Rhapsody", "Queen", 354),
+            ytm_row("z", "Bohemian Rhapsodz", "Queen", 354),
+        ];
+        assert_eq!(pick(&seed("Queen", "Bohemian Rhapsodx", Some(354)), &rows), None);
     }
 }

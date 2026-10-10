@@ -66,7 +66,7 @@ impl DeezerMetadataService {
             if r.transient {
                 return CatalogTrackAnswer::busy();
             }
-            let hits = all_matches(r.doc.as_ref(), artist, title).and_then(|hits| {
+            let hits = all_matches(r.doc.as_ref(), artist, title, None).and_then(|hits| {
                 hits.iter()
                     .map(facts)
                     .collect::<ElementResult<Vec<_>>>()

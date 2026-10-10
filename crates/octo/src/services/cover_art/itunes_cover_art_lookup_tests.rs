@@ -195,3 +195,46 @@ async fn priming_by_barcode_matches_albums_back_by_name() {
     assert_eq!(*seen.lock(), vec![2]);
     assert_eq!(lookup.cached_rows().len(), 4);
 }
+
+/// A search ranks its hits by how well the artist is named: the same name in another script
+/// beats a longer name that only starts with the same letters.
+#[tokio::test]
+async fn a_search_takes_the_hit_that_names_the_artist() {
+    set_apple_interval(Duration::ZERO);
+    let server = MockServer::start().await;
+    let results = format!(
+        r#"{{"results":[
+            {{"artistName":"Kinoman","artworkUrl100":"{0}/image/kinoman/100x100bb.jpg"}},
+            {{"artistName":"Кино","artworkUrl100":"{0}/image/kino/100x100bb.jpg"}}
+        ]}}"#,
+        server.uri()
+    );
+    Mock::given(path("/search"))
+        .and(query_param("entity", "song"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(results))
+        .mount(&server)
+        .await;
+    Mock::given(path("/image/kino/1200x1200bb.jpg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"kino".to_vec()))
+        .mount(&server)
+        .await;
+    Mock::given(path("/image/kinoman/1200x1200bb.jpg"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"kinoman".to_vec()))
+        .mount(&server)
+        .await;
+    let lookup = ITunesCoverArtLookup::with_base_url(None, &server.uri(), Clock::fixed(at(10, 0, 0)));
+
+    let cover = lookup
+        .try_fetch(
+            &SoulseekRouting {
+                kind: RoutingKind::Song,
+                artist: Some("Kino".into()),
+                title: Some("Gruppa krovi".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .await;
+
+    assert_eq!(cover.as_deref(), Some(&b"kino"[..]));
+}

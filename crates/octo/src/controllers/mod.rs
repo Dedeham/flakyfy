@@ -3,4 +3,5 @@
 
 pub mod admin;
 pub mod lidarr_webhook;
+pub mod family;
 pub mod subsonic;

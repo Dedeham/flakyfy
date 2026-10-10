@@ -52,6 +52,11 @@
             <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>
             <span>Library folder</span>
           </button>
+          <!-- Shown only when this server reports Octo Family in /api/admin/status. -->
+          <button class="sidebar-nav-item" data-tab="family" id="family-nav" hidden>
+            <svg class="icon" aria-hidden="true" viewBox="0 0 256 256"><path d="M117.25,157.92a60,60,0,1,0-66.5,0A95.83,95.83,0,0,0,3.53,195.63a8,8,0,1,0,13.4,8.74,80,80,0,0,1,134.14,0,8,8,0,0,0,13.4-8.74A95.83,95.83,0,0,0,117.25,157.92ZM40,108a44,44,0,1,1,44,44A44.05,44.05,0,0,1,40,108Zm210.14,98.7a8,8,0,0,1-11.07-2.33A79.83,79.83,0,0,0,172,168a8,8,0,0,1,0-16,44,44,0,1,0-16.34-84.87,8,8,0,1,1-5.94-14.85,60,60,0,0,1,55.53,105.64,95.83,95.83,0,0,1,47.22,37.71A8,8,0,0,1,250.14,206.7Z"/></svg>
+            <span>Family</span>
+          </button>
         </div>
 
         <div class="sidebar-nav-section">
@@ -61,8 +66,8 @@
             <span>Streams &amp; hearts</span>
           </button>
           <button class="sidebar-nav-item" data-tab="imports">
-            <svg class="icon" aria-hidden="true"><use href="#i-spotify-logo"/></svg>
-            <span>Spotify import</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-playlist"/></svg>
+            <span>Import</span>
           </button>
           <button class="sidebar-nav-item" data-tab="soulseek">
             <svg class="icon brand" aria-hidden="true"><use href="#b-slskd"/></svg>
@@ -225,7 +230,7 @@
             Sign in with your usual Navidrome username and password. An app pointed straight at
             Navidrome skips Octo, so it gets no discovery and no downloads on heart.
           </p>
-          <form data-section="server" class="callout-form">
+          <form data-section="server" class="callout-form" id="public-address" data-spot="public-address">
             <label class="callout-address-label" for="f-public-url">
               Reachable from outside your network? Save that address here to keep it to hand.
             </label>
@@ -2096,12 +2101,48 @@
       <section data-pane="imports">
         <header class="page-header">
           <div>
-            <h1>Spotify import</h1>
-            <p>See which of your Spotify songs are missing here, keep your playlists as Navidrome playlists, and let Octo fetch the rest a few songs an hour.</p>
+            <h1>Import</h1>
+            <p>Bring your playlists and liked songs from any music service, see which songs are missing here, keep your playlists as Navidrome playlists, and let Octo fetch the rest a few songs an hour.</p>
           </div>
         </header>
 
         <div class="notice notice-warn" id="imp-library-problem" hidden></div>
+
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title">Get my music</h3>
+            <p class="set-desc">TuneMyMusic exports your music from any service to a file for free. Pick your service for the steps, then bring the file back here.</p>
+          </div>
+          <div class="set-card imp-card">
+            <div class="imp-svc-grid" id="imp-services" role="group" aria-label="Your music service"></div>
+            <div class="imp-guide" id="imp-guide-steps" hidden>
+              <ol class="lfm-steps" id="imp-guide-list"></ol>
+              <a class="btn btn-primary" id="imp-guide-open" href="https://www.tunemymusic.com/" target="_blank" rel="noopener noreferrer"><svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"/></svg><span>Open TuneMyMusic</span></a>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Upload the file</div>
+                <div class="set-info-d">The CSV or TXT from TuneMyMusic, a CSV from <a href="https://exportify.app" target="_blank" rel="noopener">Exportify</a> or Soundiiz, or the zip from Spotify's own <a href="https://www.spotify.com/account/privacy/" target="_blank" rel="noopener">Download your data</a>, which holds every playlist whole.</div>
+                <div class="set-info-more">Any CSV with a title column and an artist column works, and so does a plain list with one Artist - Title a line. Importing a newer file updates the list of the same name.</div>
+              </div>
+              <div class="lfm-connect-row">
+                <input class="set-input" id="imp-file" type="file" accept=".csv,.txt,.json,.zip,text/csv,text/plain,application/json,application/zip" aria-label="File to import" />
+                <button class="btn" id="imp-file-add" type="button">Import</button>
+              </div>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Paste a list</div>
+                <div class="set-info-d">One song a line, written Artist - Title. Octo reads Title - Artist too when that names more of your library.</div>
+              </div>
+              <input class="set-input" id="imp-paste-name" type="text" autocomplete="off" placeholder="Pasted list" aria-label="Name for the pasted list" />
+              <textarea class="set-input imp-paste-box" id="imp-paste-text" rows="6" spellcheck="false" placeholder="Massive Attack - Teardrop" aria-label="Songs, one a line"></textarea>
+              <div class="imp-actions">
+                <button class="btn" id="imp-paste-add" type="button">Import the list</button>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="set-section">
           <div class="set-head">
@@ -2181,8 +2222,8 @@
 
         <div class="set-section">
           <div class="set-head">
-            <h3 class="set-title">Without signing in</h3>
-            <p class="set-desc">A public playlist or album by its link, or a file another tool exported.</p>
+            <h3 class="set-title">From a Spotify link</h3>
+            <p class="set-desc">A public playlist or album by its link, with no sign-in.</p>
           </div>
           <div class="set-card">
             <div class="set-row stack">
@@ -2195,24 +2236,13 @@
                 <button class="btn" id="imp-link-add" type="button">Add</button>
               </div>
             </div>
-            <div class="set-row stack">
-              <div class="set-info">
-                <div class="set-info-t">A file</div>
-                <div class="set-info-d">A CSV from <a href="https://exportify.app" target="_blank" rel="noopener">Exportify</a>, TuneMyMusic or Soundiiz, or the zip from Spotify's own <a href="https://www.spotify.com/account/privacy/" target="_blank" rel="noopener">Download your data</a>, which holds every playlist whole.</div>
-                <div class="set-info-more">Any CSV with a title column and an artist column works. Importing a newer file updates the list of the same name.</div>
-              </div>
-              <div class="lfm-connect-row">
-                <input class="set-input" id="imp-file" type="file" accept=".csv,.json,.zip,text/csv,application/json,application/zip" aria-label="File to import" />
-                <button class="btn" id="imp-file-add" type="button">Import</button>
-              </div>
-            </div>
           </div>
         </div>
 
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Your lists</h3>
-            <p class="set-desc"><strong>Keep as playlist</strong> makes a Navidrome playlist of the songs you have, in Spotify's order, and adds the rest as they arrive. <strong>Get missing songs</strong> hands the rest to the trickle below, and every song added to the list later too.</p>
+            <p class="set-desc"><strong>Keep as playlist</strong> makes a Navidrome playlist of the songs you have, in the list's order, and adds the rest as they arrive. <strong>Get missing songs</strong> hands the rest to the trickle below, and every song added to the list later too.</p>
           </div>
           <div class="set-card imp-card">
             <p class="set-info-d imp-reading" id="imp-reading" hidden></p>
@@ -2772,6 +2802,37 @@
         <div class="info-card">
           <h3 class="info-card-title">When a restart is needed</h3>
           <p>Settings marked <span class="restart-badge restart-badge-inline">Restart</span> take effect after Octo restarts; everything else applies within about a second of saving. Anything waiting on a restart is listed at the top of every page, and <strong>Restart</strong> in the sidebar applies it.</p>
+        </div>
+      </section>
+
+      <!-- Family: shown only when this server reports Octo Family in /api/admin/status. -->
+      <section data-pane="family" id="family-pane" hidden>
+        <header class="page-header">
+          <div>
+            <h1>Family</h1>
+            <p>Accounts for the people you share your music with: each gets their own sign-in, library and devices, and you choose what they can do.</p>
+          </div>
+        </header>
+        <div class="info-card" id="family-card" aria-live="polite">
+          <p>Loading…</p>
+        </div>
+        <div class="info-card" id="family-notices" hidden>
+          <h3 class="info-card-title">Family notifications</h3>
+          <p>Sent through the channels on the Notifications page. Members get their own pushes on topics they choose.</p>
+          <div class="set-row">
+            <div class="set-info">
+              <div class="set-info-t">New requests and failed requests</div>
+              <div class="set-info-d">When someone asks for a copy that waits for you, or a request could not be met.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="f-family-notify-requests" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-info">
+              <div class="set-info-t">New devices</div>
+              <div class="set-info-d">When a member signs in a new device, or one of your own apps is seen for the first time.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="f-family-notify-devices" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+          </div>
         </div>
       </section>
     </main>

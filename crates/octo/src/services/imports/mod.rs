@@ -15,8 +15,10 @@ pub mod spotify_account_store;
 pub mod spotify_auth;
 pub mod spotify_link_reader;
 pub mod spotify_web_api;
+pub mod text_list;
 pub mod trickle_queue;
 pub mod trickle_worker;
+pub mod tunemymusic;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -25,7 +27,7 @@ pub use import_file_reader::{FileList, ImportFileReader};
 pub use import_matcher::{ImportMatcher, LibraryIndex};
 pub use import_models::{ImportList, ImportTrack, TrickleJob};
 pub use import_playlists::{ImportPlaylists, NavidromePlaylists, PlaylistNavidrome};
-pub use import_service::{ImportParts, ImportService};
+pub use import_service::{ImportFamily, ImportParts, ImportService};
 pub use import_store::ImportStore;
 pub use import_views::ImportActionResult;
 pub use spotify_account_store::{SpotifyAccount, SpotifyAccountStore};
@@ -34,6 +36,7 @@ pub use spotify_link_reader::SpotifyLinkReader;
 pub use spotify_web_api::{ImportKeys, SpotifyException, SpotifyWebApi};
 pub use trickle_queue::TrickleQueue;
 pub use trickle_worker::{TrickleServices, TrickleWorker};
+pub use tunemymusic::ImportServices;
 
 use std::path::Path;
 

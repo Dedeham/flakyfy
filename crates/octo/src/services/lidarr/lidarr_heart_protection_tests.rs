@@ -181,6 +181,7 @@ fn owned(id: &str, title: &str, suffix: &str, bit_rate: i32) -> Candidate {
         duration: Some(330),
         suffix: suffix.into(),
         bit_rate,
+        isrcs: Vec::new(),
     }
 }
 

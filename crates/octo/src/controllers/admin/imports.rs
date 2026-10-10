@@ -1,5 +1,5 @@
-//! Port of `Controllers/ImportsController.cs`: the dashboard's Spotify import page. Connect a
-//! Spotify account, add a public link or an exported file, see what the library has and what it
+//! Port of `Controllers/ImportsController.cs`: the dashboard's import page. Connect a
+//! Spotify account, add a public link, an exported file or a pasted list, see what the library has and what it
 //! is missing, keep a list as a playlist, and the trickle that fetches the rest. Lists belong to
 //! the Navidrome user signed in on the page, the same person an Octo app signed in as sees them,
 //! so it needs the dashboard's sign-in.
@@ -39,6 +39,8 @@ pub fn routes() -> RouteSet {
             // [RequestSizeLimit(ImportFileReader.MaxBytes)]
             post(file).layer(DefaultBodyLimit::max(ImportFileReader::MAX_BYTES as usize)),
         )
+        .route("/api/admin/imports/text", post(text))
+        .route("/api/admin/imports/services", get(services))
         .route("/api/admin/imports/lists/{id}/playlist", post(playlist))
         .route("/api/admin/imports/lists/{id}/fetch", post(fetch))
         .route("/api/admin/imports/lists/{id}/songs", post(songs))
@@ -178,6 +180,30 @@ impl FromBody for FinishRequest {
             name: "address",
             kind: Kind::Text,
         }],
+    };
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct TextRequest {
+    name: Option<String>,
+    text: Option<String>,
+}
+
+impl FromBody for TextRequest {
+    const SHAPE: &'static Shape = &Shape {
+        name: "Octo.Controllers.ImportsController+TextRequest",
+        by_constructor: true,
+        members: &[
+            Member {
+                name: "name",
+                kind: Kind::Text,
+            },
+            Member {
+                name: "text",
+                kind: Kind::Text,
+            },
+        ],
     };
 }
 
@@ -323,6 +349,36 @@ async fn file(State(state): State<AppState>, request: Request) -> AppResult {
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
     Ok(answer(&result))
+}
+
+/// A pasted list, one song a line, kept under its name ("Pasted list" when it has none).
+async fn text(State(state): State<AppState>, request: Request) -> AppResult {
+    let (parts, body) = split(request).await;
+    let request: TextRequest = match bind_body::<TextRequest>(&parts.headers, &body, "request") {
+        Ok(request) => request,
+        Err(refused) => return Ok(refused),
+    };
+    let Some(user) = signed_in(&state, &parts.headers) else {
+        return Ok(sign_in());
+    };
+    let text = request.text.unwrap_or_default();
+    if text.trim().is_empty() {
+        return Ok(answer(&ImportActionResult::failed("Paste a list first.")));
+    }
+    let imports = state.imports.clone();
+    let name = request.name;
+    let result = tokio::spawn(async move { imports.add_text(&user, name.as_deref(), &text).await })
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(answer(&result))
+}
+
+/// Where people can bring their music from, for the dashboard's guide.
+async fn services(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if signed_in(&state, &headers).is_none() {
+        return sign_in();
+    }
+    ok(&state.imports.services())
 }
 
 async fn playlist(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> AppResult {

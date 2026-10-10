@@ -497,6 +497,252 @@ fn query_case() {
     );
 }
 
+// ---- Lookup cases: docs/song-identity-lookup-cases.json ------------------------------------
+
+fn lookup_cases() -> Value {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/song-identity-lookup-cases.json"
+    );
+    let text = std::fs::read_to_string(path).expect("docs/song-identity-lookup-cases.json is in the repo");
+    serde_json::from_str(&text).expect("the lookup cases file is JSON")
+}
+
+const LOOKUPS: [(&str, Lookup); 2] = [("owned", Lookup::Owned), ("pick", Lookup::Pick)];
+
+fn verdict_name(verdict: SongVerdict) -> &'static str {
+    match verdict {
+        SongVerdict::Same => "same",
+        SongVerdict::SameSongDifferentVersion => "version",
+        SongVerdict::Different => "different",
+    }
+}
+
+/// The verdict both ways round, or a line saying they disagree.
+fn both_ways(a: &SongRef, b: &SongRef, options: &SongMatchOptions) -> Result<SongMatch, String> {
+    let forward = SongIdentity::same(a, b, Some(options));
+    let backward = SongIdentity::same(b, a, Some(options));
+    if forward.verdict != backward.verdict {
+        return Err(format!(
+            "{} one way ({}), {} the other ({})",
+            verdict_name(forward.verdict),
+            forward.reason,
+            verdict_name(backward.verdict),
+            backward.reason
+        ));
+    }
+    assert!(
+        (0.0..=1.0).contains(&forward.confidence),
+        "confidence {}",
+        forward.confidence
+    );
+    assert!(!is_blank(&forward.reason), "no reason");
+    Ok(forward)
+}
+
+/// The lookup file's options: a length tolerance of 8 s unless the case says otherwise (null
+/// compares no lengths), and whatever else the contract cases' options allow.
+fn lookup_options_of(item: &Value, lookup: Lookup) -> SongMatchOptions {
+    let mut options = options_of(item);
+    if item
+        .get("options")
+        .and_then(|options| options.get("lengthToleranceSeconds"))
+        .is_none()
+    {
+        options.length_tolerance_seconds = Some(8);
+    }
+    options.lookup = lookup;
+    options
+}
+
+#[test]
+fn lookup_cases_pass() {
+    let cases = lookup_cases();
+    let items = cases["cases"].as_array().expect("cases");
+    assert!(items.len() >= 60, "{} cases", items.len());
+    let mut failures = Vec::new();
+    for item in items {
+        let note = text_of(&item["note"]);
+        let a = song_ref(&item["a"]);
+        let b = song_ref(&item["b"]);
+        for (mode, lookup) in LOOKUPS {
+            let expect = item[mode]
+                .as_str()
+                .unwrap_or_else(|| panic!("{note}: no '{mode}' verdict"));
+            match both_ways(&a, &b, &lookup_options_of(item, lookup)) {
+                Ok(found) if verdict_name(found.verdict) == expect => {}
+                Ok(found) => failures.push(format!(
+                    "{note} [{mode}] expected {expect}, got {} ({})",
+                    verdict_name(found.verdict),
+                    found.reason
+                )),
+                Err(line) => failures.push(format!("{note} [{mode}] {line}")),
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failing:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn lookup_romanized_keys_are_as_recorded() {
+    let cases = lookup_cases();
+    let mut failures = Vec::new();
+    for item in cases["romanized"].as_array().expect("romanized") {
+        let text = text_of(&item["text"]);
+        let key = crate::common::romanize::romanized_key(text);
+        if key != text_of(&item["key"]) {
+            failures.push(format!("{text}: '{key}'"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every contract case again with each lookup on. A verdict that moves must be listed, with what
+/// it was and why, and a listed move must still happen.
+#[test]
+fn lookup_contract_cases_move_only_where_listed() {
+    let contract = cases();
+    let lookup = lookup_cases();
+    let listed: Vec<&Value> = lookup["contractChanges"]
+        .as_array()
+        .expect("contractChanges")
+        .iter()
+        .collect();
+    let mut seen = vec![false; listed.len()];
+    let mut failures = Vec::new();
+    for (index, item) in contract["compare"]
+        .as_array()
+        .expect("compare")
+        .iter()
+        .enumerate()
+    {
+        let note = text_of(&item["note"]);
+        let a = song_ref(&item["a"]);
+        let b = song_ref(&item["b"]);
+        let was = text_of(&item["expect"]);
+        for (mode, lookup) in LOOKUPS {
+            let mut options = options_of(item);
+            options.lookup = lookup;
+            let got = match both_ways(&a, &b, &options) {
+                Ok(found) => verdict_name(found.verdict),
+                Err(line) => {
+                    failures.push(format!("#{index} {note} [{mode}] {line}"));
+                    continue;
+                }
+            };
+            let entry = listed.iter().position(|change| {
+                change["index"].as_u64() == Some(index as u64) && text_of(&change["mode"]) == mode
+            });
+            match entry {
+                Some(at) => {
+                    seen[at] = true;
+                    let change = listed[at];
+                    if text_of(&change["note"]) != note || text_of(&change["was"]) != was {
+                        failures.push(format!("#{index} [{mode}] listed with another note or 'was'"));
+                    }
+                    if text_of(&change["expect"]) != got {
+                        failures.push(format!(
+                            "#{index} {note} [{mode}] listed as {}, got {got}",
+                            text_of(&change["expect"])
+                        ));
+                    }
+                    if is_blank(text_of(&change["reason"])) {
+                        failures.push(format!("#{index} [{mode}] listed without a reason"));
+                    }
+                }
+                None if got != was => {
+                    failures.push(format!(
+                        "#{index} {note} [{mode}] moved from {was} to {got}, not listed"
+                    ));
+                }
+                None => {}
+            }
+        }
+    }
+    for (at, change) in listed.iter().enumerate() {
+        if !seen[at] {
+            failures.push(format!("listed change {change} matches no contract case"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failing:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn score_ranks_the_closer_length_and_title_higher() {
+    let want = SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0);
+    let exact = SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0);
+    let off_by_four = SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(358.0);
+    let typo = SongRef::new("Bohemian Rapsody", "Queen").with_seconds(354.0);
+    let unknown = SongRef::new("Bohemian Rhapsody", "Queen");
+
+    let score = |b: &SongRef| SongIdentity::score(&want, b);
+    assert!((score(&exact) - 1.0).abs() < 1e-9, "{}", score(&exact));
+    assert!(score(&exact) > score(&off_by_four));
+    assert!(score(&exact) > score(&typo));
+    assert!((score(&unknown) - 0.9).abs() < 1e-9, "{}", score(&unknown));
+}
+
+#[test]
+fn score_reads_a_title_across_scripts() {
+    let want = SongRef::new("Kamin", "EMIN").with_seconds(200.0);
+    let cyrillic = SongRef::new("Камин", "EMIN").with_seconds(200.0);
+    assert!(SongIdentity::score(&want, &cyrillic) > 0.99);
+}
+
+#[test]
+fn pick_best_takes_the_best_score_and_refuses_a_near_tie_between_two_songs() {
+    let want = SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0);
+    let pick = SongIdentity::pick(5);
+
+    // The closer length wins over the search's order.
+    let candidates = [
+        SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(358.0),
+        SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0),
+    ];
+    assert_eq!(SongIdentity::pick_best(&want, &candidates, &pick), Some(1));
+
+    // Two copies of one song at one length: the first.
+    let copies = [
+        SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0),
+        SongRef::new("Bohemian Rhapsody (Remastered 2011)", "Queen").with_seconds(354.0),
+    ];
+    assert_eq!(SongIdentity::pick_best(&want, &copies, &pick), Some(0));
+
+    // Two different titles, each a typo away and as close as the other: no pick.
+    let want_typo = SongRef::new("Bohemian Rhapsodx", "Queen").with_seconds(354.0);
+    let rivals = [
+        SongRef::new("Bohemian Rhapsody", "Queen").with_seconds(354.0),
+        SongRef::new("Bohemian Rhapsodz", "Queen").with_seconds(354.0),
+    ];
+    assert_eq!(SongIdentity::pick_best(&want_typo, &rivals, &pick), None);
+
+    // Nothing accepted: nothing picked.
+    let others = [SongRef::new("Killer Queen", "Queen").with_seconds(180.0)];
+    assert_eq!(SongIdentity::pick_best(&want, &others, &pick), None);
+}
+
+#[test]
+fn lookup_off_is_the_default_and_changes_nothing() {
+    assert_eq!(SongMatchOptions::default().lookup, Lookup::Off);
+    let a = SongRef::new("Kamin", "EMIN").with_seconds(200.0);
+    let b = SongRef::new("Камин", "EMIN").with_seconds(200.0);
+    assert_eq!(SongIdentity::same(&a, &b, None).verdict, SongVerdict::Different);
+    assert_eq!(
+        SongIdentity::same(&a, &b, Some(&SongIdentity::owned(8))).verdict,
+        SongVerdict::Same
+    );
+}
+
 // ---- Rust-only: where .NET semantics had to be reproduced ----------------------------------
 
 #[test]

@@ -5,11 +5,12 @@
 use std::sync::LazyLock;
 
 use crate::common::dotnet;
-use crate::common::{SongIdentity, SongMatchOptions};
+use crate::common::{Lookup, SongIdentity, SongMatchOptions};
 
 static RADIO_MATCH: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptions {
     length_tolerance_seconds: None,
     also_neutral: vec!["radio edit".to_string()],
+    lookup: Lookup::Owned,
     ..Default::default()
 });
 
@@ -20,7 +21,9 @@ static RADIO_MATCH: LazyLock<SongMatchOptions> = LazyLock::new(|| SongMatchOptio
 /// direction was doing exactly that ("Air" matched "Airbourne", "Intro" matched every intro).
 /// So the whole comparison is [`SongIdentity`]'s: the same title, the same version, a shared
 /// artist, both artists known. A radio edit counts as the song here, since playing your radio
-/// edit for the album cut is what anyone wants from a station.
+/// edit for the album cut is what anyone wants from a station. So does the same title written in
+/// another script and the same artists credited another way ([`Lookup::Owned`]); a title a typo
+/// away does not.
 pub fn is_same_recording(want_artist: &str, want_title: &str, hit_artist: &str, hit_title: &str) -> bool {
     !dotnet::is_blank(want_artist)
         && !dotnet::is_blank(hit_artist)
@@ -85,6 +88,40 @@ mod tests {
         ] {
             assert!(
                 is_same_recording(want_artist, want_title, hit_artist, hit_title),
+                "{want_artist} - {want_title} / {hit_artist} - {hit_title}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_script_or_a_credit_written_another_way_is_the_same_recording() {
+        for (want_artist, want_title, hit_artist, hit_title) in [
+            ("EMIN", "Kamin", "EMIN", "Камин"),
+            ("Kino", "Gruppa krovi", "Кино", "Группа крови"),
+            ("Luis Fonsi", "Despacito", "Fonsi, Luis", "Despacito"),
+        ] {
+            assert!(
+                is_same_recording(want_artist, want_title, hit_artist, hit_title),
+                "{want_artist} - {want_title} / {hit_artist} - {hit_title}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typo_a_tribute_or_another_version_in_another_script_is_not() {
+        for (want_artist, want_title, hit_artist, hit_title) in [
+            ("Queen", "Bohemian Rhapsody", "Queen", "Bohemian Rapsody"),
+            (
+                "Queen",
+                "Bohemian Rhapsody",
+                "Queen Tribute Band",
+                "Bohemian Rhapsody",
+            ),
+            ("EMIN", "Kamin", "EMIN", "Камин (Live)"),
+            ("Luis Fonsi", "Despacito", "Luis Miguel", "Despacito"),
+        ] {
+            assert!(
+                !is_same_recording(want_artist, want_title, hit_artist, hit_title),
                 "{want_artist} - {want_title} / {hit_artist} - {hit_title}"
             );
         }

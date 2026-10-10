@@ -360,23 +360,23 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"yjR4ryJm9lY6bGoVZNFSXKKejskPwMRhybCcQCj3hF0=\"'\\]$",
+        "^B:\\ \\['\"epVoOPtrtLeGrLro/K1bGkzpRzcHDsbmP5/yj67AyTY=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ ca3478af2266f6563a6c6a1564d1525ca29e8ec90fc0c461c9b09c4028f7845d\\ \\(194962\\ bytes,\\ text\\)$",
+        "^B:\\ 7a956838fb6bb4b786acbae8fcad5b1a4ce94737070ec6e63f9ff28faec0c936\\ \\(197452\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"xSqbbTYY/VFFLx8P7sZ3aOk3FR5gDMFqUHalu3TCXW4=\"'\\]$",
+        "^B:\\ \\['\"n8vxRHv\\+QazwDBOU1nsMYC1wRtsf5gylaTbDF3aJdE8=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ c52a9b6d3618fd51452f1f0feec67768e937151e600cc16a5076a5bb74c25d6e\\ \\(376499\\ bytes,\\ text\\)$",
+        "^B:\\ 9fcbf1447bfe41acf00c1394d67b0c602d7046db1fe60ca56936c3177689744f\\ \\(389200\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"FnxtuSHIv503E2td0ee\\+1JM5x09YrKdZckZJrgZ\\+wxs=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ 167c6db921c8bf9d37136b5dd1e7bed49339c74f58aca759724649ae067ec31b\\ \\(116170\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/194962'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/197452'\\]$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo).",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo). Re-pinned for Octo Family (index.html, admin.js): the dashboard's Family entry, shown only on a server that answers /api/admin/family, so it stays hidden on a server without Family. Re-pinned again for Octo Family (index.html, admin.js): the Family pane's outside-address notice, the choice of where members' music lives, and Open Family signing the owner in.",
       "knownDiff": "Dashboard Charts card",
-      "reviewed": "Brandon 2026-10-08"
+      "reviewed": "Brandon 2026-10-08; Family re-pins Brandon 2026-10-09"
     },
     {
       "id": "dashboard-files-2026-10-09",
@@ -1868,6 +1868,227 @@
       ],
       "reason": "An outside artist page lists repeat editions of one record as one row: the catalog's \"Northern Lights (2020 Remaster)\" and \"Northern Lights\" are one album, shown as the first listed, so the page has two rows where C# had three; the single \"Borealis\" keeps its own row.",
       "knownDiff": "Outside artist pages: one row per record"
+    },
+    {
+      "id": "imports-octo-imports-version-2",
+      "backlog": "H",
+      "requests": [
+        "16-lists/extensions-json",
+        "16-lists/extensions-xml",
+        "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-final-json",
+        "01-system/extensions-json",
+        "01-system/extensions-xml",
+        "01-system/extensions-json-noauth",
+        "01-system/extensions-xml-badpass",
+        "13-downloads/extensions-json",
+        "13-downloads/extensions-xml",
+        "15-radio/extensions-radio-on-json",
+        "15-radio/extensions-radio-on-xml",
+        "15-radio/extensions-radio-off-json",
+        "20-library-edits/extensions-on-json",
+        "20-library-edits/extensions-on-xml",
+        "20-library-edits/extensions-off-again"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$"
+      ],
+      "reason": "octoImports version 2 tells an app that getImportServices (the services TuneMyMusic exports from, with each one's export page), importFile (a multipart upload of an exported file, up to 64 MB) and importText (a pasted list) are there (import plan, Track 2). Version 1 is still listed, so an app that knows only that one keeps working. The other lines on these answers are other entries': octoTopSongs [1, 2] and octoAcquisitions [1, 2].",
+      "knownDiff": "`octoImports` version 2"
+    },
+    {
+      "id": "dashboard-files-import-pane",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"e15VCN/qT3mF2LNSvq4qLvjIEmFgR43eMF\\+5AYQ9wmQ=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 7b5e5508dfea4f7985d8b352beae2a2ef8c8126160478dde305fb901843dc264\\ \\(199276\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"MgxG7SNLeHScAFwPDnVSHLTGy6qu\\+I98wbVF4zgpstI=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 320c46ed234b78749c005c0f0e75521cb4c6cbaaaef88f7cc1b545e33829b2d2\\ \\(396805\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/199276'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the Import page (import plan, Track 2): the tab is Import, the Get my music card lists the services from /api/admin/imports/services with TuneMyMusic's steps for the one picked (accent fill and a check on the pick), the file upload takes .txt too, and a paste box sends to /api/admin/imports/text. The Spotify card is unchanged. These hashes also carry the Library health run card changes already on rust/main (7d9630a, a16c33e), so the B lines of dashboard-files-2026-10-08 are superseded by these once reviewed.",
+      "knownDiff": "Dashboard Import page"
+    },
+    {
+      "id": "imports-file-error-names-plain-lists",
+      "backlog": "H",
+      "requests": [
+        "12-imports/file-no-title-column"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.message: Octo could not read that file: The file needs a title column and an artist column, named in its first row\\. != Octo could not read that file: The file needs a title column and an artist column, named in its first row, or a plain list with one Artist - Title per line\\.$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^-\\{\"ok\":false,\"message\":\"Octo could not read that file: The file needs a title column and an artist column, named in its first row\\.\"",
+        "^\\+\\{\"ok\":false,\"message\":\"Octo could not read that file: The file needs a title column and an artist column, named in its first row, or a plain list with one Artist - Title per line\\.\""
+      ],
+      "reason": "Plain lists (one Artist - Title a line, from a .txt file, a file whose first line names no columns, or pasted text) import as lists (import plan, Track 1), so a CSV whose header names no title or artist column says the plain list works too. A .txt file whose first line is a CSV header (12-imports/file-text-csv) is still read as a table, as C# read it. The exact A words are from the C# source; check them against the first run.",
+      "knownDiff": "Import: plain lists"
+    },
+    {
+      "id": "imports-matcher-lookups",
+      "backlog": "H",
+      "requests": [
+        "12-imports/list-*",
+        "12-imports/getImport-*",
+        "12-imports/getImports-*",
+        "12-imports/file-*",
+        "12-imports/link-*",
+        "12-imports/refresh-*",
+        "12-imports/fetch-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "The import matcher finds a library song by ISRC first (the closest length among the songs carrying it), then by MatchKey, then among songs with the same title, the same title in Latin letters, or a credited name in common, each accepted only by SongIdentity.Same with the Owned lookup (another script and a credit written another way count, a typo does not; a name on more than 2,000 songs reads the first 2,000). Within each step the best fit by SongIdentity.Score wins before C#'s tie-breaks (length, album, lossless, bitrate). Answers that can move: a list's have and missing counts, a track's state and libraryId. A plain list is read Title - Artist when that names more of the library. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Import: matching"
+    },
+    {
+      "id": "search-leaves-out-owned-songs-by-lookup",
+      "backlog": "import-anywhere",
+      "requests": [
+        "03-search/s3-mixed-*",
+        "03-search/s3-discovery-only-*",
+        "03-search/s3-cjk-json",
+        "03-search/s3-diacritics-json",
+        "03-search/s3-typeahead-json",
+        "03-search/s3-songs-only-json",
+        "03-search/s3-song-page2-json",
+        "03-search/s3-post-form-json",
+        "03-search/s3-jsonp",
+        "00-setup/discovery-zephyr"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "Search leaves out an outside song you already own also when its key differs but both lengths are known, within 8 seconds, and SongIdentity.Same with the Owned lookup accepts it (a title in another script, a credit written another way). Library songs and outside songs are never merged among themselves. Answers can lose an outside song row and shift the later ones; a later page leaves out the same songs. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Search: owned songs by lookup"
+    },
+    {
+      "id": "ownership-isrc-and-other-scripts",
+      "backlog": "import-anywhere",
+      "requests": [
+        "95-acquisition/heart-*",
+        "90-mutations/star-*",
+        "13-downloads/find-*"
+      ],
+      "aspects": [
+        "body",
+        "status"
+      ],
+      "reason": "Whether a hearted outside song is already owned: an ISRC in common first (the catalog song's isrc and isrcs against search3's isrc list), then C#'s MatchKey and 8 s (or the same album when a length is unknown), then, with both lengths known, SongIdentity.Same with the Owned lookup over the same search3 hits; when none is the song and the artist or title has letters outside ASCII, one more search3 for the Latin spelling, within the same scope. Album ownership's third tier reads the same way. Answers can say a song is already in the library where C# downloaded it again; stubs see one more search3 for a non-Latin song. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Ownership: ISRC and other scripts"
+    },
+    {
+      "id": "soulseek-whole-words-and-artist-ties",
+      "backlog": "import-anywhere",
+      "requests": [
+        "95-acquisition/heart-*",
+        "95-acquisition/find-*",
+        "95-acquisition/pick-*",
+        "13-downloads/find-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "A Soulseek file name must hold each title word as a whole word (a title of two or more words whose joined key is 8 letters or more may also run together, \"BohemianRhapsody.flac\"), so \"Four\" never takes \"Fourteen.flac\"; and among files of the same quality, one whose name or two parent folders name the artist comes first (import plan, Track 1). Answers can name another file, peer or log line. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Soulseek: whole words and the artist"
+    },
+    {
+      "id": "deezer-containment-floor",
+      "backlog": "import-anywhere",
+      "requests": [
+        "95-acquisition/heart-*",
+        "03-search/s3-mixed-*",
+        "03-search/s3-discovery-only-*",
+        "15-radio/similar-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "Deezer matching counts one name inside another only when the shorter key has 6 characters or more, and two known lengths more than 8 s apart are another recording (import plan, Track 1). Answers can name another Deezer track or none. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Deezer: containment floor"
+    },
+    {
+      "id": "covers-artist-name-score",
+      "backlog": "import-anywhere",
+      "requests": [
+        "13-downloads/find-cover-*",
+        "95-acquisition/heart-neon-find-cover",
+        "17-covers-explicit/covers-*",
+        "96-covers-explicit-writes/covers-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "The Deezer and iTunes cover searches rank hits with one shared artist-name score (the same name, the same name in Latin letters, word-order-free similarity, whole-word containment) instead of two lowercase containment scorers (import plan, Track 1). Answers can pick another cover. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Covers: one artist-name score"
+    },
+    {
+      "id": "radio-lyrics-lidarr-lookups",
+      "backlog": "import-anywhere",
+      "requests": [
+        "15-radio/similar-*",
+        "06-lyrics/lyrics-*",
+        "95-acquisition/heart-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "reason": "Radio's owned-song check and lyrics' same-song check read a title in another script and a credit written another way (Owned); the YouTube Music radio seed is the best pick among its results (Pick, a near tie picks none); Lidarr's album pick compares artists as credits (Agree or Loose) with the album key unchanged (import plan, Track 1). Answers can list another radio song, find lyrics C# missed, or pick another Lidarr album. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
+      "knownDiff": "Lookups: radio, lyrics and Lidarr"
     }
   ]
 }

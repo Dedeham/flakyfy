@@ -13,6 +13,9 @@ use octo_core::settings::SettingsStore;
 use parking_lot::Mutex;
 use tracing::{info, warn};
 
+use octo_core::family::abilities::{AddToLibrary, RequestQuality};
+
+use crate::services::family::FamilyStore;
 use crate::services::subsonic::SubsonicProxyService;
 
 /// Makes sure an allowed user has a playlist for each enabled action.
@@ -28,6 +31,8 @@ pub struct LibraryActionPlaylistProvisioner {
     proxy: SubsonicProxyService,
     /// `IOptionsMonitor<LibraryActionSettings>`: read at every call.
     settings: Arc<SettingsStore>,
+    /// The family's members, for their own action playlists.
+    family: Option<Arc<FamilyStore>>,
 }
 
 impl LibraryActionPlaylistProvisioner {
@@ -36,6 +41,7 @@ impl LibraryActionPlaylistProvisioner {
             done: Mutex::new(HashSet::new()),
             proxy,
             settings,
+            family: None,
         }
     }
 
@@ -49,12 +55,13 @@ impl LibraryActionPlaylistProvisioner {
         existing_names: &[String],
         auth_parameters: &IndexMap<String, String>,
     ) {
-        let settings = self.settings.current();
-        let settings = &settings.library_actions;
-        if !settings.enabled || !(settings.playlists_enabled || settings.notices_enabled()) {
-            return;
-        }
-        if !settings.is_allowed(Some(username)) {
+        let current = self.settings.current();
+        let settings = &current.library_actions;
+        let family_titles = self.family_titles(username);
+        let actions_on = settings.enabled
+            && (settings.playlists_enabled || settings.notices_enabled())
+            && settings.is_allowed(Some(username));
+        if !actions_on && family_titles.is_empty() {
             return;
         }
         if !self.done.lock().insert(dotnet::ordinal_ignore_case_key(username)) {
@@ -63,7 +70,7 @@ impl LibraryActionPlaylistProvisioner {
 
         // The notice playlists Octo fills are the user's own too, for the same reason: they are
         // private, and the admin identity fills them.
-        let actions: Vec<String> = if settings.playlists_enabled {
+        let actions: Vec<String> = if actions_on && settings.playlists_enabled {
             settings
                 .effective_actions()
                 .iter()
@@ -73,13 +80,17 @@ impl LibraryActionPlaylistProvisioner {
         } else {
             Vec::new()
         };
-        let mut wanted: Vec<String> = Vec::new();
-        for title in actions.into_iter().chain(
+        let notices: Vec<String> = if actions_on {
             settings
                 .enabled_notice_kinds()
                 .into_iter()
-                .map(|kind| settings.notice_title(kind)),
-        ) {
+                .map(|kind| settings.notice_title(kind))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut wanted: Vec<String> = Vec::new();
+        for title in actions.into_iter().chain(notices).chain(family_titles) {
             let exists = existing_names
                 .iter()
                 .any(|name| dotnet::eq_ignore_case(name, &title));
@@ -137,7 +148,47 @@ impl LibraryActionPlaylistProvisioner {
     pub fn reset(&self) {
         self.done.lock().clear();
     }
+
+    /// The same provisioner, also making family members' own action playlists.
+    pub fn with_family(mut self, family: Arc<FamilyStore>) -> Self {
+        self.family = Some(family);
+        self
+    }
+
+    /// A family member's own action playlists: "Request a copy" (and "Request a copy in FLAC"
+    /// when they may ask for FLAC) for members who ask before adding, and "Remove from my
+    /// library" for every member. None while Family is off or for anyone else.
+    fn family_titles(&self, username: &str) -> Vec<String> {
+        let Some(family) = &self.family else {
+            return Vec::new();
+        };
+        if !self.settings.current().family.enabled {
+            return Vec::new();
+        }
+        let Some(member) = family.member(username) else {
+            return Vec::new();
+        };
+        let abilities = member.abilities();
+        let mut titles = Vec::new();
+        if abilities.add_to_library == AddToLibrary::Request {
+            titles.push(REQUEST_PLAYLIST.to_string());
+            if abilities.request_quality.rank() >= RequestQuality::Flac.rank() {
+                titles.push(REQUEST_FLAC_PLAYLIST.to_string());
+            }
+        }
+        titles.push(REMOVE_PLAYLIST.to_string());
+        titles
+    }
 }
+
+/// A family member's playlist: songs added to it are asked for (best quality).
+pub const REQUEST_PLAYLIST: &str = "Request a copy";
+
+/// A family member's playlist: songs added to it are asked for in FLAC.
+pub const REQUEST_FLAC_PLAYLIST: &str = "Request a copy in FLAC";
+
+/// A family member's playlist: songs added to it leave their own library.
+pub const REMOVE_PLAYLIST: &str = "Remove from my library";
 
 #[cfg(test)]
 mod tests {
@@ -206,5 +257,77 @@ mod tests {
             })
             .collect();
         assert_eq!(created, [("🛠 Keep".to_string(), "alice".to_string(), false)]);
+    }
+}
+
+#[cfg(test)]
+mod family_tests {
+    use octo_core::family::abilities::Preset;
+    use octo_core::settings::{AppSettings, SubsonicSettings};
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::services::family::test_support::member;
+
+    async fn created_for(user: &str, family_on: bool) -> Vec<String> {
+        let navidrome = MockServer::start().await;
+        Mock::given(path("/rest/createPlaylist"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(r#"{"subsonic-response":{"status":"ok"}}"#, "application/json"),
+            )
+            .mount(&navidrome)
+            .await;
+        let mut app = AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(navidrome.uri()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        app.family.enabled = family_on;
+        let settings = Arc::new(SettingsStore::for_tests(app));
+        let family = Arc::new(FamilyStore::in_memory());
+        family.upsert_member(member("alex", Preset::Member, 3));
+        family.upsert_member(member("sam", Preset::Listener, 4));
+        family.upsert_member(member("kim", Preset::Kid, 5));
+        let provisioner =
+            LibraryActionPlaylistProvisioner::new(SubsonicProxyService::new(settings.clone()), settings)
+                .with_family(family);
+        let auth: IndexMap<String, String> = [("u", user), ("t", "tok"), ("s", "salt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        provisioner.ensure(user, &[], &auth).await;
+        navidrome
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .filter_map(|r| {
+                r.url
+                    .query_pairs()
+                    .find(|(k, _)| k == "name")
+                    .map(|(_, v)| v.into_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn members_get_their_own_request_and_remove_playlists() {
+        assert_eq!(
+            created_for("sam", true).await,
+            [REQUEST_PLAYLIST, REQUEST_FLAC_PLAYLIST, REMOVE_PLAYLIST]
+        );
+        // A kid may ask for MP3 copies only.
+        assert_eq!(
+            created_for("kim", true).await,
+            [REQUEST_PLAYLIST, REMOVE_PLAYLIST]
+        );
+        // A member who adds songs at once has nothing to ask for.
+        assert_eq!(created_for("alex", true).await, [REMOVE_PLAYLIST]);
+        assert!(created_for("winters", true).await.is_empty());
+        assert!(created_for("sam", false).await.is_empty(), "Family off");
     }
 }

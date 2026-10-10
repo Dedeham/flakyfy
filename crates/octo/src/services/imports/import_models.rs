@@ -99,6 +99,10 @@ pub struct ImportList {
     pub get_missing: bool,
     /// No longer on the account. Kept while it is a playlist or fetching, so nothing is lost.
     pub gone: bool,
+    /// An approver said yes to fetching this family member's list, so it fetches like any
+    /// other. Written only once it is true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub family_approved: bool,
 }
 
 impl Default for ImportList {
@@ -122,6 +126,7 @@ impl Default for ImportList {
             playlist_note: None,
             get_missing: false,
             gone: false,
+            family_approved: false,
         }
     }
 }

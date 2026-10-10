@@ -9,7 +9,9 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::{AcquisitionRequest, DownloadConcurrency, TrackAcquisitionQueue};
+use super::acquisition_tracker::key_of;
+use super::{AcquisitionPlace, AcquisitionRequest, DownloadConcurrency, TrackAcquisitionQueue};
+use crate::services::family::FamilyPlacement;
 use crate::services::i_download_service::IDownloadService;
 use crate::services::library::ReplacementRejectedException;
 use crate::services::notifications::NotificationService;
@@ -31,6 +33,10 @@ pub struct AcquisitionWorker {
 
     /// Optional: without it the worker runs one request at a time, as it always did.
     concurrency: Option<Arc<DownloadConcurrency>>,
+
+    /// The family pool: a finished download is linked for every member who asked, however
+    /// late they joined. Without it, or with Family off, nothing changes.
+    family: Option<Arc<dyn FamilyPlacement>>,
 }
 
 impl AcquisitionWorker {
@@ -47,7 +53,14 @@ impl AcquisitionWorker {
             id_registry,
             notifications,
             concurrency,
+            family: None,
         }
+    }
+
+    /// The same worker, settling members' downloads in the family pool.
+    pub fn with_family(mut self, family: Arc<dyn FamilyPlacement>) -> Self {
+        self.family = Some(family);
+        self
     }
 
     /// `ExecuteAsync`.
@@ -84,23 +97,62 @@ impl AcquisitionWorker {
         // A fresh token, never the stopping token. The transfer must not be cancellable by
         // anything other than the process ending: that is the difference between "the client
         // left" and "the download is lost".
-        let attempt = AssertUnwindSafe(self.downloads.execute_acquisition(
-            &request.provider,
-            &request.external_id,
-            request.trigger_album_download,
-            request.force_permanent,
-            request.source_override,
-            &CancellationToken::new(),
-            // Read here rather than at enqueue time: a second user can join this
-            // request right up until it is dequeued, and they asked for the file
-            // just as much as whoever queued it.
-            Some(request.requested_by()),
-            request.upgrade_search(),
-            request.replacement.clone(),
-        ))
-        .catch_unwind()
-        .await
+        // Where the file goes, read now for the same reason. A request nobody in the family
+        // asked for, and every request with Family off, goes the way it always has.
+        let place = request.place();
+        let token = CancellationToken::new();
+        let attempt = if place == AcquisitionPlace::default() {
+            AssertUnwindSafe(self.downloads.execute_acquisition(
+                &request.provider,
+                &request.external_id,
+                request.trigger_album_download,
+                request.force_permanent,
+                request.source_override,
+                &token,
+                // Read here rather than at enqueue time: a second user can join this
+                // request right up until it is dequeued, and they asked for the file
+                // just as much as whoever queued it.
+                Some(request.requested_by()),
+                request.upgrade_search(),
+                request.replacement.clone(),
+            ))
+            .catch_unwind()
+            .await
+        } else {
+            AssertUnwindSafe(self.downloads.execute_acquisition_to(
+                &request.provider,
+                &request.external_id,
+                request.trigger_album_download,
+                request.force_permanent,
+                request.source_override,
+                &token,
+                Some(request.requested_by()),
+                request.upgrade_search(),
+                request.replacement.clone(),
+                place,
+            ))
+            .catch_unwind()
+            .await
+        }
         .unwrap_or_else(|_| Err(anyhow::anyhow!("the acquisition panicked")));
+
+        // Members who joined while it ran get their link too, a file the shared library came to
+        // want moves there, and a member who cannot see the shared library a file landed in
+        // gets a pool copy of it.
+        let attempt = match (attempt, &self.family) {
+            (Ok(path), Some(family)) => {
+                let members = request.pool_members();
+                if members.is_empty() && !request.wants_shared() {
+                    Ok(path)
+                } else {
+                    let key = key_of(&request.provider, &request.external_id);
+                    Ok(family
+                        .settle(&path, &members, request.wants_shared(), Some(&key))
+                        .await)
+                }
+            }
+            (attempt, _) => attempt,
+        };
 
         match attempt {
             Ok(path) => {
@@ -172,3 +224,7 @@ impl AcquisitionWorker {
 #[cfg(test)]
 #[path = "acquisition_worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "acquisition_worker_family_tests.rs"]
+mod family_tests;

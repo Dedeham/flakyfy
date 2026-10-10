@@ -13,13 +13,14 @@ pub mod similar_songs;
 pub mod top_songs;
 
 #[cfg(test)]
-mod route_tests;
+pub(crate) mod route_tests;
 
 pub(crate) mod album_ownership;
 pub mod browsing;
 pub(crate) mod caller_checks;
 pub mod downloads;
 pub mod extensions;
+pub mod family;
 pub mod imports;
 pub mod lyrics;
 pub mod media;
@@ -32,6 +33,8 @@ mod test_app;
 
 #[cfg(test)]
 mod extensions_tests;
+#[cfg(test)]
+mod family_lists_tests;
 #[cfg(test)]
 mod for_you_tests;
 #[cfg(test)]
@@ -146,4 +149,5 @@ pub fn routes() -> RouteSet {
         .merge(lyrics::routes())
         .merge(top_songs::routes())
         .merge(imports::routes())
+        .merge(family::routes())
 }

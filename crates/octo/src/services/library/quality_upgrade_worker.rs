@@ -318,6 +318,43 @@ impl QualityUpgradeWorker {
         }
     }
 
+    /// While members have libraries of their own (Family on, or turned off with their libraries
+    /// still there), the weekly upgrade keeps to the shared library: songs in members' own
+    /// libraries are left out of the walk.
+    pub fn with_library_scope(self, scope: crate::services::family::ScopeResolver) -> Self {
+        self.configure(|seams| {
+            let walk = seams.list_songs.clone();
+            seams.list_songs = Arc::new(move || {
+                let walk = walk.clone();
+                let scope = scope.clone();
+                async move {
+                    let (songs, complete) = walk().await;
+                    if !scope.keeps_shared() {
+                        return (songs, complete);
+                    }
+                    let view = scope.shared_view();
+                    let shared = songs
+                        .into_iter()
+                        .filter(|row| {
+                            let full = crate::services::family::library_index::row_full_path(
+                                row.library_path.as_deref(),
+                                &row.path,
+                            );
+                            view.allows(
+                                &crate::services::family::LibraryScope::Shared,
+                                Some(&row.id),
+                                Some(&full),
+                            )
+                        })
+                        .collect();
+                    (shared, complete)
+                }
+                .boxed()
+            });
+        });
+        self
+    }
+
     /// Changes a seam after construction, as the C# tests set a property.
     pub fn configure(&self, change: impl FnOnce(&mut QualityUpgradeSeams)) {
         change(&mut self.seams.lock());

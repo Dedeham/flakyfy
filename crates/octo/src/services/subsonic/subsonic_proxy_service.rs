@@ -23,6 +23,7 @@ use octo_subsonic::subsonic_request_parser::{
 use serde_json::json;
 
 use crate::http::error::{AppError, json_status, problem};
+use crate::middleware::family_gate::GateReading;
 use crate::services::http_client_factory::{
     DEFAULT_TIMEOUT, connect_failure_message, default_client, streaming_client, timeout_message,
 };
@@ -109,6 +110,9 @@ pub struct IncomingRequest {
     /// The whole body as the client sent it.
     pub body: Bytes,
     query_values: OnceLock<StringValuesCollection>,
+    /// The family gate's reading of this request, while Family is on: its parameters are the
+    /// ones every handler reads.
+    gate: Option<GateReading>,
 }
 
 impl IncomingRequest {
@@ -119,16 +123,20 @@ impl IncomingRequest {
             query,
             body,
             query_values: OnceLock::new(),
+            gate: None,
         }
     }
 
+    /// The request a handler was given, with the family gate's reading of it when there is one.
     pub fn from_parts(parts: &axum::http::request::Parts, body: Bytes) -> Self {
-        Self::new(
+        let mut incoming = Self::new(
             parts.method.clone(),
             parts.headers.clone(),
             parts.uri.query().map(str::to_string),
             body,
-        )
+        );
+        incoming.gate = GateReading::of(&parts.extensions).cloned();
+        incoming
     }
 
     /// `Request.ContentType`.
@@ -156,14 +164,27 @@ impl IncomingRequest {
         }
     }
 
-    /// `SubsonicRequestParser.ExtractAllParametersAsync(Request)`.
+    /// `SubsonicRequestParser.ExtractAllParametersAsync(Request)`, or while Family is on the
+    /// parameters the family gate read (its rewrites and quality included).
     pub fn parameters(&self) -> Parameters {
-        parser::extract_all_parameters(&self.request_parts())
+        match &self.gate {
+            Some(gate) => gate.parameters().clone(),
+            None => parser::extract_all_parameters(&self.request_parts()),
+        }
     }
 
-    /// `SubsonicRequestParser.ExtractParameterValuesAsync(Request, name)`.
+    /// `SubsonicRequestParser.ExtractParameterValuesAsync(Request, name)`, from the family
+    /// gate's reading while Family is on.
     pub fn parameter_values(&self, name: &str) -> Vec<String> {
-        parser::extract_parameter_values(&self.request_parts(), name)
+        match &self.gate {
+            Some(gate) => gate.parameter_values(name),
+            None => parser::extract_parameter_values(&self.request_parts(), name),
+        }
+    }
+
+    /// The family gate's reading of this request, while Family is on.
+    pub fn gate(&self) -> Option<&GateReading> {
+        self.gate.as_ref()
     }
 
     /// `Request.Query`.

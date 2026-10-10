@@ -1301,3 +1301,49 @@ async fn get_artist_albums_on_a_clean_only_server_keeps_the_clean_edition() {
     let ids: Vec<&str> = hits.iter().map(|hit| hit.deezer_id.as_str()).collect();
     assert_eq!(ids, ["4", "2"]);
 }
+
+// ---- How close a hit has to be ---------------------------------------------------------------
+
+#[test]
+fn a_short_title_is_not_found_inside_a_longer_one() {
+    // "home" (4) inside "homecoming": too short to count.
+    assert_eq!(compare_titles("Home", Some("Homecoming")), FieldVerdict::Mismatch);
+    assert_eq!(compare_titles("Homecoming", Some("Home")), FieldVerdict::Mismatch);
+    // Six characters or more still counts: Deezer's own decorations stay matched.
+    assert_eq!(
+        compare_titles("Teardrop", Some("Teardrop (From the Motion Picture)")),
+        FieldVerdict::Match
+    );
+    // Equal keys need no floor.
+    assert_eq!(compare_titles("Home", Some("HOME")), FieldVerdict::Match);
+}
+
+#[test]
+fn a_short_artist_is_not_found_inside_a_longer_one() {
+    assert_eq!(compare_artists("Muse", Some("Musette")), FieldVerdict::Mismatch);
+    assert_eq!(
+        compare_artists("Rihanna", Some("Rihanna Experience Band")),
+        FieldVerdict::Match
+    );
+    assert_eq!(compare_artists("Drake", Some("Drake")), FieldVerdict::Match);
+}
+
+#[test]
+fn a_hit_of_a_far_length_is_another_recording_when_both_lengths_are_known() {
+    let doc = serde_json::json!({"data": [
+        {"id": 1, "title": "Teardrop", "duration": 400, "artist": {"name": "Massive Attack"}},
+        {"id": 2, "title": "Teardrop", "duration": 335, "artist": {"name": "Massive Attack"}},
+        {"id": 3, "title": "Teardrop", "artist": {"name": "Massive Attack"}},
+    ]});
+    let ids = |seconds: Option<i32>| -> Vec<i64> {
+        all_matches(Some(&doc), "Massive Attack", "Teardrop", seconds)
+            .expect("read")
+            .iter()
+            .map(|hit| hit["id"].as_i64().expect("id"))
+            .collect()
+    };
+    assert_eq!(ids(Some(330)), [2, 3]);
+    assert_eq!(ids(Some(338)), [2, 3]);
+    assert_eq!(ids(None), [1, 2, 3]);
+    assert_eq!(ids(Some(0)), [1, 2, 3]);
+}

@@ -23,6 +23,7 @@ use tracing::{debug, info};
 
 use super::radio_outcome_store::RadioOutcomeStore;
 use super::radio_source_set::RadioSourceSet;
+use crate::services::family::{FamilyStore, kid_filter};
 use crate::services::last_fm::LastFmRadioTrackResolver;
 use crate::services::sonic::SonicStore;
 
@@ -40,6 +41,8 @@ pub struct SongRadioService {
     /// Source of the placement's draw. Tests replace it with a seeded one so a radio repeats
     /// exactly.
     randomizer: Mutex<Randomizer>,
+    /// The family, whose kid profiles get clean radio.
+    family: Option<Arc<FamilyStore>>,
 }
 
 impl SongRadioService {
@@ -55,12 +58,19 @@ impl SongRadioService {
             sonic,
             outcomes,
             randomizer: Mutex::new(default_randomizer()),
+            family: None,
         }
     }
 
     /// The draw placement uses from now on, as the station service's `set_randomizer`.
     pub fn set_randomizer(&self, randomizer: Randomizer) {
         *self.randomizer.lock() = randomizer;
+    }
+
+    /// The service with the family, so a kid profile's radio is clean.
+    pub fn with_family(mut self, family: Arc<FamilyStore>) -> Self {
+        self.family = Some(family);
+        self
     }
 
     pub fn sources(&self) -> &Arc<RadioSourceSet> {
@@ -190,8 +200,9 @@ impl SongRadioService {
             }
         }
         // The admin's explicit filter, as stations apply it: with outside songs from every
-        // source, radio is where most unknown lyrics now come from.
-        let filter = self.settings.current().subsonic.explicit_filter;
+        // source, radio is where most unknown lyrics now come from. A kid profile's is clean.
+        let filter =
+            kid_filter::explicit_filter_for(&self.settings.current(), self.family.as_deref(), listener);
         let songs: Vec<Song> = scored
             .into_iter()
             .map(|(song, _)| song)

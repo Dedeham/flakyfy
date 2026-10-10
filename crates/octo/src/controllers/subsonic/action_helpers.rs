@@ -46,8 +46,9 @@ pub struct SubsonicCall {
 }
 
 impl SubsonicCall {
-    /// Reads the body and the parameters. A body over Kestrel's limit is refused as Kestrel
-    /// refused it. (The refusal is a whole response, as an action's early return was.)
+    /// Reads the body and the parameters (while Family is on, the ones the family gate read).
+    /// A body over Kestrel's limit is refused as Kestrel refused it. (The refusal is a whole
+    /// response, as an action's early return was.)
     #[allow(clippy::result_large_err)]
     pub async fn read(state: &AppState, req: Request) -> Result<SubsonicCall, Response> {
         let (parts, body) = req.into_parts();
@@ -222,10 +223,12 @@ pub fn int_param(parameters: &Parameters, name: &str, fallback: i32) -> i32 {
     }
 }
 
-/// Octo's own playlist ids: radio stations start "or", mixes "og". Navidrome's ids are 22
-/// characters of base62 that start with 0 to 7, so neither can ever be one of them.
-pub fn is_octo_playlist_id(id: &str) -> bool {
-    dotnet::utf16_len(id) == 22 && (id.starts_with("or") || id.starts_with("og"))
+/// Octo's own playlist ids: radio stations start "or", mixes "og", and while Family is on,
+/// family playlists "of". Navidrome's ids are 22 characters of base62 that start with 0 to 7,
+/// so none can ever be one of them.
+pub fn is_octo_playlist_id(id: &str, family_on: bool) -> bool {
+    dotnet::utf16_len(id) == 22
+        && (id.starts_with("or") || id.starts_with("og") || (family_on && id.starts_with("of")))
 }
 
 /// Whether a relayed body says `status="ok"`, read in the format the client asked for
@@ -687,7 +690,12 @@ pub async fn materialize_station(
         state.external_id_registry.clone(),
     );
     let snapshot = state.settings.current();
-    let explicit_filter = snapshot.subsonic.explicit_filter;
+    // A station is its owner's: a kid profile's stations are clean whatever the server's filter.
+    let explicit_filter = crate::services::family::kid_filter::explicit_filter_for(
+        &snapshot,
+        Some(&state.family_store),
+        Some(&station.owner),
+    );
     let mut resolved = resolve_station_tracks(&resolver, &station.tracks, parameters, explicit_filter).await;
     if station.kind == LastFmRadioStationKind::Discovery {
         let cap = dotnet::round(
@@ -906,11 +914,18 @@ mod tests {
 
     #[test]
     fn octo_playlist_ids_are_22_characters_starting_or_or_og() {
-        assert!(is_octo_playlist_id("or12345678901234567890"));
-        assert!(is_octo_playlist_id("og12345678901234567890"));
-        assert!(!is_octo_playlist_id("oa12345678901234567890"));
-        assert!(!is_octo_playlist_id("or1234567890123456789"));
-        assert!(!is_octo_playlist_id("OR12345678901234567890"));
+        assert!(is_octo_playlist_id("or12345678901234567890", false));
+        assert!(is_octo_playlist_id("og12345678901234567890", false));
+        assert!(!is_octo_playlist_id("oa12345678901234567890", false));
+        assert!(!is_octo_playlist_id("or1234567890123456789", false));
+        assert!(!is_octo_playlist_id("OR12345678901234567890", false));
+    }
+
+    #[test]
+    fn of_ids_rejected_when_family_off() {
+        assert!(!is_octo_playlist_id("of12345678901234567890", false));
+        assert!(is_octo_playlist_id("of12345678901234567890", true));
+        assert!(!is_octo_playlist_id("of1234567890123456789", true));
     }
 
     #[test]

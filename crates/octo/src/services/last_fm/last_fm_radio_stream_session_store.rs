@@ -5,6 +5,7 @@
 //! expose usernames or Navidrome secrets.
 
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
@@ -12,6 +13,7 @@ use octo_core::common::dotnet;
 use octo_core::models::radio::LastFmRadioTrack;
 use parking_lot::Mutex;
 
+use crate::services::family::MemberCredentials;
 use crate::services::framework::DotnetDictionary;
 
 /// One complete MP3 segment in the radio cache, ready to play: the file, the station track,
@@ -89,11 +91,27 @@ const AUTHENTICATION_KEYS: [&str; 7] = ["u", "p", "t", "s", "apiKey", "v", "c"];
 #[derive(Default)]
 pub struct LastFmRadioStreamSessionStore {
     sessions: Mutex<DotnetDictionary<LastFmRadioStreamSession>>,
+    /// Fresh sign-ins for members: a session that signs in as a member is handed out with one
+    /// made from the member's current hidden password, never the one kept when it began.
+    members: OnceLock<Arc<MemberCredentials>>,
 }
 
 impl LastFmRadioStreamSessionStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Signs members in from their current hidden password whenever a session is read.
+    pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
+        let _ = self.members.set(members);
+    }
+
+    /// The session with a fresh sign-in when it signs in as a member.
+    fn refreshed(&self, mut session: LastFmRadioStreamSession) -> LastFmRadioStreamSession {
+        if let Some(members) = self.members.get() {
+            members.refresh_parameters(&mut session.authentication);
+        }
+        session
     }
 
     /// A new token for the station, carrying only the credential parameters of the request.
@@ -147,9 +165,12 @@ impl LastFmRadioStreamSessionStore {
 
     pub fn get(&self, token: &str, now_utc: Option<DateTime<Utc>>) -> Option<LastFmRadioStreamSession> {
         let now = now_utc.unwrap_or_else(Utc::now);
-        let mut sessions = self.sessions.lock();
-        prune_locked(&mut sessions, now);
-        sessions.get(token).cloned()
+        let session = {
+            let mut sessions = self.sessions.lock();
+            prune_locked(&mut sessions, now);
+            sessions.get(token).cloned()
+        };
+        session.map(|session| self.refreshed(session))
     }
 
     pub fn attach_ready_pool(
@@ -197,6 +218,21 @@ impl LastFmRadioStreamSessionStore {
 
     pub fn remove(&self, token: &str) {
         self.sessions.lock().remove(token);
+    }
+
+    /// Ends every station session `username` started (ignoring case): their password changed,
+    /// so the streams begun with the old one stop. Answers how many there were.
+    pub fn revoke_user(&self, username: &str) -> usize {
+        let mut sessions = self.sessions.lock();
+        let gone: Vec<String> = sessions
+            .values()
+            .filter(|session| dotnet::eq_ignore_case(session.username.trim(), username.trim()))
+            .map(|session| session.token.clone())
+            .collect();
+        for token in &gone {
+            sessions.remove(token);
+        }
+        gone.len()
     }
 
     pub fn count(&self) -> usize {
@@ -375,5 +411,21 @@ mod tests {
         assert!(store.get(&first, Some(now)).is_none());
         store.remove("missing");
         assert!(!store.attach_ready_pool("missing", &[], None));
+    }
+
+    #[test]
+    fn revoking_a_listener_ends_only_their_sessions() {
+        let store = LastFmRadioStreamSessionStore::new();
+        let alex = [
+            store.issue("alex", "s1", [("u", "alex")], None),
+            store.issue("Alex", "s2", [("u", "Alex")], None),
+        ];
+        let sam = store.issue("sam", "s1", [("u", "sam")], None);
+        assert_eq!(store.revoke_user("ALEX"), 2);
+        for token in &alex {
+            assert!(store.get(token, None).is_none());
+        }
+        assert!(store.get(&sam, None).is_some());
+        assert_eq!(store.revoke_user("alex"), 0);
     }
 }

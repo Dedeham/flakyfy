@@ -43,6 +43,7 @@ pub use octo_core::library::generated_playlist_service::GeneratedPlaylist;
 
 use super::artist_country::CountryLibrary;
 use super::for_you_lists::{CatalogSeed, Entry, NewReleasesBuilder, mint};
+use crate::services::family::{FamilyStore, kid_filter};
 use crate::services::framework::{DotnetDictionary, MemoryCache};
 use crate::services::last_fm::OperationCanceled;
 use crate::services::state_file;
@@ -106,6 +107,8 @@ pub struct GeneratedPlaylistService {
     /// Each listener's library song ids from their last walk: their country mixes count only
     /// their own songs.
     listener_songs: Mutex<HashMap<String, Arc<HashSet<String>>>>,
+    /// The family, whose kid profiles get clean lists.
+    family: Option<Arc<FamilyStore>>,
 }
 
 /// The services New Releases is made with: the catalog walk, and the outside song's JSON.
@@ -135,6 +138,7 @@ impl GeneratedPlaylistService {
             for_you: None,
             countries: None,
             listener_songs: Mutex::new(HashMap::new()),
+            family: None,
         };
         service.load();
         service
@@ -197,9 +201,12 @@ impl GeneratedPlaylistService {
         }
         let listeners = self.listener_songs.lock().clone();
         let codes = settings.country_codes();
-        let kinds = kinds_of(&settings, self.explicit_filter_now());
         let mut state = self.state.lock();
-        for (user, mixes) in state.users.iter_mut().filter(|(_, mixes)| mixes.kinds == kinds) {
+        for (user, mixes) in state
+            .users
+            .iter_mut()
+            .filter(|(user, mixes)| mixes.kinds == kinds_of(&settings, self.explicit_filter_now(user)))
+        {
             let Some(ids) = listeners.get(user) else {
                 continue;
             };
@@ -268,10 +275,17 @@ impl GeneratedPlaylistService {
         ids
     }
 
-    /// The server's explicit filter, which New Releases' outside songs obey as search and radio's
-    /// do. It is part of what decides the lists, so changing it makes them anew.
-    fn explicit_filter_now(&self) -> ExplicitFilter {
-        self.settings.current().subsonic.explicit_filter
+    /// The service with the family, so a kid profile's lists are clean.
+    pub fn with_family(mut self, family: Arc<FamilyStore>) -> Self {
+        self.family = Some(family);
+        self
+    }
+
+    /// The explicit filter for one listener's lists, which New Releases' outside songs obey as
+    /// search and radio's do: the server's, or clean only for a kid profile. It is part of what
+    /// decides the lists, so changing it makes them anew.
+    fn explicit_filter_now(&self, username: &str) -> ExplicitFilter {
+        kid_filter::explicit_filter_for(&self.settings.current(), self.family.as_deref(), Some(username))
     }
 
     /// The listener's mixes, refreshing the counts behind them when they are stale. The first
@@ -290,7 +304,7 @@ impl GeneratedPlaylistService {
 
         let user = user_key(username);
         let now = Utc::now();
-        let explicit_filter = self.explicit_filter_now();
+        let explicit_filter = self.explicit_filter_now(username);
         let (known, due) = {
             let mut state = self.state.lock();
             let current = state.users.get(&user);
@@ -500,7 +514,7 @@ impl GeneratedPlaylistService {
             }
         }
 
-        let explicit_filter = self.explicit_filter_now();
+        let explicit_filter = self.explicit_filter_now(username);
         let before = self.state.lock().users.get(&user_key(username)).cloned();
         let (for_you, covers) = if settings.any_for_you() {
             self.build_for_you(

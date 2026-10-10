@@ -13,8 +13,8 @@ use axum::response::Response;
 use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
-    GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction, LibraryActionSettings, LyricsSaveTo,
-    SettingsWriteError,
+    FamilySettings, GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction, LibraryActionSettings,
+    LyricsSaveTo, SettingsWriteError,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -595,6 +595,47 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("RefreshHours", n_num(imports.refresh_hours)),
         ]),
     );
+    // Family is off by default. Its section is listed once it is in use (turned on, changed
+    // from its defaults, or saved in settings.json), so with Family off this document has no
+    // Family section at all, and a Raw config save still keeps a saved one.
+    let family = &current.family;
+    if *family != FamilySettings::default() || file.keys().any(|key| key.eq_ignore_ascii_case("Family")) {
+        doc.insert(
+            "Family".into(),
+            n_obj([
+                ("Enabled", Node::Bool(family.enabled)),
+                ("MembersPath", n_str(&family.members_path)),
+                ("HomeNetworks", n_str(&family.home_networks)),
+                ("TrustedProxies", n_str(&family.trusted_proxies)),
+                ("InviteDays", n_num(family.invite_days)),
+                (
+                    "OwnerSeesMemberLibraries",
+                    Node::Bool(family.owner_sees_member_libraries),
+                ),
+                (
+                    "OwnerSeesMemberPlaylists",
+                    Node::Bool(family.owner_sees_member_playlists),
+                ),
+                ("UnmanagedAccounts", n_str(&family.unmanaged_accounts)),
+                ("KidUnratedIsExplicit", Node::Bool(family.kid_unrated_is_explicit)),
+                ("FastPullFactor", n_num(family.fast_pull_factor)),
+                ("RadioStreamsPerPerson", n_num(family.radio_streams_per_person)),
+                ("ManageFromAway", Node::Bool(family.manage_from_away)),
+            ]),
+        );
+        // The family notices are listed with the Family section, for the same reason.
+        let notif = &current.notifications;
+        if let Some(Node::Object(section)) = doc.get_mut("Notifications") {
+            section.insert(
+                "NotifyFamilyRequests".into(),
+                Node::Bool(notif.notify_family_requests),
+            );
+            section.insert(
+                "NotifyFamilyDevices".into(),
+                Node::Bool(notif.notify_family_devices),
+            );
+        }
+    }
     doc
 }
 

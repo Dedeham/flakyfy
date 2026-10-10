@@ -3,6 +3,7 @@
 pub mod charts;
 pub mod common;
 pub mod config;
+pub mod family;
 pub mod fingerprint;
 pub mod json;
 pub mod last_fm;

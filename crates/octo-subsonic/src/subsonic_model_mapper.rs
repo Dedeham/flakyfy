@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use octo_core::common::SongIdentity;
+use octo_core::common::song_identity::SongRef;
 use octo_core::models::domain::Song;
 use octo_core::models::search::SearchResult;
 use octo_core::models::subsonic::ExternalPlaylist;
@@ -191,24 +192,19 @@ impl SubsonicModelMapper {
         }
     }
 
-    /// Dedup keys for library rows as [`Self::parse_search_response`] returns them, JSON or
-    /// XML. The same keys the merge uses to leave out an outside song you already own.
-    pub fn local_song_keys<'a>(local_songs: impl IntoIterator<Item = &'a Row>) -> HashSet<String> {
-        local_songs
-            .into_iter()
-            .filter_map(|song| match song {
-                Row::Json(Value::Object(dict)) => {
-                    song_key(text(dict, "artist").as_deref(), text(dict, "title").as_deref())
-                }
-                Row::Json(_) => None,
-                Row::Xml(element) => song_key(element.attribute("artist"), element.attribute("title")),
-            })
-            .collect()
+    /// The library rows as [`Self::parse_search_response`] returns them, JSON or XML, as the
+    /// merge reads them to leave out an outside song you already own.
+    pub fn local_song_keys<'a>(local_songs: impl IntoIterator<Item = &'a Row>) -> LocalSongs {
+        let mut local = LocalSongs::default();
+        for song in local_songs {
+            local.add(song);
+        }
+        local
     }
 
-    /// True when `song` is one of the library rows behind `keys`.
-    pub fn is_listed(song: &Song, keys: &HashSet<String>) -> bool {
-        song_key(Some(&song.artist), Some(&song.title)).is_some_and(|key| keys.contains(&key))
+    /// True when `song` is one of the library rows behind `local`.
+    pub fn is_listed(song: &Song, local: &LocalSongs) -> bool {
+        local.has(song)
     }
 
     fn merge_search_results_json(
@@ -228,24 +224,18 @@ impl SubsonicModelMapper {
         // users expect their owned tracks to top the results, with discovery
         // suggestions following.
         // An outside song you already own is not listed again under it.
-        let local_song_keys: HashSet<String> = local_songs
-            .iter()
-            .chain(trailing_local_songs.iter())
-            .filter_map(|row| match row {
-                Row::Json(Value::Object(dict)) => {
-                    song_key(text(dict, "artist").as_deref(), text(dict, "title").as_deref())
-                }
-                _ => None,
-            })
-            .collect();
+        let owned = Self::local_song_keys(
+            local_songs
+                .iter()
+                .chain(trailing_local_songs.iter())
+                .filter(|row| matches!(row, Row::Json(_))),
+        );
         let mut merged_songs = local_songs;
         merged_songs.extend(
             external_result
                 .songs
                 .iter()
-                .filter(|s| {
-                    song_key(Some(&s.artist), Some(&s.title)).is_none_or(|k| !local_song_keys.contains(&k))
-                })
+                .filter(|s| !owned.has(s))
                 .map(|s| Row::Json(Value::Object(self.response_builder.convert_song_to_json(s)))),
         );
         merged_songs.extend(trailing_local_songs);
@@ -361,11 +351,9 @@ impl SubsonicModelMapper {
 
         // Songs, without an outside song you already own
         let mut merged_songs = Vec::new();
-        let mut local_song_keys = HashSet::new();
+        let mut owned = LocalSongs::default();
         for song in local_songs.into_iter().filter_map(Row::into_xml) {
-            if let Some(key) = song_key(song.attribute("artist"), song.attribute("title")) {
-                local_song_keys.insert(key);
-            }
+            owned.add_xml(&song);
             merged_songs.push(Row::Xml(rename(song, "song")));
         }
         let trailing: Vec<XElement> = trailing_local_songs
@@ -373,14 +361,10 @@ impl SubsonicModelMapper {
             .filter_map(Row::into_xml)
             .collect();
         for song in &trailing {
-            if let Some(key) = song_key(song.attribute("artist"), song.attribute("title")) {
-                local_song_keys.insert(key);
-            }
+            owned.add_xml(song);
         }
         for song in &external_result.songs {
-            if song_key(Some(&song.artist), Some(&song.title))
-                .is_some_and(|key| local_song_keys.contains(&key))
-            {
+            if owned.has(song) {
                 continue;
             }
             merged_songs.push(Row::Xml(self.response_builder.convert_song_to_xml(song, ns)));
@@ -390,6 +374,84 @@ impl SubsonicModelMapper {
         }
 
         (merged_songs, merged_albums, merged_artists)
+    }
+}
+
+/// The library's songs in a search answer, for leaving out an outside song you already own: one
+/// with the same song key, or, when both lengths are known and within 8 seconds, one
+/// [`SongIdentity::same`] accepts with [`SongIdentity::owned`] (a title in another script, a
+/// credit written another way).
+#[derive(Debug, Clone, Default)]
+pub struct LocalSongs {
+    keys: HashSet<String>,
+    timed: Vec<SongRef>,
+}
+
+impl LocalSongs {
+    /// How far apart two known lengths may be for one song.
+    pub const LENGTH_TOLERANCE_SECONDS: i32 = 8;
+
+    /// How many different library songs there are, by key.
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    fn add(&mut self, row: &Row) {
+        match row {
+            Row::Json(Value::Object(dict)) => {
+                let seconds = dict.get("duration").and_then(Value::as_f64);
+                self.add_song(
+                    text(dict, "artist").as_deref(),
+                    text(dict, "title").as_deref(),
+                    seconds,
+                );
+            }
+            Row::Json(_) => {}
+            Row::Xml(element) => self.add_xml(element),
+        }
+    }
+
+    fn add_xml(&mut self, element: &XElement) {
+        let seconds = element
+            .attribute("duration")
+            .and_then(|d| d.trim().parse::<f64>().ok());
+        self.add_song(element.attribute("artist"), element.attribute("title"), seconds);
+    }
+
+    fn add_song(&mut self, artist: Option<&str>, title: Option<&str>, seconds: Option<f64>) {
+        let Some(key) = song_key(artist, title) else {
+            return;
+        };
+        self.keys.insert(key);
+        if let Some(seconds) = seconds.filter(|s| *s > 0.0) {
+            self.timed.push(
+                SongRef::new(title.unwrap_or_default(), artist.unwrap_or_default()).with_seconds(seconds),
+            );
+        }
+    }
+
+    /// Whether `song`, an outside song, is one of these library songs.
+    pub fn has(&self, song: &Song) -> bool {
+        let Some(key) = song_key(Some(&song.artist), Some(&song.title)) else {
+            return false;
+        };
+        if self.keys.contains(&key) {
+            return true;
+        }
+        let Some(seconds) = song.duration.filter(|d| *d > 0).map(f64::from) else {
+            return false;
+        };
+        let tolerance = f64::from(Self::LENGTH_TOLERANCE_SECONDS);
+        let wanted = SongRef::new(song.title.as_str(), song.artist.as_str()).with_seconds(seconds);
+        let options = SongIdentity::owned(Self::LENGTH_TOLERANCE_SECONDS);
+        self.timed.iter().any(|local| {
+            local.seconds.is_some_and(|s| (s - seconds).abs() <= tolerance)
+                && SongIdentity::same(&wanted, local, Some(&options)).is_same()
+        })
     }
 }
 

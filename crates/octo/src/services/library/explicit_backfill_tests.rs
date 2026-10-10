@@ -377,3 +377,44 @@ async fn endpoints_need_a_sign_in_and_apply_needs_the_music_path_typed() {
     assert_eq!(refused, axum::http::StatusCode::BAD_REQUEST);
     assert!(refusal.contains("type the music path"), "{refusal}");
 }
+
+/// While members have libraries of their own (Family on, or turned off since), explicit marks
+/// are only ever written to the shared library.
+#[test]
+fn explicit_marks_keep_to_the_shared_library() {
+    let worker_with = |family_on: bool, members: &[(&str, i64)]| {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        ExplicitBackfill::new(
+            Arc::new(ExplicitBackfillStore::new(None)),
+            Arc::new(TagEditJournal::new(Some(dir.path().join("tag-edits.json")))),
+            Arc::new(FakeCatalog::default()),
+            Arc::new(SettingsStore::for_tests(AppSettings::default())),
+            ExplicitBackfillServices::default(),
+        )
+        .with_library_scope(crate::services::family::library_index::scope_for_tests(
+            family_on, members,
+        ))
+    };
+    let listed = vec![
+        (
+            ExplicitBackfillSong {
+                path: "/music/A/a.flac".into(),
+                navidrome_id: Some("a".into()),
+            },
+            None,
+        ),
+        (
+            ExplicitBackfillSong {
+                path: "/members/alex/A/b.flac".into(),
+                navidrome_id: Some("b".into()),
+            },
+            None,
+        ),
+    ];
+    for family_on in [true, false] {
+        let kept = worker_with(family_on, &[("alex", 3)]).shared_only(listed.clone());
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0.path, "/music/A/a.flac");
+    }
+    assert_eq!(worker_with(false, &[]).shared_only(listed).len(), 2);
+}

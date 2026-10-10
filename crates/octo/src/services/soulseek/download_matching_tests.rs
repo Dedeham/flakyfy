@@ -1410,3 +1410,38 @@ fn a_log_says_a_picked_copy_was_kept_on_the_word_of_the_pick_not_of_its_name() {
         checks_passed_text(true, true, true).starts_with("the right length; AcoustID: the same recording")
     );
 }
+
+// ---- Whole words in the file name, the same in Find songs ----------------------------------
+
+#[test]
+fn find_songs_gives_the_same_name_verdict_as_the_download() {
+    let settings = SoulseekSettings::default();
+    let fourteen = lucky(r"Music\Peer\05 - Fourteen.flac", 200, "flac");
+    assert_eq!(
+        soulseek_candidates::why_not(&fourteen, judged("Four", None, Some(200), &settings, None)).as_deref(),
+        Some("The file name does not match the title")
+    );
+    assert!(
+        rank_all(
+            std::slice::from_ref(&fourteen),
+            &want("Four", Some(200), None, None)
+        )
+        .is_empty()
+    );
+
+    let run_together = lucky(r"Music\Queen\BohemianRhapsody.flac", 354, "flac");
+    assert_eq!(
+        soulseek_candidates::why_not(
+            &run_together,
+            judged("Bohemian Rhapsody", None, Some(354), &settings, Some("Queen"))
+        ),
+        None
+    );
+    assert_eq!(
+        rank_all(
+            std::slice::from_ref(&run_together),
+            &want("Bohemian Rhapsody", Some(354), None, Some("Queen"))
+        ),
+        vec![run_together]
+    );
+}

@@ -33,8 +33,9 @@ use crate::http::error::{AppError, AppResult, json_status, problem};
 use crate::http::routes::RouteSet;
 use crate::http::static_files::{RangeOutcome, parse_range};
 use crate::services::common::track_acquisition_queue::Completion;
+use crate::services::family::{FamilyCaller, LibraryScope, audio_gate, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
-use crate::services::library::GeneratedPlaylist;
+use crate::services::library::{GeneratedPlaylist, navidrome_song_list};
 use crate::services::subsonic::subsonic_proxy_service::content_type_of;
 
 pub fn routes() -> RouteSet {
@@ -53,6 +54,7 @@ pub fn routes() -> RouteSet {
 
 /// Downloads on-the-fly if needed, or streams directly in Stream mode.
 pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
+    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -109,11 +111,26 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
         if let Some(local_path) = local_path
             && Path::new(&local_path).is_file()
         {
-            return serve_file(&call, &local_path).await;
+            match outside_file(&state, &call, caller.as_ref(), &local_path).await {
+                OutsideFile::Serve => return serve_file(&call, &local_path).await,
+                OutsideFile::Relayed(response) => return Ok(response),
+                // Not this caller's to have as a file: it plays from its source below.
+                OutsideFile::Withheld => {}
+            }
         }
     }
 
-    match play_external(&state, &call, &provider, &external_id, &id, &format).await {
+    match play_external(
+        &state,
+        &call,
+        caller.as_ref(),
+        &provider,
+        &external_id,
+        &id,
+        &format,
+    )
+    .await
+    {
         Ok(response) => Ok(response),
         Err(error) => {
             error!("Failed to stream track {id}: {error:#}");
@@ -132,6 +149,7 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
 async fn play_external(
     state: &AppState,
     call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
     provider: &str,
     external_id: &str,
     id: &str,
@@ -158,19 +176,36 @@ async fn play_external(
     }
     if settings.wait_for_lossless_on_play {
         let who = signed_in_user(state, call).await.map_err(anyhow::Error::new)?;
-        let acquisition = state.track_acquisition_queue.enqueue(
-            provider,
-            external_id,
-            false,
-            false,
-            true,
-            None,
-            true,
-            requester_for(state, Some(&who)).as_deref(),
-            false,
-            None,
-        );
-        return serve_acquired(state, call, acquisition, provider, external_id, id, format, true).await;
+        // A family member's play keeps a copy only when they may add songs at once, and then
+        // in their own library; otherwise it plays from the source below.
+        if let Some(target) = state.family_write_gate.play_target(Some(&who)) {
+            let acquisition = state.track_acquisition_queue.enqueue_for(
+                &target,
+                false,
+                provider,
+                external_id,
+                false,
+                false,
+                true,
+                None,
+                true,
+                requester_for(state, Some(&who)).as_deref(),
+                false,
+                None,
+            );
+            return serve_acquired(
+                state,
+                call,
+                caller,
+                acquisition,
+                provider,
+                external_id,
+                id,
+                format,
+                true,
+            )
+            .await;
+        }
     }
 
     if let Some(direct) = try_direct_stream(state, call, provider, external_id, id).await? {
@@ -196,6 +231,7 @@ async fn play_external(
 async fn serve_acquired(
     state: &AppState,
     call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
     acquisition: Completion,
     provider: &str,
     external_id: &str,
@@ -258,7 +294,67 @@ async fn serve_acquired(
             .create_error(format, 70, "Lossless copy is no longer on disk")
             .into_response());
     }
-    serve_file(call, &path).await.map_err(anyhow::Error::new)
+    match outside_file(state, call, caller, &path).await {
+        OutsideFile::Serve => serve_file(call, &path).await.map_err(anyhow::Error::new),
+        OutsideFile::Relayed(response) => Ok(response),
+        OutsideFile::Withheld => {
+            if let Some(preview) = try_direct_stream(state, call, provider, external_id, id).await? {
+                return Ok(preview);
+            }
+            Ok(state
+                .subsonic_response_builder
+                .create_error(format, 70, "No playable source found for this track")
+                .into_response())
+        }
+    }
+}
+
+/// What Octo does with a file it holds for an outside song, for one caller.
+enum OutsideFile {
+    /// Send the file, as with Family off.
+    Serve,
+    /// The library copy, relayed from Navidrome with the caller's quality.
+    Relayed(Response),
+    /// Not for this caller as a file: play the song from its source instead.
+    Withheld,
+}
+
+/// Whether to send a file Octo holds for an outside song. With Family on, a file in another
+/// member's own library (or the family pool) is never sent, and when the caller's audio has a
+/// ceiling the library copy is relayed with it instead, so no file goes out above it. A file
+/// the library index does not know yet cannot be relayed, so it is withheld then.
+async fn outside_file(
+    state: &AppState,
+    call: &SubsonicCall,
+    caller: Option<&FamilyCaller>,
+    path: &str,
+) -> OutsideFile {
+    let Some(caller) = caller else {
+        return OutsideFile::Serve;
+    };
+    let full = navidrome_song_list::full_path(path);
+    let song = state.library_index.find_by_path(&full);
+    let scope = if caller.managed {
+        LibraryScope::Viewer(caller.user.clone())
+    } else {
+        LibraryScope::Shared
+    };
+    if !state
+        .library_scope
+        .allows(&scope, song.as_ref().map(|s| s.id.as_str()), Some(&full))
+    {
+        return OutsideFile::Withheld;
+    }
+    if audio_gate::ceiling(caller).is_none() {
+        return OutsideFile::Serve;
+    }
+    let Some(song) = song else {
+        return OutsideFile::Withheld;
+    };
+    let mut parameters = call.parameters.clone();
+    parameters.insert("id".into(), song.id);
+    audio_gate::rewrite_parameters(caller, "stream", &mut parameters);
+    OutsideFile::Relayed(call.proxy.relay_stream(&parameters).await)
 }
 
 /// Proxy the lossy preview straight from the CDN. `None` when no source resolved.

@@ -103,6 +103,8 @@ EXPLICIT_FILTER=Clean
 YTDLP_GATE_RESERVE=2
 YTDLP_BG_GATE_WAIT_SEC=45
 OCTO_CONFIG_DIR=$work/octo-config
+MEMBERS_DIR=$work/family-members
+FAMILY_ENABLED=true
 UPDATES_CHECK=false
 UPDATES_REPO=
 COMPOSE_PROFILES=sonic
@@ -138,6 +140,11 @@ touch "$work/probe" && chmod 600 "$work/probe"
 if [ "$(stat -c %a "$work/probe" 2>/dev/null)" = 600 ]; then
   [ "$(stat -c %a "$work/octo/.env")" = 600 ] && pass ".env is readable by its owner only" || fail ".env is not chmod 600"
 fi
+
+# Family keeps members' music in the music folder, so the installer makes no folder for it;
+# an old MEMBERS_DIR line is kept like any other (checked above).
+[ ! -e "$work/family-members" ] && [ ! -e "$work/octo/members" ] \
+  && pass "no Family members folder is made" || fail "a Family members folder was made"
 
 cp "$work/octo/.env" "$work/first.env"
 run

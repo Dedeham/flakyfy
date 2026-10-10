@@ -217,6 +217,8 @@ pub struct ExplicitBackfill {
     busy_wait: Duration,
     /// Apply and Undo write the library one job at a time with the other library jobs.
     write_gate: LibraryWriteGate,
+    /// With Family on, explicit marks are written to the shared library only.
+    scope: Option<crate::services::family::ScopeResolver>,
 }
 
 impl ExplicitBackfill {
@@ -255,6 +257,37 @@ impl ExplicitBackfill {
             pace: Self::PACE,
             busy_wait: Self::BUSY_WAIT,
             write_gate: LibraryWriteGate::new(),
+            scope: None,
+        }
+    }
+
+    /// Keeps the marking to the shared library while Family is on.
+    pub fn with_library_scope(mut self, scope: crate::services::family::ScopeResolver) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// The songs the marking may touch: all of them, or the shared library's while members
+    /// have libraries of their own (Family on, or turned off with their libraries still there).
+    fn shared_only(
+        &self,
+        listed: Vec<(ExplicitBackfillSong, Option<String>)>,
+    ) -> Vec<(ExplicitBackfillSong, Option<String>)> {
+        match self.scope.as_ref().filter(|scope| scope.keeps_shared()) {
+            Some(scope) => {
+                let view = scope.shared_view();
+                listed
+                    .into_iter()
+                    .filter(|(song, _)| {
+                        view.allows(
+                            &crate::services::family::LibraryScope::Shared,
+                            song.navidrome_id.as_deref(),
+                            Some(&song.path),
+                        )
+                    })
+                    .collect()
+            }
+            None => listed,
         }
     }
 
@@ -425,7 +458,7 @@ impl ExplicitBackfill {
                 current.queue.len()
             );
         } else {
-            let listed = self.songs(stopping).await?;
+            let listed = self.shared_only(self.songs(stopping).await?);
             let queue: Vec<ExplicitBackfillSong> = listed
                 .iter()
                 .filter(|(_, status)| status.as_deref().is_none_or(str::is_empty))

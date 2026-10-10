@@ -118,12 +118,15 @@ async fn validate_listen_brainz(state: &AppState, user: Option<&str>, token: Opt
     // The page only ever holds the placeholder for a saved token; checking it means the saved one.
     let candidate = match token {
         Some(token) if !is_blank(token) && token != SECRET_PLACEHOLDER => token.to_string(),
-        _ => state
-            .settings
-            .current()
-            .listen_brainz
-            .token_for(user.unwrap_or(""))
-            .unwrap_or_default(),
+        _ => {
+            let user = user.unwrap_or("");
+            state
+                .settings
+                .current()
+                .listen_brainz
+                .token_for_listener(user, state.family_credentials.is_member(user))
+                .unwrap_or_default()
+        }
     };
     if candidate.is_empty() {
         return ok(&json!({

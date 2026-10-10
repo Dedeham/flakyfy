@@ -21,6 +21,8 @@ use super::health_words::{self as words, count_text};
 use super::keep_marks::{self, KeepMarks};
 use super::library_health::{self as health, HealthCheck, HealthReport};
 use super::server_song_fields::ServerSongFields;
+use crate::services::family::library_index::row_full_path;
+use crate::services::family::{LibraryScope, ScopeResolver};
 use crate::services::library::library_tag_edits::{self as tag_edits, song_tag_fields};
 use crate::services::library::{
     LibraryActionExecutor, LibraryActionRequest, LibraryActionState, LibraryAlbumIndex, LibraryEditOutcome,
@@ -162,6 +164,9 @@ pub struct HealthServices {
     pub upgrade_sources: Option<Arc<UpgradeSources>>,
     /// Fixing duplicates so the best sound ends up in the copy people marked.
     pub keep_marks: Option<Arc<KeepMarks>>,
+    /// With Family on, Library health keeps to the shared library: members' own libraries are
+    /// never checked or fixed here.
+    pub scope: Option<ScopeResolver>,
 }
 
 /// How one step is sent; tests answer here instead of touching files.
@@ -331,14 +336,14 @@ impl LibraryHealthService {
             {
                 return Some(Arc::new(HealthSnapshot {
                     report: known.report.clone(),
-                    songs: index.rows().to_vec(),
+                    songs: self.shared_rows(index.rows()),
                     fields: Arc::clone(&known.fields),
                     read_utc: known.read_utc,
                 }));
             }
         }
         let started = Instant::now();
-        let rows = in_search_order(index.rows());
+        let rows = in_search_order(&self.shared_rows(index.rows()));
         let checked = tokio::task::spawn_blocking(move || {
             let fields = ServerSongFields::new(rows.iter().map(|row| &**row));
             let report = health::check(&rows, &fields);
@@ -376,6 +381,24 @@ impl LibraryHealthService {
             fields,
             read_utc,
         }))
+    }
+
+    /// The rows Library health looks at: every row, or the shared library's while members have
+    /// libraries of their own (Family on, or turned off with their libraries still there).
+    fn shared_rows(&self, rows: &[Row]) -> Vec<Row> {
+        match self.services.scope.as_ref().filter(|scope| scope.keeps_shared()) {
+            Some(scope) => {
+                let view = scope.shared_view();
+                rows.iter()
+                    .filter(|row| {
+                        let full = row_full_path(row.library_path.as_deref(), &row.path);
+                        view.allows(&LibraryScope::Shared, Some(&row.id), Some(&full))
+                    })
+                    .cloned()
+                    .collect()
+            }
+            None => rows.to_vec(),
+        }
     }
 
     /// The report with what was fixed here left out, while the library read is older than the fix.

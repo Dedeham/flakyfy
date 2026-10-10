@@ -14,7 +14,11 @@ use super::caller_checks::{SubsonicCall, check_caller, signed_in_user};
 use crate::app::AppState;
 use crate::http::error::AppResult;
 use crate::http::routes::RouteSet;
+use crate::services::common::song_finder::{PickOutcome, library_action_states};
+use crate::services::family::{WriteDecision, family_caller};
 use crate::services::subsonic::SubsonicResponseBuilderExt;
+use octo_core::family::abilities::RequestQuality;
+use octo_core::family::request::RequestKind;
 
 const FORMAT: &str = "json";
 
@@ -158,6 +162,7 @@ pub async fn get_found_songs(State(state): State<AppState>, req: Request) -> App
 /// Fetches exactly one copy a Find songs search listed, by its id there (copy). The copy's place
 /// on the list (candidate) still works for older apps, once the search has ended.
 pub async fn pick_found_song(State(state): State<AppState>, req: Request) -> AppResult {
+    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return Ok(response),
@@ -180,6 +185,22 @@ pub async fn pick_found_song(State(state): State<AppState>, req: Request) -> App
             .create_error(FORMAT, 50, "Sign in with a username to pick a song")
             .into_response());
     }
+    // A family member who must ask first asks for the song instead; one who only saves songs
+    // cannot pick one. Members who add songs at once get the copy in their own library.
+    if let Some(member) = caller.filter(|c| c.managed) {
+        match state.family_write_gate.decide(Some(&member.user)) {
+            WriteDecision::Shared | WriteDecision::Member(_) => {}
+            WriteDecision::Request { full, .. } => {
+                let outcome = ask_instead(&state, &member.user, &search, full).await;
+                return Ok(builder.create_pick_response(&outcome).into_response());
+            }
+            WriteDecision::Refuse { message, .. } => {
+                return Ok(builder
+                    .create_pick_response(&PickOutcome::skipped(message))
+                    .into_response());
+            }
+        }
+    }
     let outcome = if copy.is_empty() {
         state
             .song_finder
@@ -189,4 +210,34 @@ pub async fn pick_found_song(State(state): State<AppState>, req: Request) -> App
         state.song_finder.pick_by_id(&search, &copy, &username).await
     };
     Ok(builder.create_pick_response(&outcome).into_response())
+}
+
+/// A family member's pick, as a request for the song the look was for: a better copy of a
+/// shared song, or a copy of an outside one.
+async fn ask_instead(state: &AppState, user: &str, search: &str, full: Option<String>) -> PickOutcome {
+    let Some(look) = state.song_finder.look_of(search, user) else {
+        return PickOutcome::skipped("This search is gone. Search again.");
+    };
+    let (target, kind) = match (&look.library_id, &look.external_id) {
+        (Some(library_id), _) => (library_id.clone(), RequestKind::Upgrade),
+        (None, Some(outside)) => (outside.clone(), RequestKind::Song),
+        (None, None) => return PickOutcome::skipped("This song cannot be asked for."),
+    };
+    match state
+        .family_request_service
+        .create(user, &target, RequestQuality::Best, Some(kind))
+        .await
+    {
+        Ok(request) => PickOutcome::new(
+            library_action_states::QUEUED,
+            match full {
+                Some(full) => format!("{full}. Asked for a copy instead ({}).", request.id),
+                None => format!(
+                    "Asked for a copy. You'll hear back once it's decided ({}).",
+                    request.id
+                ),
+            },
+        ),
+        Err(e) => PickOutcome::skipped(e.message),
+    }
 }

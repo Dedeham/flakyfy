@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::ImportTrack;
 use super::spotify_web_api::{ImportKeys, str_of};
+use super::text_list;
 use crate::controllers::admin::json_body::stj_parse_error;
 
 /// A list a file held: its name and songs.
@@ -15,6 +16,15 @@ use crate::controllers::admin::json_body::stj_parse_error;
 pub struct FileList {
     pub name: String,
     pub tracks: Vec<ImportTrack>,
+}
+
+/// What a file held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileRead {
+    /// Lists whose columns say which text is the artist.
+    Lists(Vec<FileList>),
+    /// A plain list's lines, either way round.
+    Text(Vec<text_list::TextList>),
 }
 
 /// Why a file could not be read, as the C# exception it was.
@@ -40,6 +50,7 @@ pub enum FileReadError {
 /// - Spotify's own "Download your data" export (Account, Privacy): YourLibrary.json holds the
 ///   liked songs and Playlist1.json (and on) every playlist, whole. The zip Spotify sends works
 ///   as it is.
+/// - A plain list, one "Artist - Title" per line ([`super::text_list`]).
 pub struct ImportFileReader;
 
 impl ImportFileReader {
@@ -57,12 +68,24 @@ impl ImportFileReader {
 
     pub const TOO_MANY_SONGS: &str = "It holds more than 50,000 songs. Split it into smaller files.";
 
+    /// The lists in a file, a plain list read Artist - Title.
     pub fn read(file_name: &str, content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
-        let lists = read_any(file_name, content)?;
-        if song_count(&lists) > Self::MAX_SONGS {
+        Ok(match Self::read_parts(file_name, content)? {
+            FileRead::Lists(lists) => lists,
+            FileRead::Text(lists) => text_list::to_file_lists(lists, text_list::Orientation::ArtistTitle),
+        })
+    }
+
+    /// What a file holds: its lists, or a plain list's lines, whose orientation the caller
+    /// decides ([`text_list::choose_orientation`]).
+    pub fn read_parts(file_name: &str, content: &[u8]) -> Result<FileRead, FileReadError> {
+        let read = read_any(file_name, content)?;
+        if let FileRead::Lists(lists) = &read
+            && song_count(lists) > Self::MAX_SONGS
+        {
             return Err(FileReadError::Format(Self::TOO_MANY_SONGS.to_string()));
         }
-        Ok(lists)
+        Ok(read)
     }
 
     /// A length in milliseconds, seconds, or m:ss.
@@ -160,18 +183,46 @@ fn decode(content: &[u8]) -> String {
     String::from_utf8_lossy(content).into_owned()
 }
 
-fn read_any(file_name_given: &str, content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
+fn read_any(file_name_given: &str, content: &[u8]) -> Result<FileRead, FileReadError> {
     let name = file_name(file_name_given);
     let extension = to_lower_invariant(extension(name));
     if extension == ".zip" {
-        return read_zip(content);
+        return read_zip(content).map(FileRead::Lists);
     }
     let text = decode(content);
     let start = text.trim_start();
     if extension == ".json" || start.starts_with('{') || start.starts_with('[') {
-        return read_json(without_extension(name), &text);
+        return read_json(without_extension(name), &text).map(FileRead::Lists);
     }
-    read_csv(without_extension(name), &text)
+    if is_text_list(&extension, &text) {
+        return text_list::read_lines(without_extension(name), &text).map(FileRead::Text);
+    }
+    read_csv(without_extension(name), &text).map(FileRead::Lists)
+}
+
+/// A `.csv` file is a table. Any other file, a `.txt` one included, is a table only when its
+/// first line names a title or an artist column among commas or semicolons (a table some tool
+/// saved as text), and a plain list otherwise: a comma alone proves nothing, since "Earth, Wind
+/// & Fire - September" has one.
+fn is_text_list(extension: &str, text: &str) -> bool {
+    if extension == ".csv" {
+        return false;
+    }
+    match text.lines().find(|line| !line.trim().is_empty()) {
+        Some(first) => !is_csv_header(first),
+        // Nothing to go by: a text file reads as a list, anything else as a table.
+        None => extension == ".txt",
+    }
+}
+
+fn is_csv_header(line: &str) -> bool {
+    if !line.contains([',', ';']) {
+        return false;
+    }
+    line.split([',', ';']).any(|cell| {
+        let name = to_lower_invariant(cell.trim().trim_matches('"').trim());
+        TITLE_COLUMNS.contains(&name.as_str()) || ARTIST_COLUMNS.contains(&name.as_str())
+    })
 }
 
 fn read_zip(content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
@@ -219,7 +270,10 @@ fn read_zip(content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
             }
             bytes.extend_from_slice(&buffer[..read]);
         }
-        lists.extend(read_any(&file, &bytes)?);
+        lists.extend(match read_any(&file, &bytes)? {
+            FileRead::Lists(read) => read,
+            FileRead::Text(read) => text_list::to_file_lists(read, text_list::Orientation::ArtistTitle),
+        });
         if song_count(&lists) > ImportFileReader::MAX_SONGS {
             return Err(FileReadError::Format(
                 ImportFileReader::TOO_MANY_SONGS.to_string(),
@@ -312,7 +366,7 @@ pub(crate) fn read_json(name: &str, text: &str) -> Result<Vec<FileList>, FileRea
 
 // ---- CSV ----------------------------------------------------------------------------------
 
-const TITLE_COLUMNS: &[&str] = &[
+pub(super) const TITLE_COLUMNS: &[&str] = &[
     "track name",
     "title",
     "track",
@@ -321,7 +375,7 @@ const TITLE_COLUMNS: &[&str] = &[
     "name",
     "track title",
 ];
-const ARTIST_COLUMNS: &[&str] = &[
+pub(super) const ARTIST_COLUMNS: &[&str] = &[
     "artist name(s)",
     "artist names",
     "artist name",
@@ -369,7 +423,8 @@ pub(crate) fn read_csv(name: &str, text: &str) -> Result<Vec<FileList>, FileRead
         |names: &[&str]| -> Option<usize> { names.iter().find_map(|n| header.iter().position(|h| h == n)) };
     let (Some(title), Some(artist)) = (column(TITLE_COLUMNS), column(ARTIST_COLUMNS)) else {
         return Err(FileReadError::Format(
-            "The file needs a title column and an artist column, named in its first row.".to_string(),
+            "The file needs a title column and an artist column, named in its first row, or a plain list with one Artist - Title per line."
+                .to_string(),
         ));
     };
     let album = column(ALBUM_COLUMNS);
@@ -387,9 +442,17 @@ pub(crate) fn read_csv(name: &str, text: &str) -> Result<Vec<FileList>, FileRead
     // One file can hold several playlists (TuneMyMusic, Soundiiz): a playlist column splits them.
     let mut order: Vec<(String, Vec<ImportTrack>)> = Vec::new();
     for row in rows.iter().skip(1) {
+        let (mut title_text, mut artist_text) = (cell(row, Some(title)), cell(row, Some(artist)));
+        // A list a tool built from plain text (TuneMyMusic's free text) leaves the artist
+        // column empty and keeps the whole "Artist - Title" line in the title column.
+        if artist_text.is_none()
+            && let Some((a, t)) = title_text.as_deref().and_then(text_list::split_artist_title)
+        {
+            (title_text, artist_text) = (Some(t.to_string()), Some(a.to_string()));
+        }
         let Some(found) = track(
-            cell(row, Some(title)).as_deref(),
-            cell(row, Some(artist)).as_deref(),
+            title_text.as_deref(),
+            artist_text.as_deref(),
             cell(row, album).as_deref(),
             ImportFileReader::seconds(cell(row, length).as_deref(), length_in_ms),
             cell(row, isrc).as_deref(),
@@ -465,7 +528,7 @@ pub(crate) fn rows(text: &str) -> impl Iterator<Item = Vec<String>> + '_ {
     })
 }
 
-fn track(
+pub(super) fn track(
     title: Option<&str>,
     artist: Option<&str>,
     album: Option<&str>,

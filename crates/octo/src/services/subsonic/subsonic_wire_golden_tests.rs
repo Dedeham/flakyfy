@@ -72,7 +72,7 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
 }
 
 /// A recorded extensions list as Octo 2026.10.05 lists the extensions the ported groups added:
-/// octoImports (H, 4008358) and octoLists (Q, f54467a) after the extensions the 2026.10.03.2
+/// octoImports (H, 4008358; versions 1 and 2) and octoLists (Q, f54467a) after the extensions the 2026.10.03.2
 /// recording lists, as 2026.10.05 lists them last, and octoAcquisitions at versions 1 and 2 (D,
 /// 9ac4e5a: the log, the key and Find songs). Until the groups that add the other 2026.10.05
 /// extensions land, a fresh recording would differ for their sake, so these golden tests keep the
@@ -83,7 +83,7 @@ fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
         let at = want.body.rfind("]}}").expect("the end of the list");
         want.body.insert_str(
             at,
-            r#",{"name":"octoImports","versions":[1]},{"name":"octoLists","versions":[1]}"#,
+            r#",{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1]}"#,
         );
         (
             r#"{"name":"octoAcquisitions","versions":[1]}"#,
@@ -97,7 +97,7 @@ fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
         want.body.insert_str(
             at,
             concat!(
-                "  <openSubsonicExtensions name=\"octoImports\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
+                "  <openSubsonicExtensions name=\"octoImports\">\n    <versions>1</versions>\n    <versions>2</versions>\n  </openSubsonicExtensions>\n",
                 "  <openSubsonicExtensions name=\"octoLists\">\n    <versions>1</versions>\n  </openSubsonicExtensions>\n",
             ),
         );

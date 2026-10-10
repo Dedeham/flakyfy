@@ -825,3 +825,36 @@ async fn a_scan_request_is_seen_until_the_worker_takes_it() {
     stopping.cancel();
     running.await.expect("the worker ends").expect("cleanly");
 }
+
+/// While members have libraries of their own (Family on, or turned off since), the duplicate
+/// scan never pairs a member's own copy with a shared song, and until the library index has
+/// been read no track can be told apart, so none is paired and nothing is settled.
+#[test]
+fn duplicates_keep_to_the_shared_library() {
+    let worker_with = |family_on: bool, members: &[(&str, i64)]| {
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
+        let http = reqwest::Client::new();
+        DuplicateScanWorker::new(
+            Arc::new(NoticeQueue::new()),
+            NavidromeIdentityService::new(settings.clone(), http.clone()),
+            http,
+            settings,
+            None,
+            None,
+        )
+        .with_library_scope(crate::services::family::library_index::scope_for_tests(
+            family_on, members,
+        ))
+    };
+    let tracks = vec![track("a"), track("b")];
+
+    let (kept, complete) = worker_with(false, &[]).shared_only(tracks.clone(), true);
+    assert_eq!(ids(&kept), ["a", "b"]);
+    assert!(complete);
+
+    for family_on in [true, false] {
+        let (kept, complete) = worker_with(family_on, &[("alex", 3)]).shared_only(tracks.clone(), true);
+        assert!(kept.is_empty(), "an index never read tells no track apart");
+        assert!(!complete, "an index never read settles nothing");
+    }
+}

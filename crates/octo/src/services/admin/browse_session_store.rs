@@ -22,6 +22,28 @@ struct Session {
     lifetime: TimeDelta,
     /// Written to disk. A recovery-code session never is.
     persist: bool,
+    kind: SessionKind,
+}
+
+/// Where a session was signed in, and so where it counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SessionKind {
+    /// The dashboard, as a Navidrome admin or with the recovery code.
+    #[default]
+    Admin,
+    /// The Family page, as a family member with their account password.
+    Member,
+    /// The Family page, as a Navidrome admin (the owner, or the admin who turns Family on).
+    FamilyNavidrome,
+    /// The Family page, as a Navidrome account outside the family that is not an admin.
+    FamilyGuest,
+}
+
+impl SessionKind {
+    /// Whether this is a dashboard session.
+    pub fn is_admin(&self) -> bool {
+        *self == SessionKind::Admin
+    }
 }
 
 /// One line of `browse-sessions.json` (the private record `Saved(string Hash, string User, DateTime Expires)`).
@@ -34,6 +56,9 @@ struct Saved {
     user: String,
     #[serde(with = "datetime::utc")]
     expires: DateTime<Utc>,
+    /// Left out for a dashboard session, so files written before kinds existed read the same.
+    #[serde(skip_serializing_if = "SessionKind::is_admin")]
+    kind: SessionKind,
 }
 
 impl Default for Saved {
@@ -42,6 +67,7 @@ impl Default for Saved {
             hash: String::new(),
             user: String::new(),
             expires: datetime::min_value(),
+            kind: SessionKind::Admin,
         }
     }
 }
@@ -78,6 +104,9 @@ impl BrowseSessionStore {
     /// Sliding lifetime of a recovery-code session: long enough to fix the settings.
     pub const RECOVERY_TTL: TimeDelta = TimeDelta::hours(1);
 
+    /// Sliding lifetime of a Family page session.
+    pub const FAMILY_TTL: TimeDelta = TimeDelta::days(30);
+
     /// A slide is written to disk at most once a day per session; the rest only moves it in memory.
     const SAVE_SLIDE_EVERY: TimeDelta = TimeDelta::days(1);
 
@@ -113,8 +142,13 @@ impl BrowseSessionStore {
                                     user: saved.user,
                                     expires: saved.expires,
                                     saved_expires: saved.expires,
-                                    lifetime: Self::TTL,
+                                    lifetime: if saved.kind.is_admin() {
+                                        Self::TTL
+                                    } else {
+                                        Self::FAMILY_TTL
+                                    },
                                     persist: true,
+                                    kind: saved.kind,
                                 },
                             );
                         }
@@ -139,15 +173,26 @@ impl BrowseSessionStore {
 
     /// Mint a token for a verified admin. Sliding expiry starts now.
     pub fn create(&self, username: &str) -> String {
-        self.mint(username, Self::TTL, true)
+        self.mint(username, Self::TTL, true, SessionKind::Admin)
     }
 
     /// Mint a recovery-code session: an hour, in memory only.
     pub fn create_recovery(&self) -> String {
-        self.mint(Self::RECOVERY_USER, Self::RECOVERY_TTL, false)
+        self.mint(Self::RECOVERY_USER, Self::RECOVERY_TTL, false, SessionKind::Admin)
     }
 
-    fn mint(&self, username: &str, lifetime: TimeDelta, persist: bool) -> String {
+    /// Mint a Family page session of `kind` (never [`SessionKind::Admin`]): 30 days of
+    /// sliding expiry, kept on disk. It counts only on the Family page.
+    pub fn create_family(&self, username: &str, kind: SessionKind) -> String {
+        let kind = if kind.is_admin() {
+            SessionKind::Member
+        } else {
+            kind
+        };
+        self.mint(username, Self::FAMILY_TTL, true, kind)
+    }
+
+    fn mint(&self, username: &str, lifetime: TimeDelta, persist: bool, kind: SessionKind) -> String {
         self.prune();
         let token = hex::encode_upper(rand::random::<[u8; 32]>());
         let expires = self.clock.now() + lifetime;
@@ -159,6 +204,7 @@ impl BrowseSessionStore {
                 saved_expires: expires,
                 lifetime,
                 persist,
+                kind,
             },
         );
         if persist {
@@ -170,14 +216,44 @@ impl BrowseSessionStore {
     /// True when the token is live. Valid use slides the expiry, so a browser in use stays
     /// signed in while an abandoned one still lapses.
     pub fn validate(&self, token: Option<&str>) -> bool {
-        self.touch(token).is_some()
+        self.touch(token).is_some_and(|s| s.kind.is_admin())
     }
 
     /// The Navidrome admin a live token was minted for, or None. Slides the expiry like
     /// Validate. What the Better quality page acts as, so a file is only ever changed for a
     /// person who signed in.
     pub fn user_of(&self, token: Option<&str>) -> Option<String> {
-        self.touch(token).map(|s| s.user)
+        self.touch(token).filter(|s| s.kind.is_admin()).map(|s| s.user)
+    }
+
+    /// Where a live token was signed in. Slides the expiry like Validate.
+    pub fn kind_of(&self, token: Option<&str>) -> Option<SessionKind> {
+        self.touch(token).map(|s| s.kind)
+    }
+
+    /// The person and kind of a live Family page token; None for a dashboard session. Slides
+    /// the expiry.
+    pub fn family_session_of(&self, token: Option<&str>) -> Option<(String, SessionKind)> {
+        self.touch(token)
+            .filter(|s| !s.kind.is_admin())
+            .map(|s| (s.user, s.kind))
+    }
+
+    /// Forgets every Family page session of one person (their dashboard sessions stay).
+    /// Answers how many were ended.
+    pub fn revoke_family_user(&self, user: &str) -> usize {
+        let gone = {
+            let mut sessions = self.sessions.lock();
+            let before = sessions.len();
+            sessions.retain(|_, session| {
+                session.kind.is_admin() || !octo_core::common::dotnet::eq_ignore_case(&session.user, user)
+            });
+            before - sessions.len()
+        };
+        if gone > 0 {
+            self.save();
+        }
+        gone
     }
 
     /// Like [`BrowseSessionStore::user_of`], but None for a recovery-code session: what the
@@ -264,6 +340,7 @@ impl BrowseSessionStore {
                 hash: hash.clone(),
                 user: s.user.clone(),
                 expires: s.expires,
+                kind: s.kind,
             })
             .collect();
         if let Err(e) = state_file::save_atomic(path, &octo_core::json::to_string(&saved)) {
@@ -498,5 +575,38 @@ mod tests {
         std::fs::write(&path, lapsed).expect("writes");
         let reloaded = BrowseSessionStore::new(Some(&path));
         assert!(reloaded.sessions.lock().is_empty());
+    }
+
+    #[test]
+    fn member_session_kind_round_trips() {
+        let (_dir, path) = temp_file();
+        let store = BrowseSessionStore::new(Some(&path));
+        let admin = store.create("winters");
+        let member = store.create_family("alex", SessionKind::Member);
+        let owner = store.create_family("winters", SessionKind::FamilyNavidrome);
+        // A dashboard session is written as it always was; a family one carries its kind.
+        let written = std::fs::read_to_string(&path).expect("reads");
+        assert_eq!(written.matches("\"Kind\"").count(), 2, "{written}");
+
+        let reloaded = BrowseSessionStore::new(Some(&path));
+        assert_eq!(reloaded.kind_of(Some(&admin)), Some(SessionKind::Admin));
+        assert_eq!(
+            reloaded.family_session_of(Some(&member)),
+            Some(("alex".to_string(), SessionKind::Member))
+        );
+        assert_eq!(
+            reloaded.family_session_of(Some(&owner)),
+            Some(("winters".to_string(), SessionKind::FamilyNavidrome))
+        );
+        // A family session never counts on the dashboard, and a dashboard one never here.
+        assert!(!reloaded.validate(Some(&member)));
+        assert!(reloaded.user_of(Some(&owner)).is_none());
+        assert!(reloaded.navidrome_user_of(Some(&member)).is_none());
+        assert!(reloaded.family_session_of(Some(&admin)).is_none());
+
+        // Ending someone's family sessions leaves their dashboard session.
+        assert_eq!(reloaded.revoke_family_user("winters"), 1);
+        assert_eq!(reloaded.user_of(Some(&admin)).as_deref(), Some("winters"));
+        assert!(reloaded.family_session_of(Some(&owner)).is_none());
     }
 }

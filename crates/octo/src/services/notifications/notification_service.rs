@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::FutureExt;
-use octo_core::notifications::notification_service::{is_enabled, render};
+use octo_core::notifications::notification_service::{is_enabled, render, render_for_member};
 use octo_core::notifications::{NotificationEvent, NotificationEventType, NotificationTestResult};
 use octo_core::settings::SettingsStore;
 use tracing::warn;
@@ -112,6 +112,59 @@ impl NotificationService {
         .await;
     }
 
+    /// Sends a family member's own push to their ntfy topic, in the background. Never fails
+    /// and never blocks the caller. A blank or malformed topic sends nothing.
+    pub fn notify_member(self: &Arc<Self>, topic: &str, evt: NotificationEvent) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let service = Arc::clone(self);
+        let topic = topic.to_string();
+        runtime.spawn(async move {
+            if let Err(e) = service.push_to_member(&topic, &evt).await {
+                warn!("A family member's push failed: {e}");
+            }
+        });
+    }
+
+    /// Publishes a member's push: to the owner's ntfy server when one is set (ntfy.sh
+    /// otherwise), on the member's topic, and never with the owner's access token, which
+    /// belongs to the owner's own topics.
+    pub(crate) async fn push_to_member(&self, topic: &str, evt: &NotificationEvent) -> anyhow::Result<()> {
+        let topic = topic.trim();
+        if !is_member_topic(topic) {
+            return Ok(());
+        }
+        let settings = self.settings.current();
+        let root = member_push_root(&settings.notifications.ntfy_url);
+        let message = render_for_member(evt);
+        let mut payload = serde_json::Map::new();
+        payload.insert("topic".into(), serde_json::json!(topic));
+        payload.insert("title".into(), serde_json::json!(message.title));
+        payload.insert(
+            "message".into(),
+            serde_json::json!(octo_core::notifications::ntfy_sink::build_body(&message)),
+        );
+        payload.insert(
+            "tags".into(),
+            serde_json::json!([octo_core::notifications::ntfy_sink::tag_for(message.r#type)]),
+        );
+        let body = octo_core::json::to_string_with(
+            &serde_json::Value::Object(payload),
+            octo_core::json::Options {
+                escaping: octo_core::json::Escaping::Relaxed,
+                indented: false,
+            },
+        );
+        let response = member_client()
+            .post(&root)
+            .header(reqwest::header::CONTENT_TYPE, "application/json; charset=utf-8")
+            .body(body)
+            .send()
+            .await?;
+        super::ensure_success_status_code(response.status())
+    }
+
     /// Admin test button. Unlike notify this awaits every sink and reports
     /// each outcome, including the transport's real error text on failure.
     pub async fn send_test(&self) -> Vec<NotificationTestResult> {
@@ -164,6 +217,27 @@ impl NotificationService {
             ..evt
         }
     }
+}
+
+/// Whether `topic` can be an ntfy topic: 1 to 64 letters, digits, `-` and `_`.
+pub fn is_member_topic(topic: &str) -> bool {
+    (1..=64).contains(&topic.len())
+        && topic
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The ntfy server members' pushes go to: the server of the owner's topic URL, or ntfy.sh.
+pub fn member_push_root(owner_ntfy_url: &str) -> String {
+    octo_core::notifications::ntfy_sink::parse_topic_url(owner_ntfy_url)
+        .map(|(root, _)| root)
+        .unwrap_or_else(|_| "https://ntfy.sh".to_string())
+}
+
+/// The client members' pushes go out on (the notifications timeout), made once.
+fn member_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(NotificationService::client).clone()
 }
 
 #[cfg(test)]
@@ -326,5 +400,61 @@ mod tests {
             }]
         );
         assert!(off.sent.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn member_push_never_carries_owner_token() {
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let svc = build(
+            NotificationSettings {
+                ntfy_url: format!("{}/owner-topic", server.uri()),
+                ntfy_token: "owner-secret-token".into(),
+                ..Default::default()
+            },
+            &[],
+        );
+        let evt = NotificationEvent {
+            title: Some("Hyperballad".into()),
+            family_member: Some("Alex".into()),
+            ..NotificationEvent::new(NotificationEventType::FamilyRequestAdded)
+        };
+        svc.push_to_member("alex-topic-k3J9x2mQ7pL4vB8n", &evt)
+            .await
+            .expect("sent");
+        // A topic that is not one sends nothing at all.
+        svc.push_to_member("../owner-topic", &evt).await.expect("ignored");
+        svc.push_to_member("", &evt).await.expect("ignored");
+
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert!(request.headers.get("authorization").is_none());
+        let body = String::from_utf8_lossy(&request.body).into_owned();
+        assert!(
+            body.contains(r#""topic":"alex-topic-k3J9x2mQ7pL4vB8n""#),
+            "{body}"
+        );
+        assert!(!body.contains("owner-topic"), "{body}");
+        assert!(!body.contains("owner-secret-token"), "{body}");
+        assert!(body.contains("Added: Hyperballad is in your library"), "{body}");
+        assert_eq!(request.url.path(), "/");
+    }
+
+    #[test]
+    fn member_pushes_go_to_the_owner_server_or_ntfy_sh() {
+        assert_eq!(
+            member_push_root("https://push.example/topic"),
+            "https://push.example"
+        );
+        assert_eq!(member_push_root(""), "https://ntfy.sh");
+        assert!(is_member_topic("Abc_123-x"));
+        assert!(!is_member_topic("a/b"));
+        assert!(!is_member_topic(&"a".repeat(65)));
     }
 }

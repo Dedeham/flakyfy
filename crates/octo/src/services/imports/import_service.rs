@@ -15,25 +15,29 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::import_file_reader::{FileReadError, ImportFileReader};
+use super::import_file_reader::{FileList, FileRead, FileReadError, ImportFileReader};
 use super::import_matcher::ImportMatcher;
 use super::import_models::{import_sources, import_track_states};
 use super::import_playlists::ImportPlaylists;
 use super::import_store::ImportStore;
 use super::import_views::{
-    ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView, TrackView,
-    TrickleView,
+    ApprovalView, ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView,
+    TrackView, TrickleView,
 };
 use super::spotify_account_store::SpotifyAccountStore;
 use super::spotify_auth::{SpotifyAuth, absolute};
 use super::spotify_link_reader::SpotifyLinkReader;
 use super::spotify_web_api::{SpotifyException, SpotifyPlaylistInfo, SpotifyWebApi};
+use super::text_list::{self, TextLine, TextList};
 use super::trickle_queue::TrickleQueue;
 use super::trickle_worker::TrickleWorker;
+use super::tunemymusic::ImportServices;
 use super::{ImportList, ImportTrack, SpotifyAccount, TrickleJob};
 use crate::services::common::acquisition_tracker::{
     AcquisitionSnapshot, AcquisitionState, AcquisitionTracker, key_of,
 };
+use crate::services::family::request_service::{RequestFacts, RequestService};
+use crate::services::family::{LibraryWriteGate, WriteDecision};
 
 /// Where Octo answers Spotify's redirect itself.
 pub const CALLBACK_PATH: &str = "/imports/spotify/callback";
@@ -72,6 +76,26 @@ pub struct ImportService {
     playlist_retries: Mutex<HashMap<String, (u32, DateTime<Utc>)>>,
     stopping: Mutex<CancellationToken>,
     clock: Mutex<Clock>,
+    /// Family's write gate and requests: a member who must ask first asks for a list's missing
+    /// songs instead of fetching them. Unset, or with Family off, everyone fetches as always.
+    family: std::sync::OnceLock<ImportFamily>,
+}
+
+/// What imports use for family members.
+#[derive(Clone)]
+pub struct ImportFamily {
+    pub gate: Arc<LibraryWriteGate>,
+    pub requests: std::sync::Weak<RequestService>,
+}
+
+/// What a family member reads once their list's missing songs were asked for.
+const LIST_ASKED: &str = "Asked for a copy of this list's missing songs. You'll hear back once it's decided.";
+
+/// What import lists do for this person: fetch, or a request, or a refusal.
+enum ListWrite {
+    Fetch,
+    Ask(Option<String>),
+    Refuse(String),
 }
 
 /// What the import is built over.
@@ -126,6 +150,7 @@ impl ImportService {
             playlist_retries: Mutex::new(HashMap::new()),
             stopping: Mutex::new(CancellationToken::new()),
             clock: Mutex::new(Clock::system()),
+            family: std::sync::OnceLock::new(),
         });
         let weak = Arc::downgrade(&service);
         service.trickle.on_finished(Arc::new(move |job| {
@@ -161,7 +186,22 @@ impl ImportService {
             lists: lists.iter().map(|list| summary(list, &jobs)).collect(),
             trickle: self.trickle_view(user, &jobs),
             library_problem: self.matcher.problem(),
+            approval: self.approval_for(user),
         }
+    }
+
+    /// Who approves the missing songs of `user` before they are fetched, when someone must.
+    fn approval_for(&self, user: &str) -> Option<ApprovalView> {
+        let gate = &self.family.get()?.gate;
+        gate.waits_for_approval(user).then(|| ApprovalView {
+            needed: true,
+            by: gate.approver_name(),
+        })
+    }
+
+    /// Where people can bring their music from, for the apps and pages.
+    pub fn services(&self) -> ImportServices {
+        ImportServices::new(&self.settings.current().imports.spotify_client_id)
     }
 
     pub fn detail(&self, user: &str, id: &str) -> Option<ListDetail> {
@@ -737,10 +777,12 @@ impl ImportService {
         )
     }
 
-    /// The lists in an exported file: CSV, Spotify's data export (JSON), or its zip.
+    /// The lists in an exported file: CSV, Spotify's data export (JSON), its zip, or a plain list
+    /// of one song a line, read whichever way round names more of the person's library.
     pub async fn add_file(&self, user: &str, file_name: &str, content: &[u8]) -> ImportActionResult {
-        let lists = match ImportFileReader::read(file_name, content) {
-            Ok(lists) => lists,
+        let lists = match ImportFileReader::read_parts(file_name, content) {
+            Ok(FileRead::Lists(lists)) => lists,
+            Ok(FileRead::Text(lines)) => self.oriented(user, lines).await,
             Err(e) => {
                 // Octo's own words for a file it refuses; a parser's are cut to their first
                 // plain sentence.
@@ -760,6 +802,56 @@ impl ImportService {
                 "That file held no songs Octo could read. It needs a title and an artist for each song.",
             );
         }
+        let source_ref = file_name.rsplit('/').next().unwrap_or(file_name).to_string();
+        self.save_file_lists(user, &source_ref, lists).await
+    }
+
+    /// The name a pasted list gets when it is given none.
+    pub const PASTED_LIST: &str = "Pasted list";
+
+    /// A pasted list, one song a line, read whichever way round names more of the person's
+    /// library. Kept as a list named `name`, like a file of that name.
+    pub async fn add_text(&self, user: &str, name: Option<&str>, text: &str) -> ImportActionResult {
+        let name = name
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(Self::PASTED_LIST);
+        if text.len() as u64 > ImportFileReader::MAX_BYTES {
+            return ImportActionResult::failed(
+                "That is more text than Octo reads at once. Split it into smaller lists.",
+            );
+        }
+        let lines = match text_list::read_lines(name, text) {
+            Ok(lines) => lines,
+            Err(e) => return ImportActionResult::failed(e.to_string()),
+        };
+        let lists = self.oriented(user, lines).await;
+        if lists.is_empty() {
+            return ImportActionResult::failed(text_list::NO_SONGS);
+        }
+        self.save_file_lists(user, name, lists).await
+    }
+
+    /// A plain list's lines read the way round that names more of `user`'s library.
+    async fn oriented(&self, user: &str, lists: Vec<TextList>) -> Vec<FileList> {
+        let sample: Vec<TextLine> = lists
+            .iter()
+            .flat_map(|list| list.lines.iter())
+            .filter(|line| line.right.is_some())
+            .take(text_list::ORIENTATION_SAMPLE)
+            .cloned()
+            .collect();
+        let orientation = self.matcher.orientation_for(user, &sample).await;
+        text_list::to_file_lists(lists, orientation)
+    }
+
+    /// Keeps lists read from a file or pasted text, each by its name, and matches them.
+    async fn save_file_lists(
+        &self,
+        user: &str,
+        source_ref: &str,
+        lists: Vec<FileList>,
+    ) -> ImportActionResult {
         let gate = self.gate(user);
         let _held = gate.lock().await;
         let incoming: Vec<(String, usize)> = lists
@@ -770,7 +862,7 @@ impl ImportService {
             return ImportActionResult::failed(full);
         }
         let mut first: Option<String> = None;
-        let source_ref = file_name.rsplit('/').next().unwrap_or(file_name).to_string();
+        let source_ref = source_ref.to_string();
         let songs: usize = lists.iter().map(|list| list.tracks.len()).sum();
         let count = lists.len();
         let first_name = lists[0].name.clone();
@@ -880,11 +972,69 @@ impl ImportService {
         })
     }
 
+    /// Gives imports Family's write gate and requests. Once only.
+    pub fn use_family(&self, family: ImportFamily) {
+        let _ = self.family.set(family);
+    }
+
+    /// What a list's missing songs do for `user`: fetch (everyone outside the family, members
+    /// who add songs at once, and a list an approver said yes to), become one request for the
+    /// list, or nothing (an account that only saves songs).
+    fn list_write(&self, user: &str, list: &ImportList) -> ListWrite {
+        let Some(family) = self.family.get() else {
+            return ListWrite::Fetch;
+        };
+        match family.gate.decide(Some(user)) {
+            WriteDecision::Shared | WriteDecision::Member(_) => ListWrite::Fetch,
+            WriteDecision::Request { .. } if list.family_approved => ListWrite::Fetch,
+            WriteDecision::Request { full, .. } => ListWrite::Ask(full),
+            WriteDecision::Refuse { message, .. } => ListWrite::Refuse(message),
+        }
+    }
+
+    /// One request for a whole list's missing songs.
+    fn ask_for_list(&self, user: &str, list: &ImportList, full: Option<String>) -> ImportActionResult {
+        let Some(requests) = self.family.get().and_then(|f| f.requests.upgrade()) else {
+            return ImportActionResult::failed("Requests are not running.");
+        };
+        let facts = RequestFacts {
+            title: list.name.clone(),
+            artist: list.by.clone().unwrap_or_default(),
+            album: String::new(),
+            cover_art: list.image_url.clone().unwrap_or_default(),
+        };
+        match requests.create_import(user, &list.id, facts) {
+            Ok(_) => ImportActionResult::ok(match full {
+                Some(full) => format!("{full}. {LIST_ASKED}"),
+                None => LIST_ASKED.to_string(),
+            })
+            .with_list(Some(list.id.clone())),
+            Err(e) => ImportActionResult::failed(e.message),
+        }
+    }
+
+    /// An approver said yes to a family member's list: it fetches its missing songs, and every
+    /// song added to it later, like anyone's.
+    pub fn approve_family_list(&self, user: &str, id: &str) -> ImportActionResult {
+        if self.store.get(user, id).is_none() {
+            return ImportActionResult::failed("That list is gone.");
+        }
+        self.store.update(user, id, |l| l.family_approved = true);
+        self.set_get_missing(user, id, true)
+    }
+
     /// Fetch the list's missing songs, and every song added to it later, or stop.
     pub fn set_get_missing(&self, user: &str, id: &str, on: bool) -> ImportActionResult {
         let Some(list) = self.store.get(user, id) else {
             return ImportActionResult::failed("There is no such list.");
         };
+        if on {
+            match self.list_write(user, &list) {
+                ListWrite::Fetch => {}
+                ListWrite::Ask(full) => return self.ask_for_list(user, &list, full),
+                ListWrite::Refuse(message) => return ImportActionResult::failed(message),
+            }
+        }
         // Never on a guess: a list nobody could match against the library would fetch songs
         // already there.
         if on && list.matched_utc.is_none() {
@@ -942,6 +1092,11 @@ impl ImportService {
         let Some(list) = self.store.get(user, id) else {
             return ImportActionResult::failed("There is no such list.");
         };
+        match self.list_write(user, &list) {
+            ListWrite::Fetch => {}
+            ListWrite::Ask(full) => return self.ask_for_list(user, &list, full),
+            ListWrite::Refuse(message) => return ImportActionResult::failed(message),
+        }
         let songs: Vec<&ImportTrack> = list
             .tracks
             .iter()
@@ -1041,7 +1196,7 @@ impl ImportService {
     pub async fn match_and_follow(&self, user: &str) {
         let lists = self.store.lists_of(user);
         let mut tracks: Vec<ImportTrack> = lists.into_iter().flat_map(|list| list.tracks).collect();
-        if !self.matcher.match_tracks(&mut tracks).await {
+        if !self.matcher.match_tracks_for(user, &mut tracks).await {
             return;
         }
         let mut found: HashMap<String, Option<String>> = HashMap::new();

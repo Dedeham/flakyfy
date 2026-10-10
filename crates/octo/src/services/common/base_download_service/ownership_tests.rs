@@ -28,6 +28,7 @@ fn c(id: &str, artist: &str, title: &str, seconds: Option<i32>, suffix: &str, bi
         duration: seconds,
         suffix: suffix.into(),
         bit_rate,
+        isrcs: Vec::new(),
     }
 }
 

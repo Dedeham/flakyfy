@@ -5,8 +5,8 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::common::SongIdentity;
 use crate::common::dotnet;
+use crate::common::{ArtistAgreement, SongIdentity};
 
 /// What escaped the C# Lidarr classes, by exception type, so callers can branch on the kind as
 /// the C# `catch` clauses did. Each carries the exception's message.
@@ -363,20 +363,23 @@ pub fn parse_release(row: &Map<String, Value>) -> Result<LidarrRelease, LidarrEr
     })
 }
 
-/// The album whose artist and title read the same as asked, by [`SongIdentity::key`]; several
-/// releases of it are told apart by the year. None when there is no single one.
+/// The album whose title reads the same as asked, by [`SongIdentity::key`], credited to the
+/// artist asked for by [`SongIdentity::compare_artists`] (a shared artist and no clash of guests:
+/// "Jay-Z & Kanye West" for "Jay-Z", "Kanye West" for "Ye", never "Airbourne" for "Air");
+/// several releases of it are told apart by the year. None when there is no single one.
 pub fn select_best_album<'a>(
     candidates: &'a [LidarrAlbumCandidate],
     artist: &str,
     album: &str,
     year: Option<i32>,
 ) -> Option<&'a LidarrAlbumCandidate> {
-    let wanted_artist = SongIdentity::key(artist);
     let wanted_album = SongIdentity::key(album);
     let mut exact: Vec<&LidarrAlbumCandidate> = Vec::new();
     for c in candidates {
-        if SongIdentity::key(&c.artist) == wanted_artist
-            && SongIdentity::key(&c.title) == wanted_album
+        if matches!(
+            SongIdentity::compare_artists(&c.artist, artist),
+            ArtistAgreement::Agree | ArtistAgreement::Loose
+        ) && SongIdentity::key(&c.title) == wanted_album
             && !exact
                 .iter()
                 .any(|e| dotnet::eq_ignore_case(&e.foreign_album_id, &c.foreign_album_id))
@@ -474,6 +477,31 @@ mod tests {
         );
         assert!(select_best_album(&candidates, "Radiohead", "In Rainbows", None).is_none());
         assert!(select_best_album(&candidates, "Other", "In Rainbows", Some(2007)).is_none());
+    }
+
+    #[test]
+    fn album_artist_is_compared_as_a_credit() {
+        let duo = [candidate(
+            "a",
+            "Bridge over Troubled Water",
+            "Simon & Garfunkel",
+            Some(1970),
+        )];
+        assert!(select_best_album(&duo, "Simon & Garfunkel", "Bridge over Troubled Water", None).is_some());
+        // A credit with a guest is the lead artist's album.
+        let guest = [candidate(
+            "w",
+            "Watch the Throne",
+            "Jay-Z & Kanye West",
+            Some(2011),
+        )];
+        assert!(select_best_album(&guest, "Jay-Z", "Watch the Throne", None).is_some());
+        // An alias is the same artist.
+        let alias = [candidate("d", "Donda", "Kanye West", Some(2021))];
+        assert!(select_best_album(&alias, "Ye", "Donda", None).is_some());
+        // A name inside another name is not.
+        let other = [candidate("s", "Sexy Boy", "Airbourne", Some(1998))];
+        assert!(select_best_album(&other, "Air", "Sexy Boy", None).is_none());
     }
 
     /// Two rows of one release group are one album, compared ignoring case.

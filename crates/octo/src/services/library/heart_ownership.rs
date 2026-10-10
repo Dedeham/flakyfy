@@ -8,6 +8,7 @@ use octo_core::settings::SettingsStore;
 use super::upgrade_queue::{UpgradeAsk, UpgradeQueue};
 use super::upgrade_sources::UpgradeSources;
 use super::{LibraryOwnership, OwnedCopy};
+use crate::services::family::LibraryScope;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 
 /// Whether a hearted outside song, or every song of a hearted outside album, is already in the
@@ -43,20 +44,30 @@ impl HeartOwnership {
     /// The library's copy of the hearted song, or `None` when it is not there, the check is
     /// off, or the song cannot be told (then the heart downloads, as before).
     pub async fn find_song(&self, provider: &str, external_id: &str) -> Option<(Song, OwnedCopy)> {
+        self.find_song_in(&LibraryScope::Shared, provider, external_id)
+            .await
+    }
+
+    /// [`Self::find_song`] in one scope: the shared library (the owner's hearts), or the shared
+    /// library and one member's own (that member's hearts). Another member's own songs never
+    /// count, so a heart is never skipped for a song only they have.
+    pub async fn find_song_in(
+        &self,
+        scope: &LibraryScope,
+        provider: &str,
+        external_id: &str,
+    ) -> Option<(Song, OwnedCopy)> {
         if !self.settings.current().subsonic.skip_owned_songs {
             return None;
         }
         let song = self.metadata.get_song(provider, external_id).await?;
-        let owned = self
-            .ownership
-            .find(
-                Some(&song.artist),
-                Some(&song.title),
-                song.duration,
-                Some(&song.album),
-            )
-            .await?;
+        let owned = self.ownership.find_song_in(scope, &song).await?;
         Some((song, owned))
+    }
+
+    /// The catalog this asks for songs and albums.
+    pub fn metadata(&self) -> &Arc<dyn IMusicMetadataService> {
+        &self.metadata
     }
 
     /// The hearted album and the library's copy of each of its songs, but only when every
@@ -76,15 +87,7 @@ impl HeartOwnership {
         let mut found = Vec::with_capacity(album.songs.len());
         for song in &album.songs {
             // `song.Album ?? album.Title`: the song's own album, which is never null here.
-            let owned = self
-                .ownership
-                .find(
-                    Some(&song.artist),
-                    Some(&song.title),
-                    song.duration,
-                    Some(&song.album),
-                )
-                .await?;
+            let owned = self.ownership.find_song_in(&LibraryScope::Shared, song).await?;
             found.push((song.clone(), owned));
         }
         Some((album, found))

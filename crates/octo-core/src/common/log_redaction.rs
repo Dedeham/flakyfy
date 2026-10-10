@@ -22,7 +22,11 @@ pub const MASK: &str = "***";
 // Subsonic reads names case-insensitively, so this does. sk is a Last.fm session key,
 // which scrobbles as that listener, and api_sig is signed with the Last.fm shared secret.
 // user is the AcoustID user's own API key, sent with every submission. Subsonic's u is
-// not it, and stays readable.
+// not it, and stays readable. password and invite are Octo Family's account passwords and
+// invite tokens, current and next the old and new password of a password change, box a sealed
+// sign-in hand-over and k the key that opens one (no Octo route takes it, and a client that
+// sends it anyway never has it written down), code and secret the codes and secrets older
+// Family apps send, and jwt a browser's sign-in.
 //
 // The C# matched the value behind a lookbehind, `(?<=[?&;](?:...)=)[^&#\s"'<>]+`. Here the
 // name is group 1 and is written back. The two find the same values: a value never holds an
@@ -33,18 +37,53 @@ pub const MASK: &str = "***";
 static SECRET_PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
     let s = "(?-i:[sS])";
     Regex::new(&format!(
-        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig)=)[^&#\s"'<>]+"#
+        r#"(?i)([?&;](?:t|{s}|p|apikey|token|api_key|client|u{s}er|{s}k|api_{s}ig|code|{s}ecret|pa{s}{s}word|invite|jwt|box|k|current|next)=)[^&#\s"'<>]+"#
     ))
     .expect("a fixed pattern compiles")
 });
 
-/// The text with every secret query parameter's value replaced by [`MASK`].
-/// Borrows the text unchanged when there is nothing to mask.
+/// A sign-in hand-over token or redemption id in a Family page path:
+/// `/api/family/signin/<token>/pending` and `/api/family/signin/redeem/<id>`. Group 2 is the
+/// segment; `start` and `redeem` themselves are route names and stay readable.
+static HAND_OVER_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(/api/family/signin/(?:redeem/)?)([^/?#\s"'<>]+)"#).expect("a fixed pattern compiles")
+});
+
+/// The `id` of `getFamilySignInRedeem`, the apps' way to fetch a sign-in hand-over's box: there
+/// it is the redemption id, which fetches the box. Every other `id` stays readable.
+static HAND_OVER_ID: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(/rest/getFamilySignInRedeem(?:\.view)?\?(?:[^#\s"'<>]*?[&;])?id=)[^&#\s"'<>]+"#)
+        .expect("a fixed pattern compiles")
+});
+
+/// The text with every secret query parameter's value, and any sign-in hand-over token or
+/// redemption id in a path or query, replaced by [`MASK`]. Borrows the text unchanged when there
+/// is nothing to mask.
 pub fn redact(text: &str) -> Cow<'_, str> {
+    let text = if text.contains("/family/signin/") {
+        HAND_OVER_PATH.replace_all(text, |caps: &Captures| match &caps[2] {
+            "start" | "redeem" => caps[0].to_string(),
+            _ => format!("{}{MASK}", &caps[1]),
+        })
+    } else {
+        Cow::Borrowed(text)
+    };
+    let text = if text.to_ascii_lowercase().contains("getfamilysigninredeem") {
+        match HAND_OVER_ID.replace_all(&text, |caps: &Captures| format!("{}{MASK}", &caps[1])) {
+            Cow::Borrowed(_) => text,
+            Cow::Owned(masked) => Cow::Owned(masked),
+        }
+    } else {
+        text
+    };
     if !text.contains('=') {
-        return Cow::Borrowed(text);
+        return text;
     }
-    SECRET_PARAMETER.replace_all(text, |caps: &Captures| format!("{}{MASK}", &caps[1]))
+    let masked = match SECRET_PARAMETER.replace_all(&text, |caps: &Captures| format!("{}{MASK}", &caps[1])) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(masked) => Some(masked),
+    };
+    masked.map_or(text, Cow::Owned)
 }
 
 #[cfg(test)]
@@ -91,10 +130,10 @@ mod tests {
     #[test]
     fn case_is_ignored_as_dotnet_ignored_it() {
         // Checked against .NET 9's invariant IgnoreCase: the Kelvin sign is a k, the long s
-        // is not an s.
+        // is not an s. A Kelvin sign alone is the hand-over key `k`, masked too.
         assert_eq!(
             redact("?apiKEY=1&S=2&\u{212A}=3&s\u{212A}=4"),
-            "?apiKEY=***&S=***&\u{212A}=3&s\u{212A}=***"
+            "?apiKEY=***&S=***&\u{212A}=***&s\u{212A}=***"
         );
         assert_eq!(
             redact("?\u{17F}=secret&u\u{17F}er=x"),
@@ -157,5 +196,71 @@ mod tests {
         for secret in [t, s, p, api_key, token] {
             assert!(!redacted.contains(&secret));
         }
+    }
+
+    #[test]
+    fn hand_over_tokens_are_masked_in_paths_and_queries() {
+        let cases = [
+            (
+                "GET /api/family/signin/AbC-123_x/pending - 200",
+                "GET /api/family/signin/***/pending - 200",
+            ),
+            (
+                "POST /api/family/signin/AbC/decide",
+                "POST /api/family/signin/***/decide",
+            ),
+            (
+                "GET /api/family/signin/redeem/Id-9?f=json",
+                "GET /api/family/signin/redeem/***?f=json",
+            ),
+            ("POST /api/family/signin/start", "POST /api/family/signin/start"),
+            ("POST /api/family/signin/redeem", "POST /api/family/signin/redeem"),
+            (
+                "/rest/putFamilySignInBox?u=a&t=T&s=S&token=K&box=B",
+                "/rest/putFamilySignInBox?u=a&t=***&s=***&token=***&box=***",
+            ),
+            (
+                "GET /rest/getFamilySignInRedeem?id=Id-9&v=1.16.1&f=json - 200",
+                "GET /rest/getFamilySignInRedeem?id=***&v=1.16.1&f=json - 200",
+            ),
+            (
+                "GET /rest/getFamilySignInRedeem.view?f=json&ID=Id-9&c=Octo",
+                "GET /rest/getFamilySignInRedeem.view?f=json&ID=***&c=Octo",
+            ),
+            (
+                "POST /api/family/signin/redeem?k=Key-1&token=T",
+                "POST /api/family/signin/redeem?k=***&token=***",
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(redact(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_password_change_and_a_hand_over_key_are_masked_and_other_ids_are_not() {
+        assert_eq!(
+            redact("GET /rest/changeFamilyPassword?u=alex&p=P&current=Old-1&next=New-2&k=K-3 - 200"),
+            "GET /rest/changeFamilyPassword?u=alex&p=***&current=***&next=***&k=*** - 200"
+        );
+        for kept in [
+            "/rest/getSong?id=song-1&u=a",
+            "/rest/getFamilySignInPending?id=x&u=a",
+            "?kind=1&nexts=2&currently=3&key=4",
+        ] {
+            assert_eq!(redact(kept), kept);
+        }
+    }
+
+    #[test]
+    fn family_codes_are_masked() {
+        let line = "/rest/octoFamilyPair?username=alex&code=123456&deviceName=Pixel&secret=S1&password=P1&invite=I1&jwt=J1&Code=2";
+        assert_eq!(
+            redact(line),
+            "/rest/octoFamilyPair?username=alex&code=***&deviceName=Pixel&secret=***&password=***&invite=***&jwt=***&Code=***"
+        );
+        // Names that only start like one of them stay readable.
+        let other = "?codec=mp3&secrets=1&passwords=2&invited=3&jwtx=4";
+        assert_eq!(redact(other), other);
     }
 }

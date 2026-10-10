@@ -1,12 +1,11 @@
 //! Port of `Services/Subsonic/SearchSongOrder.cs`: what page one of a search showed, and the
 //! cache that keeps it for the pages after.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use octo_core::models::domain::Song;
-use octo_subsonic::subsonic_model_mapper::{Row, SubsonicModelMapper};
+use octo_subsonic::subsonic_model_mapper::{LocalSongs, Row, SubsonicModelMapper};
 use parking_lot::Mutex;
 
 use super::expiring_cache::ExpiringCache;
@@ -30,7 +29,7 @@ pub struct SearchSongOrder {
     /// here rather than on each page so a later page has no gaps in it.
     pub later_externals: Vec<Song>,
     /// Dedup keys of the library rows page one showed.
-    pub prefix_keys: HashSet<String>,
+    pub prefix_keys: LocalSongs,
 }
 
 impl SearchSongOrder {

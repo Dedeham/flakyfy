@@ -1,6 +1,6 @@
 //! Port of `Services/ListenBrainz/ListenBrainzService.cs`.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -11,6 +11,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Map, Value, json};
 use tracing::{info, warn};
 
+use crate::services::family::MemberCredentials;
 use crate::services::framework::HttpAnswer;
 use crate::services::framework::http::client_builder;
 use crate::services::http_client_factory::{connect_failure_message, timeout_message};
@@ -43,6 +44,8 @@ pub struct ListenBrainzService {
     /// `IOptionsMonitor<ListenBrainzSettings>`: read at every use.
     settings: Arc<SettingsStore>,
     version: &'static str,
+    /// Which listeners are family members Octo manages, once the app hands it over.
+    members: OnceLock<Arc<MemberCredentials>>,
 }
 
 impl ListenBrainzService {
@@ -72,16 +75,28 @@ impl ListenBrainzService {
             settings,
             // The assembly's informational version, without its +sha.
             version: octo_user_agent::version(),
+            members: OnceLock::new(),
         }
+    }
+
+    /// Hands over who the family's members are: with Family on, a member Octo manages
+    /// uses their own token or none, never the default one.
+    pub fn use_member_credentials(&self, members: Arc<MemberCredentials>) {
+        let _ = self.members.set(members);
+    }
+
+    /// The token for this listener.
+    fn token_for(&self, username: &str) -> Option<String> {
+        let managed = self.members.get().is_some_and(|m| m.is_member(username));
+        self.settings
+            .current()
+            .listen_brainz
+            .token_for_listener(username, managed)
     }
 
     /// True when this listener has a token and submission is switched on.
     pub fn is_enabled_for(&self, username: &str) -> bool {
-        self.settings
-            .current()
-            .listen_brainz
-            .token_for(username)
-            .is_some()
+        self.token_for(username).is_some()
     }
 
     /// Records one completed play. Returns true when ListenBrainz accepted it, false
@@ -95,7 +110,7 @@ impl ListenBrainzService {
         duration_seconds: Option<i32>,
         listened_at_utc: DateTime<Utc>,
     ) -> bool {
-        let Some(token) = self.settings.current().listen_brainz.token_for(username) else {
+        let Some(token) = self.token_for(username) else {
             return false;
         };
         if dotnet::is_blank(artist) || dotnet::is_blank(title) {
@@ -364,5 +379,65 @@ mod tests {
         );
         assert_eq!(service.validate_token("other").await.detail, "HTTP 401");
         assert_eq!(service.validate_token("  ").await.detail, "No token configured.");
+    }
+
+    #[tokio::test]
+    async fn member_never_uses_owner_listenbrainz_token() {
+        use crate::services::family::member_credentials::tests::member;
+        use crate::services::family::{FamilyStore, FamilyVault};
+        use octo_core::settings::FamilySettings;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/1/submit-listens"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"status":"ok"}"#))
+            .mount(&server)
+            .await;
+        let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+            listen_brainz: tokens(),
+            family: FamilySettings {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let store = Arc::new(FamilyStore::in_memory());
+        let vault = Arc::new(FamilyVault::in_memory());
+        store.set_owner("winters");
+        store.upsert_member(member("alex", vault.seal("hidden").expect("sealed")));
+        let service = ListenBrainzService::with_parts(reqwest::Client::new(), &server.uri(), settings);
+        service.use_member_credentials(Arc::new(MemberCredentials::new(
+            store.clone(),
+            vault,
+            service.settings.clone(),
+        )));
+
+        // A member has no token of their own, so nothing is sent for them.
+        assert!(!service.is_enabled_for("alex"));
+        assert!(
+            !service
+                .submit_listen("alex", "A", "T", None, None, Utc::now())
+                .await
+        );
+        assert!(received(&server).await.is_empty());
+        // The owner, and anyone outside the family, still use the default token.
+        assert!(service.is_enabled_for("winters"));
+        assert!(
+            service
+                .submit_listen("winters", "A", "T", None, None, Utc::now())
+                .await
+        );
+        let requests = received(&server).await;
+        assert_eq!(
+            requests[0]
+                .headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok()),
+            Some("Token default-token")
+        );
+        assert!(service.is_enabled_for("bob"));
+        // A member with their own token uses it.
+        store.upsert_member(member("alice", String::new()));
+        assert!(service.is_enabled_for("alice"));
     }
 }

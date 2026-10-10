@@ -68,6 +68,12 @@ pub fn color_for(r#type: NotificationEventType) -> i32 {
         NotificationEventType::DownloadFailed => 0xEF4444,
         NotificationEventType::AlbumCompleted => 0x8B5CF6,
         NotificationEventType::Test => 0x64748B,
+        NotificationEventType::FamilyRequestNew => 0x3B82F6,
+        NotificationEventType::FamilyRequestApproved => 0x22C55E,
+        NotificationEventType::FamilyRequestDeclined => 0x64748B,
+        NotificationEventType::FamilyRequestAdded => 0x22C55E,
+        NotificationEventType::FamilyRequestFailed => 0xEF4444,
+        NotificationEventType::FamilyDeviceNew => 0x8B5CF6,
     }
 }
 

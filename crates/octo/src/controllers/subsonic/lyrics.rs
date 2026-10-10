@@ -9,6 +9,7 @@ use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use octo_core::common::dotnet::{is_blank, is_null_or_white_space};
+use octo_core::family::abilities::Role;
 use octo_core::json::dom::Node;
 use octo_core::lyrics::lyrics_choices::LyricsPin;
 use octo_core::lyrics::lyrics_models::{LyricsQuery, LyricsResult, LyricsTiming};
@@ -23,6 +24,7 @@ use super::caller_checks::{
 use super::media::draws_its_own_marks;
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
+use crate::services::family::family_caller;
 use crate::services::soulseek::SoulseekMetadataService;
 
 /// A lyrics lookup made while a client waits: a slow or overloaded source costs at most this,
@@ -31,6 +33,9 @@ const INTERACTIVE_LYRICS_BUDGET: Duration = Duration::from_secs(4);
 
 /// How long a lookup the caller stopped waiting for may keep going.
 const BACKGROUND_LYRICS_LIMIT: Duration = Duration::from_secs(30);
+
+/// What a family member who may not pin lyrics is told.
+const LYRICS_PIN_REFUSED: &str = "Lyrics choices change lyrics for the whole family, so this account cannot set them. Ask a family manager.";
 
 /// How long getLyricsCandidates may take: every source that is on, several entries each, is a
 /// slower thing than playing a song, and a person is choosing.
@@ -339,6 +344,7 @@ pub async fn get_lyrics_candidates(State(state): State<AppState>, req: Request) 
 /// to show no lyrics, or to "auto" to go back to finding them. The choice is the server's,
 /// so every client and every user sees it, and getLyricsBySongId and getLyrics honor it.
 pub async fn set_lyrics_choice(State(state): State<AppState>, req: Request) -> Response {
+    let caller = family_caller(req.extensions()).cloned();
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
         Err(response) => return response,
@@ -348,6 +354,15 @@ pub async fn set_lyrics_choice(State(state): State<AppState>, req: Request) -> R
     let choices = &state.lyrics_choice_service;
     if let Some(refused) = check_caller(&state, &call).await {
         return refused;
+    }
+    // A pin changes lyrics for the whole family: members from the Member preset up may set one.
+    if caller
+        .as_ref()
+        .is_some_and(|caller| caller.managed && matches!(caller.role, Role::Listener | Role::Kid))
+    {
+        return builder
+            .create_error(FORMAT, 50, LYRICS_PIN_REFUSED)
+            .into_response();
     }
 
     let id = call.param("id").to_string();

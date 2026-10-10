@@ -798,3 +798,22 @@ async fn each_answer_is_one_listing_for_the_stream_size_warmer() {
         "a long answer's songs are not"
     );
 }
+
+// ---- Family ----
+
+/// Octo Family refuses a `/rest` endpoint it has no class for to capped and kid members:
+/// every `/rest` route Octo answers itself must have one.
+#[test]
+fn every_rest_route_has_a_family_class() {
+    let names: Vec<String> = app_routes(&StaticAssets::default())
+        .templates()
+        .into_iter()
+        .filter_map(|t| octo_core::family::endpoints::rest_endpoint_name(&t).map(str::to_string))
+        .collect();
+    assert!(names.len() > 40, "{names:?}");
+    let missing: Vec<&String> = names
+        .iter()
+        .filter(|name| octo_core::family::endpoints::rest_class(name).is_none())
+        .collect();
+    assert!(missing.is_empty(), "no family class: {missing:?}");
+}

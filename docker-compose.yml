@@ -66,7 +66,7 @@ services:
       # ----- slskd (Soulseek) sidecar -----
       Soulseek__BaseUrl: http://slskd:5030
       Soulseek__Username: ${SLSKD_USERNAME:-slskd}
-      Soulseek__Password: ${SLSKD_PASSWORD:-slskd}
+      Soulseek__Password: ${SLSKD_PASSWORD:-}
       # Where the dashboard's Open slskd button goes. Blank: this server's name
       # on port 5030.
       Soulseek__WebUrl: ${SLSKD_WEB_URL:-}
@@ -388,17 +388,38 @@ services:
   #
   # Peer port 50300 is the one other Soulseek users connect to, to download what
   # you share. Forward TCP 50300 on your router to this machine. Port 5030 is
-  # slskd's own web page: keep it on your network, never forward it.
+  # slskd's own web page: it listens on this machine only (127.0.0.1) unless
+  # SLSKD_BIND in .env says otherwise, and it is never to be forwarded.
+  #
+  # slskd refuses to start while its web password is empty or still the stock
+  # "slskd": the guard below prints how to fix it and exits. Octo reaches slskd
+  # over the compose network (http://slskd:5030), not through the host port.
   slskd:
     image: slskd/slskd:latest
     container_name: slskd
     restart: unless-stopped
     ports:
-      - "5030:5030"
+      - "${SLSKD_BIND:-127.0.0.1}:5030:5030"
       - "50300:50300"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$SLSKD_PASSWORD" ] || [ "$$SLSKD_PASSWORD" = "slskd" ]; then
+          echo "slskd will not start: its web password (SLSKD_PASSWORD in .env) is empty or still the stock 'slskd'." >&2
+          echo "Fix: put your own password on the SLSKD_PASSWORD line of .env, for example the output of" >&2
+          echo "  openssl rand -hex 16" >&2
+          echo "then run: docker compose up -d   (running install.sh again also generates one)" >&2
+          exit 1
+        fi
+        exec /usr/bin/tini -- /entrypoint.sh "$$@"
+      - slskd-guard
+    command: ["./slskd"]
     environment:
       # Lets slskd's administrator (Octo signs in as it) change slskd.yml through
-      # slskd's API. The dashboard's Share my library switch needs it.
+      # slskd's API. The dashboard's Share my library switch needs it (Octo
+      # writes the share list through PUT /api/v0/options/yaml), so it stays on;
+      # slskd's API is private to this machine and behind the login above.
       SLSKD_REMOTE_CONFIGURATION: "true"
       # Completed downloads go to the shared /music mount so Octo can see and
       # relocate them. Without this slskd defaults to <app>/downloads, which the
@@ -412,7 +433,7 @@ services:
       SLSKD_SLSK_USERNAME: ${SLSKD_SOULSEEK_USERNAME:-}
       SLSKD_SLSK_PASSWORD: ${SLSKD_SOULSEEK_PASSWORD:-}
       SLSKD_USERNAME: ${SLSKD_USERNAME:-slskd}
-      SLSKD_PASSWORD: ${SLSKD_PASSWORD:-slskd}
+      SLSKD_PASSWORD: ${SLSKD_PASSWORD:-}
       # ----- Sharing: give back to the people you download from -----
       # Whether slskd shares your library is the Share my library switch on
       # the dashboard's Soulseek page (SLSKD_SHARE_LIBRARY sets where it starts).

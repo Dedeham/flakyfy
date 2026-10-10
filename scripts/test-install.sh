@@ -156,6 +156,14 @@ run
 grep -qx 'LIDARR_COMPLETION_MODE=Accepted' "$work/octo/.env" && grep -qx 'SLSKD_USERNAME=admin' "$work/octo/.env" \
   && pass "settings an older installer left empty get their defaults" || fail "empty settings stayed empty"
 
+# A .env copied from an old .env.example carries the stock slskd login; a re-run replaces it.
+fresh
+printf 'SUBSONIC_URL=http://192.168.1.20:4533\nDOWNLOAD_PATH=%s\nSLSKD_USERNAME=slskd\nSLSKD_PASSWORD=slskd\n' \
+  "$work/music" > "$work/octo/.env"
+run
+[ -n "$(value_of "$work/octo/.env" SLSKD_PASSWORD)" ] && [ "$(value_of "$work/octo/.env" SLSKD_PASSWORD)" != slskd ] \
+  && pass "the stock slskd password is replaced on a re-run" || fail "the stock slskd password was kept"
+
 # The sidecars are pulled and only Octo is built; one that will not pull is built instead.
 fresh
 run

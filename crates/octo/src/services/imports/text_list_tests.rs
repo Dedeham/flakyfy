@@ -297,3 +297,76 @@ fn orientation_looks_only_at_the_first_fifty_lines_with_both_halves() {
     });
     assert_eq!(asked.get(), ORIENTATION_SAMPLE * 2);
 }
+
+// ---- Real exports ----------------------------------------------------------------------------
+
+const TUNEMYMUSIC_TXT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/imports/tunemymusic-freetext.txt"
+));
+
+const TUNEMYMUSIC_CSV: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/imports/tunemymusic-freetext.csv"
+));
+
+#[test]
+fn a_tunemymusic_txt_export_is_read_artist_first() {
+    let lists = read("My Free text Library.txt", TUNEMYMUSIC_TXT);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].name, "My Free text Library");
+    assert_eq!(
+        pairs(&lists[0]),
+        [
+            ("The Beatles", "Hey Jude"),
+            ("Beyonce", "Halo"),
+            ("Earth, Wind & Fire", "September"),
+            ("Drake", "Too Good (feat. Rihanna)"),
+            ("Adele", "Hello"),
+            ("Queen", "Bohemian Rhapsody - Remastered 2011"),
+            ("Massive Attack", "Teardrop"),
+            ("Ben E. King", "Stand by Me"),
+            ("Luis Fonsi, Daddy Yankee", "Despacito"),
+            ("Kendrick Lamar", "HUMBLE."),
+        ]
+    );
+}
+
+#[test]
+fn a_tunemymusic_csv_from_free_text_splits_its_title_column() {
+    let lists = read("My Free text Library.csv", TUNEMYMUSIC_CSV);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].name, "My Playlist");
+    assert_eq!(
+        pairs(&lists[0]),
+        [
+            ("The Beatles", "Hey Jude"),
+            ("Beyonce", "Halo"),
+            ("Earth, Wind & Fire", "September"),
+            ("Drake", "Too Good (feat. Rihanna)"),
+            ("Queen", "Bohemian Rhapsody - Remastered 2011"),
+            ("Ben E. King", "Stand by Me"),
+            ("Luis Fonsi, Daddy Yankee", "Despacito"),
+            ("Monetochka", "Kazhdyy raz"),
+            ("Beyonc\u{e9}", "Formation"),
+            ("Kendrick Lamar", "HUMBLE."),
+        ]
+    );
+    assert_eq!(
+        lists[0].tracks[2].key,
+        ImportKeys::for_words(Some("Earth, Wind & Fire"), Some("September"))
+    );
+}
+
+#[test]
+fn a_csv_row_with_its_own_artist_keeps_its_title_whole() {
+    let csv = "Track name,Artist name\n\"Bohemian Rhapsody - Remastered 2011\",\"Queen\"\n\"Lonely - Song\",\"\"\nNo dash here,\n";
+    let lists = read("export.csv", csv);
+    assert_eq!(
+        pairs(&lists[0]),
+        [
+            ("Queen", "Bohemian Rhapsody - Remastered 2011"),
+            ("Lonely", "Song")
+        ]
+    );
+}

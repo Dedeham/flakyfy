@@ -417,9 +417,17 @@ pub(crate) fn read_csv(name: &str, text: &str) -> Result<Vec<FileList>, FileRead
     // One file can hold several playlists (TuneMyMusic, Soundiiz): a playlist column splits them.
     let mut order: Vec<(String, Vec<ImportTrack>)> = Vec::new();
     for row in rows.iter().skip(1) {
+        let (mut title_text, mut artist_text) = (cell(row, Some(title)), cell(row, Some(artist)));
+        // A list a tool built from plain text (TuneMyMusic's free text) leaves the artist
+        // column empty and keeps the whole "Artist - Title" line in the title column.
+        if artist_text.is_none()
+            && let Some((a, t)) = title_text.as_deref().and_then(text_list::split_artist_title)
+        {
+            (title_text, artist_text) = (Some(t.to_string()), Some(a.to_string()));
+        }
         let Some(found) = track(
-            cell(row, Some(title)).as_deref(),
-            cell(row, Some(artist)).as_deref(),
+            title_text.as_deref(),
+            artist_text.as_deref(),
             cell(row, album).as_deref(),
             ImportFileReader::seconds(cell(row, length).as_deref(), length_in_ms),
             cell(row, isrc).as_deref(),

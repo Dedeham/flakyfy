@@ -70,6 +70,18 @@ static TRACK_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+[.)]\s*
 static SEPARATOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[ \t]+[-\u{2013}\u{2014}][ \t]+|\t").expect("a fixed pattern"));
 
+/// The first spaced hyphen, en dash or em dash.
+static SPACED_DASH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[ \t]+[-\u{2013}\u{2014}][ \t]+").expect("a fixed pattern"));
+
+/// "Artist - Title" split on its first spaced dash into the artist and the title, or None when
+/// it has no spaced dash or either side is empty.
+pub fn split_artist_title(text: &str) -> Option<(&str, &str)> {
+    let at = SPACED_DASH.find(text)?;
+    let (artist, title) = (text[..at.start()].trim(), text[at.end()..].trim());
+    (!artist.is_empty() && !title.is_empty()).then_some((artist, title))
+}
+
 /// `#playlist: Name`, in any case.
 static PLAYLIST: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^#\s*playlist\s*:(.*)$").expect("a fixed pattern"));

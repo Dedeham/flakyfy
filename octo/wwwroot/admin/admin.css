@@ -1718,6 +1718,8 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .dl-badge.state { background: rgb(var(--accent-rgb) / 0.16); color: var(--accent); }
 .dl-badge.failed { background: var(--bad-wash); color: #ff7b72; }
 .acq-error { font-size: var(--t-label); color: #ff9a8f; margin-top: 6px; }
+/* Every card reserves room for its bar or note, so a state change does not change its height. */
+.acq-detail { min-height: 16px; display: flow-root; }
 .acq-bar { height: 6px; margin-top: 10px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.10); overflow: hidden; }
 .acq-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.75), var(--accent)); transition: width var(--t-card) var(--ease); }
 

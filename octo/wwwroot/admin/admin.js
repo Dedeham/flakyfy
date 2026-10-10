@@ -3644,22 +3644,41 @@ const ACQ_LABELS = {
 };
 let acqTimer = null;
 let acqMoving = new Set();
+let acqOrder = [];   // ids in the order first seen, so a poll never reorders cards mid-fetch
 async function loadAcquisitions() {
   const wrap = document.getElementById('acq-wrap');
   const list = document.getElementById('acq-list');
   if (!wrap || !list) return;
   clearTimeout(acqTimer);
   let rows = [];
+  let answered = false;
   try {
     const r = await api('/api/admin/acquisitions', { cache: 'no-store' });
-    if (r.ok) rows = ((await r.json()).acquisitions || []).filter(a => a.state !== 'done');
+    if (r.ok) {
+      rows = ((await r.json()).acquisitions || []).filter(a => a.state !== 'done');
+      answered = true;
+    }
   } catch { /* the log below still loads */ }
+  // A poll that failed says nothing about the cards: keep them as they are and ask again,
+  // rather than emptying the panel (which collapses the page) and drawing it back next time.
+  if (!answered) {
+    const open = document.querySelector('section[data-pane="fetched"]')?.classList.contains('active');
+    if (acqMoving.size && open) acqTimer = setTimeout(loadAcquisitions, 3000);
+    return;
+  }
+  // The server lists newest first. Cards already on the page keep their place and new ones
+  // join the end, so a song starting does not push the others about.
+  const rank = id => { const i = acqOrder.indexOf(id); return i < 0 ? Infinity : i; };
+  rows = rows.map((a, i) => [a, i]).sort((x, y) => (rank(x[0].id) - rank(y[0].id)) || (x[1] - y[1])).map(x => x[0]);
+  acqOrder = rows.map(a => a.id);
 
   const moving = new Set(rows.filter(a => a.state !== 'failed').map(a => a.id));
   // Something that was moving and no longer is has most likely just landed in the log.
   const landed = [...acqMoving].some(id => !moving.has(id));
   acqMoving = moving;
 
+  // When the last card goes, the log gains its row first, so the page moves once, not twice.
+  if (rows.length === 0 && landed) await loadFetched({ withAcquisitions: false });
   wrap.hidden = rows.length === 0;
   const focused = dlogFocusKey(list);
   list.innerHTML = rows.map(a => {
@@ -3696,7 +3715,7 @@ async function loadAcquisitions() {
           <span class="dl-badge ${failed ? 'failed' : 'state'}">${escapeHtml(label)}</span>
         </div>
         <div class="dl-sub">${sub}</div>
-        ${detail}
+        <div class="acq-detail">${detail}</div>
         ${acqActions(a)}
       </div>
       ${acqLog(a)}
@@ -3706,7 +3725,7 @@ async function loadAcquisitions() {
 
   const open = document.querySelector('section[data-pane="fetched"]')?.classList.contains('active');
   if (moving.size && open) acqTimer = setTimeout(loadAcquisitions, 3000);
-  if (landed) loadFetched({ withAcquisitions: false });
+  if (landed && rows.length) loadFetched({ withAcquisitions: false });
 }
 
 async function loadFetched({ withAcquisitions = true } = {}) {

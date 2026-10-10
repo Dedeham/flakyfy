@@ -1164,7 +1164,8 @@
         "^\\$\\.RadioSources\\.ListenBrainzRadioMode:\\ only\\ in\\ B\\ \\(easy\\)$",
         "^\\$\\.Subsonic\\.StreamSizeWarmPerMinute:\\ only\\ in\\ B\\ \\(5\\)$",
         "^\\$\\.Subsonic\\.SearchDurationWaitMs:\\ only\\ in\\ B\\ \\(1000\\)$",
-        "^\\$\\.keys:\\ array\\ length\\ 177\\ !=\\ 191$",
+        "^\\$\\.Subsonic\\.SearchLastFmWaitMs:\\ only\\ in\\ B\\ \\(1000\\)$",
+        "^\\$\\.keys:\\ array\\ length\\ 177\\ !=\\ 192$",
         "^\\$\\.keys\\[26\\]\\.Value:\\ http://stubs:5030\\ !=\\ $",
         "^\\$\\.keys\\[26\\]\\.Key:\\ Soulseek:BaseUrl\\ !=\\ Soulseek:Enabled$",
         "^\\$\\.keys\\[27\\]\\.Value:\\ slskd\\ !=\\ http://stubs:5030$",
@@ -1461,7 +1462,7 @@
         "^\\$\\.keys\\[176\\]\\.Value:\\ 0\\ !=\\ ••••••••$",
         "^\\$\\.keys\\[176\\]\\.Key:\\ Imports:RefreshHours\\ !=\\ Notifications:NtfyToken$",
         "^\\$\\.keys\\[174\\]\\.Value:\\ http://localhost/callback\\ !=\\ $",
-        "^\\$\\.bytes:\\ 7187\\ !=\\ 7840$",
+        "^\\$\\.bytes:\\ 7187\\ !=\\ 7872$",
         "^\\$\\.keys\\[26\\]\\.Value:\\ http://stubs:5030\\ !=\\ True$",
         "^\\$\\.keys\\[30\\]\\.Value:\\ True\\ !=\\ $",
         "^\\$\\.keys\\[32\\]\\.Value:\\ \\[Music\\]/music\\ !=\\ True$",
@@ -1525,10 +1526,11 @@
         "^\\$\\.persisted\\.RadioSources\\.ListenBrainzRadioMode:\\ only\\ in\\ B\\ \\(easy\\)$",
         "^\\$\\.persisted\\.Subsonic\\.StreamSizeWarmPerMinute:\\ only\\ in\\ B\\ \\(5\\)$",
         "^\\$\\.persisted\\.Subsonic\\.SearchDurationWaitMs:\\ only\\ in\\ B\\ \\(1000\\)$",
+        "^\\$\\.persisted\\.Subsonic\\.SearchLastFmWaitMs:\\ only\\ in\\ B\\ \\(1000\\)$",
         "^\\$\\.persisted\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$",
         "^\\$\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$"
       ],
-      "reason": "Every settings answer (settings, raw-config, config-sources, a save's persisted copy, settings.json) now carries all of the new keys at once: GeneratedPlaylists Charts and ChartCountry, LikedSongs, LikedSongsName and LikedSongsMax, CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh, Lidarr WebhookSecret, Soulseek Enabled, RadioSources ListenBrainzRadioMode, Subsonic StreamSizeWarmPerMinute and SearchDurationWaitMs (both listed last in config-sources, so they shift no row; SearchDurationWaitMs adds 34 bytes to the saved settings.json, 7806 to 7840) and the two new LibraryActions (seven actions), with the config-sources rows they shift and the trimmed slskd web address. One answer can be explained by one entry only, so the single-change entries (charts-settings-listed, liked-songs-first, country-mix-settings, lidarr-webhook-secret-listed, soulseek-enabled-listed, lb-radio-mode-listed, wrong-lyrics-wrong-cover-actions, config-sources-fixed-mask, slskd-web-url-trimmed) no longer match these answers; this entry pins the combined diff line by line.",
+      "reason": "Every settings answer (settings, raw-config, config-sources, a save's persisted copy, settings.json) now carries all of the new keys at once: GeneratedPlaylists Charts and ChartCountry, LikedSongs, LikedSongsName and LikedSongsMax, CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh, Lidarr WebhookSecret, Soulseek Enabled, RadioSources ListenBrainzRadioMode, Subsonic StreamSizeWarmPerMinute, SearchDurationWaitMs and SearchLastFmWaitMs (all listed last in config-sources, so they shift no row; the two search waits add 66 bytes to the saved settings.json, 7806 to 7872) and the two new LibraryActions (seven actions), with the config-sources rows they shift and the trimmed slskd web address. One answer can be explained by one entry only, so the single-change entries (charts-settings-listed, liked-songs-first, country-mix-settings, lidarr-webhook-secret-listed, soulseek-enabled-listed, lb-radio-mode-listed, wrong-lyrics-wrong-cover-actions, config-sources-fixed-mask, slskd-web-url-trimmed) no longer match these answers; this entry pins the combined diff line by line.",
       "knownDiff": "Settings answers with every new key"
     },
     {

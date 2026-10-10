@@ -298,3 +298,31 @@ async fn a_settings_file_in_a_directory_created_later_is_picked_up() {
     std::fs::write(&path, r#"{"Genre": {"MaxGenres": 5}}"#).unwrap();
     wait_for(&mut rx, |s| s.genre.max_genres == 5).await;
 }
+
+#[test]
+fn the_search_duration_wait_binds_from_the_environment_and_is_clamped() {
+    let none = settings_file(None);
+    let default = SettingsStore::from_env(Vec::new(), Some(none.path.clone()));
+    assert_eq!(default.current().subsonic.search_duration_wait_ms, 1000);
+    for (value, expected) in [("250", 250), ("0", 0), ("90000", 10_000)] {
+        let file = settings_file(None);
+        let store = SettingsStore::from_env(
+            env(&[("Subsonic__SearchDurationWaitMs", value)]),
+            Some(file.path.clone()),
+        );
+        assert_eq!(
+            store.current().subsonic.effective_search_duration_wait(),
+            std::time::Duration::from_millis(expected),
+            "{value}"
+        );
+    }
+    let file = settings_file(Some(r#"{"Subsonic": {"WaitForSearchDurations": false}}"#));
+    let store = SettingsStore::from_env(
+        env(&[("Subsonic__SearchDurationWaitMs", "5000")]),
+        Some(file.path.clone()),
+    );
+    assert_eq!(
+        store.current().subsonic.effective_search_duration_wait(),
+        std::time::Duration::ZERO
+    );
+}

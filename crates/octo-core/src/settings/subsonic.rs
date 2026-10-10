@@ -195,6 +195,15 @@ pub struct SubsonicSettings {
     /// apps that only use the length from the search results show Deezer's.
     pub wait_for_search_durations: bool,
 
+    /// How long a search waits for those YouTube lengths, in milliseconds (default: 1000,
+    /// range 0-10000). 0 never waits.
+    /// Environment variable: SEARCH_DURATION_WAIT_MS
+    ///
+    /// The rows whose length is found within the wait go out with it; the others go out with
+    /// Deezer's length and get the YouTube one in the background, where getSong and the next
+    /// search for the same words pick it up. WaitForSearchDurations off means 0.
+    pub search_duration_wait_ms: i32,
+
     /// Give clients that sync the library to the device a discovery catalog (default: true).
     /// Environment variable: ENABLE_SYNC_CATALOG
     ///
@@ -350,6 +359,7 @@ impl Default for SubsonicSettings {
             enable_external_playlists: true,
             enable_search_discovery: true,
             wait_for_search_durations: true,
+            search_duration_wait_ms: 1000,
             enable_sync_catalog: true,
             sync_catalog_clients: "Symfonium".to_string(),
             sync_catalog_max_songs: 1000,
@@ -375,6 +385,15 @@ impl Default for SubsonicSettings {
 impl SubsonicSettings {
     pub fn effective_sync_catalog_max_songs(&self) -> i32 {
         self.sync_catalog_max_songs.clamp(50, 5000)
+    }
+
+    /// How long a search waits for the YouTube lengths of its top outside rows: none while
+    /// WaitForSearchDurations is off, else SearchDurationWaitMs within 0 to 10 seconds.
+    pub fn effective_search_duration_wait(&self) -> std::time::Duration {
+        if !self.wait_for_search_durations {
+            return std::time::Duration::ZERO;
+        }
+        std::time::Duration::from_millis(self.search_duration_wait_ms.clamp(0, 10_000) as u64)
     }
 
     pub fn effective_stream_size_warm_per_minute(&self) -> usize {
@@ -539,6 +558,32 @@ mod tests {
                 "{configured}"
             );
         }
+    }
+
+    #[test]
+    fn search_waits_a_second_for_lengths_by_default_within_ten_seconds() {
+        use std::time::Duration;
+        assert_eq!(
+            SubsonicSettings::default().effective_search_duration_wait(),
+            Duration::from_millis(1000)
+        );
+        for (configured, expected) in [(0, 0), (-5, 0), (250, 250), (10_000, 10_000), (60_000, 10_000)] {
+            let s = SubsonicSettings {
+                search_duration_wait_ms: configured,
+                ..Default::default()
+            };
+            assert_eq!(
+                s.effective_search_duration_wait(),
+                Duration::from_millis(expected),
+                "{configured}"
+            );
+        }
+        let off = SubsonicSettings {
+            wait_for_search_durations: false,
+            search_duration_wait_ms: 4000,
+            ..Default::default()
+        };
+        assert_eq!(off.effective_search_duration_wait(), Duration::ZERO);
     }
 
     #[test]

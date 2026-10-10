@@ -160,7 +160,8 @@ Enums:
 | `CacheDurationHours` | `CACHE_DURATION_HOURS` | int | 1 / `1` / `1` | No clamp. Used only while the cache cleanup runs (hourly). | Live | no (an HTML mention, no field) |
 | `EnableExternalPlaylists` | `ENABLE_EXTERNAL_PLAYLISTS` | bool | **true** / `false` / `false` | The class default differs from appsettings. | Live | yes |
 | `EnableSearchDiscovery` | `ENABLE_SEARCH_DISCOVERY` | bool | true / `true` / `true` | - | Live | no |
-| `WaitForSearchDurations` | `WAIT_FOR_SEARCH_DURATIONS` | bool | true / `true` / `true` | - | Live | yes |
+| `WaitForSearchDurations` | `WAIT_FOR_SEARCH_DURATIONS` | bool | true / `true` / `true` | Rust: false makes `SearchDurationWaitMs` 0. | Live | yes |
+| `SearchDurationWaitMs` | `SEARCH_DURATION_WAIT_MS` | int | 1000 / - / `1000` | Rust only. How long a search waits for the YouTube lengths of its top outside rows; `Clamp(0, 10000)`, 0 never waits. Rows not resolved in time go out with Deezer's length and are resolved in the background. Listed last in config-sources. | Live | no |
 | `EnableSyncCatalog` | `ENABLE_SYNC_CATALOG` (compose only, not in `.env.example`) | bool | true / `true` / `true` | - | Live | yes |
 | `SyncCatalogClients` | `SYNC_CATALOG_CLIENTS` (compose only) | string (comma list) | `Symfonium` / `Symfonium` / `Symfonium` | Split on `,`, entries trimmed, empties dropped. **A client matches when its `c` parameter *contains* an entry, ignoring case** (a substring match, not equality). | Live | yes |
 | `SyncCatalogMaxSongs` | `SYNC_CATALOG_MAX_SONGS` (compose only) | int | 1000 / `1000` / `1000` | `Math.Clamp(v, 50, 5000)` | Live | yes |

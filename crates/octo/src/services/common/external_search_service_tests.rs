@@ -86,6 +86,27 @@ fn waiting(wait_for_search_durations: bool) -> Option<Arc<SettingsStore>> {
     })))
 }
 
+fn waiting_ms(search_duration_wait_ms: i32) -> Option<Arc<SettingsStore>> {
+    Some(Arc::new(SettingsStore::for_tests(AppSettings {
+        subsonic: SubsonicSettings {
+            search_duration_wait_ms,
+            ..Default::default()
+        },
+        ..Default::default()
+    })))
+}
+
+/// How many track.search calls Last.fm has had.
+async fn track_searches(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.url.to_string().contains("method=track.search"))
+        .count()
+}
+
 fn one_song_metadata() -> Arc<FakeMetadata> {
     let metadata = Arc::new(FakeMetadata::default());
     metadata.hits.lock().insert(
@@ -274,6 +295,130 @@ async fn search_rows_are_built_most_listened_first() {
     );
 }
 // ---- Rust-only ---------------------------------------------------------------------------
+
+/// A search waits for the lengths at most its budget, then answers with what it has.
+#[tokio::test]
+async fn a_search_answers_when_its_wait_for_lengths_runs_out() {
+    let metadata = one_song_metadata();
+    let mut gate = gate_durations(&metadata);
+    let (last_fm, _server) = one_hit_last_fm().await;
+    let search = ExternalSearchService::new(metadata.clone(), Some(last_fm), waiting_ms(200));
+
+    let started = std::time::Instant::now();
+    let songs = tokio::time::timeout(Duration::from_secs(5), search.get("song"))
+        .await
+        .expect("answered while the lengths are still being looked up");
+
+    assert_eq!(songs.len(), 1);
+    assert!(started.elapsed() >= Duration::from_millis(200));
+    assert_eq!(*gate.started.borrow_and_update(), Some(false));
+    gate.open.send_replace(true);
+}
+
+/// A wait of 0 is the background mode: the search does not wait at all.
+#[tokio::test]
+async fn a_wait_of_zero_never_waits() {
+    let metadata = one_song_metadata();
+    let mut gate = gate_durations(&metadata);
+    let (last_fm, _server) = one_hit_last_fm().await;
+    let search = ExternalSearchService::new(metadata.clone(), Some(last_fm), waiting_ms(0));
+
+    let songs = tokio::time::timeout(Duration::from_secs(5), search.get("song"))
+        .await
+        .expect("answered");
+    assert_eq!(songs.len(), 1);
+    let background = tokio::time::timeout(Duration::from_secs(5), gate.started.wait_for(Option::is_some))
+        .await
+        .expect("the durations pass started")
+        .expect("open")
+        .expect("a flag");
+    assert!(background);
+    gate.open.send_replace(true);
+}
+
+/// The same words again, in any case and spacing, answer from the last build: Last.fm is not
+/// asked again, the rows take the lengths found since, and the kept list itself is unchanged.
+#[tokio::test]
+async fn a_repeated_query_answers_from_the_last_build_with_lengths_found_since() {
+    let metadata = one_song_metadata();
+    let (last_fm, server) = one_hit_last_fm().await;
+    let search = ExternalSearchService::new(metadata.clone(), Some(last_fm), waiting(false));
+
+    let first = search.get("song").await;
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].duration, None);
+    metadata.lengths_now.lock().insert("Song".into(), 245);
+
+    let again = search.get("  SONG ").await;
+
+    assert_eq!(track_searches(&server).await, 1);
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].duration, Some(245));
+    assert_eq!(first[0].duration, None);
+    assert_eq!(search.get("song").await[0].duration, Some(245));
+    // Another query is built.
+    search.get("song two").await;
+    assert_eq!(track_searches(&server).await, 2);
+}
+
+/// A build with no rows (Last.fm found nothing, or it failed) is not kept.
+#[tokio::test]
+async fn a_build_with_no_rows_is_built_again() {
+    let (last_fm, server) = last_fm(0).await;
+    let search = ExternalSearchService::new(Arc::new(FakeMetadata::default()), Some(last_fm), waiting(false));
+
+    assert!(search.get("nothing").await.is_empty());
+    assert!(search.get("nothing").await.is_empty());
+
+    assert_eq!(track_searches(&server).await, 2);
+}
+
+#[tokio::test]
+async fn album_searches_are_kept_by_query_and_limit() {
+    let metadata = Arc::new(FakeMetadata::default());
+    metadata.album_hits.lock().push(Album {
+        title: "Album".into(),
+        ..Default::default()
+    });
+    let search = ExternalSearchService::new(metadata.clone(), None, None);
+
+    assert_eq!(search.get_albums("Album", 5).await.len(), 1);
+    assert_eq!(search.get_albums(" album", 5).await.len(), 1);
+    assert_eq!(*metadata.album_searches.lock(), 1);
+    search.get_albums("album", 10).await;
+    assert_eq!(*metadata.album_searches.lock(), 2);
+
+    let empty = Arc::new(FakeMetadata::default());
+    let search = ExternalSearchService::new(empty.clone(), None, None);
+    search.get_albums("none", 5).await;
+    search.get_albums("none", 5).await;
+    assert_eq!(*empty.album_searches.lock(), 2);
+}
+
+#[test]
+fn kept_results_expire_after_their_time_and_the_oldest_go_past_the_limit() {
+    let kept: RecentResults<i32> = RecentResults::new(Duration::from_secs(600), 2);
+    let start = Instant::now();
+    kept.put(recent_key(" A "), Arc::new(vec![1]), start);
+    assert_eq!(
+        kept.get("a", start + Duration::from_secs(599)).as_deref(),
+        Some(&vec![1])
+    );
+    assert!(kept.get("a", start + Duration::from_secs(600)).is_none());
+    // Gone once expired.
+    assert!(kept.get("a", start).is_none());
+
+    kept.put("a".into(), Arc::new(vec![1]), start);
+    kept.put("b".into(), Arc::new(vec![2]), start);
+    kept.put("a".into(), Arc::new(vec![10]), start);
+    kept.put("c".into(), Arc::new(vec![3]), start);
+    // "b" was the oldest once "a" was kept again.
+    assert!(kept.get("b", start).is_none());
+    assert_eq!(kept.get("a", start).as_deref(), Some(&vec![10]));
+    assert_eq!(kept.get("c", start).as_deref(), Some(&vec![3]));
+    assert_eq!(RECENT_RESULTS_TTL, Duration::from_secs(600));
+    assert_eq!(RECENT_RESULTS_MAX, 256);
+}
 
 /// No Last.fm key, or a blank query, is no discovery; a blank album query or limit is none.
 #[tokio::test]

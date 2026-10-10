@@ -269,6 +269,7 @@ pub struct Rewrite {
 }
 
 pub const FORMAT_DIFFERS: &str = "The best-sounding copy is a different format, so moving it would change the song's path and lose its marks. Nothing changed.";
+pub const CHANGED_SINCE: &str = "The file has changed since, so it was left as it is.";
 pub const CHECKING: &str = "Checking that Navidrome kept the moved songs";
 
 /// Fixing duplicates by keeping the best sound in the copy people marked.
@@ -651,16 +652,6 @@ impl KeepMarks {
                 )),
             );
         }
-        let now = std::fs::metadata(&moved.target.absolute_path).ok();
-        let unchanged = now
-            .as_ref()
-            .is_some_and(|m| m.len() == moved.size && m.modified().ok() == moved.modified);
-        if !unchanged {
-            return FixAnswer::new(
-                "failed",
-                Some("The file has changed since, so it was left as it is."),
-            );
-        }
         match self.put_back(&moved, &format!("Put back by {user}.")).await {
             Ok(()) => {
                 self.moves.lock().remove(target_id);
@@ -673,8 +664,17 @@ impl KeepMarks {
         }
     }
 
-    /// The marked copy back at its path and the best-sounding copy out of the trash.
+    /// The marked copy back at its path and the best-sounding copy out of the trash. Only while
+    /// the file moved in is exactly as the move left it: anything newer at the path stays.
     async fn put_back(&self, moved: &Moved, detail: &str) -> Result<(), String> {
+        let _share = self.write_share().await;
+        let now = std::fs::metadata(&moved.target.absolute_path).ok();
+        let unchanged = now
+            .as_ref()
+            .is_some_and(|m| m.len() == moved.size && m.modified().ok() == moved.modified);
+        if !unchanged {
+            return Err(CHANGED_SINCE.to_string());
+        }
         let root = self.resolver.music_root();
         let path = Path::new(&moved.target.absolute_path);
         let aside = path.with_file_name(format!(
@@ -792,6 +792,11 @@ impl KeepMarks {
                         self.journal.flush();
                         failed.push((id.clone(), why.to_string()));
                     }
+                    Err(problem) if problem == CHANGED_SINCE => failed.push((
+                        id.clone(),
+                        "Navidrome did not show the moved song as the same song, but the file has changed since, so both copies were left as they are."
+                            .to_string(),
+                    )),
                     Err(problem) => failed.push((id.clone(), format!("{why} {problem}"))),
                 }
                 self.moves.lock().remove(&id);

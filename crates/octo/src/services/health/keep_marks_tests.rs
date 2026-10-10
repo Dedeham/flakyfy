@@ -998,3 +998,37 @@ async fn moving_the_sound_waits_while_a_job_writes_the_music_folder() {
     assert_eq!(answer.state, "applied", "{answer:?}");
     assert_eq!(tag(&b_path, "genre").as_deref(), Some("best copy"));
 }
+
+#[tokio::test]
+async fn a_move_navidrome_does_not_keep_is_never_put_back_over_newer_content() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let keep = f.keep();
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "applied", "{answer:?}");
+
+    // Something newer lands at the path before the run's check, which Navidrome then fails.
+    std::fs::write(&b_path, b"newer").expect("written");
+    f.navidrome.blind.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (failed, _) = keep.finish_run(&["B".to_string()], &[]).await;
+
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].1.contains("changed since"), "{}", failed[0].1);
+    assert_eq!(std::fs::read(&b_path).expect("still there"), b"newer");
+}

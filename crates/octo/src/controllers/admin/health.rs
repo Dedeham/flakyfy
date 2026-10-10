@@ -36,6 +36,7 @@ use crate::services::health::library_health::{
 use crate::services::health::library_health_service::Row;
 use crate::services::health::{HealthRun, IHealthFields, LibraryHealthService, ServerSongFields};
 use crate::services::library::library_tag_edits::song_tag_fields;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::quality_upgrade_worker::compare_ordinal;
 
 pub fn routes() -> RouteSet {
@@ -723,6 +724,9 @@ async fn apply(State(state): State<AppState>, request: Request) -> Response {
     if let Some(refused) = health.refusal(Some(&user)) {
         return error(StatusCode::FORBIDDEN, refused);
     }
+    if let Some(busy) = job_writing(&state) {
+        return busy;
+    }
     let steps: Vec<FixStep> = request
         .steps
         .unwrap_or_default()
@@ -874,10 +878,22 @@ async fn undo(State(state): State<AppState>, request: Request) -> Response {
     if let Some(refused) = health.refusal(Some(&user)) {
         return error(StatusCode::FORBIDDEN, refused);
     }
+    if let Some(busy) = job_writing(&state) {
+        return busy;
+    }
     if let Some(why) = health.start_undo(&user) {
         return error(StatusCode::CONFLICT, why);
     }
     accepted(&json!({ "started": true, "run": run_view(health.run().as_deref()) }))
+}
+
+/// 409 while a job (the tidy, a re-tag, the cover upgrade) writes the music folder: a fix run
+/// changes files too, and what it checks would not hold while they move.
+fn job_writing(state: &AppState) -> Option<Response> {
+    state
+        .library_write_gate
+        .job()
+        .map(|holder| error(StatusCode::CONFLICT, LibraryWriteGate::busy_message(&holder)))
 }
 
 fn busy_answer(busy: &HealthRun) -> Response {

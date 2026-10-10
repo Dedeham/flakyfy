@@ -807,6 +807,31 @@ async fn playlists_follow_the_moved_songs_and_are_journaled() {
     )));
 }
 
+/// A playlist is written whole beside itself and moved into place, so a stop part way never
+/// leaves half of it: the old file is never written into.
+#[tokio::test]
+async fn a_playlist_is_replaced_whole_never_written_into() {
+    let rig = Rig::new(audio_or_skip!("flac"));
+    rig.song("Beyonce/A/01 - S.flac", "Beyonc\u{e9}", &[], "S");
+    let playlist = rig.at("Mixes/road.m3u");
+    std::fs::create_dir_all(rig.at("Mixes")).expect("made");
+    let text = "#EXTM3U\n../Beyonce/A/01 - S.flac\n";
+    std::fs::write(&playlist, text).expect("written");
+    // A second name for the same file: an in-place write would change what it reads too.
+    let other_name = rig.config.join("road-link.m3u");
+    std::fs::create_dir_all(&rig.config).expect("made");
+    std::fs::hard_link(&playlist, &other_name).expect("linked");
+
+    rig.preview(WHOLE).await;
+    rig.apply(WHOLE, &[]).await;
+
+    assert_eq!(
+        std::fs::read_to_string(&playlist).expect("read"),
+        "#EXTM3U\n../Beyonc\u{e9}/A/01 - S.flac\n"
+    );
+    assert_eq!(std::fs::read_to_string(&other_name).expect("read"), text);
+}
+
 #[tokio::test]
 async fn a_moved_song_navidrome_lost_track_of_is_listed() {
     let rig = Rig::new(audio_or_skip!("flac"));
@@ -871,6 +896,34 @@ async fn the_one_writer_gate_refuses_an_apply_while_another_job_writes() {
     );
     assert!(exists(&source));
     drop(genre);
+}
+
+/// While the tidy waits for Navidrome's scan between the tags and the moves, a download can be
+/// placed; no other job can start meanwhile.
+#[tokio::test]
+async fn a_download_is_placed_while_the_tidy_waits_for_a_scan() {
+    let gate = LibraryWriteGate::new();
+    let shared = gate.clone();
+    let rig = Rig::with(audio_or_skip!("flac"), None, move |worker| {
+        worker.with_write_gate(shared)
+    });
+    rig.navidrome.scans_finish.store(false, Ordering::SeqCst);
+    rig.collab();
+    rig.preview(WHOLE).await;
+
+    let placed = async {
+        while rig.run_state().phase != "Waiting for Navidrome to scan" {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let share = tokio::time::timeout(Duration::from_secs(1), gate.write()).await;
+        let other_job = gate.begin_job("The genre re-tag").await.err();
+        (share.is_ok(), gate.job(), other_job)
+    };
+    let ((placed, holder, other_job), ()) = tokio::join!(placed, rig.apply(WHOLE, &[]));
+
+    assert!(placed, "a download waited for the whole scan");
+    assert_eq!(holder.as_deref(), Some(TidyWorker::JOB_NAME));
+    assert_eq!(other_job.as_deref(), Some(TidyWorker::JOB_NAME));
 }
 
 #[tokio::test]

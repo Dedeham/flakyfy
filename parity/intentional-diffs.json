@@ -360,21 +360,21 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"epVoOPtrtLeGrLro/K1bGkzpRzcHDsbmP5/yj67AyTY=\"'\\]$",
+        "^B:\\ \\['\"GuZtz3Zt1iSMx5f3oq18BxHtwqqZ6q\\+M2VqxEX\\+l8nk=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ 7a956838fb6bb4b786acbae8fcad5b1a4ce94737070ec6e63f9ff28faec0c936\\ \\(197452\\ bytes,\\ text\\)$",
+        "^B:\\ 1ae66dcf766dd6248cc797f7a2ad7c0711edc2aa99eaaf8cd95ab1117fa5f279\\ \\(208747\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"n8vxRHv\\+QazwDBOU1nsMYC1wRtsf5gylaTbDF3aJdE8=\"'\\]$",
+        "^B:\\ \\['\"ghwVvRh0vF4E6yIGc9RfjcwehEGiSOmU\\+lw7rMcyWj8=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ 9fcbf1447bfe41acf00c1394d67b0c602d7046db1fe60ca56936c3177689744f\\ \\(389200\\ bytes,\\ text\\)$",
+        "^B:\\ 821c15bd1874bc5e04eb220673d45f8dcc1e8441a248e994fa5c3bacc7325a3f\\ \\(410432\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"FnxtuSHIv503E2td0ee\\+1JM5x09YrKdZckZJrgZ\\+wxs=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ 167c6db921c8bf9d37136b5dd1e7bed49339c74f58aca759724649ae067ec31b\\ \\(116170\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/197452'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/208747'\\]$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo). Re-pinned for Octo Family (index.html, admin.js): the dashboard's Family entry, shown only on a server that answers /api/admin/family, so it stays hidden on a server without Family. Re-pinned again for Octo Family (index.html, admin.js): the Family pane's outside-address notice, the choice of where members' music lives, and Open Family signing the owner in.",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose: the Charts card on the Mixes page (index.html, admin.js, admin.css; the charts plan, Brandon 2026-10-07) and the station previews and US spelling (admin.js, index.html; row \"Dashboard words: station previews and spelling\"). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Re-pinned on release/rust for the bridge release's update card (admin.js, index.html, admin.css): the warning when the update helper is older than version 2, with its reinstall command, and \"Pulling the new Octo\" for the build step (entry update-card-pulls-octo). Re-pinned for Octo Family (index.html, admin.js): the dashboard's Family entry, shown only on a server that answers /api/admin/family, so it stays hidden on a server without Family. Re-pinned again for Octo Family (index.html, admin.js): the Family pane's outside-address notice, the choice of where members' music lives, and Open Family signing the owner in. Re-pinned 2026-10-10 for release 2026.10.10: index.html and admin.js as merged for the release, which carry this change together with the other dashboard entries' changes (admin.css is unchanged).",
       "knownDiff": "Dashboard Charts card",
       "reviewed": "Brandon 2026-10-08; Family re-pins Brandon 2026-10-09"
     },
@@ -410,23 +410,23 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"vPkEMrERGn7GTvN30sAHFJoqPkBWALvheWzlEjGb7vg=\"'\\]$",
+        "^B:\\ \\['\"GuZtz3Zt1iSMx5f3oq18BxHtwqqZ6q\\+M2VqxEX\\+l8nk=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ bcf90432b1111a7ec64ef377d2c007149a2a3e405600bbe1796ce512319beef8\\ \\(204317\\ bytes,\\ text\\)$",
+        "^B:\\ 1ae66dcf766dd6248cc797f7a2ad7c0711edc2aa99eaaf8cd95ab1117fa5f279\\ \\(208747\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
-        "^B:\\ \\['bytes\\ 0\\-9/204317'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/208747'\\]$",
         "^A:\\ \\['bytes\\ \\*/192988'\\]$",
-        "^B:\\ \\['bytes\\ \\*/204317'\\]$",
+        "^B:\\ \\['bytes\\ \\*/208747'\\]$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"Zf56LkiNLkfHPb4/qn1tcc8zRdVZfb09bZ6htSkjOr4=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ 65fe7a2e488d2e47c73dbe3faa7d6d71cf3345d5597dbd3d6d9ea1b529233abe\\ \\(118887\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"\\+SV5w9RO4M\\+Lag\\+BOVZvCSEUE7tMp3cXogPby09ZOK4=\"'\\]$",
+        "^B:\\ \\['\"ghwVvRh0vF4E6yIGc9RfjcwehEGiSOmU\\+lw7rMcyWj8=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ f92579c3d44ee0cf8b6a0f8139566f09211413bb4ca77717a203dbcb4f5938ae\\ \\(394373\\ bytes,\\ text\\)$"
+        "^B:\\ 821c15bd1874bc5e04eb220673d45f8dcc1e8441a248e994fa5c3bacc7325a3f\\ \\(410432\\ bytes,\\ text\\)$"
       ],
-      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose since dashboard-files-2026-10-08: the Library health sections and run card (admin.js, admin.css, index.html), Liked Songs and the country mixes on the Mixes page, the Wrong lyrics and Wrong cover actions, Soulseek's on switch, the Lidarr webhook password, the ListenBrainz radio difficulty and the Tidy artists card (index.html, admin.js). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Supersedes dashboard-files-2026-10-08 once reviewed.",
+      "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose since dashboard-files-2026-10-08: the Library health sections and run card (admin.js, admin.css, index.html), Liked Songs and the country mixes on the Mixes page, the Wrong lyrics and Wrong cover actions, Soulseek's on switch, the Lidarr webhook password, the ListenBrainz radio difficulty and the Tidy artists card (index.html, admin.js). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Supersedes dashboard-files-2026-10-08 once reviewed. Re-pinned 2026-10-10 for release 2026.10.10: index.html and admin.js as merged for the release, which carry this change together with the other dashboard entries' changes (admin.css is unchanged).",
       "knownDiff": "Dashboard files, 2026-10-09",
       "reviewed": "Brandon 2026-10-10"
     },
@@ -1896,6 +1896,7 @@
         "16-lists/extensions-json",
         "16-lists/extensions-xml",
         "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-discovery-off-json",
         "16-lists/extensions-final-json",
         "01-system/extensions-json",
         "01-system/extensions-xml",
@@ -1961,21 +1962,21 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"e15VCN/qT3mF2LNSvq4qLvjIEmFgR43eMF\\+5AYQ9wmQ=\"'\\]$",
+        "^B:\\ \\['\"GuZtz3Zt1iSMx5f3oq18BxHtwqqZ6q\\+M2VqxEX\\+l8nk=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ 7b5e5508dfea4f7985d8b352beae2a2ef8c8126160478dde305fb901843dc264\\ \\(199276\\ bytes,\\ text\\)$",
+        "^B:\\ 1ae66dcf766dd6248cc797f7a2ad7c0711edc2aa99eaaf8cd95ab1117fa5f279\\ \\(208747\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"MgxG7SNLeHScAFwPDnVSHLTGy6qu\\+I98wbVF4zgpstI=\"'\\]$",
+        "^B:\\ \\['\"ghwVvRh0vF4E6yIGc9RfjcwehEGiSOmU\\+lw7rMcyWj8=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ 320c46ed234b78749c005c0f0e75521cb4c6cbaaaef88f7cc1b545e33829b2d2\\ \\(396805\\ bytes,\\ text\\)$",
+        "^B:\\ 821c15bd1874bc5e04eb220673d45f8dcc1e8441a248e994fa5c3bacc7325a3f\\ \\(410432\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/199276'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/208747'\\]$"
       ],
-      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the Import page (import plan, Track 2): the tab is Import, the Get my music card lists the services from /api/admin/imports/services with TuneMyMusic's steps for the one picked (accent fill and a check on the pick), the file upload takes .txt too, and a paste box sends to /api/admin/imports/text. The Spotify card is unchanged. These hashes also carry the Library health run card changes already on rust/main (7d9630a, a16c33e), so the B lines of dashboard-files-2026-10-08 are superseded by these once reviewed.",
+      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the Import page (import plan, Track 2): the tab is Import, the Get my music card lists the services from /api/admin/imports/services with TuneMyMusic's steps for the one picked (accent fill and a check on the pick), the file upload takes .txt too, and a paste box sends to /api/admin/imports/text. The Spotify card is unchanged. These hashes also carry the Library health run card changes already on rust/main (7d9630a, a16c33e), so the B lines of dashboard-files-2026-10-08 are superseded by these once reviewed. Re-pinned 2026-10-10 for release 2026.10.10: index.html and admin.js as merged for the release, which carry this change together with the other dashboard entries' changes (admin.css is unchanged).",
       "knownDiff": "Dashboard Import page",
       "reviewed": "Brandon 2026-10-10"
     },
@@ -2119,6 +2120,28 @@
       "reason": "Radio's owned-song check and lyrics' same-song check read a title in another script and a credit written another way (Owned); the YouTube Music radio seed is the best pick among its results (Pick, a near tie picks none); Lidarr's album pick compares artists as credits (Agree or Loose) with the album key unchanged (import plan, Track 1). Answers can list another radio song, find lyrics C# missed, or pick another Lidarr album. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
       "knownDiff": "Lookups: radio, lyrics and Lidarr",
       "reviewed": "Brandon 2026-10-10"
+    },
+    {
+      "id": "sonic-transition-profile-counts",
+      "backlog": "L",
+      "requests": [
+        "15-radio/sonic-first-pass-done",
+        "15-radio/sonic-pause",
+        "15-radio/sonic-paused-settled",
+        "15-radio/sonic-start",
+        "15-radio/sonic-reset",
+        "15-radio/sonic-after-reset-pass-done",
+        "15-radio/sonic-final"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.profiled: only in B \\(\\d+\\)$",
+        "^\\$\\.readsSound: only in B \\((true|false)\\)$"
+      ],
+      "reason": "octo-sonic now makes every song a transition profile, which the Octo apps' Automix reads, whether Sounds alike radio is on or off. The dashboard's octo-sonic status (/api/admin/sonic) adds two fields for it: profiled, the songs with a profile of the current version, and readsSound, false while Sounds alike is off and octo-sonic only makes profiles. Every field the C# answer had is unchanged.",
+      "knownDiff": "octo-sonic status: transition profiles"
     }
   ]
 }

@@ -30,6 +30,9 @@ use indexmap::IndexSet;
 use regex::{Captures, Regex};
 use unicode_normalization::UnicodeNormalization;
 
+use super::fuzzy::{jaro_winkler, ratio, token_sort_ratio};
+use super::romanize::{first_script, has_non_ascii_letters, romanized_key, romanized_words, words};
+
 use super::dotnet::{
     eq_ignore_case, format_optional_decimals, is_blank, is_cased_letter_utf16, is_combining_mark,
     is_digit_utf16, is_letter_or_digit, is_letter_utf16, is_upper_utf16, round, starts_with_ignore_case,
@@ -72,6 +75,24 @@ impl SongMatch {
     }
 }
 
+/// What a comparison accepts beyond the rules every caller gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lookup {
+    /// Only the rules every caller gets.
+    #[default]
+    Off,
+
+    /// Also the same title in another script ("Камин" and "Kamin"), and the same artists
+    /// credited another way ("Fonsi, Luis" and "Luis Fonsi"). For deciding whether a song is
+    /// already owned or which entry is the song asked for; never for deleting or replacing files.
+    Owned,
+
+    /// [`Lookup::Owned`], plus a title a typo away when both lengths are known and agree. Only
+    /// where one search's results are ranked and a near tie picks nothing
+    /// ([`SongIdentity::pick_best`]).
+    Pick,
+}
+
 /// How one call site wants songs compared. The defaults are the strict reading.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SongMatchOptions {
@@ -86,6 +107,9 @@ pub struct SongMatchOptions {
     /// Version markers this caller treats as the same recording, on top of the ones
     /// that always are (remaster, explicit, original mix, album version, mono, stereo).
     pub also_neutral: Vec<String>,
+
+    /// What else is accepted, for lookups. Off by default.
+    pub lookup: Lookup,
 }
 
 impl Default for SongMatchOptions {
@@ -94,6 +118,7 @@ impl Default for SongMatchOptions {
             length_tolerance_seconds: Some(SongIdentity::LENGTH_TOLERANCE_SECONDS),
             extras_must_agree: false,
             also_neutral: Vec::new(),
+            lookup: Lookup::Off,
         }
     }
 }
@@ -1126,6 +1151,10 @@ enum TitleAgreement {
     Exact,
     Loose,
     Numbers,
+    /// The same title written in two scripts, read through their Latin spellings.
+    CrossScript,
+    /// A title a typo away, with the guards of [`near_title`].
+    NearTitle,
 }
 
 fn compare_keys(a: &SongTitle, b: &SongTitle) -> TitleAgreement {
@@ -1159,10 +1188,108 @@ fn compare_keys(a: &SongTitle, b: &SongTitle) -> TitleAgreement {
     }
 }
 
+/// The key a title is compared by across scripts: its Latin spelling when it has letters
+/// outside ASCII, else its key. Only computed for a lookup.
+fn cross_key(title: &SongTitle) -> String {
+    if has_non_ascii_letters(&title.keyed) {
+        romanized_key(&title.keyed)
+    } else {
+        title.key.clone()
+    }
+}
+
+/// The same title in two scripts: the cores start in different scripts and their Latin
+/// spellings key the same. Two titles in one script never compare this way, since a spelling
+/// loses tones and two different Chinese titles can share one.
+fn same_across_scripts(a: &SongTitle, b: &SongTitle) -> bool {
+    let (script_a, script_b) = (first_script(&a.core), first_script(&b.core));
+    if script_a.is_none() || script_b.is_none() || script_a == script_b {
+        return false;
+    }
+    let key = cross_key(a);
+    !key.is_empty() && key == cross_key(b)
+}
+
+/// A roman numeral from 1 to 39, the way a sequel or a part is numbered.
+static ROMAN_NUMERAL: LazyLock<Regex> = LazyLock::new(|| rx(r"^x{0,3}(?:ix|iv|v?i{0,3})$"));
+
+fn title_words(title: &SongTitle) -> Vec<String> {
+    words(&title.keyed)
+        .split(' ')
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A title a typo away: both lengths known and within the tolerance, the shorter key at least six
+/// letters, the same numbers, the same trailing roman numeral, the same number of words, and an
+/// indel ratio of at least 0.90 between the keys. Short titles ("Mine" and "Mind"), plurals
+/// ("Angel" and "Angels") and numbered parts never pass.
+fn near_title(a: &SongTitle, b: &SongTitle, options: &SongMatchOptions, lengths: Option<(f64, f64)>) -> bool {
+    let (Some(tolerance), Some((seconds_a, seconds_b))) = (options.length_tolerance_seconds, lengths) else {
+        return false;
+    };
+    if (seconds_a - seconds_b).abs() > f64::from(tolerance) {
+        return false;
+    }
+    let letters = |key: &str| key.chars().filter(|&ch| is_letter_utf16(ch)).count();
+    if letters(&a.key).min(letters(&b.key)) < 6 {
+        return false;
+    }
+    let (words_a, words_b) = (title_words(a), title_words(b));
+    if words_a.len() != words_b.len() {
+        return false;
+    }
+    let numbers = |title: &SongTitle| -> BTreeSet<String> {
+        DIGITS
+            .find_iter(&utf16_class_view(&title.keyed))
+            .map(|found| found.as_str().trim_start_matches('0').to_string())
+            .collect()
+    };
+    if numbers(a) != numbers(b) {
+        return false;
+    }
+    let roman = |words: &[String]| words.last().filter(|word| ROMAN_NUMERAL.is_match(word)).cloned();
+    if roman(&words_a) != roman(&words_b) {
+        return false;
+    }
+    ratio(&a.key, &b.key) >= 0.90
+}
+
+/// [`compare_keys`], then the lookup tiers the options allow when the keys disagree.
+fn compare_keys_lookup(
+    a: &SongTitle,
+    b: &SongTitle,
+    options: &SongMatchOptions,
+    lengths: Option<(f64, f64)>,
+) -> TitleAgreement {
+    let agreement = compare_keys(a, b);
+    if agreement != TitleAgreement::None
+        || options.lookup == Lookup::Off
+        || a.key.is_empty()
+        || b.key.is_empty()
+    {
+        return agreement;
+    }
+    if same_across_scripts(a, b) {
+        return TitleAgreement::CrossScript;
+    }
+    if options.lookup == Lookup::Pick && near_title(a, b, options, lengths) {
+        return TitleAgreement::NearTitle;
+    }
+    TitleAgreement::None
+}
+
 const CREDITED_VERSIONS: [&str; 4] = ["remix", "mix", "dub", "edit"];
 
-fn compare_titles(a: &SongTitle, b: &SongTitle, options: &SongMatchOptions) -> SongMatch {
-    let agreement = compare_keys(a, b);
+/// `lengths` is both lengths, when both are known.
+fn compare_titles(
+    a: &SongTitle,
+    b: &SongTitle,
+    options: &SongMatchOptions,
+    lengths: Option<(f64, f64)>,
+) -> SongMatch {
+    let agreement = compare_keys_lookup(a, b, options, lengths);
     if agreement == TitleAgreement::None {
         let reason = if a.key.is_empty() || b.key.is_empty() {
             "a title is empty".to_string()
@@ -1181,6 +1308,14 @@ fn compare_titles(a: &SongTitle, b: &SongTitle, options: &SongMatchOptions) -> S
     if agreement == TitleAgreement::Numbers {
         confidence -= 0.1;
         reasons.push("the same title with numbers that overlap");
+    }
+    if agreement == TitleAgreement::CrossScript {
+        confidence -= 0.1;
+        reasons.push("the same title in another script");
+    }
+    if agreement == TitleAgreement::NearTitle {
+        confidence -= 0.2;
+        reasons.push("nearly the same title");
     }
 
     let versions_a = SongIdentity::distinct_versions(a, Some(options));
@@ -1264,6 +1399,121 @@ fn credit_text<'a>(artist: &'a str, title: &'a SongTitle) -> &'a str {
     } else {
         artist
     }
+}
+
+/// Credits that say a song is someone else playing it. A credit with one of these words is never
+/// read as the same artists as one without.
+const TRIBUTE_WORDS: [&str; 6] = ["tribute", "karaoke", "cover", "covers", "rendition", "renditions"];
+
+/// Credits that name nobody, as keys.
+const PLACEHOLDER_ARTISTS: [&str; 9] = [
+    "variousartists",
+    "variousartist",
+    "various",
+    "va",
+    "unknownartist",
+    "unknown",
+    "releasetopic",
+    "release",
+    "artist",
+];
+
+fn is_placeholder(name: &str) -> bool {
+    let key = SongIdentity::key(name);
+    key.is_empty() || PLACEHOLDER_ARTISTS.contains(&key.as_str())
+}
+
+/// The words of two names in any order, the better of as written and spelled in Latin letters.
+fn names_alike(a: &str, b: &str) -> f64 {
+    let written = token_sort_ratio(&words(a), &words(b));
+    if has_non_ascii_letters(a) || has_non_ascii_letters(b) {
+        written.max(token_sort_ratio(&romanized_words(a), &romanized_words(b)))
+    } else {
+        written
+    }
+}
+
+fn tribute_words(artists: &SongArtists) -> BTreeSet<&'static str> {
+    let text = if has_non_ascii_letters(&artists.display) {
+        romanized_words(&artists.display)
+    } else {
+        words(&artists.display)
+    };
+    let found: HashSet<&str> = text.split(' ').collect();
+    TRIBUTE_WORDS
+        .iter()
+        .copied()
+        .filter(|word| found.contains(word))
+        .collect()
+}
+
+/// Two credits that share no artist by key, read as the same artists written another way: the
+/// tribute words agree, the whole credits have the same words allowing a typo, and so does every
+/// name of the credit with fewer names against some name of the other ("Fonsi, Luis" and "Luis
+/// Fonsi"). A placeholder such as "Various Artists" never passes.
+fn credits_alike(a: &SongArtists, b: &SongArtists) -> bool {
+    if is_placeholder(&a.display) || is_placeholder(&b.display) || tribute_words(a) != tribute_words(b) {
+        return false;
+    }
+    let named = |artists: &SongArtists| -> Vec<String> {
+        artists
+            .names
+            .iter()
+            .chain(&artists.featured)
+            .filter(|name| !is_placeholder(name))
+            .cloned()
+            .collect()
+    };
+    let (names_a, names_b) = (named(a), named(b));
+    if names_a.is_empty() || names_b.is_empty() || names_alike(&a.display, &b.display) < 0.92 {
+        return false;
+    }
+    let (short, long) = if names_a.len() <= names_b.len() {
+        (&names_a, b)
+    } else {
+        (&names_b, a)
+    };
+    let others: Vec<&str> = Credit(long).all().filter(|name| !is_placeholder(name)).collect();
+    short
+        .iter()
+        .all(|name| others.iter().any(|other| names_alike(name, other) >= 0.92))
+}
+
+/// Both lengths, when both are known.
+fn known_lengths(a: &SongRef, b: &SongRef) -> Option<(f64, f64)> {
+    match (a.seconds, b.seconds) {
+        (Some(seconds_a), Some(seconds_b)) if seconds_a > 0.0 && seconds_b > 0.0 => {
+            Some((seconds_a, seconds_b))
+        }
+        _ => None,
+    }
+}
+
+/// How alike two titles read, 0 to 1, for ranking: the best of their words in any order and
+/// Jaro-Winkler over their keys, as written and spelled in Latin letters.
+fn title_similarity(a: &SongTitle, b: &SongTitle) -> f64 {
+    let mut best = token_sort_ratio(&words(&a.keyed), &words(&b.keyed)).max(jaro_winkler(&a.key, &b.key));
+    if has_non_ascii_letters(&a.keyed) || has_non_ascii_letters(&b.keyed) {
+        best = best
+            .max(token_sort_ratio(
+                &romanized_words(&a.keyed),
+                &romanized_words(&b.keyed),
+            ))
+            .max(jaro_winkler(&cross_key(a), &cross_key(b)));
+    }
+    best
+}
+
+/// How alike two credits read, 0 to 1, for ranking: 1 when they share an artist, else the best of
+/// the whole credits and the primary artists compared word by word.
+fn artist_similarity(a: &SongArtists, b: &SongArtists) -> f64 {
+    if matches!(
+        SongIdentity::compare_parsed_artists(a, b),
+        ArtistAgreement::Agree | ArtistAgreement::Loose
+    ) {
+        return 1.0;
+    }
+    names_alike(&a.display, &b.display).max(names_alike(a.primary(), b.primary()))
 }
 
 fn versioned_key(parsed: &SongTitle) -> String {
@@ -1764,12 +2014,33 @@ impl SongIdentity {
         }
     }
 
+    /// For deciding whether a song is already owned, or which entry is the song asked for: the
+    /// default reading plus [`Lookup::Owned`], with lengths that may be `tolerance_seconds` apart.
+    pub fn owned(tolerance_seconds: i32) -> SongMatchOptions {
+        SongMatchOptions {
+            length_tolerance_seconds: Some(tolerance_seconds),
+            lookup: Lookup::Owned,
+            ..Default::default()
+        }
+    }
+
+    /// For picking one of a search's results with [`SongIdentity::pick_best`]: the default
+    /// reading plus [`Lookup::Pick`], with lengths that may be `tolerance_seconds` apart.
+    pub fn pick(tolerance_seconds: i32) -> SongMatchOptions {
+        SongMatchOptions {
+            length_tolerance_seconds: Some(tolerance_seconds),
+            lookup: Lookup::Pick,
+            ..Default::default()
+        }
+    }
+
     /// Whether two titles are one song, and one version of it. Artists are not looked at.
     pub fn same_title(a: &str, b: &str, options: Option<&SongMatchOptions>) -> SongMatch {
         compare_titles(
             &Self::parse_title(a, None),
             &Self::parse_title(b, None),
             options.unwrap_or(&DEFAULT_OPTIONS),
+            None,
         )
     }
 
@@ -1786,14 +2057,20 @@ impl SongIdentity {
         let options = options.unwrap_or(&DEFAULT_OPTIONS);
         let title_a = Self::parse_title(&a.title, Some(&a.artist));
         let title_b = Self::parse_title(&b.title, Some(&b.artist));
-        let title = compare_titles(&title_a, &title_b, options);
+        let title = compare_titles(&title_a, &title_b, options, known_lengths(a, b));
         if title.verdict == SongVerdict::Different {
             return title;
         }
 
         let artist_a = credit_of(&a.artist, &title_a);
         let artist_b = credit_of(&b.artist, &title_b);
-        let artist = Self::compare_parsed_artists(&artist_a, &artist_b);
+        let mut artist = Self::compare_parsed_artists(&artist_a, &artist_b);
+        let credited_alike = artist == ArtistAgreement::None
+            && options.lookup != Lookup::Off
+            && credits_alike(&artist_a, &artist_b);
+        if credited_alike {
+            artist = ArtistAgreement::Loose;
+        }
         match artist {
             ArtistAgreement::Unknown => {
                 return SongMatch::new(SongVerdict::Different, 0.6, "no artist to compare");
@@ -1826,7 +2103,10 @@ impl SongIdentity {
         if title.reason != "the same title" {
             reasons.push(title.reason);
         }
-        if artist == ArtistAgreement::Loose {
+        if credited_alike {
+            confidence -= 0.1;
+            reasons.push("the same artists written another way".to_string());
+        } else if artist == ArtistAgreement::Loose {
             confidence -= 0.1;
             reasons.push("the same artist once stylized characters are read as letters".to_string());
         }
@@ -1856,6 +2136,49 @@ impl SongIdentity {
             reasons.join("; ")
         };
         SongMatch::new(SongVerdict::Same, round(confidence.clamp(0.0, 1.0), 2), reason)
+    }
+
+    /// How well `b` fits `a`, 0 to 1, for ranking songs that [`SongIdentity::same`] already
+    /// accepted: 0.45 for the title, 0.35 for the artist and 0.20 for the length (1 when equal,
+    /// falling to 0 ten seconds apart, 0.5 when either is unknown). Accepts nothing by itself.
+    pub fn score(a: &SongRef, b: &SongRef) -> f64 {
+        let title_a = Self::parse_title(&a.title, Some(&a.artist));
+        let title_b = Self::parse_title(&b.title, Some(&b.artist));
+        let name = title_similarity(&title_a, &title_b);
+        let artist = artist_similarity(&credit_of(&a.artist, &title_a), &credit_of(&b.artist, &title_b));
+        let length = known_lengths(a, b).map_or(0.5, |(seconds_a, seconds_b)| {
+            (1.0 - (seconds_a - seconds_b).abs() / 10.0).max(0.0)
+        });
+        0.45 * name + 0.35 * artist + 0.20 * length
+    }
+
+    /// The candidate that is `want`, among one search's results: of those [`SongIdentity::same`]
+    /// accepts, the best by [`SongIdentity::score`], the earlier one on a tie. A candidate within
+    /// 0.05 of the best that is not the same song as the best (by the same options, with
+    /// [`Lookup::Pick`] read as [`Lookup::Owned`]) makes the pick ambiguous, and None is chosen.
+    pub fn pick_best(want: &SongRef, candidates: &[SongRef], options: &SongMatchOptions) -> Option<usize> {
+        let mut ranked: Vec<(usize, f64)> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| Self::same(want, candidate, Some(options)).is_same())
+            .map(|(at, candidate)| (at, Self::score(want, candidate)))
+            .collect();
+        // A stable sort, so equal scores keep the search's order.
+        ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        let (&(best, top), rest) = ranked.split_first()?;
+        let between = SongMatchOptions {
+            lookup: if options.lookup == Lookup::Pick {
+                Lookup::Owned
+            } else {
+                options.lookup
+            },
+            ..options.clone()
+        };
+        let ambiguous = rest
+            .iter()
+            .take_while(|(_, score)| top - score < 0.05 - 1e-9)
+            .any(|&(other, _)| !Self::same(&candidates[best], &candidates[other], Some(&between)).is_same());
+        (!ambiguous).then_some(best)
     }
 
     /// [`SongIdentity::same`] for two songs known only by title and artist.

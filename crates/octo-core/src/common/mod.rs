@@ -24,7 +24,7 @@ pub use error::{Error, ErrorType};
 pub use path_helper::PathHelper;
 pub use single_flight::SingleFlight;
 pub use song_identity::{
-    ArtistAgreement, SongArtists, SongIdentity, SongMatch, SongMatchOptions, SongQuery, SongRef, SongTitle,
-    SongVerdict,
+    ArtistAgreement, Lookup, SongArtists, SongIdentity, SongMatch, SongMatchOptions, SongQuery, SongRef,
+    SongTitle, SongVerdict,
 };
 pub use supersedable_build_coordinator::SupersedableBuildCoordinator;

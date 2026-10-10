@@ -305,6 +305,7 @@ pub fn rank(
             version_variant::missing(&h.filename, Some(title), artist).len(),
             variant_penalty(&h.filename, title),
             quality_penalty(h),
+            artist_missing(&h.filename, artist),
             h.queue_length.unwrap_or(i32::MAX),
             std::cmp::Reverse(h.upload_speed.unwrap_or(0)),
             size_sort_key(h.size, Some(&wanted)),
@@ -460,9 +461,71 @@ pub fn filename_plausibly_matches_title(filename: &str, title: &str, require_phr
             || leaf_contains_title_phrase(&stylized(&leaf), &SongIdentity::fold_stylized(title));
     }
     let loose_leaf = stylized(&leaf);
-    tokens
+    if tokens
         .iter()
-        .all(|t| leaf.contains(t.as_str()) || loose_leaf.contains(stylized(t).as_str()))
+        .all(|t| contains_word(&leaf, t) || contains_word(&loose_leaf, &stylized(t)))
+    {
+        return true;
+    }
+    // "BohemianRhapsody.flac", "01-bohemianrhapsody.mp3": a title of several words run
+    // together. Only a long enough title counts this way, and never a single word, so "Four"
+    // is not found in "Fourteen".
+    tokens.len() >= 2
+        && (run_together(&leaf, &SongIdentity::plain(title)) || run_together(&loose_leaf, &stylized(title)))
+}
+
+/// Letters and digits only.
+fn compact(value: &str) -> String {
+    value.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// Shortest run-together title, in letters and digits, that may match without spaces.
+const MIN_RUN_TOGETHER: usize = 8;
+
+fn run_together(leaf: &str, title: &str) -> bool {
+    let joined = compact(title);
+    joined.chars().count() >= MIN_RUN_TOGETHER && compact(leaf).contains(&joined)
+}
+
+/// Whether `word` sits in `text` as a word of its own: no letter or digit right before or
+/// right after it.
+fn contains_word(text: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// Whether the song's primary artist is named nowhere in the file's name or its two parent
+/// folders. Only a tiebreak between copies of the same quality: many good files are named
+/// "01 Title.flac" in a folder that does not name the artist either. No artist asked for is
+/// never missing.
+pub fn artist_missing(filename: &str, artist: Option<&str>) -> bool {
+    let Some(artist) = artist.filter(|a| !a.trim().is_empty()) else {
+        return false;
+    };
+    let primary = SongIdentity::primary_artist(artist);
+    let plain = SongIdentity::plain(&primary);
+    let mut wanted: Vec<String> = vec![SongIdentity::key(&primary), SongIdentity::loose_key(&primary)];
+    if let Some(rest) = plain.strip_prefix("the ") {
+        wanted.push(SongIdentity::key(rest));
+    }
+    wanted.retain(|key| !key.is_empty());
+    if wanted.is_empty() {
+        return false;
+    }
+    let segments: Vec<&str> = filename.split(['\\', '/']).filter(|s| !s.is_empty()).collect();
+    let start = segments.len().saturating_sub(3);
+    !segments[start..].iter().any(|segment| {
+        let (key, loose) = (SongIdentity::key(segment), SongIdentity::loose_key(segment));
+        wanted
+            .iter()
+            .any(|w| key.contains(w.as_str()) || loose.contains(w.as_str()))
+    })
 }
 
 static TITLE_BRACKET: LazyLock<Regex> = LazyLock::new(|| rx(r"\s*[\(\[\{]([^\(\)\[\]\{\}]*)[\)\]\}]"));

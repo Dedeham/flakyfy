@@ -15,6 +15,7 @@ pub mod spotify_account_store;
 pub mod spotify_auth;
 pub mod spotify_link_reader;
 pub mod spotify_web_api;
+pub mod text_list;
 pub mod trickle_queue;
 pub mod trickle_worker;
 

@@ -11,6 +11,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use indexmap::IndexMap;
+use octo_core::common::cover_names::cover_name_score;
 use octo_core::common::{Clock, SongIdentity, SongMatchOptions, dotnet};
 // `BarcodeForms` came over with tagging, which reads it too.
 use octo_core::json::element::{array_length, enumerate_array, get_string, str_prop, try_get_property};
@@ -610,7 +611,7 @@ impl ITunesCoverArtLookup {
                     continue;
                 };
 
-                let score = score_artist_match(expected_artist, artist);
+                let score = i32::from(cover_name_score(expected_artist, artist));
                 if score > best_score {
                     best_score = score;
                     best_url = Some(artwork.to_string());
@@ -770,31 +771,6 @@ fn write_rows(path: &Path, rows: &[CachedMaster]) -> anyhow::Result<()> {
     std::fs::write(&tmp, octo_core::json::to_string(rows))?;
     std::fs::rename(&tmp, path)?;
     Ok(())
-}
-
-/// Cheap case-insensitive substring score. Exact equality is best, then
-/// containment in either direction, then any token overlap. We don't need
-/// a real edit distance: we just need to push wrong-artist hits to the
-/// bottom and let a correct-artist hit win.
-fn score_artist_match(expected: &str, actual: &str) -> i32 {
-    if actual.is_empty() {
-        return 0;
-    }
-    let e = dotnet::to_lower_invariant(expected.trim());
-    let a = dotnet::to_lower_invariant(actual.trim());
-    if a == e {
-        return 100;
-    }
-    if a.contains(&e) || e.contains(&a) {
-        return 60;
-    }
-    let a_tokens: Vec<&str> = a.split(' ').filter(|t| !t.is_empty()).collect();
-    let overlap = e
-        .split(' ')
-        .filter(|t| !t.is_empty())
-        .filter(|t| a_tokens.contains(t))
-        .count();
-    overlap as i32 * 10
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use octo_core::common::cover_names::cover_name_score;
 use octo_core::common::{SongIdentity, dotnet};
 use octo_core::json::element::{array_length, enumerate_array, get_string, str_prop, try_get_property};
 use octo_core::metadata::accept_language_header;
@@ -189,7 +190,7 @@ impl DeezerCoverArtLookup {
             let Some(pic) = pic.filter(|p| !p.is_empty()) else {
                 continue;
             };
-            let score = score_name_match(artist, name);
+            let score = i32::from(cover_name_score(artist, name));
             if score > best_score {
                 best_score = score;
                 best = Some(pic.to_string());
@@ -284,7 +285,7 @@ fn pick_best_album_cover(
             Some(a) => str_prop(a, "title")?,
             None => None,
         };
-        let score = score_name_match(expected_artist, artist)
+        let score = i32::from(cover_name_score(expected_artist, artist))
             + title_bonus(expected_title, str_prop(item, "title")?)
                 .max(title_bonus(expected_title, album_title));
         if score > best_score {
@@ -311,8 +312,8 @@ fn pick_best_direct_cover(
         let Some(cover) = cover.filter(|c| !c.is_empty()) else {
             continue;
         };
-        let score =
-            score_name_match(expected_artist, artist) + title_bonus(expected_title, str_prop(item, "title")?);
+        let score = i32::from(cover_name_score(expected_artist, artist))
+            + title_bonus(expected_title, str_prop(item, "title")?);
         if score > best_score {
             best_score = score;
             best = Some(cover.to_string());
@@ -328,27 +329,6 @@ fn title_bonus(expected: &str, actual: Option<&str>) -> i32 {
         Some(actual) if !actual.is_empty() && SongIdentity::key(actual) == SongIdentity::key(expected) => 50,
         _ => 0,
     }
-}
-
-fn score_name_match(expected: &str, actual: &str) -> i32 {
-    if actual.is_empty() {
-        return 0;
-    }
-    let e = dotnet::to_lower_invariant(expected.trim());
-    let a = dotnet::to_lower_invariant(actual.trim());
-    if a == e {
-        return 100;
-    }
-    if a.contains(&e) || e.contains(&a) {
-        return 60;
-    }
-    let a_tokens: Vec<&str> = a.split(' ').filter(|t| !t.is_empty()).collect();
-    let overlap = e
-        .split(' ')
-        .filter(|t| !t.is_empty())
-        .filter(|t| a_tokens.contains(t))
-        .count();
-    overlap as i32 * 10
 }
 
 #[cfg(test)]

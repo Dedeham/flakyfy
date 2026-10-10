@@ -221,3 +221,65 @@ async fn an_artists_picture_is_the_best_named_hit_and_the_language_is_sent() {
         );
     }
 }
+
+/// An artist's picture goes to the hit that names the artist, in any script, never to a longer
+/// name that only starts with the same letters.
+#[tokio::test]
+async fn an_artists_picture_is_never_a_name_that_only_starts_the_same() {
+    let (_server, lookup) = catalog(|cdn| {
+        HashMap::from([(
+            "/search/artist",
+            format!(
+                r#"{{"data":[{{"name":"Kinoman","picture_xl":"{cdn}/kinoman.jpg"}},{{"name":"Кино","picture_xl":"{cdn}/kino.jpg"}}]}}"#
+            ),
+        )])
+    })
+    .await;
+
+    let bytes = lookup
+        .try_fetch(
+            &SoulseekRouting {
+                kind: RoutingKind::Artist,
+                artist: Some("Kino".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .await
+        .expect("a picture");
+
+    assert_eq!(&bytes[..], b"/cdn/kino.jpg");
+}
+
+/// A song search takes the hit credited to the artist written another way over one by an artist
+/// whose name merely holds the same letters.
+#[tokio::test]
+async fn a_songs_cover_follows_the_artist_written_another_way() {
+    let (_server, lookup) = catalog(|cdn| {
+        HashMap::from([(
+            "/search",
+            format!(
+                r#"{{"data":[
+                    {{"title":"Despacito","artist":{{"name":"Luis Fonsiman"}},"album":{{"title":"Covers","cover_xl":"{cdn}/other.jpg"}}}},
+                    {{"title":"Despacito","artist":{{"name":"Fonsi, Luis"}},"album":{{"title":"Vida","cover_xl":"{cdn}/vida.jpg"}}}}
+                  ]}}"#
+            ),
+        )])
+    })
+    .await;
+
+    let bytes = lookup
+        .try_fetch(
+            &SoulseekRouting {
+                kind: RoutingKind::Song,
+                artist: Some("Luis Fonsi".into()),
+                title: Some("Despacito".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .await
+        .expect("a cover");
+
+    assert_eq!(&bytes[..], b"/cdn/vida.jpg");
+}

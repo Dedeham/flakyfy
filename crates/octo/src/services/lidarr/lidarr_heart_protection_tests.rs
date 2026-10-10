@@ -760,6 +760,58 @@ async fn a_late_import_never_deletes_through_lidarr() {
 }
 
 #[tokio::test]
+async fn a_late_import_of_part_of_the_album_keeps_it_listed_for_the_rest() {
+    let f = Fixture::new().await;
+    f.lidarr.on_search(&[(1, "Angel", "FLAC")]);
+    f.lidarr.hold_imports();
+    let service = f.service(None, 1);
+    assert!(!within(service.try_acquire_album("soulseek", "mezzanine", true, Some("alice"))).await);
+    f.job_wound_up(true).await;
+    f.lidarr.release_imports();
+
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL])).await,
+        LidarrImportOutcome::Late
+    );
+    until(|| f.taken.lock().len() == 1).await;
+    until(|| !f.claims.heart_busy(ALBUM_ID)).await;
+    // Teardrop has not come in yet, so the album stays listed.
+    assert!(f.pending.get(ALBUM_ID).is_some());
+
+    f.lidarr.import(3, "Teardrop", "FLAC");
+    assert_eq!(
+        service.lidarr_imported(imported(&[ANGEL, TEARDROP])).await,
+        LidarrImportOutcome::Late
+    );
+    until(|| f.taken.lock().len() == 2).await;
+    until(|| !f.claims.heart_busy(ALBUM_ID)).await;
+    assert_eq!(f.taken(), ["Angel", "Teardrop"]);
+    assert!(f.pending.get(ALBUM_ID).is_none());
+}
+
+#[tokio::test]
+async fn a_late_import_while_the_album_is_busy_is_taken_once_it_is_free() {
+    let f = Fixture::new().await;
+    f.lidarr
+        .on_search(&[(1, "Angel", "FLAC"), (3, "Teardrop", "FLAC")]);
+    f.lidarr.hold_imports();
+    let service = f.service(None, 1);
+    service.set_claim_poll(Duration::from_millis(20));
+    assert!(!within(service.try_acquire_album("soulseek", "mezzanine", true, Some("alice"))).await);
+    f.job_wound_up(true).await;
+    f.lidarr.release_imports();
+
+    f.claims.upgrade_started(ALBUM_ID);
+    service.lidarr_imported(imported(&[ANGEL, TEARDROP])).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(f.taken().is_empty(), "taken while an upgrade held the album");
+
+    f.claims.upgrade_ended(ALBUM_ID);
+    until(|| f.taken.lock().len() == 2).await;
+    assert_eq!(f.taken(), ["Angel", "Teardrop"]);
+}
+
+#[tokio::test]
 async fn an_album_octo_is_not_waiting_for_is_left_alone() {
     let f = Fixture::new().await;
     let service = f.service(None, 30);

@@ -990,14 +990,15 @@ impl Inner {
         let Some(pending) = self.pending.as_ref().and_then(|pending| pending.get(&key)) else {
             return LidarrImportOutcome::NotOurs;
         };
-        // An upgrade borrowing the album deletes what its own search brings in; those files are
-        // not this heart's.
+        // An upgrade borrowing the album deletes what its own search brings in, and another
+        // heart on it takes what is its own; what is left is looked at again once they let go.
         if self
             .claims
             .as_ref()
             .is_some_and(|claims| claims.upgrade_busy(&key) || claims.heart_busy(&key))
         {
-            return LidarrImportOutcome::NotOurs;
+            tokio::spawn(self.after_claims(key, event));
+            return LidarrImportOutcome::Late;
         }
         if let Some(claims) = &self.claims {
             claims.heart_started(&key);
@@ -1015,9 +1016,34 @@ impl Inner {
         LidarrImportOutcome::Late
     }
 
+    /// How long a late import waits for an upgrade or another heart to let go of its album.
+    const CLAIM_WAIT: Duration = Duration::from_secs(6 * 60 * 60);
+
+    /// Looks at a late import again once nothing else holds its album.
+    async fn after_claims(self: Arc<Self>, key: String, event: LidarrImportEvent) {
+        let until = Instant::now() + Self::CLAIM_WAIT;
+        loop {
+            let busy = self
+                .claims
+                .as_ref()
+                .is_some_and(|claims| claims.upgrade_busy(&key) || claims.heart_busy(&key));
+            if !busy {
+                break;
+            }
+            if Instant::now() >= until {
+                warn!("Lidarr's late import of {key} was not taken: the album stayed busy");
+                return;
+            }
+            let poll = self.timing.lock().claim_poll;
+            tokio::time::sleep(poll).await;
+        }
+        self.lidarr_imported(event);
+    }
+
     /// The files of a late import that Lidarr names and that are new since Octo's search,
-    /// each through the pipeline as an album track nobody is waiting on. The album then leaves
-    /// the pending list. Answers how many files were handed on.
+    /// each through the pipeline as an album track nobody is waiting on. The album leaves the
+    /// pending list once every track has a file; until then it stays, with the files dealt with
+    /// here added to those never taken again. Answers how many files were handed on.
     async fn take_late_import(
         self: &Arc<Self>,
         pending: &PendingAlbum,
@@ -1055,6 +1081,7 @@ impl Inner {
         let tracks = self.client.get_album_tracks(pending.lidarr_album_id).await?;
         let mut seen_paths: HashSet<String> = HashSet::new();
         let mut handed = Vec::new();
+        let mut dealt_with: Vec<i32> = Vec::new();
         for track in &tracks {
             if !track.has_file
                 || track.track_file_id <= 0
@@ -1080,6 +1107,7 @@ impl Inner {
             if !Path::new(&imported_path).is_file() {
                 continue;
             }
+            dealt_with.push(track.track_file_id);
             if let Some(handoff) = self
                 .take_import(&job, track, imported_path, &before, &landed)
                 .await
@@ -1092,7 +1120,23 @@ impl Inner {
             let _ = handoff.await;
         }
         if let Some(pending_albums) = &self.pending {
-            pending_albums.forget(&pending.foreign_album_id);
+            let complete = self
+                .client
+                .get_album_tracks(pending.lidarr_album_id)
+                .await
+                .is_ok_and(|now| !now.is_empty() && now.iter().all(|t| t.has_file && t.track_file_id > 0));
+            if complete {
+                pending_albums.forget(&pending.foreign_album_id);
+            } else {
+                let mut files_before = pending.files_before.clone();
+                files_before.extend(dealt_with);
+                files_before.sort_unstable();
+                files_before.dedup();
+                pending_albums.remember(PendingAlbum {
+                    files_before,
+                    ..pending.clone()
+                });
+            }
         }
         Ok(taken)
     }

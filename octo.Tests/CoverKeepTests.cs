@@ -36,17 +36,15 @@ public class CoverKeepTests
                 var y = (float)random.NextDouble() * (height ?? side);
                 var w = (float)(random.NextDouble() * side / 3) + 4;
                 var h = (float)(random.NextDouble() * (height ?? side) / 3) + 4;
-                ctx.Paint(canvas => canvas.Fill(
-                    Brushes.Solid(Color.FromPixel(new Rgb24((byte)random.Next(256), (byte)random.Next(256), (byte)random.Next(256)))),
-                    new Rectangle((int)x, (int)y, (int)w, (int)h)));
+                ctx.Fill(Color.FromRgb((byte)random.Next(256), (byte)random.Next(256), (byte)random.Next(256)),
+                    new RectangleF(x, y, w, h));
             }
             // Fine lines, the lettering a real cover has and a blown-up copy loses.
             for (var i = 0; i < 400; i++)
             {
                 var x = (float)random.NextDouble() * side;
                 var y = (float)random.NextDouble() * (height ?? side);
-                ctx.Paint(canvas => canvas.Fill(Brushes.Solid(Color.White),
-                    new Rectangle((int)x, (int)y, (int)(side / 300f + 1), (int)(side / 60f))));
+                ctx.Fill(Color.White, new RectangleF(x, y, side / 300f + 1, side / 60f));
             }
         });
         using var stream = new MemoryStream();

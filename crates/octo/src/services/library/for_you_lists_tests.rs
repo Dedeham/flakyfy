@@ -250,7 +250,7 @@ async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(
             "rest/ping" | "rest/ping.view" => plain(&query, ""),
             "rest/getPlaylists" | "rest/getPlaylists.view" => plain(&query, "playlists"),
             "rest/star" | "rest/star.view" => {
-                let user = query.get("u").cloned().unwrap_or_default();
+                let user = caller(&query);
                 let id = query.get("id").cloned().unwrap_or_default();
                 let mut hearts = upstream.hearts.lock();
                 if !hearts.iter().any(|(who, heart, _)| *who == user && *heart == id) {

@@ -374,3 +374,40 @@ async fn an_unheart_signed_in_with_an_api_key_takes_the_heart_off_the_list() {
 
     assert!(entry(&entries(&app, &id).await, &song).get("starred").is_none());
 }
+
+#[tokio::test]
+async fn a_heart_signed_in_with_an_api_key_shows_on_the_list() {
+    let (_upstream, app) = setup().await;
+    let id = list_id(&app, "deepCuts").await;
+    let song = library_song(&entries(&app, &id).await);
+    assert!(entry(&entries(&app, &id).await, &song).get("starred").is_none());
+
+    let starred = get(
+        &app,
+        &format!("/rest/star.view?apiKey=alice-key&v=1.16.1&c=test&f=json&id={song}"),
+    )
+    .await;
+    assert_eq!(starred.json()["subsonic-response"]["status"], "ok");
+
+    assert!(
+        entry(&entries(&app, &id).await, &song)["starred"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn a_rating_signed_in_with_an_api_key_shows_on_the_list() {
+    let (_upstream, app) = setup().await;
+    let id = list_id(&app, "deepCuts").await;
+    let song = library_song(&entries(&app, &id).await);
+
+    let rated = get(
+        &app,
+        &format!("/rest/setRating.view?apiKey=alice-key&v=1.16.1&c=test&f=json&id={song}&rating=4"),
+    )
+    .await;
+    assert_eq!(rated.json()["subsonic-response"]["status"], "ok");
+
+    assert_eq!(entry(&entries(&app, &id).await, &song)["userRating"], 4);
+}

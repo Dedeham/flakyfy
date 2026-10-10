@@ -206,13 +206,15 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     // For non-external items or when download-on-star is disabled, relay to real Subsonic server
     match call.proxy.relay("rest/star", &call.parameters).await {
         Ok(result) => {
-            if is_successful_subsonic_response(&result.body, &format)
-                && let Some(username) = call.param_opt("u").filter(|u| !u.is_empty())
-            {
+            let username = if is_successful_subsonic_response(&result.body, &format) {
+                listener(&state, &call).await
+            } else {
+                None
+            };
+            if let Some(username) = username.as_deref() {
                 state.generated_playlists.forget_marks(username);
             }
-            if is_successful_subsonic_response(&result.body, &format)
-                && let Some(username) = call.param_opt("u").filter(|u| !u.is_empty())
+            if let Some(username) = username.as_deref()
                 && !item_id.is_empty()
                 && let Some(song) = resolver(&state, &call)
                     .resolve_scrobble(&item_id, &call.parameters)
@@ -300,11 +302,13 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
 
     if is_successful_subsonic_response(&result.body, &format)
         && let Some(stars) = try_parse_int(&rating_text)
-        && let Some(rater) = call.param_opt("u").filter(|u| !u.is_empty())
         && !item_id.is_empty()
+        && let Some(rater) = listener(&state, &call).await
     {
-        state.generated_playlists.rated(rater, &item_id, i64::from(stars));
-        record_radio_ban(&state, &call, rater, &item_id, stars).await;
+        state
+            .generated_playlists
+            .rated(&rater, &item_id, i64::from(stars));
+        record_radio_ban(&state, &call, &rater, &item_id, stars).await;
     }
 
     let settings = state.settings.current().library_actions.clone();
@@ -336,6 +340,19 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         .content_type
         .unwrap_or_else(|| format!("application/{format}"));
     Ok(file(result.body, &content_type))
+}
+
+/// The listener a request Navidrome accepted speaks for, named the way every request's identity
+/// is: `u`, or for an API key sign-in its owner as Navidrome names it. None when there is nobody
+/// to name or Navidrome could not be asked.
+async fn listener(state: &AppState, call: &SubsonicCall) -> Option<String> {
+    state
+        .request_identity
+        .username(&call.parameters, &call.proxy)
+        .await
+        .ok()
+        .flatten()
+        .filter(|u| !u.is_empty())
 }
 
 /// One star keeps a song off this listener's radio; any other rating lifts that. Never fails the

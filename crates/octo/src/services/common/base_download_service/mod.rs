@@ -68,7 +68,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::services::common::acquisition_tracker::{acquisition_event_kinds, key_of};
 use crate::services::common::{
-    AcquisitionPlace, AcquisitionState, AcquisitionTracker, DownloadArrivals, DownloadConcurrency, DownloadPicks,
+    AcquisitionPlace, AcquisitionState, AcquisitionTracker, DownloadArrivals, DownloadConcurrency,
+    DownloadPicks,
 };
 use crate::services::cover_art::DownloadCoverResolver;
 use crate::services::family::FamilyPlacement;

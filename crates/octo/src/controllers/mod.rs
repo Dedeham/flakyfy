@@ -2,6 +2,6 @@
 //! actions with `pub fn routes() -> RouteSet`, merged into [`crate::http::pipeline::app_routes`].
 
 pub mod admin;
-pub mod lidarr_webhook;
 pub mod family;
+pub mod lidarr_webhook;
 pub mod subsonic;

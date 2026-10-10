@@ -54,14 +54,15 @@ use octo_media::cover::CoverArtService;
 use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
+use crate::services::family::LibraryWriteGate as FamilyWriteGate;
 use crate::services::family::request_service::{
     FamilyEvents, LiveRequestCatalog, LiveRequestFetcher, RequestParts, RequestService,
 };
 use crate::services::family::{
     AnswerRules, AudioGate, DeviceRegistry, FamilyPlacement, FamilyPlaylistStore, FamilyPool,
-    FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, MemberBridge, MemberCopies,
-    MemberCredentials, NavidromeAdmin, NavidromeMemberStars, PersonalLibrary, PlayerCaps, PoolParts,
-    RequestStore, SavedStore, ScopeResolver, family_service::FamilyService,
+    FamilyPoolStore, FamilyStore, FamilyVault, LibraryIndex, MemberBridge, MemberCopies, MemberCredentials,
+    NavidromeAdmin, NavidromeMemberStars, PersonalLibrary, PlayerCaps, PoolParts, RequestStore, SavedStore,
+    ScopeResolver, family_service::FamilyService,
 };
 use crate::services::fingerprint::{
     AcoustIdClient, AcoustIdRateLimitHandler, AcoustIdRateLimiter, DownloadVerificationService,
@@ -91,7 +92,6 @@ use crate::services::library::library_edit_service::{
 };
 use crate::services::library::library_review_sweep_worker::SweepVerification;
 use crate::services::library::library_tag_edits::TagEditJournal;
-use crate::services::family::LibraryWriteGate as FamilyWriteGate;
 use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::navidrome_song_list;
 use crate::services::library::tidy::worker::ListSongs;

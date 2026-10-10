@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
-use indexmap::IndexMap;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use indexmap::IndexMap;
 use octo_core::charts::chart_settings;
 use octo_core::common::dotnet;
 use octo_core::common::dotnet::eq_ignore_case;
@@ -115,7 +115,12 @@ pub async fn get_playlists(State(state): State<AppState>, req: Request) -> Respo
         .await
         .map(|row| liked_playlist_fields(builder, &row, &mix_settings));
     let family = family_rows(&state, caller.as_ref()).await;
-    if stations.is_empty() && family.is_empty() && charts.is_empty() && generated.is_empty() && liked.is_none() {
+    if stations.is_empty()
+        && family.is_empty()
+        && charts.is_empty()
+        && generated.is_empty()
+        && liked.is_none()
+    {
         return call.file(&relay.body, relay.content_type.as_deref());
     }
 

@@ -137,14 +137,45 @@ How it is counted and stored, per song (`ytdlp-fallback.json`, section 5.4):
 | `lastOutcomes` | the last run's outcome per source (enum names only), for the dashboard |
 | `parkedReason` | `waiting-soulseek`, `waiting-spacing`, `rate-limit`, `shim-unavailable` |
 
-The record is removed when the song is obtained (by any source, including a later Soulseek
-hit) or when it is given up. An attempt that ends in `Obtained` never counts. The worker owns the
+The counting record is removed when the song is obtained (by any source, including a later
+Soulseek hit), when the "already in the library / already yours" check finds the file
+(`AlreadyYoursAsync`, `:173`) on a re-run, or when the song is given up (it then moves to the
+given-up list, below). An attempt that ends in `Obtained` never counts. The worker owns the
 counter; the coordinator only reports outcomes (section 5.3). With the defaults that is three
 Soulseek/Lidarr tries, then yt-dlp.
 
-Zero applicable sources is allowed (a person who turned off Soulseek and Lidarr and wants only
-YouTube): there is nothing to count, so the fallback is eligible at once. This is the "YouTube
-only" shape, and it is the person's choice.
+**A lost or corrupt store fails toward not fetching.** If `ytdlp-fallback.json` is missing,
+unreadable or corrupt, the module treats every song as `countedAttempts = 0`: nothing becomes
+eligible from a store it cannot trust, so no yt-dlp download starts from a damaged file. A
+single corrupt entry is skipped and logged (sanitised) without crashing the worker and without
+dropping the other entries (and so without dropping other users' entries); a wholly unreadable
+file is moved aside (kept `0600`) and a new empty one is started.
+
+**Given-up list.** A song that is given up (72 h, or `NotFoundAnywhere`) is written to a
+separate persisted list in the same store (`givenUp`), so the dashboard has something to show.
+It holds only provider, externalId, `requestedBy`, `givenUpUtc`, `countedAttempts`, the
+reason (enum) and the last outcomes (enum names). No titles, no free text. It is kept for
+`GivenUpRetentionDays` (default 30, then pruned) and capped per user (`MaxGivenUpPerUser`,
+default 100, oldest dropped). A new heart of the same song clears its entry.
+
+**Two users, one song.** The key includes `requestedBy`, so each user has a record. The
+download is one at a time and starts with the "already in the library" check, so the second
+user's request finds the file and does not download it again; when the file lands, the other
+users' records for that song are removed.
+
+**Clock.** All times are UTC wall-clock. A stored timestamp in the future is clamped to now when
+read, and spacing and give-up are never computed from a future timestamp (a clock jump forward
+cannot satisfy the spacing or trigger the give-up early; a jump back only delays).
+
+**Minimums.** The settings are clamped when read so the rejected "single miss" behaviour cannot
+come back by configuration: `FailedAttempts` at least 2, `AttemptSpacingHours` at least 1,
+`MaxWaitHours` at least `FailedAttempts * AttemptSpacingHours` plus 6 (24 at the defaults'
+minimum). Defaults are 3, 6 and 72.
+
+Zero applicable sources applies only to an **empty chain** (no enabled step at all, so no
+YouTube row either): there is nothing to count and the fallback is eligible at once. A person
+whose chain contains the YouTube row has chosen YouTube themselves and the fallback declines
+(5.2).
 
 "Applicable" means in the enabled steps for this kind of heart (`EnabledSteps(albumHeart:false)`,
 `:289`) and set up.
@@ -213,7 +244,7 @@ fallback.
 | `NotFound` or `FoundNotObtained` | `NotFound`, `FoundNotObtained` or `Unavailable` | **Counted attempt.** If `countedAttempts >= FailedAttempts` and the spacing is met, **fallback eligible**; otherwise park until `lastCountedUtc + AttemptSpacingHours` and run the chain again. |
 | `NotFound` or `FoundNotObtained` | `NotApplicable` | Same: counted attempt. |
 | `NotApplicable` | any except `Obtained` | Counted attempt, same rule. |
-| `NotApplicable` | `NotApplicable` | Fallback eligible at once (YouTube-only person). |
+| `NotApplicable` | `NotApplicable` | Fallback eligible at once, **only for an empty chain** (no step enabled). If a YouTube row is in the chain the fallback declines (5.2). |
 | **`Unavailable`** (any reason) | anything | **Not counted. Park.** Re-run the whole chain when Soulseek is up. |
 | `Obtained` or Lidarr `Obtained` | | Done; the record is removed. |
 
@@ -243,9 +274,11 @@ Other settings (all in `YtDlpFallbackSettings`, env names in the same four place
 | Setting | Env | Default | Purpose |
 |---|---|---|---|
 | `Enabled` | `YTDLP_FALLBACK_ENABLED` | `false` | the switch |
-| `FailedAttempts` | `YTDLP_FALLBACK_FAILED_ATTEMPTS` | `3` | counted failed fetch attempts before yt-dlp is used (section 4.2) |
-| `AttemptSpacingHours` | `YTDLP_FALLBACK_ATTEMPT_SPACING_HOURS` | `6` | least time between two counted attempts of the same song |
-| `MaxWaitHours` | `YTDLP_FALLBACK_MAX_WAIT_HOURS` | `72` | how long a parked song waits (outage, spacing, rate limit) before it is given up and shown on the dashboard (section 5.4) |
+| `FailedAttempts` | `YTDLP_FALLBACK_FAILED_ATTEMPTS` | `3` | counted failed fetch attempts before yt-dlp is used (section 4.2); **minimum 2** |
+| `AttemptSpacingHours` | `YTDLP_FALLBACK_ATTEMPT_SPACING_HOURS` | `6` | least time between two counted attempts of the same song; **minimum 1** |
+| `GivenUpRetentionDays` | `YTDLP_FALLBACK_GIVEN_UP_RETENTION_DAYS` | `30` | how long a given-up song is listed before it is pruned |
+| `MaxGivenUpPerUser` | `YTDLP_FALLBACK_MAX_GIVEN_UP_PER_USER` | `100` | given-up entries kept per user, oldest dropped |
+| `MaxWaitHours` | `YTDLP_FALLBACK_MAX_WAIT_HOURS` | `72` | how long a parked song waits (outage, spacing, rate limit) before it is given up and shown on the dashboard (section 5.4); clamped to at least `FailedAttempts * AttemptSpacingHours + 6` |
 | `PerHour` | `YTDLP_FALLBACK_PER_HOUR` | `12` | most fallback downloads started per hour, **globally**; the hard cap |
 | `PerUserPerHour` | `YTDLP_FALLBACK_PER_USER_PER_HOUR` | `4` | most per signed-in user per hour (Security condition 7, 13) |
 | `MaxParkedPerUser` | `YTDLP_FALLBACK_MAX_PARKED_PER_USER` | `200` | parked/counting songs per user; rows over it are dropped with a plain message |
@@ -351,14 +384,21 @@ count and last outcomes), not dropped silently. The person can heart it again, w
 new record.
 
 - The import trickle needs no change: `SoulseekOut` already holds songs while Soulseek is not
-  logged in. With Lidarr in the chain it does not hold (`TrickleWorker.cs:94`), and the chain's
+  logged in. With Lidarr in the chain it does not hold (`TrickleWorker.cs:95`), and the chain's
   parking covers that case instead.
 - Nothing is parked or counted when the module is off.
+- **Who sees the lists (for Security to confirm).** The dashboard's parked and given-up lists
+  are filtered per user: a person sees only their own entries, and another person's entry
+  answers as "not there". An admin sees **counts only** (how many parked, how many given up),
+  not other users' songs, unless Security decides otherwise.
 
 ### 5.5 When the fallback itself runs
 
 `OfferAsync` once the song is eligible (4.2):
 
+0. **Fresh Soulseek check first.** Before the download starts, read Soulseek fresh again. If
+   Soulseek is applicable and not `LoggedIn` (including `null` and `Unknown`), do not download:
+   re-park as `waiting-soulseek`. An outage that begins after the count is reached wins.
 1. Take the budgets: per user (`PerUserPerHour`) and global (`PerHour`); if either is
    exhausted, `Parked` with reason "rate limit" and retry next hour. Also refuse to start below
    `MinFreeGb` free space. Concurrency is one fallback download at a time (the shim also gates: the
@@ -557,7 +597,7 @@ Test cases (scripted `ISoulseekLink`, as the existing hold tests do): Soulseek `
 throughout with Lidarr set up and failing (nothing counted); three failed runs with Lidarr
 down (counted, then yt-dlp); two failed runs then Soulseek has it (YouTube never called);
 attempts closer than `AttemptSpacingHours` (not counted twice); give-up at 72 h with the
-dashboard entry; counter survives restart; Soulseek `null` reading; Soulseek login drops mid
+dashboard entry; counter survives restart; missing, corrupt and half-corrupt store (nothing eligible, other entries kept); two users, one song (one download, both records gone); future timestamp clamped; config below the minimums is clamped; Soulseek goes down after the count is reached (re-parked, no download); given-up entry is retained, pruned and capped; Soulseek `null` reading; Soulseek login drops mid
 search; search start failure (G1); Soulseek has candidates that all fail transfer; eligible
 and the shim `no_hit`; eligible and the shim 502; Lidarr unreachable; zero
 applicable sources; YouTube row already on; restart while parked; parked song whose Soulseek
@@ -672,4 +712,5 @@ conditions for FLA-21 and its PR review (Linear comment on FLA-14, "[Security ag
 13. **Lowered defaults**: `PerHour` 12 plus a per-user share of 4; `MaxMinutes` 15, with 10 for
     songs the registry says are shorter than 6 minutes.
 14. **Tests and review**: the F-series tests in 8.4, plus those above, are named in the PR with
-    CI links; Security reviews the FLA-21 PR (external input, shim, files, per-user data).
+    CI links (CI runs on PRs on this fork now; `docker.yml` stays disabled, so nothing is published);
+    Security reviews the FLA-21 PR (external input, shim, files, per-user data).

@@ -137,6 +137,7 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("getLibraryTrash", Read),
     ("getLyricsCandidates", Read),
     ("getTopChart", Read),
+    ("getTransitionProfile", Read),
     ("getUpgrades", Read),
     ("importAction", LibraryWrite),
     ("importFile", LibraryWrite),

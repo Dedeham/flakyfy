@@ -92,3 +92,6 @@ navidrome-data/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local Claude Code permissions, per machine
+/.claude/settings.local.json

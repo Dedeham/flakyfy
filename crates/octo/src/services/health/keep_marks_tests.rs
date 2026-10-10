@@ -959,3 +959,151 @@ fn the_keep_marks_words_are_plain_and_use_no_dash() {
         Some("Moved the best sound into 1 song, put back the copies of 1 song.")
     );
 }
+
+#[tokio::test]
+async fn moving_the_sound_waits_while_a_job_writes_the_music_folder() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let tidy = f
+        .state
+        .library_write_gate
+        .begin_job("Tidy artists")
+        .await
+        .expect("free");
+
+    let keep = f.keep();
+    let moving = tokio::spawn(async move { keep.move_sound("B", "A", "alice", &IndexMap::new()).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!moving.is_finished(), "the sound moved during a job");
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("marked copy"));
+
+    drop(tidy);
+    let answer = moving.await.expect("joined");
+    assert_eq!(answer.state, "applied", "{answer:?}");
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("best copy"));
+}
+
+#[tokio::test]
+async fn a_move_navidrome_does_not_keep_is_never_put_back_over_newer_content() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let keep = f.keep();
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "applied", "{answer:?}");
+
+    // Something newer lands at the path before the run's check, which Navidrome then fails.
+    std::fs::write(&b_path, b"newer").expect("written");
+    f.navidrome.blind.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (failed, _) = keep.finish_run(&["B".to_string()], &[]).await;
+
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].1.contains("changed since"), "{}", failed[0].1);
+    assert_eq!(std::fs::read(&b_path).expect("still there"), b"newer");
+}
+
+#[test]
+fn the_startup_sweep_removes_the_hidden_copies_a_stopped_move_left() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let album = dir.path().join("Massive Attack/Mezzanine");
+    std::fs::create_dir_all(&album).expect("made");
+    for name in [
+        "03 Teardrop.flac",
+        ".octo-keep-0a1b.flac",
+        ".octo-keep-back-2c3d.flac",
+        ".hidden-but-not-ours.flac",
+    ] {
+        std::fs::write(album.join(name), b"x").expect("written");
+    }
+
+    assert_eq!(sweep_staging_under(dir.path()), 2);
+
+    let mut left: Vec<String> = std::fs::read_dir(&album)
+        .expect("listed")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, [".hidden-but-not-ours.flac", "03 Teardrop.flac"]);
+}
+
+#[tokio::test]
+async fn moving_the_sound_waits_for_no_library_action_on_either_copy() {
+    let f = Factory::new().await;
+    f.copy(
+        "A",
+        "Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac",
+        &BEST,
+        24,
+        20,
+        false,
+    );
+    f.copy(
+        "B",
+        "Massive Attack/Mezzanine/03 Teardrop.flac",
+        &MARKED,
+        16,
+        1,
+        true,
+    );
+    let a_path = f.root.join("Massive Attack/Mezzanine (Deluxe)/07 Teardrop.flac");
+    let b_path = f.root.join("Massive Attack/Mezzanine/03 Teardrop.flac");
+    let keep = f.keep();
+
+    // A library action is running on the best-sounding copy.
+    let action = f
+        .state
+        .library_action_executor
+        .claim_songs(&[&a_path.to_string_lossy()])
+        .expect("free");
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "skipped", "{answer:?}");
+    assert_eq!(
+        answer.detail.as_deref(),
+        Some(crate::services::library::LibraryActionExecutor::BUSY_TEXT)
+    );
+    assert_eq!(tag(&b_path, "genre").as_deref(), Some("marked copy"));
+    assert!(a_path.exists());
+
+    drop(action);
+    let answer = keep.move_sound("B", "A", "alice", &IndexMap::new()).await;
+    assert_eq!(answer.state, "applied", "{answer:?}");
+    // The move held both copies only while it ran.
+    assert!(
+        f.state
+            .library_action_executor
+            .claim_songs(&[&a_path.to_string_lossy(), &b_path.to_string_lossy()])
+            .is_some()
+    );
+}

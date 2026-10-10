@@ -207,6 +207,9 @@ pub struct LyricsSidecarWriter {
     tracker: OnceLock<Arc<AcquisitionTracker>>,
     /// The music folder's one-writer gate: a write waits while a library job holds it.
     write_gate: OnceLock<LibraryWriteGate>,
+    /// Where a replacement someone asked for records what it wrote over, so the lyrics page's
+    /// Undo puts it back.
+    undo: OnceLock<Arc<LyricsUndoJournal>>,
 }
 
 impl LyricsSidecarWriter {
@@ -244,7 +247,13 @@ impl LyricsSidecarWriter {
             scan_pending: Arc::new(AtomicBool::new(false)),
             tracker: OnceLock::new(),
             write_gate: OnceLock::new(),
+            undo: OnceLock::new(),
         }
+    }
+
+    /// The lyrics undo journal a replacement records into. Only the first call counts.
+    pub fn set_undo_journal(&self, journal: Arc<LyricsUndoJournal>) {
+        let _ = self.undo.set(journal);
     }
 
     /// The gate shared with the library jobs. Only the first call counts.
@@ -498,11 +507,22 @@ impl LyricsSidecarWriter {
         if !audio_path.exists() || (!chosen.has_synced() && !chosen.has_plain()) {
             return Ok(false);
         }
+        let _share = match self.write_gate.get() {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        };
         let has = self.song_lyrics(audio_path);
         if has.place != SongLyricsPlace::None && !has.octos {
             return Ok(false);
         }
-        self.save(audio_path, chosen, None).await
+        let Some(journal) = self.undo.get() else {
+            return self.save(audio_path, chosen, None).await;
+        };
+        let run_id = super::lyrics_library_job::new_run_id();
+        let record = |path: &Path, kind: &str, before: Option<&str>| -> anyhow::Result<()> {
+            Ok(journal.record(&path.to_string_lossy(), kind, before, &run_id)?)
+        };
+        self.save(audio_path, chosen, Some(&record)).await
     }
 
     /// Save lyrics someone picked on the lyrics page, where LYRICS_SAVE_TO says and Octo may

@@ -49,12 +49,13 @@ impl RejectionStore {
             return false;
         }
         let mut state = self.state.lock();
+        let before = state.clone();
         let added = state
             .lyrics
             .entry(song_id.to_string())
             .or_default()
             .insert(candidate_id.to_string());
-        !added || self.save(&state)
+        self.kept(&mut state, before, added)
     }
 
     /// Every lyrics candidate turned down for the song.
@@ -74,6 +75,7 @@ impl RejectionStore {
             return false;
         }
         let mut state = self.state.lock();
+        let before = state.clone();
         let mut added = state
             .covers
             .entry(album_key.to_string())
@@ -86,7 +88,7 @@ impl RejectionStore {
                 .or_default()
                 .insert(format!("{looks:016x}"));
         }
-        !added || self.save(&state)
+        self.kept(&mut state, before, added)
     }
 
     /// Every picture turned down for the album.
@@ -112,6 +114,16 @@ impl RejectionStore {
         RejectedCovers { hashes, looks }
     }
 
+    /// Saves a change; one that cannot be saved is taken back, so nothing acts on a rejection
+    /// that would be gone after a restart.
+    fn kept(&self, state: &mut Rejections, before: Rejections, added: bool) -> bool {
+        if !added || self.save(state) {
+            return true;
+        }
+        *state = before;
+        false
+    }
+
     fn save(&self, state: &Rejections) -> bool {
         let Some(path) = &self.path else {
             return true;
@@ -127,12 +139,23 @@ impl RejectionStore {
     }
 }
 
-/// Unreadable rejections are none, never a failure to start.
+/// Unreadable rejections are none, never a failure to start. A file that does not read is set
+/// aside as `.bad` first, so the next save does not write over what it held.
 fn load(path: &std::path::Path) -> Rejections {
     match state_file::read_text(path) {
         Ok(Some(text)) => serde_json::from_str::<Option<Rejections>>(&text)
             .unwrap_or_else(|error| {
-                warn!("rejected lyrics and covers could not be read: {error}");
+                let mut aside = path.as_os_str().to_owned();
+                aside.push(".bad");
+                match std::fs::rename(path, &aside) {
+                    Ok(()) => warn!(
+                        "rejected lyrics and covers could not be read: {error}; the file was kept as {}",
+                        std::path::Path::new(&aside).display()
+                    ),
+                    Err(rename) => warn!(
+                        "rejected lyrics and covers could not be read: {error}; nor set aside: {rename}"
+                    ),
+                }
                 None
             })
             .unwrap_or_default(),
@@ -192,5 +215,40 @@ mod tests {
         let path = dir.path().join("rejections.json");
         std::fs::write(&path, "{ not json").expect("written");
         assert!(RejectionStore::new(Some(path)).rejected_lyrics("nd-1").is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_set_aside_before_anything_is_written_over_it() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("rejections.json");
+        std::fs::write(&path, "{ not json").expect("written");
+        let store = RejectionStore::new(Some(path.clone()));
+        assert!(store.reject_lyrics("nd-1", "lrclib:7"));
+
+        let aside = dir.path().join("rejections.json.bad");
+        assert_eq!(std::fs::read_to_string(aside).expect("kept"), "{ not json");
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("written")
+                .contains("lrclib:7")
+        );
+    }
+
+    #[test]
+    fn a_rejection_that_cannot_be_saved_is_not_kept() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        // A folder where the file should be: the save fails.
+        let path = dir.path().join("rejections.json");
+        std::fs::create_dir_all(path.join("in-the-way")).expect("a folder");
+        let store = RejectionStore::new(Some(path.clone()));
+
+        assert!(!store.reject_lyrics("nd-1", "lrclib:7"));
+        assert!(store.rejected_lyrics("nd-1").is_empty());
+        assert!(!store.reject_cover("daft punk|discovery", &[7u8; 32], Some(1)));
+        assert!(store.rejected_covers("daft punk|discovery").is_empty());
+
+        std::fs::remove_dir_all(&path).expect("cleared");
+        assert!(store.reject_lyrics("nd-1", "lrclib:7"));
+        assert!(store.rejected_lyrics("nd-1").contains("lrclib:7"));
     }
 }

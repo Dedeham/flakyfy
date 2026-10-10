@@ -268,6 +268,21 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
+/// Songs another fix holds in the executor's busy set; dropping it frees them.
+pub struct SongsClaim<'a> {
+    busy: &'a Mutex<HashSet<String>>,
+    keys: Vec<String>,
+}
+
+impl Drop for SongsClaim<'_> {
+    fn drop(&mut self) {
+        let mut busy = self.busy.lock();
+        for key in &self.keys {
+            busy.remove(key);
+        }
+    }
+}
+
 /// The C# exception types the replacement loop tells apart.
 fn is_rejected(error: &anyhow::Error) -> Option<&ReplacementRejectedException> {
     error.downcast_ref::<ReplacementRejectedException>()
@@ -347,6 +362,24 @@ fn describe(action: LibraryAction) -> &'static str {
 }
 
 impl LibraryActionExecutor {
+    /// Marks the files at `paths` busy for a fix made outside the executor, so no library action
+    /// runs on them meanwhile, and none of them twice. None, and nothing marked, when one is
+    /// busy already.
+    pub fn claim_songs(&self, paths: &[&str]) -> Option<SongsClaim<'_>> {
+        let mut busy = self.busy.lock();
+        let keys: Vec<String> = paths.iter().map(|path| get_full_path(path)).collect();
+        if keys.iter().any(|key| busy.contains(key)) {
+            return None;
+        }
+        for key in &keys {
+            busy.insert(key.clone());
+        }
+        Some(SongsClaim {
+            busy: &self.busy,
+            keys,
+        })
+    }
+
     pub const BUSY_TEXT: &'static str =
         "Another action on this song is still running, so this one was skipped.";
     pub const JOINED_TEXT: &'static str =

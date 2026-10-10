@@ -479,6 +479,50 @@ impl LibraryActionQuarantine {
             .collect()
     }
 
+    /// Follow a folder the library tidy moved: each note in the trash whose song (or one of its
+    /// own files) came from under `from` names its place under `to`, so Put back returns it
+    /// there. Answers how many notes followed.
+    pub fn move_paths(&self, music_root: &str, from: &str, to: &str) -> usize {
+        let moved_path = |path: &str| octo_core::common::PathHelper::moved_path(path, from, to);
+        let mut folders = vec![std::path::PathBuf::from(self.root_for(music_root))];
+        let mut moved = 0;
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    folders.push(path);
+                    continue;
+                }
+                let name = path.to_string_lossy().into_owned();
+                let Some(quarantine_path) = name.strip_suffix(Self::MANIFEST_SUFFIX) else {
+                    continue;
+                };
+                let Some(mut manifest) = self.read_manifest(quarantine_path) else {
+                    continue;
+                };
+                let mut changed = false;
+                if let Some(now) = moved_path(&manifest.original_path) {
+                    manifest.original_path = now;
+                    changed = true;
+                }
+                for sidecar in manifest.sidecars.iter_mut().flatten() {
+                    if let Some(now) = moved_path(&sidecar.original_path) {
+                        sidecar.original_path = now;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.write_manifest(quarantine_path, &manifest);
+                    moved += 1;
+                }
+            }
+        }
+        moved
+    }
+
     /// Written straight over the path, not through a temporary file, as the C# did.
     fn write_manifest(&self, quarantine_path: &str, manifest: &QuarantineManifest) {
         let path = format!("{quarantine_path}{}", Self::MANIFEST_SUFFIX);

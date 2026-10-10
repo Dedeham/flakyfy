@@ -27,6 +27,7 @@ use super::health_fixes::{self as fixes, DuplicateFix, FixAnswer};
 use super::library_health::{DuplicateSet, IHealthFields};
 use super::library_health_service::Row;
 use crate::services::library::library_tag_edits::{self as tag_edits, song_tag_fields};
+use crate::services::library::library_write_gate::{LibraryWrite, LibraryWriteGate};
 use crate::services::library::navidrome_playlist_api::{PlaylistKind, SongMarks};
 use crate::services::library::{
     LibraryActionEntry, LibraryActionExecutor, LibraryActionJournal, LibraryActionQuarantine,
@@ -212,7 +213,7 @@ fn stage(
         .map(|ext| ext.to_string_lossy().into_owned())
         .unwrap_or_default();
     let staged = folder.join(format!(
-        ".octo-keep-{}.{extension}",
+        "{STAGING_PREFIX}{}.{extension}",
         uuid::Uuid::new_v4().simple()
     ));
     let made = (|| {
@@ -268,6 +269,7 @@ pub struct Rewrite {
 }
 
 pub const FORMAT_DIFFERS: &str = "The best-sounding copy is a different format, so moving it would change the song's path and lose its marks. Nothing changed.";
+pub const CHANGED_SINCE: &str = "The file has changed since, so it was left as it is.";
 pub const CHECKING: &str = "Checking that Navidrome kept the moved songs";
 
 /// Fixing duplicates by keeping the best sound in the copy people marked.
@@ -280,6 +282,7 @@ pub struct KeepMarks {
     executor: Arc<LibraryActionExecutor>,
     settings: Arc<SettingsStore>,
     members: Option<Arc<dyn MemberMarks>>,
+    write_gate: Option<LibraryWriteGate>,
     moves: Mutex<HashMap<String, Moved>>,
     returning: Mutex<HashMap<String, Moved>>,
 }
@@ -294,6 +297,9 @@ pub struct KeepMarksParts {
     pub executor: Arc<LibraryActionExecutor>,
     pub settings: Arc<SettingsStore>,
     pub members: Option<Arc<dyn MemberMarks>>,
+    /// The music folder's one-writer gate: each move takes a share, so it waits while a job
+    /// rewrites the folder.
+    pub write_gate: Option<LibraryWriteGate>,
 }
 
 impl KeepMarks {
@@ -307,6 +313,7 @@ impl KeepMarks {
             executor: parts.executor,
             settings: parts.settings,
             members: parts.members,
+            write_gate: parts.write_gate,
             moves: Mutex::new(HashMap::new()),
             returning: Mutex::new(HashMap::new()),
         }
@@ -373,6 +380,14 @@ impl KeepMarks {
     }
 
     // ---- the move -------------------------------------------------------------------------
+
+    /// A share of the music folder's gate for one move: waits while a job holds it.
+    async fn write_share(&self) -> Option<LibraryWrite> {
+        match &self.write_gate {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        }
+    }
 
     fn entry(
         key: &str,
@@ -444,6 +459,12 @@ impl KeepMarks {
         if !same_extension(&target.absolute_path, &audio.absolute_path) {
             return FixAnswer::new("failed", Some(FORMAT_DIFFERS));
         }
+        let Some(_claim) = self
+            .executor
+            .claim_songs(&[&target.absolute_path, &audio.absolute_path])
+        else {
+            return FixAnswer::new("skipped", Some(LibraryActionExecutor::BUSY_TEXT));
+        };
         if settings.dry_run {
             return FixAnswer::new(
                 "rehearsed",
@@ -460,6 +481,7 @@ impl KeepMarks {
             })
             .collect();
 
+        let _share = self.write_share().await;
         let staged = {
             let (audio_path, target_path) = (
                 PathBuf::from(&audio.absolute_path),
@@ -636,16 +658,6 @@ impl KeepMarks {
                 )),
             );
         }
-        let now = std::fs::metadata(&moved.target.absolute_path).ok();
-        let unchanged = now
-            .as_ref()
-            .is_some_and(|m| m.len() == moved.size && m.modified().ok() == moved.modified);
-        if !unchanged {
-            return FixAnswer::new(
-                "failed",
-                Some("The file has changed since, so it was left as it is."),
-            );
-        }
         match self.put_back(&moved, &format!("Put back by {user}.")).await {
             Ok(()) => {
                 self.moves.lock().remove(target_id);
@@ -658,12 +670,27 @@ impl KeepMarks {
         }
     }
 
-    /// The marked copy back at its path and the best-sounding copy out of the trash.
+    /// The marked copy back at its path and the best-sounding copy out of the trash. Only while
+    /// the file moved in is exactly as the move left it: anything newer at the path stays.
     async fn put_back(&self, moved: &Moved, detail: &str) -> Result<(), String> {
+        let Some(_claim) = self
+            .executor
+            .claim_songs(&[&moved.target.absolute_path, &moved.audio.absolute_path])
+        else {
+            return Err(LibraryActionExecutor::BUSY_TEXT.to_string());
+        };
+        let _share = self.write_share().await;
+        let now = std::fs::metadata(&moved.target.absolute_path).ok();
+        let unchanged = now
+            .as_ref()
+            .is_some_and(|m| m.len() == moved.size && m.modified().ok() == moved.modified);
+        if !unchanged {
+            return Err(CHANGED_SINCE.to_string());
+        }
         let root = self.resolver.music_root();
         let path = Path::new(&moved.target.absolute_path);
         let aside = path.with_file_name(format!(
-            ".octo-keep-back-{}.{}",
+            "{STAGING_PREFIX}back-{}.{}",
             uuid::Uuid::new_v4().simple(),
             path.extension()
                 .map(|e| e.to_string_lossy().into_owned())
@@ -723,6 +750,15 @@ impl KeepMarks {
         Ok(())
     }
 
+    /// Removes the hidden copies a move makes beside a song (`.octo-keep-…`), which a stop part
+    /// way leaves behind. Run at startup, when no move is going. Answers how many went.
+    pub async fn sweep_staging(&self) -> usize {
+        let root = PathBuf::from(self.resolver.music_root());
+        tokio::task::spawn_blocking(move || sweep_staging_under(&root))
+            .await
+            .unwrap_or(0)
+    }
+
     // ---- the end of a run -----------------------------------------------------------------
 
     /// After a run: every song moved into is checked until Navidrome shows it as the same song,
@@ -777,6 +813,11 @@ impl KeepMarks {
                         self.journal.flush();
                         failed.push((id.clone(), why.to_string()));
                     }
+                    Err(problem) if problem == CHANGED_SINCE => failed.push((
+                        id.clone(),
+                        "Navidrome did not show the moved song as the same song, but the file has changed since, so both copies were left as they are."
+                            .to_string(),
+                    )),
                     Err(problem) => failed.push((id.clone(), format!("{why} {problem}"))),
                 }
                 self.moves.lock().remove(&id);
@@ -942,6 +983,38 @@ fn rewrite_notes(title: &str, rewrite: &Rewrite) -> Vec<String> {
         ));
     }
     notes
+}
+
+/// The hidden copies a move makes beside a song.
+const STAGING_PREFIX: &str = ".octo-keep-";
+
+/// Every `.octo-keep-…` file under `root`, removed; links are never followed. Answers how many.
+pub fn sweep_staging_under(root: &Path) -> usize {
+    let mut removed = 0;
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if kind.is_dir() {
+                folders.push(path);
+            } else if kind.is_file() && entry.file_name().to_string_lossy().starts_with(STAGING_PREFIX) {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) => warn!("Could not remove {}: {e}", path.display()),
+                }
+            }
+        }
+    }
+    if removed > 0 {
+        info!("Removed {removed} copy(ies) a stopped move left beside songs");
+    }
+    removed
 }
 
 fn file_name(path: &str) -> String {

@@ -509,6 +509,7 @@ fn library_health(
         executor: Arc::clone(executor),
         settings: Arc::clone(settings),
         members: None,
+        write_gate: Some(stores.library_write_gate.clone()),
     }));
     Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
@@ -547,6 +548,7 @@ fn library_edits(
             identifier: Some(tagging.release_identifier.clone()),
             verification: Some(tagging.download_verification.clone()),
             cover_finder: Some(cover_finder),
+            write_gate: Some(stores.library_write_gate.clone()),
         },
     ));
     (rescan, edits)
@@ -1221,14 +1223,16 @@ impl Lyrics {
         // The writer is given the library service (for the scan after writing inside songs)
         // with `set_library` once that is built.
         let sidecar_writer = Arc::new(LyricsSidecarWriter::new(service.clone(), settings.clone()));
+        let undo_journal = Arc::new(LyricsUndoJournal::new(
+            config_dir.map(|dir| dir.join("lyrics-undo.jsonl")),
+        ));
+        sidecar_writer.set_undo_journal(undo_journal.clone());
         Lyrics {
             choice_service: Arc::new(LyricsChoiceService::new(service.clone(), choice_store.clone())),
             choice_store,
             service,
             sidecar_writer,
-            undo_journal: Arc::new(LyricsUndoJournal::new(
-                config_dir.map(|dir| dir.join("lyrics-undo.jsonl")),
-            )),
+            undo_journal,
             rejections: Arc::new(RejectionStore::new(
                 config_dir.map(|dir| dir.join("rejections.json")),
             )),
@@ -1315,7 +1319,8 @@ fn build_tidy(
     navidrome: &NavidromeServices,
     clients: &MetadataClients,
     stores: &Stores,
-    genre_journal: &Arc<GenreBackfillJournal>,
+    jobs: &GenreAndCoverJobs,
+    lyrics_undo: &Arc<LyricsUndoJournal>,
 ) -> Arc<TidyWorker> {
     let (identity, http, list_settings) = (
         navidrome.navidrome_identity.clone(),
@@ -1346,11 +1351,15 @@ fn build_tidy(
                 library: Some(navidrome.local_library.clone()),
                 music_brainz: Some(clients.music_brainz.clone()),
                 notices: Some(stores.notice_queue.clone()),
-                genre_journal: Some(genre_journal.clone()),
+                genre_journal: Some(jobs.genre_backfill_journal.clone()),
                 tag_edits: Some(stores.tag_edit_journal.clone()),
                 actions: Some(stores.library_action_journal.clone()),
                 history: Some(stores.download_history.clone()),
                 list_songs: Some(list_songs),
+                cover_journal: Some(jobs.cover_upgrade_journal.clone()),
+                lyrics_undo: Some(lyrics_undo.clone()),
+                explicit: Some(jobs.explicit_backfill_store.clone()),
+                quarantine: Some(Arc::new(LibraryActionQuarantine::new(settings.clone()))),
             },
         )
         .with_write_gate(stores.library_write_gate.clone()),
@@ -1421,6 +1430,7 @@ impl GenreAndCoverJobs {
                 library: Some(navidrome.local_library.clone()),
                 identity: Some(Arc::new(navidrome.navidrome_identity.clone())),
                 http: Some(navidrome.http.clone()),
+                write_gate: Some(write_gate.clone()),
             },
         ));
         // Marking the library explicit or clean: a preview, then the writes it found, journaled
@@ -2195,7 +2205,8 @@ impl AppState {
             &navidrome,
             &clients,
             &stores,
-            &genre_cover_jobs.genre_backfill_journal,
+            &genre_cover_jobs,
+            &lyrics.undo_journal,
         );
         {
             let worker = tidy_worker.clone();
@@ -2301,6 +2312,15 @@ impl AppState {
             &stores,
             &library_actions.quarantine,
         );
+        if let Some(keep) = library_health.keep_marks().cloned() {
+            workers.register("KeepMarksStagingSweep", move |_stopping| {
+                let keep = Arc::clone(&keep);
+                async move {
+                    keep.sweep_staging().await;
+                    Ok(())
+                }
+            });
+        }
         let imports = Imports::build(
             &settings,
             Some(&config_dir),
@@ -2522,7 +2542,8 @@ impl AppState {
             &navidrome,
             &clients,
             &stores,
-            &genre_cover_jobs.genre_backfill_journal,
+            &genre_cover_jobs,
+            &lyrics.undo_journal,
         );
         // No workers: the acquisition worker, the resumer and the cache cleanup are not run.
         let acquisition = Acquisition::build(

@@ -34,15 +34,20 @@ use super::planner::{
 };
 use super::store::{TidyMode, TidyPlanFile, TidyRun, TidyScope, TidyStatus, TidyStore, TidyWork};
 use crate::services::common::base_download_service::BaseDownloadService;
+use crate::services::cover_art::CoverUpgradeJournal;
 use crate::services::fingerprint::music_brainz_client::MusicBrainzClient;
+use crate::services::library::explicit_backfill::ExplicitBackfillStore;
 use crate::services::library::library_action_journal::LibraryActionJournal;
+use crate::services::library::library_action_quarantine::LibraryActionQuarantine;
 use crate::services::library::library_tag_edits::TagEditJournal;
-use crate::services::library::library_write_gate::LibraryWriteGate;
+use crate::services::library::library_write_gate::{LibraryJob, LibraryWriteGate};
 use crate::services::library::navidrome_song_list::NavidromeSongEntry;
 use crate::services::library::notice_queue::NoticeQueue;
 use crate::services::local::scan_wait::{self, ScanWaitError, ScanWaitTiming};
 use crate::services::local::{DownloadHistoryService, ILocalLibraryService};
+use crate::services::lyrics::LyricsUndoJournal;
 use crate::services::metadata::genre_backfill_journal::GenreBackfillJournal;
+use crate::services::state_file;
 use crate::services::subsonic::navidrome_version::{self, TidyGate};
 
 /// What the dashboard asks for.
@@ -75,6 +80,10 @@ pub struct TidyServices {
     pub actions: Option<Arc<LibraryActionJournal>>,
     pub history: Option<Arc<DownloadHistoryService>>,
     pub list_songs: Option<ListSongs>,
+    pub cover_journal: Option<Arc<CoverUpgradeJournal>>,
+    pub lyrics_undo: Option<Arc<LyricsUndoJournal>>,
+    pub explicit: Option<Arc<ExplicitBackfillStore>>,
+    pub quarantine: Option<Arc<LibraryActionQuarantine>>,
 }
 
 /// How one change went.
@@ -447,7 +456,7 @@ impl TidyWorker {
             refuse("Octo has no library service to ask Navidrome for scans.".to_string());
             return;
         };
-        let _job = match self.write_gate.begin_job(Self::JOB_NAME).await {
+        let mut job = match self.write_gate.begin_job(Self::JOB_NAME).await {
             Ok(job) => job,
             Err(holder) => {
                 refuse(LibraryWriteGate::busy_message(&holder));
@@ -532,7 +541,7 @@ impl TidyWorker {
             work.retags.len(),
             work.moves.len()
         );
-        self.execute(&root, &work, library, stopping).await;
+        self.execute(&root, &work, library, stopping, &mut job).await;
     }
 
     async fn execute(
@@ -541,10 +550,15 @@ impl TidyWorker {
         work: &TidyWork,
         library: Arc<dyn ILocalLibraryService>,
         stopping: &CancellationToken,
+        job: &mut LibraryJob,
     ) {
         let hold = library.scan_hold().map(|hold| hold.hold());
         let before = self.list_songs().await;
-        let stopped = self.write_and_move(root, work, library.as_ref(), stopping).await;
+        let stopped = self
+            .write_and_move(root, work, library.as_ref(), stopping, job)
+            .await;
+        // Nothing is written from here on.
+        job.pause();
 
         let wanted = hold.map(|hold| hold.release()).unwrap_or(false);
         let changed = {
@@ -582,10 +596,16 @@ impl TidyWorker {
         work: &TidyWork,
         library: &dyn ILocalLibraryService,
         stopping: &CancellationToken,
+        job: &mut LibraryJob,
     ) -> Option<Stop> {
         self.store
             .update(|run| run.phase = "Waiting for Navidrome to finish scanning".to_string());
-        if !scan_wait::wait_while_scanning(library, self.timing, stopping).await {
+        // Downloads may land while Navidrome scans; the tidy measures every file before it
+        // touches it.
+        job.pause();
+        let idle = scan_wait::wait_while_scanning(library, self.timing, stopping).await;
+        job.resume().await;
+        if !idle {
             if let Some(stop) = self.should_stop(stopping) {
                 return Some(stop);
             }
@@ -657,6 +677,9 @@ impl TidyWorker {
             .map(|(_, modified)| *modified)
             .chain(last_write)
             .max();
+        // A move goes ahead only while every song in the folder is as this scan saw it, so the
+        // folder is open to downloads until the scan is done.
+        job.pause();
         let seen = library
             .get_scan_status()
             .await
@@ -708,6 +731,7 @@ impl TidyWorker {
             self.finish_with(TidyStatus::Failed, NO_STATUS.to_string());
             return None;
         };
+        job.resume().await;
 
         // ---- phase 2: album folders ----
         self.store.update(|run| run.phase = "Moving files".to_string());
@@ -718,7 +742,10 @@ impl TidyWorker {
                 self.follow_playlists(root, &moved, &work.run_id);
                 return Some(stop);
             }
-            if !scan_wait::wait_while_scanning(library, self.timing, stopping).await {
+            job.pause();
+            let idle = scan_wait::wait_while_scanning(library, self.timing, stopping).await;
+            job.resume().await;
+            if !idle {
                 if let Some(stop) = self.should_stop(stopping) {
                     self.follow_playlists(root, &moved, &work.run_id);
                     return Some(stop);
@@ -829,6 +856,20 @@ impl TidyWorker {
         if let Some(history) = &self.services.history {
             history.move_paths(from, to);
         }
+        if let Some(journal) = &self.services.cover_journal {
+            journal.move_paths(from, to);
+        }
+        if let Some(journal) = &self.services.lyrics_undo
+            && let Err(failure) = journal.move_paths(from, to)
+        {
+            warn!("Library tidy moved {from} but the lyrics undo could not follow: {failure}");
+        }
+        if let Some(store) = &self.services.explicit {
+            store.move_paths(from, to);
+        }
+        if let Some(quarantine) = &self.services.quarantine {
+            quarantine.move_paths(&self.music_root(), from, to);
+        }
     }
 
     /// Playlist files under the music folder that name a moved song name it where it is now.
@@ -869,7 +910,7 @@ impl TidyWorker {
                 self.fail(&playlist, &journal_failed(&failure.to_string()));
                 return;
             }
-            if let Err(failure) = std::fs::write(&playlist, rewritten) {
+            if let Err(failure) = state_file::write_atomic(Path::new(&playlist), rewritten.as_bytes()) {
                 self.fail(&playlist, &failure.to_string());
             }
         }
@@ -1329,6 +1370,8 @@ struct Contents {
     links: bool,
 }
 
+/// Dot folders and dot files are left out, as [`walk`] leaves them out: a half-made copy Octo
+/// keeps hidden beside a song is not one of the album's songs.
 fn walk_all(folder: &Path) -> std::io::Result<Contents> {
     let mut contents = Contents {
         audio: Vec::new(),
@@ -1338,6 +1381,9 @@ fn walk_all(folder: &Path) -> std::io::Result<Contents> {
     while let Some(folder) = folders.pop() {
         for entry in std::fs::read_dir(&folder)? {
             let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             let kind = entry.file_type()?;
             let path = entry.path();
             if kind.is_symlink() {
@@ -1537,7 +1583,7 @@ impl TidyWorker {
             );
             return;
         };
-        let _job = match self.write_gate.begin_job(Self::JOB_NAME).await {
+        let mut job = match self.write_gate.begin_job(Self::JOB_NAME).await {
             Ok(job) => job,
             Err(holder) => {
                 self.finish_with(TidyStatus::Failed, LibraryWriteGate::busy_message(&holder));
@@ -1564,7 +1610,15 @@ impl TidyWorker {
         let hold = library.scan_hold().map(|hold| hold.hold());
         let mut done: HashSet<usize> = HashSet::new();
         let stopped = self
-            .put_back(&root, &entries, &chosen, &mut done, library.as_ref(), stopping)
+            .put_back(
+                &root,
+                &entries,
+                &chosen,
+                &mut done,
+                library.as_ref(),
+                stopping,
+                &mut job,
+            )
             .await;
 
         let remaining = remaining(&entries, &done);
@@ -1605,6 +1659,7 @@ impl TidyWorker {
         self.finish_with(TidyStatus::Completed, summary);
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn put_back(
         &self,
         root: &str,
@@ -1613,10 +1668,14 @@ impl TidyWorker {
         done: &mut HashSet<usize>,
         library: &dyn ILocalLibraryService,
         stopping: &CancellationToken,
+        job: &mut LibraryJob,
     ) -> Option<Stop> {
         self.store
             .update(|run| run.phase = "Waiting for Navidrome to finish scanning".to_string());
-        if !scan_wait::wait_while_scanning(library, self.timing, stopping).await {
+        job.pause();
+        let idle = scan_wait::wait_while_scanning(library, self.timing, stopping).await;
+        job.resume().await;
+        if !idle {
             if let Some(stop) = self.should_stop(stopping) {
                 return Some(stop);
             }
@@ -1688,7 +1747,7 @@ impl TidyWorker {
             let now = std::fs::read_to_string(path).ok();
             let wrote = rewrite_playlist(path, before, &moves_of_run);
             if now.is_some() && now == wrote {
-                match std::fs::write(path, before) {
+                match state_file::write_atomic(Path::new(path), before.as_bytes()) {
                     Ok(()) => {
                         done.insert(*at);
                     }
@@ -1718,6 +1777,7 @@ impl TidyWorker {
             self.store
                 .update(|run| run.phase = "Waiting for Navidrome to scan".to_string());
             let after = Utc::now();
+            job.pause();
             if !library.start_scan().await {
                 self.finish_with(
                     TidyStatus::Failed,
@@ -1726,7 +1786,9 @@ impl TidyWorker {
                 );
                 return None;
             }
-            match scan_wait::wait_for_scan(library, after, self.timing, stopping).await {
+            let scanned = scan_wait::wait_for_scan(library, after, self.timing, stopping).await;
+            job.resume().await;
+            match scanned {
                 Ok(_) => {}
                 Err(ScanWaitError::Cancelled) => {
                     return self.should_stop(stopping).or(Some(Stop::Cancelled));

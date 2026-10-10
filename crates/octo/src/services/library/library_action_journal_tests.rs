@@ -325,6 +325,76 @@ fn entries_survive_a_restart() {
     assert!(second.is_never_requested(Some("Drake"), Some("Rich Flex")));
 }
 
+/// The shared journal only ever holds actions an older build knows the numbers of; Wrong lyrics
+/// and Wrong cover answers are kept in a file of their own.
+#[test]
+fn lyrics_and_cover_answers_are_kept_in_their_own_journal_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("library-actions.json");
+    {
+        let journal = LibraryActionJournal::with_path(Some(path.clone()));
+        journal.record(plain(
+            LibraryAction::Delete,
+            "song-a",
+            LibraryActionState::Applied,
+        ));
+        journal.record(plain(
+            LibraryAction::WrongLyrics,
+            "song-b",
+            LibraryActionState::Applied,
+        ));
+        journal.record(plain(
+            LibraryAction::WrongCover,
+            "song-c",
+            LibraryActionState::Applied,
+        ));
+        assert!(journal.flush());
+    }
+
+    let shared: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("the shared file")).expect("JSON");
+    let actions: Vec<i64> = shared
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|entry| entry["Action"].as_i64().expect("a number"))
+        .collect();
+    assert_eq!(actions, [0]);
+    let answers =
+        std::fs::read_to_string(dir.path().join("library-answer-journal.json")).expect("the answers file");
+    assert!(
+        answers.contains("song-b") && answers.contains("song-c"),
+        "{answers}"
+    );
+
+    let reloaded = LibraryActionJournal::with_path(Some(path));
+    let mut ids: Vec<String> = reloaded.recent(10).into_iter().map(|e| e.navidrome_id).collect();
+    ids.sort();
+    assert_eq!(ids, ["song-a", "song-b", "song-c"]);
+}
+
+/// A shared journal an earlier build of this version wrote answers into gives them up to the
+/// answers file on the next flush.
+#[test]
+fn answers_found_in_the_shared_journal_move_to_their_own_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("library-actions.json");
+    std::fs::write(
+        &path,
+        r#"[{"Key":"a","Action":0,"State":1},{"Key":"b","Action":5,"State":1}]"#,
+    )
+    .expect("written");
+    let journal = LibraryActionJournal::with_path(Some(path.clone()));
+    assert!(journal.flush());
+
+    let shared = std::fs::read_to_string(&path).expect("the shared file");
+    assert!(!shared.contains(r#""Key":"b""#), "{shared}");
+    let answers =
+        std::fs::read_to_string(dir.path().join("library-answer-journal.json")).expect("the answers file");
+    assert!(answers.contains(r#""Key":"b""#), "{answers}");
+    assert_eq!(journal.recent(10).len(), 2);
+}
+
 #[test]
 fn recent_is_newest_first() {
     let journal = LibraryActionJournal::new();

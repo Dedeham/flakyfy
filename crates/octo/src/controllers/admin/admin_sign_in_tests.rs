@@ -1094,3 +1094,62 @@ async fn lidarr_test_never_sends_the_saved_key_to_a_new_address() {
         r#"{"ok":false,"error":"Retype the Lidarr API key for the new address."}"#
     );
 }
+
+/// A fix run, or its undo, waits for no job writing the music folder: it is refused, naming the job.
+#[tokio::test]
+async fn library_health_fixes_are_refused_while_a_job_writes_the_music_folder() {
+    let factory = SignInFactory::new().await;
+    let cookie = cookie_of(&factory.sign_in("admin", "pw").await);
+    let mut settings = (*factory.state.settings.current()).clone();
+    settings.library_actions.enabled = true;
+    settings.library_actions.dry_run = false;
+    settings.library_actions.allowed_users = vec!["admin".into()];
+    factory.state.settings.set(settings);
+    let tidy = factory
+        .state
+        .library_write_gate
+        .begin_job("Tidy artists")
+        .await
+        .expect("free");
+
+    let apply = post_json(
+        &factory.app,
+        "/api/admin/health/apply",
+        &json!({
+            "label": "Fixing copies",
+            "check": "duplicates",
+            "steps": [{ "action": "remove", "id": "a", "title": "A" }],
+        }),
+        &[("Cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(apply.status, StatusCode::CONFLICT);
+    assert_eq!(
+        apply.json()["error"],
+        "Tidy artists is changing the music folder right now. Try again when it is done."
+    );
+    let undo = post_json(
+        &factory.app,
+        "/api/admin/health/undo",
+        &json!({}),
+        &[("Cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(undo.status, StatusCode::CONFLICT);
+    assert_eq!(undo.json()["error"], apply.json()["error"]);
+    assert!(factory.state.library_health.run().is_none());
+
+    drop(tidy);
+    let apply = post_json(
+        &factory.app,
+        "/api/admin/health/apply",
+        &json!({
+            "label": "Fixing copies",
+            "check": "duplicates",
+            "steps": [{ "action": "remove", "id": "a", "title": "A" }],
+        }),
+        &[("Cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(apply.status, StatusCode::ACCEPTED, "{}", apply.text());
+}

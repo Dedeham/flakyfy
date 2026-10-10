@@ -21,6 +21,7 @@ use crate::services::cover_art::{
     IAlbumCoverFinder,
 };
 use crate::services::library::library_action_test_support::{Extras, RecordingLibrary, executor, store};
+use crate::services::library::library_write_gate::LibraryWriteGate;
 
 const FILE_NAME: &str = "Massive Attack - Teardrop";
 const LINES: &str = "[00:01.00]love, love is a verb";
@@ -122,6 +123,10 @@ struct Fixture {
     choices: Arc<LyricsChoiceService>,
     covers: Arc<CoverUpgradeWorker>,
     executor: Arc<LibraryActionExecutor>,
+    gate: LibraryWriteGate,
+    root: PathBuf,
+    sidecars: Arc<LyricsSidecarWriter>,
+    undo: Arc<crate::services::lyrics::LyricsUndoJournal>,
     _navidrome: MockServer,
 }
 
@@ -212,6 +217,7 @@ impl Fixture {
             lyrics.clone(),
             Arc::new(crate::services::lyrics::LyricsChoiceStore::new(None)),
         ));
+        let gate = LibraryWriteGate::new();
         let covers = Arc::new(CoverUpgradeWorker::new(
             Arc::new(CoverUpgradeStore::new(None)),
             Arc::new(CoverUpgradeJournal::new(Some(
@@ -219,8 +225,15 @@ impl Fixture {
             ))),
             Arc::new(OneCover(cover)),
             settings.clone(),
-            CoverUpgradeServices::default(),
+            CoverUpgradeServices {
+                write_gate: Some(gate.clone()),
+                ..CoverUpgradeServices::default()
+            },
         ));
+        let sidecars = Arc::new(LyricsSidecarWriter::new(lyrics.clone(), settings.clone()));
+        sidecars.set_write_gate(gate.clone());
+        let undo = Arc::new(crate::services::lyrics::LyricsUndoJournal::new(None));
+        sidecars.set_undo_journal(undo.clone());
         let rejections = Arc::new(RejectionStore::new(Some(config.join("rejections.json"))));
         let queue = Arc::new(TrackAcquisitionQueue::new());
         let journal = Arc::new(LibraryActionJournal::new());
@@ -233,7 +246,7 @@ impl Fixture {
                 answers: Some(SongAnswers {
                     lyrics: lyrics.clone(),
                     choices: choices.clone(),
-                    sidecars: Arc::new(LyricsSidecarWriter::new(lyrics, settings.clone())),
+                    sidecars: sidecars.clone(),
                     covers: covers.clone(),
                     rejections: rejections.clone(),
                 }),
@@ -249,6 +262,10 @@ impl Fixture {
             choices,
             covers,
             executor,
+            gate,
+            root,
+            sidecars,
+            undo,
             _navidrome: navidrome,
         }
     }
@@ -370,4 +387,73 @@ async fn wrong_cover_with_no_other_cover_is_skipped_and_leaves_the_file_untouche
     assert_eq!(before, std::fs::read(&t.original).expect("read"));
     assert!(!t.covers.can_undo());
     t.never_downloaded();
+}
+
+/// The lyrics files beside the song: the .lrc or .txt Wrong lyrics writes.
+fn lyrics_files(root: &std::path::Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .expect("the music root")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "lrc" || e == "txt"))
+        .collect()
+}
+
+#[tokio::test]
+async fn wrong_lyrics_waits_while_a_job_writes_the_music_folder() {
+    let t = Arc::new(Fixture::new(LibraryAction::WrongLyrics, None, Vec::new()).await);
+    let tidy = t.gate.begin_job("Tidy artists").await.expect("free");
+
+    let pressing = {
+        let t = Arc::clone(&t);
+        tokio::spawn(async move { t.press(LibraryAction::WrongLyrics).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!pressing.is_finished(), "lyrics were written during a job");
+    assert!(lyrics_files(&t.root).is_empty());
+
+    drop(tidy);
+    let outcome = pressing.await.expect("joined");
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    assert_eq!(lyrics_files(&t.root).len(), 1);
+}
+
+#[tokio::test]
+async fn wrong_cover_waits_while_a_job_writes_the_music_folder() {
+    let wrong = ramp(400);
+    let right = bars(1200);
+    let t = Arc::new(Fixture::new(LibraryAction::WrongCover, Some(&wrong), right.clone()).await);
+    let tidy = t.gate.begin_job("Tidy artists").await.expect("free");
+
+    let pressing = {
+        let t = Arc::clone(&t);
+        tokio::spawn(async move { t.press(LibraryAction::WrongCover).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!pressing.is_finished(), "a cover was written during a job");
+    assert_eq!(t.front(), wrong);
+
+    drop(tidy);
+    let outcome = pressing.await.expect("joined");
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    assert_eq!(t.front(), right);
+}
+
+#[tokio::test]
+async fn wrong_lyrics_writes_go_through_the_lyrics_undo() {
+    let t = Fixture::new(LibraryAction::WrongLyrics, None, Vec::new()).await;
+
+    let outcome = t.press(LibraryAction::WrongLyrics).await;
+
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    let written = lyrics_files(&t.root);
+    assert_eq!(written.len(), 1);
+    let entries = t.undo.read_all().expect("read");
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].path, written[0].to_string_lossy());
+    assert_eq!(entries[0].before, None);
+
+    // The lyrics page's Undo takes the file Wrong lyrics added back out.
+    assert!(t.sidecars.restore(&entries[0]));
+    assert!(lyrics_files(&t.root).is_empty());
 }

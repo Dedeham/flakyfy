@@ -31,6 +31,9 @@ pub struct PendingAlbum {
     pub year: Option<i32>,
     /// The track files Lidarr had before Octo's search; they are the owner's, never taken.
     pub files_before: Vec<i32>,
+    /// The tracks that already had a file before Octo's search. Their files stay the owner's
+    /// even when Lidarr later replaces them with a new file id.
+    pub tracks_before: Vec<i32>,
     /// Who hearted it.
     pub requested_by: Vec<String>,
     pub asked_at: DateTime<Utc>,
@@ -45,6 +48,7 @@ impl Default for PendingAlbum {
             title: String::new(),
             year: None,
             files_before: Vec::new(),
+            tracks_before: Vec::new(),
             requested_by: Vec::new(),
             asked_at: Utc::now(),
         }

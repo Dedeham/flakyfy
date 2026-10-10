@@ -997,3 +997,35 @@ async fn undoing_an_isrc_retag_takes_the_code_off_the_file() {
     let file = TagFile::open(&path).expect("opens");
     assert_eq!(extras::read_text(&file, TagFields::ISRC), None);
 }
+
+#[tokio::test]
+async fn retag_waits_while_a_job_writes_the_music_folder() {
+    let f = Factory::new().await;
+    let path = f.song(
+        "s1",
+        "Massive Attack/Mezzanine/Teardrop.flac",
+        "Teardrop",
+        "Massive Attack",
+        "Mezzanine",
+    );
+    let tidy = f
+        .state
+        .library_write_gate
+        .begin_job("Tidy artists")
+        .await
+        .expect("free");
+
+    let edits = f.state.library_edits.clone();
+    let editing = tokio::spawn(async move {
+        let changes = indexmap::IndexMap::from([("genre".to_string(), Some("Trip Hop".to_string()))]);
+        edits.retag("s1", "alice", changes).await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!editing.is_finished(), "the tags were written during a job");
+    assert_eq!(tag(&path, "genre"), None);
+
+    drop(tidy);
+    let outcome = editing.await.expect("joined");
+    assert_eq!(outcome.state, "applied", "{outcome:?}");
+    assert_eq!(tag(&path, "genre").as_deref(), Some("Trip Hop"));
+}

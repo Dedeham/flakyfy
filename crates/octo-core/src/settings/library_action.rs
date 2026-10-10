@@ -52,6 +52,16 @@ impl LibraryAction {
             .and_then(|i| Self::ALL.get(i).copied())
     }
 
+    /// The built-in playlist name.
+    pub fn default_name(self) -> &'static str {
+        self.defaults().0
+    }
+
+    /// The built-in star rating; 0 is none.
+    pub fn default_rating(self) -> i32 {
+        self.defaults().1
+    }
+
     /// The built-in playlist name and star rating.
     fn defaults(self) -> (&'static str, i32) {
         match self {

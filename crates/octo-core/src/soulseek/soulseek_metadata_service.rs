@@ -24,7 +24,7 @@ pub enum RoutingKind {
 /// Where an outside song, album or artist came from, enough to find it again: what the short
 /// external ids Octo hands to Subsonic clients stand for.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "PascalCase", default)]
+#[serde(remote = "Self", rename_all = "PascalCase", default)]
 pub struct SoulseekRouting {
     pub kind: RoutingKind,
     pub you_tube_id: Option<String>,
@@ -155,6 +155,24 @@ impl SoulseekRouting {
     }
 }
 
+/// A length read from a downloaded file is written as Deezer's number with `ShownFromFile` beside
+/// it, because a reader that knows only the first four sources refuses the whole file over a
+/// number it does not know. Both that form and the plain number are read.
+const SHOWN_FROM_FILE: &str = "ShownFromFile";
+
+impl<'de> Deserialize<'de> for SoulseekRouting {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let from_file = value.get(SHOWN_FROM_FILE).and_then(serde_json::Value::as_bool) == Some(true);
+        let mut routing = SoulseekRouting::deserialize(value).map_err(D::Error::custom)?;
+        if from_file && routing.shown_duration_source == LengthSource::Deezer {
+            routing.shown_duration_source = LengthSource::File;
+        }
+        Ok(routing)
+    }
+}
+
 /// By hand, because System.Text.Json also wrote the computed `HasYouTube` and `HasArtistTitle`
 /// (ignored again on read). The stream facts are written only when known, so a routing without
 /// them is written exactly as before.
@@ -171,7 +189,9 @@ impl Serialize for SoulseekRouting {
         .into_iter()
         .filter(|known| *known)
         .count();
-        let mut s = serializer.serialize_struct("SoulseekRouting", 18 + stream_fields)?;
+        let from_file = self.shown_duration_source == LengthSource::File;
+        let mut s =
+            serializer.serialize_struct("SoulseekRouting", 18 + stream_fields + usize::from(from_file))?;
         s.serialize_field("Kind", &self.kind)?;
         s.serialize_field("YouTubeId", &self.you_tube_id)?;
         s.serialize_field("Artist", &self.artist)?;
@@ -185,7 +205,11 @@ impl Serialize for SoulseekRouting {
         s.serialize_field("TotalTracks", &self.total_tracks)?;
         s.serialize_field("Isrc", &self.isrc)?;
         s.serialize_field("ShownDuration", &self.shown_duration)?;
-        s.serialize_field("ShownDurationSource", &self.shown_duration_source)?;
+        if from_file {
+            s.serialize_field("ShownDurationSource", &LengthSource::Deezer)?;
+        } else {
+            s.serialize_field("ShownDurationSource", &self.shown_duration_source)?;
+        }
         s.serialize_field("ExplicitContent", &self.explicit_content)?;
         s.serialize_field("Version", &self.version)?;
         if let Some(size) = &self.stream_size {
@@ -205,6 +229,9 @@ impl Serialize for SoulseekRouting {
         }
         if let Some(peak) = &self.track_peak {
             s.serialize_field("TrackPeak", peak)?;
+        }
+        if from_file {
+            s.serialize_field(SHOWN_FROM_FILE, &true)?;
         }
         s.serialize_field("HasYouTube", &self.has_you_tube())?;
         s.serialize_field("HasArtistTitle", &self.has_artist_title())?;
@@ -233,6 +260,39 @@ mod tests {
         );
         let back: SoulseekRouting = serde_json::from_str(&json).expect("reads back");
         assert_eq!(back, routing);
+    }
+
+    #[test]
+    fn a_length_from_a_file_is_written_in_numbers_an_older_reader_knows() {
+        let routing = SoulseekRouting {
+            title: Some("Angel".into()),
+            shown_duration: Some(380),
+            shown_duration_source: LengthSource::File,
+            ..Default::default()
+        };
+        let json = crate::json::to_string(&routing);
+        assert!(json.contains(r#""ShownDurationSource":3,"#), "{json}");
+        assert!(json.contains(r#""ShownFromFile":true"#), "{json}");
+        assert!(!json.contains(r#""ShownDurationSource":4"#), "{json}");
+
+        // Read back, the file's length is still the file's.
+        let back: SoulseekRouting = serde_json::from_str(&json).expect("reads back");
+        assert_eq!(back, routing);
+        // The number an earlier build wrote reads too.
+        let older: SoulseekRouting =
+            serde_json::from_str(r#"{"Kind":0,"ShownDuration":380,"ShownDurationSource":4}"#).expect("reads");
+        assert_eq!(older.shown_duration_source, LengthSource::File);
+        // A Deezer length stays Deezer's, with no marker written.
+        let deezer = SoulseekRouting {
+            shown_duration_source: LengthSource::Deezer,
+            ..Default::default()
+        };
+        let json = crate::json::to_string(&deezer);
+        assert!(!json.contains("ShownFromFile"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<SoulseekRouting>(&json).expect("reads"),
+            deezer
+        );
     }
 
     #[test]

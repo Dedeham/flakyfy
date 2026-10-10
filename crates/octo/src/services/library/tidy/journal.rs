@@ -3,7 +3,7 @@
 //! written stops the run. One JSON object per line: a run killed mid-write leaves a torn last
 //! line, which costs that one line rather than the whole journal.
 
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -106,8 +106,22 @@ impl TidyJournal {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-        let mut line = serde_json::to_string(entry).map_err(io::Error::other)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)?;
+        let mut line = String::new();
+        // A torn last line gets its own line ended first, so this entry is never joined to it.
+        if file.metadata()?.len() > 0 {
+            let mut last = [0u8; 1];
+            file.seek(SeekFrom::End(-1))?;
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                line.push('\n');
+            }
+        }
+        line.push_str(&serde_json::to_string(entry).map_err(io::Error::other)?);
         line.push('\n');
         file.write_all(line.as_bytes())?;
         file.sync_all()
@@ -209,6 +223,31 @@ mod tests {
         let entries = journal.read_all();
         assert_eq!(entries.len(), 1);
         assert!(matches!(&entries[0], TidyJournalEntry::Tags { path, .. } if path == "/m/a.flac"));
+    }
+
+    #[test]
+    fn an_entry_after_a_torn_last_line_is_written_on_a_line_of_its_own() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = dir.path().join("tidy-journal.jsonl");
+        let journal = TidyJournal::new(Some(path.clone()));
+        journal.append(&tags("/m/a.flac")).expect("written");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(b"{\"kind\":\"tags\",\"path\":\"/m/c.fl"))
+            .expect("torn");
+
+        journal.append(&tags("/m/b.flac")).expect("written");
+
+        let paths: Vec<String> = journal
+            .read_all()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                TidyJournalEntry::Tags { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, ["/m/a.flac", "/m/b.flac"]);
     }
 
     #[test]

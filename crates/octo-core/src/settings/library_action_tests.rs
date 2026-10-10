@@ -70,7 +70,7 @@ fn effective_actions_back_fills_every_action_and_keeps_configured_names() {
 
     let actions = settings.effective_actions();
 
-    assert_eq!(actions.len(), 5);
+    assert_eq!(actions.len(), 7);
     let delete = find(&actions, LibraryAction::Delete);
     assert_eq!(delete.name, "Bin it");
     assert!(delete.enabled);
@@ -95,7 +95,7 @@ fn effective_actions_drops_a_duplicate_effective_title() {
         ..Default::default()
     };
 
-    assert_eq!(settings.effective_actions().len(), 4);
+    assert_eq!(settings.effective_actions().len(), 6);
 }
 
 #[test]
@@ -414,6 +414,31 @@ fn mapped_ratings_lists_enabled_non_zero_ratings_in_order() {
 fn library_action_indexes_match_the_journal_numbers() {
     assert_eq!(LibraryAction::Keep.as_index(), 4);
     assert_eq!(LibraryAction::from_index(3), Some(LibraryAction::BetterQuality));
-    assert_eq!(LibraryAction::from_index(5), None);
+    assert_eq!(LibraryAction::from_index(5), Some(LibraryAction::WrongLyrics));
+    assert_eq!(LibraryAction::from_index(6), Some(LibraryAction::WrongCover));
+    assert_eq!(LibraryAction::from_index(7), None);
     assert_eq!(LibraryAction::from_index(-1), None);
+}
+
+/// The journal stores actions as numbers, so the two answers about a song's lyrics and cover
+/// come after Keep, and they start unmapped and off: no star asks for them until someone says so.
+#[test]
+fn wrong_lyrics_and_wrong_cover_come_after_keep_unmapped_and_off() {
+    assert_eq!(LibraryAction::WrongLyrics.as_index(), 5);
+    assert_eq!(LibraryAction::WrongCover.as_index(), 6);
+    let settings = LibraryActionSettings {
+        review_enabled: true,
+        ..Default::default()
+    };
+    let actions = settings.effective_actions();
+    for (action, name) in [
+        (LibraryAction::WrongLyrics, "Wrong lyrics"),
+        (LibraryAction::WrongCover, "Wrong cover"),
+    ] {
+        let entry = find(&actions, action);
+        assert_eq!(entry.name, name);
+        assert_eq!(entry.rating, Some(0));
+        assert!(!entry.enabled);
+    }
+    assert_eq!(settings.mapped_ratings(), [5]);
 }

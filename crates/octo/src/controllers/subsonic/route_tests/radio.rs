@@ -1295,3 +1295,103 @@ async fn a_station_song_says_the_source_its_station_was_built_with() {
         assert_eq!(entry["octoSuggestedBy"], "YouTube Music", "{entry}");
     }
 }
+
+/// A Discovery Mix of ten: six library songs and four outside ones, and a reserve of outside
+/// songs after them.
+fn install_discovery(fixture: &RadioFixture, reserve: &[(&str, &str)]) -> String {
+    let track = |artist: &str, title: &str| LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        duration: Some(200),
+        ..Default::default()
+    };
+    let id = station_id("alice", "discovery");
+    fixture.state.last_fm_radio_state.replace_stations(
+        "alice",
+        &[LastFmRadioStation {
+            id: id.clone(),
+            key: "discovery".into(),
+            name: "Discovery Mix".into(),
+            owner: "alice".into(),
+            kind: LastFmRadioStationKind::Discovery,
+            personalized: true,
+            valid_until_utc: Utc::now() + TimeDelta::hours(12),
+            tracks: vec![
+                track("Artist One", "Song One"),
+                track("Outside A", "Tune A"),
+                track("Artist Two", "Song Two"),
+                track("New Artist One", "New Song One"),
+                track("Outside B", "Tune B"),
+                track("Artist Three", "Song Three"),
+                track("New Artist Two", "New Song Two"),
+                track("Outside C", "Tune C"),
+                track("Artist Four", "Song Four"),
+                track("Outside D", "Tune D"),
+            ],
+            reserve: reserve
+                .iter()
+                .map(|(artist, title)| track(artist, title))
+                .collect(),
+            ..Default::default()
+        }],
+    );
+    id
+}
+
+async fn discovery_entries(fixture: &RadioFixture, id: &str) -> Vec<serde_json::Value> {
+    let body = get_string(
+        &fixture.app,
+        &format!("/rest/getPlaylist?id={id}&u=alice&t=token&s=salt&f=json"),
+    )
+    .await;
+    let doc: serde_json::Value = serde_json::from_str(&body).expect("JSON");
+    doc["subsonic-response"]["playlist"]["entry"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn library_ids(entries: &[serde_json::Value]) -> Vec<String> {
+    entries
+        .iter()
+        .filter_map(|entry| entry["id"].as_str())
+        .filter(|id| id.starts_with("local-"))
+        .map(str::to_string)
+        .collect()
+}
+
+// At the default Discovery balance of 35, a Discovery Mix of ten keeps four library songs (3.5
+// rounds to even); the library songs past them give their places to the reserve's outside songs.
+#[tokio::test]
+async fn discovery_mix_keeps_library_songs_to_the_discovery_balance_share() {
+    let fixture = RadioFixture::with_metadata(Options::default(), outside_copies()).await;
+    let id = install_discovery(&fixture, &[("Outside E", "Tune E"), ("Outside F", "Tune F")]);
+
+    let entries = discovery_entries(&fixture, &id).await;
+
+    let titles: Vec<&str> = entries.iter().filter_map(|e| e["title"].as_str()).collect();
+    assert_eq!(entries.len(), 10, "{titles:?}");
+    assert_eq!(
+        library_ids(&entries),
+        ["local-one", "local-two", "local-new-one", "local-three"],
+        "{titles:?}"
+    );
+    assert_eq!(titles[6], "Tune E", "{titles:?}");
+    assert_eq!(titles[8], "Tune F", "{titles:?}");
+}
+
+// With nothing in reserve, the library songs past the share keep their places: a short reserve
+// never makes a short mix.
+#[tokio::test]
+async fn discovery_mix_fills_from_library_songs_when_the_reserve_runs_out() {
+    let fixture = RadioFixture::with_metadata(Options::default(), outside_copies()).await;
+    let id = install_discovery(&fixture, &[("Outside E", "Tune E")]);
+
+    let entries = discovery_entries(&fixture, &id).await;
+
+    let titles: Vec<&str> = entries.iter().filter_map(|e| e["title"].as_str()).collect();
+    assert_eq!(entries.len(), 10, "{titles:?}");
+    assert_eq!(library_ids(&entries).len(), 5, "{titles:?}");
+    assert_eq!(titles[6], "Tune E", "{titles:?}");
+    assert_eq!(titles[8], "Song Four", "{titles:?}");
+}

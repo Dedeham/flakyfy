@@ -13,6 +13,8 @@ pub const TRENDING: &str = "trending";
 /// The overall list's playlist key: the same as before charts had genres, so its id stays.
 pub const OVERALL_KEY: &str = "chart:popular";
 pub const OVERALL_NAME: &str = "Popular right now";
+/// The words on Popular right now's cover, over the light line "Chart".
+pub const OVERALL_COVER_TITLE: &str = "Popular";
 pub const NEW_SONGS_NAME: &str = "Best New Songs";
 pub const TRENDING_NAME: &str = "Trending Songs";
 /// Songs a chart page holds without a developer token.

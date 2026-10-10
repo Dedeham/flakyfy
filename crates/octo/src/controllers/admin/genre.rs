@@ -20,6 +20,7 @@ use super::request_binding::{
 };
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::metadata::genre_backfill_state::{GenreBackfillScope, GenreBackfillStatus};
 use crate::services::metadata::{GenreBackfillRequest, GenreBackfillWorker};
 
@@ -137,6 +138,11 @@ async fn start_genre_backfill(State(state): State<AppState>, request: Request) -
             format!("To rewrite the whole library, type the music path exactly: {root}"),
         ));
     }
+    if !request.dry_run
+        && let Some(busy) = other_job_writing(&state)
+    {
+        return browse.finish(busy);
+    }
     if !state
         .genre_backfill_worker
         .try_enqueue(GenreBackfillRequest::new(scope, request.dry_run))
@@ -251,6 +257,9 @@ async fn undo_genre_backfill(State(state): State<AppState>, request: Request) ->
     if !state.genre_backfill_journal.exists() {
         return browse.finish(error(StatusCode::BAD_REQUEST, "There is no backfill to undo."));
     }
+    if let Some(busy) = other_job_writing(&state) {
+        return browse.finish(busy);
+    }
     if !state
         .genre_backfill_worker
         .try_enqueue(GenreBackfillRequest::undo())
@@ -259,6 +268,15 @@ async fn undo_genre_backfill(State(state): State<AppState>, request: Request) ->
     }
     info!("Genre backfill undo requested");
     browse.finish(status(StatusCode::ACCEPTED, &json!({ "started": true })))
+}
+
+/// 409 while another library job (the tidy, the explicit marking) writes the music folder.
+fn other_job_writing(state: &AppState) -> Option<Response> {
+    state
+        .library_write_gate
+        .job()
+        .filter(|holder| holder != GenreBackfillWorker::JOB_NAME)
+        .map(|holder| error(StatusCode::CONFLICT, LibraryWriteGate::busy_message(&holder)))
 }
 
 /// The broad-genre preset, served from the one place it is defined. A second copy in admin.js

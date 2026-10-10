@@ -2,6 +2,7 @@
 //! Navidrome song and playlist plumbing.
 
 pub mod album_ownership;
+pub mod artist_country;
 pub mod chart_playlist_service;
 pub mod duplicate_scan_worker;
 pub mod explicit_backfill;
@@ -21,14 +22,17 @@ pub mod library_review_sweep_worker;
 pub mod library_snapshot;
 pub mod library_tag_edits;
 pub mod library_walk;
+pub mod library_write_gate;
 pub mod navidrome_playlist_api;
 pub mod navidrome_song_list;
 pub mod navidrome_song_path_resolver;
 pub mod notice_playlist_worker;
 pub mod notice_queue;
 pub mod quality_upgrade_worker;
+pub mod rejections;
 pub mod replacement_handoff;
 mod state_dictionary;
+pub mod tidy;
 pub mod upgrade_queue;
 pub mod upgrade_sources;
 
@@ -44,7 +48,7 @@ pub use generated_playlist_service::{GeneratedPlaylist, GeneratedPlaylistService
 pub use heart_ownership::HeartOwnership;
 pub use library_action_executor::{
     LibraryActionCodes, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionOutcome,
-    LibraryActionRequest,
+    LibraryActionRequest, SongAnswers,
 };
 pub use library_action_journal::{LibraryActionEntry, LibraryActionJournal, LibraryActionState};
 pub use library_action_playlist_provisioner::LibraryActionPlaylistProvisioner;
@@ -69,6 +73,7 @@ pub use quality_upgrade_worker::{
     LibrarySongRow, QualityUpgradeAttempt, QualityUpgradeState, QualityUpgradeStatus, QualityUpgradeStore,
     QualityUpgradeWorker,
 };
+pub use rejections::RejectionStore;
 pub use replacement_handoff::{ReplacementHandoff, ReplacementRejectedException};
 pub use upgrade_queue::{
     AudioSummary, UpgradeAsk, UpgradeJob, UpgradeQueue, UpgradeResult, UpgradeStates, UpgradeWorker,

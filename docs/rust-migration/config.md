@@ -164,6 +164,7 @@ Enums:
 | `EnableSyncCatalog` | `ENABLE_SYNC_CATALOG` (compose only, not in `.env.example`) | bool | true / `true` / `true` | - | Live | yes |
 | `SyncCatalogClients` | `SYNC_CATALOG_CLIENTS` (compose only) | string (comma list) | `Symfonium` / `Symfonium` / `Symfonium` | Split on `,`, entries trimmed, empties dropped. **A client matches when its `c` parameter *contains* an entry, ignoring case** (a substring match, not equality). | Live | yes |
 | `SyncCatalogMaxSongs` | `SYNC_CATALOG_MAX_SONGS` (compose only) | int | 1000 / `1000` / `1000` | `Math.Clamp(v, 50, 5000)` | Live | yes |
+| `StreamSizeWarmPerMinute` | `STREAM_SIZE_WARM_PER_MINUTE` | int | 5 / `5` / `5` | Rust only. Outside songs a minute whose stream size is learned in the background; `Clamp(0, 30)`, 0 turns the lookups off. Listed last in config-sources. | Live | yes |
 | `PlaylistsDirectory` | - | string | `playlists` / `playlists` / - | **Dead:** its only consumer, `PlaylistSyncService`, is never registered in DI (`GetService` returns null). It would be relative to `Library:DownloadPath`, with null falling back to `"playlists"`. | Dead | yes |
 | `DownloadOnStar` | `DOWNLOAD_ON_STAR` | bool | true / `true` / `true` | Feeds only `EffectiveHeartDownloadSources()` when `HeartDownloadSources` is empty. | Live | no |
 | `DownloadAlbumOnStar` | `DOWNLOAD_ALBUM_ON_STAR` | bool | true / `true` / `true` | As above. | Live | no |
@@ -420,6 +421,7 @@ Song radio (getSimilarSongs) and the stations ask every source that is on and bl
 | `SonicUrl` | `RADIO_SONIC_URL` | string | `http://octo-sonic:8080` (all three) | The octo-sonic sidecar; the status page probes `{SonicUrl}/health`. | Live | yes |
 | `SonicPauseSeconds` | `RADIO_SONIC_PAUSE_SECONDS` | int | 2 / `2` / `2` | `Clamp(0, 600)`. | Live | yes |
 | `ListenBrainzAlgorithm` | `RADIO_LISTENBRAINZ_ALGORITHM` (compose only) | string | `session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30` (all three) | The labs similarity dataset. | Live | no |
+| `ListenBrainzRadioMode` | `RADIO_LISTENBRAINZ_RADIO_MODE` | string | `easy` (all three) | LB Radio's mode for artist and genre stations: `easy`, `medium` or `hard`; any other value is `easy`. Part of the LB Radio cache key. | Live | yes |
 | `LastFmWeight`, `YouTubeMusicWeight`, `ListenBrainzWeight`, `SoundsAlikeWeight` | - (dashboard only) | double | 0.9, 1.0, 0.7, 0.4 / same / - | `EffectiveWeight`: `Clamp(0, 3)`, and 1 for a value that is not a finite number. 0 leaves a source out of the blend. | Live | yes |
 | `LearnFromListening` | `RADIO_LEARN_FROM_LISTENING` | bool | true / `true` / `true` | Each listener's plays and skips move the weights (0.3 to 1.5). | Live | yes |
 

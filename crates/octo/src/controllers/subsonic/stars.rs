@@ -206,8 +206,15 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     // For non-external items or when download-on-star is disabled, relay to real Subsonic server
     match call.proxy.relay("rest/star", &call.parameters).await {
         Ok(result) => {
-            if is_successful_subsonic_response(&result.body, &format)
-                && let Some(username) = call.param_opt("u").filter(|u| !u.is_empty())
+            let username = if is_successful_subsonic_response(&result.body, &format) {
+                listener(&state, &call).await
+            } else {
+                None
+            };
+            if let Some(username) = username.as_deref() {
+                state.generated_playlists.forget_marks(username);
+            }
+            if let Some(username) = username.as_deref()
                 && !item_id.is_empty()
                 && let Some(song) = resolver(&state, &call)
                     .resolve_scrobble(&item_id, &call.parameters)
@@ -295,10 +302,13 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
 
     if is_successful_subsonic_response(&result.body, &format)
         && let Some(stars) = try_parse_int(&rating_text)
-        && let Some(rater) = call.param_opt("u").filter(|u| !u.is_empty())
         && !item_id.is_empty()
+        && let Some(rater) = listener(&state, &call).await
     {
-        record_radio_ban(&state, &call, rater, &item_id, stars).await;
+        state
+            .generated_playlists
+            .rated(&rater, &item_id, i64::from(stars));
+        record_radio_ban(&state, &call, &rater, &item_id, stars).await;
     }
 
     let settings = state.settings.current().library_actions.clone();
@@ -332,6 +342,19 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
     Ok(file(result.body, &content_type))
 }
 
+/// The listener a request Navidrome accepted speaks for, named the way every request's identity
+/// is: `u`, or for an API key sign-in its owner as Navidrome names it. None when there is nobody
+/// to name or Navidrome could not be asked.
+async fn listener(state: &AppState, call: &SubsonicCall) -> Option<String> {
+    state
+        .request_identity
+        .username(&call.parameters, &call.proxy)
+        .await
+        .ok()
+        .flatten()
+        .filter(|u| !u.is_empty())
+}
+
 /// One star keeps a song off this listener's radio; any other rating lifts that. Never fails the
 /// rating itself: the radio is a side effect of it.
 async fn record_radio_ban(state: &AppState, call: &SubsonicCall, username: &str, item_id: &str, stars: i32) {
@@ -359,7 +382,8 @@ fn try_parse_int(text: &str) -> Option<i32> {
 }
 
 /// Scrobbles a play. Plays of external songs go to Last.fm (when configured) and the radio's
-/// listening profile; the first id also prewarms the next songs of a queue.
+/// listening profile; once Navidrome accepts the caller, the first id also prewarms the next
+/// songs of a queue.
 ///
 /// Library songs are relayed to Navidrome too, because real scrobbling
 /// (last-played stats, the Now Playing panel) is the upstream's job. Outside
@@ -380,7 +404,12 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
     let id = ids.first().cloned().unwrap_or_default();
     let format = call.format();
 
-    if !id.is_empty() {
+    // The next songs of a radio queue start resolving only once Navidrome has accepted the
+    // caller: an unchecked request never spends YouTube lookups.
+    let prewarm_queue = || {
+        if id.is_empty() {
+            return;
+        }
         let upcoming = state.radio_queues.get_upcoming_from(&id, 16);
         if !upcoming.is_empty() {
             debug!("scrobble {id}: prewarming next {} from queue", upcoming.len());
@@ -389,7 +418,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
                 metadata.prewarm_you_tube_ids_for_song_ids(&upcoming, 8).await;
             });
         }
-    }
+    };
 
     // Library songs pass through so Navidrome's last-played/Now Playing stays accurate.
     // An outside id is not Navidrome's: relayed, it logs "data not found" on every play
@@ -429,6 +458,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
                 .relay("rest/ping", relay_parameters.iter().map(|(k, v)| (k, v)))
                 .await?;
             if is_successful_subsonic_response(&check.body, &format) {
+                prewarm_queue();
                 learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
             }
             let content_type = check
@@ -448,6 +478,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
             .relay("rest/scrobble", relay_parameters.iter().map(|(k, v)| (k, v)))
             .await?;
         if is_successful_subsonic_response(&result.body, &format) {
+            prewarm_queue();
             learn_from_scrobbles(&state, &call, &ids, &submissions, &times).await?;
         }
         let content_type = result
@@ -460,7 +491,7 @@ pub async fn scrobble(State(state): State<AppState>, req: Request) -> AppResult 
     match outcome {
         Ok(response) => Ok(response),
         // Even if upstream is briefly unhappy, return 200 so the client
-        // doesn't think scrobble is broken: the prewarm side already fired.
+        // doesn't think scrobble is broken.
         Err(RelayError::Http(_)) => Ok(state
             .subsonic_response_builder
             .create_response(&format, "scrobble")

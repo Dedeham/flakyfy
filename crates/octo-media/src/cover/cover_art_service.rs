@@ -16,10 +16,12 @@ use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use parking_lot::Mutex;
 use tracing::{debug, error, info, warn};
 
+use super::badged_covers::BadgedCovers;
 use super::cover_backgrounds;
 use super::cover_book::CoverBook;
 use super::cover_colors::{self, CoverMusic, Swatch};
 use super::cover_fonts::{self, CoverTypesetter};
+use super::cover_glyph::CoverGlyph;
 use super::cover_image;
 use super::cover_layout::{self, CoverSpec};
 use super::cover_painter::{self, CoverArt};
@@ -35,6 +37,10 @@ pub mod list_kinds {
     pub const NEW_SONGS: &str = "new-songs";
     /// Trending Songs.
     pub const TRENDING: &str = "trending";
+    /// Review and Duplicates: the lists Octo fills with songs to look at.
+    pub const NOTICE: &str = "notice";
+    /// Liked Songs.
+    pub const LIKED: &str = "liked";
 }
 
 /// A boxed future, as the seed callbacks return them.
@@ -55,6 +61,11 @@ pub struct ListCover {
     pub kind: String,
     pub seeds: Option<SeedsFn>,
     pub song_count: Option<i32>,
+    /// The words the cover shows in place of the name, when they differ from it. The design is
+    /// still picked by the name.
+    pub cover_title: Option<String>,
+    /// A glyph in place of the words: the cover of a list Octo marks for what it is.
+    pub glyph: Option<CoverGlyph>,
 }
 
 impl ListCover {
@@ -65,6 +76,8 @@ impl ListCover {
             kind: list_kinds::MIX.to_string(),
             seeds: None,
             song_count: None,
+            cover_title: None,
+            glyph: None,
         }
     }
 }
@@ -99,6 +112,8 @@ pub struct CoverArtService {
     covers_directory: Option<PathBuf>,
     book: &'static CoverBook,
     setter: CoverTypesetter,
+    /// Badged covers of outside songs, kept an hour.
+    badged: BadgedCovers,
 }
 
 impl CoverArtService {
@@ -121,6 +136,7 @@ impl CoverArtService {
             covers_directory: covers_directory.filter(|d| !d.as_os_str().to_string_lossy().trim().is_empty()),
             book: CoverBook::shipped(),
             setter: CoverTypesetter,
+            badged: BadgedCovers::default(),
         }
     }
 
@@ -183,9 +199,15 @@ impl CoverArtService {
     /// modified bytes as JPEG, or the original bytes unchanged if the logo is missing or the
     /// source image fails to decode.
     pub fn add_octo_badge(&self, original_art: &[u8]) -> Vec<u8> {
+        self.try_add_octo_badge(original_art)
+            .unwrap_or_else(|| original_art.to_vec())
+    }
+
+    /// [`Self::add_octo_badge`], None when the badge could not be drawn.
+    pub fn try_add_octo_badge(&self, original_art: &[u8]) -> Option<Vec<u8>> {
         let Some(image) = cover_image::decode(original_art) else {
             error!("Failed to composite Octo badge onto cover art");
-            return original_art.to_vec();
+            return None;
         };
         let mut image = image.to_rgba8();
         let image_size = image.width().min(image.height());
@@ -193,16 +215,31 @@ impl CoverArtService {
         // thumbnails most clients use for queue rows.
         let badge_size = (image_size as f64 * 0.28) as u32;
         let padding = (image_size as f64 * 0.03) as i64;
-        let Some(badge) = self.sized_logo(badge_size, badge_size) else {
-            return original_art.to_vec();
-        };
+        let badge = self.sized_logo(badge_size, badge_size)?;
         // Top-left placement: most album covers concentrate visual content and text along the
         // center/bottom (artist name, track titles, overlay UI from clients), so top-left is
         // consistently the "quietest" region. Also matches Western reading-order so it's the
         // first thing the eye picks up: exactly what a source indicator wants.
         image::imageops::overlay(&mut image, &badge, padding, padding);
         cover_image::encode_jpeg(&DynamicImage::ImageRgba8(image), 90)
-            .unwrap_or_else(|| original_art.to_vec())
+    }
+
+    /// The key a badged outside cover is kept under: the cover design's version and the id. The
+    /// badge goes on the same picture whatever size is asked, so the size is no part of it.
+    pub fn badged_key(&self, id: &str) -> String {
+        format!("{}|{id}", self.book.version)
+    }
+
+    /// A badged cover kept under `key`, while it is fresh.
+    pub fn kept_badged(&self, key: &str) -> Option<Vec<u8>> {
+        self.badged
+            .get(key, Instant::now())
+            .map(|bytes| bytes.as_ref().clone())
+    }
+
+    /// Keeps a badged cover under `key` for an hour.
+    pub fn keep_badged(&self, key: String, bytes: &[u8]) {
+        self.badged.put(key, Arc::new(bytes.to_vec()), Instant::now());
     }
 
     /// Returns a 600x600 placeholder JPEG with the Octo logo centered on a black background.
@@ -236,7 +273,7 @@ impl CoverArtService {
     /// call it from a background task (`spawn_blocking`).
     pub fn warm(&self) {
         let warmed = self.render(
-            &Self::spec("Warm Radio", Some(list_kinds::RADIO), Some(1), None),
+            &Self::spec("Warm Radio", None, Some(list_kinds::RADIO), Some(1), None),
             MIN_COVER_SIZE,
             true,
         );
@@ -258,13 +295,39 @@ impl CoverArtService {
 
     /// A list's cover from its name alone: its genre's or decade's color, or its design's own.
     pub fn get_named_cover(&self, name: &str, label: Option<&str>, size: Option<i32>, kind: &str) -> Vec<u8> {
-        let list = ListCover {
-            name: name.to_string(),
-            label: label.map(str::to_string),
-            kind: kind.to_string(),
-            seeds: None,
-            song_count: None,
-        };
+        self.named(
+            ListCover {
+                name: name.to_string(),
+                label: label.map(str::to_string),
+                kind: kind.to_string(),
+                seeds: None,
+                song_count: None,
+                cover_title: None,
+                glyph: None,
+            },
+            size,
+        )
+    }
+
+    /// A marked list's cover: a painted background picked by its name, with one white glyph in
+    /// the middle and no words. A picture in the covers folder named after it still wins.
+    pub fn get_glyph_cover(&self, name: &str, kind: &str, glyph: CoverGlyph, size: Option<i32>) -> Vec<u8> {
+        self.named(
+            ListCover {
+                name: name.to_string(),
+                label: None,
+                kind: kind.to_string(),
+                seeds: None,
+                song_count: None,
+                cover_title: None,
+                glyph: Some(glyph),
+            },
+            size,
+        )
+    }
+
+    /// A list's cover from what it says of itself, with no seed songs.
+    fn named(&self, list: ListCover, size: Option<i32>) -> Vec<u8> {
         let (size, shown, lookup) = Self::names(&list, size);
         if let Some(custom) = self.override_cover(&shown, &lookup, size) {
             return custom;
@@ -333,15 +396,23 @@ impl CoverArtService {
         seeded: Option<CoverMusic>,
     ) -> Vec<u8> {
         let music = seeded.or_else(|| self.fallback_music(shown, lookup));
-        let spec = Self::spec(shown, Some(&list.kind), list.song_count, music);
+        let mut spec = Self::spec(
+            shown,
+            list.cover_title.as_deref(),
+            Some(&list.kind),
+            list.song_count,
+            music,
+        );
+        spec.glyph = list.glyph;
         let background = cover_backgrounds::choose(self.book, spec.music.as_ref(), &spec.id);
         let key = format!(
-            "{}\n{}\n{}\n{}\n{}\n{background}\n{size}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{background}\n{size}",
             self.book.version,
             spec.id,
             spec.name,
             spec.line.as_deref().unwrap_or(""),
-            spec.footer.as_deref().unwrap_or("")
+            spec.footer.as_deref().unwrap_or(""),
+            spec.glyph.map_or("", CoverGlyph::name)
         );
         if let Some(drawn) = self.named_covers.lock().get(&key) {
             return drawn.clone();
@@ -381,29 +452,43 @@ impl CoverArtService {
         Some(CoverMusic::of(hue, chroma, GENRE_LIGHTNESS))
     }
 
-    /// What goes on a list's cover. The name is the list's own, less a trailing "Radio" on a
-    /// station or "Mix" on a mix, since the light line under it says which it is; "Your Mix"
-    /// stays whole. A name that still ends in a word saying what it is ("Your Mix", "Discovery
-    /// Mix") has no light line, as the name already says it. The foot line is its song count
-    /// when known. The design is picked by the list's full name, the same on every request.
+    /// What goes on a list's cover. The name is the list's own, less a trailing "Radio", "Chart"
+    /// or "Mix" whatever kind of list it is, and the light line under it says that word
+    /// ("Station" for Radio): "Discovery Mix" reads "Discovery" over "Mix". "Your Mix" and the
+    /// other possessives stay whole. With no such word the light line says the list's kind. A
+    /// name that still ends in a word saying what it is ("Your Mix") has no light line, as the
+    /// name already says it. `cover_title`, when given, is shown as it is in place of the name.
+    /// The foot line is its song count when known. The design is picked by the list's full name,
+    /// the same on every request.
     pub(crate) fn spec(
         shown: &str,
+        cover_title: Option<&str>,
         kind: Option<&str>,
         song_count: Option<i32>,
         music: Option<CoverMusic>,
     ) -> CoverSpec {
-        let (line, suffix) = match kind {
-            Some(list_kinds::RADIO) => ("Station", " Radio"),
-            Some(list_kinds::CHART) => ("Chart", " Chart"),
-            Some(list_kinds::NEW_SONGS) => ("New", " New"),
-            Some(list_kinds::TRENDING) => ("Trending", " Trending"),
-            _ => ("Mix", " Mix"),
+        let mut line = match kind {
+            Some(list_kinds::RADIO) => "Station",
+            Some(list_kinds::CHART) => "Chart",
+            Some(list_kinds::NEW_SONGS) => "New",
+            Some(list_kinds::TRENDING) => "Trending",
+            _ => "Mix",
         };
         let mut title = shown;
-        if let Some(head) = strip_suffix_ignore_case(shown, suffix) {
-            let head = head.trim();
-            if utf16_len(head) > 1 && !POSSESSIVES.iter().any(|p| eq_ignore_case(p, head)) {
-                title = head;
+        match cover_title.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(given) => title = given,
+            None => {
+                for (suffix, word) in KIND_SUFFIXES {
+                    let Some(head) = strip_suffix_ignore_case(shown, suffix) else {
+                        continue;
+                    };
+                    let head = head.trim();
+                    if utf16_len(head) > 1 && !POSSESSIVES.iter().any(|p| eq_ignore_case(p, head)) {
+                        title = head;
+                        line = word;
+                        break;
+                    }
+                }
             }
         }
         CoverSpec {
@@ -416,6 +501,7 @@ impl CoverArtService {
             },
             footer: Self::footer(song_count),
             music,
+            glyph: None,
         }
     }
 
@@ -449,7 +535,13 @@ impl CoverArtService {
             side: size,
             background: cover_backgrounds::choose(self.book, spec.music.as_ref(), &spec.id),
             orientation: cover_backgrounds::orientation(self.book, &spec.id),
-            words: cover_layout::words(spec, size, &self.setter, self.book),
+            // A glyph stands in for every word.
+            words: if spec.glyph.is_some() {
+                Vec::new()
+            } else {
+                cover_layout::words(spec, size, &self.setter, self.book)
+            },
+            glyph: spec.glyph,
         }
     }
 
@@ -585,6 +677,9 @@ impl CoverArtService {
 }
 
 const POSSESSIVES: &[&str] = &["Your", "My", "Our"];
+
+/// Name endings that say what a list is, and the word the light line uses for each.
+const KIND_SUFFIXES: &[(&str, &str)] = &[(" Radio", "Station"), (" Chart", "Chart"), (" Mix", "Mix")];
 
 /// `n.ToString("N0", CultureInfo.InvariantCulture)`: thousands split by commas.
 fn thousands(n: i32) -> String {

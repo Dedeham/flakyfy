@@ -209,6 +209,70 @@ async fn background_durations_run_before_the_video_prewarm() {
         .expect("open");
 }
 
+/// track.search answers in fuzzy-relevance order; the rows are built most listened first, the
+/// live take of a song is folded into the song, and the row in another script comes last.
+#[tokio::test]
+async fn search_rows_are_built_most_listened_first() {
+    let rows = [
+        ("Skyfall", "Adele", 1_430_000),
+        ("Rolling in the Deep", "Adele", 2_680_000),
+        ("Rolling in the Deep (Live)", "Adele", 9_000),
+        ("Привет", "Адель", 5_000_000),
+        ("Someone Like You", "Adele", 2_200_000),
+    ];
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(move |request: &Request| {
+            let tracks: Vec<String> = rows
+                .iter()
+                .map(|(name, artist, listeners)| {
+                    format!(r#"{{"name":"{name}","artist":"{artist}","listeners":"{listeners}"}}"#)
+                })
+                .collect();
+            let body = if request.url.to_string().contains("method=track.search") {
+                format!(
+                    r#"{{"results":{{"trackmatches":{{"track":[{}]}}}}}}"#,
+                    tracks.join(",")
+                )
+            } else {
+                r#"{"toptracks":{"track":[]}}"#.to_string()
+            };
+            ResponseTemplate::new(200).set_body_string(body)
+        })
+        .mount(&server)
+        .await;
+    let settings = Arc::new(SettingsStore::for_tests(AppSettings {
+        last_fm: LastFmSettings {
+            api_key: "key".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    let last_fm = Arc::new(LastFmService::with_base_url(
+        settings,
+        &format!("{}/", server.uri()),
+    ));
+    let metadata = Arc::new(FakeMetadata::default());
+    for (title, artist, _) in rows {
+        metadata.hits.lock().insert(
+            (artist.into(), title.into()),
+            Song {
+                artist: artist.into(),
+                title: title.into(),
+                ..Default::default()
+            },
+        );
+    }
+    let search = ExternalSearchService::new(metadata, Some(last_fm), waiting(false));
+
+    let songs = search.get("adele").await;
+
+    let titles: Vec<&str> = songs.iter().map(|song| song.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Rolling in the Deep", "Someone Like You", "Skyfall", "Привет"]
+    );
+}
 // ---- Rust-only ---------------------------------------------------------------------------
 
 /// No Last.fm key, or a blank query, is no discovery; a blank album query or limit is none.

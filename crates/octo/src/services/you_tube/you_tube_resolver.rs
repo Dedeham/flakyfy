@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use octo_core::settings::SettingsStore;
+use octo_core::soulseek::StreamFacts;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use tracing::{debug, warn};
@@ -14,6 +15,9 @@ pub struct YouTubeHit {
     pub title: Option<String>,
     pub duration: Option<i32>,
     pub channel: Option<String>,
+    /// The audio stream the shim picked for this video, when the run that found it had one
+    /// (/search does; /meta never picks a stream).
+    pub stream: StreamFacts,
 }
 
 /// An open `/stream` response. The caller owns it and reads the body from `response`
@@ -177,6 +181,33 @@ impl YouTubeResolver {
         outcome.ok().flatten()
     }
 
+    /// What the shim's /stream would send for `video_id`: its format, container, bit rate and
+    /// exact size. The shim resolves the video when it has not yet (as /stream would, so a play
+    /// after this is a cache hit). None when the shim could not.
+    pub async fn facts(&self, video_id: &str, background: bool) -> Option<StreamFacts> {
+        if video_id.trim().is_empty() {
+            return None;
+        }
+        let mut url = format!("{}/facts?id={}", self.base_url, escape(video_id));
+        if background {
+            url.push_str("&bg=1");
+        }
+        let outcome: anyhow::Result<Option<StreamFacts>> = async {
+            let resp = self.search_client.get(&url).send().await?;
+            if !resp.status().is_success() {
+                debug!("shim /facts HTTP {} for {video_id}", resp.status().as_u16());
+                return Ok(None);
+            }
+            let root: Value = serde_json::from_str(&resp.text().await?)?;
+            Ok(Some(parse_stream(&root)).filter(|facts| !facts.is_empty()))
+        }
+        .await;
+        outcome.unwrap_or_else(|e| {
+            warn!("shim /facts failed for {video_id}: {e}");
+            None
+        })
+    }
+
     /// Opens a streaming connection to the shim's /stream endpoint. The shim
     /// proxies bytes from YouTube's CDN to us; we hand the resulting stream
     /// off to the handler, which forwards it to the Subsonic client.
@@ -203,10 +234,11 @@ impl YouTubeResolver {
                 return None;
             }
         };
-        // Accept 200 (full body) and 206 (partial content). Anything else
-        // means the upstream/shim couldn't satisfy the request.
+        // Accept 200 (full body), 206 (partial content) and 416 (a range past the end, whose
+        // `bytes */<size>` is the client's answer). Anything else means the upstream/shim
+        // couldn't satisfy the request.
         let status = resp.status().as_u16();
-        if status != 200 && status != 206 {
+        if !matches!(status, 200 | 206 | 416) {
             warn!("shim /stream HTTP {status} for {video_id}");
             return None;
         }
@@ -315,7 +347,39 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
         title,
         duration,
         channel,
+        stream: parse_stream(root),
     }))
+}
+
+/// The stream facts in a /search or /facts answer (`size`, `itag`, `ext`, `abr`, and, once a play
+/// measured it, `track_gain` and `track_peak`). A field that is missing or not what it should be
+/// is left unknown rather than failing the answer.
+fn parse_stream(root: &Value) -> StreamFacts {
+    let text = |name: &str| {
+        root.get(name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let number = |name: &str| root.get(name).and_then(Value::as_f64).filter(|n| n.is_finite());
+    let track_gain = number("track_gain");
+    StreamFacts {
+        track_gain,
+        // A peak means nothing without the gain it was measured with.
+        track_peak: track_gain.and(number("track_peak")).filter(|peak| *peak > 0.0),
+        size: root.get("size").and_then(Value::as_u64).filter(|size| *size > 0),
+        // Reported, not played: only the bytes of a play confirm it.
+        size_confirmed: false,
+        itag: text("itag"),
+        ext: text("ext"),
+        bit_rate: root
+            .get("abr")
+            .and_then(Value::as_f64)
+            .map(f64::round)
+            .filter(|kbps| *kbps > 0.0 && *kbps < f64::from(i32::MAX))
+            .map(|kbps| kbps as i32),
+    }
 }
 
 #[cfg(test)]
@@ -391,9 +455,96 @@ mod tests {
                 title: Some("Emotion".into()),
                 duration: Some(417),
                 channel: Some("Daft Punk - Topic".into()),
+                stream: StreamFacts::default(),
             })
         );
         assert!(resolver.search("  ", None, false).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn search_reads_the_stream_the_shim_picked() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "Daft Punk Emotion"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"video_id":"abc","duration":417,"size":6755585,"itag":"140","ext":"m4a","abr":129.486}"#,
+            ))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/search"))
+            .and(query_param("q", "odd stream"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"video_id":"x","size":"big","itag":140,"abr":null}"#),
+            )
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let hit = resolver
+            .search("Daft Punk Emotion", None, false)
+            .await
+            .expect("a hit");
+        assert_eq!(
+            hit.stream,
+            StreamFacts {
+                size: Some(6_755_585),
+                itag: Some("140".into()),
+                ext: Some("m4a".into()),
+                bit_rate: Some(129),
+                ..Default::default()
+            }
+        );
+        // Odd stream fields are unknown, and the hit still counts.
+        let odd = resolver.search("odd stream", None, false).await.expect("a hit");
+        assert_eq!(odd.stream, StreamFacts::default());
+    }
+
+    #[tokio::test]
+    async fn facts_asks_for_the_video_in_the_background_and_reads_its_stream() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/facts"))
+            .and(query_param("id", "abc"))
+            .and(query_param("bg", "1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    r#"{"video_id":"abc","size":7012345,"itag":"251","ext":"webm","abr":160}"#,
+                ),
+            )
+            .mount(&shim)
+            .await;
+        Mock::given(path("/facts"))
+            .and(query_param("id", "gone"))
+            .respond_with(ResponseTemplate::new(502))
+            .mount(&shim)
+            .await;
+        Mock::given(path("/facts"))
+            .and(query_param("id", "empty"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"video_id":"empty"}"#))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let facts = resolver.facts("abc", true).await.expect("facts");
+        assert_eq!(facts.size, Some(7_012_345));
+        assert_eq!((facts.track_gain, facts.track_peak), (None, None));
+        assert_eq!(facts.itag.as_deref(), Some("251"));
+        assert_eq!(facts.bit_rate, Some(160));
+        assert!(resolver.facts("gone", true).await.is_none());
+        assert!(resolver.facts("empty", true).await.is_none());
+        assert!(resolver.facts(" ", true).await.is_none());
+    }
+
+    #[test]
+    fn facts_read_the_measured_replay_gain_and_its_peak() {
+        let facts = parse_stream(&serde_json::json!({
+            "video_id": "abc", "size": 6755585, "track_gain": -10.0, "track_peak": 1.135011
+        }));
+        assert_eq!(facts.track_gain, Some(-10.0));
+        assert_eq!(facts.track_peak, Some(1.135011));
+        // A silent track has no peak; a peak alone is not taken.
+        let silent = parse_stream(&serde_json::json!({"track_gain": 3.5, "track_peak": null}));
+        assert_eq!((silent.track_gain, silent.track_peak), (Some(3.5), None));
+        let peak_only = parse_stream(&serde_json::json!({"track_peak": 0.9}));
+        assert_eq!(peak_only, StreamFacts::default());
     }
 
     #[tokio::test]
@@ -467,6 +618,23 @@ mod tests {
         );
         assert!(resolver.open_stream("gone", None).await.is_none());
         assert!(resolver.open_stream(" ", None).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn open_stream_hands_back_a_range_past_the_end_with_the_size() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/stream"))
+            .and(query_param("id", "abc"))
+            .respond_with(ResponseTemplate::new(416).insert_header("content-range", "bytes */1000"))
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+        let stream = resolver
+            .open_stream("abc", Some("bytes=5000-"))
+            .await
+            .expect("the refusal is an answer");
+        assert_eq!(stream.status_code, 416);
+        assert_eq!(stream.content_range.as_deref(), Some("bytes */1000"));
     }
 
     #[tokio::test]

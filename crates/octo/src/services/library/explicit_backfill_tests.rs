@@ -300,6 +300,7 @@ fn navidrome_entry(path: &Path) -> NavidromeSongEntry {
         id: Some(format!("nd-{}", file_stem(&path.to_string_lossy()))),
         duration: None,
         explicit_status: Some(String::new()),
+        missing: false,
     }
 }
 

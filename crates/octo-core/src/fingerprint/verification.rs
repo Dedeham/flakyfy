@@ -117,7 +117,8 @@ pub struct VerificationResult {
 
     pub reason: InconclusiveReason,
 
-    /// The recording that agreed with the request. Set only when Confirmed.
+    /// The recording that agreed with the request. Set when Confirmed, and when the right song
+    /// and artist were doubted only for their length (LengthOff), to say how long it runs.
     pub r#match: Option<AcoustIdRecording>,
 
     /// Kept so a person's confirmation can be sent back to AcoustID (#47).
@@ -158,6 +159,7 @@ impl VerificationResult {
                 InconclusiveReason::NoEntry
                     | InconclusiveReason::BelowThreshold
                     | InconclusiveReason::SourceDisagreed
+                    | InconclusiveReason::LengthOff
             )
     }
 
@@ -274,6 +276,8 @@ mod tests {
             (InconclusiveReason::NoEntry, true),
             (InconclusiveReason::BelowThreshold, true),
             (InconclusiveReason::SourceDisagreed, true),
+            (InconclusiveReason::LengthOff, true),
+            (InconclusiveReason::SoundsLikeAnother, false),
         ];
         for (reason, expected) in cases {
             let result = VerificationResult {

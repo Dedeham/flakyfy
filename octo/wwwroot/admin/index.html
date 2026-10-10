@@ -866,7 +866,7 @@
               <input class="set-input" name="LastFm.GenreStationCount" type="number" min="0" max="5" />
             </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Discovery balance</div><div class="set-info-d">Percentage of Your Mix reserved for less-familiar recommendations.</div></div>
+              <div class="set-info"><div class="set-info-t">Discovery balance</div><div class="set-info-d">Percentage of Your Mix reserved for less-familiar recommendations. Discovery Mix keeps the same share of songs from your library.</div></div>
               <input class="set-input" name="LastFm.DiscoveryPercent" type="number" min="0" max="100" />
             </div>
             <details class="radio-advanced">
@@ -890,6 +890,14 @@
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">ListenBrainz</div><div class="set-info-d">Songs people play alongside it, from ListenBrainz's open listening data. With a ListenBrainz token, its radio also fills artist and genre stations.</div></div>
               <label class="switch"><input type="checkbox" name="RadioSources.ListenBrainz" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info"><div class="set-info-t">ListenBrainz radio difficulty</div><div class="set-info-d">How far ListenBrainz's radio reaches for artist and genre stations. Easy keeps to close artists and well-known songs; medium and hard go further out. Needs a ListenBrainz token. Default: easy.</div></div>
+              <select class="set-input" name="RadioSources.ListenBrainzRadioMode">
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
             </div>
             <div class="set-row">
               <div class="set-info"><div class="set-info-t">Sounds alike</div><div class="set-info-d">Library songs that sound like it. Octo reads every song once to learn how it sounds, one song at a time and only while nothing is downloading.</div></div>
@@ -1273,6 +1281,70 @@
           </div>
         </div>
 
+        <div class="set-section" id="library-tidy">
+          <div class="set-head">
+            <h3 class="set-title">Tidy artists</h3>
+            <p class="set-desc">New downloads are filed under their first artist, with one spelling per artist and guests listed in their own tag. This brings music already in your library in line. Nothing is written until you have seen a preview.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Which files</div>
+                <div class="set-info-d">Every file is read either way, because the spelling most of your library uses is the one that wins. Only downloads Octo made are changed, or the whole library, your own rips and purchases included.</div>
+                <div class="set-info-more">The whole library asks you to type the music path to confirm.</div>
+              </div>
+              <select class="set-input" id="library-tidy-scope">
+                <option value="OctoDownloads">Downloads Octo made</option>
+                <option value="WholeLibrary">The whole library</option>
+              </select>
+              <div class="set-info-d scope-hint" id="library-tidy-scope-hint" role="status" hidden>You changed which files. Preview again before applying.</div>
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <div class="set-info-t">Leave out</div>
+                <div class="set-info-d">Folders the tidy never changes, one per line, as they sit under the music folder (for example <code>Various Artists</code>).</div>
+              </div>
+              <textarea class="set-input" id="library-tidy-excluded" rows="3" spellcheck="false"></textarea>
+            </div>
+            <div class="notice notice-warn">
+              <strong>Back up your music folder first.</strong> Apply rewrites artist tags, waits for Navidrome to finish a scan that saw them, and only then moves whole album folders, so each song keeps its stars, plays and playlist entries. That needs Navidrome 0.55 or newer. A rename marked with a warning changes which artist Navidrome files the songs under, and stars and ratings on the old artist are lost for every user, so those rows only run when you tick them. Undo moves folders back and restores the artist tags.
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Preview</div><div class="set-info-d">Reads every file and lists what would change and what is left alone, with the reason. Writes nothing. Folders whose songs say nothing are looked up on MusicBrainz, about one a second, so a large library may need a second preview to finish asking.</div></div>
+              <button class="btn btn-ghost" type="button" id="library-tidy-preview">Preview changes</button>
+            </div>
+            <div id="library-tidy-status" class="set-row stack"></div>
+            <div class="set-row" id="library-tidy-filter" hidden>
+              <div class="set-info"><div class="set-info-t">Show</div></div>
+              <select class="set-input" id="library-tidy-kind">
+                <option value="Changes">Every change</option>
+                <option value="Split">Folders split</option>
+                <option value="Respell">Spellings</option>
+                <option value="Rename">Renames that lose stars</option>
+                <option value="Guest">Guests</option>
+                <option value="Skip">Left alone</option>
+              </select>
+            </div>
+            <div id="library-tidy-results"></div>
+            <div class="set-row" id="library-tidy-pager" hidden>
+              <div class="set-info-d" id="library-tidy-page-label"></div>
+              <div class="genre-preset-actions">
+                <button class="btn btn-ghost" type="button" id="library-tidy-prev">Previous</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-next">Next</button>
+              </div>
+            </div>
+            <div class="set-row" id="library-tidy-actions">
+              <div class="set-info"><div class="set-info-t">Apply</div><div class="set-info-d" id="library-tidy-apply-note">Once a preview has finished, for the same files it previewed.</div></div>
+              <div class="genre-preset-actions">
+                <button class="btn" type="button" id="library-tidy-apply" hidden>Apply these changes</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-resume" hidden>Resume</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-cancel" hidden>Cancel</button>
+                <button class="btn btn-ghost" type="button" id="library-tidy-undo" hidden>Undo the last tidy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Mark explicit songs</h3>
@@ -1383,6 +1455,14 @@
               <div class="set-info"><div class="set-info-t">Deep Cuts</div><div class="set-info-d">Songs played once or never, from the artists each listener plays most.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.DeepCuts" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Liked Songs</div><div class="set-info-d">Every song each listener hearted, newest first, listed before their other playlists.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.LikedSongs" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Liked Songs name</div><div class="set-info-d">What the list is called in every app.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.LikedSongsName" type="text" maxlength="80" placeholder="Liked Songs" />
+            </div>
             <details class="set-more">
               <summary>How far back</summary>
               <div class="set-row stack">
@@ -1418,8 +1498,16 @@
               <div class="set-info"><div class="set-info-t">A mix per decade</div><div class="set-info-d">The 1950s onward, from the year your files carry.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Decades" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Country mixes</div><div class="set-info-d">A mix per country your artists are from, such as Spain Mix, as MusicBrainz knows them.</div><div class="set-info-more">Octo looks the artists up in the background, a few hundred every six hours, so the first country mixes take a while. Downloads being checked always go first.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.CountryMixes" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre or decade</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
+              <div class="set-info"><div class="set-info-t">Countries <span class="set-opt">two-letter codes</span></div><div class="set-info-d">Only these countries get a mix, such as ES, JP. Empty means any country with enough songs.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.Countries" type="text" maxlength="200" placeholder="Any country" />
+            </div>
+            <div class="set-row stack">
+              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre, decade or country</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
               <input class="set-input" name="GeneratedPlaylists.NameFormat" maxlength="60" placeholder="{0} Mix" />
             </div>
             <details class="set-more">
@@ -1434,6 +1522,10 @@
               <div class="set-row">
                 <div class="set-info"><div class="set-info-t">At most <span class="set-opt">mixes</span></div><div class="set-info-d">The largest first.</div></div>
                 <input class="set-input" name="GeneratedPlaylists.MaxPlaylists" type="number" min="1" max="100" data-number="true" />
+              </div>
+              <div class="set-row">
+                <div class="set-info"><div class="set-info-t">At most <span class="set-opt">country mixes</span></div><div class="set-info-d">The largest first, on top of the genre and decade mixes, so a country never takes a genre's place.</div></div>
+                <input class="set-input" name="GeneratedPlaylists.MaxCountryPlaylists" type="number" min="1" max="100" data-number="true" />
               </div>
             </details>
           </form>
@@ -2358,7 +2450,7 @@
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">The actions</h3>
-            <p class="set-desc">Rename each action, switch it on, and choose the star rating that asks for it; 0 stars leaves it playlist-only. Keep removes nothing: it answers Review with &ldquo;this is right&rdquo;.</p>
+            <p class="set-desc">Seven actions. Rename each one, switch it on, and choose the star rating that asks for it; 0 stars leaves it playlist-only. Keep removes nothing: it answers Review with &ldquo;this is right&rdquo;. Wrong lyrics and Wrong cover change only the lyrics or the album&rsquo;s cover, never the song itself, and start with no star.</p>
           </div>
           <form data-section="library-actions-list" class="set-card" id="library-actions-list-form">
             <div id="library-action-list" class="genre-mapping-list"></div>
@@ -2533,6 +2625,19 @@
                 <label class="set-info-t" for="f-lidarr-timeout">Import timeout <span class="set-opt">seconds</span></label>
               </div>
               <input class="set-input" id="f-lidarr-timeout" name="Lidarr.ImportTimeoutSeconds" type="number" min="60" step="60" />
+            </div>
+            <div class="set-row stack">
+              <div class="set-info">
+                <label class="set-info-t" for="f-lidarr-webhook">Webhook password <span class="set-opt">optional</span></label>
+                <div class="set-info-d">Lets Lidarr tell Octo the moment it imports an album. Leave it blank to keep the webhook off.</div>
+                <div class="set-info-more">In Lidarr, open Settings, then Connect, and add a Webhook. Paste the address below as its URL, keep the method POST, type any user name and this password, and turn on On Release Import. A heart then hears about the import at once, and an album Lidarr imports after Octo stopped waiting for it is still added to your library.</div>
+              </div>
+              <input class="set-input" id="f-lidarr-webhook" name="Lidarr.WebhookSecret" type="password" autocomplete="new-password" />
+              <div class="callout-address">
+                <span class="callout-address-label">Webhook address</span>
+                <code id="lidarr-webhook-address">http://this-host:5274/api/lidarr/webhook</code>
+                <button type="button" class="btn btn-ghost" id="copy-lidarr-webhook-address"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+              </div>
             </div>
             <div class="set-row stack">
               <div class="set-info-d" id="lidarr-options-status" role="status" aria-live="polite"></div>

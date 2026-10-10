@@ -15,8 +15,9 @@ use futures::FutureExt;
 use octo_core::common::dotnet::{self, is_blank};
 use octo_core::common::{SongIdentity, playlist_id_helper};
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind};
+use octo_core::settings::NoticeKind;
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
-use octo_media::cover::{CoverSeed, ListCover, list_kinds};
+use octo_media::cover::{CoverGlyph, CoverSeed, ListCover, list_kinds};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
@@ -177,10 +178,14 @@ async fn play_external(
     }
 
     warn!("Direct stream not available for {id}");
-    Ok(state
+    // A 404 with the Subsonic error body: a player that only reads the status still sees the
+    // play failed, instead of trying to decode an error envelope as audio.
+    let mut response = state
         .subsonic_response_builder
         .create_error(format, 70, "No playable source found for this track")
-        .into_response())
+        .into_response();
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    Ok(response)
 }
 
 /// Wait for a queued acquisition and serve the file.
@@ -272,6 +277,20 @@ async fn try_direct_stream(
     // every external song from the queue.
     let range_header = call.header("Range");
 
+    // A range that starts past the end of a stream whose size a play confirmed is refused here,
+    // the way a file would refuse it, so a player probing the end learns the length without a
+    // relay. A size a lookup only reported is not refused on.
+    if let Some(size) = state
+        .external_id_registry
+        .stream_facts(external_id)
+        .filter(|facts| facts.size_confirmed)
+        .and_then(|facts| facts.size)
+        && let Some(range) = range_header.as_deref()
+        && matches!(parse_range(range, size), RangeOutcome::Unsatisfiable)
+    {
+        return Ok(Some(range_not_satisfiable(size)));
+    }
+
     let Some(direct) = state
         .download_service
         .get_direct_stream(
@@ -290,6 +309,12 @@ async fn try_direct_stream(
         direct.quality.as_deref().unwrap_or(""),
         direct.status_code
     );
+    // The shim measures a played song's loudness; ask for it once it has had time to.
+    if matches!(direct.status_code, 200 | 206)
+        && is_first_byte_request(call.method().as_str(), range_header.as_deref())
+    {
+        state.stream_size_warmer.after_play(external_id);
+    }
 
     // Manual stream copy: the network stream isn't seekable, so the upstream's status code +
     // Content-Range are forwarded verbatim and the bytes copied to the response body.
@@ -309,6 +334,18 @@ async fn try_direct_stream(
         headers.insert(header::CONTENT_RANGE, range);
     }
     Ok(Some(response))
+}
+
+/// 416 with `Content-Range: bytes */<size>`, as a file past its end answers.
+fn range_not_satisfiable(size: u64) -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+    let headers = response.headers_mut();
+    if let Ok(range) = HeaderValue::from_str(&format!("bytes */{size}")) {
+        headers.insert(header::CONTENT_RANGE, range);
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    response
 }
 
 /// `File(File.OpenRead(path), GetContentType(path), enableRangeProcessing: true)`: the file
@@ -335,16 +372,7 @@ async fn serve_file(call: &SubsonicCall, path: &str) -> Result<Response, AppErro
             to - from + 1,
             Some(format!("bytes {from}-{to}/{length}")),
         ),
-        RangeOutcome::Unsatisfiable => {
-            let mut response = Response::new(Body::empty());
-            *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
-            let headers = response.headers_mut();
-            if let Ok(range) = HeaderValue::from_str(&format!("bytes */{length}")) {
-                headers.insert(header::CONTENT_RANGE, range);
-            }
-            headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
-            return Ok(response);
-        }
+        RangeOutcome::Unsatisfiable => return Ok(range_not_satisfiable(length)),
     };
 
     if from > 0 {
@@ -403,6 +431,30 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(serve_placeholder(&state, true).await);
     }
 
+    // Review and Duplicates: Octo's painted cover with the notice's glyph, picked by the
+    // notice's title. getPlaylists hands these ids out for the listener's notice playlists.
+    if let Some(kind) = id
+        .strip_prefix(super::playlists::NOTICE_COVER_PREFIX)
+        .and_then(super::playlists::notice_kind)
+    {
+        let title = state.settings.current().library_actions.notice_title(kind);
+        let glyph = match kind {
+            NoticeKind::Review => CoverGlyph::Magnifier,
+            NoticeKind::Duplicates => CoverGlyph::Copies,
+        };
+        let service = Arc::clone(&state.cover_art_service);
+        let size = requested_cover_size(&call);
+        let bytes = tokio::task::spawn_blocking(move || {
+            service.get_glyph_cover(&title, list_kinds::NOTICE, glyph, size)
+        })
+        .await
+        .unwrap_or_default();
+        if bytes.is_empty() {
+            return Ok(serve_placeholder(&state, false).await);
+        }
+        return Ok(file(bytes, "image/jpeg"));
+    }
+
     // Generated radio IDs already resolve through the per-user state store,
     // so station artwork follows the current station name without creating
     // a parallel metadata record or exposing that name in the cover ID.
@@ -417,6 +469,8 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(seeds) }.boxed()
             })),
             song_count: Some(i32::try_from(station.tracks.len()).unwrap_or(i32::MAX)),
+            cover_title: None,
+            glyph: None,
         };
         let bytes = state
             .cover_art_service
@@ -425,9 +479,29 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(file(bytes, "image/jpeg"));
     }
 
+    // Liked Songs: Octo's painted cover with a heart, picked by its name.
+    let cover_user = call.param("u").to_string();
+    if !cover_user.is_empty() && id == state.generated_playlists.liked_id(&cover_user) {
+        let name = state
+            .settings
+            .current()
+            .generated_playlists
+            .effective_liked_songs_name();
+        let service = Arc::clone(&state.cover_art_service);
+        let size = requested_cover_size(&call);
+        let bytes = tokio::task::spawn_blocking(move || {
+            service.get_glyph_cover(&name, list_kinds::LIKED, CoverGlyph::Heart, size)
+        })
+        .await
+        .unwrap_or_default();
+        if bytes.is_empty() {
+            return Ok(serve_placeholder(&state, false).await);
+        }
+        return Ok(file(bytes, "image/jpeg"));
+    }
+
     // A mix is the listener's own library, so its cover carries no Octo mark: the logo says
     // where a result came from, and this came from them.
-    let cover_user = call.param("u").to_string();
     if let Some(mix) = state.generated_playlists.find(&cover_user, &id) {
         let song_count = state
             .generated_playlists
@@ -450,6 +524,8 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(mix_cover_seeds(&state, &proxy, &user, &mix, &parameters).await) }.boxed()
             })),
             song_count,
+            cover_title: None,
+            glyph: None,
         };
         let bytes = state
             .cover_art_service
@@ -477,6 +553,8 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 async move { Ok(seeds) }.boxed()
             })),
             song_count,
+            cover_title: chart_cover_title(&chart.chart).map(str::to_string),
+            glyph: None,
         };
         let bytes = state
             .cover_art_service
@@ -504,7 +582,11 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
     // plain, and a missing one is a 404 it draws its own empty tile for. Every other
     // client keeps the badge, the only sign it gets that a song came from Octo's search.
     let plain = draws_its_own_marks(&call);
+    let badged_key = state.cover_art_service.badged_key(&id);
     if let Some(routing) = state.external_id_registry.lookup(&id) {
+        if !plain && let Some(kept) = state.cover_art_service.kept_badged(&badged_key) {
+            return Ok(file(kept, "image/jpeg"));
+        }
         let routing = routing.snapshot();
         let raw = state.cover_art_aggregator.get_cover(&routing, false).await;
         let Some(raw) = raw else {
@@ -520,7 +602,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         let watermarked = if plain {
             raw.to_vec()
         } else {
-            badge(&state, raw.to_vec()).await
+            match badge(&state, raw.to_vec()).await {
+                Some(badged) => {
+                    state.cover_art_service.keep_badged(badged_key, &badged);
+                    badged
+                }
+                None => raw.to_vec(),
+            }
         };
         return Ok(file(watermarked, "image/jpeg"));
     }
@@ -538,6 +626,9 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
     // compatibility with any in-flight clients).
     let (is_external, cover_provider, kind, cover_external_id) = state.local_library.parse_external_id(&id);
     if is_external {
+        if !plain && let Some(kept) = state.cover_art_service.kept_badged(&badged_key) {
+            return Ok(file(kept, "image/jpeg"));
+        }
         let provider = cover_provider.unwrap_or_default();
         let external_id = cover_external_id.unwrap_or_default();
         let metadata = &state.music_metadata;
@@ -571,7 +662,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
                 let watermarked = if plain {
                     image_bytes
                 } else {
-                    badge(&state, image_bytes).await
+                    match badge(&state, image_bytes.clone()).await {
+                        Some(badged) => {
+                            state.cover_art_service.keep_badged(badged_key, &badged);
+                            badged
+                        }
+                        None => image_bytes,
+                    }
                 };
                 return Ok(file(watermarked, "image/jpeg"));
             }
@@ -625,13 +722,24 @@ async fn missing_cover(state: &AppState, plain: bool) -> Response {
     }
 }
 
-/// `_coverArtService.AddOctoBadge(raw)`, off the async threads.
-async fn badge(state: &AppState, raw: Vec<u8>) -> Vec<u8> {
+/// `_coverArtService.AddOctoBadge(raw)`, off the async threads. None when the badge could not
+/// be drawn: the caller sends the picture as it came, and does not keep it.
+async fn badge(state: &AppState, raw: Vec<u8>) -> Option<Vec<u8>> {
     let service = Arc::clone(&state.cover_art_service);
-    let fallback = raw.clone();
-    tokio::task::spawn_blocking(move || service.add_octo_badge(&raw))
+    tokio::task::spawn_blocking(move || service.try_add_octo_badge(&raw))
         .await
-        .unwrap_or(fallback)
+        .ok()
+        .flatten()
+}
+
+/// The words a chart's cover shows in place of its name, when they differ: Popular right now
+/// says "Popular".
+pub(crate) fn chart_cover_title(chart: &str) -> Option<&'static str> {
+    matches!(
+        octo_core::charts::chart_settings::kind(chart),
+        Some(octo_core::charts::chart_settings::ChartKind::Overall)
+    )
+    .then_some(octo_core::charts::chart_settings::OVERALL_COVER_TITLE)
 }
 
 /// The size a client asked a cover at, if it asked.

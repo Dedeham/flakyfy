@@ -311,6 +311,7 @@ fn a_run_says_what_was_done_what_was_not_and_how_to_put_it_back() {
         )],
         rehearsed: false,
         stopped: false,
+        notes: Vec::new(),
     };
 
     assert_eq!(outcome.removed(), ["mp3".to_string()].into_iter().collect());

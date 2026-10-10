@@ -123,6 +123,69 @@ impl NavidromePlaylistApi {
         }
     }
 
+    /// Every playlist of every user with what decides whether its tracks may be edited, or
+    /// `None` when Navidrome could not be read (never an empty list for a failure).
+    pub async fn list_playlist_kinds(&self) -> Option<Vec<PlaylistKind>> {
+        let call = Call::get(format!("{}/api/playlist?_start=0&_end=10000", self.base_url()));
+        match self.read_json(call).await {
+            Ok(Some(root)) => Some(parse_playlist_kinds(&root)),
+            Ok(None) => None,
+            Err(message) => {
+                warn!("Could not list playlists: {message}");
+                None
+            }
+        }
+    }
+
+    /// The admin's own marks on one song, as Navidrome's song page holds them, or `None` when
+    /// the song could not be read.
+    pub async fn song_marks(&self, song_id: &str) -> Option<SongMarks> {
+        let call = Call::get(format!(
+            "{}/api/song/{}",
+            self.base_url(),
+            escape_data_string(song_id)
+        ));
+        match self.read_json(call).await {
+            Ok(Some(root)) => Some(parse_song_marks(&root)),
+            Ok(None) => None,
+            Err(message) => {
+                warn!("Could not read the marks on song {song_id}: {message}");
+                None
+            }
+        }
+    }
+
+    /// Moves the track at `position` so it sits at `insert_before`, every track between shifting
+    /// by one, as Navidrome's playlist editor drags a row. `Err` when the call itself failed.
+    pub async fn move_track(
+        &self,
+        playlist_id: &str,
+        position: usize,
+        insert_before: usize,
+    ) -> Result<bool, String> {
+        let call = Call {
+            method: Method::PUT,
+            url: format!(
+                "{}/api/playlist/{}/tracks/{position}",
+                self.base_url(),
+                escape_data_string(playlist_id)
+            ),
+            json_body: Some(octo_core::json::to_string(
+                &serde_json::json!({ "insert_before": insert_before.to_string() }),
+            )),
+            content_type: JSON_UTF8,
+        };
+        let status = self.try_send(call).await?.map(|r| r.status());
+        if status.is_some_and(|s| s.is_success()) {
+            return Ok(true);
+        }
+        warn!(
+            "Could not move track {position} of playlist {playlist_id}: HTTP {}",
+            status_text(status)
+        );
+        Ok(false)
+    }
+
     /// Remove tracks by POSITION. Positions are reassigned on every change, so callers re-read
     /// the list immediately before and send every position in one call. `Err` when the call
     /// itself failed, which the C# let escape to its caller.
@@ -422,6 +485,81 @@ impl Call {
             json_body: None,
             content_type: JSON_UTF8,
         }
+    }
+}
+
+/// One playlist and whether its tracks are people's own: a smart playlist's come from its rules
+/// and a synced one's from its file, so Navidrome refuses to edit either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistKind {
+    pub id: String,
+    pub name: String,
+    pub owner: String,
+    pub smart: bool,
+    pub synced: bool,
+}
+
+impl PlaylistKind {
+    pub fn editable(&self) -> bool {
+        !self.smart && !self.synced
+    }
+}
+
+/// One listener's marks on one song: a favorite, a rating from 1 to 5 (0 for none) and plays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SongMarks {
+    pub starred: bool,
+    pub rating: i32,
+    pub plays: i64,
+}
+
+pub fn parse_playlist_kinds(root: &Value) -> Vec<PlaylistKind> {
+    let Value::Array(items) = root else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())?;
+            let rules = item.get("rules").filter(|rules| match rules {
+                Value::Null => false,
+                Value::Object(fields) => !fields.is_empty(),
+                _ => true,
+            });
+            Some(PlaylistKind {
+                id: id.to_string(),
+                name: item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                owner: item
+                    .get("ownerName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                smart: rules.is_some(),
+                synced: item.get("sync").and_then(Value::as_bool).unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+pub fn parse_song_marks(song: &Value) -> SongMarks {
+    let number = |name: &str| -> i64 {
+        match song.get(name) {
+            Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
+            Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
+            _ => 0,
+        }
+    };
+    SongMarks {
+        starred: song.get("starred").and_then(Value::as_bool).unwrap_or(false),
+        rating: i32::try_from(number("rating")).unwrap_or(0),
+        plays: number("playCount"),
     }
 }
 

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use octo_core::common::dotnet;
+use octo_core::common::{PathHelper, dotnet};
 use octo_core::fingerprint::verification::{InconclusiveReason, VerificationResult};
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
@@ -309,6 +309,43 @@ impl NoticeQueue {
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Follow a folder the library tidy moved: an open question would otherwise look for its
+    /// file where it used to be, and a settled one would no longer stop Octo asking again.
+    /// Answers how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut moved = 0;
+        {
+            let mut entries = self.entries.lock();
+            let keys: Vec<String> = entries.keys().cloned().collect();
+            for key in keys {
+                let Some(entry) = entries.get(&key) else {
+                    continue;
+                };
+                let Some(now) = PathHelper::moved_path(&entry.local_path, from, to) else {
+                    continue;
+                };
+                let mut entry = entry.clone();
+                let new_key = if entry.kind == NoticeKind::Review {
+                    Self::review_key(&entry.username, &now)
+                } else {
+                    entry.key.clone()
+                };
+                if new_key != key && entries.contains_key(&new_key) {
+                    continue;
+                }
+                entries.remove(&key);
+                entry.key = new_key.clone();
+                entry.local_path = now;
+                entries.set(new_key, entry);
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.dirty.store(true, Ordering::SeqCst);
+        }
+        moved
     }
 
     pub fn review_key(username: &str, local_path: &str) -> String {

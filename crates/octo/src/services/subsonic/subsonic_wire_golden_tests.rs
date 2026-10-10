@@ -827,14 +827,32 @@ fn borealis() -> SearchResult {
     }
 }
 
+/// A recorded mixed search with the outside row's guessed length taken out. The recording wrote
+/// a song of unknown length as 180 seconds; it now goes out with no `duration` at all.
+fn recorded_without_a_guessed_length(file: &str, name: &str) -> Recorded {
+    let mut want = recorded(file, name);
+    let row = r#""id":"rhcHCXhQyCj24j4PjWSZF4""#;
+    let xml_row = r#"<song id="rhcHCXhQyCj24j4PjWSZF4""#;
+    let (start, guess) = match (want.body.find(row), want.body.find(xml_row)) {
+        (Some(at), _) => (at, r#""duration":180,"#),
+        (None, Some(at)) => (at, r#" duration="180""#),
+        (None, None) => panic!("{file}/{name}: no outside row"),
+    };
+    let at = start + want.body[start..].find(guess).expect("the guessed length");
+    want.body.replace_range(at..at + guess.len(), "");
+    want.content_length = None;
+    want
+}
+
 #[test]
 fn a_mixed_search_matches_the_recordings() {
     let mapper = SubsonicModelMapper::new(builder());
     let page = navidrome_json_page("03-search", "s3-mixed-json", "searchResult3");
     let local = mapper.parse_search_response(page.as_bytes(), Some("application/json"));
     let rows = mapper.merge_search_results(local.0, local.1, local.2, &borealis(), &[], true, None);
-    assert_golden(
+    assert_recorded(
         search_reply(&builder(), "searchResult3", true, rows),
+        recorded_without_a_guessed_length("03-search", "s3-mixed-json"),
         "03-search",
         "s3-mixed-json",
     );
@@ -846,7 +864,12 @@ fn a_mixed_search_matches_the_recordings() {
         let page = navidrome_xml_page("03-search", name, envelope);
         let local = mapper.parse_search_response(page.as_bytes(), Some("application/xml"));
         let rows = mapper.merge_search_results(local.0, local.1, local.2, &borealis(), &[], false, None);
-        assert_golden(search_reply(&builder(), envelope, false, rows), "03-search", name);
+        assert_recorded(
+            search_reply(&builder(), envelope, false, rows),
+            recorded_without_a_guessed_length("03-search", name),
+            "03-search",
+            name,
+        );
     }
 }
 

@@ -69,6 +69,8 @@ pub fn action_name(action: LibraryAction) -> &'static str {
         LibraryAction::WrongVersion => "WrongVersion",
         LibraryAction::BetterQuality => "BetterQuality",
         LibraryAction::Keep => "Keep",
+        LibraryAction::WrongLyrics => "WrongLyrics",
+        LibraryAction::WrongCover => "WrongCover",
     }
 }
 
@@ -265,6 +267,10 @@ impl Entries {
 /// is the timer (a worker, which flushes once more on shutdown) and `Drop` is the `Dispose`.
 pub struct LibraryActionJournal {
     path: Option<PathBuf>,
+    /// Where Wrong lyrics and Wrong cover answers are kept, beside `path`. They stay out of the
+    /// shared file because a reader that knows fewer actions refuses the whole list over one
+    /// number it does not know.
+    answers_path: Option<PathBuf>,
     entries: Mutex<Entries>,
     reconcile_lock: Mutex<()>,
     flush_lock: Mutex<()>,
@@ -279,6 +285,7 @@ impl Default for LibraryActionJournal {
 
 impl LibraryActionJournal {
     const MAX_ENTRIES: usize = 2000;
+    const ANSWERS_FILE: &'static str = "library-answer-journal.json";
     const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 
     /// A journal in memory only (`new LibraryActionJournal()`).
@@ -290,8 +297,10 @@ impl LibraryActionJournal {
     /// path, keeps it in memory.
     pub fn with_path(path: Option<PathBuf>) -> Self {
         let path = path.filter(|p| !dotnet::is_blank(&p.to_string_lossy()));
+        let answers_path = path.as_ref().map(|p| p.with_file_name(Self::ANSWERS_FILE));
         let journal = LibraryActionJournal {
             path,
+            answers_path,
             entries: Mutex::new(Entries::default()),
             reconcile_lock: Mutex::new(()),
             flush_lock: Mutex::new(()),
@@ -299,6 +308,15 @@ impl LibraryActionJournal {
         };
         if let Some(path) = journal.path.clone() {
             journal.load(&path);
+        }
+        if let Some(path) = journal.answers_path.clone().filter(|p| p.is_file()) {
+            journal.load(&path);
+            // The two files' entries back in the order they were made.
+            let mut entries = journal.entries.lock();
+            let Entries { by_key, order } = &mut *entries;
+            order
+                .make_contiguous()
+                .sort_by_key(|key| by_key.get(key).map(|entry| entry.at_utc));
         }
         journal
     }
@@ -339,6 +357,34 @@ impl LibraryActionJournal {
                         LibraryActionState::Applied | LibraryActionState::Skipped
                     )
             })
+    }
+
+    /// Follow a folder the library tidy moved: an action's source and revealed paths name
+    /// where the file is now. Answers how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut moved = 0;
+        {
+            let mut entries = self.entries.lock();
+            for entry in entries.by_key.values_mut() {
+                let mut changed = false;
+                for path in [&mut entry.source_path, &mut entry.revealed_path] {
+                    if let Some(now) = path
+                        .as_deref()
+                        .and_then(|old| octo_core::common::PathHelper::moved_path(old, from, to))
+                    {
+                        *path = Some(now);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    moved += 1;
+                }
+            }
+        }
+        if moved > 0 {
+            self.dirty.store(true, Ordering::SeqCst);
+        }
+        moved
     }
 
     pub fn record(&self, entry: LibraryActionEntry) {
@@ -587,6 +633,10 @@ impl LibraryActionJournal {
                     if entry.key.is_empty() {
                         continue;
                     }
+                    if entry.action.leaves_the_audio() && Some(path) != self.answers_path.as_deref() {
+                        // Kept in the answers file from the next flush on.
+                        self.dirty.store(true, Ordering::SeqCst);
+                    }
                     if !entries.by_key.contains_key(&entry.key) {
                         entries.order.push_back(entry.key.clone());
                     }
@@ -618,11 +668,22 @@ impl LibraryActionJournal {
         if !self.dirty.swap(false, Ordering::SeqCst) {
             return true;
         }
-        let json = {
+        let (shared, answers) = {
             let entries = self.entries.lock();
-            octo_core::json::to_string(&entries.ordered().collect::<Vec<_>>())
+            let (answers, shared): (Vec<_>, Vec<_>) = entries
+                .ordered()
+                .partition(|entry| entry.action.leaves_the_audio());
+            (
+                octo_core::json::to_string(&shared),
+                octo_core::json::to_string(&answers),
+            )
         };
-        match state_file::save_atomic(path, &json) {
+        let saved = match &self.answers_path {
+            Some(answers_path) => state_file::save_atomic(answers_path, &answers),
+            None => Ok(()),
+        }
+        .and_then(|()| state_file::save_atomic(path, &shared));
+        match saved {
             Ok(()) => true,
             Err(e) => {
                 self.dirty.store(true, Ordering::SeqCst);

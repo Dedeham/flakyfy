@@ -149,6 +149,59 @@ fn match_key_one_song_one_key_one_version_one_key() {
     );
 }
 
+/// An outside song already in the library is known as owned however the outside source writes
+/// it. The first of each pair is spelled as library tags carry it (MusicBrainz spellings kept by
+/// Lidarr); the second as Last.fm or Deezer commonly write the same song.
+#[test]
+fn match_key_the_same_song_gets_the_same_key_however_it_is_written() {
+    for (owned_artist, owned_title, artist, title) in [
+        ("Damso", "Θ. Macarena", "Damso", "Θ. Macarena"),
+        ("Damso", "Θ. Macarena", "DAMSO", "Θ. MACARENA"),
+        ("Damso", "Ε. Signaler", "Damso", "Ε. Signaler"),
+        ("Damso", "Qui m\u{2019}a demandé", "Damso", "Qui m'a demandé"),
+        ("Damso", "T\u{2019}es mon DEL", "Damso", "T'es mon DEL"),
+        ("Damso", "Frère", "Damso", "Frere"),
+        (
+            "SZA feat. James Fauntleroy",
+            "Wavy (Interlude)",
+            "SZA",
+            "Wavy (Interlude)",
+        ),
+        ("SZA feat. James Fauntleroy", "Wavy (Interlude)", "SZA", "Wavy"),
+        (
+            "Dr. Dre • Xzibit • Tray-Dee",
+            "Lolo (Intro)",
+            "Dr. Dre",
+            "Lolo (Intro)",
+        ),
+        (
+            "Dr. Dre • Eddie Griffin",
+            "Ed-Ucation (Skit)",
+            "Dr. Dre",
+            "Ed\u{2010}ucation (Skit)",
+        ),
+        (
+            "Kendrick Lamar",
+            "Savior (Interlude)",
+            "Kendrick Lamar",
+            "Savior (Interlude)",
+        ),
+        (
+            "Queen",
+            "Bohemian Rhapsody",
+            "Queen",
+            "Bohemian Rhapsody - Remastered 2011",
+        ),
+        ("Adele", "Hello", "Adele", "Hello (feat. Someone)"),
+    ] {
+        assert_eq!(
+            SongIdentity::match_key(owned_artist, owned_title),
+            SongIdentity::match_key(artist, title),
+            "{owned_artist} - {owned_title} / {artist} - {title}"
+        );
+    }
+}
+
 // ---- SongIdentityTests: ISRCs --------------------------------------------------------------
 
 #[test]

@@ -12,8 +12,7 @@ use crate::soulseek::soulseek_metadata_service::SoulseekRouting;
 )]
 #[repr(i32)]
 pub enum LengthSource {
-    /// Nothing is known. The song goes out with the 180s placeholder, which the
-    /// Octo app reads as "no length".
+    /// Nothing is known. The song goes out with no length.
     #[default]
     None = 0,
 
@@ -27,6 +26,9 @@ pub enum LengthSource {
 
     /// Deezer's catalog length for the matched track.
     Deezer = 3,
+
+    /// The length of the audio in a file downloaded for the song: what it really runs.
+    File = 4,
 }
 
 /// The rules for the length a client is shown for a song Octo found outside the library.
@@ -51,6 +53,26 @@ impl SongLength {
     /// The video's length when it is plausibly one song, or None.
     pub fn sane_video_length(seconds: Option<i32>) -> Option<i32> {
         seconds.filter(|&s| (Self::MIN_VIDEO_SECONDS..=Self::MAX_VIDEO_SECONDS).contains(&s))
+    }
+
+    /// How far a stream's length may sit from a known length and still replace it: 7 seconds,
+    /// or 7 % of a long song.
+    pub const STREAM_LENGTH_SLACK_SECONDS: i32 = 7;
+    pub const STREAM_LENGTH_SLACK_PERCENT: i32 = 7;
+
+    /// Whether a length learned from a stream may be written over `known`, the routing's own
+    /// length. Only a length that could be one song counts ([`Self::sane_video_length`]). It
+    /// fills an unknown length; a known one it replaces only when it is close, so a short clip
+    /// or a long upload never stands in for the catalog's length.
+    pub fn stream_length_may_replace(known: Option<i32>, learned: i32) -> bool {
+        if Self::sane_video_length(Some(learned)).is_none() {
+            return false;
+        }
+        let Some(known) = known.filter(|&k| k > 0) else {
+            return true;
+        };
+        let slack = Self::STREAM_LENGTH_SLACK_SECONDS.max(known * Self::STREAM_LENGTH_SLACK_PERCENT / 100);
+        (learned - known).abs() <= slack
     }
 
     /// Store a length on the routing unless a stronger source already gave one. Returns
@@ -97,6 +119,26 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_length_replaces_a_known_length_only_when_close_to_it() {
+        // Fills an unknown length, when it could be one song.
+        assert!(SongLength::stream_length_may_replace(None, 200));
+        assert!(SongLength::stream_length_may_replace(Some(0), 200));
+        assert!(!SongLength::stream_length_may_replace(None, 3));
+        assert!(!SongLength::stream_length_may_replace(None, 3600));
+        // Within 7 seconds of a short song, within 7 % of a long one.
+        assert!(SongLength::stream_length_may_replace(Some(100), 107));
+        assert!(SongLength::stream_length_may_replace(Some(100), 93));
+        assert!(!SongLength::stream_length_may_replace(Some(100), 108));
+        assert!(SongLength::stream_length_may_replace(Some(201), 215));
+        assert!(!SongLength::stream_length_may_replace(Some(201), 216));
+        assert!(SongLength::stream_length_may_replace(Some(600), 642));
+        assert!(!SongLength::stream_length_may_replace(Some(600), 643));
+        // A short stub never stands in for a catalog length.
+        assert!(!SongLength::stream_length_may_replace(Some(201), 3));
+        assert!(!SongLength::stream_length_may_replace(Some(201), 0));
+    }
+
+    #[test]
     fn sane_video_length_keeps_only_what_could_be_one_song() {
         let cases = [
             (29, None),
@@ -127,6 +169,10 @@ mod tests {
         assert!(!SongLength::remember(&mut r, Some(418), LengthSource::LastFm));
         assert!(!SongLength::remember(&mut r, Some(430), LengthSource::Video));
         assert_eq!(SongLength::shown(&r), (Some(417), LengthSource::Deezer));
+
+        assert!(SongLength::remember(&mut r, Some(419), LengthSource::File));
+        assert!(!SongLength::remember(&mut r, Some(417), LengthSource::Deezer));
+        assert_eq!(SongLength::shown(&r), (Some(419), LengthSource::File));
     }
 
     #[test]

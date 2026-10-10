@@ -136,6 +136,42 @@ fn create_song_response_xml_format_returns_song_data() {
     assert_eq!(element.attribute("title"), Some("Test Song"));
 }
 
+#[test]
+fn an_outside_song_with_no_known_length_goes_out_without_one() {
+    for duration in [None, Some(0), Some(-1)] {
+        let song = Song {
+            id: "ext-1".into(),
+            title: "Genesis".into(),
+            artist: "Justice".into(),
+            duration,
+            is_local: false,
+            ..Default::default()
+        };
+        let json = json_of(&builder().create_song_response("json", &song));
+        let data = &json["subsonic-response"]["song"];
+        assert!(data.get("duration").is_none(), "{duration:?}: {data}");
+        assert_eq!(data["id"], "ext-1");
+        let root = xml_of(&builder().create_song_response("xml", &song));
+        assert_eq!(child(&root, "song").attribute("duration"), None, "{duration:?}");
+    }
+}
+
+#[test]
+fn an_outside_song_with_a_known_length_carries_it() {
+    let song = Song {
+        id: "ext-1".into(),
+        title: "Genesis".into(),
+        artist: "Justice".into(),
+        duration: Some(234),
+        is_local: false,
+        ..Default::default()
+    };
+    let json = json_of(&builder().create_song_response("json", &song));
+    assert_eq!(json["subsonic-response"]["song"]["duration"], 234);
+    let root = xml_of(&builder().create_song_response("xml", &song));
+    assert_eq!(child(&root, "song").attribute("duration"), Some("234"));
+}
+
 fn song(id: &str, title: &str, duration: Option<i32>) -> Song {
     Song {
         id: id.into(),
@@ -303,6 +339,177 @@ fn external_song_declares_lossless_when_waiting_for_lossless() {
     assert_eq!(row["contentType"], "audio/flac");
     // A FLAC's rate is unknown until it is fetched, so none is claimed.
     assert!(!row.contains_key("bitRate"));
+}
+
+/// `TestIds` that also knows the stream of some songs, and notes the ones asked about.
+#[derive(Default)]
+struct StreamIds {
+    facts: std::collections::HashMap<String, StreamFacts>,
+    wanted: std::sync::Mutex<Vec<String>>,
+    listed: std::sync::Mutex<Vec<String>>,
+}
+
+impl IdRegistry for StreamIds {
+    fn register(&self, routing: SoulseekRouting) -> String {
+        TestIds.register(routing)
+    }
+
+    fn stream_facts(&self, song_id: &str) -> Option<StreamFacts> {
+        self.facts.get(song_id).cloned()
+    }
+
+    fn size_wanted(&self, song_id: &str) {
+        self.wanted
+            .lock()
+            .expect("not poisoned")
+            .push(song_id.to_string());
+    }
+
+    fn outside_listed(&self, song_id: &str) {
+        self.listed
+            .lock()
+            .expect("not poisoned")
+            .push(song_id.to_string());
+    }
+}
+
+fn builder_over(ids: Arc<StreamIds>, wait_for_lossless: bool) -> SubsonicResponseBuilder {
+    SubsonicResponseBuilder::new(
+        ids,
+        &SubsonicSettings {
+            wait_for_lossless_on_play: wait_for_lossless,
+            ..Default::default()
+        },
+    )
+}
+
+fn known_stream(itag: &str, ext: &str, size: u64, bit_rate: Option<i32>) -> Arc<StreamIds> {
+    let mut ids = StreamIds::default();
+    ids.facts.insert(
+        "abc123".into(),
+        StreamFacts {
+            size: Some(size),
+            itag: Some(itag.into()),
+            ext: Some(ext.into()),
+            bit_rate,
+            ..Default::default()
+        },
+    );
+    Arc::new(ids)
+}
+
+#[test]
+fn an_outside_song_with_a_known_stream_carries_its_true_size_in_json_and_xml() {
+    let ids = known_stream("140", "m4a", 6_755_585, Some(129));
+    let builder = builder_over(ids.clone(), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(row["size"], 6_755_585);
+    assert_eq!(row["suffix"], "m4a");
+    assert_eq!(row["contentType"], "audio/mp4");
+    assert_eq!(row["bitRate"], 128);
+    // In the place a library song carries it, and still no other file facts.
+    let keys: Vec<&str> = row.keys().map(String::as_str).collect();
+    let at = |key: &str| keys.iter().position(|k| *k == key);
+    assert!(at("size") < at("contentType"), "{keys:?}");
+    assert!(!row.contains_key("path") && !row.contains_key("created"));
+
+    let xml = builder.convert_song_to_xml(&external_song(), NS);
+    assert_eq!(xml.attribute("size"), Some("6755585"));
+    assert_eq!(xml.attribute("suffix"), Some("m4a"));
+    assert!(ids.wanted.lock().expect("not poisoned").is_empty());
+}
+
+#[test]
+fn an_outside_song_served_as_opus_says_so() {
+    let builder = builder_over(known_stream("251", "webm", 7_012_345, Some(160)), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(row["size"], 7_012_345);
+    assert_eq!(row["suffix"], "webm");
+    assert_eq!(row["contentType"], "audio/webm");
+    assert_eq!(row["bitRate"], 160);
+
+    let builder = builder_over(known_stream("251", "webm", 7_012_345, None), false);
+    assert!(
+        !builder
+            .convert_song_to_json(&external_song())
+            .contains_key("bitRate")
+    );
+}
+
+#[test]
+fn an_outside_song_without_a_known_stream_has_no_size_and_is_asked_about() {
+    let ids = Arc::new(StreamIds::default());
+    let row = builder_over(ids.clone(), false).convert_song_to_json(&external_song());
+    assert!(!row.contains_key("size"));
+    assert_eq!(row["suffix"], "m4a");
+    assert_eq!(
+        *ids.wanted.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+}
+
+/// The registry hears of every outside row an answer lists, sized or not, so it can tell a
+/// short list from a whole catalog.
+#[test]
+fn every_outside_row_is_counted_as_listed_sized_or_not() {
+    let sized = known_stream("140", "m4a", 6_755_585, Some(129));
+    builder_over(sized.clone(), false).convert_song_to_json(&external_song());
+    assert_eq!(
+        *sized.listed.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+
+    let unsized_ids = Arc::new(StreamIds::default());
+    builder_over(unsized_ids.clone(), false).convert_song_to_xml(&external_song(), NS);
+    assert_eq!(
+        *unsized_ids.listed.lock().expect("not poisoned"),
+        vec!["abc123".to_string()]
+    );
+}
+
+#[test]
+fn an_outside_song_with_measured_loudness_sends_its_replay_gain() {
+    let mut ids = StreamIds::default();
+    ids.facts.insert(
+        "abc123".into(),
+        StreamFacts {
+            size: Some(6_755_585),
+            itag: Some("140".into()),
+            track_gain: Some(-10.0),
+            track_peak: Some(1.135011),
+            ..Default::default()
+        },
+    );
+    let ids = Arc::new(ids);
+    let builder = builder_over(ids.clone(), false);
+    let row = builder.convert_song_to_json(&external_song());
+    assert_eq!(
+        row["replayGain"],
+        json!({"trackGain": -10.0, "trackPeak": 1.135011})
+    );
+    let xml = builder.convert_song_to_xml(&external_song(), NS);
+    let gain = xml
+        .elements()
+        .find(|e| e.is(NS, "replayGain"))
+        .expect("a replayGain element");
+    assert_eq!(gain.attribute("trackGain"), Some("-10"));
+    assert_eq!(gain.attribute("trackPeak"), Some("1.135011"));
+
+    // Not measured yet: the empty object every row carries.
+    let row = builder_over(Arc::new(StreamIds::default()), false).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
+    // Waiting for lossless: the FLAC is not the stream that was measured.
+    let row = builder_over(ids, true).convert_song_to_json(&external_song());
+    assert_eq!(row["replayGain"], json!({}));
+}
+
+#[test]
+fn a_lossless_wait_never_sends_a_size_even_when_the_stream_is_known() {
+    let ids = known_stream("140", "m4a", 6_755_585, Some(129));
+    let row = builder_over(ids.clone(), true).convert_song_to_json(&external_song());
+    assert!(!row.contains_key("size"));
+    assert_eq!(row["suffix"], "flac");
+    assert!(ids.wanted.lock().expect("not poisoned").is_empty());
 }
 
 #[test]
@@ -841,6 +1048,7 @@ fn song_rows_keep_the_csharp_field_order_and_values() {
         album: "  ".into(),
         suffix: Some(" MP3 ".into()),
         bit_rate: Some(320),
+        duration: Some(180),
         is_local: true,
         year: Some(1995),
         ..Default::default()
@@ -1017,12 +1225,12 @@ fn a_radio_station_is_a_read_only_playlist() {
     };
     assert_eq!(
         octo_core::json::to_string(&builder().radio_playlist_fields(&station)),
-        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":280,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z"}"#
+        r#"{"id":"or1","name":"Radio","owner":"alice","public":false,"songCount":2,"duration":100,"created":"2026-01-02T03:04:05.000Z","changed":"2026-01-02T03:04:05.000Z","coverArt":"or1","readonly":true,"validUntil":"2026-01-02T03:04:05.000Z"}"#
     );
     let songs = [song("s1", "One", None)];
     let json = json_of(&builder().create_radio_playlist_response("Json", &station, &songs));
     assert_eq!(json["subsonic-response"]["playlist"]["songCount"], 1);
-    assert_eq!(json["subsonic-response"]["playlist"]["duration"], 180);
+    assert_eq!(json["subsonic-response"]["playlist"]["duration"], 0);
     assert_eq!(json["subsonic-response"]["playlist"]["entry"][0]["id"], "s1");
     let root = xml_of(&builder().create_radio_playlist_response("xml", &station, &songs));
     let playlist = child(&root, "playlist");
@@ -1063,6 +1271,28 @@ fn an_entries_playlist_passes_navidromes_entries_through() {
 }
 
 #[test]
+fn an_entries_playlist_keeps_each_entrys_replay_gain_in_xml() {
+    let entries = [
+        Node::parse(r#"{"id":"n1","duration":200,"replayGain":{"trackGain":-6.5,"trackPeak":0.98}}"#)
+            .unwrap(),
+        Node::parse(r#"{"id":"n2","duration":100,"replayGain":{}}"#).unwrap(),
+    ];
+
+    let root = xml_of(&builder().create_entries_playlist_response("xml", Fields::new(), &entries));
+
+    let playlist = child(&root, "playlist");
+    let rows: Vec<&XElement> = playlist.elements_named(NS, "entry").collect();
+    let gain = rows[0]
+        .elements()
+        .find(|e| e.is(NS, "replayGain"))
+        .expect("a replayGain element");
+    assert_eq!(gain.attribute("trackGain"), Some("-6.5"));
+    assert_eq!(gain.attribute("trackPeak"), Some("0.98"));
+    // Nothing measured, nothing written.
+    assert!(rows[1].elements().next().is_none());
+}
+
+#[test]
 fn library_actions_offer_what_is_enabled() {
     let off = LibraryActionSettings::default();
     assert_eq!(
@@ -1098,14 +1328,14 @@ fn library_actions_offer_what_is_enabled() {
     assert_eq!(json["subsonic-response"]["libraryActions"]["admin"], true);
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove", "upgrade"])
+        json!(["remove", "upgrade", "lyrics", "cover-swap"])
     );
     let json = json_of(
         &builder().create_library_actions_response(&on, None, 3, false, "Lidarr", true, false, false),
     );
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["remove"])
+        json!(["remove", "lyrics", "cover-swap"])
     );
     // Version 3 (374dac8, f2c6a65): remove only for a Navidrome admin; the edits whenever the
     // server can make them, cover last and only with a cover finder.
@@ -1113,7 +1343,16 @@ fn library_actions_offer_what_is_enabled() {
         json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
     assert_eq!(
         json["subsonic-response"]["libraryActions"]["actions"],
-        json!(["upgrade", "retag", "joinAlbum", "lookup", "undo", "restore"])
+        json!([
+            "upgrade",
+            "lyrics",
+            "cover-swap",
+            "retag",
+            "joinAlbum",
+            "lookup",
+            "undo",
+            "restore"
+        ])
     );
     let json = json_of(
         &builder().create_library_actions_response(&off, None, 1, false, "Soulseek", true, true, true),
@@ -1132,6 +1371,37 @@ fn library_actions_offer_what_is_enabled() {
             .text(),
         r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"octo","openSubsonic":true,"libraryAction":{"id":"s1","action":"upgrade","state":"queued","detail":null}}}"#
     );
+}
+
+#[test]
+fn wrong_lyrics_and_wrong_cover_are_offered_only_when_switched_on() {
+    use octo_core::settings::{LibraryAction, LibraryActionDefinition};
+    let only = |action: LibraryAction| LibraryActionSettings {
+        enabled: true,
+        allowed_users: vec!["alice".into()],
+        actions: vec![LibraryActionDefinition {
+            action,
+            enabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let offered = |settings: &LibraryActionSettings| {
+        json_of(&builder().create_library_actions_response(
+            settings,
+            Some("alice"),
+            1,
+            false,
+            "Soulseek",
+            false,
+            false,
+            false,
+        ))["subsonic-response"]["libraryActions"]["actions"]
+            .clone()
+    };
+    assert_eq!(offered(&only(LibraryAction::WrongLyrics)), json!(["lyrics"]));
+    assert_eq!(offered(&only(LibraryAction::WrongCover)), json!(["cover-swap"]));
+    assert_eq!(offered(&only(LibraryAction::Keep)), json!([]));
 }
 
 // ---- getOpenSubsonicExtensions --------------------------------------------------------------

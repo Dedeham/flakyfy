@@ -117,6 +117,7 @@ impl TagFields {
     pub const ALBUM_VERSION: TagField = txxx("ALBUMVERSION", "ALBUMVERSION", "ALBUMVERSION");
     pub const RELEASE_DATE: TagField = txxx("RELEASEDATE", "RELEASEDATE", "RELEASEDATE");
     pub const ADVISORY: TagField = txxx("ITUNESADVISORY", "ITUNESADVISORY", "ITUNESADVISORY");
+    pub const ARTISTS: TagField = txxx("ARTISTS", "ARTISTS", "ARTISTS");
 }
 
 /// The containers' own tags a setter writes to.
@@ -666,4 +667,61 @@ impl FileFactsReader for TagWriterExtras {
             }
         }
     }
+}
+
+/// Every value of one field, from the first container that holds any: trimmed, blanks dropped.
+/// Reading never creates a tag.
+pub fn read_values(file: &TagFile, field: TagField) -> Vec<String> {
+    let clean = |values: Vec<String>| -> Vec<String> {
+        values
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect()
+    };
+    if let Some(id3) = &file.id3v2 {
+        let values = match (field.id3_frame, field.id3_description) {
+            (Some(frame), _) => id3.text_values(frame),
+            (None, Some(description)) => id3.user_text(description, false).unwrap_or_default(),
+            (None, None) => Vec::new(),
+        };
+        let values = clean(values);
+        if !values.is_empty() {
+            return values;
+        }
+    }
+    if let Some(xiph) = &file.xiph {
+        let values = clean(xiph.field(field.vorbis));
+        if !values.is_empty() {
+            return values;
+        }
+    }
+    file.apple
+        .as_ref()
+        .and_then(|apple| apple.dash_boxes(APPLE_MEAN, field.mp4))
+        .map(|values| clean(values.into_iter().flatten().collect()))
+        .unwrap_or_default()
+}
+
+/// The MusicBrainz artist ids a file carries, in credit order. Picard writes one value per
+/// artist; older taggers join them with "/" or ";", so the ids are picked out of the text.
+pub fn read_artist_ids(file: &TagFile) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for value in read_values(file, TagFields::ARTIST_ID) {
+        for piece in value.split(|ch: char| !(ch.is_ascii_hexdigit() || ch == '-')) {
+            let id = piece.to_lowercase();
+            if octo_core::fingerprint::music_brainz_client::is_mbid(&id) && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
+}
+
+/// Whether an ID3v2.3 artist frame was read as several values: its "/" (or a stray null) can
+/// not be told from a separator, so the frame cannot be written back the way it was.
+pub fn artist_frame_splits_on_slash(file: &TagFile) -> bool {
+    file.id3v2
+        .as_ref()
+        .is_some_and(|id3| id3.version < 4 && id3.text_values("TPE1").len() > 1)
 }

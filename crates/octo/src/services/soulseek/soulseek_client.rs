@@ -83,6 +83,8 @@ struct Jwt {
 }
 
 struct Inner {
+    /// Soulseek is on: switched on and given slskd's address.
+    on: bool,
     http: reqwest::Client,
     /// `IOptions<SoulseekSettings>`: the address, login and download timeout are deliberately
     /// the values Octo started with (a restart-only setting; see RestartTracker).
@@ -198,6 +200,9 @@ impl Drop for SearchCleanup {
     }
 }
 
+/// Why a call to slskd was not made.
+pub const SOULSEEK_OFF: &str = "Soulseek is off (no slskd address, or Soulseek:Enabled is false).";
+
 impl SoulseekClient {
     /// The HTTP client's timeout.
     pub const TIMEOUT: Duration = Duration::from_secs(30);
@@ -219,10 +224,12 @@ impl SoulseekClient {
         SoulseekClient {
             inner: Arc::new(Inner {
                 http,
+                on: settings.is_on(),
                 base: settings
                     .base_url
                     .as_deref()
-                    .unwrap_or("http://localhost:5030")
+                    .unwrap_or_default()
+                    .trim()
                     .trim_end_matches('/')
                     .to_string(),
                 username: settings.username.clone(),
@@ -247,6 +254,11 @@ impl SoulseekClient {
         &self.inner.base
     }
 
+    /// Whether Soulseek is on (as captured at startup). Off, nothing is ever sent to slskd.
+    pub fn is_on(&self) -> bool {
+        self.inner.on
+    }
+
     fn now(&self) -> DateTime<Utc> {
         self.inner.timings.clock.now()
     }
@@ -261,6 +273,9 @@ impl SoulseekClient {
     /// Fetches and caches a JWT from slskd's session endpoint. Re-authenticates
     /// when the cached token is missing or near expiry.
     async fn get_jwt(&self) -> anyhow::Result<Option<String>> {
+        if !self.inner.on {
+            anyhow::bail!(SOULSEEK_OFF);
+        }
         if let Some(token) = self.token_fresh() {
             return Ok(Some(token));
         }
@@ -307,6 +322,9 @@ impl SoulseekClient {
         url: &str,
         body: Option<&str>,
     ) -> anyhow::Result<reqwest::RequestBuilder> {
+        if !self.inner.on {
+            anyhow::bail!(SOULSEEK_OFF);
+        }
         let mut req = self.inner.http.request(method.clone(), url);
         if let Some(jwt) = self.get_jwt().await?.filter(|t| !t.is_empty()) {
             req = req.bearer_auth(jwt);
@@ -340,6 +358,9 @@ impl SoulseekClient {
     }
 
     pub async fn is_reachable(&self) -> bool {
+        if !self.inner.on {
+            return false;
+        }
         match self
             .send(
                 Method::GET,
@@ -361,6 +382,9 @@ impl SoulseekClient {
     /// while sitting in "Disconnecting", and every search failed with "must be connected and
     /// logged in". None when slskd did not answer.
     pub async fn read_server(&self) -> Option<SoulseekServerReading> {
+        if !self.inner.on {
+            return None;
+        }
         match self
             .get_text(&format!("{}/api/v0/application", self.inner.base))
             .await

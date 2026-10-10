@@ -3,8 +3,9 @@
 //! needs a Navidrome admin sign-in like the genre backfill, and a whole-library run (not a
 //! preview) needs the music path typed back.
 //!
-//! Every route checks the session with `Validate`, which slides the server-side expiry but, unlike
-//! `AdminController`'s `BrowseUser`, does not re-issue the cookie.
+//! Every route checks the session with [`signed`]: a Navidrome sign-in, from the cookie or else the
+//! browse token header. It slides the server-side expiry but never re-issues the cookie, and it
+//! refuses a recovery-code session, since these routes change library files.
 
 use std::sync::Arc;
 

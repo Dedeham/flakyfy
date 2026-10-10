@@ -81,6 +81,12 @@ impl<V: Clone> MemoryCache<V> {
         );
     }
 
+    /// `Remove(key)`: the entry goes, whether or not it had expired.
+    pub fn forget(&self, key: &str) {
+        let mut state = self.state.lock();
+        Self::remove(&mut state, key);
+    }
+
     /// `Clear()`.
     pub fn clear(&self) {
         let mut state = self.state.lock();

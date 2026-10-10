@@ -28,6 +28,7 @@ use crate::services::cover_art::CoverArtAggregator;
 use crate::services::framework::InFlight;
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::metadata::DeezerMetadataService;
+use crate::services::metadata::deezer_metadata_service::fold_editions;
 use crate::services::you_tube::YouTubeResolver;
 
 /// The two members of `LastFmService` the length lookup uses: whether it has an API key, and
@@ -129,9 +130,9 @@ struct Inner {
 const SEARCH_ENRICH_LIMIT: usize = 12;
 
 /// The whole slice a search can return. Everything between the first page and this is
-/// filled from cache and warmed for next time, because a row with no enrichment falls
-/// back to a flat 180 and a page of identical 3:00 rows is worse than a page of
-/// approximate ones. Deezer's length is the approximation - it is not always the
+/// filled from cache and warmed for next time, because a row with no enrichment goes out
+/// with no length at all, and a page of approximate lengths is better than a page of
+/// none. Deezer's length is the approximation - it is not always the
 /// recording that plays - and the exact value is resolved when a row is opened or
 /// played, where getSong and the native detail endpoint both call
 /// ResolveTopDurationsAsync.
@@ -139,8 +140,8 @@ const BACKGROUND_ENRICH_LIMIT: usize = 60;
 
 // ---- Lengths for rows that went out without one ---------------------------------
 //
-// About half of all outside songs reached clients with the 180s placeholder: search
-// rows past the first page, and every station row Last.fm gave no length for. The
+// About half of all outside songs would reach clients with no length: search rows past
+// the first page, and every station row Last.fm gave no length for. The
 // station path never looked a length up at all, and what the search warm fetched only
 // reached Deezer's in-memory cache, so a song got its length back on a repeat search at
 // best and lost it again on a restart.
@@ -380,17 +381,78 @@ pub(crate) fn clean_copies(hits: &[AlbumHit]) -> HashSet<String> {
 }
 
 impl Inner {
+    /// Album search rows, each registered so it opens, plays and stars like any outside
+    /// album. With `fold`, repeat editions of one record are one row (see `fold_editions`).
+    async fn album_search(&self, query: &str, limit: i32, fold: bool) -> Vec<Album> {
+        if dotnet::is_blank(query) || limit <= 0 {
+            return Vec::new();
+        }
+        let hits = self.deezer.search_albums(query, limit, false).await;
+        let hits = if fold { fold_editions(hits, true) } else { hits };
+        let mut albums = Vec::with_capacity(hits.len());
+        let clean_copies = clean_copies(&hits);
+
+        for hit in hits {
+            // The registry id is the external id everywhere: getAlbum, getCoverArt and
+            // star all round-trip through it. The Deezer id rides along on the routing
+            // so album detail can fetch the exact tracklist without a name lookup. A clean copy
+            // listed beside its explicit original gets an id of its own, or the two rows would
+            // open the same album.
+            let words = if clean_copies.contains(hit.deezer_id.as_str()) {
+                Some(explicit_status::CLEAN)
+            } else {
+                (hit.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT)
+            };
+            let album_id = self.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Album,
+                artist: Some(hit.artist.clone()),
+                album: Some(hit.title.clone()),
+                external_album_id: Some(hit.deezer_id.clone()),
+                explicit_content: words,
+                version: explicit_status::version_of(words),
+                ..Default::default()
+            });
+            let artist_id = self.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Artist,
+                artist: Some(hit.artist.clone()),
+                ..Default::default()
+            });
+
+            albums.push(Album {
+                id: album_id.clone(),
+                title: hit.title.clone(),
+                artist: hit.artist.clone(),
+                artist_id: Some(artist_id),
+                year: hit.year,
+                song_count: Some(hit.track_count),
+                cover_art_url: hit.cover_url.clone(),
+                release_types: release_type_list(hit.record_type.as_deref()),
+                explicit_content_lyrics: words,
+                is_local: false,
+                external_provider: Some(SoulseekMetadataService::PROVIDER_NAME.to_string()),
+                external_id: Some(album_id),
+                ..Default::default()
+            });
+        }
+
+        albums
+    }
+
     fn lookup(&self, id: &str) -> Option<SharedRouting> {
         self.id_registry.lookup(id)
     }
 
     /// Reflect a catalog answer onto the song and its shared routing, so getSong stays
-    /// consistent, and remember its length.
+    /// consistent, and remember its length. The catalog's album only fills a blank one: the
+    /// track it matched can sit on a compilation, and the album the song already names is the
+    /// one it came from.
     fn apply_track_meta(&self, song: &mut Song, meta: &TrackMeta) {
         if let Some(d) = meta.duration.filter(|&d| d > 0) {
             song.duration = Some(d);
         }
-        if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
+        if dotnet::is_blank(&song.album)
+            && let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a))
+        {
             song.album = album.to_string();
         }
         if let Some(words) = meta.explicit_content {
@@ -405,7 +467,9 @@ impl Inner {
             if let Some(d) = meta.duration.filter(|&d| d > 0) {
                 r.duration = Some(d);
             }
-            if let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a)) {
+            if r.album.as_deref().is_none_or(dotnet::is_blank)
+                && let Some(album) = meta.album_title.as_deref().filter(|a| !dotnet::is_blank(a))
+            {
                 r.album = Some(album.to_string());
             }
             if let Some(said) = meta.explicit_content {
@@ -414,6 +478,53 @@ impl Inner {
         }
         self.id_registry
             .remember_length(id, meta.duration, LengthSource::Deezer);
+    }
+
+    /// One song's video and its length from the shim's quick lookup: the video is pinned on
+    /// the routing for playback and its length remembered as the video's. `background`: the
+    /// song is already with the client, so only the routing is written and a video a play
+    /// pinned meanwhile is kept.
+    async fn resolve_video_length(&self, song: &mut Song, background: bool) {
+        let inner = self;
+        // Fast metadata-only lookup (flat search, no URL solve). Pass the
+        // Deezer duration as a hint so it picks the closest-length canonical
+        // video (not a long-form/compilation upload); playback reuses the
+        // stored videoId, so the shown length matches the audio.
+        let hit = inner
+            .youtube
+            .meta(
+                &format!("{} {}", song.artist, song.title),
+                song.duration,
+                background,
+            )
+            .await;
+        let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) else {
+            return;
+        };
+        let Some(d) = hit.duration.filter(|&d| d > 0) else {
+            return;
+        };
+        // Shown only inside the sane range. An hour-long upload is a mix or a
+        // live set, and its length is no better than the one the row has.
+        // Only the foreground pass may touch the Song. In the background the list is
+        // already with the client and cached for the next page, being serialized as this
+        // runs. getSong builds its answer from routing.Duration, so it still gets this length.
+        if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
+            song.duration = Some(shown);
+        }
+        // Playback reuses this exact video. A play can pin a different video while this
+        // lookup runs; the next Range request has to get the same video, so in the
+        // background the pinned one wins.
+        if inner.id_registry.pin_video(&song.id, &hit.video_id, !background) {
+            if let Some(routing) = inner.lookup(&song.id) {
+                routing.lock().duration = Some(d);
+            }
+        } else if background && inner.lookup(&song.id).is_some() {
+            return;
+        }
+        inner
+            .id_registry
+            .remember_length(&song.id, Some(d), LengthSource::Video);
     }
 
     /// Complete the rows below the first page from what is already known, then fetch the
@@ -864,11 +975,10 @@ impl IMusicMetadataService for SoulseekMetadataService {
             .lookup(&external_id)
             .and_then(|routing| SongLength::shown(&routing.lock()).0);
 
-        // 180 is the fallback when we don't know the real duration: most songs
-        // are 3-5 min so it's a less-bad guess than 0 (which would prevent
-        // clients from rendering a scrub bar at all). The Octo app knows this
-        // value and shows no length for it rather than a wrong one.
-        let effective_duration = remembered.or(duration_seconds).unwrap_or(180);
+        // No length is known: the song goes out without one rather than with a guess. A
+        // made-up length misleads a player planning a crossfade, while a missing one only
+        // waits for the stream to report the real length.
+        let effective_duration = remembered.or(duration_seconds.filter(|&d| d > 0));
         let explicit = registry
             .lookup(&external_id)
             .and_then(|routing| routing.lock().explicit_content);
@@ -878,7 +988,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
             title: title.to_string(),
             artist: artist.to_string(),
             album: String::new(),
-            duration: Some(effective_duration),
+            duration: effective_duration,
             explicit_content_lyrics: explicit,
             is_local: false,
             external_provider: Some(Self::PROVIDER_NAME.to_string()),
@@ -894,7 +1004,7 @@ impl IMusicMetadataService for SoulseekMetadataService {
         let first_keys: Vec<(String, String, String)> = external.iter().map(|s| key_of(s)).collect();
 
         // First-page rows Deezer gave no length for. They join the background lookup below
-        // rather than going out as 3:00 for good.
+        // rather than going out with no length for good.
         let missed: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
         futures::stream::iter(external)
             .for_each_concurrent(8, |song| {
@@ -927,6 +1037,12 @@ impl IMusicMetadataService for SoulseekMetadataService {
         inner.warm_lengths(first_missed.chain(cold));
     }
 
+    fn remember_file_length(&self, external_id: &str, seconds: i32) {
+        self.inner
+            .id_registry
+            .remember_length(external_id, Some(seconds), LengthSource::File);
+    }
+
     fn complete_song_lengths(&self, songs: &mut [Song]) {
         let inner = &self.inner;
         let mut cold = Vec::new();
@@ -942,7 +1058,11 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 if r.kind != RoutingKind::Song || !r.has_artist_title() {
                     continue;
                 }
-                // Minting the song already applied whatever the registry remembered.
+                // A song rebuilt from its id (getSong) carries only the routing's own length,
+                // so a row with none takes the length the registry remembered for display.
+                if song.duration.is_none_or(|d| d <= 0) {
+                    song.duration = SongLength::shown(&r).0.or(r.duration).filter(|&d| d > 0);
+                }
                 if SongLength::has_metadata_length(&r) {
                     continue;
                 }
@@ -990,52 +1110,29 @@ impl IMusicMetadataService for SoulseekMetadataService {
                 let Some(_permit) = bounded_wait(gate).await else {
                     return;
                 };
-                // Fast metadata-only lookup (flat search, no URL solve). Pass the
-                // Deezer duration as a hint so it picks the closest-length canonical
-                // video (not a long-form/compilation upload); playback reuses the
-                // stored videoId, so the shown length matches the audio.
-                let hit = inner
-                    .youtube
-                    .meta(
-                        &format!("{} {}", song.artist, song.title),
-                        song.duration,
-                        background,
-                    )
-                    .await;
-                let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) else {
-                    return;
-                };
-                let Some(d) = hit.duration.filter(|&d| d > 0) else {
-                    return;
-                };
-                // Shown only inside the sane range. An hour-long upload is a mix or a
-                // live set, and its length is no better than the one the row has.
-                // Only the foreground pass may touch the Song. In the background the list is
-                // already with the client and cached for the next page, being serialized as this
-                // runs. getSong builds its answer from routing.Duration, so it still gets this length.
-                if !background && let Some(shown) = SongLength::sane_video_length(Some(d)) {
-                    song.duration = Some(shown);
-                }
-                let routing = inner.lookup(&song.id);
-                if let Some(routing) = &routing {
-                    let mut r = routing.lock();
-                    // A play can pin a different video while this lookup runs. The next Range
-                    // request has to get the same video, so the pinned one wins.
-                    if background
-                        && r.you_tube_id
-                            .as_deref()
-                            .is_some_and(|y| !y.is_empty() && y != hit.video_id)
-                    {
-                        return;
-                    }
-                    r.you_tube_id = Some(hit.video_id.clone()); // playback reuses this exact video
-                    r.duration = Some(d);
-                }
-                inner
-                    .id_registry
-                    .remember_length(&song.id, Some(d), LengthSource::Video);
+                inner.resolve_video_length(song, background).await;
             });
         futures::future::join_all(tasks).await;
+    }
+
+    async fn resolve_song_length(&self, song: &mut Song) {
+        if song.is_local || song.id.is_empty() || song.duration.is_some_and(|d| d > 0) {
+            return;
+        }
+        let Some(routing) = self.inner.lookup(&song.id) else {
+            return;
+        };
+        {
+            let r = routing.lock();
+            if r.kind != RoutingKind::Song
+                || !r.has_artist_title()
+                || r.you_tube_id.as_deref().is_some_and(|y| !y.is_empty())
+            {
+                return;
+            }
+        }
+        // Someone is waiting on this answer, so it never queues behind prewarm work.
+        self.inner.resolve_video_length(song, false).await;
     }
 
     /// Fire-and-forget background prewarm: resolve the YouTube videoId (and via
@@ -1101,12 +1198,13 @@ impl IMusicMetadataService for SoulseekMetadataService {
             };
             let hit = inner.youtube.search(&query, duration, true).await;
             if let Some(hit) = hit.filter(|h| !h.video_id.is_empty()) {
-                {
-                    let mut r = routing.lock();
-                    r.you_tube_id = Some(hit.video_id.clone());
-                    if let Some(d) = hit.duration {
-                        r.duration = Some(d);
-                    }
+                // A play that pinned a video meanwhile keeps it.
+                if !inner.id_registry.pin_video(&id, &hit.video_id, false) {
+                    return;
+                }
+                inner.id_registry.remember_stream(&id, &hit.video_id, &hit.stream);
+                if let Some(d) = hit.duration {
+                    routing.lock().duration = Some(d);
                 }
                 inner
                     .id_registry
@@ -1146,58 +1244,11 @@ impl IMusicMetadataService for SoulseekMetadataService {
     }
 
     async fn search_albums(&self, query: &str, limit: i32) -> Vec<Album> {
-        if dotnet::is_blank(query) || limit <= 0 {
-            return Vec::new();
-        }
-        let inner = &self.inner;
-        let hits = inner.deezer.search_albums(query, limit, false).await;
-        let mut albums = Vec::with_capacity(hits.len());
-        let clean_copies = clean_copies(&hits);
+        self.inner.album_search(query, limit, false).await
+    }
 
-        for hit in hits {
-            // The registry id is the external id everywhere: getAlbum, getCoverArt and
-            // star all round-trip through it. The Deezer id rides along on the routing
-            // so album detail can fetch the exact tracklist without a name lookup. A clean copy
-            // listed beside its explicit original gets an id of its own, or the two rows would
-            // open the same album.
-            let words = if clean_copies.contains(hit.deezer_id.as_str()) {
-                Some(explicit_status::CLEAN)
-            } else {
-                (hit.explicit_lyrics == Some(true)).then_some(explicit_status::EXPLICIT)
-            };
-            let album_id = inner.id_registry.register(SoulseekRouting {
-                kind: RoutingKind::Album,
-                artist: Some(hit.artist.clone()),
-                album: Some(hit.title.clone()),
-                external_album_id: Some(hit.deezer_id.clone()),
-                explicit_content: words,
-                version: explicit_status::version_of(words),
-                ..Default::default()
-            });
-            let artist_id = inner.id_registry.register(SoulseekRouting {
-                kind: RoutingKind::Artist,
-                artist: Some(hit.artist.clone()),
-                ..Default::default()
-            });
-
-            albums.push(Album {
-                id: album_id.clone(),
-                title: hit.title.clone(),
-                artist: hit.artist.clone(),
-                artist_id: Some(artist_id),
-                year: hit.year,
-                song_count: Some(hit.track_count),
-                cover_art_url: hit.cover_url.clone(),
-                release_types: release_type_list(hit.record_type.as_deref()),
-                explicit_content_lyrics: words,
-                is_local: false,
-                external_provider: Some(Self::PROVIDER_NAME.to_string()),
-                external_id: Some(album_id),
-                ..Default::default()
-            });
-        }
-
-        albums
+    async fn search_album_rows(&self, query: &str, limit: i32) -> Vec<Album> {
+        self.inner.album_search(query, limit, true).await
     }
 
     async fn search_artists(&self, query: &str, limit: i32) -> Vec<Artist> {
@@ -1512,6 +1563,59 @@ impl IMusicMetadataService for SoulseekMetadataService {
             external_id: Some(external_id.to_string()),
             ..Default::default()
         })
+    }
+
+    async fn get_related_artists(
+        &self,
+        external_provider: &str,
+        external_id: &str,
+        limit: i32,
+    ) -> Vec<Artist> {
+        if !is_ours(external_provider) || limit <= 0 {
+            return Vec::new();
+        }
+        let inner = &self.inner;
+        let Some(routing) = inner.lookup(external_id).map(|r| r.snapshot()) else {
+            return Vec::new();
+        };
+        if routing.kind != RoutingKind::Artist {
+            return Vec::new();
+        }
+        let Some(hit) = inner.find_catalog_artist(&routing).await else {
+            return Vec::new();
+        };
+        let mut related = Vec::new();
+        for other in inner.deezer.related_artists(&hit.deezer_id, limit).await {
+            // The same id the artist's search row has, so the row opens that artist's page.
+            let id = inner.id_registry.register(SoulseekRouting {
+                kind: RoutingKind::Artist,
+                artist: Some(other.name.clone()),
+                ..Default::default()
+            });
+            if let Some(shared) = inner.lookup(&id) {
+                let unsettled = {
+                    let mut r = shared.lock();
+                    let unsettled = r.external_artist_id.is_none();
+                    if unsettled {
+                        r.external_artist_id = Some(other.deezer_id.clone());
+                    }
+                    unsettled
+                };
+                if unsettled {
+                    inner.id_registry.register(shared);
+                }
+            }
+            related.push(Artist {
+                id: id.clone(),
+                name: other.name,
+                image_url: other.picture_url,
+                album_count: Some(other.album_count),
+                is_local: false,
+                external_provider: Some(Self::PROVIDER_NAME.to_string()),
+                external_id: Some(id),
+            });
+        }
+        related
     }
 
     /// An outside artist's releases, for their page and for filling out a library artist's

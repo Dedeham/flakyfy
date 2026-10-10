@@ -1,5 +1,6 @@
 //! Port of `Services/Lyrics/LyricsService.cs`.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -79,20 +80,45 @@ impl LyricsService {
         ct: &CancellationToken,
         songs_own: LyricsTiming,
     ) -> LyricsLookup {
+        self.find_skipping(query, ct, songs_own, &HashSet::new()).await
+    }
+
+    /// The same search, passing over the candidates in `skip` (ids as "lrclib:9"): an answer
+    /// carrying one of them counts as that source having nothing. "song" in `skip` passes over
+    /// the lyrics the song already has.
+    pub async fn find_skipping(
+        &self,
+        query: &LyricsQuery,
+        ct: &CancellationToken,
+        songs_own: LyricsTiming,
+        skip: &HashSet<String>,
+    ) -> LyricsLookup {
         if is_null_or_white_space(Some(&query.artist)) || is_null_or_white_space(Some(&query.title)) {
             return LyricsLookup::miss();
         }
+        let songs_own = if skip.contains(MetadataSettings::SONG_LYRICS_SOURCE) {
+            LyricsTiming::None
+        } else {
+            songs_own
+        };
 
         let settings = self.settings.current();
         let order = settings.metadata.effective_lyrics_sources();
         let prefer_words = settings.metadata.prefer_word_timed_lyrics;
+        let mut skipped: Vec<&str> = skip.iter().map(String::as_str).collect();
+        skipped.sort_unstable();
         let key = format!(
-            "{}|{}|{}|{}|{:?}",
+            "{}|{}|{}|{}|{:?}{}",
             SongIdentity::match_key(&query.artist, &query.title),
             query.duration_seconds.map(|d| d.to_string()).unwrap_or_default(),
             order.join(","),
             if prefer_words { "True" } else { "False" },
-            songs_own
+            songs_own,
+            if skipped.is_empty() {
+                String::new()
+            } else {
+                format!("|skip:{}", skipped.join(","))
+            }
         );
         if let Some(cached) = self.cache.get(&key) {
             return cached;
@@ -129,7 +155,10 @@ impl LyricsService {
                 transient = true;
                 continue;
             }
-            let Some(result) = lookup.result else {
+            let Some(result) = lookup
+                .result
+                .filter(|result| result.candidate_id.as_ref().is_none_or(|id| !skip.contains(id)))
+            else {
                 continue;
             };
             if result.instrumental

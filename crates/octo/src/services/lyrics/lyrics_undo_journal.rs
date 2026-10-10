@@ -122,6 +122,34 @@ impl LyricsUndoJournal {
             .collect())
     }
 
+    /// Follow a folder the library tidy moved: each entry names where its file is now. Answers
+    /// how many entries followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> io::Result<usize> {
+        let mut entries = self.read_all()?;
+        let mut moved = 0;
+        for entry in &mut entries {
+            if let Some(now) = octo_core::common::PathHelper::moved_path(&entry.path, from, to) {
+                entry.path = now;
+                moved += 1;
+            }
+        }
+        if moved == 0 {
+            return Ok(0);
+        }
+        let mut memory = self.memory.lock();
+        match &self.path {
+            None => *memory = entries,
+            Some(path) => {
+                let text: String = entries
+                    .iter()
+                    .map(|entry| octo_core::json::to_string(entry) + "\n")
+                    .collect();
+                state_file::write_atomic(path, text.as_bytes())?;
+            }
+        }
+        Ok(moved)
+    }
+
     pub fn clear(&self) -> io::Result<()> {
         let mut memory = self.memory.lock();
         memory.clear();

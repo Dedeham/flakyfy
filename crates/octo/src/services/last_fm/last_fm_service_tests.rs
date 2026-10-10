@@ -511,3 +511,124 @@ async fn find_similar_tracks_says_how_the_list_was_found() {
     assert_eq!(style_versions(Some("Faded (Nightcore)")), ["nightcore"]);
     assert!(style_versions(Some("Faded (Remastered)")).is_empty());
 }
+
+/// Fails the first call, then answers every call with `body`; counts the calls.
+struct FailsOnce {
+    calls: Arc<Mutex<u32>>,
+    body: &'static str,
+}
+
+impl Respond for FailsOnce {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        let mut calls = self.calls.lock();
+        *calls += 1;
+        if *calls == 1 {
+            ResponseTemplate::new(500)
+        } else {
+            ResponseTemplate::new(200).set_body_string(self.body)
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_failed_call_is_not_kept_as_an_empty_answer() {
+    let calls = Arc::new(Mutex::new(0));
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(FailsOnce {
+            calls: Arc::clone(&calls),
+            body: r#"{"similarartists":{"artist":[{"name":"Justice","match":"1"}]}}"#,
+        })
+        .mount(&server)
+        .await;
+    let last_fm = service(&server);
+
+    let failed = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+    let answered = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+    let kept = last_fm.get_similar_artists("Daft Punk", 5).await.expect("reads");
+
+    assert!(failed.is_empty());
+    assert_eq!(answered.len(), 1);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        *calls.lock(),
+        2,
+        "asked again after the failure, then answered from the cache"
+    );
+}
+
+#[tokio::test]
+async fn keeping_an_answer_sweeps_out_the_expired_ones() {
+    let server = serve(answer(|_| {
+        r#"{"toptags":{"tag":[{"name":"house"}]}}"#.to_string()
+    }))
+    .await;
+    let last_fm = service(&server);
+    last_fm.radio_cache.lock().insert(
+        "stale".into(),
+        (Utc::now() - TimeDelta::minutes(1), RadioValue::Count(1)),
+    );
+
+    last_fm.get_artist_top_tags("Daft Punk", 3).await.expect("reads");
+
+    let cache = last_fm.radio_cache.lock();
+    assert!(!cache.contains_key("stale"));
+    assert_eq!(cache.len(), 1);
+}
+
+#[tokio::test]
+async fn an_artists_top_tracks_are_kept_and_not_asked_for_twice() {
+    let server = serve(answer(|_| {
+        r#"{"toptracks":{"track":[{"name":"One More Time"}]}}"#.to_string()
+    }))
+    .await;
+    let last_fm = service(&server);
+
+    let first = last_fm.get_artist_top_tracks("Daft Punk", 10).await;
+    let second = last_fm.get_artist_top_tracks("Daft Punk", 10).await;
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    assert_eq!(received(&server).await.len(), 1);
+}
+
+/// Notes when each call arrived, and answers it slowly.
+struct SlowArrivals {
+    arrived: Arc<Mutex<Vec<std::time::Instant>>>,
+}
+
+impl Respond for SlowArrivals {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        self.arrived.lock().push(std::time::Instant::now());
+        ResponseTemplate::new(200)
+            .set_body_string(r#"{"toptracks":{"track":[]}}"#)
+            .set_delay(Duration::from_millis(400))
+    }
+}
+
+#[tokio::test]
+async fn top_track_calls_take_turns_at_the_provider_gate() {
+    let arrived = Arc::new(Mutex::new(Vec::new()));
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(SlowArrivals {
+            arrived: Arc::clone(&arrived),
+        })
+        .mount(&server)
+        .await;
+    let last_fm = service(&server);
+    let start = std::time::Instant::now();
+
+    futures::future::join_all((0..8).map(|i| {
+        let last_fm = &last_fm;
+        async move { last_fm.get_artist_top_tracks(&format!("Artist {i}"), 5).await }
+    }))
+    .await;
+
+    let early = arrived
+        .lock()
+        .iter()
+        .filter(|at| at.duration_since(start) < Duration::from_millis(200))
+        .count();
+    assert_eq!(early, 4, "four at once, the rest after");
+}

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::text::{IgnoreCaseSet, eq_ignore_case, utf16_len};
 
-/// Keep is appended, never inserted: the journal stores actions as numbers, so moving one would
-/// change what every entry already written means.
+/// New actions are appended, never inserted: the journal stores actions as numbers, so moving one
+/// would change what every entry already written means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Deserialize, Serialize)]
 pub enum LibraryAction {
     #[default]
@@ -17,17 +17,28 @@ pub enum LibraryAction {
     WrongVersion,
     BetterQuality,
     Keep,
+    /// The song is right but its lyrics are not: show the next source's, never these again.
+    WrongLyrics,
+    /// The song is right but its album's cover is not: put in another, never this one again.
+    WrongCover,
 }
 
 impl LibraryAction {
-    /// `Enum.GetValues<LibraryAction>()`, in declaration order.
-    pub const ALL: [LibraryAction; 5] = [
+    /// Every action, in declaration order.
+    pub const ALL: [LibraryAction; 7] = [
         LibraryAction::Delete,
         LibraryAction::WrongSong,
         LibraryAction::WrongVersion,
         LibraryAction::BetterQuality,
         LibraryAction::Keep,
+        LibraryAction::WrongLyrics,
+        LibraryAction::WrongCover,
     ];
+
+    /// Whether the action answers about the song's lyrics or cover, leaving its audio alone.
+    pub fn leaves_the_audio(self) -> bool {
+        matches!(self, LibraryAction::WrongLyrics | LibraryAction::WrongCover)
+    }
 
     /// The number the journal stores (`(int)action`).
     pub fn as_index(self) -> i32 {
@@ -41,6 +52,16 @@ impl LibraryAction {
             .and_then(|i| Self::ALL.get(i).copied())
     }
 
+    /// The built-in playlist name.
+    pub fn default_name(self) -> &'static str {
+        self.defaults().0
+    }
+
+    /// The built-in star rating; 0 is none.
+    pub fn default_rating(self) -> i32 {
+        self.defaults().1
+    }
+
     /// The built-in playlist name and star rating.
     fn defaults(self) -> (&'static str, i32) {
         match self {
@@ -49,6 +70,9 @@ impl LibraryAction {
             LibraryAction::WrongVersion => ("Wrong version", 3),
             LibraryAction::BetterQuality => ("Better quality", 4),
             LibraryAction::Keep => ("Keep", 5),
+            // No star by default: a rating someone already gave must not start asking for these.
+            LibraryAction::WrongLyrics => ("Wrong lyrics", 0),
+            LibraryAction::WrongCover => ("Wrong cover", 0),
         }
     }
 }

@@ -36,6 +36,7 @@ use crate::middleware::admin_sign_in_gate::GateState;
 use crate::middleware::{
     admin_guard, admin_headers, admin_port_split, admin_sign_in_gate, cors, exception, forwarded, request_log,
 };
+use crate::services::you_tube::stream_size_warmer;
 
 /// The whole application as one service, for `axum::serve` and for tests (`oneshot`).
 pub type App = BoxCloneSyncService<Request, Response, Infallible>;
@@ -47,6 +48,7 @@ pub fn app_routes(assets: &StaticAssets) -> RouteSet {
         .merge(admin_root::routes())
         .merge(crate::controllers::subsonic::routes())
         .merge(crate::controllers::admin::routes())
+        .merge(crate::controllers::lidarr_webhook::routes())
 }
 
 /// The whole application. `admin_port`: the dashboard's own port (`Admin:Port`, 0 when it
@@ -68,6 +70,7 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
         app: state.clone(),
         canon: Arc::new(canon.clone()),
     };
+    let warmer = state.stream_size_warmer.clone();
     let router = router.with_state(state);
     let service = ServiceBuilder::new()
         .layer(from_fn(request_log::request_log))
@@ -78,6 +81,8 @@ pub fn build_with_port(state: AppState, routes: RouteSet, admin_port: u16) -> Ap
         .layer(from_fn_with_state(gate, admin_sign_in_gate::admin_sign_in_gate))
         .layer(from_fn(cors::cors))
         .layer(from_fn(exception::catch_panic))
+        // Each answer is one listing for the stream size warmer.
+        .layer(from_fn_with_state(warmer, stream_size_warmer::listing_scope))
         .map_request(move |mut req: Request| {
             // `Request.Path` as the client spelled it, which a few actions read (the relay
             // target of getSimilarSongs and the playlist mutations keeps the client's casing).

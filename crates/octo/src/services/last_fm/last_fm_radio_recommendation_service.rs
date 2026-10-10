@@ -11,10 +11,13 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet;
 use octo_core::last_fm::SimilarTrack;
 use octo_core::last_fm::last_fm_radio_recommendation_service::{
-    Candidate, HEARTED_SEED_AFFINITY, IgnoreCaseKeys, NEIGHBOUR_ARTIST_AFFINITY, Randomizer,
+    ARTIST_RADIO_NEIGHBOURS, Candidate, FRONTIER_ARTIST_CAP, FRONTIER_ARTISTS, FRONTIER_FEWEST_SONGS,
+    FRONTIER_NEIGHBOURS, FRONTIER_SEEDS, FRONTIER_TRACKS_EACH, FrontierScores, HEARTED_SEED_AFFINITY,
+    IgnoreCaseKeys, NEIGHBOUR_ARTIST_AFFINITY, Randomizer, SECOND_STEP_SEEDS, SECOND_STEP_WEIGHT,
     SEED_RECENCY_DECAY, SEEDS_AT_ONCE, artist_cap, artist_key, create, default_randomizer,
-    definition_version, key, ranked, score_artists, score_local_tags, seed_score, shape, source_weight,
-    suppress_station_overlap, title, to_candidate,
+    definition_version, discount_known, key, known_artists, ranked, score_artists, score_local_tags,
+    seed_score, shape, shape_with_reserve, source_weight, suppress_station_overlap, title, to_candidate,
+    unknown_neighbours_first,
 };
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use octo_core::models::domain::Song;
@@ -36,13 +39,24 @@ use crate::services::radio::RadioSourceSet;
 /// Provider expansion has a hard fan-out and deadline. Partial results are useful.
 const PROVIDER_BUDGET: Duration = Duration::from_secs(25);
 
+/// The similar-artist walk of Discovery Mix has this long of its own, within the build's budget.
+const DISCOVERY_WALK_BUDGET: Duration = Duration::from_secs(8);
+
 /// `CancellationTokenSource.CreateLinkedTokenSource(ct)` with `CancelAfter(25 s)`.
 struct Budget<'a> {
     caller: &'a CancellationToken,
     deadline: Instant,
 }
 
-impl Budget<'_> {
+impl<'a> Budget<'a> {
+    /// This budget cut to at most `limit` from now: the same caller, the earlier deadline.
+    fn within(&self, limit: Duration) -> Budget<'a> {
+        Budget {
+            caller: self.caller,
+            deadline: self.deadline.min(Instant::now() + limit),
+        }
+    }
+
     /// The call, or [`OperationCanceled`] once the caller cancels or the deadline passes. (A
     /// cancelled call is dropped, which cancels its request.)
     async fn run<F: Future>(&self, call: F) -> Result<F::Output, OperationCanceled> {
@@ -139,6 +153,7 @@ impl LastFmRadioRecommendationService {
             .iter()
             .map(|ban| artist_key(&ban.artist))
             .collect();
+        let known = known_artists(&plays);
         let refill_headroom = (unavailable.len() as i32).min(settings.effective_radio_track_count());
         let candidate_target = 100.min(settings.effective_radio_track_count() + refill_headroom + 10);
         let artist_scores = score_artists(&plays, now);
@@ -244,46 +259,84 @@ impl LastFmRadioRecommendationService {
 
             if learned {
                 let top_tags = tags.top_by_score_then_name(3);
-                if settings.enable_discovery_mix && !top_tags.is_empty() {
-                    let discovery = self
-                        .tracks_from_tags(username, &top_tags, candidate_target, &budget)
+                // The artist and genre stations' candidates are asked for first, so a slow walk
+                // for Discovery Mix never spends their time; the stations are still drawn and
+                // listed in the same order as before.
+                let mut artist_candidates: Vec<(String, Vec<Candidate>)> = Vec::new();
+                for (artist, _) in artist_scores
+                    .iter()
+                    .take(settings.effective_artist_station_count().max(0) as usize)
+                {
+                    let candidates = self
+                        .tracks_from_artist(username, artist, candidate_target, &known, &budget)
                         .await?;
+                    artist_candidates.push((artist.clone(), candidates));
+                }
+                let mut genre_candidates: Vec<(String, Vec<Candidate>)> = Vec::new();
+                for tag in tags.top_by_score(settings.effective_genre_station_count().max(0) as usize) {
+                    // A genre station is for finding: the listener's own artists keep a third of
+                    // their weight, so the genre's other names lead.
+                    let candidates = discount_known(
+                        self.tracks_from_tags(
+                            username,
+                            std::slice::from_ref(&tag),
+                            candidate_target,
+                            &budget,
+                        )
+                        .await?,
+                        &known,
+                    );
+                    genre_candidates.push((tag, candidates));
+                }
+
+                if settings.enable_discovery_mix {
+                    // New artists first, found through the ones the listener plays, within the
+                    // walk's own few seconds; the tag charts only when the walk finds too few
+                    // songs.
+                    let walk_budget = budget.within(DISCOVERY_WALK_BUDGET);
+                    let mut discovery = self
+                        .tracks_from_frontier(&artist_scores, &known, &disliked, &walk_budget)
+                        .await;
+                    let mut discovery_cap = FRONTIER_ARTIST_CAP;
+                    if discovery.len() < FRONTIER_FEWEST_SONGS && !top_tags.is_empty() {
+                        discovery = self
+                            .tracks_from_tags(username, &top_tags, candidate_target, &budget)
+                            .await?;
+                        discovery_cap = artist_cap(settings, LastFmRadioStationKind::Discovery);
+                    }
                     if discovery.len() >= 5 {
-                        let tracks = shape(
+                        // The reserve stands in for library songs past the Discovery balance's
+                        // share, which only resolving the tracks can tell.
+                        let shaped = shape_with_reserve(
                             discovery,
                             &plays,
                             settings,
                             &unavailable,
                             &mut *random,
                             previous("discovery"),
-                            artist_cap(settings, LastFmRadioStationKind::Discovery),
+                            discovery_cap,
                             true,
-                            None,
                             Some(&banned),
                             Some(&disliked),
                         );
-                        stations.push(create(
+                        let mut station = create(
                             username,
                             "discovery",
                             "Discovery Mix",
                             LastFmRadioStationKind::Discovery,
                             true,
                             &top_tags,
-                            tracks,
+                            shaped.tracks,
                             1,
                             Utc::now(),
-                        ));
+                        );
+                        station.reserve = shaped.reserve;
+                        stations.push(station);
                     }
                 }
 
-                for (artist, _) in artist_scores
-                    .iter()
-                    .take(settings.effective_artist_station_count().max(0) as usize)
-                {
-                    let candidates = self
-                        .tracks_from_artist(username, artist, candidate_target, &budget)
-                        .await?;
-                    let station_key = format!("artist-{}", key(artist));
+                for (artist, candidates) in artist_candidates {
+                    let station_key = format!("artist-{}", key(&artist));
                     if candidates.len() >= 5 {
                         let tracks = shape(
                             candidates,
@@ -312,10 +365,7 @@ impl LastFmRadioRecommendationService {
                     }
                 }
 
-                for tag in tags.top_by_score(settings.effective_genre_station_count().max(0) as usize) {
-                    let candidates = self
-                        .tracks_from_tags(username, std::slice::from_ref(&tag), candidate_target, &budget)
-                        .await?;
+                for (tag, candidates) in genre_candidates {
                     let station_key = format!("genre-{}", key(&tag));
                     let artists: IgnoreCaseKeys =
                         candidates.iter().map(|item| item.track.artist.as_str()).collect();
@@ -548,12 +598,16 @@ impl LastFmRadioRecommendationService {
     }
 
     /// The seed artist's own top tracks lead; similar artists' top tracks ride at
-    /// [`NEIGHBOUR_ARTIST_AFFINITY`] so the station stays about who it is named for.
+    /// [`NEIGHBOUR_ARTIST_AFFINITY`] so the station stays about who it is named for. Of
+    /// [`ARTIST_RADIO_NEIGHBOURS`] neighbours, the five used are the strongest with the ones the
+    /// listener knows counted at a third of their match: a small artist whose closest neighbours
+    /// are all familiar still leads somewhere new.
     async fn tracks_from_artist(
         &self,
         username: &str,
         artist: &str,
         candidate_target: i32,
+        known: &IgnoreCaseKeys,
         budget: &Budget<'_>,
     ) -> anyhow::Result<Vec<Candidate>> {
         let mut result = Vec::new();
@@ -569,10 +623,13 @@ impl LastFmRadioRecommendationService {
             return Ok(result);
         };
         result.extend(ranked(own, &format!("artist:{artist}"), 1.0));
-        let Ok(similar) = budget.run(self.last_fm.get_similar_artists(artist, 6)).await else {
+        let Ok(similar) = budget
+            .run(self.last_fm.get_similar_artists(artist, ARTIST_RADIO_NEIGHBOURS))
+            .await
+        else {
             return Ok(result);
         };
-        for similar in similar?.into_iter().take(5) {
+        for similar in unknown_neighbours_first(similar?, known).into_iter().take(5) {
             let Ok(tracks) = budget
                 .run(
                     self.last_fm
@@ -609,6 +666,86 @@ impl LastFmRadioRecommendationService {
             }
         }
         Ok(result)
+    }
+
+    /// Songs by artists the listener does not know yet, found through the ones they play (see
+    /// [`FRONTIER_SEEDS`]): the walk scores each new neighbour of the strongest artists, steps
+    /// once more from the best of them, then asks the best new artists for their top songs, each
+    /// list weighted by its artist's score. The build's budget running out keeps what the walk
+    /// has found so far.
+    async fn tracks_from_frontier(
+        &self,
+        artist_scores: &[(String, f64)],
+        known: &IgnoreCaseKeys,
+        disliked: &IgnoreCaseKeys,
+        budget: &Budget<'_>,
+    ) -> Vec<Candidate> {
+        let seeds: Vec<&(String, f64)> = artist_scores.iter().take(FRONTIER_SEEDS).collect();
+        let Some(strongest) = seeds.first().map(|(_, score)| score.max(1e-9)) else {
+            return Vec::new();
+        };
+        let mut scores = FrontierScores::default();
+        let first: Vec<(String, f64)> = seeds
+            .iter()
+            .map(|(artist, score)| (artist.clone(), score / strongest))
+            .collect();
+        for (similar, weight) in self.neighbours(&first, budget).await {
+            scores.add(&similar, weight, known, disliked);
+        }
+        let step = scores.top(SECOND_STEP_SEEDS);
+        if let Some(best) = step.first().map(|(_, score)| score.max(1e-9)) {
+            let from: Vec<(String, f64)> = step
+                .iter()
+                .map(|(artist, score)| (artist.clone(), SECOND_STEP_WEIGHT * score / best))
+                .collect();
+            for (similar, weight) in self.neighbours(&from, budget).await {
+                scores.add(&similar, weight, known, disliked);
+            }
+        }
+        let picked = scores.top(FRONTIER_ARTISTS);
+        let Some(top) = picked.first().map(|(_, score)| score.max(1e-9)) else {
+            return Vec::new();
+        };
+        let gate = Semaphore::new(SEEDS_AT_ONCE);
+        let lists = futures::future::join_all(picked.iter().map(|(artist, score)| {
+            let gate = &gate;
+            async move {
+                let Ok(_permit) = budget.run(gate.acquire()).await else {
+                    return Vec::new();
+                };
+                let Ok(tracks) = budget
+                    .run(self.last_fm.get_artist_top_tracks(artist, FRONTIER_TRACKS_EACH))
+                    .await
+                else {
+                    return Vec::new();
+                };
+                ranked(tracks, &format!("frontier:{artist}"), score / top)
+            }
+        }))
+        .await;
+        lists.into_iter().flatten().collect()
+    }
+
+    /// Each artist's similar artists with the weight its answer carries; an artist whose
+    /// answer did not come in time, or could not be read, adds nothing.
+    async fn neighbours(
+        &self,
+        from: &[(String, f64)],
+        budget: &Budget<'_>,
+    ) -> Vec<(Vec<octo_core::last_fm::SimilarArtist>, f64)> {
+        futures::future::join_all(from.iter().map(|(artist, weight)| async move {
+            match budget
+                .run(self.last_fm.get_similar_artists(artist, FRONTIER_NEIGHBOURS))
+                .await
+            {
+                Ok(Ok(similar)) => Some((similar, *weight)),
+                _ => None,
+            }
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
     }
 }
 

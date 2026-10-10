@@ -31,15 +31,15 @@ use octo_core::models::domain::{Album, Artist, Song, explicit_status};
 use octo_core::models::radio::LastFmRadioStation;
 use octo_core::models::subsonic::ExternalPlaylist;
 use octo_core::settings::SubsonicSettings;
-use octo_core::soulseek::{RoutingKind, SoulseekRouting};
+use octo_core::soulseek::{RoutingKind, SoulseekRouting, StreamFacts};
 use serde_json::{Map, Number, Value, json};
 
 use crate::xml::{XElement, XValue};
 
 pub use library_actions::{
-    COVER_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LIBRARY_ACTIONS_EXTENSION,
-    LIBRARY_ACTIONS_EXTENSION_VERSION, LOOKUP_ACTION, REMOVE_ACTION, RESTORE_ACTION, RETAG_ACTION,
-    UNDO_ACTION, UPGRADE_ACTION,
+    COVER_ACTION, COVER_SWAP_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LIBRARY_ACTIONS_EXTENSION,
+    LIBRARY_ACTIONS_EXTENSION_VERSION, LOOKUP_ACTION, LYRICS_ACTION, REMOVE_ACTION, RESTORE_ACTION,
+    RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
 };
 pub use lyrics::{CueLineOut, CueWord, LYRICS_EXTENSION, LYRICS_EXTENSION_VERSION};
 pub use reply::{ReplyKind, SubsonicReply};
@@ -114,6 +114,18 @@ pub const FILE_ONLY_FIELDS: &[&str] = &[
 /// implements this for it.
 pub trait IdRegistry: Send + Sync {
     fn register(&self, routing: SoulseekRouting) -> String;
+
+    /// What is known of the stream an outside song under `song_id` plays, when anything is.
+    fn stream_facts(&self, _song_id: &str) -> Option<StreamFacts> {
+        None
+    }
+
+    /// An outside song went out without its size: a chance to learn it for next time.
+    fn size_wanted(&self, _song_id: &str) {}
+
+    /// An outside song that streams from YouTube is in the answer being built, with its size
+    /// or without, so the registry knows how many such rows one answer lists.
+    fn outside_listed(&self, _song_id: &str) {}
 }
 
 /// Handles building Subsonic API responses in both XML and JSON formats.
@@ -195,6 +207,50 @@ impl SubsonicResponseBuilder {
         SubsonicReply::xml(&envelope("ok").child(element))
     }
 
+    /// [`Self::create_info_response`] for an artist, with the related artists as
+    /// `similarArtist` entries after the fields (none written when there are none).
+    pub fn create_artist_info_response(
+        &self,
+        format: &str,
+        element_name: &str,
+        fields: &[(&str, &str)],
+        similar: &[Artist],
+    ) -> SubsonicReply {
+        if format == "json" {
+            let mut body = Fields::new();
+            body.insert("status".into(), "ok".into());
+            body.insert("version".into(), SUBSONIC_VERSION.into());
+            let mut element: Fields = fields
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), Value::from(*v)))
+                .collect();
+            if !similar.is_empty() {
+                element.insert(
+                    "similarArtist".into(),
+                    Value::Array(
+                        similar
+                            .iter()
+                            .map(|artist| Value::Object(build_artist_fields(artist)))
+                            .collect(),
+                    ),
+                );
+            }
+            body.insert(element_name.into(), Value::Object(element));
+            return self.create_json_response(Value::Object(body));
+        }
+
+        let mut element = subsonic_element(element_name);
+        for (key, value) in fields {
+            element.push(subsonic_element(*key).text(*value));
+        }
+        for artist in similar {
+            let mut entry = subsonic_element("similarArtist");
+            attributes(&mut entry, &build_artist_fields(artist));
+            element.push(entry);
+        }
+        SubsonicReply::xml(&envelope("ok").child(element))
+    }
+
     /// Creates a Subsonic error response.
     pub fn create_error(&self, format: &str, code: i32, message: &str) -> SubsonicReply {
         if format == "json" {
@@ -229,7 +285,7 @@ impl SubsonicResponseBuilder {
         let duration: i64 = station
             .tracks
             .iter()
-            .map(|track| i64::from(track.duration.unwrap_or(180)))
+            .map(|track| i64::from(known_seconds(track.duration)))
             .sum();
         let mut fields = Fields::new();
         fields.insert("id".into(), station.id.clone().into());
@@ -257,7 +313,7 @@ impl SubsonicResponseBuilder {
         fields.insert("songCount".into(), songs.len().into());
         let duration: i64 = songs
             .iter()
-            .map(|song| i64::from(song.duration.unwrap_or(180)))
+            .map(|song| i64::from(known_seconds(song.duration)))
             .sum();
         fields.insert("duration".into(), duration.into());
         if format.eq_ignore_ascii_case("json") {
@@ -321,6 +377,14 @@ impl SubsonicResponseBuilder {
         for entry in entries {
             let mut element = subsonic_element("entry");
             scalar_attributes(&mut element, entry);
+            // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+            if let Some(gain) = entry
+                .get("replayGain")
+                .map(Node::to_value)
+                .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+            {
+                element.push(json_shape_to_xml(Some(SUBSONIC_NAMESPACE), "replayGain", &gain));
+            }
             playlist.push(element);
         }
         SubsonicReply::xml(&envelope("ok").child(playlist))
@@ -690,8 +754,11 @@ impl SubsonicResponseBuilder {
         } else {
             "audio/mp4"
         };
-        let duration = song.duration.unwrap_or(180);
-        let est_size = i64::from(duration) * i64::from(bit_rate) * 125;
+        // A song whose length is not known goes out without one, never with a guess: a
+        // player that plans a crossfade from a made-up length cuts the song short or leaves
+        // a gap, while a missing length only waits for the stream to report the real one.
+        let duration = song.duration.filter(|&d| d > 0);
+        let est_size = i64::from(duration.unwrap_or(0)) * i64::from(bit_rate) * 125;
 
         // Resolve a real-looking album for placeholder songs. Last.fm's
         // track.search/getsimilar don't include album names, so song.Album is
@@ -755,7 +822,9 @@ impl SubsonicResponseBuilder {
         fields.insert("size".into(), est_size.into());
         fields.insert("contentType".into(), content_type.into());
         fields.insert("suffix".into(), suffix.into());
-        fields.insert("duration".into(), duration.into());
+        if let Some(duration) = duration {
+            fields.insert("duration".into(), duration.into());
+        }
         fields.insert("bitRate".into(), bit_rate.into());
         fields.insert("path".into(), path.into());
         fields.insert("created".into(), millis(&self.clock.now()).into());
@@ -797,18 +866,60 @@ impl SubsonicResponseBuilder {
         }
 
         if !song.is_local {
-            // No file on the server, so nothing about one.
-            for key in FILE_ONLY_FIELDS {
-                fields.shift_remove(*key);
-            }
             // A FLAC's rate is a guess until it is fetched; the 128 of the AAC stream is real.
-            if lossless_external {
+            let size = if lossless_external {
                 fields.shift_remove("bitRate");
+                None
+            } else {
+                self.declare_outside_stream(&mut fields, &song.id)
+            };
+            // No file on the server, so nothing about one; the size of the stream it relays is
+            // the one fact it can truthfully give, once known.
+            for key in FILE_ONLY_FIELDS {
+                match (*key, size) {
+                    ("size", Some(size)) => {
+                        fields.insert("size".into(), size.into());
+                    }
+                    _ => {
+                        fields.shift_remove(*key);
+                    }
+                }
             }
             fields.insert("isExternal".into(), true.into());
         }
 
         fields
+    }
+
+    /// An outside song that streams from YouTube: once the stream is known, the suffix, content
+    /// type and bit rate of the format it is served in, and its exact size (returned). A stream
+    /// not known yet keeps the m4a declaration and goes without a size, and is asked about for
+    /// next time. Wait-for-lossless rows never come here: their bytes are not known until the
+    /// FLAC lands.
+    fn declare_outside_stream(&self, fields: &mut Fields, song_id: &str) -> Option<u64> {
+        let facts = self.id_registry.stream_facts(song_id).unwrap_or_default();
+        if let Some(declared) = facts.declared() {
+            fields.insert("suffix".into(), declared.suffix.into());
+            fields.insert("contentType".into(), declared.content_type.into());
+            match declared.bit_rate {
+                Some(rate) => fields.insert("bitRate".into(), rate.into()),
+                None => fields.shift_remove("bitRate"),
+            };
+        }
+        // ReplayGain measured on the very stream that plays (OpenSubsonic's replayGain).
+        if let Some(gain) = facts.track_gain {
+            let mut replay_gain = Fields::new();
+            replay_gain.insert("trackGain".into(), json!(gain));
+            if let Some(peak) = facts.track_peak {
+                replay_gain.insert("trackPeak".into(), json!(peak));
+            }
+            fields.insert("replayGain".into(), Value::Object(replay_gain));
+        }
+        self.id_registry.outside_listed(song_id);
+        if facts.size.is_none() {
+            self.id_registry.size_wanted(song_id);
+        }
+        facts.size
     }
 
     /// Converts an Album domain model to Subsonic JSON format.
@@ -885,6 +996,13 @@ impl SubsonicResponseBuilder {
         let mut element = XElement::in_namespace(ns, "song");
         attributes(&mut element, &fields);
         text_lists(&mut element, &fields, ns);
+        // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+        if let Some(gain) = fields
+            .get("replayGain")
+            .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+        {
+            element.push(json_shape_to_xml(ns, "replayGain", gain));
+        }
         element
     }
 
@@ -940,6 +1058,11 @@ fn build_artist_fields(artist: &Artist) -> Fields {
     fields.insert("coverArt".into(), artist.id.clone().into());
     fields.insert("isExternal".into(), (!artist.is_local).into());
     fields
+}
+
+/// A song's length for a list's total: an unknown length counts as nothing.
+fn known_seconds(duration: Option<i32>) -> i32 {
+    duration.unwrap_or(0).max(0)
 }
 
 /// `new XElement(ns + "subsonic-response", status, version)`.

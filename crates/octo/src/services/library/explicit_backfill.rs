@@ -46,6 +46,7 @@ pub use super::explicit_backfill_store::{
 };
 use super::library_tag_edits::{self, TagEditEntry, TagEditJournal, tag_edit_kinds};
 use super::library_walk;
+use super::library_write_gate::LibraryWriteGate;
 use super::navidrome_song_list::{self, NavidromeSongEntry};
 use crate::services::local::ILocalLibraryService;
 use crate::services::subsonic::NavidromeIdentityService;
@@ -118,6 +119,32 @@ impl ExplicitBackfillStore {
         self.dirty.store(true, Ordering::SeqCst);
     }
 
+    /// Follow a folder the library tidy moved: the run's songs name where their files are now.
+    /// Answers how many followed.
+    pub fn move_paths(&self, from: &str, to: &str) -> usize {
+        let mut moved = 0;
+        {
+            let mut run = self.run.lock();
+            let run = &mut *run;
+            let paths = run
+                .rows
+                .iter_mut()
+                .map(|row| &mut row.path)
+                .chain(run.queue.iter_mut().map(|song| &mut song.path));
+            for path in paths {
+                if let Some(now) = octo_core::common::PathHelper::moved_path(path, from, to) {
+                    *path = now;
+                    moved += 1;
+                }
+            }
+        }
+        if moved > 0 {
+            self.dirty.store(true, Ordering::SeqCst);
+            self.flush();
+        }
+        moved
+    }
+
     pub fn replace(&self, run: ExplicitBackfillRun) {
         *self.run.lock() = run;
         self.dirty.store(true, Ordering::SeqCst);
@@ -188,6 +215,8 @@ pub struct ExplicitBackfill {
     list_songs: Option<ListSongs>,
     pace: Duration,
     busy_wait: Duration,
+    /// Apply and Undo write the library one job at a time with the other library jobs.
+    write_gate: LibraryWriteGate,
 }
 
 impl ExplicitBackfill {
@@ -225,8 +254,18 @@ impl ExplicitBackfill {
             list_songs: None,
             pace: Self::PACE,
             busy_wait: Self::BUSY_WAIT,
+            write_gate: LibraryWriteGate::new(),
         }
     }
+
+    /// The gate shared with the other jobs that write the music folder.
+    pub fn with_write_gate(mut self, gate: LibraryWriteGate) -> Self {
+        self.write_gate = gate;
+        self
+    }
+
+    /// What the dashboard calls this job when another one has to wait for it.
+    pub const JOB_NAME: &'static str = "Explicit marking";
 
     /// The songs to look at instead of Navidrome's list, and no waits (tests: the C# set
     /// `ListSongs`, `Pace` and `BusyWait`).
@@ -339,6 +378,18 @@ impl ExplicitBackfill {
         request: &ExplicitBackfillRequest,
         stopping: &CancellationToken,
     ) -> Result<(), Stopped> {
+        let _job = match request.mode {
+            ExplicitBackfillMode::Preview => None,
+            _ => match self.write_gate.begin_job(Self::JOB_NAME).await {
+                Ok(job) => Some(job),
+                Err(holder) => {
+                    let busy = LibraryWriteGate::busy_message(&holder);
+                    warn!("Explicit marking did not start: {busy}");
+                    self.store.update(|run| run.reason = Some(busy));
+                    return Ok(());
+                }
+            },
+        };
         let outcome = match request.mode {
             ExplicitBackfillMode::Preview => self.preview(stopping).await,
             ExplicitBackfillMode::Apply => self.apply(&request.username, stopping).await,

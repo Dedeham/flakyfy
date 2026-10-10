@@ -844,3 +844,197 @@ async fn the_preview_verifier_answers_through_the_service() {
         SpectrumReport::unknown("not checked", 0)
     );
 }
+
+// ---- Stray links: a weak recording beside a much stronger one of another song ---------------
+
+fn sized(title: &str, artist: &str, sources: i32, seconds: Option<i32>) -> AcoustIdRecording {
+    let mut r = recording(title, artist, None, None);
+    r.sources = sources;
+    r.duration_seconds = seconds;
+    r
+}
+
+fn decide_at(lookup: &AcoustIdLookup, artist: &str, title: &str, seconds: i32) -> VerificationResult {
+    DownloadVerificationService::decide(
+        lookup,
+        Some(artist),
+        Some(title),
+        THRESHOLD,
+        false,
+        seconds,
+        false,
+    )
+}
+
+/// AcoustID ties this audio to "bury a friend" with 1,865 submissions and to "my boy" with one.
+fn bury_a_friend() -> AcoustIdLookup {
+    let mut stray = sized("my boy", "Billie Eilish", 1, Some(171));
+    stray.recording_id = "mbid-my-boy".into();
+    let mut acoustic = sized("Bury a Friend (acoustic)", "Billie Eilish", 1, Some(190));
+    acoustic.recording_id = "mbid-acoustic".into();
+    let mut single = sized("bury a friend", "Billie Eilish", 2, Some(193));
+    single.recording_id = "mbid-single".into();
+    ok(vec![result(
+        0.97,
+        vec![
+            stray,
+            sized("bury a friend", "Billie Eilish", 1865, Some(193)),
+            acoustic,
+            single,
+        ],
+    )])
+}
+
+#[test]
+fn a_stray_link_beside_a_strong_one_does_not_confirm() {
+    let verdict = decide_at(&bury_a_friend(), "Billie Eilish", "my boy", 193);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(verdict.matched_title.as_deref(), Some("bury a friend"));
+    assert_eq!(verdict.recording_id.as_deref(), Some("mbid-bury a friend"));
+}
+
+#[test]
+fn a_stray_link_with_the_right_length_still_does_not_confirm() {
+    // Same lengths everywhere: only the submissions tell the stray apart.
+    let mut stray = sized("my boy", "Billie Eilish", 1, Some(193));
+    stray.recording_id = "mbid-my-boy".into();
+    let lookup = ok(vec![result(
+        0.97,
+        vec![stray, sized("bury a friend", "Billie Eilish", 1865, Some(193))],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(verdict.matched_title.as_deref(), Some("bury a friend"));
+}
+
+#[test]
+fn the_strong_link_still_confirms() {
+    let verdict = decide_at(&bury_a_friend(), "Billie Eilish", "bury a friend", 193);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
+}
+
+#[test]
+fn a_far_off_length_does_not_confirm() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 5, Some(171))],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    assert_ne!(verdict.verdict, VerificationVerdict::Confirmed);
+}
+
+/// The right song and artist whose only doubt is the length is a question for a person, never
+/// a mismatch that calls the requested song another one.
+#[test]
+fn a_right_song_off_only_in_length_needs_a_look_and_is_never_called_another_song() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 5, Some(171))],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Inconclusive);
+    assert_eq!(verdict.reason, InconclusiveReason::LengthOff);
+    assert!(verdict.needs_review());
+    assert_eq!(verdict.deny_reason, "");
+    assert_eq!(verdict.matched_title.as_deref(), Some("my boy"));
+    assert_eq!(
+        verdict.r#match.as_ref().and_then(|m| m.duration_seconds),
+        Some(171)
+    );
+}
+
+#[test]
+fn a_tagged_isrc_never_settles_a_length_doubt() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 5, Some(171))],
+    )]);
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 193);
+
+    let kept = DownloadVerificationService::with_tagged_isrc(verdict, Some("USUM71900764"), true);
+
+    assert_eq!(kept.verdict, VerificationVerdict::Inconclusive);
+    assert_eq!(kept.reason, InconclusiveReason::LengthOff);
+}
+
+/// A stray link stays a mismatch even when its length is off too: the stronger song is named.
+#[test]
+fn a_stray_link_with_an_off_length_is_still_a_mismatch() {
+    let verdict = decide_at(&bury_a_friend(), "Billie Eilish", "my boy", 240);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(verdict.matched_title.as_deref(), Some("bury a friend"));
+}
+
+#[test]
+fn a_lone_small_link_still_confirms() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 1, Some(171))],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 172);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
+}
+
+#[test]
+fn unknown_lengths_are_not_held_against_a_link() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![sized("my boy", "Billie Eilish", 3, None)],
+    )]);
+
+    let verdict = decide_at(&lookup, "Billie Eilish", "my boy", 0);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
+}
+
+/// The same audio on an album and as a radio edit: a weaker recording of the same song is a
+/// version of it, not a stray.
+#[test]
+fn a_weaker_version_of_the_same_song_still_confirms() {
+    let lookup = ok(vec![result(
+        0.97,
+        vec![
+            sized("Song (Radio Edit)", "Artist", 5, Some(200)),
+            sized("Song", "Artist", 900, Some(200)),
+        ],
+    )]);
+
+    let verdict = decide_at(&lookup, "Artist", "Song (Radio Edit)", 200);
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
+    assert_eq!(verdict.recording_id.as_deref(), Some("mbid-Song (Radio Edit)"));
+}
+
+/// A request carrying the stray's own ISRC does not bring the stray back.
+#[test]
+fn the_isrc_of_a_stray_link_does_not_confirm_it() {
+    let lookup = bury_a_friend();
+    let before = VerificationResult {
+        duration_seconds: 193,
+        ..decide_at(&lookup, "Billie Eilish", "my boy", 193)
+    };
+    let isrcs = isrcs(&[("mbid-my-boy", &["USUM71900764"]), ("mbid-bury a friend", &[])]);
+
+    let verdict = DownloadVerificationService::settle_by_isrc(
+        before,
+        &lookup,
+        THRESHOLD,
+        false,
+        "USUM71900764",
+        &isrcs,
+        false,
+    );
+
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+}

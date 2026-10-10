@@ -34,8 +34,8 @@ use octo_core::soulseek::soulseek_download_service::{
     planned_queries, rank,
 };
 use octo_core::soulseek::{
-    AlbumFolderPicker, AlbumTrack, RoutingKind, SearchProfile, SoulseekFileHit, SoulseekLinkState,
-    SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState,
+    AlbumFolderPicker, AlbumTrack, LengthSource, RoutingKind, SearchProfile, SoulseekFileHit,
+    SoulseekLinkState, SoulseekRouting, SoulseekTransferProgress, SoulseekTransferState, StreamFacts,
 };
 use octo_media::audio::SpectrumReport;
 use octo_media::tags::TagFile;
@@ -93,6 +93,24 @@ pub struct InvalidOperationException(pub String);
 /// of kind `NotFound`, which is how the library-action executor recognizes "no copy here".
 fn file_not_found(message: String) -> anyhow::Error {
     std::io::Error::new(std::io::ErrorKind::NotFound, message).into()
+}
+
+/// The whole stream's size as a shim answer shows it: the body of a 200, or the total after the
+/// slash of a partial answer's Content-Range (`bytes 0-1/12345`, or `bytes */12345` on a 416).
+pub(crate) fn played_size(
+    status: u16,
+    content_length: Option<u64>,
+    content_range: Option<&str>,
+) -> Option<u64> {
+    let total = content_range
+        .and_then(|range| range.rsplit_once('/'))
+        .and_then(|(_, total)| total.trim().parse::<u64>().ok());
+    match status {
+        200 => content_length.or(total),
+        206 | 416 => total,
+        _ => None,
+    }
+    .filter(|size| *size > 0)
 }
 
 /// A Soulseek call's failure, with a caller who gave up told apart as the base's
@@ -436,11 +454,14 @@ impl SoulseekDownloadService {
             let hit = self
                 .youtube
                 .search(&format!("{artist} {title}"), r.duration, false)
-                .await;
-            video_id = hit.map(|h| h.video_id).filter(|v| !v.is_empty());
-            if let Some(found) = &video_id {
-                routing.lock().you_tube_id = Some(found.clone());
+                .await
+                .filter(|h| !h.video_id.is_empty());
+            if let Some(hit) = &hit {
+                self.id_registry.set_you_tube_id(&track_key, &hit.video_id);
+                self.id_registry
+                    .remember_stream(&track_key, &hit.video_id, &hit.stream);
             }
+            video_id = hit.map(|h| h.video_id);
         }
         let Some(video_id) = video_id else {
             return Err(file_not_found(format!(
@@ -1963,17 +1984,25 @@ impl DownloadBackend for SoulseekDownloadService {
             let hit = self
                 .youtube
                 .search(&format!("{artist} {title}"), r.duration, false)
-                .await;
-            video_id = hit.map(|h| h.video_id).filter(|v| !v.is_empty());
-            // Cache back on the routing so a second click on the same placeholder
-            // skips the yt-dlp ytsearch1: round trip: that 3-8s saving is the
-            // difference between Arpeggi (~10s HTTP timeout) playing the song or
-            // canceling and falling back to a local one. The routing is shared via
-            // the registry, so this change is visible to every subsequent stream
-            // request for this id.
-            if let Some(found) = &video_id {
-                routing.lock().you_tube_id = Some(found.clone());
+                .await
+                .filter(|h| !h.video_id.is_empty());
+            // Pin it on the song so a second click on the same placeholder skips the
+            // yt-dlp ytsearch1: round trip: that 3-8s saving is the difference between
+            // Arpeggi (~10s HTTP timeout) playing the song or canceling and falling back
+            // to a local one. Every later stream request for this id reads the same pin.
+            if let Some(hit) = &hit {
+                self.id_registry.set_you_tube_id(external_id, &hit.video_id);
+                self.id_registry
+                    .remember_stream(external_id, &hit.video_id, &hit.stream);
+                // The video that plays says how long the song runs, for every later row.
+                if !self
+                    .id_registry
+                    .remember_length(external_id, hit.duration, LengthSource::Video)
+                {
+                    routing.remember_length(hit.duration, LengthSource::Video);
+                }
             }
+            video_id = hit.map(|h| h.video_id);
         }
         let Some(video_id) = video_id else {
             return Ok(None);
@@ -1983,6 +2012,23 @@ impl DownloadBackend for SoulseekDownloadService {
             warn!("yt-dlp shim failed to open stream for vid={video_id}");
             return Ok(None);
         };
+
+        // The bytes on their way are the last word on the size.
+        if let Some(size) = played_size(
+            opened.status_code,
+            opened.content_length,
+            opened.content_range.as_deref(),
+        ) {
+            self.id_registry.remember_stream(
+                external_id,
+                &video_id,
+                &StreamFacts {
+                    size: Some(size),
+                    size_confirmed: true,
+                    ..Default::default()
+                },
+            );
+        }
 
         info!(
             "YouTube preview '{} - {}' (vid={video_id}, status={}, {} bytes{})",
@@ -2049,6 +2095,18 @@ impl DownloadBackend for SoulseekDownloadService {
         let source = download
             .source_override
             .unwrap_or(base.subsonic_settings().download_source);
+        // Soulseek switched off: the combined source is YouTube alone, and Soulseek alone has
+        // nothing to try.
+        let source = match source {
+            DownloadSource::SoulseekThenYouTube if !self.slskd.is_on() => DownloadSource::YouTube,
+            DownloadSource::YouTube => DownloadSource::YouTube,
+            _ if !self.slskd.is_on() => {
+                return Err(
+                    InvalidOperationException(super::soulseek_client::SOULSEEK_OFF.to_string()).into(),
+                );
+            }
+            source => source,
+        };
         match source {
             DownloadSource::YouTube => {
                 self.download_via_you_tube(base, &routing, download, true, cancellation_token)
@@ -2108,7 +2166,7 @@ impl DownloadBackend for SoulseekDownloadService {
     ) -> Vec<String> {
         let none = Vec::new();
         let settings = base.current_soulseek_settings();
-        if !settings.album_folders || tracks.len() < 3 {
+        if !settings.album_folders || tracks.len() < 3 || !self.slskd.is_on() {
             return none;
         }
         if !matches!(

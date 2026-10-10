@@ -129,6 +129,13 @@ async fn test_host_points_at_a_closed_port_not_a_real_server() {
 }
 
 #[tokio::test]
+async fn settings_list_how_many_stream_sizes_are_learned_a_minute() {
+    let (_, app) = factory();
+    let document = get(&app, "/api/admin/settings").await.json();
+    assert_eq!(document["Subsonic"]["StreamSizeWarmPerMinute"], 5);
+}
+
+#[tokio::test]
 async fn settings_report_restart_pending_as_a_list() {
     let (_, app) = factory();
     let reply = get(&app, "/api/admin/settings").await;
@@ -548,6 +555,39 @@ async fn settings_post_refusals_read_as_recorded() {
     );
 }
 
+/// The editor sends every action back. Wrong lyrics and Wrong cover are saved only when someone
+/// changed them, so an untouched settings file still reads in a build that does not know them.
+#[tokio::test]
+async fn settings_save_keeps_untouched_lyrics_and_cover_actions_out_of_the_file() {
+    let (state, app) = factory();
+    let body = r#"{"LibraryActions":{"Actions":[
+        {"Action":"Delete","Name":"Delete","Enabled":true,"Rating":1},
+        {"Action":"WrongLyrics","Name":"Wrong lyrics","Enabled":false,"Rating":0},
+        {"Action":"WrongCover","Name":" Wrong cover ","Enabled":false,"Rating":null}
+    ]}}"#;
+    let reply = admin_write(&app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let saved = std::fs::read_to_string(state.settings_writer.file_path()).expect("the file was written");
+    assert!(saved.contains("\"Delete\""), "{saved}");
+    assert!(
+        !saved.contains("WrongLyrics") && !saved.contains("WrongCover"),
+        "{saved}"
+    );
+
+    // Changed from the defaults, they are saved.
+    let body = r#"{"LibraryActions":{"Actions":[
+        {"Action":"WrongLyrics","Name":"Wrong lyrics","Enabled":true,"Rating":0},
+        {"Action":"WrongCover","Name":"Bad art","Enabled":false,"Rating":0}
+    ]}}"#;
+    let reply = admin_write(&app, Method::POST, "/api/admin/settings", Some(body)).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let saved = std::fs::read_to_string(state.settings_writer.file_path()).expect("the file was written");
+    assert!(
+        saved.contains("WrongLyrics") && saved.contains("Bad art"),
+        "{saved}"
+    );
+}
+
 #[tokio::test]
 async fn settings_post_merges_the_patch_and_echoes_it_with_secrets_masked() {
     let (state, app) = factory();
@@ -649,8 +689,17 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("Soulseek:BaseUrl")["IsSecret"], false);
     assert_eq!(row("Genre:Mappings")["Value"], "");
     assert_eq!(row("ListenBrainz:Token")["IsSecret"], true);
-    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry (the charts plan).
-    assert_eq!(rows.len(), 179);
+    assert_eq!(row("Lidarr:WebhookSecret")["IsSecret"], true);
+    // 177 from the C#, plus GeneratedPlaylists:Charts and :ChartCountry, Liked Songs'
+    // three: GeneratedPlaylists:LikedSongs, :LikedSongsName and :LikedSongsMax, the
+    // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
+    // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
+    // RadioSources:ListenBrainzRadioMode and Subsonic:StreamSizeWarmPerMinute.
+    assert_eq!(rows.len(), 190);
+    assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
+    assert_eq!(row("GeneratedPlaylists:CountryMixes")["IsSecret"], false);
+    assert_eq!(row("GeneratedPlaylists:LikedSongsName")["IsSecret"], false);
+    assert_eq!(row("RadioSources:ListenBrainzRadioMode")["IsSecret"], false);
     assert!(body["configFile"].as_str().unwrap().ends_with("settings.json"));
 }
 
@@ -777,6 +826,20 @@ async fn the_side_effect_posts_answer_as_recorded() {
     let reply = admin_write(&app, Method::POST, "/api/admin/restart", None).await;
     assert_eq!(reply.status, StatusCode::ACCEPTED);
     assert_eq!(reply.text(), r#"{"ok":true,"message":"restarting"}"#);
+}
+
+#[tokio::test]
+async fn status_says_a_switched_off_soulseek_is_off_and_optional() {
+    let mut settings = factory_settings();
+    settings.soulseek.enabled = false;
+    let app = app(AppState::for_tests(settings));
+
+    let body = get(&app, "/api/admin/status").await.json();
+
+    assert_eq!(body["services"]["slskd"]["detail"], "Off. Optional.");
+    assert_eq!(body["services"]["slskd"]["ok"], true);
+    assert_eq!(body["services"]["slskd"]["configured"], false);
+    assert_eq!(body["services"]["slskd"]["warning"], false);
 }
 
 #[tokio::test]

@@ -6,7 +6,8 @@
 //! races its token against each call.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use octo_core::common::dotnet;
 use octo_core::lidarr::lidarr_client::{
@@ -21,6 +22,7 @@ use octo_core::lidarr::{
 use octo_core::settings::{LidarrSettings, SettingsStore};
 use reqwest::Method;
 use serde_json::{Map, Value, json};
+use tracing::{info, warn};
 
 use crate::services::http_client_factory;
 
@@ -31,6 +33,18 @@ pub struct LidarrClient {
     http: reqwest::Client,
     /// `IOptionsMonitor<LidarrSettings>`: the address and key are read at every request.
     settings: Arc<SettingsStore>,
+    /// Milliseconds between looks while waiting for an album's track list.
+    metadata_poll: AtomicU64,
+}
+
+/// What a look at an album's track list found.
+enum TrackListWait {
+    /// Lidarr lists the album's tracks.
+    Ready,
+    /// No tracks yet, and a refresh that brings them is queued or running.
+    Refreshing,
+    /// No tracks, and nothing is refreshing them.
+    Idle,
 }
 
 impl LidarrClient {
@@ -45,7 +59,11 @@ impl LidarrClient {
             .timeout(Self::TIMEOUT)
             .build()
             .expect("the Lidarr HTTP client builds");
-        LidarrClient { http, settings }
+        LidarrClient {
+            http,
+            settings,
+            metadata_poll: AtomicU64::new(2000),
+        }
     }
 
     pub async fn is_reachable(&self) -> bool {
@@ -266,10 +284,12 @@ impl LidarrClient {
             .await?;
 
         let album_id;
+        let artist_id;
         let mut was_monitored = false;
         if let Some(first) = existing.first() {
             let mut resource = first.clone();
             album_id = int_or_zero(&resource, "id")?;
+            artist_id = artist_id_of(&resource)?;
             was_monitored = nullable_bool(&resource, "monitored")?.unwrap_or(false);
             if !was_monitored {
                 resource.insert("monitored".into(), Value::Bool(true));
@@ -343,12 +363,14 @@ impl LidarrClient {
 
             let added = self.send_json(Method::POST, "/api/v1/album", &resource).await?;
             album_id = int_or_zero(&added, "id")?;
+            artist_id = artist_id_of(&added)?;
             self.ensure_artist_monitored(existing_artist).await?;
         }
 
         if let Some(grab) = grab {
             self.grab_picked(album_id, grab).await?;
         } else {
+            self.wait_for_track_list(album_id, artist_id, &settings).await;
             self.send_json(
                 Method::POST,
                 "/api/v1/command",
@@ -365,6 +387,116 @@ impl LidarrClient {
         })
     }
 
+    /// How often [`LidarrClient::wait_for_track_list`] looks again.
+    pub fn set_metadata_poll(&self, poll: Duration) {
+        self.metadata_poll.store(
+            poll.as_millis().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Waits until Lidarr knows the album's tracks, so an AlbumSearch has something to match a
+    /// release against. A just-added artist or album gets its track list from Lidarr's own
+    /// refresh: while a RefreshArtist or RefreshAlbum for it is queued or running, this waits
+    /// for it. When none is running and the list is still empty, it asks for one RefreshAlbum
+    /// and waits for that. It gives up when that refresh ended without tracks, or once
+    /// [`track_list_wait`] has passed; the search is started either way.
+    async fn wait_for_track_list(&self, album_id: i32, artist_id: i32, settings: &LidarrSettings) {
+        let deadline = Instant::now() + track_list_wait(settings);
+        let poll = Duration::from_millis(self.metadata_poll.load(Ordering::Relaxed));
+        let mut refresh_asked = false;
+        loop {
+            match self.waiting_on_refresh(album_id, artist_id).await {
+                Ok(TrackListWait::Ready) => return,
+                Ok(TrackListWait::Refreshing) => {}
+                Ok(TrackListWait::Idle) if !refresh_asked => {
+                    refresh_asked = true;
+                    let command =
+                        json!({ "name": "RefreshAlbum", "albumId": album_id, "albumIds": [album_id] });
+                    if let Err(e) = self
+                        .send_json(
+                            Method::POST,
+                            "/api/v1/command",
+                            command.as_object().expect("an object literal"),
+                        )
+                        .await
+                    {
+                        warn!("Could not ask Lidarr to refresh album {album_id}: {e}");
+                        return;
+                    }
+                    info!("Lidarr has no tracks for album {album_id} yet; asked it to refresh the album");
+                }
+                Ok(TrackListWait::Idle) => {
+                    warn!("Lidarr refreshed album {album_id} and still lists no tracks; searching anyway");
+                    return;
+                }
+                Err(e) => {
+                    warn!("Could not check Lidarr's tracks for album {album_id}: {e}");
+                    return;
+                }
+            }
+            if Instant::now() + poll > deadline {
+                warn!("Lidarr listed no tracks for album {album_id} in time; searching anyway");
+                return;
+            }
+            tokio::time::sleep(poll).await;
+        }
+    }
+
+    /// Whether the album has its track list, and if not, whether a refresh that brings it is
+    /// queued or running.
+    async fn waiting_on_refresh(&self, album_id: i32, artist_id: i32) -> Result<TrackListWait, LidarrError> {
+        if !self
+            .get_array(&format!("/api/v1/track?albumId={album_id}"))
+            .await?
+            .is_empty()
+        {
+            return Ok(TrackListWait::Ready);
+        }
+        for command in self.get_array("/api/v1/command").await? {
+            let name = nullable_str(&command, "name")?;
+            let status = nullable_str(&command, "status")?;
+            if !matches!(status.as_deref(), Some("queued" | "started")) {
+                continue;
+            }
+            let body = object(&command, "body");
+            let names_id = |single: &str, many: &str, id: i32| -> Result<bool, LidarrError> {
+                let Some(body) = body else {
+                    return Ok(false);
+                };
+                if nullable_int(body, single)? == Some(id) {
+                    return Ok(true);
+                }
+                Ok(match body.get(many) {
+                    Some(Value::Array(ids)) => ids.iter().any(|v| v.as_i64() == Some(i64::from(id))),
+                    _ => false,
+                })
+            };
+            let ours = match name.as_deref() {
+                // A refresh of every artist has no id and covers this one too.
+                Some("RefreshArtist") => {
+                    artist_id <= 0
+                        || names_id("artistId", "artistIds", artist_id)?
+                        || body.is_none_or(|b| !b.contains_key("artistId") && !b.contains_key("artistIds"))
+                }
+                Some("RefreshAlbum") => names_id("albumId", "albumIds", album_id)?,
+                _ => false,
+            };
+            if ours {
+                return Ok(TrackListWait::Refreshing);
+            }
+        }
+        // A refresh may have finished between the two reads.
+        if !self
+            .get_array(&format!("/api/v1/track?albumId={album_id}"))
+            .await?
+            .is_empty()
+        {
+            return Ok(TrackListWait::Ready);
+        }
+        Ok(TrackListWait::Idle)
+    }
+
     /// Lidarr neither upgrades nor re-searches albums of an unmonitored artist.
     async fn ensure_artist_monitored(&self, artist: Option<&JsonObject>) -> Result<(), LidarrError> {
         let Some(artist) = artist else {
@@ -376,6 +508,9 @@ impl LidarrClient {
         let id = int_or_zero(artist, "id")?;
         let mut full = self.get_object(&format!("/api/v1/artist/{id}")).await?;
         full.insert("monitored".into(), Value::Bool(true));
+        // Monitoring the artist again is for this album; it must not start fetching every
+        // release the artist puts out from now on.
+        full.insert("monitorNewItems".into(), Value::from("none"));
         self.send_json(Method::PUT, &format!("/api/v1/artist/{id}"), &full)
             .await?;
         Ok(())
@@ -621,6 +756,18 @@ struct Request {
     timeout: Option<Duration>,
 }
 
+/// The artist id an album resource names: its `artistId`, else its artist's `id`; 0 when
+/// neither is there.
+fn artist_id_of(album: &JsonObject) -> Result<i32, LidarrError> {
+    if let Some(id) = nullable_int(album, "artistId")?.filter(|id| *id > 0) {
+        return Ok(id);
+    }
+    match object(album, "artist") {
+        Some(artist) => int_or_zero(artist, "id"),
+        None => Ok(0),
+    }
+}
+
 /// What HttpClient threw for a request that got no answer: its timeout, or the connection.
 fn transport_error(error: reqwest::Error, timeout: Duration) -> LidarrError {
     if error.is_timeout() {
@@ -640,6 +787,15 @@ fn truncate(value: &str, max: usize) -> &str {
         }
     }
     value
+}
+
+/// The longest wait for Lidarr to list an album's tracks before its search starts.
+const TRACK_LIST_WAIT_MAX: Duration = Duration::from_secs(5 * 60);
+
+/// How long to wait for an album's track list: the import timeout, at most
+/// [`TRACK_LIST_WAIT_MAX`], so a long import timeout never holds the search back for as long.
+fn track_list_wait(settings: &LidarrSettings) -> Duration {
+    Duration::from_secs(settings.import_timeout_seconds.max(1) as u64).min(TRACK_LIST_WAIT_MAX)
 }
 
 #[cfg(test)]

@@ -15,9 +15,10 @@ use octo_core::json::datetime::format_utc;
 use octo_core::json::dom::Node;
 use octo_core::models::domain::{Album, Artist, Song};
 use octo_core::models::radio::LastFmRadioStation;
-use octo_core::soulseek::RoutingKind;
+use octo_core::soulseek::{RoutingKind, StreamFacts};
 use octo_subsonic::Parameters;
 use octo_subsonic::subsonic_model_mapper::album_key;
+use octo_subsonic::subsonic_response_builder::IdRegistry;
 use serde_json::{Value, json};
 
 use super::action_helpers::{
@@ -291,7 +292,7 @@ fn native_station(station: &LastFmRadioStation) -> Node {
     let duration: i64 = station
         .tracks
         .iter()
-        .map(|track| i64::from(track.duration.unwrap_or(180)))
+        .map(|track| i64::from(track.duration.unwrap_or(0).max(0)))
         .sum();
     to_node(&json!({
         "id": station.id,
@@ -342,6 +343,11 @@ async fn try_serve_native_external_song(state: &AppState, endpoint: &str) -> Opt
         .metadata_service
         .resolve_top_durations(&mut one, false)
         .await;
+    // The video's length above is what plays, so it stays; only a song still without a
+    // length takes one the registry remembered.
+    if one[0].duration.is_none_or(|d| d <= 0) {
+        state.metadata_service.complete_song_lengths(&mut one);
+    }
 
     let body = octo_core::json::to_string(&native_song_object(state, &one[0]));
     Some(written_json(
@@ -484,15 +490,38 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
     // Navidrome-mode clients take their contract from HERE and never from
     // SubsonicResponseBuilder, so this has to follow the same setting or the native
     // path keeps promising m4a while /rest/stream hands back a FLAC. Note the two
-    // serializers are not symmetric: this one emits no contentType at all, and
-    // defaults an unknown duration to 0 where the Subsonic one uses 180.
+    // serializers are not symmetric: this one emits no contentType at all, and writes
+    // an unknown duration as 0 where the Subsonic one leaves the field out.
+    //
+    // The size is the stream's true byte count once it is known, and absent until then (and
+    // always absent while waiting for lossless, whose bytes are not known until the FLAC lands).
+    // The suffix and bit rate follow the format the stream is served in, when known.
     let lossless = state.settings.current().subsonic.wait_for_lossless_on_play;
-    let suffix = if lossless { "flac" } else { "m4a" };
-    let bit_rate: i64 = if lossless { 950 } else { 128 }; // format 140 AAC ~128 kbps; FLAC lands ~850-1000
-    let size: i64 = if duration > 0 {
-        i64::from(duration) * bit_rate * 1000 / 8
+    let facts = if lossless {
+        StreamFacts::default()
     } else {
-        0
+        state
+            .stream_size_warmer
+            .stream_facts(&song.id)
+            .unwrap_or_default()
+    };
+    if !lossless {
+        state.stream_size_warmer.outside_listed(&song.id);
+        if facts.size.is_none() {
+            state.stream_size_warmer.size_wanted(&song.id);
+        }
+    }
+    let declared = facts.declared();
+    let suffix = match &declared {
+        _ if lossless => "flac".to_string(),
+        Some(declared) => declared.suffix.clone(),
+        None => "m4a".to_string(),
+    };
+    // Format 140 AAC ~128 kbps; FLAC lands ~850-1000.
+    let bit_rate: Option<i64> = match &declared {
+        _ if lossless => Some(950),
+        Some(declared) => declared.bit_rate.map(i64::from),
+        None => Some(128),
     };
     let album_artist = match song.album_artist.as_deref() {
         Some(album_artist) if !album_artist.is_empty() => album_artist.to_string(),
@@ -511,10 +540,11 @@ fn native_song_object(state: &AppState, song: &Song) -> Value {
         "hasCoverArt": true,
         "trackNumber": song.track.unwrap_or(0),
         "discNumber": song.disc_number.unwrap_or(1),
-        "size": size,
+        // Typed native clients read these as numbers: an unknown one is 0, never missing.
+        "size": facts.size.unwrap_or(0),
         "suffix": suffix,
         "duration": duration,
-        "bitRate": bit_rate,
+        "bitRate": bit_rate.unwrap_or(0),
         "playCount": 0,
         // Fixed old timestamp: injected tracks are not "recently added" library
         // items, so they should never crowd a client's recently-added view.

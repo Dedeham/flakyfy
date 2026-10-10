@@ -17,7 +17,8 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::lidarr::lidarr_client::LidarrError;
-use octo_core::settings::{DownloadSource, LibraryAction, SettingsStore};
+use octo_core::lyrics::{LyricsQuery, LyricsResult, LyricsTiming};
+use octo_core::settings::{DownloadSource, LibraryAction, MetadataSettings, SettingsStore};
 use octo_core::soulseek::{RoutingKind, SoulseekRouting};
 use octo_media::audio::spectrum_analyzer::{SpectrumAnalyzer, SpectrumReport};
 use octo_media::tags::{KeptIdentity, KeptIdentityTags};
@@ -31,13 +32,16 @@ use super::library_action_journal::{
 use super::library_action_quarantine::LibraryActionQuarantine;
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::NoticeQueue;
+use super::rejections::RejectionStore;
 use super::replacement_handoff::{
     BeforeReveal, OnRevealed, ReplacementHandoff, ReplacementRejectedException,
 };
 use super::upgrade_sources::UpgradeSources;
 use super::{NavidromeSongPathResolver, ResolvedSongFile};
 use crate::services::common::{StarOnArrival, TrackAcquisitionQueue};
+use crate::services::cover_art::{CoverUpgradeWorker, RejectedCovers};
 use crate::services::local::ILocalLibraryService;
+use crate::services::lyrics::{LyricsChoiceService, LyricsService, LyricsSidecarWriter};
 use crate::services::soulseek::soulseek_link::{OFFLINE_TEXT, SoulseekLinkState};
 use crate::services::soulseek::{
     ExternalIdRegistry, ISoulseekLink, RejectedPeerRegistry, SoulseekMetadataService,
@@ -173,6 +177,17 @@ impl Default for ExecutorSeams {
     }
 }
 
+/// What Wrong lyrics and Wrong cover work with: the lyrics lookups and pins, the lyrics files
+/// beside songs, the cover upgrade's journaled writes, and what people turned down.
+#[derive(Clone)]
+pub struct SongAnswers {
+    pub lyrics: Arc<LyricsService>,
+    pub choices: Arc<LyricsChoiceService>,
+    pub sidecars: Arc<LyricsSidecarWriter>,
+    pub covers: Arc<CoverUpgradeWorker>,
+    pub rejections: Arc<RejectionStore>,
+}
+
 /// What the executor is built from: the C# constructor's parameters, the optional ones last.
 pub struct LibraryActionExecutorParts {
     pub resolver: Arc<NavidromeSongPathResolver>,
@@ -189,6 +204,7 @@ pub struct LibraryActionExecutorParts {
     pub stars: Option<Arc<StarOnArrival>>,
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     pub sources: Option<Arc<UpgradeSources>>,
+    pub answers: Option<SongAnswers>,
 }
 
 /// How a replacement ended: the outcome, where the original waits, and the new file.
@@ -227,6 +243,7 @@ pub struct LibraryActionExecutor {
     stars: Option<Arc<StarOnArrival>>,
     soulseek_link: Option<Arc<dyn ISoulseekLink>>,
     sources: Option<Arc<UpgradeSources>>,
+    answers: Option<SongAnswers>,
     reconciled: AtomicBool,
 
     // The songs a library action is working on right now, by the original's full path. The
@@ -248,6 +265,21 @@ struct BusyGuard<'a> {
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
         self.busy.lock().remove(&self.key);
+    }
+}
+
+/// Songs another fix holds in the executor's busy set; dropping it frees them.
+pub struct SongsClaim<'a> {
+    busy: &'a Mutex<HashSet<String>>,
+    keys: Vec<String>,
+}
+
+impl Drop for SongsClaim<'_> {
+    fn drop(&mut self) {
+        let mut busy = self.busy.lock();
+        for key in &self.keys {
+            busy.remove(key);
+        }
     }
 }
 
@@ -324,10 +356,30 @@ fn describe(action: LibraryAction) -> &'static str {
         LibraryAction::WrongVersion => "replace (wrong version)",
         LibraryAction::BetterQuality => "upgrade",
         LibraryAction::Keep => "keep",
+        LibraryAction::WrongLyrics => "look for other lyrics for",
+        LibraryAction::WrongCover => "look for another cover for",
     }
 }
 
 impl LibraryActionExecutor {
+    /// Marks the files at `paths` busy for a fix made outside the executor, so no library action
+    /// runs on them meanwhile, and none of them twice. None, and nothing marked, when one is
+    /// busy already.
+    pub fn claim_songs(&self, paths: &[&str]) -> Option<SongsClaim<'_>> {
+        let mut busy = self.busy.lock();
+        let keys: Vec<String> = paths.iter().map(|path| get_full_path(path)).collect();
+        if keys.iter().any(|key| busy.contains(key)) {
+            return None;
+        }
+        for key in &keys {
+            busy.insert(key.clone());
+        }
+        Some(SongsClaim {
+            busy: &self.busy,
+            keys,
+        })
+    }
+
     pub const BUSY_TEXT: &'static str =
         "Another action on this song is still running, so this one was skipped.";
     pub const JOINED_TEXT: &'static str =
@@ -352,6 +404,7 @@ impl LibraryActionExecutor {
             stars: parts.stars,
             soulseek_link: parts.soulseek_link,
             sources: parts.sources,
+            answers: parts.answers,
             reconciled: AtomicBool::new(false),
             busy: Mutex::new(HashSet::new()),
             seams: Mutex::new(ExecutorSeams::default()),
@@ -461,6 +514,12 @@ impl LibraryActionExecutor {
             return Ok(LibraryActionOutcome::said(LibraryActionState::Unresolved, detail));
         };
 
+        // An answer about the lyrics or the cover can be given again and again, each time turning
+        // down what shows now, so it is never "already done".
+        if request.action.leaves_the_audio() {
+            return Ok(self.answer(&request, &resolved, settings.dry_run).await);
+        }
+
         let fingerprint =
             LibraryActionJournal::fingerprint(resolved.size_bytes, last_write_ticks(&resolved.absolute_path));
         if self
@@ -563,6 +622,251 @@ impl LibraryActionExecutor {
             key: song_key,
         };
         self.apply_on_file(&request, &resolved, &key, pending).await
+    }
+
+    /// Wrong lyrics or Wrong cover on a song whose file is known. Recorded like Keep: one entry
+    /// per press, never a pending one, since no file moves.
+    async fn answer(
+        &self,
+        request: &LibraryActionRequest,
+        resolved: &ResolvedSongFile,
+        dry_run: bool,
+    ) -> LibraryActionOutcome {
+        let key = LibraryActionJournal::make_key(
+            request.action,
+            &request.navidrome_id,
+            &format!("answer:{}", dotnet_ticks(Utc::now())),
+        );
+        let record = |outcome: &LibraryActionOutcome| {
+            self.journal.record(LibraryActionEntry {
+                key: key.clone(),
+                ..Self::entry(
+                    request,
+                    Some(resolved),
+                    outcome.state,
+                    outcome.detail.as_deref(),
+                    dry_run,
+                )
+            });
+            self.journal.flush();
+        };
+        if dry_run {
+            let outcome = LibraryActionOutcome::said(
+                LibraryActionState::Rehearsed,
+                format!(
+                    "Dry run: would {} {}",
+                    describe(request.action),
+                    resolved.absolute_path
+                ),
+            );
+            record(&outcome);
+            return outcome;
+        }
+        let Some(answers) = &self.answers else {
+            return LibraryActionOutcome::said(
+                LibraryActionState::Failed,
+                "This server cannot change lyrics or covers.",
+            );
+        };
+
+        let song_key = get_full_path(&resolved.absolute_path);
+        if !self.busy.lock().insert(song_key.clone()) {
+            let outcome = LibraryActionOutcome::said(LibraryActionState::Skipped, Self::BUSY_TEXT);
+            record(&outcome);
+            return outcome;
+        }
+        let _busy = BusyGuard {
+            busy: &self.busy,
+            key: song_key,
+        };
+        let outcome = if request.action == LibraryAction::WrongLyrics {
+            Self::wrong_lyrics(answers, request, resolved).await
+        } else {
+            Self::wrong_cover(answers, resolved).await
+        };
+        record(&outcome);
+        info!(
+            "Library action {} by {} on '{} - {}': {}",
+            action_name(request.action),
+            request.username,
+            resolved.artist,
+            resolved.title,
+            outcome.detail.as_deref().unwrap_or("")
+        );
+        outcome
+    }
+
+    pub const NO_LYRICS_ANSWER_TEXT: &'static str =
+        "No lyrics service answered, so the lyrics were left as they are. It will be tried again.";
+    pub const NO_OTHER_LYRICS_TEXT: &'static str = "No other lyrics found; hidden.";
+    pub const NO_OTHER_COVER_TEXT: &'static str = "No other cover found.";
+
+    /// Turns down the lyrics the song shows now (its pin, or what the lookup would show) and
+    /// shows the next source's, pinned so every player gets them. The song's audio is never
+    /// touched and nothing is downloaded. With nothing else to show, its lyrics are hidden.
+    async fn wrong_lyrics(
+        answers: &SongAnswers,
+        request: &LibraryActionRequest,
+        resolved: &ResolvedSongFile,
+    ) -> LibraryActionOutcome {
+        let id = request.navidrome_id.as_str();
+        let (artist, title) = (resolved.artist.as_str(), resolved.title.as_str());
+        let audio = Path::new(&resolved.absolute_path);
+        let query = LyricsQuery::new(
+            artist,
+            title,
+            Some(resolved.album.clone()).filter(|album| !album.trim().is_empty()),
+            resolved
+                .duration_seconds
+                .or_else(|| answers.sidecars.tags().duration_seconds(audio)),
+        );
+        let has = answers.sidecars.song_lyrics(audio);
+        let (own, octos_own) = (has.timing, has.octos);
+        let ct = tokio_util::sync::CancellationToken::new();
+        let unanswered =
+            || LibraryActionOutcome::said(LibraryActionState::Failed, Self::NO_LYRICS_ANSWER_TEXT);
+
+        let mut skip = answers.rejections.rejected_lyrics(id);
+        let mut turned_down: Vec<String> = Vec::new();
+        match answers.choices.pin_for_song(id, Some(artist), Some(title)) {
+            Some(pin) if pin.is_hidden() => {}
+            Some(pin) => {
+                turned_down.push(pin.choice);
+                // Lyrics Octo wrote beside the song are a copy of the pin's.
+                if octos_own {
+                    turned_down.push(MetadataSettings::SONG_LYRICS_SOURCE.to_string());
+                }
+            }
+            None => {
+                let now = answers.lyrics.find_skipping(&query, &ct, own, &skip).await;
+                if now.transient {
+                    return unanswered();
+                }
+                match now.result {
+                    Some(shown) if shown.is_songs_own() => {
+                        turned_down.push(MetadataSettings::SONG_LYRICS_SOURCE.to_string());
+                        // Lyrics Octo wrote beside the song came from a source; that one is
+                        // turned down as well, or it would come straight back.
+                        if octos_own {
+                            let found = answers
+                                .lyrics
+                                .find_skipping(&query, &ct, LyricsTiming::None, &skip)
+                                .await;
+                            if found.transient {
+                                return unanswered();
+                            }
+                            turned_down.extend(found.result.and_then(|found| found.candidate_id));
+                        }
+                    }
+                    Some(shown) => turned_down.extend(shown.candidate_id),
+                    None => {}
+                }
+            }
+        }
+        skip.extend(turned_down.iter().cloned());
+
+        let next = answers.lyrics.find_skipping(&query, &ct, own, &skip).await;
+        if next.transient {
+            return unanswered();
+        }
+        // Written down before anything changes, so the next press never offers them again.
+        for candidate in &turned_down {
+            if !answers.rejections.reject_lyrics(id, candidate) {
+                return LibraryActionOutcome::said(
+                    LibraryActionState::Failed,
+                    "Could not write down the rejected lyrics, so nothing was changed.",
+                );
+            }
+        }
+
+        let who = Some(request.username.as_str());
+        let mut next = next.result;
+        // A candidate whose lyrics cannot be fetched again is passed over for the one after it.
+        for _ in 0..4 {
+            match next.take() {
+                Some(own) if own.is_songs_own() => {
+                    answers.choices.clear_song(id, Some(artist), Some(title));
+                    return LibraryActionOutcome::said(
+                        LibraryActionState::Applied,
+                        "Now showing the lyrics the song has.",
+                    );
+                }
+                Some(found) if Self::showable(&found) => {
+                    let candidate = found.candidate_id.clone().unwrap_or_default();
+                    if answers
+                        .choices
+                        .pin(id, &candidate, Some(artist), Some(title), who, &ct)
+                        .await
+                    {
+                        if let Err(error) = answers.sidecars.replace(audio, &found, &ct).await {
+                            warn!(
+                                "Wrong lyrics could not rewrite the lyrics beside {}: {error}",
+                                resolved.absolute_path
+                            );
+                        }
+                        return LibraryActionOutcome::said(
+                            LibraryActionState::Applied,
+                            format!("Now showing lyrics from {}.", found.source),
+                        );
+                    }
+                    skip.insert(candidate);
+                    let again = answers.lyrics.find_skipping(&query, &ct, own, &skip).await;
+                    next = again.result;
+                }
+                _ => break,
+            }
+        }
+        answers.choices.hide(id, Some(artist), Some(title), who);
+        LibraryActionOutcome::said(LibraryActionState::Applied, Self::NO_OTHER_LYRICS_TEXT)
+    }
+
+    /// Lyrics a pin can name and show: words from a source, not an "instrumental".
+    fn showable(found: &LyricsResult) -> bool {
+        found.candidate_id.as_deref().is_some_and(|id| !id.is_empty())
+            && !found.instrumental
+            && (found.has_synced() || found.has_plain())
+    }
+
+    /// Turns down the picture the song's album shows now and puts another cover on the album,
+    /// through the cover upgrade's journaled writes, so its Undo puts the old one back.
+    async fn wrong_cover(answers: &SongAnswers, resolved: &ResolvedSongFile) -> LibraryActionOutcome {
+        let Some(album) = answers.covers.album_on_disk(&resolved.absolute_path).await else {
+            return LibraryActionOutcome::said(
+                LibraryActionState::Failed,
+                "Could not read this song's tags, so its cover was left as it is.",
+            );
+        };
+        // Written down first, so a stop part way can never bring this picture back.
+        if let Some(shown) = album.shown.as_deref()
+            && !answers.rejections.reject_cover(
+                &album.key,
+                &RejectedCovers::sha256(shown),
+                octo_media::cover::cover_image::looks_hash(Some(shown)),
+            )
+        {
+            return LibraryActionOutcome::said(
+                LibraryActionState::Failed,
+                "Could not write down the rejected cover, so nothing was changed.",
+            );
+        }
+        let rejected = answers.rejections.rejected_covers(&album.key);
+        match answers.covers.replace_album_cover(&album, &rejected).await {
+            Err(reason) => LibraryActionOutcome::said(LibraryActionState::Failed, reason),
+            Ok(None) => LibraryActionOutcome::said(LibraryActionState::Skipped, Self::NO_OTHER_COVER_TEXT),
+            Ok(Some(replaced)) => LibraryActionOutcome::said(
+                LibraryActionState::Applied,
+                format!(
+                    "Put in another cover from {} on {} song(s){}.",
+                    replaced.source,
+                    replaced.files,
+                    if replaced.folder_cover {
+                        " and the folder's cover file"
+                    } else {
+                        ""
+                    }
+                ),
+            ),
+        }
     }
 
     async fn apply_on_file(
@@ -964,27 +1268,7 @@ impl LibraryActionExecutor {
         key: &str,
         carry_star: bool,
     ) -> bool {
-        let seams = self.seams.lock().clone();
-        let mut kept = false;
-        let mut attempt = 0;
-        while attempt < seams.history_attempts.max(1) && !kept {
-            if attempt % 8 == 0 {
-                match &seams.force_scan {
-                    Some(scan) => {
-                        scan().await;
-                    }
-                    None => {
-                        self.library.trigger_library_scan(true).await;
-                    }
-                }
-            }
-            tokio::time::sleep(seams.history_poll).await;
-            kept = match &seams.shows_at {
-                Some(shows_at) => shows_at(original.navidrome_id.clone(), new_path.to_string()).await,
-                None => self.resolver.shows_at(&original.navidrome_id, new_path).await,
-            };
-            attempt += 1;
-        }
+        let kept = self.wait_until_shown(&original.navidrome_id, new_path).await;
 
         self.journal.complete(
             key,
@@ -1028,6 +1312,33 @@ impl LibraryActionExecutor {
             );
         }
         false
+    }
+
+    /// Scans, then watches until Navidrome shows `navidrome_id` as a present song at exactly
+    /// `path`: about ten minutes, scanning again every two in case Navidrome was busy.
+    pub async fn wait_until_shown(&self, navidrome_id: &str, path: &str) -> bool {
+        let seams = self.seams.lock().clone();
+        let mut shown = false;
+        let mut attempt = 0;
+        while attempt < seams.history_attempts.max(1) && !shown {
+            if attempt % 8 == 0 {
+                match &seams.force_scan {
+                    Some(scan) => {
+                        scan().await;
+                    }
+                    None => {
+                        self.library.trigger_library_scan(true).await;
+                    }
+                }
+            }
+            tokio::time::sleep(seams.history_poll).await;
+            shown = match &seams.shows_at {
+                Some(shows_at) => shows_at(navidrome_id.to_string(), path.to_string()).await,
+                None => self.resolver.shows_at(navidrome_id, path).await,
+            };
+            attempt += 1;
+        }
+        shown
     }
 
     /// Where a replacement may come from, in the order tried. Better quality uses the upgrade
@@ -1367,3 +1678,7 @@ mod tests;
 #[cfg(test)]
 #[path = "library_action_one_at_a_time_tests.rs"]
 mod one_at_a_time_tests;
+
+#[cfg(test)]
+#[path = "library_action_answer_tests.rs"]
+mod answer_tests;

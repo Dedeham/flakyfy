@@ -28,6 +28,9 @@ pub struct NavidromeSongEntry {
     pub duration: Option<f64>,
     /// What Navidrome read from the advisory tag: "e" (explicit), "c" (clean) or "".
     pub explicit_status: Option<String>,
+    /// Navidrome no longer finds the file: it was moved or deleted and the scan could not
+    /// match it to a file somewhere else.
+    pub missing: bool,
 }
 
 impl NavidromeSongEntry {
@@ -119,6 +122,10 @@ pub async fn list(
                         id: text("id"),
                         duration: song.get("duration").and_then(serde_json::Value::as_f64),
                         explicit_status: text("explicitStatus"),
+                        missing: song
+                            .get("missing")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
                     });
                 }
             }

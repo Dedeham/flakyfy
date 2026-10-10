@@ -37,6 +37,11 @@ pub trait ISoulseekLink: Send + Sync {
     /// Returns once slskd is logged in, cannot say, or `deadline_utc` has passed.
     /// True when Soulseek is worth trying; false when the wait ran out with slskd still out.
     async fn wait_for_login(&self, deadline_utc: DateTime<Utc>) -> bool;
+
+    /// Soulseek is switched off (no slskd address, or turned off): no step should use it.
+    fn is_off(&self) -> bool {
+        false
+    }
 }
 
 type ReadFn = Arc<dyn Fn() -> BoxFuture<'static, Option<SoulseekServerReading>> + Send + Sync>;
@@ -52,6 +57,8 @@ struct Cached {
 pub struct SoulseekLink {
     /// `IOptionsMonitor<SoulseekSettings>`: the hold is read live.
     settings: Arc<SettingsStore>,
+    /// Soulseek is off, as the client was built.
+    off: bool,
     // Seams, the same way SoulseekClient exposes Clock and PollInterval.
     read: ReadFn,
     clock: Clock,
@@ -62,12 +69,14 @@ pub struct SoulseekLink {
 
 impl SoulseekLink {
     pub fn new(client: SoulseekClient, settings: Arc<SettingsStore>) -> Self {
+        let off = !client.is_on();
         let read: ReadFn = Arc::new(move || {
             let client = client.clone();
             async move { client.read_server().await }.boxed()
         });
         SoulseekLink {
             settings,
+            off,
             read,
             clock: Clock::system(),
             delay: Arc::new(|span| tokio::time::sleep(span).boxed()),
@@ -150,6 +159,10 @@ impl ISoulseekLink for SoulseekLink {
 
     fn utc_now(&self) -> DateTime<Utc> {
         self.clock.now()
+    }
+
+    fn is_off(&self) -> bool {
+        self.off
     }
 
     async fn wait_for_login(&self, deadline_utc: DateTime<Utc>) -> bool {

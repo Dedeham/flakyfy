@@ -1161,6 +1161,7 @@ async fn navidrome_names_the_albums_and_draws_their_tiles() {
         library: None,
         identity: Some(identity),
         http: Some(reqwest::Client::new()),
+        write_gate: None,
     };
     let (worker, store) = library.worker_with(FixedFinder::new(None), false, services, settings);
 
@@ -1203,4 +1204,169 @@ async fn navidrome_names_the_albums_and_draws_their_tiles() {
         .find(|row| row.navidrome_album_id.is_none())
         .expect("listed");
     assert_eq!(worker.navidrome_thumbnail(&other.id).await, None);
+}
+
+// ---- Wrong cover ----------------------------------------------------------------------------
+
+fn front(path: &str) -> Vec<u8> {
+    pictures(path)
+        .into_iter()
+        .find(|picture| picture.picture_type == FRONT_COVER)
+        .map(|picture| picture.data)
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_wrong_cover_is_replaced_on_every_song_of_its_album_and_undo_puts_it_back() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    let wrong = stripes(600, true);
+    let other = jpeg(300, 40);
+    let one = library.song("Discovery", "One More Time", Some(&wrong), None, true);
+    let two = library.song("Discovery", "Aerodynamic", Some(&wrong), None, true);
+    let homework = library.song("Homework", "Da Funk", Some(&other), None, true);
+    let homework_before = std::fs::read(&homework).expect("read");
+    let right = stripes(1200, false);
+    let (worker, store) = library.worker(
+        FixedFinder::new(Some(FoundCover::new(right.clone(), "iTunes", 1200))),
+        true,
+    );
+
+    let album = worker.album_on_disk(&one).await.expect("the album");
+    assert_eq!(album.paths.len(), 2, "{:?}", album.paths);
+    assert!(album.paths.contains(&two));
+    assert_eq!(album.shown.as_deref(), Some(wrong.as_slice()));
+
+    let replaced = worker
+        .replace_album_cover(&album, &RejectedCovers::default())
+        .await
+        .expect("written")
+        .expect("a cover");
+
+    assert_eq!((replaced.source.as_str(), replaced.files), ("iTunes", 2));
+    assert_eq!(front(&one), right);
+    assert_eq!(front(&two), right);
+    assert_eq!(homework_before, std::fs::read(&homework).expect("read"));
+    // Not a run of the dashboard's: its list is left as it was.
+    assert_eq!(store.current().status, CoverUpgradeStatus::Idle);
+    assert!(worker.can_undo());
+
+    run(&worker, &store, CoverUpgradeRequest::undo()).await;
+
+    assert_eq!(front(&one), wrong);
+    assert_eq!(front(&two), wrong);
+}
+
+#[tokio::test]
+async fn a_wrong_cover_with_only_the_same_artwork_to_find_leaves_the_files_untouched() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    let wrong = stripes(600, true);
+    let one = library.song("Discovery", "One More Time", Some(&wrong), None, false);
+    let before = std::fs::read(&one).expect("read");
+    // The same artwork, larger: still the picture someone turned down.
+    let (worker, _store) = library.worker(
+        FixedFinder::new(Some(FoundCover::new(stripes(1200, true), "iTunes", 1200))),
+        false,
+    );
+    let album = worker.album_on_disk(&one).await.expect("the album");
+    let rejected = RejectedCovers {
+        hashes: [RejectedCovers::sha256(&wrong)].into(),
+        looks: vec![cover_image::looks_hash(Some(&wrong)).expect("a look")],
+    };
+
+    let replaced = worker
+        .replace_album_cover(&album, &rejected)
+        .await
+        .expect("no error");
+
+    assert_eq!(replaced, None);
+    assert_eq!(before, std::fs::read(&one).expect("read"));
+    assert!(!worker.can_undo());
+}
+
+#[tokio::test]
+async fn a_wrong_cover_waits_while_another_job_writes_the_music_folder() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    let wrong = stripes(600, true);
+    let one = library.song("Discovery", "One More Time", Some(&wrong), None, true);
+    let right = stripes(1200, false);
+    let gate = crate::services::library::library_write_gate::LibraryWriteGate::new();
+    let (worker, _store) = library.worker_with(
+        FixedFinder::new(Some(FoundCover::new(right.clone(), "iTunes", 1200))),
+        true,
+        CoverUpgradeServices {
+            write_gate: Some(gate.clone()),
+            ..CoverUpgradeServices::default()
+        },
+        AppSettings::default(),
+    );
+    let album = worker.album_on_disk(&one).await.expect("the album");
+    let tidy = gate.begin_job("Tidy artists").await.expect("free");
+
+    let writing = {
+        let worker = worker.clone();
+        tokio::spawn(async move {
+            worker
+                .replace_album_cover(&album, &RejectedCovers::default())
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!writing.is_finished(), "a cover was written during a job");
+    assert_eq!(front(&one), wrong);
+
+    drop(tidy);
+    let replaced = writing.await.expect("joined").expect("written").expect("a cover");
+    assert_eq!(replaced.files, 1);
+    assert_eq!(front(&one), right);
+}
+
+#[tokio::test]
+async fn an_upgrade_that_writes_takes_the_music_folder_and_waits_for_no_other_job() {
+    let library = Library::new(audio_or_skip!("mp3"));
+    let path = library.song("Discovery", "One More Time", Some(&jpeg(200, 10)), None, false);
+    let gate = crate::services::library::library_write_gate::LibraryWriteGate::new();
+    let (worker, store) = library.worker_with(
+        FixedFinder::new(found(3000, "iTunes")),
+        false,
+        CoverUpgradeServices {
+            write_gate: Some(gate.clone()),
+            ..CoverUpgradeServices::default()
+        },
+        AppSettings::default(),
+    );
+
+    // Another job holds the folder: the upgrade is refused, naming it, and writes nothing.
+    let tidy = gate.begin_job("Tidy artists").await.expect("free");
+    run(&worker, &store, whole(CoverUpgradeMode::Apply)).await;
+    assert_eq!(front_side(&path), 200);
+    assert!(
+        store
+            .current()
+            .reason
+            .unwrap_or_default()
+            .contains("Tidy artists"),
+        "{:?}",
+        store.current().reason
+    );
+    drop(tidy);
+
+    // While it writes, the folder is the cover upgrade's.
+    let held = Arc::new(parking_lot::Mutex::new(None));
+    let watching = {
+        let (gate, held) = (gate.clone(), held.clone());
+        tokio::spawn(async move {
+            loop {
+                if let Some(job) = gate.job() {
+                    *held.lock() = Some(job);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+    };
+    run(&worker, &store, whole(CoverUpgradeMode::Apply)).await;
+    watching.abort();
+    assert_eq!(front_side(&path), 1500);
+    assert_eq!(held.lock().as_deref(), Some(CoverUpgradeWorker::JOB_NAME));
+    assert_eq!(gate.job(), None);
 }

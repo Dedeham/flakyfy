@@ -21,6 +21,7 @@ use super::lyrics_undo_journal::{LyricsUndoEntry, LyricsUndoJournal};
 use super::song_lyrics;
 use crate::services::common::AcquisitionTracker;
 use crate::services::common::acquisition_tracker::acquisition_event_kinds;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::local::ILocalLibraryService;
 
 /// One song to find lyrics for.
@@ -204,6 +205,11 @@ pub struct LyricsSidecarWriter {
     scan_pending: Arc<AtomicBool>,
     /// The downloads log a download's look reports to; set once the tracker exists.
     tracker: OnceLock<Arc<AcquisitionTracker>>,
+    /// The music folder's one-writer gate: a write waits while a library job holds it.
+    write_gate: OnceLock<LibraryWriteGate>,
+    /// Where a replacement someone asked for records what it wrote over, so the lyrics page's
+    /// Undo puts it back.
+    undo: OnceLock<Arc<LyricsUndoJournal>>,
 }
 
 impl LyricsSidecarWriter {
@@ -240,7 +246,19 @@ impl LyricsSidecarWriter {
             receiver: tokio::sync::Mutex::new(receiver),
             scan_pending: Arc::new(AtomicBool::new(false)),
             tracker: OnceLock::new(),
+            write_gate: OnceLock::new(),
+            undo: OnceLock::new(),
         }
+    }
+
+    /// The lyrics undo journal a replacement records into. Only the first call counts.
+    pub fn set_undo_journal(&self, journal: Arc<LyricsUndoJournal>) {
+        let _ = self.undo.set(journal);
+    }
+
+    /// The gate shared with the library jobs. Only the first call counts.
+    pub fn set_write_gate(&self, gate: LibraryWriteGate) {
+        let _ = self.write_gate.set(gate);
     }
 
     /// The downloads log a download's look reports to. Only the first call counts.
@@ -274,8 +292,14 @@ impl LyricsSidecarWriter {
             let Some(job) = job else {
                 break;
             };
+            let share = match self.write_gate.get() {
+                Some(gate) => Some(gate.write().await),
+                None => None,
+            };
+            let written = self.write(&job, false, &stopping).await;
+            drop(share);
             // One job's failure is logged and the loop goes on.
-            match self.write(&job, false, &stopping).await {
+            match written {
                 _ if stopping.is_cancelled() => break,
                 Ok(write) => {
                     self.report(&job, &write);
@@ -483,11 +507,22 @@ impl LyricsSidecarWriter {
         if !audio_path.exists() || (!chosen.has_synced() && !chosen.has_plain()) {
             return Ok(false);
         }
+        let _share = match self.write_gate.get() {
+            Some(gate) => Some(gate.write().await),
+            None => None,
+        };
         let has = self.song_lyrics(audio_path);
         if has.place != SongLyricsPlace::None && !has.octos {
             return Ok(false);
         }
-        self.save(audio_path, chosen, None).await
+        let Some(journal) = self.undo.get() else {
+            return self.save(audio_path, chosen, None).await;
+        };
+        let run_id = super::lyrics_library_job::new_run_id();
+        let record = |path: &Path, kind: &str, before: Option<&str>| -> anyhow::Result<()> {
+            Ok(journal.record(&path.to_string_lossy(), kind, before, &run_id)?)
+        };
+        self.save(audio_path, chosen, Some(&record)).await
     }
 
     /// Save lyrics someone picked on the lyrics page, where LYRICS_SAVE_TO says and Octo may

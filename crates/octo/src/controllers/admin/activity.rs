@@ -32,6 +32,7 @@ use crate::services::cover_art::{CoverUpgradeMode, CoverUpgradeRun, CoverUpgrade
 use crate::services::health::HealthRun;
 use crate::services::imports::import_views::ImportOverview;
 use crate::services::library::duplicate_scan_worker::DuplicateScanResult;
+use crate::services::library::tidy::{TidyMode, TidyRun, TidyStatus};
 use crate::services::library::upgrade_queue::{UpgradeJob, UpgradeStates};
 use crate::services::metadata::genre_backfill_state::{GenreBackfillRun, GenreBackfillStatus};
 
@@ -144,6 +145,8 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
     if signed {
         let genre_worker = &state.genre_backfill_worker;
         items.extend(genre(&genre_worker.current(), genre_worker.is_pending(), now));
+        let tidy_worker = &state.tidy_worker;
+        items.extend(tidy(&tidy_worker.current(), tidy_worker.is_pending(), now));
         let covers_worker = &state.cover_upgrade_worker;
         items.extend(covers(&covers_worker.current(), covers_worker.is_busy(), now));
         let lyrics_worker = &state.lyrics_library_worker;
@@ -305,6 +308,44 @@ pub fn genre(run: &GenreBackfillRun, pending: bool, now: DateTime<Utc>) -> Optio
         ActivityItem::new(id, "genre", "tags", title, state)
             .counted(run.processed, run.total, "songs")
             .detail(detail)
+            .started(run.started_utc)
+            .finished(run.finished_utc)
+            .error(if state == "failed" {
+                run.reason.clone()
+            } else {
+                None
+            }),
+    )
+}
+
+/// A "Tidy artists" run: a preview, an apply, or an undo.
+pub fn tidy(run: &TidyRun, pending: bool, now: DateTime<Utc>) -> Option<ActivityItem> {
+    let title = match run.mode {
+        TidyMode::Preview => "Previewing the artist tidy",
+        TidyMode::Apply => "Tidying artists",
+        TidyMode::Undo => "Undoing the artist tidy",
+    };
+    if pending && run.status != TidyStatus::Running {
+        return Some(
+            ActivityItem::new("tidy:pending", "tidy", "tags", "Tidy artists", "running")
+                .detail(Some("Starting".to_string())),
+        );
+    }
+    let id = format!("tidy:{}", run.run_id);
+    if run.status == TidyStatus::Running {
+        return Some(
+            ActivityItem::new(id, "tidy", "tags", title, "running")
+                .detail(Some(run.phase.clone()).filter(|phase| !phase.is_empty()))
+                .started(run.started_utc),
+        );
+    }
+    if run.status == TidyStatus::Idle || !recent(run.finished_utc, now) {
+        return None;
+    }
+    let state = ended(run.status.name());
+    Some(
+        ActivityItem::new(id, "tidy", "tags", title, state)
+            .detail(run.reason.clone())
             .started(run.started_utc)
             .finished(run.finished_utc)
             .error(if state == "failed" {

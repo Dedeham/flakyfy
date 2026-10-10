@@ -255,6 +255,22 @@ impl PathHelper {
         )
     }
 
+    /// Where `path` is once the folder `from` has moved to `to`: `to` for `from` itself, the
+    /// same place inside `to` for a path inside `from`, and None for any other path.
+    pub fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
+        let from = from.trim_end_matches('/');
+        let to = to.trim_end_matches('/');
+        if from.is_empty() {
+            return None;
+        }
+        if path == from {
+            return Some(to.to_string());
+        }
+        path.strip_prefix(from)
+            .filter(|rest| rest.starts_with('/'))
+            .map(|rest| format!("{to}{rest}"))
+    }
+
     /// Resolves a unique file path by appending a counter if the file already exists.
     pub fn resolve_unique_path(base_path: &str) -> String {
         if !file_exists(base_path) {

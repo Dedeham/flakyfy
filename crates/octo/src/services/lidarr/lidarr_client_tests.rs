@@ -162,6 +162,7 @@ async fn new_album_uses_chosen_defaults_and_does_not_monitor_future_releases() {
             ("GET", "/api/v1/album") => "[]",
             ("GET", "/api/v1/artist") => "[]",
             ("POST", "/api/v1/album") => r#"{"id":42}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
             ("POST", "/api/v1/command") => r#"{"id":9}"#,
             _ => "[]",
         }
@@ -207,6 +208,7 @@ async fn existing_artist_settings_are_preserved_when_adding_album() {
                 r#"[{"id":7,"foreignArtistId":"artist-mbid","path":"/existing/Artist","qualityProfileId":9,"metadataProfileId":10}]"#
             }
             ("POST", "/api/v1/album") => r#"{"id":42}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
             ("POST", "/api/v1/command") => r#"{"id":9}"#,
             _ => "[]",
         }
@@ -243,6 +245,40 @@ async fn unmonitored_existing_artist_is_monitored_and_otherwise_unchanged() {
                 r#"{"id":7,"monitored":false,"monitorNewItems":"none","qualityProfileId":9}"#
             }
             ("PUT", "/api/v1/artist/7") => r#"{"id":7,"monitored":true}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
+            ("POST", "/api/v1/command") => r#"{"id":9}"#,
+            _ => "[]",
+        }
+        .to_string()
+    })
+    .await;
+
+    build(&server)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    let requests = requests(&server).await;
+    let puts: Vec<&Request> = requests.iter().filter(|r| r.method.as_str() == "PUT").collect();
+    assert_eq!(puts.len(), 1);
+    let update = body(puts[0]);
+    assert_eq!(update["monitored"], true);
+    assert_eq!(update["monitorNewItems"], "none");
+    assert_eq!(update["qualityProfileId"], 9);
+}
+
+#[tokio::test]
+async fn a_remonitored_artist_does_not_start_following_new_releases() {
+    let server = serve(|method, path| {
+        match (method, path) {
+            ("GET", "/api/v1/album") => {
+                r#"[{"id":12,"foreignAlbumId":"mbid","monitored":true,"artist":{"id":7,"monitored":false}}]"#
+            }
+            ("GET", "/api/v1/artist/7") => {
+                r#"{"id":7,"monitored":false,"monitorNewItems":"all","qualityProfileId":9}"#
+            }
+            ("PUT", "/api/v1/artist/7") => r#"{"id":7,"monitored":true}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
             ("POST", "/api/v1/command") => r#"{"id":9}"#,
             _ => "[]",
         }
@@ -272,6 +308,7 @@ async fn existing_album_is_monitored_without_changing_its_artist() {
                 r#"[{"id":12,"foreignAlbumId":"mbid","monitored":false,"artist":{"id":7,"qualityProfileId":9}}]"#
             }
             ("PUT", "/api/v1/album/12") => r#"{"id":12,"monitored":true}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
             ("POST", "/api/v1/command") => r#"{"id":9}"#,
             _ => "[]",
         }
@@ -527,6 +564,7 @@ async fn a_picked_release_is_grabbed_instead_of_an_album_search() {
                 r#"[{"id":12,"foreignAlbumId":"mbid","monitored":true,"artist":{"id":7,"monitored":true}}]"#
             }
             ("POST", "/api/v1/release") => r#"{"guid":"a1"}"#,
+            ("GET", "/api/v1/track") => r#"[{"id":1}]"#,
             ("POST", "/api/v1/command") => r#"{"id":9}"#,
             _ => "[]",
         }
@@ -622,4 +660,235 @@ async fn a_forgotten_pick_is_grabbed_again_under_its_new_guid() {
         client.grab_picked(7, &untitled).await,
         Err(LidarrError::InvalidOperation(PICK_GONE_TEXT.into()))
     );
+}
+
+// ---- Waiting for an album's track list before AlbumSearch -----------------------------------
+
+/// A Lidarr whose album 12 (artist 7) has no tracks until a refresh finishes. Each look at the
+/// command list moves a running refresh one step on; `refresh_steps` looks finish a refresh
+/// that was already running (`usize::MAX`: never), one look a RefreshAlbum asked for.
+#[derive(Clone)]
+struct RefreshingLidarr {
+    state: Arc<parking_lot::Mutex<RefreshState>>,
+}
+
+struct RefreshState {
+    has_tracks: bool,
+    /// The refresh Lidarr is running: (name, body, looks left until it finishes).
+    running: Option<(String, Value, usize)>,
+    /// Whether a finished refresh brings the tracks.
+    refresh_brings_tracks: bool,
+    /// What happened, in order: "tracks", "commands", "RefreshAlbum", "AlbumSearch".
+    log: Vec<String>,
+}
+
+impl Respond for RefreshingLidarr {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let mut state = self.state.lock();
+        let ok = |body: Value| ResponseTemplate::new(200).set_body_string(body.to_string());
+        match (request.method.as_str(), request.url.path()) {
+            ("GET", "/api/v1/album") => ok(json!([
+                { "id": 12, "foreignAlbumId": "mbid", "monitored": true, "artistId": 7,
+                  "artist": { "id": 7, "monitored": true } }
+            ])),
+            ("GET", "/api/v1/track") => {
+                state.log.push("tracks".into());
+                ok(if state.has_tracks {
+                    json!([{ "id": 1, "title": "Song" }])
+                } else {
+                    json!([])
+                })
+            }
+            ("GET", "/api/v1/command") => {
+                state.log.push("commands".into());
+                let mut listed = Vec::new();
+                if let Some((name, body, left)) = state.running.take() {
+                    if left == 0 {
+                        if state.refresh_brings_tracks {
+                            state.has_tracks = true;
+                        }
+                    } else {
+                        listed.push(json!({ "id": 3, "name": name, "status": "started", "body": body }));
+                        let left = if left == usize::MAX { left } else { left - 1 };
+                        state.running = Some((name, body, left));
+                    }
+                }
+                listed.push(json!({ "id": 2, "name": "RssSync", "status": "started", "body": {} }));
+                ok(Value::Array(listed))
+            }
+            ("POST", "/api/v1/command") => {
+                let body: Value = serde_json::from_slice(&request.body).expect("a JSON body");
+                let name = body["name"].as_str().unwrap_or_default().to_string();
+                state.log.push(name.clone());
+                if name == "RefreshAlbum" {
+                    state.running = Some((name, body, 1));
+                }
+                ok(json!({ "id": 9 }))
+            }
+            _ => ok(json!([])),
+        }
+    }
+}
+
+async fn refreshing_lidarr(
+    has_tracks: bool,
+    running: Option<(&str, Value)>,
+    refresh_steps: usize,
+    refresh_brings_tracks: bool,
+) -> (RefreshingLidarr, MockServer) {
+    let fake = RefreshingLidarr {
+        state: Arc::new(parking_lot::Mutex::new(RefreshState {
+            has_tracks,
+            running: running.map(|(name, body)| (name.to_string(), body, refresh_steps)),
+            refresh_brings_tracks,
+            log: Vec::new(),
+        })),
+    };
+    let server = MockServer::start().await;
+    Mock::given(any()).respond_with(fake.clone()).mount(&server).await;
+    (fake, server)
+}
+
+fn build_waiting(server: &MockServer, import_timeout_seconds: i32) -> LidarrClient {
+    let settings = LidarrSettings {
+        base_url: Some(server.uri()),
+        api_key: Some("secret".into()),
+        root_folder_path: Some("/data/music".into()),
+        quality_profile_id: 3,
+        metadata_profile_id: 4,
+        import_timeout_seconds,
+        ..Default::default()
+    };
+    let client = LidarrClient::new(Arc::new(SettingsStore::for_tests(AppSettings {
+        lidarr: settings,
+        ..Default::default()
+    })));
+    client.set_metadata_poll(std::time::Duration::from_millis(5));
+    client
+}
+
+fn log_of(fake: &RefreshingLidarr) -> Vec<String> {
+    fake.state.lock().log.clone()
+}
+
+#[tokio::test]
+async fn an_album_that_has_its_tracks_is_searched_without_waiting() {
+    let (fake, server) = refreshing_lidarr(true, None, 0, false).await;
+
+    build_waiting(&server, 60)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    assert_eq!(log_of(&fake), ["tracks", "AlbumSearch"]);
+}
+
+#[tokio::test]
+async fn an_album_search_waits_for_the_artist_refresh_already_running() {
+    let (fake, server) = refreshing_lidarr(
+        false,
+        Some(("RefreshArtist", json!({ "artistIds": [7] }))),
+        2,
+        true,
+    )
+    .await;
+
+    build_waiting(&server, 60)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    let log = log_of(&fake);
+    assert_eq!(log.last().map(String::as_str), Some("AlbumSearch"));
+    assert!(!log.iter().any(|step| step == "RefreshAlbum"), "{log:?}");
+    let searched_after = log
+        .iter()
+        .rposition(|step| step == "tracks")
+        .expect("tracks looked at");
+    assert_eq!(searched_after, log.len() - 2, "{log:?}");
+    assert!(fake.state.lock().has_tracks);
+}
+
+#[tokio::test]
+async fn an_album_with_no_tracks_and_no_refresh_gets_one_refresh_album_first() {
+    let (fake, server) = refreshing_lidarr(false, None, 1, true).await;
+
+    build_waiting(&server, 60)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    let requests = requests(&server).await;
+    let refreshes: Vec<Value> = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/api/v1/command")
+        .map(body)
+        .filter(|b| b["name"] == "RefreshAlbum")
+        .collect();
+    assert_eq!(refreshes.len(), 1);
+    assert_eq!(refreshes[0]["albumId"], 12);
+    let log = log_of(&fake);
+    let refresh = log
+        .iter()
+        .position(|step| step == "RefreshAlbum")
+        .expect("a refresh");
+    let search = log
+        .iter()
+        .position(|step| step == "AlbumSearch")
+        .expect("a search");
+    assert!(refresh < search, "{log:?}");
+    assert!(fake.state.lock().has_tracks);
+}
+
+#[tokio::test]
+async fn a_refresh_that_brings_no_tracks_is_asked_once_and_the_search_still_starts() {
+    let (fake, server) = refreshing_lidarr(false, None, 1, false).await;
+
+    build_waiting(&server, 60)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    let log = log_of(&fake);
+    assert_eq!(
+        log.iter().filter(|step| *step == "RefreshAlbum").count(),
+        1,
+        "{log:?}"
+    );
+    assert_eq!(log.last().map(String::as_str), Some("AlbumSearch"));
+}
+
+#[tokio::test]
+async fn a_refresh_that_never_ends_holds_the_search_only_until_the_import_timeout() {
+    let (fake, server) = refreshing_lidarr(
+        false,
+        Some(("RefreshAlbum", json!({ "albumId": 12 }))),
+        usize::MAX,
+        false,
+    )
+    .await;
+
+    let started = std::time::Instant::now();
+    build_waiting(&server, 1)
+        .ensure_album_and_search(&candidate("mbid", "Album", "Artist", Some(2020)))
+        .await
+        .expect("a search");
+
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let log = log_of(&fake);
+    assert_eq!(log.last().map(String::as_str), Some("AlbumSearch"));
+    assert!(!log.iter().any(|step| step == "RefreshAlbum"), "{log:?}");
+}
+
+#[test]
+fn the_wait_for_a_track_list_stops_at_five_minutes_whatever_the_import_timeout() {
+    let wait = |import_timeout_seconds: i32| {
+        track_list_wait(&LidarrSettings {
+            import_timeout_seconds,
+            ..Default::default()
+        })
+    };
+    assert_eq!(wait(3600), std::time::Duration::from_secs(5 * 60));
+    assert_eq!(wait(120), std::time::Duration::from_secs(120));
+    assert_eq!(wait(0), std::time::Duration::from_secs(1));
 }

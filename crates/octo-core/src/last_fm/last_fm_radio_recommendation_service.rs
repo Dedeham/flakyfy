@@ -17,10 +17,11 @@ use sha2::{Digest, Sha256};
 
 use crate::common::dotnet;
 use crate::common::dotnet_random::DotnetRandom;
-use crate::last_fm::SimilarTrack;
+use crate::last_fm::last_fm_radio_placement::{self, Spacing};
 use crate::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
 use crate::last_fm::last_fm_radio_state_store::station_id;
 use crate::last_fm::radio_filler;
+use crate::last_fm::{SimilarArtist, SimilarTrack};
 use crate::metadata::genre_normalizer::to_title_case;
 use crate::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use crate::radio::radio_provider;
@@ -285,7 +286,9 @@ impl<S: AsRef<str>> FromIterator<S> for IgnoreCaseKeys {
 /// songs of itself and a title not within [`TITLE_GAP`]. A new song heard in the last
 /// [`HEARD_LATELY`], or one the gaps refused, waits; if the walk falls short they fill the rest,
 /// never the same artist twice in a row. The caps are the marginal-relevance idea applied
-/// greedily, with artist and source repetition as the redundancy.
+/// greedily, with artist and source repetition as the redundancy; and, with a familiar quota,
+/// the two halves placed at random at the discovery share, paced to what the walk took, keeping
+/// the walk's artist and title gaps.
 pub fn shape(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
@@ -299,7 +302,80 @@ pub fn shape(
     banned: Option<&IgnoreCaseKeys>,
     disliked: Option<&IgnoreCaseKeys>,
 ) -> Vec<LastFmRadioTrack> {
+    shape_walk(
+        candidates,
+        plays,
+        settings,
+        unavailable,
+        random,
+        previous,
+        artist_cap,
+        exclude_recent,
+        familiar_quota,
+        banned,
+        disliked,
+        1,
+    )
+    .tracks
+}
+
+/// A station's tracks and, behind them, the walk's next picks.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Shaped {
+    pub tracks: Vec<LastFmRadioTrack>,
+    pub reserve: Vec<LastFmRadioTrack>,
+}
+
+/// [`shape`] without a familiar quota, the walk carried on past the station's size so that
+/// tracks and reserve together hold up to twice as many. The tracks are exactly what [`shape`]
+/// would take; the reserve is what the same walk would take next, under the same caps, for
+/// whatever the station cannot use once its tracks are resolved.
+pub fn shape_with_reserve(
+    candidates: Vec<Candidate>,
+    plays: &[LastFmRadioPlay],
+    settings: &LastFmSettings,
+    unavailable: &IgnoreCaseKeys,
+    random: &mut dyn RadioRandom,
+    previous: &IgnoreCaseKeys,
+    artist_cap: i32,
+    exclude_recent: bool,
+    banned: Option<&IgnoreCaseKeys>,
+    disliked: Option<&IgnoreCaseKeys>,
+) -> Shaped {
+    shape_walk(
+        candidates,
+        plays,
+        settings,
+        unavailable,
+        random,
+        previous,
+        artist_cap,
+        exclude_recent,
+        None,
+        banned,
+        disliked,
+        2,
+    )
+}
+
+/// The walk behind [`shape`] and [`shape_with_reserve`]: it takes up to `reach` times the
+/// station's size, and everything past the size is the reserve.
+fn shape_walk(
+    candidates: Vec<Candidate>,
+    plays: &[LastFmRadioPlay],
+    settings: &LastFmSettings,
+    unavailable: &IgnoreCaseKeys,
+    random: &mut dyn RadioRandom,
+    previous: &IgnoreCaseKeys,
+    artist_cap: i32,
+    exclude_recent: bool,
+    familiar_quota: Option<i32>,
+    banned: Option<&IgnoreCaseKeys>,
+    disliked: Option<&IgnoreCaseKeys>,
+    reach: i32,
+) -> Shaped {
     let target = settings.effective_radio_track_count();
+    let walk_target = target.saturating_mul(reach.max(1));
     let recent: IgnoreCaseKeys = plays
         .iter()
         .take(30)
@@ -372,12 +448,13 @@ pub fn shape(
         per_source: HashMap::new(),
         familiar_taken: 0,
         output: Vec::new(),
+        familiar_flags: Vec::new(),
         output_artists: Vec::new(),
         output_titles: Vec::new(),
     };
     let mut held = Vec::new();
     for candidate in weighted_order(distinct, random, previous) {
-        if walk.output.len() as i32 >= target {
+        if walk.output.len() as i32 >= walk_target {
             break;
         }
         if walk.admit(&candidate, true) == Verdict::Wait {
@@ -385,13 +462,61 @@ pub fn shape(
         }
     }
     for candidate in &held {
-        if walk.output.len() as i32 >= target {
+        if walk.output.len() as i32 >= walk_target {
             break;
         }
         walk.admit(candidate, false);
     }
-    walk.output
+    let Walk {
+        mut output,
+        familiar_flags,
+        output_artists,
+        output_titles,
+        ..
+    } = walk;
+    let reserve = output.split_off(output.len().min(target.max(0) as usize));
+    // Your Mix (and Starter Radio): the familiar tracks and the discoveries take turns at random
+    // at the discovery share (last_fm_radio_placement), instead of the walk's order putting the
+    // familiar first. The share is paced to what the walk took, so a short walk ends on no block
+    // of discoveries. The placement keeps the walk's artist and title gaps. It is handed the
+    // walk's keys, and folds the artist key again with the spacing's `artist_key`, which groups
+    // artists as the walk does or more coarsely: a gap the placement keeps, the walk's keys
+    // keep too.
+    if let Some(quota) = familiar_quota.filter(|_| target > 0) {
+        let share = f64::from(target - quota) / f64::from(target);
+        let flagged: Vec<Placed> = output
+            .into_iter()
+            .zip(familiar_flags)
+            .zip(output_artists.into_iter().zip(output_titles))
+            .map(|((track, familiar), (artist, title))| (track, familiar, artist, title))
+            .collect();
+        let title_of = |(_, _, _, title): &Placed| title.clone();
+        let tracks = last_fm_radio_placement::place(
+            &flagged,
+            |(_, familiar, _, _): &Placed| !*familiar,
+            |(_, _, artist, _): &Placed| Some(artist.clone()),
+            None,
+            Spacing {
+                artist_gap,
+                title: Some((&title_of, TITLE_GAP)),
+            },
+            share,
+            random,
+        )
+        .into_iter()
+        .map(|(track, _, _, _)| track)
+        .collect();
+        return Shaped { tracks, reserve };
+    }
+    Shaped {
+        tracks: output,
+        reserve,
+    }
 }
+
+/// A Your Mix track with what its placement needs: whether it is familiar, and the walk's
+/// artist and title keys.
+type Placed = (LastFmRadioTrack, bool, String, String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict {
@@ -415,6 +540,8 @@ struct Walk<'a> {
     per_source: HashMap<String, i32>,
     familiar_taken: i32,
     output: Vec<LastFmRadioTrack>,
+    /// Beside each output track: whether it is a familiar one, for Your Mix's placement.
+    familiar_flags: Vec<bool>,
     output_artists: Vec<String>,
     output_titles: Vec<String>,
 }
@@ -488,6 +615,7 @@ impl Walk<'_> {
             }),
             ..Default::default()
         });
+        self.familiar_flags.push(is_familiar);
         self.output_artists.push(artist);
         self.output_titles.push(title);
         *self.per_artist.entry(artist_folded).or_insert(0) += 1;
@@ -617,6 +745,106 @@ pub fn score_artists(plays: &[LastFmRadioPlay], now: DateTime<Utc>) -> Vec<(Stri
     scores
 }
 
+/// Discovery Mix walks Last.fm's similar-artist graph out from the listener's
+/// [`FRONTIER_SEEDS`] strongest artists, [`FRONTIER_NEIGHBOURS`] neighbours each, then one more
+/// step from the [`SECOND_STEP_SEEDS`] best new artists at [`SECOND_STEP_WEIGHT`]. The
+/// [`FRONTIER_ARTISTS`] best new artists give [`FRONTIER_TRACKS_EACH`] top songs each, and at
+/// most [`FRONTIER_ARTIST_CAP`] of an artist's songs make the station. Under
+/// [`FRONTIER_FEWEST_SONGS`] songs, the listener's tag charts stand in.
+pub const FRONTIER_SEEDS: usize = 10;
+pub const FRONTIER_NEIGHBOURS: i32 = 30;
+pub const SECOND_STEP_SEEDS: usize = 5;
+pub const SECOND_STEP_WEIGHT: f64 = 0.5;
+pub const FRONTIER_ARTISTS: usize = 30;
+pub const FRONTIER_TRACKS_EACH: i32 = 3;
+pub const FRONTIER_ARTIST_CAP: i32 = 2;
+pub const FRONTIER_FEWEST_SONGS: usize = 5;
+
+/// Weight kept by an artist the listener already plays, among a genre station's suggestions:
+/// a genre station is for finding, and the listener's own artists would otherwise lead it.
+pub const KNOWN_ARTIST_WEIGHT: f64 = 0.3;
+
+/// Neighbours an artist station asks Last.fm for; the five it uses are the strongest after
+/// known artists keep [`KNOWN_ARTIST_WEIGHT`] of their match, so new names come first.
+pub const ARTIST_RADIO_NEIGHBOURS: i32 = 15;
+
+/// The artists the listener knows, by [`artist_key`]: everyone in their plays.
+pub fn known_artists(plays: &[LastFmRadioPlay]) -> IgnoreCaseKeys {
+    plays.iter().map(|play| artist_key(&play.artist)).collect()
+}
+
+/// Candidates by an artist the listener knows keep [`KNOWN_ARTIST_WEIGHT`] of their weight.
+pub fn discount_known(candidates: Vec<Candidate>, known: &IgnoreCaseKeys) -> Vec<Candidate> {
+    candidates
+        .into_iter()
+        .map(|mut candidate| {
+            if known.contains(&artist_key(&candidate.track.artist)) {
+                candidate.weight *= KNOWN_ARTIST_WEIGHT;
+            }
+            candidate
+        })
+        .collect()
+}
+
+/// An artist station's neighbours, strongest first once known artists keep
+/// [`KNOWN_ARTIST_WEIGHT`] of their match; equal ones in Last.fm's order.
+pub fn unknown_neighbours_first(similar: Vec<SimilarArtist>, known: &IgnoreCaseKeys) -> Vec<SimilarArtist> {
+    let mut scored: Vec<(f64, SimilarArtist)> = similar
+        .into_iter()
+        .map(|artist| {
+            let factor = if known.contains(&artist_key(&artist.name)) {
+                KNOWN_ARTIST_WEIGHT
+            } else {
+                1.0
+            };
+            (artist.r#match * factor, artist)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+    scored.into_iter().map(|(_, artist)| artist).collect()
+}
+
+/// The new artists a similar-artist walk reached, each scored by the weight of the artist that
+/// pointed to it times how similar Last.fm says they are, summed over every artist that did:
+/// an artist several favorites point to leads. Known and disliked artists never score.
+#[derive(Debug, Clone, Default)]
+pub struct FrontierScores {
+    scores: IndexMap<String, (String, f64)>,
+}
+
+impl FrontierScores {
+    pub fn add(
+        &mut self,
+        similar: &[SimilarArtist],
+        weight: f64,
+        known: &IgnoreCaseKeys,
+        disliked: &IgnoreCaseKeys,
+    ) {
+        for artist in similar {
+            let key = artist_key(&artist.name);
+            if key.is_empty() || known.contains(&key) || disliked.contains(&key) {
+                continue;
+            }
+            self.scores
+                .entry(dotnet::ordinal_ignore_case_key(&key))
+                .or_insert_with(|| (artist.name.clone(), 0.0))
+                .1 += weight * artist.r#match.max(0.05);
+        }
+    }
+
+    /// The `n` best, strongest first, equal scores in the order they were first reached.
+    pub fn top(&self, n: usize) -> Vec<(String, f64)> {
+        let mut entries: Vec<(String, f64)> = self.scores.values().cloned().collect();
+        entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        entries.truncate(n);
+        entries
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.scores.is_empty()
+    }
+}
+
 /// Tag scores, keyed ignoring case, in the order the tags were first scored.
 #[derive(Debug, Clone, Default)]
 pub struct TagScores {
@@ -703,6 +931,7 @@ pub fn create<S: AsRef<str>>(
             .map(str::to_string)
             .collect(),
         tracks,
+        reserve: Vec::new(),
     }
 }
 
@@ -857,6 +1086,314 @@ mod tests {
         ];
         suppress_station_overlap(&mut stations);
         assert_eq!(stations[1].tracks.len(), 12);
+    }
+
+    /// Placement keeps the walk's gaps: with plenty of artists, no artist comes back within
+    /// [`ARTIST_GAP`] songs of itself and no title within [`TITLE_GAP`], in any build.
+    #[test]
+    fn your_mix_keeps_its_artist_and_title_gaps_after_placement() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        // Sixty artists with two songs each, and every title sung by two of them: enough that the walk
+        // itself keeps every gap, as a real listener's many artists let it.
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..60)
+            .map(|i| {
+                candidate(
+                    format!("Familiar {}", i % 30),
+                    format!("Song {}", i / 2),
+                    2.0,
+                    FAMILIAR_SOURCE,
+                )
+            })
+            .chain(
+                (0..60)
+                    .map(|i| candidate(format!("New {}", i % 30), format!("Tune {}", i / 2), 0.3, "tag:x")),
+            )
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..100 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                artist_cap(&settings, LastFmRadioStationKind::YourMix),
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            assert_eq!(tracks.len(), 50, "seed {seed}");
+            let artists: Vec<String> = tracks.iter().map(|track| artist_key(&track.artist)).collect();
+            let titles: Vec<String> = tracks
+                .iter()
+                .map(|track| dotnet::to_lower_invariant(&seed_normalizer::title(&track.title)))
+                .collect();
+            for i in 0..tracks.len() {
+                for j in i + 1..tracks.len() {
+                    assert!(
+                        !(j - i <= ARTIST_GAP as usize && artists[i] == artists[j]),
+                        "seed {seed}: {} at {i} and {j}",
+                        artists[i]
+                    );
+                    assert!(
+                        !(j - i <= TITLE_GAP && titles[i] == titles[j]),
+                        "seed {seed}: {} at {i} and {j}",
+                        titles[i]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Decision D10 (radio placement, 2026-10-08): Your Mix places its familiar tracks and its
+    /// discoveries at random at the discovery share, so the familiar ones no longer gather at
+    /// the front, and the order is not the apps' old every-third-song schedule either.
+    #[test]
+    fn your_mix_mixes_familiar_and_discovery_throughout() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..40)
+            .map(|i| candidate(format!("Familiar {i}"), format!("Song {i}"), 2.0, FAMILIAR_SOURCE))
+            .chain((0..40).map(|i| candidate(format!("New {i}"), format!("Tune {i}"), 0.3, "tag:x")))
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        let schedule = "FFD".repeat(17);
+        let mut mixed_early = 0;
+        for seed in 0..100 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                50,
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            let pattern: String = tracks
+                .iter()
+                .map(|track| {
+                    if track.artist.starts_with("Familiar") {
+                        'F'
+                    } else {
+                        'D'
+                    }
+                })
+                .collect();
+            // Placement changes the order only: the quota still holds.
+            assert_eq!(pattern.len(), 50, "seed {seed}: {pattern}");
+            assert_eq!(pattern.matches('D').count(), 18, "seed {seed}: {pattern}");
+            assert_ne!(pattern, schedule[..50], "seed {seed} reads the old schedule");
+            if pattern[..10].matches('D').count() >= 2 {
+                mixed_early += 1;
+            }
+        }
+        assert!(
+            mixed_early >= 90,
+            "only {mixed_early} of 100 mixes had 2 discoveries in their first 10"
+        );
+    }
+
+    /// The Check Mode finding M1 (2026-10-08): a walk that falls short of its quota, 5 familiar
+    /// tracks and 18 discoveries where Your Mix wants 32 and 18 of 50, was placed at the quota's
+    /// 36% and ended on 16 discoveries in a row. Paced to what the walk took, it ends on 6 at
+    /// most over 200 seeds, and no more than 2 familiar tracks come in a row.
+    #[test]
+    fn a_short_your_mix_walk_ends_on_no_long_run_of_discoveries() {
+        let settings = LastFmSettings {
+            radio_track_count: 50,
+            ..Default::default()
+        };
+        let candidate = |artist: String, title: String, weight: f64, source: &str| Candidate {
+            track: SimilarTrack::new(artist, title, 1.0),
+            weight,
+            source: source.to_string(),
+        };
+        let candidates: Vec<Candidate> = (0..5)
+            .map(|i| candidate(format!("Familiar {i}"), format!("Song {i}"), 2.0, FAMILIAR_SOURCE))
+            .chain((0..18).map(|i| candidate(format!("New {i}"), format!("Tune {i}"), 0.3, "tag:x")))
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..200 {
+            let tracks = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                50,
+                false,
+                Some(32),
+                None,
+                None,
+            );
+            let pattern: String = tracks
+                .iter()
+                .map(|track| {
+                    if track.artist.starts_with("Familiar") {
+                        'F'
+                    } else {
+                        'D'
+                    }
+                })
+                .collect();
+            assert_eq!(pattern.len(), 23, "seed {seed}: {pattern}");
+            let tail = pattern.len() - pattern.trim_end_matches('D').len();
+            assert!(tail <= 6, "seed {seed} ends on {tail} discoveries: {pattern}");
+            assert!(!pattern.contains("FFF"), "seed {seed}: {pattern}");
+        }
+    }
+
+    /// The reserve is what the same walk takes next: the tracks are exactly what `shape` takes,
+    /// and tracks and reserve together hold at most twice the station's size.
+    #[test]
+    fn the_reserve_follows_the_station_and_leaves_its_tracks_as_they_were() {
+        let settings = LastFmSettings {
+            radio_track_count: 20,
+            ..Default::default()
+        };
+        let candidates: Vec<Candidate> = (0..80)
+            .map(|i| Candidate {
+                track: SimilarTrack::new(format!("Artist {}", i % 40), format!("Tune {i}"), 1.0),
+                weight: 1.0 / f64::from(i + 1),
+                source: format!("tag:{}", i % 3),
+            })
+            .collect();
+        let none = IgnoreCaseKeys::new();
+        for seed in 0..20 {
+            let plain = shape(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                2,
+                true,
+                None,
+                None,
+                None,
+            );
+            let shaped = shape_with_reserve(
+                candidates.clone(),
+                &[],
+                &settings,
+                &none,
+                &mut DotnetRandom::new(seed),
+                &none,
+                2,
+                true,
+                None,
+                None,
+            );
+            assert_eq!(shaped.tracks, plain, "seed {seed}");
+            assert_eq!(shaped.tracks.len(), 20, "seed {seed}");
+            assert!(!shaped.reserve.is_empty(), "seed {seed}");
+            assert!(shaped.reserve.len() <= 20, "seed {seed}");
+            let keys: IgnoreCaseKeys = shaped
+                .tracks
+                .iter()
+                .chain(&shaped.reserve)
+                .map(|track| seed_normalizer::track_key(&track.artist, &track.title))
+                .collect();
+            assert_eq!(
+                keys.len(),
+                shaped.tracks.len() + shaped.reserve.len(),
+                "seed {seed}"
+            );
+        }
+    }
+
+    fn similar(names: &[(&str, f64)]) -> Vec<SimilarArtist> {
+        names
+            .iter()
+            .map(|(name, r#match)| SimilarArtist {
+                name: (*name).to_string(),
+                r#match: *r#match,
+            })
+            .collect()
+    }
+
+    /// An artist two favorites point to beats one only the strongest points to, and known or
+    /// disliked artists never score, however similar.
+    #[test]
+    fn the_frontier_scores_new_artists_by_who_points_to_them() {
+        let known: IgnoreCaseKeys = ["known band"].into_iter().collect();
+        let disliked: IgnoreCaseKeys = ["disliked band"].into_iter().collect();
+        let mut scores = FrontierScores::default();
+        scores.add(
+            &similar(&[
+                ("Known Band", 1.0),
+                ("Solo Pick", 0.9),
+                ("Shared Pick", 0.6),
+                ("Disliked Band", 1.0),
+            ]),
+            1.0,
+            &known,
+            &disliked,
+        );
+        scores.add(&similar(&[("shared pick", 0.6)]), 0.8, &known, &disliked);
+        let top = scores.top(10);
+        let names: Vec<&str> = top.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["Shared Pick", "Solo Pick"]);
+        assert!((top[0].1 - (0.6 + 0.48)).abs() < 1e-9);
+        assert_eq!(scores.top(1).len(), 1);
+    }
+
+    #[test]
+    fn known_artists_keep_a_third_of_their_weight_and_go_after_new_neighbours() {
+        let plays = [LastFmRadioPlay {
+            artist: "Known Band feat. Guest".into(),
+            title: "Song".into(),
+            ..Default::default()
+        }];
+        let known = known_artists(&plays);
+        let candidates = discount_known(
+            vec![
+                Candidate {
+                    track: SimilarTrack::new("KNOWN BAND", "Hit", 1.0),
+                    weight: 1.0,
+                    source: "tag:x".into(),
+                },
+                Candidate {
+                    track: SimilarTrack::new("New Band", "Hit", 1.0),
+                    weight: 1.0,
+                    source: "tag:x".into(),
+                },
+            ],
+            &known,
+        );
+        assert_eq!(candidates[0].weight, KNOWN_ARTIST_WEIGHT);
+        assert_eq!(candidates[1].weight, 1.0);
+        let order: Vec<String> = unknown_neighbours_first(
+            similar(&[("Known Band", 0.9), ("New One", 0.5), ("New Two", 0.2)]),
+            &known,
+        )
+        .into_iter()
+        .map(|artist| artist.name)
+        .collect();
+        assert_eq!(order, ["New One", "Known Band", "New Two"]);
     }
 
     #[test]

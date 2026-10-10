@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use octo_core::common::dotnet;
 use octo_core::models::domain::Song;
 use octo_core::radio::RadioSeed;
+use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
 use octo_subsonic::SubsonicReply;
 use octo_subsonic::subsonic_response_builder::{SUBSONIC_NAMESPACE, SUBSONIC_VERSION};
 use octo_subsonic::xml::XElement;
@@ -19,6 +20,10 @@ use super::action_helpers::{SubsonicCall, int_param, is_successful_subsonic_resp
 use crate::app::AppState;
 use crate::services::last_fm::LastFmRadioTrackResolver;
 
+/// The most songs Octo's own apps (`octoMix=client`) may ask one radio for. The sources are
+/// asked for at most 100 too (`SongRadioService::build`).
+const MOST_FOR_OCTO_APPS: i32 = 100;
+
 pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> Response {
     let call = match SubsonicCall::read(&state, req).await {
         Ok(call) => call,
@@ -28,8 +33,19 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
     let builder = &state.subsonic_response_builder;
     let id = call.param_or("id", "").to_string();
     let settings = state.settings.current();
-    let count = int_param(&call.parameters, "count", 50)
-        .clamp(1, settings.last_fm.effective_radio_track_count().max(1));
+    // Octo's own apps mix the radio themselves and ask for the order of fit (octoMix=client);
+    // for every other app this order is the radio, so outside songs are placed at random at the
+    // radio's own mix (last_fm_radio_placement).
+    let client_order = dotnet::eq_ignore_case(call.param_or("octoMix", ""), "client");
+    // Octo's apps may ask for up to 100 songs, whatever RadioTrackCount is: at Lots and Mostly
+    // new they need more outside songs than a 50-song answer holds. Every other app gets the
+    // dashboard's count at most, as before.
+    let most = if client_order {
+        MOST_FOR_OCTO_APPS
+    } else {
+        settings.last_fm.effective_radio_track_count().max(1)
+    };
+    let count = int_param(&call.parameters, "count", 50).clamp(1, most);
 
     // Subsonic spec: getSimilarSongs.view → key "similarSongs"; getSimilarSongs2.view →
     // "similarSongs2". Clients (Arpeggi) parse the v2 key strictly and ignore v1-shaped
@@ -71,7 +87,18 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         state.external_id_registry.clone(),
     );
     let (is_external, provider, external_id) = state.local_library.parse_song_id(&id);
-    if is_external {
+    // An outside artist (an artist row of a search or a chart) is a radio of the artists like
+    // them, as a library artist is: the seed is the artist alone.
+    let outside_artist = is_external
+        .then(|| state.external_id_registry.lookup(&id))
+        .flatten()
+        .map(|routing| routing.snapshot())
+        .filter(|routing| routing.kind == RoutingKind::Artist)
+        .and_then(|routing| routing.artist)
+        .filter(|artist| !dotnet::is_blank(artist));
+    if let Some(artist) = &outside_artist {
+        artist_name = artist.clone();
+    } else if is_external {
         // External song - get metadata from our service
         if let Some(song) = state
             .metadata_service
@@ -106,7 +133,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         artist_name = seed.artist;
     }
 
-    if artist_name.is_empty() || (track_title.is_empty() && is_external) {
+    if artist_name.is_empty() || (track_title.is_empty() && is_external && outside_artist.is_none()) {
         warn!("Could not get artist/title for song {id}");
         return builder.create_response(format, response_key).into_response();
     }
@@ -146,7 +173,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         library_song: library_seed,
         you_tube_id: seed_video,
     };
-    let resolved_songs = state
+    let mut resolved_songs = state
         .song_radio
         .build(
             &seed,
@@ -155,6 +182,7 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
             &call.parameters,
             &bans,
             &resolver,
+            client_order,
         )
         .await;
     if resolved_songs.is_empty() {
@@ -168,6 +196,10 @@ pub async fn get_similar_songs(State(state): State<AppState>, req: Request) -> R
         }
         return builder.create_response(format, response_key).into_response();
     }
+
+    // Outside picks take the lengths already known for them; the rest are looked up in the
+    // background for the next answer.
+    state.metadata_service.complete_song_lengths(&mut resolved_songs);
 
     let local_count = resolved_songs.iter().filter(|song| song.is_local).count();
     info!(

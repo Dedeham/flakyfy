@@ -208,7 +208,10 @@ let activityFastUntil = 0;
 
 // What reloads a page when its job starts or ends.
 const ACTIVITY_PAGE_REFRESH = {
-  tags: () => typeof loadGenreBackfill === 'function' && loadGenreBackfill(),
+  tags: () => {
+    if (typeof loadGenreBackfill === 'function') loadGenreBackfill();
+    if (typeof loadTidy === 'function') loadTidy();
+  },
   covers: () => typeof loadCoverUpgrade === 'function' && loadCoverUpgrade(),
   lyrics: () => typeof loadLyricsLibrary === 'function' && loadLyricsLibrary(),
   lossy: () => typeof loadUpgrades === 'function' && loadUpgrades(),
@@ -587,6 +590,7 @@ async function loadSettings() {
   // retry: false, so a page load never pops a sign-in prompt. Without a session the section
   // simply stays empty until the user asks for a preview.
   loadGenreBackfill();
+  loadTidy();
   loadExplicitBackfill();
   loadCoverUpgrade();
   loadLyricsLibrary();
@@ -1674,6 +1678,291 @@ document.getElementById('genre-backfill-undo')?.addEventListener('click', async 
   await loadGenreBackfill();
 });
 
+// ---- Tidy artists -----------------------------------------------------------------
+// Preview (writes nothing), then apply what the preview showed: tags, a Navidrome scan, then
+// whole album folders. Renames that lose stars only run when ticked. Every call needs the
+// browse sign-in, like the genre re-tag.
+
+let libraryTidyPoll = null;
+let lastTidyRun = null;
+let tidyScopeInitialised = false;
+let tidyOffset = 0;
+const TIDY_PAGE = 100;
+const tidyTicked = new Set();
+
+const tidyKindLabels = {
+  Split: 'Folder split',
+  Respell: 'Spelling',
+  Rename: 'Rename',
+  Guest: 'Guests',
+  Skip: 'Left alone',
+};
+
+async function libraryTidyFetch(url, options = {}, retry = true) {
+  const response = await api(url, options);
+  if (response.status === 401 && retry) {
+    const holder = document.getElementById('library-tidy-status');
+    if (await browseAuthenticate(holder ?? document.createElement('div'))) {
+      return libraryTidyFetch(url, options, false);
+    }
+  }
+  return response;
+}
+
+function tidyNote(message, kind = 'ok') {
+  note(document.querySelector('#library-tidy-actions .genre-preset-actions'), message, kind);
+}
+
+function tidyExcluded() {
+  return (document.getElementById('library-tidy-excluded')?.value ?? '')
+    .split('\n').map(line => line.trim().replace(/^\/+|\/+$/g, '')).filter(Boolean);
+}
+
+function renderLibraryTidy(run) {
+  const status = document.getElementById('library-tidy-status');
+  if (!status) return;
+  const running = run.status === 'Running';
+  const previewed = run.previewed === true;
+  const scopeSelect = document.getElementById('library-tidy-scope');
+  const scopeChanged = previewed && scopeSelect && scopeSelect.value !== run.scope;
+  document.getElementById('library-tidy-scope-hint').hidden = !scopeChanged;
+
+  const changes = Object.entries(run.rows ?? {})
+    .filter(([kind]) => kind !== 'Skip').reduce((sum, [, count]) => sum + count, 0);
+  const applyNote = document.getElementById('library-tidy-apply-note');
+  applyNote.textContent = previewed && !run.applyAllowed && run.applyBlockedReason
+    ? run.applyBlockedReason
+    : run.otherJob
+      ? `${run.otherJob} is changing the music folder right now. Apply is available once it is done.`
+      : 'Once a preview has finished, for the same files it previewed.';
+
+  document.getElementById('library-tidy-cancel').hidden = !running;
+  document.getElementById('library-tidy-apply').hidden =
+    !previewed || changes === 0 || scopeChanged || !run.applyAllowed || Boolean(run.otherJob);
+  document.getElementById('library-tidy-resume').hidden = !run.canResume || running;
+  document.getElementById('library-tidy-undo').hidden = !run.canUndo || running;
+  document.getElementById('library-tidy-preview').disabled = running;
+  document.getElementById('library-tidy-filter').hidden = !previewed && !run.rows?.Skip;
+
+  if (run.status === 'Idle') {
+    status.innerHTML = '';
+    return;
+  }
+  const label = running
+    ? (run.phase || (run.mode === 'Undo' ? 'Undoing' : run.mode === 'Apply' ? 'Applying' : 'Previewing'))
+    : {
+        Completed: run.mode === 'Undo' ? 'Undo finished' : run.mode === 'Apply' ? 'Finished' : 'Preview finished',
+        Cancelled: 'Cancelled',
+        Interrupted: 'Interrupted',
+        Failed: 'Stopped',
+      }[run.status] ?? run.status;
+  const counts = (run.mode === 'Preview'
+    ? [
+        `${run.files} files read`,
+        `${run.plannedRetags} to re-tag`,
+        `${run.plannedMoves} album folders to move`,
+        run.rows?.Skip ? `${run.rows.Skip} left alone` : null,
+      ]
+    : [
+        run.mode === 'Undo' ? `${run.moved} folders moved back` : `${run.retagged} re-tagged`,
+        run.mode === 'Undo' ? `${run.retagged} tags restored` : `${run.moved} album folders moved`,
+        run.held ? `${run.held} held back` : null,
+        run.failed ? `${run.failed} failed` : null,
+      ]).filter(Boolean).join(' · ');
+  const unasked = run.lookupsNotAsked
+    ? `<div class="set-info-d">MusicBrainz was not asked about ${run.lookupsNotAsked} name(s) yet. Preview again to ask about the next batch.</div>`
+    : '';
+  const held = run.heldRows?.length ? `
+    <div class="set-info-t">Held back</div>
+    ${tidyTable(run.heldRows, false)}` : '';
+  const errors = run.errors?.length
+    ? `<div class="field-error" role="alert">${esc(run.errors[run.errors.length - 1])}</div>` : '';
+  status.innerHTML = `
+    <div class="set-info">
+      <div class="set-info-t">${esc(label)}</div>
+      <div class="set-info-d">${esc(counts)}${run.reason ? `. ${esc(run.reason)}` : ''}</div>
+      ${unasked}
+    </div>
+    ${held}${errors}`;
+}
+
+function tidyTable(rows, withTicks) {
+  const body = rows.map(row => `
+    <div class="config-row genre-change-row">
+      <span class="key">${withTicks && row.optIn
+        ? `<label><input type="checkbox" data-tidy-tick="${esc(row.id)}"${tidyTicked.has(row.id) ? ' checked' : ''}> ${esc(tidyKindLabels[row.kind] ?? row.kind)}</label>`
+        : esc(tidyKindLabels[row.kind] ?? row.kind)}${row.path ? `: ${esc(row.path)}` : ''}</span>
+      <span class="value">${esc(row.before || '')}</span>
+      <span class="value">${esc(row.after || '')}</span>
+      <span class="value">${esc(row.evidence || '')}${withTicks && row.path
+        ? ` <button class="btn btn-ghost" type="button" data-tidy-exclude="${esc(row.path.split('/')[0])}">Leave out</button>` : ''}</span>
+    </div>`).join('');
+  return `
+    <div class="config-table">
+      <div class="config-row config-row-head genre-change-row">
+        <span>What</span><span>Before</span><span>After</span><span>Why</span>
+      </div>
+      ${body}
+    </div>`;
+}
+
+async function loadTidyRows() {
+  const results = document.getElementById('library-tidy-results');
+  const pager = document.getElementById('library-tidy-pager');
+  if (!results || !lastTidyRun?.previewed && !lastTidyRun?.rows?.Skip) {
+    if (results) results.innerHTML = '';
+    if (pager) pager.hidden = true;
+    return;
+  }
+  const kind = document.getElementById('library-tidy-kind')?.value ?? 'Changes';
+  const response = await libraryTidyFetch(`/api/admin/tidy/rows?kind=${encodeURIComponent(kind)}&offset=${tidyOffset}&limit=${TIDY_PAGE}`, {}, false);
+  if (!response.ok) return;
+  const page = await response.json();
+  results.innerHTML = page.rows.length ? tidyTable(page.rows, true) : '<p class="set-info-d">Nothing here.</p>';
+  pager.hidden = page.total <= TIDY_PAGE;
+  const last = Math.min(page.offset + page.rows.length, page.total);
+  document.getElementById('library-tidy-page-label').textContent =
+    page.total ? `${page.offset + 1} to ${last} of ${page.total}` : '';
+  document.getElementById('library-tidy-prev').disabled = page.offset === 0;
+  document.getElementById('library-tidy-next').disabled = last >= page.total;
+}
+
+async function loadTidy(retry = false) {
+  const response = await libraryTidyFetch('/api/admin/tidy', {}, retry);
+  if (!response.ok) {
+    if (libraryTidyPoll) { clearInterval(libraryTidyPoll); libraryTidyPoll = null; }
+    return null;
+  }
+  const run = await response.json();
+  if (run.pending && run.status !== 'Running') Object.assign(run, { status: 'Running', phase: 'Starting' });
+  const previous = lastTidyRun;
+  lastTidyRun = run;
+  const scopeSelect = document.getElementById('library-tidy-scope');
+  if (!tidyScopeInitialised && scopeSelect && run.previewed && run.scope) scopeSelect.value = run.scope;
+  const excluded = document.getElementById('library-tidy-excluded');
+  if (!tidyScopeInitialised && excluded && run.excluded?.length) excluded.value = run.excluded.join('\n');
+  tidyScopeInitialised = true;
+  renderLibraryTidy(run);
+  if (previous?.status === 'Running' && run.status !== 'Running') {
+    const what = run.mode === 'Undo' ? 'Undo' : run.mode === 'Apply' ? 'Tidy' : 'Preview';
+    tidyNote(`${what} ${run.status === 'Completed' ? 'finished' : run.status.toLowerCase()}.`,
+      run.status === 'Failed' ? 'error' : 'ok');
+  }
+  if (run.status !== 'Running' && previous?.runId !== run.runId) {
+    tidyOffset = 0;
+    await loadTidyRows();
+  } else if (!previous) {
+    await loadTidyRows();
+  }
+  if (run.status === 'Running') {
+    if (!libraryTidyPoll) libraryTidyPoll = setInterval(() => loadTidy(), 2000);
+  } else if (libraryTidyPoll) {
+    clearInterval(libraryTidyPoll);
+    libraryTidyPoll = null;
+  }
+  return run;
+}
+
+async function postTidy(url, body) {
+  const response = await libraryTidyFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  const answer = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    tidyNote(answer.error || `Could not start: HTTP ${response.status}`, 'error');
+    return false;
+  }
+  await loadTidy();
+  return true;
+}
+
+async function confirmTidyPath(run, action) {
+  if (run.scope !== 'WholeLibrary') return '';
+  return askDialog({
+    title: `${action} in your whole library?`,
+    message: `This re-tags and moves files anywhere under:\n${run.musicPath}\nincluding music Octo never downloaded. Type that path exactly to continue.`,
+    confirm: action, danger: true,
+    input: { label: 'Music folder', placeholder: run.musicPath, mustEqual: run.musicPath },
+  });
+}
+
+document.getElementById('library-tidy-preview')?.addEventListener('click', async () => {
+  const scope = document.getElementById('library-tidy-scope')?.value ?? 'OctoDownloads';
+  tidyTicked.clear();
+  if (await postTidy('/api/admin/tidy/preview', { scope, excluded: tidyExcluded() })) {
+    tidyNote('Previewing. Nothing is being written.', 'info');
+  }
+});
+document.getElementById('library-tidy-scope')?.addEventListener('change', () => {
+  if (lastTidyRun) renderLibraryTidy(lastTidyRun);
+});
+document.getElementById('library-tidy-kind')?.addEventListener('change', () => {
+  tidyOffset = 0;
+  loadTidyRows();
+});
+document.getElementById('library-tidy-prev')?.addEventListener('click', () => {
+  tidyOffset = Math.max(0, tidyOffset - TIDY_PAGE);
+  loadTidyRows();
+});
+document.getElementById('library-tidy-next')?.addEventListener('click', () => {
+  tidyOffset += TIDY_PAGE;
+  loadTidyRows();
+});
+document.getElementById('library-tidy-results')?.addEventListener('change', event => {
+  const id = event.target?.dataset?.tidyTick;
+  if (!id) return;
+  if (event.target.checked) tidyTicked.add(id); else tidyTicked.delete(id);
+});
+document.getElementById('library-tidy-results')?.addEventListener('click', event => {
+  const folder = event.target?.dataset?.tidyExclude;
+  if (!folder) return;
+  const box = document.getElementById('library-tidy-excluded');
+  const lines = tidyExcluded();
+  if (!lines.includes(folder)) box.value = [...lines, folder].join('\n');
+  tidyNote(`"${folder}" is left out. Preview again to see the plan without it.`, 'info');
+});
+document.getElementById('library-tidy-apply')?.addEventListener('click', async () => {
+  const run = await loadTidy();
+  if (!run || !run.applyAllowed) return;
+  const ticked = [...tidyTicked];
+  const renames = ticked.length
+    ? ` ${ticked.length} rename(s) you ticked will lose the stars and ratings on the old artist for every user.`
+    : '';
+  if (!(await askConfirm('Tidy these artists?',
+    `Re-tags files first, waits for Navidrome to scan them, then moves whole album folders. This can take a while.${renames}`,
+    'Tidy', ticked.length > 0))) return;
+  const confirm = await confirmTidyPath(run, 'Tidy');
+  if (confirm === null) return;
+  if (await postTidy('/api/admin/tidy/apply', { scope: run.scope, ticked, confirm })) {
+    tidyNote('Tidying. Tags first, then a Navidrome scan, then the folders.', 'info');
+  }
+});
+document.getElementById('library-tidy-resume')?.addEventListener('click', async () => {
+  const run = lastTidyRun;
+  if (!run) return;
+  const confirm = await confirmTidyPath(run, 'Resume');
+  if (confirm === null) return;
+  await postTidy('/api/admin/tidy/resume', { confirm });
+});
+document.getElementById('library-tidy-cancel')?.addEventListener('click', async () => {
+  const response = await libraryTidyFetch('/api/admin/tidy/cancel', { method: 'POST' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    tidyNote(body.error || `Could not cancel: HTTP ${response.status}`, 'error');
+    return;
+  }
+  tidyNote('Cancelling after the current file.', 'info');
+  await loadTidy();
+});
+document.getElementById('library-tidy-undo')?.addEventListener('click', async () => {
+  if (!(await askConfirm('Undo the last tidy?',
+    'Moves its album folders back and restores the artist tags. A folder whose old place is taken, or a song changed since, stays as it is.',
+    'Undo the tidy'))) return;
+  if (await postTidy('/api/admin/tidy/undo', {})) tidyNote('Undoing the tidy.', 'info');
+});
+
 // ---- Mark explicit songs ----------------------------------------------------------
 // Look up (writes nothing), then mark what the lookup found explicit or clean, then undo.
 // Every call needs the browse sign-in, like the genre re-tag.
@@ -2141,6 +2430,8 @@ const libraryActionLabels = {
   WrongVersion: 'Wrong version: find the plain recording instead',
   BetterQuality: 'Better quality: upgrade only to a larger lossless copy',
   Keep: 'Keep: the track is right, so stop asking. Removes nothing',
+  WrongLyrics: 'Wrong lyrics: look for other lyrics, and never show these again',
+  WrongCover: 'Wrong cover: look for another cover, and never use this one again',
 };
 
 function normalizeLibraryAction(action = {}) {
@@ -4677,9 +4968,17 @@ function localOctoAddress() {
   return `${here.protocol}//${here.hostname}:${here.port || '5274'}`;
 }
 
+// Where Lidarr's Webhook connection posts. Lidarr usually runs beside Octo, so the address on
+// this network is the one to paste.
+function lidarrWebhookAddress() {
+  return `${localOctoAddress()}/api/lidarr/webhook`;
+}
+
 function renderOctoAddresses() {
   const el = document.getElementById('octo-address');
   if (el) el.textContent = localOctoAddress();
+  const webhook = document.getElementById('lidarr-webhook-address');
+  if (webhook) webhook.textContent = lidarrWebhookAddress();
 
   const row = document.getElementById('octo-public-address-row');
   const code = document.getElementById('octo-public-address');
@@ -4690,6 +4989,7 @@ function renderOctoAddresses() {
 }
 
 bindCopy('copy-octo-address', localOctoAddress);
+bindCopy('copy-lidarr-webhook-address', lidarrWebhookAddress);
 bindCopy('copy-octo-public-address',
   () => normalizeAddress(currentSettings?.Server?.PublicUrl));
 renderOctoAddresses();

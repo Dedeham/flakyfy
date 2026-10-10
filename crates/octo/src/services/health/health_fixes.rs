@@ -10,6 +10,7 @@ use octo_core::common::dotnet::{eq_ignore_case, is_blank, to_lower_invariant};
 use octo_core::common::song_identity::SongIdentity;
 
 use super::health_words::{self as words, count_text};
+use super::keep_marks::TargetReason;
 use super::library_health::{
     AlbumDifference, BestReason, DuplicateSet, HealthTag, IHealthFields, SplitAlbum, tags_of,
 };
@@ -65,6 +66,9 @@ pub struct DuplicateFix<T> {
     pub differs: Vec<TagChoice>,
     /// Something worth knowing first, like a copy that is the only one on its album.
     pub note: Option<String>,
+    /// The copy whose sound moves into the kept one, which keeps its id, path and identity
+    /// tags so people's marks stay with it. None when the kept copy keeps its own sound.
+    pub audio: Option<T>,
 }
 
 /// A split album put right: every song of the other parts takes the album tags of the first
@@ -120,8 +124,14 @@ pub mod fix_actions {
     pub const COVER: &str = "cover";
     pub const RESTORE: &str = "restore";
     pub const UNDO: &str = "undo";
+    /// The best-sounding copy's audio moves into this copy (`from`), which keeps its id.
+    pub const MOVE_SOUND: &str = "moveSound";
+    /// A move of the sound put back: both copies as they were.
+    pub const MOVE_BACK: &str = "moveBack";
 
-    pub const ALL: [&str; 6] = [REMOVE, RETAG, JOIN_ALBUM, COVER, RESTORE, UNDO];
+    pub const ALL: [&str; 8] = [
+        REMOVE, RETAG, JOIN_ALBUM, COVER, RESTORE, UNDO, MOVE_SOUND, MOVE_BACK,
+    ];
 }
 
 use fix_actions as actions;
@@ -172,6 +182,12 @@ impl FixStep {
                 Some(FixStep::new(actions::UNDO, &self.id, &self.title))
             }
             actions::RESTORE => Some(FixStep::new(actions::REMOVE, &self.id, &self.title)),
+            actions::MOVE_SOUND => Some(FixStep::with(
+                actions::MOVE_BACK,
+                &self.id,
+                &self.title,
+                IndexMap::from([("from".to_string(), self.param("from").unwrap_or("").to_string())]),
+            )),
             _ => None,
         }
     }
@@ -192,6 +208,20 @@ impl FixStep {
             with.insert(change.tag.clone(), change.value.clone());
         }
         FixStep::with(actions::RETAG, id, title, with)
+    }
+
+    /// The sound of `from` moved into `id`, with the tags picked for `id` written as well.
+    pub fn move_sound<'a>(
+        id: &str,
+        title: &str,
+        from: &str,
+        changes: impl IntoIterator<Item = &'a TagChange>,
+    ) -> Self {
+        let mut with: IndexMap<String, String> = IndexMap::from([("from".to_string(), from.to_string())]);
+        for change in changes {
+            with.insert(change.tag.clone(), change.value.clone());
+        }
+        FixStep::with(actions::MOVE_SOUND, id, title, with)
     }
 
     pub fn join(id: &str, title: &str, like: &str) -> Self {
@@ -244,6 +274,8 @@ pub struct FixOutcome {
     pub rehearsed: bool,
     /// Stopped before the end.
     pub stopped: bool,
+    /// Things worth knowing about what was done, like playlists that could not be changed.
+    pub notes: Vec<String>,
 }
 
 impl FixOutcome {
@@ -274,6 +306,14 @@ impl FixOutcome {
         let covers = count(actions::COVER);
         let restores = count(actions::RESTORE);
         let undos = count(actions::UNDO);
+        let moves = count(actions::MOVE_SOUND);
+        let backs = count(actions::MOVE_BACK);
+        if moves > 0 {
+            parts.push(format!(
+                "moved the best sound into {}",
+                count_text(moves, "song", "songs")
+            ));
+        }
         if removes > 0 {
             parts.push(format!("removed {}", count_text(removes, "song", "songs")));
         }
@@ -301,6 +341,12 @@ impl FixOutcome {
                 count_text(undos, "song", "songs")
             ));
         }
+        if backs > 0 {
+            parts.push(format!(
+                "put back the copies of {}",
+                count_text(backs, "song", "songs")
+            ));
+        }
         let head = if parts.is_empty() {
             if self.unchanged.is_empty() {
                 "Nothing was done.".to_string()
@@ -325,7 +371,8 @@ impl FixOutcome {
                 self.failed[0].1
             ),
         };
-        format!("{head}{stop}{miss}")
+        let notes: String = self.notes.iter().map(|note| format!(" {note}")).collect();
+        format!("{head}{stop}{miss}{notes}")
     }
 }
 
@@ -504,7 +551,41 @@ pub fn duplicate_fix<T: Clone>(
         fills,
         differs,
         note,
+        audio: None,
     }
+}
+
+/// The plan that keeps people's marks: `target`, the copy whose id carries them, keeps its id
+/// and path. With `same_format`, the best-sounding copy's audio moves into it under its identity
+/// tags and the best-sounding copy's own file goes; without, `target` is kept as it is when it
+/// holds marks or playlist places, since a changed extension would change its path and lose
+/// them. When `target` is the best-sounding copy, or only its age or nothing tells the copies
+/// apart and the formats differ, the usual plan.
+pub fn duplicate_fix_keeping_marks<T: Clone>(
+    set: &DuplicateSet<T>,
+    fields: &dyn IHealthFields<T>,
+    target: &T,
+    reason: TargetReason,
+    same_format: bool,
+) -> DuplicateFix<T> {
+    let audio = set.best();
+    if fields.id(target) == fields.id(audio) || reason == TargetReason::First {
+        return duplicate_fix(set, fields, None);
+    }
+    // Only marks someone can see are worth a worse sound: the oldest copy is just a likely holder.
+    if !same_format && !matches!(reason, TargetReason::Marks | TargetReason::Playlists) {
+        return duplicate_fix(set, fields, None);
+    }
+    let mut fix = duplicate_fix(set, fields, Some(target));
+    if !same_format {
+        fix.why = words::kept_marks_as_is(&words::quality_text(target, fields), reason);
+        return fix;
+    }
+    let audio_id = fields.id(audio).to_string();
+    fix.remove.retain(|copy| fields.id(copy) != audio_id);
+    fix.why = words::kept_marks_moved(&words::quality_text(audio, fields), reason);
+    fix.audio = Some(audio.clone());
+    fix
 }
 
 /// Why `keep` is the one kept, in words.
@@ -553,7 +634,15 @@ pub fn duplicate_steps<T>(
 ) -> Vec<FixStep> {
     let fills = fills.unwrap_or(&fix.fills);
     let mut steps = Vec::new();
-    if !fills.is_empty() {
+    if let Some(audio) = &fix.audio {
+        // The tags go onto the moved audio before it takes the kept copy's place.
+        steps.push(FixStep::move_sound(
+            fields.id(&fix.keep),
+            fields.title(&fix.keep),
+            fields.id(audio),
+            fills,
+        ));
+    } else if !fills.is_empty() {
         steps.push(FixStep::retag_with(
             fields.id(&fix.keep),
             fields.title(&fix.keep),

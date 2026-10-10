@@ -10,6 +10,8 @@ use anyhow::{Context, bail};
 use indexmap::IndexMap;
 use serde::Deserialize;
 
+use super::cover_glyph::GlyphNumbers;
+
 use super::design;
 use super::text;
 
@@ -159,6 +161,7 @@ struct Document {
     layout: LayoutNumbers,
     background: BackgroundRule,
     veil: VeilNumbers,
+    glyphs: GlyphNumbers,
 }
 
 #[derive(Deserialize)]
@@ -182,6 +185,8 @@ pub struct CoverBook {
     pub fonts: FontFiles,
     pub layout: LayoutNumbers,
     pub veil: VeilNumbers,
+    /// The glyphs marked lists carry in place of words.
+    pub glyphs: GlyphNumbers,
     pub background_choice: BackgroundRule,
     pub backgrounds: Vec<Background>,
     /// The side the backgrounds are stored at.
@@ -243,6 +248,7 @@ impl CoverBook {
             fonts: document.fonts,
             layout: document.layout,
             veil: document.veil,
+            glyphs: document.glyphs,
             background_choice: document.background,
             backgrounds,
             background_size: library.size,

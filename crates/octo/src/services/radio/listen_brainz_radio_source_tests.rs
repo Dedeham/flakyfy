@@ -306,3 +306,43 @@ async fn a_call_too_far_back_in_the_queue_is_skipped() {
     assert!(client.recording_mbid("Other", "Song").await.is_none());
     assert_eq!(requests(&labs).len(), 1);
 }
+
+// LB Radio asks in the difficulty the dashboard chose, easy unless set, and an answer in one
+// mode is never handed out for another.
+#[tokio::test]
+async fn lb_radio_asks_in_the_chosen_mode_and_keeps_each_modes_answer_apart() {
+    use octo_core::settings::RadioSourceSettings;
+    let server = MockServer::start().await;
+    let labs = Labs(Arc::new(LabsState {
+        requests: Mutex::new(Vec::new()),
+        answer: Box::new(live),
+    }));
+    Mock::given(any()).respond_with(labs.clone()).mount(&server).await;
+    let with_mode = |mode: &str| AppSettings {
+        listen_brainz: ListenBrainzSettings {
+            token: "lb-token".into(),
+            ..Default::default()
+        },
+        radio_sources: RadioSourceSettings {
+            listen_brainz_radio_mode: mode.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let settings = Arc::new(SettingsStore::for_tests(with_mode("")));
+    let client = ListenBrainzRadioClient::with_urls(settings.clone(), &server.uri(), &server.uri())
+        .with_pacing(Duration::ZERO, ListenBrainzRadioClient::MAX_QUEUE_WAIT);
+    let source = ListenBrainzRadioSource::new(Arc::new(client), settings.clone());
+
+    assert_eq!(source.tag("phonk", 20).await.unwrap().r#match, RadioMatch::Genre);
+    settings.set(with_mode("hard"));
+    assert_eq!(source.tag("phonk", 20).await.unwrap().r#match, RadioMatch::Genre);
+    assert_eq!(source.tag("phonk", 20).await.unwrap().r#match, RadioMatch::Genre);
+
+    let modes: Vec<String> = requests(&labs)
+        .into_iter()
+        .filter(|(call, _)| call.starts_with("/1/explore/lb-radio"))
+        .map(|(call, _)| call.split("mode=").nth(1).unwrap_or("").to_string())
+        .collect();
+    assert_eq!(modes, ["easy", "hard"]);
+}

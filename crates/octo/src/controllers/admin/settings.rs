@@ -13,7 +13,8 @@ use axum::response::Response;
 use octo_core::common::dotnet::{is_blank, ordinal_ignore_case_key, utf16_len};
 use octo_core::json::dom::Node;
 use octo_core::settings::{
-    GenreMatchMode, JsonObject, LastFmUserSession, LibraryActionSettings, LyricsSaveTo, SettingsWriteError,
+    GenreMatchMode, JsonObject, LastFmUserSession, LibraryAction, LibraryActionSettings, LyricsSaveTo,
+    SettingsWriteError,
 };
 use std::collections::HashSet;
 use tracing::{error, info, warn};
@@ -143,6 +144,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("EnableSyncCatalog", Node::Bool(subsonic.enable_sync_catalog)),
             ("SyncCatalogClients", n_str(&subsonic.sync_catalog_clients)),
             ("SyncCatalogMaxSongs", n_num(subsonic.sync_catalog_max_songs)),
+            (
+                "StreamSizeWarmPerMinute",
+                n_num(subsonic.stream_size_warm_per_minute),
+            ),
             ("StorageMode", name(subsonic.storage_mode)),
             ("DownloadMode", name(subsonic.download_mode)),
             ("DownloadOnStar", Node::Bool(subsonic.download_on_star)),
@@ -227,6 +232,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "Soulseek".into(),
         n_obj([
+            ("Enabled", Node::Bool(soulseek.enabled)),
             ("BaseUrl", opt(&soulseek.base_url)),
             ("Username", opt(&soulseek.username)),
             // slskd's web login opens slskd entirely, so it goes out as the placeholder too.
@@ -289,6 +295,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("MetadataProfileId", n_num(lidarr.metadata_profile_id)),
             ("CompletionMode", name(lidarr.completion_mode)),
             ("ImportTimeoutSeconds", n_num(lidarr.import_timeout_seconds)),
+            (
+                "WebhookSecret",
+                n_str(&mask_secret(lidarr.webhook_secret.as_deref())),
+            ),
         ]),
     );
     doc.insert(
@@ -309,6 +319,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("SonicUrl", n_str(&radio.sonic_url)),
             ("SonicPauseSeconds", n_num(radio.sonic_pause_seconds)),
             ("ListenBrainzAlgorithm", n_str(&radio.listen_brainz_algorithm)),
+            ("ListenBrainzRadioMode", n_str(&radio.listen_brainz_radio_mode)),
             ("LastFmWeight", n_num(radio.last_fm_weight)),
             ("YouTubeMusicWeight", n_num(radio.you_tube_music_weight)),
             ("ListenBrainzWeight", n_num(radio.listen_brainz_weight)),
@@ -494,12 +505,22 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("NewShare", n_num(mixes.new_share)),
             ("NewDays", n_num(mixes.new_days)),
             ("NameFormat", n_str(&mixes.name_format)),
+            ("CountryMixes", Node::Bool(mixes.country_mixes)),
+            ("Countries", n_str(&mixes.countries)),
+            ("MaxCountryPlaylists", n_num(mixes.max_country_playlists)),
+            (
+                "CountryLookupsPerRefresh",
+                n_num(mixes.country_lookups_per_refresh),
+            ),
             ("NewReleases", Node::Bool(mixes.new_releases)),
             ("Rediscover", Node::Bool(mixes.rediscover)),
             ("DeepCuts", Node::Bool(mixes.deep_cuts)),
             ("NewReleaseWeeks", n_num(mixes.new_release_weeks)),
             ("NewReleaseArtists", n_num(mixes.new_release_artists)),
             ("RediscoverMonths", n_num(mixes.rediscover_months)),
+            ("LikedSongs", Node::Bool(mixes.liked_songs)),
+            ("LikedSongsName", n_str(&mixes.liked_songs_name)),
+            ("LikedSongsMax", n_num(mixes.liked_songs_max)),
         ]),
     );
     // Read from the raw file, for the same reason as DiscoveryStations: EffectiveMappings()
@@ -698,8 +719,11 @@ pub fn validate_library_actions(
     }
 
     if let Some(Node::Array(definitions)) = actions.get("Actions") {
-        if definitions.len() > 5 {
-            return Ok(Some("There are only five library actions".into()));
+        if definitions.len() > LibraryAction::ALL.len() {
+            return Ok(Some(format!(
+                "There are only {} library actions",
+                LibraryAction::ALL.len()
+            )));
         }
         let mut ratings = HashSet::new();
         for node in definitions {
@@ -722,6 +746,45 @@ pub fn validate_library_actions(
         }
     }
     Ok(None)
+}
+
+/// A Wrong lyrics or Wrong cover definition exactly as the defaults have it, which the editor
+/// sends back with every save. Such a definition is left out of the file: a build that does not
+/// know these actions refuses a settings file naming them, so they are written only once someone
+/// changes them.
+fn untouched_answer_action(definition: &JsonObject) -> bool {
+    let field = |name: &str| key_of(definition, name).and_then(|key| definition.get(&key));
+    let action = match field("Action") {
+        Some(Node::String(name)) => LibraryAction::ALL
+            .into_iter()
+            .find(|action| format!("{action:?}").eq_ignore_ascii_case(name.trim())),
+        Some(Node::Number(number)) => number.parse().ok().and_then(LibraryAction::from_index),
+        _ => None,
+    };
+    let Some(action) = action.filter(|action| action.leaves_the_audio()) else {
+        return false;
+    };
+    let name = string_value(field("Name")).map(str::trim).unwrap_or("");
+    let enabled = matches!(field("Enabled"), Some(Node::Bool(true)));
+    let rating = match field("Rating") {
+        None | Some(Node::Null) => Some(action.default_rating()),
+        Some(Node::Number(number)) => number.parse::<i32>().ok(),
+        Some(_) => None,
+    };
+    (name.is_empty() || name == action.default_name()) && !enabled && rating == Some(action.default_rating())
+}
+
+/// Takes the untouched Wrong lyrics and Wrong cover definitions out of a settings patch.
+fn drop_untouched_answer_actions(patch: &mut JsonObject) {
+    let Some(actions) = child_mut(patch, "LibraryActions") else {
+        return;
+    };
+    let Some(key) = key_of(actions, "Actions") else {
+        return;
+    };
+    if let Some(Node::Array(definitions)) = actions.get_mut(&key) {
+        definitions.retain(|node| !node.as_object().is_some_and(untouched_answer_action));
+    }
 }
 
 /// `Enum.TryParse<GenreMatchMode>(value, ignoreCase: true, out _)`: a name in any case, a
@@ -908,6 +971,8 @@ pub async fn save_settings(
     {
         return Ok(error_json(StatusCode::BAD_REQUEST, &message));
     }
+
+    drop_untouched_answer_actions(&mut patch);
 
     // A saved credential never follows a new address it was not typed again for: with the admin
     // API open to the LAN, that would hand it to whatever server the address names.
@@ -1170,9 +1235,10 @@ mod tests {
         );
     }
 
-    /// Keep made five actions. A sixth is still a config that does not mean anything.
+    /// Wrong lyrics and Wrong cover made seven actions. An eighth is a config that does not mean
+    /// anything.
     #[test]
-    fn validate_library_actions_accepts_five_refuses_six() {
+    fn validate_library_actions_accepts_seven_refuses_eight() {
         fn with_actions(count: usize) -> JsonObject {
             let actions = (0..count)
                 .map(|i| n_obj([("Name", n_str(&format!("a{i}"))), ("Rating", n_num(0))]))
@@ -1183,14 +1249,14 @@ mod tests {
         }
         let current = LibraryActionSettings::default();
         assert_eq!(
-            validate_library_actions(&with_actions(5), &current).unwrap(),
+            validate_library_actions(&with_actions(7), &current).unwrap(),
             None
         );
         assert_eq!(
-            validate_library_actions(&with_actions(6), &current)
+            validate_library_actions(&with_actions(8), &current)
                 .unwrap()
                 .as_deref(),
-            Some("There are only five library actions")
+            Some("There are only 7 library actions")
         );
     }
 

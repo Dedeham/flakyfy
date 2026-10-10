@@ -1270,6 +1270,57 @@ async fn remove_with_delete_off_is_skipped_and_moves_nothing() {
 }
 
 #[tokio::test]
+async fn wrong_lyrics_from_the_app_while_it_is_off_is_skipped_and_touches_nothing() {
+    let t = LibraryApp::new(|_| {}).await;
+
+    let doc = t
+        .get_json(&format!(
+            "/rest/libraryAction?{}&id={SONG_ID}&action=lyrics",
+            lib_auth("alice")
+        ))
+        .await;
+
+    let action = action(&doc);
+    assert_eq!(action["action"], "lyrics");
+    assert_eq!(action["state"], "skipped", "{doc}");
+    assert_eq!(action["detail"], "WrongLyrics is not enabled.");
+    t.assert_untouched().await;
+}
+
+#[tokio::test]
+async fn wrong_cover_from_the_app_in_a_dry_run_is_rehearsed_and_writes_nothing() {
+    let t = LibraryApp::new(|s| {
+        s.library_actions.dry_run = true;
+        s.library_actions.actions.push(LibraryActionDefinition {
+            action: LibraryAction::WrongCover,
+            enabled: true,
+            ..Default::default()
+        });
+    })
+    .await;
+    let before = std::fs::read(t.song_file()).expect("readable");
+
+    let doc = t
+        .get_json(&format!(
+            "/rest/libraryAction?{}&id={SONG_ID}&action=COVER-SWAP",
+            lib_auth("alice")
+        ))
+        .await;
+
+    let action = action(&doc);
+    assert_eq!(action["action"], "cover-swap");
+    assert_eq!(action["state"], "rehearsed", "{doc}");
+    assert!(
+        action["detail"]
+            .as_str()
+            .expect("a detail")
+            .starts_with("Dry run: would look for another cover for "),
+        "{doc}"
+    );
+    assert_eq!(std::fs::read(t.song_file()).expect("readable"), before);
+}
+
+#[tokio::test]
 async fn remove_of_a_song_with_no_file_it_can_prove_is_unresolved() {
     let t = LibraryApp::new(|_| {}).await;
 

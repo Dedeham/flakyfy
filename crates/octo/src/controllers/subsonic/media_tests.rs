@@ -648,3 +648,239 @@ async fn a_lossless_copy_on_disk_is_served_with_ranges() {
         assert_eq!(reply.body.len(), length, "{range}");
     }
 }
+
+/// One picture, the same every time it is asked.
+struct OnePicture;
+
+#[async_trait::async_trait]
+impl crate::services::cover_art::ICoverArtSource for OnePicture {
+    fn name(&self) -> &str {
+        "one"
+    }
+
+    async fn try_fetch(&self, _: &SoulseekRouting, _: bool) -> Option<bytes::Bytes> {
+        let mut picture = Vec::new();
+        image::DynamicImage::new_rgb8(64, 64)
+            .write_to(&mut std::io::Cursor::new(&mut picture), image::ImageFormat::Jpeg)
+            .ok()?;
+        Some(picture.into())
+    }
+}
+
+/// A badged outside cover is kept by id and cover design and served from memory the next time,
+/// at any size asked (the badge is drawn on the same picture whatever the size); the Octo app's
+/// plain covers are never the badged ones.
+#[tokio::test]
+async fn a_badged_outside_cover_is_kept_and_served_again_from_memory() {
+    let navidrome = MockServer::start().await;
+    let state = state_with(settings(&navidrome.uri()), |inner| {
+        inner.cover_art_aggregator = Arc::new(crate::services::cover_art::CoverArtAggregator::new(vec![
+            Arc::new(OnePicture),
+        ]));
+        // The logo the badge is drawn from, as the image ships it.
+        let logo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../octo/Assets/octo_logo.png");
+        inner.cover_art_service =
+            Arc::new(octo_media::cover::CoverArtService::new(None).with_logo_paths(vec![logo]));
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Artist".into()),
+        title: Some("Title".into()),
+        ..Default::default()
+    });
+    let app = app(&state);
+    let key = state.cover_art_service.badged_key(&id);
+
+    let first = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(
+        state.cover_art_service.kept_badged(&key).as_deref(),
+        Some(first.body.as_ref())
+    );
+
+    // What is kept is what the next request gets.
+    state.cover_art_service.keep_badged(key.clone(), b"kept");
+    let second = get(&app, &format!("/rest/getCoverArt?id={id}&size=300")).await;
+    assert_eq!(second.body.as_ref(), b"kept");
+    // Another size is the same picture.
+    let other = get(&app, &format!("/rest/getCoverArt?id={id}&size=600")).await;
+    assert_eq!(other.body.as_ref(), b"kept");
+    // The Octo app gets the plain picture, never the badged one.
+    let plain = get(&app, &format!("/rest/getCoverArt?id={id}&size=300&c=Octo")).await;
+    assert_ne!(plain.body.as_ref(), b"kept");
+}
+
+#[test]
+fn a_badged_cover_is_kept_by_design_version_and_id() {
+    let service = octo_media::cover::CoverArtService::new(None);
+    let version = octo_media::cover::CoverBook::shipped().version;
+
+    assert_eq!(service.badged_key("ext-1"), format!("{version}|ext-1"));
+}
+
+/// A picture that is not one the badge can be drawn on.
+struct NotAPicture;
+
+#[async_trait::async_trait]
+impl crate::services::cover_art::ICoverArtSource for NotAPicture {
+    fn name(&self) -> &str {
+        "broken"
+    }
+
+    async fn try_fetch(&self, _: &SoulseekRouting, _: bool) -> Option<bytes::Bytes> {
+        Some(bytes::Bytes::from_static(b"not a picture"))
+    }
+}
+
+/// A cover the badge could not be drawn on goes out as it came, and is not kept: the next
+/// request tries the badge again.
+#[tokio::test]
+async fn a_cover_the_badge_failed_on_is_not_kept() {
+    let navidrome = MockServer::start().await;
+    let state = state_with(settings(&navidrome.uri()), |inner| {
+        inner.cover_art_aggregator = Arc::new(crate::services::cover_art::CoverArtAggregator::new(vec![
+            Arc::new(NotAPicture),
+        ]));
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Artist".into()),
+        title: Some("Broken".into()),
+        ..Default::default()
+    });
+    let app = app(&state);
+
+    let reply = get(&app, &format!("/rest/getCoverArt?id={id}")).await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body.as_ref(), b"not a picture");
+    assert_eq!(
+        state
+            .cover_art_service
+            .kept_badged(&state.cover_art_service.badged_key(&id)),
+        None
+    );
+}
+
+// ---- An outside stream that cannot play, or a range past its end ---------------------------
+
+#[tokio::test]
+async fn an_unplayable_outside_stream_is_a_404_with_the_subsonic_error() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::with_external(
+        "external-track",
+        "soulseek",
+        "track-id",
+    ));
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let app = app(&state);
+
+    let response = get(
+        &app,
+        "/rest/stream?id=external-track&f=json&u=alice&t=good&s=salt&v=1.16.1&c=test",
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+    let body: serde_json::Value = serde_json::from_slice(&response.body).expect("JSON");
+    assert_eq!(body["subsonic-response"]["status"], "failed");
+    assert_eq!(body["subsonic-response"]["error"]["code"], 70);
+}
+
+#[tokio::test]
+async fn a_size_no_play_has_confirmed_never_refuses_a_range() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::default());
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Daft Punk".into()),
+        title: Some("Veridis Quo".into()),
+        ..Default::default()
+    });
+    state.external_id_registry.set_you_tube_id(&id, "vid-b");
+    // A size a lookup reported, before any of the stream was played.
+    state.external_id_registry.remember_stream(
+        &id,
+        "vid-b",
+        &octo_core::soulseek::StreamFacts {
+            size: Some(1000),
+            ..Default::default()
+        },
+    );
+    library.add_external("external-track", "soulseek", &id);
+    let app = app(&state);
+
+    let past = send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=1000-")],
+        Body::empty(),
+    )
+    .await;
+
+    assert_ne!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(downloads.stream_calls().len(), 1, "relayed");
+}
+
+#[tokio::test]
+async fn a_range_past_the_end_of_a_known_stream_is_a_416_with_its_size() {
+    let navidrome = ping_ok().await;
+    let downloads = Arc::new(FakeStreams::default());
+    let library = Arc::new(FakeLibrary::default());
+    let state = state_with(playback_settings(&navidrome.uri(), false, false), |inner| {
+        inner.download_service = downloads.clone();
+        inner.local_library = library.clone();
+    });
+    let id = state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Song,
+        artist: Some("Daft Punk".into()),
+        title: Some("Emotion".into()),
+        ..Default::default()
+    });
+    state.external_id_registry.set_you_tube_id(&id, "vid-a");
+    // A size the bytes of a play confirmed.
+    state.external_id_registry.remember_stream(
+        &id,
+        "vid-a",
+        &octo_core::soulseek::StreamFacts {
+            size: Some(1000),
+            size_confirmed: true,
+            ..Default::default()
+        },
+    );
+    library.add_external("external-track", "soulseek", &id);
+    let app = app(&state);
+
+    let past = send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=1000-")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), Some("bytes */1000"));
+    assert!(downloads.stream_calls().is_empty(), "nothing relayed");
+
+    // A range inside the stream is relayed as before.
+    send(
+        &app,
+        Method::GET,
+        "/rest/stream?id=external-track&u=alice&t=good&s=salt&v=1.16.1&c=test",
+        &[("Range", "bytes=999-")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(downloads.stream_calls().len(), 1);
+}

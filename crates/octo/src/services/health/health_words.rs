@@ -4,6 +4,7 @@
 
 use octo_core::common::dotnet::{is_blank, to_upper_invariant};
 
+use super::keep_marks::TargetReason;
 use super::library_health::{
     AlbumDifference, AlbumDifferenceValues, BestReason, DuplicateBasis, DuplicateSet, HealthCheck,
     HealthReport, IHealthFields, SplitAlbum, SplitBasis, SplitReason,
@@ -309,7 +310,7 @@ pub fn fix_all_label(check: HealthCheck, count: usize) -> String {
 pub fn fix_meaning(check: HealthCheck) -> &'static str {
     match check {
         HealthCheck::Duplicates => {
-            "Keeps the best copy of each song, fills in the tags it lacks from the others, and moves the others to the server's trash, where they can be put back."
+            "Keeps the best sound of each song in the copy people starred, rated, played or put in playlists, fills in the tags it lacks from the others, and moves the others to the server's trash, where they can be put back."
         }
         HealthCheck::SplitAlbums => {
             "Gives the songs of the other parts the album tags of the largest part, album artist and all, so each album shows as one. When one part's album artist already names every part's artist, that part leads instead."
@@ -328,3 +329,32 @@ pub fn fix_meaning(check: HealthCheck) -> &'static str {
         }
     }
 }
+
+/// Who keeps the marks, in words, for the copy the fix keeps the id of.
+fn marked_copy(reason: TargetReason) -> &'static str {
+    match reason {
+        TargetReason::Marks => "the copy people starred, rated or played",
+        TargetReason::Playlists => "the copy your playlists list",
+        TargetReason::Oldest => "the oldest copy, the likeliest to hold plays and favorites",
+        TargetReason::First => "the first copy",
+    }
+}
+
+/// Why the fix moves the best sound into another copy.
+pub fn kept_marks_moved(audio_quality: &str, reason: TargetReason) -> String {
+    format!(
+        "Keeps the best-sounding copy ({audio_quality}), moved into {}, so its marks and playlist places stay.",
+        marked_copy(reason)
+    )
+}
+
+/// Why the fix keeps a copy that does not sound best.
+pub fn kept_marks_as_is(quality: &str, reason: TargetReason) -> String {
+    format!(
+        "Keeps {} ({quality}) as it is. The best-sounding copy is a different format, and moving it in would lose those marks.",
+        marked_copy(reason)
+    )
+}
+
+/// Said on a set in the list, where the plan shown is the best-sound one.
+pub const MARKS_PICKED_IN_PREVIEW: &str = "Fix these copies first checks which copy people starred, rated, played or put in playlists, and keeps the best sound in that one.";

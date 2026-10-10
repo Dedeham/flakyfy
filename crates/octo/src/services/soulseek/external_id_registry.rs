@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use octo_core::common::SongIdentity;
-use octo_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting};
+use octo_core::soulseek::{LengthSource, RoutingKind, SongLength, SoulseekRouting, StreamFacts};
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -191,6 +191,10 @@ impl ExternalIdRegistry {
                     p.album.clone(),
                 )
             };
+            let (prev_video, prev_stream) = {
+                let p = previous.lock();
+                (p.you_tube_id.clone().filter(|v| !v.is_empty()), p.stream_facts())
+            };
             let mut r = routing.lock();
             // A song row mints an album routing with no Deezer id (ConvertSongToJson), and it
             // hashes to the same id as the one an album search already resolved. Registering it
@@ -232,6 +236,21 @@ impl ExternalIdRegistry {
                     .is_some_and(|album| !album.trim().is_empty())
             {
                 r.album = prev_album;
+            }
+            // And the video a play or a lookup pinned, with what is known of its stream: a
+            // search mints the song again with no video, and the size a client was told has to
+            // stay the size of the video that plays.
+            if let Some(prev_video) = prev_video {
+                match r.you_tube_id.as_deref().filter(|v| !v.is_empty()) {
+                    None => {
+                        r.pin_video(&prev_video);
+                        r.merge_stream_facts(&prev_stream);
+                    }
+                    Some(video) if video == prev_video && r.stream_facts().is_empty() => {
+                        r.merge_stream_facts(&prev_stream);
+                    }
+                    Some(_) => {}
+                }
             }
         }
 
@@ -342,6 +361,75 @@ impl ExternalIdRegistry {
         }
         self.dirty.store(true, Ordering::SeqCst);
         true
+    }
+
+    /// Pins `video` for playback on the song under `short_id`, written down at the next flush.
+    /// `replace` false keeps a different video that is already pinned. Pinning another video
+    /// forgets the old one's stream facts. True when the song now plays `video`.
+    pub fn pin_video(&self, short_id: &str, video: &str, replace: bool) -> bool {
+        if short_id.is_empty() || video.is_empty() {
+            return false;
+        }
+        let Some(routing) = self.lru.lock().by_id.get(short_id).map(|(r, _)| r.clone()) else {
+            return false;
+        };
+        let changed = {
+            let mut r = routing.lock();
+            if !replace
+                && r.you_tube_id
+                    .as_deref()
+                    .is_some_and(|v| !v.is_empty() && v != video)
+            {
+                return false;
+            }
+            r.pin_video(video)
+        };
+        if changed {
+            self.dirty.store(true, Ordering::SeqCst);
+        }
+        true
+    }
+
+    /// Pins `video` on the song under `short_id`, replacing any other pin.
+    pub fn set_you_tube_id(&self, short_id: &str, video: &str) -> bool {
+        self.pin_video(short_id, video, true)
+    }
+
+    /// Stores what an answer said of `video`'s stream, but only while it is still the video the
+    /// song under `short_id` plays: a re-pin meanwhile makes the facts someone else's.
+    pub fn remember_stream(&self, short_id: &str, video: &str, facts: &StreamFacts) -> bool {
+        if short_id.is_empty() || video.is_empty() || facts.is_empty() {
+            return false;
+        }
+        let Some(routing) = self.lru.lock().by_id.get(short_id).map(|(r, _)| r.clone()) else {
+            return false;
+        };
+        {
+            let mut r = routing.lock();
+            if r.kind != RoutingKind::Song || r.you_tube_id.as_deref() != Some(video) {
+                return false;
+            }
+            let before = r.stream_facts();
+            r.merge_stream_facts(facts);
+            if r.stream_facts() == before {
+                return false;
+            }
+        }
+        self.dirty.store(true, Ordering::SeqCst);
+        true
+    }
+
+    /// What is known of the stream the song under `short_id` plays, when anything is.
+    pub fn stream_facts(&self, short_id: &str) -> Option<StreamFacts> {
+        if short_id.is_empty() {
+            return None;
+        }
+        let routing = self.lru.lock().by_id.get(short_id).map(|(r, _)| r.clone())?;
+        let r = routing.lock();
+        if r.kind != RoutingKind::Song || !r.has_you_tube() {
+            return None;
+        }
+        Some(r.stream_facts()).filter(|facts| !facts.is_empty())
     }
 
     /// Derive 22 base62 chars from sha256 of routing fields. Same input -> same id.

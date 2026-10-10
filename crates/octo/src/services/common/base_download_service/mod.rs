@@ -69,6 +69,7 @@ use crate::services::fingerprint::MusicBrainzClient;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmService;
+use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::{
     LibraryActionJournal, LibraryOwnership, OwnedCopy, OwnedDecision, ReplacementHandoff,
     ReplacementRejectedException, UpgradeAsk, UpgradeQueue, UpgradeSources,
@@ -262,6 +263,8 @@ pub struct DownloadServices {
     pub last_fm: Option<Arc<LastFmService>>,
     /// `DownloadPicks`: copies picked in Find songs, taken instead of a search.
     pub picks: Option<Arc<DownloadPicks>>,
+    /// The music folder's one-writer gate: a placement waits while a library job holds it.
+    pub write_gate: Option<LibraryWriteGate>,
 }
 
 /// Everything a single download is asked with beyond its provider and id: the optional
@@ -947,6 +950,14 @@ impl BaseDownloadService {
                     stages.join(", ")
                 );
             }
+        }
+
+        if let Some(seconds) = octo_media::tags::TagFile::open(&local_path)
+            .ok()
+            .map(|file| file.duration_seconds())
+            .filter(|&seconds| seconds > 0)
+        {
+            self.metadata.remember_file_length(external_id, seconds);
         }
 
         if let Some(info) = self.active_downloads.lock().get_mut(song_id) {

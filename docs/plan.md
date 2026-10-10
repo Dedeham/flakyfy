@@ -1,604 +1,402 @@
 # Plan for Wave 2 and the final checks
 
 The detailed plan that FLA-17 asks for. It pulls the architecture map, the module conventions,
-the security requirements, the four research and design documents and the human decisions of
-2026-10-10 into one place, then says what to build, in what order, and what is still open.
+the security requirements, the research and design documents and the human decisions of
+2026-10-10 into one place: what to build, in what order, and what is still open.
 
-**Status: draft for human sign-off.** Nothing in Wave 2 starts until a human has approved the
-stack and priorities on FLA-17 (step 2 of that issue). The Wave 2 issues are not yet updated
-with this scope (step 3); that follows the approval.
+**Status: approved by the human on 2026-10-10 ("plan freigeben", recorded on FLA-17), in the
+simplified form below.** The first draft (PR #12) was larger; the human asked for everything to be
+simplified against the project brief, and this version is that simplification. Step 3 of FLA-17
+(each Wave 2 issue carries its final scope) links each issue to its section here. Step 4 (a fresh
+Architect reviews this plan) is still to do.
 
 Sources, all on `main`: `docs/architecture.md` (FLA-7), `docs/modules.md` (FLA-8),
 `docs/security-requirements.md` (FLA-9), `docs/testing.md` (FLA-12), `docs/research/search.md`
 (FLA-13), `docs/research/ytdlp-fallback.md` (FLA-14), `docs/research/discover-weekly.md`
-(FLA-15), `docs/research/retention.md` (FLA-16). Line numbers are not repeated here; each
-source document cites the code it was read from.
+(FLA-15), `docs/research/retention.md` (FLA-16).
 
 ---
 
-## Summary (one screen)
+## Summary
 
-**What gets built, in this order**
+**Build order. At most two builds run at the same time.**
 
-| Step | Issues | What the user gets | Size |
-|---|---|---|---|
-| A (start together) | FLA-19 | Imports keep order, star liked songs for that user only, stay private; proven by tests | small to medium |
-| A | FLA-21 with FLA-31 (one branch) | yt-dlp as last resort after 3 failed attempts, saved as MP3; outages still waited out; switch off | large |
-| A | FLA-22 | Search finds more outside songs, also without a Last.fm key (Deezer track search fused with Last.fm) | medium |
-| A | FLA-23 | Discover Weekly: one private playlist per user, built on their first request of the week, no credential held, 10 auto-downloads per user per week; switch off | large |
-| A (any time, disjoint files) | FLA-25 | Proof that the updater works end to end | small to medium |
-| B | FLA-18 | YouTube Music import per user (recommended v1: public playlist link and Google Takeout file, no stored login) | medium |
-| B | FLA-20 | Admin page: what each import source is used for | small |
-| C | FLA-26, FLA-27 | Regression with modules on and off, dependency scans in CI, final security review | medium |
-| Postponed | FLA-24 | 30-day retention cleanup. Not built. The design stays as the record | none |
+| Phase | Issues | What the user gets |
+|---|---|---|
+| 1 | FLA-19 | Imports keep order; liked songs become Navidrome favorites for that user only; playlists stay separate and private |
+| 1 | FLA-21 with FLA-31 (one branch) | yt-dlp as last resort after 3 failed Soulseek/Lidarr attempts, saved as MP3, outages waited out; yt-dlp pinned and verified; then on by default |
+| 2 | FLA-22 | Search: library results on top, outside results below, Deezer added, nothing outside can empty or break the library part |
+| 2 | FLA-23 | Discover Weekly: a small module of our own; one private playlist per user, all users with opt-out, 10 downloads per user per week |
+| 3 | FLA-20 | Admin page: what each import source is used for |
+| 3 | FLA-25 | A short verification of the existing update path |
+| 3 | FLA-18 | YouTube Music import, low priority, may be dropped |
+| 4 | FLA-26, then FLA-27 | Regression with modules on and off, scans in CI, final security review |
+| after FLA-28 merges | FLA-11 | The new cover PNG (both edit `CoverArtService.cs`) |
+| postponed | FLA-24 | Retention cleanup: not built, the design stays as the record |
 
-**Decided already (details in section 1):** retention postponed; Discover Weekly with no held
-credential and 10 downloads per user per week, switch off; yt-dlp after several failed
-Soulseek or Lidarr attempts, MP3, outages waited out, switch off; ImageSharp 4.x approved; GitHub
-Actions runs CI only; the orchestrator may merge verified PRs.
+Phase 3 also respects the limit of two: FLA-20 and FLA-25 first, FLA-18 when one is merged.
 
 **Every new module** is one folder under `octo/Services/<Module>`, one switch with its default in
 four places, one registration line in `Program.cs`, its own tests, and a validation workflow in the
-integration harness. Off means off. Every module that touches auth, user data, credentials,
-external input or files comes back to Security as a PR review.
+integration harness. Off means off. A module that touches auth, user data, credentials, external
+input or files is reviewed by Security.
 
-**What I need from you (section 4 has the reasoning, with my recommendation for each):**
-
-1. Deezer as a second search source: approve, with the default on.
-2. Last.fm: do not wait for a real key; build against canned answers and record a live run when a key exists.
-3. Keep type-ahead (`songCount` under 12) free of outside calls.
-4. Discover Weekly: opt-out coverage, but only with a user-reachable opt-out in the dashboard; otherwise opt-in.
-5. Discover Weekly server-wide caps: 100 songs a week, 20 an hour, 10 GB free floor.
-6. API-key sign-ins get no Discover Weekly list in v1.
-7. yt-dlp switch stays off; file one follow-up issue to pin and verify yt-dlp, which unblocks default-on later.
-8. YouTube Music import v1: public link and Takeout file only; no cookies or login stored.
-9. Import fidelity: how liked songs become stars without holding a password.
-10. FLA-22 thresholds and latency budget (proposed in section 2).
-11. Should the yt-dlp fallback decline songs that Discover Weekly fetches?
-12. A shared stub service for the harness (a test-only container).
-13. The remaining Medium findings from the security audit (SEC-3 to SEC-6, SEC-9): file them or not.
-14. Split the dependency-scan part out of FLA-26 so it lands early.
-
-**What I would cut if time is short, in order:** FLA-20, then the Takeout/link breadth of FLA-18,
-then FLA-25 (the updater already has shell tests). I would not cut FLA-19, FLA-21, FLA-22, FLA-26
-or FLA-27. FLA-23 is the riskiest build; if its trigger spike fails, the fallback in section 3
-applies before anything is cut.
+**Still open for the human: two questions only** (section 4).
 
 ---
 
 ## 1. Decisions already made by the human
 
-All quoted or recorded on the issue named, on 2026-10-10, relayed by the orchestrator. Under the
-rule the human set that day, a quoted relay is written approval for the action and scope it names.
+All recorded on the issue named, on 2026-10-10, relayed by the orchestrator. Under the rule the
+human set that day, a quoted relay is written approval for the action and scope it names.
 
 | # | Decision | Recorded on |
 |---|---|---|
-| D1 | The retention build **FLA-24 is postponed**: "Lohnt sich das Feature überhaupt? Dann lassen wir das mal weg." It stays in Backlog and nobody starts it until a human lifts the postponement. The design (`docs/research/retention.md`, with Security's 19 conditions) is kept as the record. | FLA-16, FLA-24 |
-| D2 | Retention design choices kept anyway: 1 to 2 star ratings protect a song, an album or artist heart protects all its songs, Navidrome is not pinned. Only matters if D1 is ever lifted. | FLA-16 |
-| D3 | **Discover Weekly holds no credential.** The list is built during the user's first live request of the week, using the freshly verified credential of that request, used for that run only, never stored. A user who is not active that week gets no new list. | FLA-15 |
-| D4 | **Discover Weekly auto-downloads are on for each user, capped at 10 songs per user per week**, and the module switch ships **off**. A starred artist does not exclude all of that artist's songs. | FLA-15 |
-| D5 | **The yt-dlp fallback runs after several failed Soulseek or Lidarr attempts** (3 counted attempts at least 6 hours apart by default), not after one miss. The file is saved as **MP3**. A Soulseek or Lidarr **outage** is waited out and its attempts do not count. A Lidarr failure never blocks the fallback forever. Gives up after 72 hours and shows it on the dashboard. The switch stays **off** for now. | FLA-14 |
-| D6 | The other recommendations of the FLA-14 design are accepted: the small coordinator hook, album hearts later (separate switch, separate issue), the legacy order unchanged. | FLA-14 |
-| D7 | **ImageSharp 4.x is approved** (4.1.x with the matching ImageSharp.Drawing major version, plus the new transitive packages PolygonClipper and System.IO.Hashing). Scope: those packages and the code changes in `octo/Services/CoverArt/*`, nothing else. | FLA-28 |
-| D8 | **GitHub Actions runs CI only.** `docker.yml` and `release-links.yml` are disabled, so a merge to `main` does not publish images. | memory file, orchestrator |
-| D9 | **The orchestrator may merge verified PRs.** Decisions given in chat and relayed verbatim to Linear count as approval. Tags, releases, deployments and running the updater against a real server still need a human each time (`AGENTS.md`). | memory file, orchestrator |
-| D10 | All agent work runs on Sonnet (the human's instruction), overriding the model table in `AGENTS.md`. One commit per finished issue. | memory file |
-
-Open and **not** decided, carried into section 4: whether the yt-dlp switch ever defaults on
-(the human wants more context on Security condition 11).
+| D1 | **Plan approved** in the simplified form of this document. | FLA-17 |
+| D2 | **Retention build FLA-24 is postponed** ("Lohnt sich das Feature überhaupt? Dann lassen wir das mal weg."). Stays in Backlog, nobody starts it until a human lifts it. The design (`docs/research/retention.md`, with Security's 19 conditions) is the record. Ratings protect a song, an album or artist heart protects all its songs, Navidrome is not pinned. | FLA-16, FLA-24 |
+| D3 | **Search (FLA-22).** Library results are always on top, outside results below. Robustness first. Latency must not be worse than today (2 to 4 seconds in the app). A failing outside source never breaks or empties the library results. Deezer is added as a second outside source. | FLA-22 |
+| D4 | **Discover Weekly (FLA-23).** Our own small module, no third-party project integrated. Every user gets a list, with an opt-out. 10 auto-downloads per user per week. **No server-wide caps.** No credential is held: the list is built during the user's first live request of the week. A starred artist does not exclude all of that artist's songs. | FLA-15, FLA-23 |
+| D5 | **yt-dlp fallback (FLA-21), lean v1.** Attempt counting (3 attempts, at least 6 hours apart), the fallback itself (MP3), hardening of what goes into the shim, yt-dlp pinned and checksum-verified, then **default on**. Outages of Soulseek and Lidarr are waited out and do not count as failed attempts. The extra conditions from the later Security rounds move to "after v1" unless needed for safety (section 2, FLA-21). | FLA-14, FLA-21 |
+| D6 | **Import fidelity (FLA-19) comes first.** Liked songs become Navidrome favorites (the same set) and are **on by default**. Playlists are created separately and are private. A requested song plays right away (streamed) and is downloaded in the background so it is local next time. | FLA-19 |
+| D7 | **YouTube Music import (FLA-18) is low priority** ("erstmal egal, viel wichtiger ist, dass der pro-User-Import richtig funktioniert"). | FLA-18 |
+| D8 | **ImageSharp (FLA-28) stays on 3.1.12** with the cover size cap only. The remaining High advisories are accepted as a temporary risk by the human; the 4.x approval is withdrawn (4.x needs a Six Labors licence key in every non-Debug build). FLA-32 evaluates replacing ImageSharp with SkiaSharp. | FLA-28, FLA-32 |
+| D9 | **The test-only stub container for the harness is approved** (one small container in `tests/integration/docker-compose.yml`, never in the root compose file or the images). | FLA-17 |
+| D10 | **No new Medium security issues** are filed now. FLA-27 reports on the remaining audit findings. | FLA-17 |
+| D11 | **GitHub Actions runs CI only**; `docker.yml` and `release-links.yml` are disabled. | memory file |
+| D12 | **The orchestrator may merge verified PRs.** Tags, releases, deployments and running the updater against a real server still need a human each time. | memory file, PR #15 |
+| D13 | All agent work runs on Sonnet. One commit per finished issue. | memory file |
 
 Already built or in flight and not part of this plan: FLA-12 (harness, merged), FLA-29 (slskd
-default login, merged), FLA-28 (ImageSharp, in progress), FLA-30 (quarantine real path, in
-progress), FLA-10 (layout jump, skipped by the human, left in Todo), FLA-11 (new cover PNG, waits
-for FLA-28 because both edit `CoverArtService.cs`).
+default login, merged), FLA-28 and FLA-30 (cover size cap, quarantine real path), FLA-10 (layout
+jump, skipped by the human, left in Todo), FLA-11 (new cover PNG, waits for FLA-28).
 
 ---
 
 ## 2. One section per Wave 2 build issue
 
-Conventions used below. "Switch" is the on/off setting; every switch states one default in
-`.env.example`, `docker-compose.yml`, `octo/appsettings.json` and the settings class
-(`docs/modules.md`, "The switch"). "Hotspots" are the shared files that need a claim
-(`AGENTS.md`); each module changes only its own line or paragraph in them. "Harness" is the
-integration harness in `tests/integration/` (`docs/testing.md`): each module adds seed data, at
-least one `test_<module>.py`, a per-user isolation check for anything stored per user, and any
-stub it needs in `tests/integration/docker-compose.yml`.
+Words used. "Switch" is the on/off setting; each switch states one default in `.env.example`,
+`docker-compose.yml`, `octo/appsettings.json` and the settings class (`docs/modules.md`).
+"Common hotspots" are `octo/Program.cs` (one registration line), `.env.example`,
+`docker-compose.yml`, `octo/appsettings.json` and `README.md` (one paragraph); each module changes
+only its own lines in them and claims them first (`AGENTS.md`). "Harness" is `tests/integration/`
+(`docs/testing.md`): each module adds seed data, at least one `test_<module>.py`, an A/B isolation
+check for anything stored per user, and its routes in the shared stub (D9).
 
-Hotspot set common to every new module: `octo/Program.cs` (one registration line),
-`.env.example`, `docker-compose.yml`, `octo/appsettings.json`, `README.md` (one paragraph). It is
-written "common hotspots" below, with extras named.
+**The shared stub.** One small Python container (standard library only) in
+`tests/integration/docker-compose.yml`, reachable only inside the test stack. It stands in for
+Deezer, Last.fm, slskd, Lidarr and the yt-dlp shim, with canned answers per module. The first
+builder who needs it (FLA-21) creates it; later modules add their routes in their own files under
+`tests/integration/stubs/`, so they do not edit each other's.
 
-### FLA-18 YouTube Music import, per user
+### FLA-19 Import fidelity: order, favorites, private playlists (phase 1)
 
-- **Recommendation.** Ship v1 with sources that need **no stored login**: (a) a public playlist
-  link or id, (b) a Google Takeout file the user uploads (playlists and liked music). Do not store
-  YouTube cookies, OAuth tokens or request headers in v1. Why: the shim's `ytm.py` has no
-  authentication code at all today (search, radio and artist radio only), `ImportSources` has only
-  `spotifyLiked`, `spotifyPlaylist`, `link` and `file`, and a stored cookie is a full-account
-  credential, the highest class under R1.5. The Takeout path is also the only one the harness can
-  test without a stub of YouTube.
-- **Module.** `octo/Services/YouTubeMusicImport/` (`Octo.Services.YouTubeMusicImport`), its own
-  controller `octo/Controllers/YouTubeMusicImportController.cs` (routes under `api/admin/imports/ytm/...`
-  so the admin gate and the signed-in-user pattern of `ImportsController` apply), dashboard
-  additions under `octo/wwwroot/admin`.
-- **Switch.** `YTMUSIC_IMPORT_ENABLED`, default **false** for v1. It adds an
-  outbound path to YouTube Music for playlist reads. Settings section `YouTubeMusicImport`.
-  Off removes the dashboard section and the endpoints answer "off".
-- **Reuse.** Stores lists in `ImportStore` as `ImportList` with `Owner`, fetches missing songs through
-  the existing `TrickleQueue`/`AcquisitionWorker` (acceptance: no new queue), writes the playlist
-  with `ImportPlaylists`. File parsing reuses the limits of `ImportFileReader` (64 MB, 200 entries,
-  256 MB unpacked, R4.13).
-- **Hotspots.** Common hotspots, plus two shared files that are not hotspots but belong to another
-  feature: `octo/Services/Imports/ImportModels.cs` (one new constant in `ImportSources` and its
-  `CanRefresh` rule) and `yt-dlp-shim/ytm.py` / `yt-dlp-shim/app.py` (one read-only
-  playlist route, if the public-link path is kept). List both in the PR.
-- **Harness.** `tests/integration/test_ytm_import.py`: alice and bob each upload a Takeout-shaped
-  fixture (generated, no real data); each sees only their own list; order is kept; bob cannot read,
-  refresh or delete alice's list by id. If the public-link path stays, a stub shim route serves a
-  canned playlist; this needs the shared stub (question 12).
-- **Security conditions inherited.** R1.4, R1.5 (nothing stored in v1, so these hold trivially;
-  any later cookie support returns to Security), R2.1 to R2.3 and R2.7 (per-user lists), R4.12
-  (the playlist link is parsed into an id and the host is built by Octo, as `SpotifyLinkReader`
-  does), R4.13 (upload limits), R4.1 and R4.6 (titles are data, never a shim argument starting
-  with `-`). Security approves the PR, as the issue says.
-- **Depends on.** FLA-17 (gate), FLA-12 (done). **Practically after FLA-19**, because both edit
-  `octo/Services/Imports`, and "liked songs handled like Spotify" needs FLA-19's favorites rule.
-- **Open questions.** Questions 8 and 9 in section 4.
+- **Scope.** Audit and fix three behaviours. Order (A6) and privacy (A8) already exist in
+  `ImportFileReader.ReadCsv`, `ImportPlaylists.SyncAsync` and `NavidromePlaylistApi`; favorites (A7)
+  are missing (the liked list is only a playlist named "Liked Songs"). Write the three harness tests
+  first. The order and privacy tests may pass on today's code and then act as locks; say so in the
+  PR. Only favorites, and any real defect the order test finds after songs arrive later, can fail
+  first.
+- **Favorites, on by default (D6).** Octo never holds a password and cannot act as a user without a
+  live credential (`docs/architecture.md`, finding 2; R2.5 forbids an admin shortcut). So liked
+  songs go into a per-user "pending stars" list (song ids only) in the import store and are applied
+  on that user's next live Subsonic request with that request's verified credential, never stored.
+  Songs already in the library are starred at once; fetched songs as they land. The liked set and
+  the playlist are separate: removing the playlist does not touch favorites.
+- **Module.** Not a new module: fixes in `octo/Services/Imports` (existing code). New code in its
+  own file `octo/Services/Imports/ImportStarsOnRequest.cs`.
+- **Switch.** `IMPORT_STAR_LIKED`, default **true**.
+- **Hotspots.** Common hotspots for the switch. Shared, not hotspots: `ImportService.cs`,
+  `ImportPlaylists.cs`, `ImportStore.cs`. If the request hook cannot be registered from inside the
+  imports code, one claimed line in `SubSonicController*.cs` (the same spike as FLA-23; whichever is
+  built first proves the registration point).
+- **Harness.** `test_import_fidelity.py`: (1) CSV of 6 rows, some songs present, others arriving
+  later; playlist order equals source order before and after; (2) liked songs are starred for the
+  importer and for nobody else (alice and bob overlap on songs, so a leak shows); (3) the playlist
+  is non-public and owned by the importer, checked in Navidrome directly and through Octo as bob.
+- **Security inherited.** R2.1 to R2.5, R2.7 (verified user, A/B test), R1.2 (the live credential is
+  never logged or stored). Security reviews the PR (user data, credentials).
+- **Depends on.** FLA-12 (done). No other Wave 2 issue.
 
-### FLA-19 Import fidelity: order, favorites, private playlists
+### FLA-21 Build the yt-dlp fallback, with FLA-31 (phase 1, one branch)
 
-- **Recommendation.** Treat this as an audit-and-fix of three behaviours already half there.
-  Per `docs/architecture.md`: order (A6) and privacy (A8) **exist** (`ImportFileReader.ReadCsv`
-  keeps row order, `ImportPlaylists.SyncAsync` writes in list order and keeps the matching prefix,
-  playlists are created `public = false` and handed to the owner); favorites (A7) are **missing**
-  (the liked list becomes a playlist named "Liked Songs" and nothing stars a song).
-  Step 1: write the three harness tests first. Order and privacy tests will pass on current code and
-  act as locks; the "tests fail on the current code" criterion can only be met for favorites and
-  for any real defect the order test finds after songs arrive later. Say so in the PR. Step 2:
-  fix what fails.
-- **Favorites mechanism (decision needed, question 9).** Octo never holds a password and cannot act
-  as a user without a live credential (`docs/architecture.md`, finding 2; R2.5 forbids an admin
-  shortcut around Navidrome's ownership checks). Recommended: a **per-user "pending stars" list
-  in the import store (song ids only)** that is applied on that user's next live Subsonic request,
-  with that request's verified credential, using the same pattern FLA-23 uses for its trigger
-  (verified by `CredentialCheck`, never stored, canonical user key). Stars apply to songs already
-  in the library at once and to fetched songs as they land. Not recommended: holding a token for a
-  day (the design FLA-15 rejected for the same reason).
-- **Module.** Not a new module: fixes in `octo/Services/Imports` (existing code, convention does not
-  apply retroactively, `docs/modules.md`). New code for the pending-stars hook goes in its own file
-  `octo/Services/Imports/ImportStarsOnRequest.cs`, behind the import policy of FLA-20 once that
-  exists. Switch: none new for order and privacy (bug fixes); the favorites behaviour gets
-  `IMPORT_STAR_LIKED`, default **false** until the human has seen it work, since it writes to users'
-  Navidrome data.
-- **Hotspots.** Common hotspots for the one switch. Shared, not hotspots: `ImportService.cs`,
-  `ImportPlaylists.cs`, `ImportStore.cs`. If the request hook cannot be registered by the module
-  itself, a one-line call in `SubSonicController*.cs` needs a claim (same spike as FLA-23).
-- **Harness.** `test_import_fidelity.py`: (1) CSV import of a 6-row list, some songs present, others
-  arriving later; playlist order equals source order before and after arrival; (2) liked songs are
-  starred for the importing user and for nobody else (alice and bob overlap on songs on purpose, so
-  a leak shows); (3) the imported playlist is non-public and owned by the importer, checked through
-  Navidrome directly and through Octo as bob.
-- **Security conditions inherited.** R2.1 to R2.5 and R2.7 (user from a verified sign-in, Navidrome's
-  own checks, A/B test), R1.2 (the live credential is never logged or stored, as FLA-15 conditions 1
-  and 14). Touches user data and credentials, so **Security reviews** the PR.
-- **Depends on.** FLA-17, FLA-12. No dependency on other Wave 2 issues. **Build first in step A.**
-- **Open questions.** Question 9.
-
-### FLA-20 Admin setting: what each import source is used for
-
-- **Recommendation.** One small dashboard page and one policy store, so each import source has a
-  setting. Option list (my proposal for the "final option list" the issue asks the gate for):
-  1. **Playlist only** (keep as a Navidrome playlist, fetch nothing, star nothing)
-  2. **Playlist and fetch missing songs** (today's Spotify behaviour)
-  3. **Playlist, fetch missing and star liked songs** (needs FLA-19)
-  Drop the "taste seed for Discover Weekly" option the architecture map mentioned: the Discover Weekly
-  design takes taste from the user's Navidrome plays, their ListenBrainz account and library songs,
-  not from imports, and a cross-module dependency would break "no import module depends on another".
-  The default for an existing source is whatever it does today (option 2), so enabling nothing
-  changes nothing.
-- **Module.** `octo/Services/ImportPolicy/` with a tiny public interface (`IImportPolicy.For(source)`
-  returning the option) that import modules call; the policy store `import-policy.json` in
-  `/app/config`. The Imports code and FLA-18 ask the interface; the policy module never calls into
-  them. Admin endpoints in `octo/Controllers/ImportPolicyController.cs` under `api/admin/import-policy`
-  (admin session, `AdminRequestGuard`, no GET-side changes).
-- **Switch.** `IMPORT_POLICY_ENABLED`, default **true** (it is only a policy lookup that defaults
-  to today's behaviour). Off: every source behaves as today and the page is hidden.
-- **Hotspots.** Common hotspots; `octo/wwwroot/admin/index.html` and `admin.js` (the shared
-  dashboard files; additions in a clearly marked block only). `admin.js` is large and also touched
-  by FLA-10 if that is ever resumed.
-- **Harness.** `test_import_policy.py`: set a source to "playlist only", import as alice, no songs
-  are queued; set to fetch, songs are queued; restart Octo, the setting survives; a non-admin gets a
-  refusal. Browser check at desktop and phone width for the page (criterion), screenshots on the PR.
-- **Security conditions inherited.** R3.1 to R3.3, R3.5, R3.6 (admin routes, guard, no-store); setting
-  values validated against the fixed option list on the server.
-- **Depends on.** FLA-17, FLA-12; **practically after FLA-19 and FLA-18**, because it must offer the
-  options those two define.
-- **Open questions.** None beyond the option list above, which is part of the sign-off.
-
-### FLA-21 Build the yt-dlp fallback (with FLA-31)
-
-- **Recommendation.** Build the design in `docs/research/ytdlp-fallback.md` as written: a module
-  that plugs into the end of the acquisition chain through one small extension point, counts
-  failed attempts, waits out outages, and downloads through the existing YouTube path as MP3. Fix
-  **FLA-31 in the same branch**: the design's typed source outcomes (`NotFound` versus `Unavailable`)
-  are exactly what FLA-31 needs (Soulseek outage held whatever Lidarr's position, a Lidarr error
-  not read as "not found"). Doing them separately would edit the same lines in
-  `HeartAcquisitionCoordinator.cs`, `TrickleWorker.cs`, `SoulseekLink.cs` twice.
-- **Module.** `octo/Services/YtDlpFallback/` (design section 5.1), tests in `octo.Tests/YtDlpFallback/`.
-- **Switch.** `YTDLP_FALLBACK_ENABLED`, default **false** (D5). Thirteen further settings with
-  bounds, listed in design section 5.1 (Security conditions 15 and 16 require server-side
-  clamping and tests for 0, negative, huge and non-numeric input). Known build detail from the
-  FLA-14 thread: `MaxWaitHours` has a computed minimum that can exceed its stated maximum (726
-  against 720 at `FailedAttempts` 10 and spacing 72); the computed minimum must win, with a test.
-- **Commits (design section 10).** 1 shim hardening (video id, `%` escape, `dest` confined to
-  `.octo-incoming`, `--`, limits; closes SEC-8), 2 typed outcomes (also FLA-31), 3 the extension
-  point in the coordinator, 4 the module, 5 `RetryBetterDays` and the "YouTube copy" label.
-  Commits 1 and 2 are useful alone and should be merged first.
-- **Hotspots.** Common hotspots; shared non-hotspots the PR must list: `HeartAcquisitionCoordinator.cs`,
+- **Scope (lean v1).**
+  1. *Shim input hardening* (closes SEC-8): video id `^[A-Za-z0-9_-]{11}$` at the shim edge and in
+     `YouTubeResolver`; `dest` confined to `.octo-incoming/` with `%` escaped; `--` before the URL;
+     free text only behind the fixed `ytsearch1:`/`ytsearch5:` prefix; text cleaned and length-capped
+     at one choke point in `YouTubeResolver`; the shim enforces duration, file size and timeouts
+     itself; no raw query in logs.
+  2. *Pin yt-dlp and verify it* (Security condition 11): a pinned, checksum-verified yt-dlp in the shim
+     image, with the runtime self-update (`-U`) off or limited to the pinned version, plus a
+     `pip-audit` job for the shim in `ci.yml`. This is the precondition for default-on.
+  3. *Typed source outcomes* (also **FLA-31**): `NotFound` versus `Unavailable` from Soulseek, Lidarr
+     and the YouTube resolver. A Soulseek outage (logged out, crashed, unreachable) is waited out
+     whatever Lidarr's position; a Lidarr error is not "not found".
+  4. *The module*: counts failed attempts (default 3, at least 6 hours apart), then downloads through
+     the existing YouTube path as MP3, tags the file as YouTube-sourced, and plugs into the end of
+     `HeartAcquisitionCoordinator` through one small extension point (`IAcquisitionFallback`). Songs
+     from hearts and import trickle only; not album hearts, not play.
+  5. Gives up after 72 hours with a plain dashboard line (counts, no song list).
+- **Moved to "after v1"** (they stay in `docs/research/ytdlp-fallback.md` section 12 as the later
+  hardening list): the persisted given-up list with its own retention and caps, moved-aside corrupt
+  store files, deletion of a user's records when the user is deleted, admin-view rules beyond "no
+  user sees another's", the `RetryBetterDays` rule and the "YouTube copy" label, and the
+  thirteen-setting surface (v1 keeps `Enabled`, `FailedAttempts`, `AttemptSpacingHours`,
+  `MaxWaitHours`, `PerHour`, `PerUserPerHour`, `MaxMinutes`, each clamped on the server with a
+  minimum of 1, and `FailedAttempts` at least 2). **Kept for safety** because they stop a wrong
+  fetch or a leak: strict store entries (a missing or corrupt field never counts as "enough
+  attempts", the store fails toward not fetching), a re-heart never resets the count, "enabled but
+  not set up" counts as unavailable, tags that carry no user identity, a store file created `0600`,
+  an A/B isolation test, and the free-space check before a download. Security confirms this cut in
+  its review of the PR; anything it rejects moves back in. (This split is the Architect's reading;
+  Security has not yet seen it.)
+- **Module.** `octo/Services/YtDlpFallback/`, tests `octo.Tests/YtDlpFallback/`.
+- **Switch.** `YTDLP_FALLBACK_ENABLED`, default **true once item 2 is merged** (D5). The PR may ship it
+  `false` until pinning is in, and the same PR flips it when it is. The README states what it does and
+  that yt-dlp is pinned.
+- **Hotspots.** Common hotspots, plus `.github/workflows/ci.yml` (the shim scan job, its own job).
+  Shared, not hotspots: `HeartAcquisitionCoordinator.cs`, `TrickleWorker.cs`, `SoulseekLink.cs`,
   `SoulseekClient.cs`, `SoulseekDownloadService.cs`, `LidarrHeartAcquisitionService.cs`,
-  `YouTubeResolver.cs`, `LocalLibraryService.cs`, `QualityUpgradeWorker.cs`, `TrickleWorker.cs`,
-  `SoulseekLink.cs`, `yt-dlp-shim/app.py`. This is the widest footprint in Wave 2: see the ordering
-  in section 3.
-- **Harness.** `test_ytdlp_fallback.py` (both required criteria): (1) a song missing from stubbed
-  Soulseek and Lidarr arrives through a stubbed shim and carries the YouTube-sourced tag and mapping
-  flag; (2) during a stubbed Soulseek outage nothing is taken from YouTube. Real waiting (3 attempts,
-  6 hours apart) is not testable in a run; the test pre-seeds `ytdlp-fallback.json` with valid
-  counted attempts in the past (Security condition 20 allows only fully valid entries, so the seed
-  must be complete), and the unit tests drive a fake clock. Needs stubs for slskd, Lidarr and the
-  shim in the harness compose (question 12). Isolation check: alice's parked and given-up songs
-  are invisible to bob, and the admin read returns counts only (condition 18).
-- **Security conditions inherited.** All 21 in `docs/research/ytdlp-fallback.md` section 12 (shim
-  input validation, `dest` confinement, query cleaning at one choke point, log hygiene, size and
-  duration limits enforced in the shim, per-user and global rate limits, `0600` store, tags that
-  carry no user identity, SEC-7 as a precondition for **default-on**, bounded settings, deletion with
-  the user, counts-only admin view, "enabled but not set up" counts as unavailable, strict store
-  entries, no reset by re-hearting). Security reviews the PR (external input, shim, files, per-user
-  data).
-- **Depends on.** FLA-17, FLA-12. Related: FLA-31 (same branch), FLA-14 (design).
-- **Open questions.** Question 7 (default-on and the yt-dlp pin), question 11 (Discover Weekly
-  songs).
+  `YouTubeResolver.cs`, `LocalLibraryService.cs`, `yt-dlp-shim/app.py`, `yt-dlp-shim/Dockerfile`.
+  List them in the PR.
+- **Commits.** (1) shim hardening and pin, (2) typed outcomes with the FLA-31 fixes, (3) the
+  extension point, (4) the module, switch and README. 1 and 2 are behaviour-preserving apart from the
+  fixes and can merge first.
+- **Harness.** `test_ytdlp_fallback.py`: (1) a song missing from stubbed Soulseek and Lidarr arrives
+  through the stubbed shim and carries the YouTube-sourced tag; (2) during a stubbed Soulseek outage
+  nothing is taken from YouTube; (3) alice's parked songs are not visible to bob. Waiting for 3 x 6
+  hours is not testable in a run: the test pre-seeds a complete valid store entry with past times, and
+  unit tests use a fake clock. Say so in the PR.
+- **Security inherited.** Conditions 1 to 6, 8, 10, 11, 13 and 19 to 21 of
+  `docs/research/ytdlp-fallback.md` section 12 (the safety set above); the rest are the "after v1"
+  list. Security reviews the PR.
+- **Depends on.** FLA-12 (done). FLA-31 is the same branch.
 
-### FLA-22 Improve search results
+### FLA-31 Soulseek outage handling (inside FLA-21, phase 1)
 
-- **Recommendation.** Option B of `docs/research/search.md` with the cheap parts of A: add Deezer
-  track search as a second outside source, run in parallel with Last.fm, fuse by reciprocal rank
-  with the existing `SongIdentity.MatchKey` dedupe (and `LooseKey` as a second chance), and fix the
-  Last.fm anchor (`autocorrect=1`, artist found through `artist.search` rather than the raw query).
-  It is the only option that fixes the key-less case. Out of scope: type-ahead, library-side
-  widening, YouTube Music as a third source (a later, separately switched issue if gaps remain).
-- **Module.** `octo/Services/SearchFusion/` with `ISearchSongSource`, `LastFmSearchSource`,
-  `DeezerTrackSearchSource` (through the existing Deezer HTTP client so `DeezerRateLimiter`
-  applies) and the fusion function. One hook: `ExternalSearchService.BuildAsync` gains a single
-  branch (fusion on: collect from `SearchFusion`; off: today's path unchanged). `SubSonicController`,
-  `SearchBudget` and the paging classes are not touched.
-- **Switch.** `SEARCH_FUSION_ENABLED`, default **true** (recommended, question 1). Off means
-  byte-for-byte today's results and no Deezer track call.
-- **Hotspots.** Common hotspots; shared non-hotspots: `octo/Services/Common/ExternalSearchService.cs`
-  and one parameter in `LastFmService.cs`.
-- **Acceptance numbers the issue leaves to this gate (my proposal, question 10).**
-  *Result threshold:* on the 15-query fixture `docs/research/search-queries.json` with canned
-  source answers, at least **12 of the 13 scored cases** meet their `minSongs` and
-  `mustIncludeInTop`; the typeahead case makes **zero** outside calls; the "wekend" case is best
-  effort and not scored; both scenarios pass (songs without a Last.fm key; page one shows the library
-  row first then at least 15 outside rows). The one allowed miss is `Mr. Brightside live`, which the
-  fixture itself says needs a second source to agree. *Latency budget:* an uncached outside build
-  with fusion on takes at most the **median of today's plus 300 ms** and p95 plus 500 ms, measured
-  before and after on the same stubbed upstream and once live; the 10-second build deadline is
-  unchanged; the library rows are never delayed by the outside half.
-- **Harness.** `test_search_fusion.py` against a stubbed Deezer and Last.fm in the harness compose
-  (needs the Deezer base URL to be configurable; if it is hard-coded, a setting is added as part of
-  this issue). Seed: a library holding exactly one matching song for the "daft punk" scenario.
-  No per-user data, so no isolation test; search results are not per person.
-- **Security conditions inherited.** No design-specific list was needed; the general rules apply:
-  R4.12 (fixed hosts, no user-supplied URL), timeouts and response size caps on both sources,
-  R4.6 (titles and artists are data), and the same sanitising before any log line. Security reviews
-  only if the PR adds a new outbound host or setting that takes a URL.
-- **Depends on.** FLA-17, FLA-12. Human confirmation of Deezer volume before the build starts (QA
-  asked for this on FLA-13).
-- **Open questions.** Questions 1, 2, 3, 10.
+Built on the FLA-21 branch as item 3 above. Its own acceptance criteria stand (outage waited out
+whatever Lidarr's position, a Lidarr failure not read as "not found", tests for each shape, README
+matches). If FLA-21 is delayed, the typed-outcome commit with the FLA-31 fixes can merge alone.
 
-### FLA-23 Build the Discover Weekly module
+### FLA-22 Improve search results (phase 2)
 
-- **Recommendation.** Build `docs/research/discover-weekly.md` as revised for D3 and D4: candidates
-  from ListenBrainz (Weekly Exploration, recommendations, seeded similarity), Last.fm similarity
-  and library songs the user has never touched; a three-layer fail-closed exclusion gate against the
-  user's playlists, favorites and starred albums; one private "Discover Weekly" Navidrome playlist per
-  user, created with the user's own credential; at most 10 outside songs fetched per user per week.
-  No Explo, Troi or recommender library, and no new container.
-- **Module.** `octo/Services/DiscoverWeekly/` (settings, recommendations client, pure selector with
-  the exclusion gate, store and ledger, credential-free worker, module extension), its own controller
-  `octo/Controllers/DiscoverWeeklyController.cs` (status and per-user opt-out), dashboard files for
-  the opt-out and status. **Made for you is not edited** (the PR diff shows it).
-- **Switch.** `DISCOVER_WEEKLY_ENABLED`, default **false** (D4). Per-user cap
-  `DISCOVER_WEEKLY_PER_USER_WEEKLY` default 10. Server-wide caps in question 5. Off: no calls, no
-  runs, no files, endpoints say "off".
-- **The trigger.** A filter the module registers itself, which starts a run only after
-  `CredentialCheck` returns Accepted for a `u` with `t` and `s` or `u` with `p`; no `apiKey`/`jwt`;
-  one case-folded user key; query string only; drops when the check cap is full. **Spike first**
-  (design section 9): prove an `IStartupFilter` registered from the module runs after
-  `UseAdminPortSplit` and leaves the `Program.cs:725` body buffering alone. **Fallback if the spike
-  fails:** one line beside `EnsureAsync` in `GetPlaylists` in `SubSonicController.cs`, a hotspot that
-  needs a claim and, per design section 8, a human yes (question list in the design; I fold it into
-  the sign-off of this plan: approved here means approved if and only if the spike fails).
-- **Hotspots.** Common hotspots; the `SubSonicController.cs` fallback line only if the spike fails.
-- **Harness.** `test_discover_weekly.py`: alice and bob have overlapping private playlists and
-  favorites (the seed already does); after each makes a Subsonic request, each has a private
-  "Discover Weekly" playlist; **no song in a user's list is in any of that user's playlists or
-  favorites** (the required criterion); bob cannot read, change or delete alice's playlist id, ledger
-  or picks (R2.7); "Alice" and "alice" share one cap; an API-key request starts nothing; a refused
-  request with a real user name creates no row and does not suppress that user's run (condition 13);
-  switch off makes no run and writes no file. Library-derived candidates need no external stub, so the
-  core test needs only the existing seed; a ListenBrainz stub is optional.
-- **Security conditions inherited.** All 19 in `docs/research/discover-weekly.md` section 10
-  (credential only in local variables and never in a field, log or exception; coverage and the
-  opt-out requirements; trigger rules 3, 13 to 17; playlist privacy read back and verified;
-  isolation test; ListenBrainz name mapping proved or admin-only; external input rules; abuse caps;
-  `0600` stores; off-by-default; PR returns to Security, trigger and credential code reviewed line by
-  line; late-landing songs checked by the landed file's tags).
-- **Depends on.** FLA-17, FLA-12. No dependency on FLA-21.
-- **Open questions.** Questions 4, 5, 6, 11.
+- **Scope.** Library results stay on top and are never delayed or emptied by the outside half. The
+  outside half gets Deezer track search as a second source next to Last.fm, merged by reciprocal
+  rank with the existing `SongIdentity.MatchKey` dedupe. It works with no Last.fm key. One small
+  Last.fm fix: `autocorrect=1` on the artist pad. Out of scope: type-ahead (`songCount` under 12 keeps
+  skipping outside calls), library-side widening, YouTube Music as a source, a Last.fm measurement.
+- **Robustness rules (D3).** The outside half has its own deadline. A Deezer or Last.fm error, timeout
+  or empty answer returns the library rows plus whatever the other source gave; both failing returns
+  the library only. Tests cover each case.
+- **Module.** `octo/Services/SearchFusion/` with `ISearchSongSource`, a Last.fm source, a Deezer
+  source (through the existing Deezer HTTP client so `DeezerRateLimiter` applies) and the fusion
+  function. One hook: one branch in `ExternalSearchService.BuildAsync`; off runs today's path byte for
+  byte. `SubSonicController`, `SearchBudget` and the paging classes are not touched.
+- **Switch.** `SEARCH_FUSION_ENABLED`, default **true** (Deezer added, D3).
+- **Hotspots.** Common hotspots; shared, not hotspots: `ExternalSearchService.cs`, one parameter in
+  `LastFmService.cs`.
+- **Acceptance numbers.** Fixture `docs/research/search-queries.json` with canned source answers: at
+  least 12 of the 13 scored cases meet `minSongs` and `mustIncludeInTop` (the one allowed miss is
+  `Mr. Brightside live`, which the fixture says needs two sources to agree), type-ahead makes zero
+  outside calls, "wekend" is best effort, both scenarios pass. Latency no worse than today: measure
+  the uncached outside build before and after on the same stubbed upstream and once live, keep the
+  10 second deadline, and report both numbers on the PR (the human's reference is 2 to 4 seconds in
+  the app today).
+- **Harness.** `test_search_fusion.py` against the stub (the Deezer base URL must be configurable; if
+  it is hard-coded, a setting is added in this issue). Seed: a library with exactly one match for the
+  "daft punk" scenario. Plus a test that a stubbed outside failure still returns the library rows. No
+  per-user data.
+- **Security inherited.** R4.12 (fixed hosts), timeouts and size caps on both sources, R4.6 (titles
+  are data, sanitised in logs). Security reviews only if a new host or URL setting is added.
+- **Depends on.** FLA-12 (done).
+
+### FLA-23 Build the Discover Weekly module (phase 2)
+
+- **Scope (lean).** Our own small module. Candidates: ListenBrainz recommendations (for users whose
+  name the module can prove from their own stored token) and library songs the user has never
+  touched. No Explo, Troi or recommender library; no Last.fm similarity and no admin-typed
+  ListenBrainz name map in v1 (both can come later). A fail-closed exclusion gate against the user's
+  playlists and favorites (`docs/research/discover-weekly.md` section 4.2), so no song is in any of
+  that user's playlists or favorites. One private "Discover Weekly" Navidrome playlist per user,
+  created with the user's own credential, read back and checked private. **Every allowed user is
+  covered unless they opt out** (D4). Up to 10 outside songs fetched per user per week through the
+  existing acquisition entry points. No server-wide caps (D4); the per-user hourly rate and the
+  existing acquisition checks (size, duration, free space) still apply.
+- **The trigger.** Built during the user's first live request of the week: a filter the module
+  registers itself starts a run only after `CredentialCheck` returns Accepted, for `u` with `t`/`s` or
+  `p`, never an API key (API-key sign-ins get no list; the status says why). Nothing about the
+  credential is stored. **Spike first** (design section 9). If it fails, one claimed line beside
+  `EnsureAsync` in `GetPlaylists` in `SubSonicController.cs`; the sign-off covers that fallback only
+  if the spike fails.
+- **Opt-out.** A small panel on the dashboard for any signed-in user (the dashboard already serves
+  non-admin Navidrome users for imports): says what the list does and lets the user turn it off.
+  Opting out stops runs and deletes their rows.
+- **Module.** `octo/Services/DiscoverWeekly/`, controller `octo/Controllers/DiscoverWeeklyController.cs`,
+  panel files under `octo/wwwroot/admin` as a separate JS file (not edits inside `admin.js`).
+  **Made for you is not edited** (the PR diff shows it).
+- **Switch.** `DISCOVER_WEEKLY_ENABLED`, default **false** until the PR is merged and checked; the
+  per-user cap `DISCOVER_WEEKLY_PER_USER_WEEKLY` default 10. Off: no calls, runs or files; endpoints
+  say off.
+- **Marking.** Songs it fetches are marked so the yt-dlp fallback declines them (section 4, a
+  decision taken in this plan): an automatic pick should not turn into a YouTube MP3.
+- **Hotspots.** Common hotspots; the `SubSonicController.cs` line only if the spike fails.
+- **Harness.** `test_discover_weekly.py`: alice and bob (overlapping private playlists and favorites
+  in the seed) each make a request and each get a private playlist; **no song in a user's list is in
+  any of that user's playlists or favorites**; bob cannot read, change or delete alice's list (R2.7);
+  "Alice" and "alice" share one cap; an API-key request starts nothing; a refused request creates no
+  row; opt-out stops runs; switch off makes no run and writes no file. Library-derived candidates need
+  no external stub.
+- **Security inherited.** The binding conditions of `docs/research/discover-weekly.md` section 10 that
+  stay relevant for the lean scope: 1 to 3, 5, 6, 8, 10 to 18 (credential never held; Accepted-only
+  trigger; privacy read back; isolation test; external input rules; `0600` store; off by default; one
+  case-folded user key; late-landing songs checked by the landed file's tags). Condition 7 (name map)
+  and 9 (server-wide caps) no longer apply because the feature is out of scope or decided. Condition 4
+  is moot as in the design. The PR returns to Security, trigger and credential code line by line.
+- **Depends on.** FLA-12 (done). Starts after phase 1 (at most two builds at once).
+
+### FLA-20 Admin setting: what each import source is used for (phase 3)
+
+- **Scope.** One small dashboard page and a policy store. Options per source: (1) playlist only, (2)
+  playlist and fetch missing songs (today's behaviour, the default), (3) playlist, fetch missing and
+  favorites (needs FLA-19, built first). No "taste seed for Discover Weekly" option: Discover Weekly
+  does not read imports, and a link would break "no import module depends on another".
+- **Module.** `octo/Services/ImportPolicy/` with `IImportPolicy.For(source)` that the import code
+  calls; the policy module never calls back. Store `import-policy.json` in `/app/config`. Endpoints in
+  `octo/Controllers/ImportPolicyController.cs` under `api/admin/import-policy`.
+- **Switch.** `IMPORT_POLICY_ENABLED`, default **true**; off means every source behaves as today and
+  the page is hidden.
+- **Hotspots.** Common hotspots; `octo/wwwroot/admin/index.html` and `admin.js` (one clearly marked
+  block, or a separate file).
+- **Harness.** `test_import_policy.py`: "playlist only" queues nothing, "fetch" queues, the setting
+  survives an Octo restart, a non-admin is refused. Browser check at desktop and phone width.
+- **Security inherited.** R3.1 to R3.3, R3.5, R3.6; values validated against the fixed option list.
+- **Depends on.** FLA-19. FLA-18 is built after and calls the same interface.
+
+### FLA-25 Verify updates on production installs (phase 3, a short verification only)
+
+- **Scope.** The update path exists (`scripts/updater/`, `UpdateController`, `octo/Services/Updates`,
+  tested by `scripts/updater/test-updater.sh` and `UpdateHostTests`). Do a short verification, not a
+  build: one test that updates a disposable stack from the previous release to the current build and
+  keeps `config`, `.env` and `docker-compose.override.yml`, and one that a failed update leaves the
+  old version running. Fix a gap only if it is a bug; file anything bigger as an issue. Nothing
+  pushes images or tags and nothing touches a real deployment.
+- **Module.** Not a module. Tests in `tests/integration/` as their own workflow file.
+- **Switch.** None.
+- **Hotspots.** `.github/workflows/*` only to add its own file. README only for a real change.
+- **Security inherited.** R3.8 (no new ports); the no-Docker-socket design stays.
+- **Depends on.** FLA-12 (done).
+
+### FLA-18 YouTube Music import, per user (phase 3, low priority)
+
+- **Scope.** Low priority (D7); drop it if time is short. v1 needs **no stored login**: a public
+  playlist link or id, and a Google Takeout file the user uploads. No cookies, OAuth tokens or request
+  headers are stored. Reason: the shim's `ytm.py` has no authentication today, and a stored cookie is
+  a full-account credential (R1.5). The private liked-music list is reached through Takeout only.
+  Liked songs follow the FLA-19 rule (favorites on by default, playlists separate and private).
+- **Module.** `octo/Services/YouTubeMusicImport/`, controller
+  `octo/Controllers/YouTubeMusicImportController.cs` under `api/admin/imports/ytm/...`, dashboard files
+  under `octo/wwwroot/admin`. Reuses `ImportStore`, `TrickleQueue`/`AcquisitionWorker` (no new queue),
+  `ImportPlaylists` and the limits of `ImportFileReader` (R4.13).
+- **Switch.** `YTMUSIC_IMPORT_ENABLED`, default **false**.
+- **Hotspots.** Common hotspots; shared, not hotspots: `octo/Services/Imports/ImportModels.cs` (one
+  new `ImportSources` constant) and, if the link path stays, a read-only playlist route in
+  `yt-dlp-shim/ytm.py` and `app.py`. List both in the PR.
+- **Harness.** `test_ytm_import.py`: alice and bob each upload a generated Takeout-shaped file; each
+  sees only their own list; order kept; bob cannot read, refresh or delete alice's list by id. The
+  link path, if kept, uses a stub route.
+- **Security inherited.** R1.5 (nothing stored), R2.1 to R2.3 and R2.7, R4.12 (the link is parsed to
+  an id; Octo builds the host), R4.13, R4.1 and R4.6. Security approves the PR.
+- **Depends on.** FLA-19 (same code), FLA-21's shim hardening (titles go through its choke point).
 
 ### FLA-24 Build the 30-day retention cleanup (POSTPONED)
 
-- **Status.** Postponed by the human on 2026-10-10 (D1). Stays in Backlog; **no agent starts it**,
-  even when its blockers are Done, until a human lifts the postponement in writing.
-- **If it is ever lifted.** The design and Security's 19 conditions are in
-  `docs/research/retention.md` (sections 9 to 11); the human has already decided ratings protect a
-  song, an album or artist heart protects all its songs, and Navidrome is not pinned (D2). Still
-  needed then: the credential option (A recommended), the snapshot trigger place, and written approval
-  to run with `RETENTION_DRY_RUN=false`. FLA-30 (real-path check in quarantine) is already in
-  progress and is a precondition Security named.
-- **Effect on this plan.** FLA-26 and FLA-27 do not wait for it and do not review it.
+Postponed by the human (D2). Stays in Backlog; no agent starts it until a human lifts it in writing.
+If lifted, the design and Security's 19 conditions are in `docs/research/retention.md` sections 9 to
+11, the credential option (A recommended) and the snapshot trigger place must be decided, and going
+live (`RETENTION_DRY_RUN=false`) needs written approval. FLA-26 and FLA-27 do not wait for it.
 
-### FLA-25 Verify updates on production installs
+### FLA-26 Full regression with modules on and off, and security scans in CI (phase 4)
 
-- **Recommendation.** Do it as the issue says: a harness-style test that updates a stack from the
-  previous release to the current build, keeps `config`, `.env` and `docker-compose.override.yml`,
-  and leaves the old version running after a failed update. It needs no gate and can start now.
-  Note one constraint from `AGENTS.md` and decision D8: nothing may push images or tags, and the
-  updater (`scripts/updater/`) is never run against a real server. The test uses a disposable
-  stack and a local registry or locally built images only.
-- **Module.** Not a module: tests and fixes in `scripts/updater/`, `scripts/test-install.sh`,
-  `octo/Services/Updates`, `UpdateController`. No switch. Test goes in `tests/integration/` (or a
-  sibling folder if it cannot share the Navidrome stack) as its own workflow file.
-- **Hotspots.** `.github/workflows/*` only if a new workflow file is added (its own job, no edit to
-  existing ones). README only for a documented change.
-- **Security conditions inherited.** R3.8 (no new published ports), the updater's no-Docker-socket
-  design stays; Security reviews if the updater scripts change.
-- **Depends on.** FLA-12 (done). Not FLA-17.
-- **Open questions.** None. Which "previous release" to start from is chosen by the build (the last
-  tagged release is `2026.10.05` on `main`; the `2026.10.07` commit was reverted).
+- **Scope.** Matrix: the harness with every new module on, and with every new module off. Dependency
+  scans for .NET, Rust and Python plus a container image scan; High or Critical fails the build
+  (`docs/security-requirements.md` R6.3, R6.4). The Python scan for the shim already exists from
+  FLA-21; this issue adds the rest and the matrix. Existing CI jobs are unchanged apart from additions.
+  Flaky tests are fixed or filed. **FLA-10 is no longer a blocker** (skipped by the human; the Linear
+  relation is removed). The remaining High advisories on ImageSharp 3.1.12 are an accepted risk (D8),
+  so the .NET scan records them as a known exception on the PR until FLA-32 decides.
+- **Switch / module.** None.
+- **Hotspots.** `.github/workflows/*` (new jobs or files).
+- **Depends on.** All Wave 2 builds except FLA-24.
 
-### FLA-26 Full regression with modules on and off, and security scans in CI
+### FLA-27 Final security review of all new modules (phase 4)
 
-- **Recommendation.** After all Wave 2 builds. Matrix: harness with every new module on, and with
-  every new module off (Wave 2 modules all default to off or to today's behaviour, so "off" is also
-  the default install). Dependency scans: `dotnet list package --vulnerable --include-transitive`,
-  `cargo audit`, `pip-audit`, plus a container image scan; High or Critical fails the build
-  (`docs/security-requirements.md` R6.3 to R6.4, SEC-7). Existing CI jobs unchanged apart from
-  additions. No test is skipped; flaky ones are fixed or filed (the one flaky test seen so far is
-  `SearchAlbumOwnershipTests` under load, per the FLA-28 thread).
-- **Split proposal (question 14).** The scan jobs do not depend on any module. Land them early as
-  their own PR so a known-vulnerable dependency stops new work sooner, and so SEC-7 is on its way
-  before anyone asks for the yt-dlp default to flip.
-- **Hotspots.** `.github/workflows/*` (its own new jobs or files; no behaviour change to `ci.yml`,
-  `docker.yml`, `release-links.yml`). Note D8: `docker.yml` stays disabled on this fork.
-- **Depends on.** All Wave 0 UI fixes and all Wave 2 builds (except FLA-24, postponed).
-
-### FLA-27 Final security review of all new modules
-
-- **Recommendation.** One pass against every requirement in `docs/security-requirements.md`, marked
-  pass or fail, with the status of every FLA-9 finding (SEC-1 and SEC-2 are covered by FLA-28 and
-  FLA-29; SEC-3 to SEC-13 need a status each, see question 13). Focus areas as in the issue:
-  cross-user access (imports, Discover Weekly, favorites, playlists), inputs into the shim and
-  Soulseek, credential storage for import sources, and the conditions listed per module above. Retention
-  is out of focus while FLA-24 is postponed; the report says so.
-- **Output.** A Linear document on the project; no release approval (the issue is explicit).
-- **Depends on.** All Wave 2 builds.
+- **Scope.** One pass against `docs/security-requirements.md`, marked pass or fail, with a status for
+  every FLA-9 finding (SEC-1 is the accepted risk of D8; SEC-2 is closed by FLA-29; SEC-3 to SEC-13
+  get a status each and are reported, not filed as new Medium issues, D10). The items moved to "after
+  v1" in FLA-21 are listed as residual risks with their conditions. Retention is out of scope while
+  FLA-24 is postponed.
+- **Output.** A Linear document on the project; no release approval.
+- **Depends on.** All Wave 2 builds except FLA-24.
 
 ---
 
-## 3. Recommended build order and parallelism
+## 3. Build order and overlaps
 
-### Where the work overlaps
+At most two builds at the same time:
 
-| Overlap | Who | What to do |
-|---|---|---|
-| The acquisition chain: `HeartAcquisitionCoordinator`, `TrickleWorker`, `SoulseekLink`, `SoulseekDownloadService` | FLA-21 and FLA-31 | One branch, one agent. FLA-31 is the typed-outcome work FLA-21 needs anyway. Two branches would conflict in the same lines. |
-| `CoverArtService.cs` | FLA-28 (in progress) and FLA-11 | FLA-11 waits for FLA-28's merge. Already recorded. Nothing in Wave 2 touches cover code. |
-| `octo/Services/Imports` | FLA-19, FLA-18, FLA-20 | Serialise: FLA-19, then FLA-18, then FLA-20. FLA-19 and FLA-18 both edit `ImportModels.cs`, `ImportService.cs` and the Imports controller. |
-| The per-request, verified-credential trigger | FLA-23, FLA-19 (pending stars) | Same pattern, two modules. Do **not** share internals between modules. Build the FLA-23 spike first; FLA-19 reuses what the spike proves (the filter registration point) as a copied pattern, or, if the human agrees, a separate small issue extracts a shared "verified request hook". |
-| `ExternalSearchService.cs`, `LastFmService.cs` | FLA-22 only | No overlap. |
-| Shim `yt-dlp-shim/app.py` | FLA-21 (hardening, limits), FLA-18 (playlist read route, if kept) | FLA-21's shim commit lands first; FLA-18 adds its route after, and the shim hardening (video id, input limits) then covers it. |
-| `YouTubeResolver.cs`, YouTube path | FLA-21 (input choke point), FLA-18 (titles into the shim) | FLA-18 goes through the choke point FLA-21 builds. Another reason for FLA-18 after FLA-21's first two commits. |
-| `tests/integration/docker-compose.yml` | every module adds stubs | A merge-conflict factory. Proposed: each module adds its stubs in its own compose file, and the harness picks them up (a small QA change to `run.sh`, question 12). |
-| The five common hotspot files | all modules | Each change is a few additive lines, so conflicts are easy but constant. Rule: merge in order, each next branch rebases on `main` before review (`AGENTS.md`), never resolved by dropping someone's lines. |
+1. **Phase 1:** FLA-19 and FLA-21 with FLA-31.
+2. **Phase 2:** FLA-22 and FLA-23, each started when a phase 1 slot is free.
+3. **Phase 3:** FLA-20 and FLA-25, then FLA-18.
+4. **Phase 4:** FLA-26, then FLA-27.
+5. FLA-11 any time after FLA-28 merges (nothing in this plan touches cover code).
 
-### Waves
+| Overlap | Handling |
+|---|---|
+| Acquisition chain (`HeartAcquisitionCoordinator`, `TrickleWorker`, `SoulseekLink`) | FLA-21 and FLA-31 are one branch. |
+| `octo/Services/Imports` | FLA-19, then FLA-20, then FLA-18. |
+| The verified-request registration point | FLA-19 (pending stars) and FLA-23 (trigger) both need it. FLA-19 is first, so it proves the point (or uses the fallback line); FLA-23 copies the pattern, it does not share internals. |
+| Shim and `YouTubeResolver` | FLA-21 first; FLA-18 later goes through the choke point it builds. |
+| Shared stub | FLA-21 creates it; later modules add routes in their own files. |
+| `admin.js` | FLA-20 and the Discover Weekly panel each use a separate JS file. |
+| The five common hotspot files | Merge in order; each next branch rebases on `main` before review; never drop someone's lines. |
 
-**Step 0 (before Step A, a few hours):** QA makes the harness accept per-module stub compose files
-(and optionally the shared stub service, question 12). Backend files the yt-dlp pin issue
-(question 7). Both are small and unblock the rest.
-
-**Step A (start together, files do not overlap):**
-1. FLA-19 (Imports, small, finishes first)
-2. FLA-21 with FLA-31 (acquisition chain, shim; the longest)
-3. FLA-22 (search)
-4. FLA-23 (Discover Weekly; starts with the trigger spike; only Program.cs line in common)
-5. FLA-25 (updater tests; fully disjoint, lowest priority, can wait for a free agent)
-
-Four large builds in parallel is the most I would run: the review load (QA plus Security on each
-PR) is the real limit, not the build time. If review capacity is thin, start FLA-19, FLA-21+31 and
-FLA-22, and start FLA-23 as soon as the first of them is merged.
-
-**Step B:** FLA-18 after FLA-19 is merged and FLA-21's shim commit (commit 1) is in; then FLA-20
-after FLA-19 and FLA-18. FLA-11 any time after FLA-28 merges.
-
-**Step C:** FLA-26's scan jobs may start with Step A (question 14); the matrix run and FLA-27
-wait for all builds.
-
-**Review rule per PR:** QA verifies against its criteria; Security reviews FLA-18, FLA-19, FLA-21,
-FLA-23 (user data, credentials, external input) and any FLA-20/22/25 change that adds a host, a port
-or an admin route. A human merges, or the orchestrator on the human's standing instruction (D9).
+Review rule per PR: QA verifies against its criteria; Security reviews FLA-18, FLA-19, FLA-21, FLA-23
+and any change that adds a host, port or admin route; the orchestrator merges verified PRs (D12).
 
 ---
 
 ## 4. Open questions for the human
 
-Each has my recommendation. Where I could not verify something, it says so.
+Only two remain. Everything else from the first draft is answered by the decisions in section 1.
 
-**1. Deezer as a second search source (FLA-22).** *Recommend: approve, with `SEARCH_FUSION_ENABLED`
-on by default.* Deezer track search is not an existing call, but the public API is already used
-by default for albums, artists and enrichment without a key, so this is more volume to a host
-already in use, not a new service. Cost: one extra request per query of 12 songs or more, plus
-fewer per-row lookups because track rows already carry album, cover and length. Octo's rate limiter
-already caps Deezer at about 50 requests per 5 seconds. **Not verified:** Deezer's published terms of
-use for the public API (I did not read them); please have one person look before approving, because
-the QA note on FLA-13 asked for this. Default on is consistent with how albums already work and
-fixes the "no Last.fm key means no outside songs" case, which is the biggest cause of poor search.
-If you would rather start cautious, default off for one release and flip it.
+1. **Deezer's terms.** *Recommend: one person reads Deezer's published terms for the public API
+   before FLA-22 is merged.* Deezer is already used by default for albums and enrichment without a
+   key, and FLA-22 adds one more request per search of 12 songs or more, so I expect no change, but I
+   did not read the terms. The build can proceed meanwhile; the switch is one setting if the answer is
+   no.
+2. **"A requested song plays right away and is downloaded in the background" (D6).** Octo already can
+   stream an outside song from YouTube at the first byte and download it on play, but
+   `DOWNLOAD_ON_PLAY` is off by default (`docs/architecture.md` section 3.2). *Recommend: confirm that
+   you want it on by default.* If yes, it is a one-line default change with its README line, filed as
+   a small separate Backend issue, not part of this plan's builds.
 
-**2. Last.fm: measure with a real key, or skip? (FLA-22)** *Recommend: skip it as a gate.* The
-Deezer path does not need a key, and the unit tests use canned answers for both sources. Ask whoever
-has a key to run the 15 queries once after the PR is merged and paste the counts on FLA-22, to
-re-tune the fusion weights later. Waiting for it would stall the largest user-visible fix for a
-measurement that only tunes it.
-
-**3. `songCount` of 12 or less keeps skipping outside search? (FLA-22)** *Recommend: keep it.* It
-protects both upstreams from a request per keystroke, and the fixture has a case that fails the
-build if outside calls appear there. Revisit with measurements after the fusion is live.
-
-**4. Discover Weekly: opt-out or opt-in? (FLA-23)** *Recommend: opt-out (every allowed user is
-covered once the module is on), only if the user can opt out without an admin; otherwise opt-in.*
-Security accepts opt-out under five conditions: switch off by default (kept), no outbound call
-carries a user's data unless they linked a service themselves, the opt-out is reachable by the
-user, the first list says what it does, and opting out stops runs and deletes their rows. The
-condition most likely to fail is the third: this repo has no end-user app (the players live in
-another repo). However `ImportsController` already serves signed-in non-admin Navidrome users
-through the dashboard, so a small "Discover Weekly" panel there can carry the opt-out and the
-explanation. If that panel is cut for time, the honest choice is opt-in, not an admin-only opt-out.
-
-**5. Server-wide caps (FLA-23).** *Recommend: 100 outside songs per week for the whole server, 20
-per hour, and stop fetching below 10 GB free.* These are my numbers, not measurements: with the
-per-user cap of 10, 100 covers ten active users, which is a household or a few friends. They are
-settings, so a larger server raises them. The design asks the human to confirm the defaults; the
-per-user cap of 10 is already decided.
-
-**6. API-key sign-ins get no Discover Weekly list in v1 (FLA-23).** *Recommend: accept.* A request
-carrying an API key has no user name Octo can trust (Octo asks Navidrome who owns the key, but the
-design refuses to start a run on a credential that carries `apiKey`/`jwt`, Security condition 15).
-Status says why. Add a later issue only if someone actually uses an API-key client.
-
-**7. Does the yt-dlp switch default on? (FLA-21)** *Recommend: no, keep it off for this release, and
-file one follow-up issue now.* Security condition 11 forbids default-on until SEC-7 is addressed for
-yt-dlp: a pinned, checksum-verified yt-dlp (or a setting that turns the runtime self-update off), and
-the dependency scan in CI. Reason: the fallback makes yt-dlp run unattended, more often, on text
-that comes from outside, and `-U` on a 403 downloads and runs an unverified binary as root today.
-Proposed follow-up issue (Backend, small, no gate needed, can run in Step 0): "Pin and verify
-yt-dlp in the shim and add a setting to turn off its self-update", with Security's review. Together
-with FLA-26's scan jobs it clears condition 11, and the default then becomes a separate, one-line
-human decision with Security's re-review. The switch's own README paragraph must say the risk until then.
-
-**8. YouTube Music import scope (FLA-18).** *Recommend: v1 is public playlist links and a Takeout
-file; no cookies, no OAuth, no stored login.* The architecture map (A3) says nothing reads a
-YouTube Music account today. A "log in with your account" import means a stored cookie or token
-that is a full-account credential, the worst class under R1.5, which would pull FLA-18 into a
-credential-storage design plus Security's line-by-line review. The private liked-music list is
-only reachable through Takeout in v1. If you want live account import, make it a separate issue
-after v1, with its own design. **Not verified:** that Takeout's current file layout still matches
-what the parser will assume; the build verifies it against a generated fixture and says so.
-
-**9. Import fidelity (FLA-19): how do liked songs become stars?** *Recommend: pending stars applied
-on the user's next live request, no stored credential* (FLA-19 section above). The alternatives are
-worse: keep a token for a day (rejected for Discover Weekly for the same reason), or star as an admin
-(forbidden by R2.5). Consequence the human should accept: liked songs are starred when the importing
-user next opens a client, not at the moment of import, and only after the song is in the library.
-Related, default: `IMPORT_STAR_LIKED` off until you have seen it work on your own server.
-
-**10. FLA-22 thresholds (the gate must set them).** *Recommend as written in the FLA-22 section:*
-12 of 13 scored fixture cases pass on canned answers, zero outside calls for type-ahead, both
-scenarios pass; latency median plus 300 ms, p95 plus 500 ms, 10-second deadline unchanged. Reason
-for 12 of 13: `Mr. Brightside live` is documented as needing two sources to agree; any other miss
-is a real defect.
-
-**11. Should the yt-dlp fallback decline songs that Discover Weekly fetches? (FLA-21 and FLA-23)**
-*Recommend: yes.* The fallback is designed for songs a person asked for (hearts and imports through
-`AcquireTrackAsync`). Discover Weekly also uses the acquisition entry points, so without a rule a
-song Octo picked on its own that no source has could be taken as a YouTube MP3 at volume nobody
-chose song by song. The rule is small: the Discover Weekly request marks its songs, and the
-fallback declines marked songs. Without this, FLA-21 and FLA-23 interact by accident.
-
-**12. A test-only stub service for the harness.** *Recommend: yes, one small Python (standard
-library only) container in `tests/integration/docker-compose.yml` that stands in for Deezer, Last.fm,
-slskd, Lidarr and the yt-dlp shim, with canned answers per module.* Four modules need stubs
-(FLA-18 if the link path stays, FLA-21, FLA-22, optionally FLA-23), and `docs/testing.md` says a
-module adds its own. A shared stub avoids four incompatible ones. `AGENTS.md` requires written
-approval for a new container the plan does not list; this one exists only in the test stack,
-never in the root `docker-compose.yml` or the images. Alternative: each module writes its own stub
-file (more duplication, no approval needed).
-
-**13. The remaining Medium and Low findings from the security audit.** *Recommend: file SEC-4/SEC-6
-(secret files written with `0600` from the start) and SEC-5 (recovery code in the log) now as small
-Backend issues; leave SEC-3, SEC-9 to SEC-13 as FLA-27 findings.* Only SEC-1 and SEC-2 were filed
-(as FLA-28 and FLA-29). The audit's own text lists the Medium ones as "awaiting human approval" and
-FLA-27's acceptance ("no open High or Critical; Medium and Low filed as issues") will make them
-issues anyway, so filing the cheap, risk-reducing ones early costs nothing and the final review is
-shorter. SEC-3 (dashboard on the main port) and SEC-11 (containers as root) change deployment and
-need a human decision before anyone touches them.
-
-**14. Split the dependency-scan jobs out of FLA-26.** *Recommend: yes.* They need no module, they
-close SEC-7 (and Security condition 11), and the earlier a vulnerable dependency fails a build, the
-cheaper it is. FLA-26 keeps the matrix run and the report.
-
-**15. Anything else I found unresolved.**
-- *FLA-10* (the page jumping while a song is fetched) was skipped by the human and sits in Todo with
-  a draft PR. It is a Wave 0 item that FLA-26 lists as a dependency ("all Wave 0 UI fixes"). *Recommend:
-  tell FLA-26 explicitly that FLA-10 is not required, or close FLA-10 as postponed.*
-- *FLA-11* has a `Blocked` label although the PNG has been supplied; the comment says it waits for
-  FLA-28 instead. The label should change to say that, or be removed when FLA-28 merges.
-- *Per-user opt-out UI for Discover Weekly* and the *import options page* both add to the dashboard
-  `admin.js`, which is one large file. Two agents editing it at once is a conflict risk: serialise
-  FLA-20 and the Discover Weekly panel, or have each add a separate JS file under `wwwroot/admin`.
-- *Discover Weekly's server-wide weekly cap* and *`PerHour`* of the yt-dlp fallback are separate
-  budgets; nothing yet limits total unattended downloads from both together. *Recommend:* accept,
-  document both in the README, and let FLA-27 check the sum.
-- *CI evidence.* Decision D8 says CI runs. The docs-only PRs (FLA-13 to FLA-16) used `[skip ci]`
-  and the earlier notes said Actions was off, so none of them has a CI run to cite. Before a build PR
-  claims "CI passed", confirm `ci.yml` and `integration.yml` actually ran on that PR, and say so
-  plainly when they did not.
+A decision I took inside the plan that you may overrule: the yt-dlp fallback declines songs that
+Discover Weekly fetches (FLA-23 section), so an automatic pick never becomes a YouTube MP3.
 
 ---
 
 ## 5. Risks, and what to cut
 
-### Risks
+| Risk | Mitigation |
+|---|---|
+| The Discover Weekly trigger does not work as designed | Do the spike first; the fallback is one claimed line in `SubSonicController.cs`; if both fail, ship it as a dashboard "Build now" button (a dashboard sign-in is also a verified request) |
+| FLA-21 touches the most shared code | Hardening and typed outcomes first, behaviour-preserving, each tested; off means off is tested; Security reviews the shim change before the module |
+| Default-on for the yt-dlp fallback | The pin and the shim scan ship in the same PR; Security re-reviews when the default is on |
+| The harness cannot test time | Fake clock in unit tests; the harness pre-seeds valid entries; each PR says so |
+| Unverified upstream behaviour (Deezer terms, ListenBrainz `validate-token`, Navidrome API details) | Each is a build-time spike with a stated stop condition |
+| Accepted High advisories on ImageSharp 3.1.12 (D8) | The size cap is in; FLA-32 evaluates a replacement; FLA-27 reports it |
+| CI evidence | Docs-only PRs used `[skip ci]` and had no CI run to cite; a build PR must confirm `ci.yml` and `integration.yml` actually ran, and say so when they did not |
+| Auto-downloading at volume | Per-user cap of 10 a week for Discover Weekly and the yt-dlp per-hour limits; each is a setting |
 
-| Risk | Why it matters | Mitigation |
-|---|---|---|
-| The Discover Weekly trigger does not work as designed | Everything in FLA-23 hangs on a module-registered filter running after the port split without breaking body buffering (`Program.cs`); the design itself marks this as unverified | Do the spike as the very first FLA-23 task; the fallback is one claimed line in `SubSonicController.cs`; if both fail, drop FLA-23 to opt-in with a visible "Build now" button on the dashboard (the user's dashboard sign-in is also a verified request) |
-| FLA-21 touches the most shared code (coordinator, shim, resolver, Soulseek, Lidarr, trickle) | Regressions in the heart-to-download path affect every user; the typed outcomes change exception types | Commits 1 and 2 first, behaviour-preserving, each tested; run the full unit suite and the harness after each; off means off is tested; Security reviews the shim change before the module |
-| Four agents in parallel on shared hotspots | Rebase churn in `Program.cs`, `.env.example`, `docker-compose.yml`, `appsettings.json`, `README.md` | Merge in order; each branch rebases before review; per-module stub compose files; no reformatting |
-| Review capacity (QA plus Security) is the bottleneck | Security must review four large PRs with long condition lists (21 and 19 conditions) | Stagger Step A; give Security the condition list as a checklist in each PR body |
-| Upstream behaviour not measured | Last.fm unmeasured; Deezer volume and terms unverified; ListenBrainz `validate-token` unverified; Navidrome API details marked "verify" in several designs | Treat each as a build-time spike with a stated stop condition; do not guess in code |
-| Harness cannot test time | yt-dlp fallback waits hours, Discover Weekly waits a week | Unit tests with a fake clock; harness pre-seeds valid store entries; say so in each PR instead of claiming a live test |
-| Default-on pressure on the yt-dlp fallback | The human wants it useful; Security condition 11 says not yet | Keep the follow-up pin issue small and early (question 7) |
-| Auto-downloading at volume (Discover Weekly, yt-dlp fallback) | Disk, abuse, terms | Per-user and server caps, free-space floor, switches off by default, both stated in the README |
-| Data written to users' Navidrome accounts (stars, playlists) | A bug here changes users' real data | Off by default; written only with the user's own credential; A/B isolation tests; read back and verify |
-| CI evidence | Past docs-only work had no CI run to cite | Confirm CI runs on this fork's PRs before Step A (question 15) and say plainly when it did not run |
-
-### What I would cut if time is short
-
-In this order, cheapest loss first:
-
-1. **FLA-20** (the admin policy page). Everything works at today's defaults without it. The import
-   options can still be set by switch.
-2. **FLA-18's link path** (keep the Takeout file only). Removes the shim route and one stub.
-3. **FLA-25** (updater verification). The updater already has shell tests; this is proof, not a
-   feature.
-4. **FLA-23's extras**: no ListenBrainz name map (use only users who have a token that
-   proves a name), no seeded Last.fm similarity; library-only plus ListenBrainz recommendations.
-5. Last resort: ship FLA-23 as opt-in with a dashboard button, which removes the trigger risk.
-
-I would not cut: **FLA-19** (the brief asks for it and it is small), **FLA-21 with FLA-31** (the
-human's explicit request, and it fixes a real outage bug), **FLA-22** (the most user-visible
-quality fix), **FLA-26** (regression and scans), **FLA-27** (the only whole-system security pass).
+**What I would cut if time is short, in order:** FLA-18, then FLA-20, then FLA-25's tests beyond the
+failed-update case. I would not cut FLA-19, FLA-21 with FLA-31, FLA-22, FLA-26 or FLA-27. If FLA-23's
+trigger spike fails twice, ship it as the "Build now" button instead of dropping it.

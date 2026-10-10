@@ -1,5 +1,5 @@
-//! Port of `Services/Library/LibraryActionPlaylistWorker.cs`: the worker, and the playlist rows
-//! and parsers `NavidromePlaylistApi` returns.
+//! The library action playlist worker, and the playlist rows and parsers `NavidromePlaylistApi`
+//! returns.
 
 use std::sync::Arc;
 
@@ -41,8 +41,8 @@ pub struct LibraryActionPlaylistWorker {
     resolver: Arc<NavidromeSongPathResolver>,
     identity: NavidromeIdentityService,
     api: Arc<NavidromePlaylistApi>,
-    /// `IOptionsMonitor<LibraryActionSettings>`. `Enabled`, `PlaylistsEnabled` and the poll
-    /// interval are decided once, when the worker starts; the sweep reads the rest live.
+    /// The library action settings. `Enabled`, `PlaylistsEnabled` and the poll interval are
+    /// decided once, when the worker starts; the sweep reads the rest live.
     settings: Arc<SettingsStore>,
 }
 
@@ -67,7 +67,7 @@ impl LibraryActionPlaylistWorker {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker loop, until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         // Deliberately captured: the switches and the interval are decided when the worker starts.
         let settings = self.settings.current().library_actions.clone();

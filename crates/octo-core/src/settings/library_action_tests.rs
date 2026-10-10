@@ -1,5 +1,4 @@
-//! LibraryActionSettingsTests.cs, plus the settings-only half of DuplicateTests.cs
-//! (DuplicateSettingsTests).
+//! Library action settings tests, plus the duplicate settings.
 //!
 //! Every part of library actions is configurable, which means the sanitizing has to be too.
 //! The defaults are the cautious reading of every choice, because the feature removes files
@@ -356,7 +355,7 @@ fn playlist_title_uses_the_configured_prefix_and_tolerates_none() {
     assert_eq!(none.playlist_title(&definition.expect("delete")), "Delete");
 }
 
-// ---- DuplicateTests.cs: DuplicateSettingsTests ---------------------------------------------
+// ---- duplicate settings --------------------------------------------------------------------
 
 #[test]
 fn duplicates_alone_turns_on_notices_keep_and_the_notice_only_scope() {
@@ -395,7 +394,7 @@ fn effective_duplicates_scan_interval_is_clamped() {
     }
 }
 
-// ---- Beyond the C# tests ---------------------------------------------------------------------
+// ---- mapped ratings and journal numbers ------------------------------------------------------
 
 #[test]
 fn mapped_ratings_lists_enabled_non_zero_ratings_in_order() {

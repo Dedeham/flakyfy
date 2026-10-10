@@ -1,5 +1,5 @@
-//! The pure half of `Services/Soulseek/SoulseekLink.cs`: slskd's login state, one reading of
-//! it, and the dashboard's words for it. The link itself (the cached read and the wait) is
+//! The pure half of the Soulseek link: slskd's login state, one reading of it, and the
+//! dashboard's words for it. The link itself (the cached read and the wait) is
 //! `octo::services::soulseek::soulseek_link`.
 
 use std::time::Duration;
@@ -15,7 +15,7 @@ pub enum SoulseekLinkState {
 }
 
 impl SoulseekLinkState {
-    /// The member's name, as C#'s `ToString()` wrote it.
+    /// The member's name.
     pub fn name(self) -> &'static str {
         match self {
             SoulseekLinkState::LoggedIn => "LoggedIn",
@@ -123,7 +123,6 @@ mod tests {
         )
     }
 
-    /// SoulseekOutageTests.TheDashboardWarnsWhenSlskdIsUpButNotLoggedIn
     #[test]
     fn the_dashboard_warns_when_slskd_is_up_but_not_logged_in() {
         let reading = not_logged_in();
@@ -143,8 +142,8 @@ mod tests {
         assert!(describe(Some(&reading), 1).2.contains("1 hour for it"));
     }
 
-    /// SoulseekOutageTests.TheDashboardLinesForTheOtherStates (the logged-in line with the
-    /// reading parsed from slskd's answer is in `soulseek_client`'s tests).
+    /// The logged-in line with the reading parsed from slskd's answer is in `soulseek_client`'s
+    /// tests.
     #[test]
     fn the_dashboard_lines_for_the_other_states() {
         assert_eq!(
@@ -170,7 +169,6 @@ mod tests {
         );
     }
 
-    /// SoulseekOutageTests.NoDashLikeCharactersInTheWords
     #[test]
     fn no_dash_like_characters_in_the_words() {
         let detail = describe(Some(&not_logged_in()), 6).2;

@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/NavidromeIdentityService.cs`.
-
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,9 +45,9 @@ pub struct NavidromeIdentityService {
 }
 
 struct Inner {
-    // Read at the point of use (IOptionsMonitor, not IOptions): the admin UI writes
-    // settings.json and the config provider reloads it, so a captured copy would serve startup
-    // values until a restart while the admin UI SHOWED the new value.
+    // Read at the point of use: the admin UI writes settings.json and the config provider reloads
+    // it, so a captured copy would serve startup values until a restart while the admin UI SHOWED
+    // the new value.
     settings: Arc<SettingsStore>,
     http: reqwest::Client,
     state: Mutex<State>,
@@ -78,8 +76,7 @@ impl State {
     }
 }
 
-/// `JsonElement.GetString()`: a string, `None` for JSON null, and the exception it threw for
-/// any other kind.
+/// A string value: the string, `None` for JSON null, and an error for any other kind.
 fn get_string(value: &Value) -> Result<Option<String>, String> {
     match value {
         Value::String(s) => Ok(Some(s.clone())),
@@ -103,7 +100,7 @@ fn kind_name(value: &Value) -> &'static str {
     }
 }
 
-/// `JsonElement.ToString()`: a string's value, any other value's JSON text.
+/// A value's text: a string's value, any other value's JSON text.
 fn element_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),

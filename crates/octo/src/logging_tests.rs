@@ -1,5 +1,5 @@
-//! Port of `LogRedactionTests`: Subsonic credentials never reach the log. The request-line
-//! tests live with the pipeline (`http/pipeline_tests.rs`), where requests flow.
+//! Subsonic credentials never reach the log. The request-line tests live with the pipeline
+//! (`http/pipeline_tests.rs`), where requests flow.
 
 use super::*;
 use std::borrow::Cow;
@@ -65,7 +65,7 @@ fn octos_own_lines_mask_each_secret_parameter() {
             tracing::warn!(url = %url, "relay failed");
             tracing::warn!(uri = %parsed, "relay failed");
             tracing::warn!("relay to {url} failed");
-            // The unmasked form of HttpClient's own line.
+            // The unmasked form of the HTTP client's per-call line.
             tracing::info!(target: "System.Net.Http.HttpClient.Default.ClientHandler", "Sending HTTP request GET {url}");
         });
         let text = capture.text();
@@ -136,7 +136,7 @@ fn redact_returns_the_same_string_when_nothing_is_masked() {
 }
 
 #[test]
-fn dotnet_levels_map_to_tracing_levels() {
+fn log_level_names_map_to_tracing_levels() {
     let cases = [
         ("Trace", Some("trace")),
         ("Debug", Some("debug")),
@@ -153,7 +153,7 @@ fn dotnet_levels_map_to_tracing_levels() {
 }
 
 #[test]
-fn filter_directives_prefer_rust_log_then_dotnet_variables_then_information() {
+fn filter_directives_prefer_rust_log_then_logging_variables_then_information() {
     let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
         pairs
             .iter()
@@ -192,7 +192,7 @@ fn filter_directives_prefer_rust_log_then_dotnet_variables_then_information() {
     ] {
         assert!(parts.contains(&expected), "{expected} missing from {d}");
     }
-    // The directive string parses, and the ported request lines obey the AspNetCore level.
+    // The directive string parses, and the request lines obey the AspNetCore level.
     let filter = EnvFilter::builder().parse(&d).expect("directives parse");
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(filter).with(

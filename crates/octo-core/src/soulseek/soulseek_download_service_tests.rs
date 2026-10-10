@@ -1,6 +1,5 @@
-//! Port of `octo.Tests/SoulseekCandidateMatchingTests.cs` (its extension tests are in
-//! `soulseek_client`'s), the Soulseek cases SongIdentityTests and LiveVersionTests deferred to
-//! here, and AlbumFolderTests' `TheAlbumSearchWords` and `TheFolderOfAFileIsWhatThePeerNamesIt`.
+//! Soulseek candidate matching (its extension tests are in `soulseek_client`'s), the Soulseek
+//! cases of song identity and live versions, and the album search words and folder names.
 //!
 //! Which peer file gets accepted decides what audio ends up in the library, and a wrong
 //! choice is invisible: the tagger stamps the correct title, track number and cover art
@@ -217,7 +216,7 @@ fn unrequested_variants_sort_below_plain_matches() {
     assert_eq!(plain, 0);
 }
 
-/// A remix that was actually asked for must not be penalised.
+/// A remix that was actually asked for must not be penalized.
 #[test]
 fn requested_variants_are_not_penalised() {
     assert_eq!(
@@ -335,9 +334,9 @@ fn cd_quality_outranks_hi_res() {
     assert!(cd48 < hi_res, "hi-res sorts last");
 }
 
-/// Most peers report neither field. Treating unknown as hi-res would bury the
-/// majority of a normal search; treating it as CD would let an unlabelled 24/96
-/// outrank a labelled 16/44.1. It sits between the two on purpose.
+/// Most peers report neither field. Treating unknown as hi-res would bury the majority of a
+/// normal search; treating it as CD would let an unlabeled 24/96 outrank a labeled 16/44.1. It
+/// sits between the two on purpose.
 #[test]
 fn unknown_quality_sits_between_cd_and_hi_res() {
     let unknown = quality_penalty(&hit(None, None));
@@ -371,7 +370,7 @@ fn size_tiebreak_reads_a_configured_extension_in_any_shape() {
 }
 
 #[test]
-fn the_quality_penalties_follow_the_c_sharp_tables() {
+fn the_quality_penalties_follow_the_reference_tables() {
     let cases = [
         ((Some(16), Some(44100)), 0),
         ((Some(8), Some(22050)), 9),
@@ -386,7 +385,7 @@ fn the_quality_penalties_follow_the_c_sharp_tables() {
     }
 }
 
-// ---- SongIdentityTests: the Soulseek cases -----------------------------------------------
+// ---- song identity: the Soulseek cases ---------------------------------------------------
 
 #[test]
 fn soulseek_queries_skip_brackets_and_cap_the_searches() {
@@ -468,7 +467,7 @@ fn soulseek_ultimate_suicide_is_not_suicide_on_the_title_only_search() {
     assert!(!matches_phrase("Ultimate $uicide.flac", "$UICIDE Pt. 2"));
 }
 
-// ---- LiveVersionTests: the Soulseek cases ----------------------------------------------
+// ---- live versions: the Soulseek cases -------------------------------------------------
 
 const LIVE_PATH: &str =
     r"Music\Silverstein\Decade (live at the El Mocambo) (2010)\17 - Smile in Your Sleep.flac";
@@ -535,7 +534,7 @@ fn a_live_request_takes_a_live_folder() {
     }
 }
 
-// ---- AlbumFolderTests: the pure statics --------------------------------------------------
+// ---- album folders: the pure functions ---------------------------------------------------
 
 #[test]
 fn the_album_search_words() {

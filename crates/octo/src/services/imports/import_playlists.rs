@@ -1,5 +1,4 @@
-//! Port of `Services/Imports/ImportPlaylists.cs`, with the port's fix for "Keep as playlist"
-//! (BACKLOG H).
+//! "Keep as playlist": an imported list kept as a Navidrome playlist.
 
 use std::sync::Arc;
 
@@ -34,8 +33,8 @@ impl PlaylistSyncResult {
     }
 }
 
-/// What the playlist keeper asks Navidrome. The C# class took these as settable delegates, so a
-/// test could build one with no Navidrome at all; here they are a trait the tests implement.
+/// What the playlist keeper asks Navidrome. A trait, so a test can build one with no Navidrome
+/// at all.
 #[async_trait]
 pub trait PlaylistNavidrome: Send + Sync {
     /// A new private playlist, as the admin: its id, or None.
@@ -48,7 +47,7 @@ pub trait PlaylistNavidrome: Send + Sync {
     async fn read_tracks(&self, id: &str) -> Option<Vec<(String, String)>>;
     async fn remove(&self, id: &str, positions: &[String]) -> bool;
     async fn add(&self, id: &str, songs: &[String]) -> bool;
-    /// Deletes a playlist Octo just made. Not in the C#: the port's fix.
+    /// Deletes a playlist Octo just made and could not fill.
     async fn delete(&self, id: &str) -> bool;
     /// The admin Octo signs in to Navidrome as.
     fn admin_name(&self) -> Option<String>;
@@ -111,9 +110,9 @@ impl PlaylistNavidrome for NavidromePlaylists {
 /// is replaced. Songs nobody has yet are left out until they arrive. A playlist the person
 /// deleted stays deleted.
 ///
-/// The port's fix: a playlist this call made and could not fill is deleted again, so a failure
-/// never leaves an empty one behind (the C# kept no id on a failure and made another next time).
-/// When even the delete fails, its id is handed back so the next try fills that one.
+/// A playlist this call made and could not fill is deleted again, so a failure never leaves an
+/// empty one behind, and the next try never makes a second one. When even the delete fails, its
+/// id is handed back so the next try fills that one.
 pub struct ImportPlaylists {
     navidrome: Arc<dyn PlaylistNavidrome>,
 }

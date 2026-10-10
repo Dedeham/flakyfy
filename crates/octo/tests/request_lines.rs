@@ -1,4 +1,4 @@
-//! `LogRedactionTests.RequestLines_*`: the hosting layer's request lines never carry a secret.
+//! The hosting layer's request lines never carry a secret.
 //!
 //! These live in their own test binary with one global subscriber. A scoped (thread-local)
 //! subscriber in the unit tests races with other tests that hit the same request-line callsites
@@ -152,11 +152,9 @@ async fn request_lines_mask_every_secret_at_once_and_keep_the_rest() {
     }
 }
 
-/// `AnApiKeySignIn_IsNamed_WithoutTheKeyReachingTheLog`: an API key sign-in carries no
-/// username, so Octo asks Navidrome whose key it is. That call carries the key too, and neither
-/// it nor Octo's own lines about it may log it. The C# drove it through scrobble and search3
-/// (6-A); here a relayed call carries the key through the catch-all, and `RequestIdentity`
-/// names it.
+/// An API key sign-in carries no username, so Octo asks Navidrome whose key it is. That call
+/// carries the key too, and neither it nor Octo's own lines about it may log it. A relayed call
+/// carries the key through the catch-all, and `RequestIdentity` names it.
 #[tokio::test]
 async fn an_api_key_sign_in_is_named_without_the_key_reaching_the_log() {
     use wiremock::matchers::{method, path};

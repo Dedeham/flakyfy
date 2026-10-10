@@ -1,7 +1,5 @@
-//! LastFmRadioControllerTests and LastFmRadioNativeApiTests: radio stations as Subsonic
-//! playlists, as internet radio stations with an opaque stream URL, the stream itself, and as
-//! Navidrome-native playlists. (The scrobble tests in that file drive `/rest/scrobble`, task
-//! 6-A2's.)
+//! Radio stations as Subsonic playlists, as internet radio stations with an opaque stream URL,
+//! the stream itself, and as Navidrome-native playlists.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -60,7 +58,7 @@ impl Gate {
     }
 }
 
-/// The C# `BlockingRadioTranscoder`.
+/// A radio transcoder a test can hold at its gates, make fail a set number of times, and count.
 struct BlockingTranscoder {
     last_bitrate_kbps: AtomicI32,
     failures_before_success: AtomicUsize,
@@ -138,9 +136,8 @@ impl ILastFmRadioAudioTranscoder for BlockingTranscoder {
     }
 }
 
-/// The download service as the C# fixture had it: the real one, whose direct stream came from
-/// the yt-dlp shim (`external-source-audio`). The real service is task 4-C's, so this stands
-/// in for it.
+/// A download service whose direct stream comes from the yt-dlp shim (`external-source-audio`),
+/// standing in for the real one.
 struct ShimDownloads;
 
 #[async_trait]
@@ -235,7 +232,7 @@ impl IRadioTuneInSelector for FixedTuneIn {
     }
 }
 
-/// The C# `RadioUpstreamHandler`'s Navidrome.
+/// The radio tests' Navidrome.
 #[derive(Clone, Default)]
 struct RadioUpstream {
     relayed_scrobble_ids: Arc<Mutex<Vec<String>>>,
@@ -395,7 +392,7 @@ impl Default for Options {
     }
 }
 
-/// The C# `RadioWebFactory`.
+/// The app over the radio tests' Navidrome and services.
 struct RadioFixture {
     _dir: TempDir,
     _navidrome: MockServer,
@@ -712,8 +709,7 @@ async fn subsonic_playlist_detail_rejects_wrong_user_and_reserved_mutations() {
     }
 }
 
-/// The station-list half of `AuthenticationFailure_DoesNotExposeStationsOrLearnScrobbles` (the
-/// scrobble half drives 6-A2's `/rest/scrobble`).
+/// A failed sign-in does not expose the stations.
 #[tokio::test]
 async fn authentication_failure_does_not_expose_stations() {
     let fixture = RadioFixture::new(Options::default()).await;
@@ -1206,7 +1202,7 @@ async fn internet_radio_preparation_skips_failed_source_and_caches_playable_fall
 }
 
 // ---------------------------------------------------------------------------------------
-// LastFmRadioNativeApiTests
+// Navidrome-native playlists
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1297,7 +1293,6 @@ fn outside_copies() -> TestMetadata {
     })
 }
 
-// RadioProvenanceTests.AStationSongThatSoundedAlike_ButIsNoLongerInTheLibrary_IsLeftOut
 #[tokio::test]
 async fn a_station_song_that_sounded_alike_but_is_no_longer_in_the_library_is_left_out() {
     use octo_core::radio::radio_provider::{SOUNDS_ALIKE, YOU_TUBE_MUSIC};
@@ -1344,7 +1339,6 @@ async fn a_station_song_that_sounded_alike_but_is_no_longer_in_the_library_is_le
     assert!(body.contains("Online Song"), "{body}");
 }
 
-// RadioProvenanceTests.AStationSong_SaysTheSourceItsStationWasBuiltWith
 #[tokio::test]
 async fn a_station_song_says_the_source_its_station_was_built_with() {
     use octo_core::radio::radio_provider::YOU_TUBE_MUSIC;

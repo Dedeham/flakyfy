@@ -1,5 +1,5 @@
-//! Running ffmpeg or fpcalc the way the C# `Process` blocks did: from the temp folder, stdout
-//! and stderr redirected, stdin inherited, and killed when the caller gives up on it.
+//! Running ffmpeg or fpcalc: from the temp folder, stdout and stderr redirected, stdin
+//! inherited, and killed when the caller gives up on it.
 
 use std::io;
 use std::process::{ExitStatus, Stdio};
@@ -30,7 +30,7 @@ pub(crate) fn spawn(program: &str, arguments: &[&str]) -> io::Result<Child> {
 }
 
 /// Reads stdout and stderr to the end side by side, then waits for the exit. `keep_stdout`
-/// false copies stdout to nowhere, as `CopyToAsync(Stream.Null)` did.
+/// false reads stdout to the end and drops it.
 pub(crate) async fn collect(child: &mut Child, keep_stdout: bool) -> io::Result<ToolRun> {
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let mut stderr = child.stderr.take().expect("stderr is piped");

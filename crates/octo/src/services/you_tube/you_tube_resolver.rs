@@ -1,4 +1,4 @@
-//! Port of `Services/YouTube/YouTubeResolver.cs`: the client for the yt-dlp shim.
+//! The client for the yt-dlp shim.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +43,7 @@ pub struct ShimStream {
 pub struct YouTubeResolver {
     /// `yt-dlp-shim-search`: 60 s rather than 30 s because back-to-back search3 prewarm
     /// bursts can fill the shim's yt-dlp gate (MAX_CONCURRENT_YTDLP, which ships as 5) and
-    /// queue requests behind 5-8 s yt-dlp ytsearch1: invocations. 30 s was cancelling the tail
+    /// queue requests behind 5-8 s yt-dlp ytsearch1: invocations. 30 s was canceling the tail
     /// of every prewarm batch.
     search_client: reqwest::Client,
     /// `yt-dlp-shim-stream`: no timeout, because /stream stays open for the whole song and a
@@ -72,7 +72,7 @@ pub struct ShimBusy {
     pub ytdlp_limit: u32,
 }
 
-/// `Uri.EscapeDataString`: everything but the RFC 3986 unreserved characters.
+/// What a query escapes: everything but the RFC 3986 unreserved characters.
 const DATA_STRING: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
@@ -84,7 +84,7 @@ fn escape(text: &str) -> String {
 }
 
 impl YouTubeResolver {
-    /// The named clients' names in the C#.
+    /// The two clients' names.
     pub const SEARCH_CLIENT_NAME: &'static str = "yt-dlp-shim-search";
     pub const STREAM_CLIENT_NAME: &'static str = "yt-dlp-shim-stream";
 
@@ -114,8 +114,8 @@ impl YouTubeResolver {
 
     /// A resolver on the given shim address (blank → the compose service name).
     pub fn with_base_url(configured: Option<&str>) -> Self {
-        // IHttpClientFactory's clients did not decompress, so neither do these: /stream
-        // passes the shim's bytes and Content-Length straight through.
+        // Neither client decompresses: /stream passes the shim's bytes and Content-Length
+        // straight through.
         let search_client = reqwest::Client::builder()
             .timeout(Self::SEARCH_TIMEOUT)
             .no_gzip()
@@ -469,9 +469,8 @@ impl YouTubeResolver {
     }
 }
 
-/// `TryGetProperty(name, out v) ? v.GetString() : null`: absent or null → None; a value that
-/// is not a string threw (`InvalidOperationException`), and so does a root that is not an
-/// object, which the callers caught.
+/// A string property: absent or null → None; a value that is not a string is an error, and so
+/// is a root that is not an object, which the callers handle.
 fn json_string(root: &Value, name: &str) -> anyhow::Result<Option<String>> {
     let object = root
         .as_object()
@@ -490,8 +489,7 @@ fn parse_hit(root: &Value, with_channel: bool) -> anyhow::Result<Option<YouTubeH
         return Ok(None);
     };
     let title = json_string(root, "title")?;
-    // `d.ValueKind == Number ? d.GetInt32() : null`: GetInt32 threw on a number that is not
-    // an Int32.
+    // A number must fit an `i32`, or the answer is an error; anything else is no duration.
     let duration = match root.get("duration") {
         Some(Value::Number(n)) => Some(
             n.as_i64()
@@ -551,7 +549,7 @@ mod tests {
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    // ---- YouTubeResolverBaseUrlTests ----------------------------------------------------
+    // ---- The shim's base URL ------------------------------------------------------------
 
     fn build(shim_url: Option<&str>) -> YouTubeResolver {
         let store = SettingsStore::for_tests(Default::default());
@@ -588,11 +586,11 @@ mod tests {
         }
     }
 
-    // ---- Rust-only: the shim's endpoints ------------------------------------------------
+    // ---- The shim's endpoints ------------------------------------------------------------
 
     #[test]
-    fn queries_are_escaped_as_uri_escape_data_string_did() {
-        // .NET 9: Uri.EscapeDataString("a b+c/é~*'()!")
+    fn queries_are_escaped_except_unreserved_characters() {
+        // The reference escaping of "a b+c/é~*'()!".
         assert_eq!(escape("a b+c/é~*'()!"), "a%20b%2Bc%2F%C3%A9~%2A%27%28%29%21");
     }
 

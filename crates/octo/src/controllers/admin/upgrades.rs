@@ -1,6 +1,5 @@
-//! `AdminController`'s Better quality page (L1254-L1432): the library's lossy songs and the
-//! upgrade queue, which acts as the Navidrome admin signed in on the page, who must be on the
-//! library actions allowed list.
+//! The Better quality page: the library's lossy songs and the upgrade queue, which acts as the
+//! Navidrome admin signed in on the page, who must be on the library actions allowed list.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -45,13 +44,13 @@ pub const MAX_UPGRADES_PER_REQUEST: usize = 2000;
 const NO_ADMIN_CREDENTIAL: &str = "Octo needs a Navidrome admin credential to read the whole library.";
 
 /// The library's lossy songs, listed from Navidrome. Walking a big library takes a while, so the
-/// answer is kept a few minutes; "refresh" asks again. (A static in C# too.)
+/// answer is kept a few minutes, shared by every request; "refresh" asks again.
 static LOSSY_CACHE: LazyLock<Mutex<Option<(DateTime<Utc>, Vec<LibrarySongRow>)>>> =
     LazyLock::new(|| Mutex::new(None));
 
 const LOSSY_FOR: TimeDelta = TimeDelta::minutes(5);
 
-/// `Path.GetFileName` on a path already written with forward slashes.
+/// The last part of a path already written with forward slashes.
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -108,7 +107,7 @@ async fn get_lossy(State(state): State<AppState>, request: Request) -> Response 
             .push(path);
     }
     let tried = state.quality_upgrade_worker.tried().attempts;
-    // ToDictionary(job => job.NavidromeId): ids are unique in the queue.
+    // Keyed by Navidrome id: ids are unique in the queue.
     let jobs: HashMap<String, UpgradeJob> = state
         .upgrade_queue
         .snapshot()
@@ -147,7 +146,7 @@ async fn get_lossy(State(state): State<AppState>, request: Request) -> Response 
     browse.finish(ok(&json!({ "total": rows.len(), "songs": songs })))
 }
 
-/// `string.EndsWith(value, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `text` ends with `suffix`, ignoring case.
 fn ends_with_ignore_case(text: &str, suffix: &str) -> bool {
     let text: Vec<char> = text.chars().collect();
     let suffix: Vec<char> = suffix.chars().collect();
@@ -184,7 +183,7 @@ async fn get_upgrades(State(state): State<AppState>, request: Request) -> Respon
     let Some(user) = browse.user.clone() else {
         return browse.finish(sign_in());
     };
-    // GroupBy(provider:externalId).First().
+    // One row per provider and external id: the first one seen.
     let mut live: HashMap<String, AcquisitionSnapshot> = HashMap::new();
     for row in state.acquisition_tracker.all() {
         live.entry(format!("{}:{}", row.provider, row.external_id))
@@ -258,7 +257,7 @@ fn better_quality_on(actions: &octo_core::settings::LibraryActionSettings) -> bo
         .any(|a| a.action == LibraryAction::BetterQuality && a.enabled)
 }
 
-/// `UpgradeQueueRequest(List<UpgradeAsk>? Songs)`.
+/// The queue body: an optional list of `songs` to upgrade.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct UpgradeQueueRequest {
@@ -276,7 +275,7 @@ impl FromBody for UpgradeQueueRequest {
     };
 }
 
-/// `UpgradeAsk(string NavidromeId, string? Title, ...)`, as the body carries it.
+/// One song to upgrade, as the body carries it.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct UpgradeAskBody {
@@ -288,14 +287,14 @@ struct UpgradeAskBody {
     attempt_key: Option<String>,
 }
 
-/// `UpgradeIdsRequest(List<string>? Ids)`.
+/// A body with an optional list of job `ids`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct UpgradeIdsRequest {
     ids: Option<Vec<String>>,
 }
 
-/// `Octo.Services.Library.UpgradeAsk`, and the `PickedCopy` class it can carry.
+/// The shape of one song to upgrade, and of the picked copy it can carry.
 const UPGRADE_ASK: &Shape = &Shape {
     name: "Octo.Services.Library.UpgradeAsk",
     by_constructor: true,
@@ -405,7 +404,7 @@ async fn queue_upgrades(State(state): State<AppState>, request: Request) -> Resp
         Ok(r) => r,
         Err(answer) => return *answer,
     };
-    // The implicit [Required] on every ask's NavidromeId, checked before the action ran.
+    // Every ask's NavidromeId is required, checked before the action runs.
     let missing: Vec<String> = request
         .songs
         .iter()

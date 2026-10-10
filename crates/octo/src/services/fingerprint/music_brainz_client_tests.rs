@@ -1,6 +1,5 @@
-//! Port of the client half of `octo.Tests/MusicBrainzReleaseDetailsTests.cs` ("the client:
-//! cache and escaping"). Its `ReleaseDetails.Parse` and `CandidateSources` tests belong to the
-//! tagging port (2-A); its `MusicBrainzQueryTests` are in
+//! The MusicBrainz client: its cache and escaping. Reading release details and candidate
+//! sources is tested with the tagging code; the query builders are tested in
 //! `octo_core::fingerprint::music_brainz_client`.
 
 use wiremock::matchers::any;
@@ -116,7 +115,7 @@ async fn search_recordings_is_remembered_for_the_same_song() {
     assert_eq!(calls(&server).await.len(), 1);
 }
 
-/// Rust-only: the second request waits out the one-a-second gap.
+/// The second request waits out the one-a-second gap.
 #[tokio::test]
 async fn requests_are_spaced_a_second_apart() {
     let (client, _server) =

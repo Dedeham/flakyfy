@@ -1,5 +1,5 @@
-//! The records of `Services/Notifications/INotificationSink.cs`. The sink trait itself is async
-//! and lives with the transports in `octo::services::notifications::i_notification_sink`.
+//! The notification sinks' records. The sink trait itself is async and lives with the transports
+//! in `octo::services::notifications::i_notification_sink`.
 
 use serde::Serialize;
 
@@ -24,7 +24,7 @@ pub struct NotificationMessage {
 }
 
 impl NotificationMessage {
-    /// `new NotificationMessage(type, title, body, imageUrl)`: no description, no fields.
+    /// A message from its type, title, body and image URL: no description, no fields.
     pub fn new(
         r#type: NotificationEventType,
         title: impl Into<String>,
@@ -42,7 +42,7 @@ impl NotificationMessage {
     }
 }
 
-/// Per-sink outcome of the admin "Send test" button. Serialized as ASP.NET wrote the record.
+/// Per-sink outcome of the admin "Send test" button. Serialized in camelCase.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationTestResult {

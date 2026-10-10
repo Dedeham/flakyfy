@@ -1,14 +1,13 @@
-//! Logging: the `tracing` subscriber that stands in for ASP.NET's console logger, its level
-//! filter, and the credential redaction `Program.cs` wrapped around the whole logger factory
-//! (`builder.Logging.AddCredentialRedaction()`).
+//! Logging: the `tracing` subscriber that writes Octo's console log, its level filter, and the
+//! credential redaction wrapped around every line it writes.
 //!
-//! Levels come from `RUST_LOG` when it is set. Otherwise the .NET variables are honored:
-//! `Logging__LogLevel__Default` and `Logging__LogLevel__<Category>`, with the .NET level names
-//! (Trace, Debug, Information, Warning, Error, Critical, None). With neither, Octo's own lines
-//! log at Information and [`QUIET_BY_DEFAULT`] leaves out the two lines for every request and
-//! the HTTP client's: they were most of the log, and writing them cost CPU. A variable for one
-//! of those categories (docker-compose.yml passes `LOG_LEVEL_ASPNETCORE` and
-//! `LOG_LEVEL_HTTPCLIENT`) brings it back.
+//! Levels come from `RUST_LOG` when it is set. Otherwise the `Logging__LogLevel__Default` and
+//! `Logging__LogLevel__<Category>` variables are honored, with their level names (Trace, Debug,
+//! Information, Warning, Error, Critical, None). With neither, Octo's own lines log at
+//! Information and [`QUIET_BY_DEFAULT`] leaves out the two lines for every request and the HTTP
+//! client's: they were most of the log, and writing them cost CPU. A variable for one of those
+//! categories (docker-compose.yml passes `LOG_LEVEL_ASPNETCORE` and `LOG_LEVEL_HTTPCLIENT`)
+//! brings it back.
 //!
 //! Redaction happens on the formatted line, so it covers the message, every field and every
 //! span field, whatever level an operator turns them up to.
@@ -20,9 +19,8 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// The tracing target of the request lines ASP.NET's hosting layer wrote ("Request starting
-/// ...", "Request finished ..."), kept so `Logging__LogLevel__Microsoft.AspNetCore` still turns
-/// them off.
+/// The tracing target of the request lines ("Request starting ...", "Request finished ..."),
+/// named so `Logging__LogLevel__Microsoft.AspNetCore` turns them off.
 pub const HOSTING_DIAGNOSTICS: &str = "Microsoft.AspNetCore.Hosting.Diagnostics";
 
 /// The tracing target of the host's lifetime lines ("Now listening on", "Application started").
@@ -33,7 +31,7 @@ pub const MASK: &str = "***";
 
 /// The categories that log only warnings unless a `Logging__LogLevel__<Category>` variable says
 /// otherwise: the request lines ("Request starting ...", "Request finished ...") and the HTTP
-/// client's. The C# bridge release set the same two in its `appsettings.json`.
+/// client's.
 pub const QUIET_BY_DEFAULT: [(&str, &str); 2] = [
     ("Microsoft.AspNetCore", "Warning"),
     ("System.Net.Http.HttpClient", "Warning"),
@@ -92,7 +90,7 @@ impl<W: Write> Write for RedactingWriter<W> {
     }
 }
 
-/// A .NET `LogLevel` name as a tracing level directive. `None` turns a category off;
+/// A `Logging__LogLevel__*` level name as a tracing level directive. `None` turns a category off;
 /// `Critical` has no tracing equivalent and maps to `error`.
 pub fn dotnet_level(name: &str) -> Option<&'static str> {
     match name.trim().to_ascii_lowercase().as_str() {
@@ -106,12 +104,12 @@ pub fn dotnet_level(name: &str) -> Option<&'static str> {
     }
 }
 
-/// The tracing targets a .NET log category stands for.
+/// The tracing targets a `Logging__LogLevel__<Category>` category stands for.
 ///
 /// - `Octo` and `Octo.Some.Namespace` become the Rust crates and modules
 ///   (`octo::some::namespace`, also under `octo_core`, `octo_media` and `octo_subsonic`).
-/// - `Microsoft.AspNetCore` (or a prefix of it) keeps its own name, which the ported request
-///   and lifetime lines log under, and adds the Rust HTTP stack (`axum`, `tower_http`, `hyper`).
+/// - `Microsoft.AspNetCore` (or a prefix of it) keeps its own name, which the request and
+///   lifetime lines log under, and adds the HTTP stack (`axum`, `tower_http`, `hyper`).
 /// - `System.Net.Http` (or a prefix) adds the HTTP client (`reqwest`, `hyper_util`).
 /// - Anything else is used as a target as written.
 pub fn category_targets(category: &str) -> Vec<String> {
@@ -130,7 +128,7 @@ pub fn category_targets(category: &str) -> Vec<String> {
     let mut matched_known = false;
     for known in [HOSTING_DIAGNOSTICS, HOSTING_LIFETIME] {
         if is_prefix_of(known) {
-            // The category as the ported code spells it, so the case-sensitive target match works.
+            // The category as the code spells it, so the case-sensitive target match works.
             targets.push(known[..category.len()].to_string());
             matched_known = true;
         }
@@ -140,7 +138,7 @@ pub fn category_targets(category: &str) -> Vec<String> {
         matched_known = true;
     }
     // System.Net.Http, a prefix of it, or a category under it (System.Net.Http.HttpClient, the
-    // one .NET's per-call lines logged under).
+    // category of the HTTP client's per-call lines).
     if is_prefix_of("System.Net.Http") || lower.starts_with("system.net.http.") {
         targets.extend(["reqwest", "hyper_util"].map(String::from));
         if lower.starts_with("system.net.http.") {

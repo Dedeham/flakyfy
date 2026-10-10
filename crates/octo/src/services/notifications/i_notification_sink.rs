@@ -1,5 +1,5 @@
-//! Port of `Services/Notifications/INotificationSink.cs`: the transport trait. Its records
-//! (`NotificationMessage`, `NotificationTestResult`) are `octo_core::notifications`.
+//! The notification transport trait. Its records (`NotificationMessage`,
+//! `NotificationTestResult`) are `octo_core::notifications`.
 
 use async_trait::async_trait;
 pub use octo_core::notifications::{NotificationMessage, NotificationTestResult};

@@ -1,4 +1,4 @@
-//! Port of `Services/Common/AcquisitionActivity.cs`.
+//! Whether anything is downloading, for the background library jobs.
 
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -13,11 +13,9 @@ pub trait IAcquisitionActivity: Send + Sync {
 
 /// A queued star or play, or any transfer at all: album tracks bypass the queue.
 ///
-/// The C# resolved both from the `IServiceProvider` late, "because hosted services are built
-/// before the download service is first used". The queue depends on nothing and is handed over
-/// at construction. The download service is set once it exists
-/// ([`AcquisitionActivity::set_downloads`]), and held weakly: the download service is what
-/// reports to the library jobs that read this, so a strong reference would make a cycle.
+/// The queue depends on nothing and is handed over at construction. The download service is set
+/// once it exists ([`AcquisitionActivity::set_downloads`]), and held weakly: the download service
+/// is what reports to the library jobs that read this, so a strong reference would make a cycle.
 pub struct AcquisitionActivity {
     queue: Arc<TrackAcquisitionQueue>,
     downloads: OnceLock<Weak<dyn IDownloadService>>,

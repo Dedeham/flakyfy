@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/SpotifyAuth.cs`.
+//! The Spotify sign-in.
 
 use std::net::IpAddr;
 

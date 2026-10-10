@@ -1,5 +1,5 @@
-//! Port of `NavidromeSongPathResolverTests`. The resolver is the last thing standing between a
-//! Navidrome song id and anything that acts on a file.
+//! The resolver is the last thing standing between a Navidrome song id and anything that acts on
+//! a file.
 //!
 //! Navidrome's Subsonic `path` is SYNTHESISED FROM TAGS unless the calling player has
 //! ReportRealPath set, which defaults off. Verified against the production library on
@@ -268,8 +268,8 @@ fn full_paths_resolve_dots_lexically() {
     assert_eq!(extension("/x/Song."), "");
 }
 
-/// NavidromeSongPathResolverTests.ASongsLengthIsReadWhetherNavidromeSendsAFractionOrWholeSeconds
-/// (ed0bd7c): Navidrome's /api/song sends 301.37; Subsonic's getSong sends 301.
+/// A song's length is read whether Navidrome sends a fraction or whole seconds: Navidrome's
+/// /api/song sends 301.37; Subsonic's getSong sends 301.
 #[test]
 fn a_songs_length_is_read_whether_navidrome_sends_a_fraction_or_whole_seconds() {
     for (body, seconds) in [

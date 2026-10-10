@@ -1,5 +1,5 @@
-//! Port of `Services/CoverArt/ITunesCoverArtLookup.cs`. The barcode forms, which tagging reads
-//! too, are `octo_core::tagging::release_distance::barcode_forms`.
+//! Cover art from Apple's iTunes catalog. The barcode forms, which tagging reads too, are
+//! `octo_core::tagging::release_distance::barcode_forms`.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -53,7 +53,7 @@ const FLUSH_EVERY: Duration = Duration::from_secs(15);
 static RELEASE_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\s+-\s+(?:Single|EP)\s*$").expect("the release suffix regex compiles"));
 
-/// `SongMatchOptions { LengthToleranceSeconds = null }`.
+/// Song matching for album titles: no length tolerance.
 fn album_titles() -> SongMatchOptions {
     SongMatchOptions {
         length_tolerance_seconds: None,
@@ -62,7 +62,7 @@ fn album_titles() -> SongMatchOptions {
 }
 
 // Every search and lookup this class sends for a master waits its turn here, however many
-// albums are being worked on at once, and whichever instance sends it (these were statics).
+// albums are being worked on at once, and whichever instance sends it (the pacing is shared).
 // Apple documents about 20 a minute, but answered 30 searches at 2 a second on 2026-10-01,
 // and sacad asks up to 10 a second; so one a second, doubling (to 8 s at most) each time
 // Apple refuses, and halving again after 50 answers in a row.
@@ -97,9 +97,8 @@ async fn wait_for_apple() {
     *next = Some(Instant::now() + interval);
 }
 
-/// One row of itunes-masters.json: the private `CachedMaster(string Key, string? Url,
-/// DateTime At)` record, read and written by System.Text.Json's default options (PascalCase
-/// names, matched case-sensitively).
+/// One row of itunes-masters.json: a key, an optional URL and when it was found, with PascalCase
+/// names matched case-sensitively.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CachedMaster {
     #[serde(rename = "Key")]
@@ -133,8 +132,8 @@ pub struct ITunesCoverArtLookup {
     client: reqwest::Client,
     base: String,
     clock: Clock,
-    /// The matched master URLs (`None` is a remembered miss) and when each was found. The C#
-    /// `ConcurrentDictionary` enumerated in no promised order; this keeps insertion order.
+    /// The matched master URLs (`None` is a remembered miss) and when each was found, in the
+    /// order they were added.
     master_urls: Mutex<IndexMap<String, (Option<String>, DateTime<Utc>)>>,
 
     /// Matches kept on disk, so a restart does not send a whole library back to
@@ -171,8 +170,7 @@ impl ITunesCoverArtLookup {
         lookup
     }
 
-    /// The C# `Timer`: writes the matches every 15 seconds, and once more when the token is
-    /// cancelled (`Dispose`).
+    /// Writes the matches every 15 seconds, and once more when the token is canceled.
     pub async fn run_flush_loop(&self, stopping: CancellationToken) -> anyhow::Result<()> {
         if self.cache_path.is_none() {
             return Ok(());
@@ -473,7 +471,7 @@ impl ITunesCoverArtLookup {
                 continue;
             }
             let Some(key) = row.key else {
-                // A null key threw out of the C# loop, leaving the rows before it loaded.
+                // A row without a key stops the load; the rows before it stay loaded.
                 debug!("iTunes match cache could not be read: Value cannot be null. (Parameter 'key')");
                 return;
             };
@@ -757,7 +755,7 @@ async fn read_up_to(response: reqwest::Response, limit: usize) -> anyhow::Result
 
 fn read_rows(path: &Path) -> anyhow::Result<Vec<CachedMaster>> {
     let text = std::fs::read_to_string(path)?;
-    // `JsonSerializer.Deserialize<List<...>>` of a literal null is null, read as no rows.
+    // A file holding a literal null reads as no rows.
     Ok(serde_json::from_str::<Option<Vec<CachedMaster>>>(&text)?.unwrap_or_default())
 }
 

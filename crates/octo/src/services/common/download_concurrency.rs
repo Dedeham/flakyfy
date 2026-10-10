@@ -1,4 +1,4 @@
-//! Port of `Services/Common/DownloadConcurrency.cs`: `DownloadConcurrency` and `TransferLimiter`.
+//! How many downloads may transfer at once: `DownloadConcurrency` and `TransferLimiter`.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +23,7 @@ pub struct DownloadConcurrency {
 }
 
 struct ConcurrencyState {
-    /// `IOptionsMonitor<SoulseekSettings>`: read at every use.
+    /// The Soulseek settings, read at every use.
     settings: Arc<SettingsStore>,
     proven: AtomicBool,
     refused: OnceLock<String>,
@@ -124,7 +124,7 @@ struct LimiterState {
     next_ticket: u64,
 }
 
-/// The transfer was given up while waiting for a slot (`OperationCanceledException`).
+/// The transfer was given up while waiting for a slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the wait for a transfer slot was cancelled")]
 pub struct Cancelled;
@@ -143,9 +143,9 @@ impl TransferLimiter {
         self.inner.state.lock().in_use
     }
 
-    /// Waits for a slot. Dropping the returned slot leaves; cancelling `token` (or dropping
+    /// Waits for a slot. Dropping the returned slot leaves; canceling `token` (or dropping
     /// this future) while it waits gives the place up. A slot handed over in the same instant
-    /// as the cancellation is still returned, as the C# did.
+    /// as the cancellation is still returned.
     pub async fn enter(&self, token: &CancellationToken) -> Result<TransferSlot, Cancelled> {
         let (ticket, rx) = {
             let mut state = self.inner.state.lock();
@@ -275,7 +275,7 @@ mod tests {
             .expect("within 5 s")
     }
 
-    // ---- ParallelDownloadTests: the transfer gate ---------------------------------------
+    // ---- the transfer gate ----------------------------------------------------------------
 
     #[tokio::test]
     async fn the_gate_lets_in_its_width_and_the_next_waits() {
@@ -387,7 +387,7 @@ mod tests {
         assert!(concurrency.why().starts_with("One at a time: slskd put"));
     }
 
-    // ---- Rust-only ----------------------------------------------------------------------
+    // ---- dropped waiters and the live setting ----------------------------------------------
 
     #[tokio::test]
     async fn a_dropped_waiter_gives_its_place_to_the_next() {

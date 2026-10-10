@@ -1,5 +1,5 @@
-//! Port of `Services/Tagging/ExplicitLookup.cs`: whether a song already in the library is
-//! explicit, the clean edit or neither, for the library-wide marking.
+//! Whether a song already in the library is explicit, the clean edit or neither, for the
+//! library-wide marking.
 //!
 //! Only a confident match counts:
 //! 1. A title or file name that says clean is the clean edit, as for a download.

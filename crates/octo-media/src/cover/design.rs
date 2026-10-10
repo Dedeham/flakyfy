@@ -1,10 +1,8 @@
 //! The list cover design, shared with the Octo apps, with its fonts and painted backgrounds,
-//! built into the binary as the csproj embedded them (`Octo.CoverDesign.*` resources).
+//! built into the binary.
 //!
-//! The files are the C# app's own (`octo/Services/CoverArt/Design`), which both builds share
-//! while the C# tree is still here; they move beside this crate when it goes. `Fonts/OFL.txt`
-//! (Inter's license) ships as a file (`licenses/Inter-OFL.txt` in the image), not inside the
-//! binary.
+//! The files live in `octo/Services/CoverArt/Design`. `Fonts/OFL.txt` (Inter's license) ships as
+//! a file (`licenses/Inter-OFL.txt` in the image), not inside the binary.
 
 /// A file of the design, for `include_bytes!` / `include_str!`.
 macro_rules! design_path {

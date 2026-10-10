@@ -1,4 +1,4 @@
-//! Port of `Services/Lidarr/LidarrImportHandoff.cs`.
+//! The handoff of files a Lidarr heart imported to the download pipeline.
 
 use std::collections::HashMap;
 

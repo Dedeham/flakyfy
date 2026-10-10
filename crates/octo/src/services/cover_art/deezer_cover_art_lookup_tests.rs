@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/CoverLookupTests.cs`.
-//!
 //! Covers for songs outside the library come from the catalog at full size. The lookup used
 //! field-qualified searches the catalog no longer answers, so every one came back empty and a
 //! smaller source served a soft 600 pixel cover instead.
@@ -174,8 +172,8 @@ async fn a_songs_cover_comes_from_a_plain_track_search() {
     assert!(!q(searches[0]).contains("track:"));
 }
 
-/// Rust-only: the Accept-Language the lookup was built with goes on every request, and an
-/// artist's picture is taken from the best-named hit.
+/// The Accept-Language the lookup was built with goes on every request, and an artist's picture
+/// is taken from the best-named hit.
 #[tokio::test]
 async fn an_artists_picture_is_the_best_named_hit_and_the_language_is_sent() {
     let server = MockServer::builder().start().await;

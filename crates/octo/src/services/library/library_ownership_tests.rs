@@ -1,5 +1,5 @@
-//! Port of `LibraryOwnershipTests`: what counts as the same song, the decision, and the lookup.
-//! The download-path half (the `BaseDownloadService` harness) is 4-B's; see test-map.md.
+//! Library ownership: what counts as the same song, the decision, and the lookup. The download
+//! path's side is tested with the `base_download_service` harness.
 
 use std::sync::Arc;
 
@@ -236,7 +236,7 @@ fn a_lossy_copy_navidrome_does_not_know_is_kept_not_upgraded() {
     );
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- The remembered answer, the Navidrome lookup and the gates ---------------------------
 
 /// The answer is remembered for two minutes, and `forget` drops it.
 #[tokio::test]
@@ -347,7 +347,7 @@ async fn without_an_admin_identity_navidrome_is_not_asked() {
 }
 
 #[test]
-fn the_extension_is_read_as_path_get_extension_read_it() {
+fn the_extension_keeps_its_dot_and_case() {
     assert_eq!(get_extension("/music/A/Song.FLAC"), ".FLAC");
     assert_eq!(get_extension("/music/A.b/Song"), "");
     assert_eq!(get_extension("/music/Song."), "");

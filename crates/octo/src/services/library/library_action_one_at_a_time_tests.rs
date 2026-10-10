@@ -1,8 +1,7 @@
-//! Port of `LibraryActionOneAtATimeTests`. A library replacement runs end to end here: a
-//! stand-in Navidrome (wiremock) resolves the song, the real queue carries the request, and the
-//! test plays the download, so the swap's edges can be timed. One action per song at a time, a
-//! joined download is never judged, the original must be the file the action started with, and a
-//! replacement already in place is never undone.
+//! A library replacement runs end to end here: a stand-in Navidrome (wiremock) resolves the song,
+//! the real queue carries the request, and the test plays the download, so the swap's edges can
+//! be timed. One action per song at a time, a joined download is never judged, the original must
+//! be the file the action started with, and a replacement already in place is never undone.
 
 use std::path::PathBuf;
 
@@ -21,10 +20,10 @@ use crate::services::common::track_acquisition_queue::AcquisitionRequest;
 use crate::services::library::library_action_test_support::{Extras, RecordingLibrary, executor, store};
 
 const FILE_NAME: &str = "Massive Attack - Teardrop";
-/// `SoulseekDownloadService.IncomingFolderName`.
+/// The Soulseek download service's `INCOMING_FOLDER_NAME`.
 const INCOMING_FOLDER_NAME: &str = ".octo-incoming";
 
-/// `AudioFixtures.Mp3`: twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz.
+/// An MP3 of twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz.
 fn mp3() -> Vec<u8> {
     let mut bytes = vec![0u8; 417 * 20];
     for frame in 0..20 {
@@ -33,7 +32,7 @@ fn mp3() -> Vec<u8> {
     bytes
 }
 
-/// `AudioFixtures.Flac`: a STREAMINFO block describing two seconds of 16-bit stereo, no frames.
+/// A FLAC of one STREAMINFO block describing two seconds of 16-bit stereo, no frames.
 fn flac() -> Vec<u8> {
     let mut bytes = b"fLaC".to_vec();
     bytes.extend_from_slice(&[0x80, 0x00, 0x00, 0x22]);
@@ -252,7 +251,7 @@ impl Fixture {
     }
 }
 
-/// What `BaseDownloadService.RevealReplacementAsync` does with the handoff.
+/// What `BaseDownloadService::reveal_replacement` does with the handoff.
 async fn reveal(download: &AcquisitionRequest, staged: &str) -> Result<String, ReplacementRejectedException> {
     let handoff = download.replacement.clone().expect("a handoff");
     if let Some(problem) = (handoff.before_reveal)(staged.to_string()).await {
@@ -616,7 +615,7 @@ async fn better_quality_with_no_source_set_up_fails_without_downloading() {
     assert!(Path::new(&f.original).exists());
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- Delete, dry run and the write-ahead rule --------------------------------------------
 
 /// A delete moves the file to quarantine, writes the journal before and after, forgets the
 /// mapping, and a second request for the same file content is "Already done.".

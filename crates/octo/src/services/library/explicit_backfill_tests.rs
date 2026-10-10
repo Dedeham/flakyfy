@@ -1,7 +1,7 @@
-//! The run half of `ExplicitBackfillTests`: the preview writes nothing, Apply writes only
-//! explicit and clean in place and journals each write, a file changed since the preview is left
-//! alone, and Undo takes every mark out again. The lookup's tests are in
-//! `octo_core::tagging::explicit_lookup`; the dashboard's calls are at the bottom.
+//! The explicit backfill's run: the preview writes nothing, Apply writes only explicit and clean
+//! in place and journals each write, a file changed since the preview is left alone, and Undo
+//! takes every mark out again. The lookup's tests are in `octo_core::tagging::explicit_lookup`;
+//! the dashboard's calls are at the bottom.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;

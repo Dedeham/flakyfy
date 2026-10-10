@@ -1,8 +1,7 @@
-//! Port of `Services/Library/LibraryEditService.cs`: what the apps' Library health changes in a
-//! song's file other than removing it (tags written in place, an album joined to another, a
-//! cover added where there was none, a lookup of the tags a download would get, and the undo of
-//! each), putting a removed song back, and `LibraryRescan`, the one Navidrome scan a little after
-//! a run of changes.
+//! What the apps' Library health changes in a song's file other than removing it (tags written
+//! in place, an album joined to another, a cover added where there was none, a lookup of the tags
+//! a download would get, and the undo of each), putting a removed song back, and `LibraryRescan`,
+//! the one Navidrome scan a little after a run of changes.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -108,7 +107,7 @@ pub struct TrashedSong {
     pub sidecars: Vec<String>,
 }
 
-/// The services the C# asked the container for (`IServiceProvider.GetService`), each optional.
+/// The services the edits use, each optional.
 #[derive(Default, Clone)]
 pub struct LibraryEditServices {
     /// `ILocalLibraryService`: the outside-song links a restore puts back.
@@ -148,7 +147,7 @@ pub struct LibraryEditService {
     actions: Arc<LibraryActionJournal>,
     journal: Arc<TagEditJournal>,
     rescan: Arc<LibraryRescan>,
-    /// `IOptionsMonitor<LibraryActionSettings>`: read at use.
+    /// The library action settings, read at use.
     settings: Arc<SettingsStore>,
     services: LibraryEditServices,
 
@@ -574,8 +573,8 @@ impl LibraryEditService {
             song.verification = Some(Box::new(verdict));
         }
         let request = ReleaseIdentifier::request_for(&song, &song.artist, &song.title, None, None);
-        // Never cancelled: the handler's future is dropped when the client goes, as the C#'s
-        // RequestAborted token stopped it.
+        // Never canceled: the handler's future is dropped when the client goes, which stops
+        // the lookup.
         let token = CancellationToken::new();
         let plan = match identifier
             .identify::<()>(
@@ -838,7 +837,8 @@ fn file_exists(path: &str) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file())
 }
 
-/// `FileInfo.LastWriteTimeUtc.Ticks`, or the ticks .NET answers for a missing file.
+/// The file's last write time in 100 ns ticks since 0001-01-01, or the ticks of 1601-01-01 for a
+/// missing file.
 fn last_write_ticks(path: &str) -> i64 {
     const MISSING: i64 = 504_911_232_000_000_000;
     std::fs::metadata(path)

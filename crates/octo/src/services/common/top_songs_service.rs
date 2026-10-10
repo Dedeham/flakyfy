@@ -1,9 +1,9 @@
-//! Port of `Services/Common/TopSongsService.cs`, with the charts generalized: an artist's most
-//! played songs, for search, and every chart list (Popular right now, Best New Songs, Trending
-//! Songs, the genre charts), for the chart playlists, `getTopChart` and the apps' Charts page.
-//! Each comes back ranked, as outside songs that play and can be added like any search row;
-//! which of them a caller's library already has is settled per request by
-//! [`TopSongsService::match_library`], because the library changes and the list does not.
+//! Top songs and the charts: an artist's most played songs, for search, and every chart list
+//! (Popular right now, Best New Songs, Trending Songs, the genre charts), for the chart
+//! playlists, `getTopChart` and the apps' Charts page. Each comes back ranked, as outside songs
+//! that play and can be added like any search row; which of them a caller's library already has
+//! is settled per request by [`TopSongsService::match_library`], because the library changes and
+//! the list does not.
 //!
 //! Sources, and why in this order:
 //!   - The charts are Apple Music's (`AppleMusicPages`): current, per country, per genre, and

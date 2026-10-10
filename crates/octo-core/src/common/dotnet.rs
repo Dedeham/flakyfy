@@ -1,25 +1,23 @@
-//! The .NET string, character and number semantics the C# code leaned on, for the places where
-//! Rust's own differ. Not a C# file: every port that called `char.IsLetter`,
-//! `ToLowerInvariant`, `StringComparison.OrdinalIgnoreCase` or `Math.Round` uses these so the
-//! answers stay the same.
+//! String, character and number rules with fixed semantics, for the places where Rust's own
+//! differ. Matching, keying and formatting code that tests letters, folds case, compares
+//! ignoring case or rounds uses these so every caller gets the same answers.
 //!
-//! - **Character classes.** `char.IsLetter` and friends test the Unicode general category of
-//!   one UTF-16 code unit, so a supplementary-plane letter (two surrogates) is never a letter to
-//!   them. Rust's `char::is_alphabetic` tests the Alphabetic property instead, which also takes
-//!   letter numbers and many marks. The `*_utf16` functions answer as `char.IsX` did; the plain
-//!   ones answer as `Rune.IsX` did, on the whole code point.
-//! - **Casing.** .NET maps one character to one character (simple case mapping), does not
-//!   apply the final-sigma rule, and on ICU leaves U+0130 (İ) and U+0131 (ı) alone. Rust's
-//!   `str::to_lowercase` does all three differently. `OrdinalIgnoreCase` has its own table.
-//!   These were checked against .NET 9 for every cased code point.
-//! - **Whitespace.** `char.IsWhiteSpace` and Rust's `char::is_whitespace` agree (the Unicode
-//!   White_Space set), so `String.Trim()` is `str::trim` and needs nothing here.
+//! - **Character classes.** The `*_utf16` functions test the Unicode general category of one
+//!   UTF-16 code unit, so a supplementary-plane letter (two surrogates) is never a letter to
+//!   them; the plain ones test the whole code point. Rust's `char::is_alphabetic` tests the
+//!   Alphabetic property instead, which also takes letter numbers and many marks.
+//! - **Casing.** One character maps to one character (simple case mapping), there is no
+//!   final-sigma rule, and U+0130 (İ) and U+0131 (ı) are left alone. Rust's `str::to_lowercase`
+//!   does all three differently. Case-insensitive comparison has its own table. These were
+//!   checked for every cased code point.
+//! - **Whitespace.** Rust's `char::is_whitespace` is the Unicode White_Space set, so trimming
+//!   is `str::trim` and needs nothing here.
 
 use std::borrow::Cow;
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-/// Whether the code point is a letter (Lu, Ll, Lt, Lm, Lo): `Rune.IsLetter`.
+/// Whether the code point is a letter (Lu, Ll, Lt, Lm, Lo).
 pub fn is_letter(c: char) -> bool {
     matches!(
         get_general_category(c),
@@ -31,12 +29,12 @@ pub fn is_letter(c: char) -> bool {
     )
 }
 
-/// Whether the code point is a decimal digit (Nd): `Rune.IsDigit`.
+/// Whether the code point is a decimal digit (Nd).
 pub fn is_digit(c: char) -> bool {
     get_general_category(c) == GeneralCategory::DecimalNumber
 }
 
-/// `Rune.IsLetterOrDigit`: a letter or a decimal digit.
+/// Whether the code point is a letter or a decimal digit.
 pub fn is_letter_or_digit(c: char) -> bool {
     is_letter(c) || is_digit(c)
 }
@@ -49,34 +47,34 @@ pub fn is_combining_mark(c: char) -> bool {
     )
 }
 
-/// Whether the code point is an uppercase letter (Lu): `Rune.IsUpper`.
+/// Whether the code point is an uppercase letter (Lu).
 pub fn is_upper(c: char) -> bool {
     get_general_category(c) == GeneralCategory::UppercaseLetter
 }
 
-/// Whether the code point is a lowercase letter (Ll): `Rune.IsLower`.
+/// Whether the code point is a lowercase letter (Ll).
 pub fn is_lower(c: char) -> bool {
     get_general_category(c) == GeneralCategory::LowercaseLetter
 }
 
-/// `char.IsLetter` on a UTF-16 code unit: a supplementary-plane character arrives as two
-/// surrogates, and neither is a letter.
+/// A letter in one UTF-16 code unit: a supplementary-plane character arrives as two surrogates,
+/// and neither is a letter.
 pub fn is_letter_utf16(c: char) -> bool {
     is_bmp(c) && is_letter(c)
 }
 
-/// `char.IsDigit` on a UTF-16 code unit.
+/// A decimal digit in one UTF-16 code unit.
 pub fn is_digit_utf16(c: char) -> bool {
     is_bmp(c) && is_digit(c)
 }
 
-/// `char.IsUpper` on a UTF-16 code unit.
+/// An uppercase letter in one UTF-16 code unit.
 pub fn is_upper_utf16(c: char) -> bool {
     is_bmp(c) && is_upper(c)
 }
 
-/// `char.IsLower` on a UTF-16 code unit (and what a `\p{Ll}` regex class matched in .NET,
-/// which also tested one code unit).
+/// A lowercase letter in one UTF-16 code unit (what a `\p{Ll}` regex class matches when it
+/// tests one code unit at a time).
 pub fn is_lower_utf16(c: char) -> bool {
     is_bmp(c) && is_lower(c)
 }
@@ -85,8 +83,8 @@ fn is_bmp(c: char) -> bool {
     (c as u32) <= 0xFFFF
 }
 
-/// A cased letter (Lu, Ll, Lt) in one UTF-16 code unit: what .NET's `\p{Ll}` (or `\p{Lu}`)
-/// matches under `RegexOptions.IgnoreCase`, which widens one case category to all three.
+/// A cased letter (Lu, Ll, Lt) in one UTF-16 code unit: what a `\p{Ll}` (or `\p{Lu}`) class
+/// matches when the regex ignores case, which widens one case category to all three.
 pub fn is_cased_letter_utf16(c: char) -> bool {
     is_bmp(c)
         && matches!(
@@ -97,7 +95,7 @@ pub fn is_cased_letter_utf16(c: char) -> bool {
         )
 }
 
-/// Whether .NET's `\b` counts the character as a word character: a letter, nonspacing mark,
+/// Whether a word boundary counts the character as a word character: a letter, nonspacing mark,
 /// decimal digit or connector in one UTF-16 code unit, or a zero-width (non-)joiner. Rust's
 /// `\w` also takes spacing and enclosing marks, letter numbers, other alphabetic symbols and
 /// every supplementary-plane letter.
@@ -143,43 +141,43 @@ fn view(text: &str, swap: impl Fn(char) -> bool) -> Cow<'_, str> {
     )
 }
 
-/// The text as a Rust regex with `\b` must see it to find what the .NET regex found: every
-/// character .NET did not count as a word character, but Rust might, swapped for a placeholder
-/// of the same UTF-8 length. Byte offsets into the view are offsets into the text, so match
-/// there and slice the original.
+/// The text as a Rust regex with `\b` must see it for boundaries to fall by [`is_word_char`]:
+/// every character that is not a word character there, but that Rust's `\w` might take, swapped
+/// for a placeholder of the same UTF-8 length. Byte offsets into the view are offsets into the
+/// text, so match there and slice the original.
 pub fn word_boundary_view(text: &str) -> Cow<'_, str> {
     view(text, |c| !c.is_ascii() && !c.is_whitespace() && !is_word_char(c))
 }
 
-/// The text as a Rust regex with `\d`, `\p{L}` or `\p{M}` must see it to find what the .NET
-/// regex found: .NET tested UTF-16 code units, so a supplementary-plane digit or letter
-/// matched none of them. Those are swapped for a placeholder of the same UTF-8 length.
+/// The text as a Rust regex with `\d`, `\p{L}` or `\p{M}` must see it for those classes to
+/// test UTF-16 code units, where a supplementary-plane digit or letter matches none of them.
+/// Those are swapped for a placeholder of the same UTF-8 length.
 pub fn utf16_class_view(text: &str) -> Cow<'_, str> {
     view(text, |c| !is_bmp(c))
 }
 
-/// `string.IsNullOrWhiteSpace` for a value that is present.
+/// Whether the string is empty or all whitespace.
 pub fn is_blank(s: &str) -> bool {
     s.chars().all(char::is_whitespace)
 }
 
-/// `string.IsNullOrWhiteSpace`.
+/// Whether the string is absent, empty or all whitespace.
 pub fn is_null_or_white_space(s: Option<&str>) -> bool {
     s.is_none_or(is_blank)
 }
 
-/// The length .NET reports for the string: UTF-16 code units.
+/// The string's length in UTF-16 code units.
 pub fn utf16_len(s: &str) -> usize {
     s.chars().map(char::len_utf16).sum()
 }
 
-/// `char.ToLowerInvariant`: the simple lowercase mapping, one character for one. U+0130 (İ)
-/// stays as it is: .NET on ICU special-cases it rather than lowercasing it to an ASCII `i`.
+/// The simple lowercase mapping, one character for one. U+0130 (İ) stays as it is rather than
+/// lowercasing to an ASCII `i`.
 pub fn to_lower_char(c: char) -> char {
     if c.is_ascii() {
         return c.to_ascii_lowercase();
     }
-    // Rust's full mapping differs from the simple one only for U+0130 ("i̇"), which .NET keeps.
+    // Rust's full mapping differs from the simple one only for U+0130 ("i̇"), which is kept.
     let mut lower = c.to_lowercase();
     match (lower.next(), lower.next()) {
         (Some(l), None) => l,
@@ -187,8 +185,8 @@ pub fn to_lower_char(c: char) -> char {
     }
 }
 
-/// `char.ToUpperInvariant`: the simple uppercase mapping, one character for one. U+0131 (ı)
-/// stays as it is, as .NET on ICU keeps it; U+017F (ſ) does become `S`.
+/// The simple uppercase mapping, one character for one. U+0131 (ı) stays as it is; U+017F (ſ)
+/// does become `S`.
 pub fn to_upper_char(c: char) -> char {
     if c.is_ascii() {
         return c.to_ascii_uppercase();
@@ -208,7 +206,7 @@ pub fn to_upper_char(c: char) -> char {
 }
 
 /// The Greek letters with ypogegrammeni, whose full uppercase is two letters ("ᾳ" → "ΑΙ") but
-/// whose simple uppercase, the one .NET uses, is the titlecase letter with prosgegrammeni.
+/// whose simple uppercase, the one used here, is the titlecase letter with prosgegrammeni.
 fn greek_ypogegrammeni_upper(c: char) -> Option<char> {
     let code = c as u32;
     let upper = match code {
@@ -221,18 +219,18 @@ fn greek_ypogegrammeni_upper(c: char) -> Option<char> {
     char::from_u32(upper)
 }
 
-/// `string.ToLowerInvariant`.
+/// The string lowercased one character at a time by [`to_lower_char`].
 pub fn to_lower_invariant(s: &str) -> String {
     s.chars().map(to_lower_char).collect()
 }
 
-/// `string.ToUpperInvariant`.
+/// The string uppercased one character at a time by [`to_upper_char`].
 pub fn to_upper_invariant(s: &str) -> String {
     s.chars().map(to_upper_char).collect()
 }
 
-/// What `StringComparison.OrdinalIgnoreCase` compares a character as: its simple uppercase,
-/// except that ı and ſ never meet ASCII I and S (where `ToUpperInvariant` does take ſ to S).
+/// What a case-insensitive comparison compares a character as: its simple uppercase, except
+/// that ı and ſ never meet ASCII I and S (where [`to_upper_char`] does take ſ to S).
 fn ordinal_case_key(c: char) -> char {
     if c == '\u{0131}' || c == '\u{017F}' {
         return c;
@@ -240,7 +238,7 @@ fn ordinal_case_key(c: char) -> char {
     to_upper_char(c)
 }
 
-/// `string.Equals(a, b, StringComparison.OrdinalIgnoreCase)`.
+/// Whether two strings are equal ignoring case, character by character.
 pub fn eq_ignore_case(a: &str, b: &str) -> bool {
     let mut left = a.chars();
     let mut right = b.chars();
@@ -253,14 +251,14 @@ pub fn eq_ignore_case(a: &str, b: &str) -> bool {
     }
 }
 
-/// A key under which strings that are equal by `StringComparer.OrdinalIgnoreCase` are equal,
-/// for a dictionary built with that comparer.
+/// A key under which strings that are equal by [`eq_ignore_case`] are equal, for a map that
+/// ignores case.
 pub fn ordinal_ignore_case_key(s: &str) -> String {
     s.chars().map(ordinal_case_key).collect()
 }
 
-/// `string.Compare(a, b, StringComparison.OrdinalIgnoreCase)`: the case-mapped UTF-16 code
-/// units compared one by one, so a supplementary-plane character sorts by its surrogates.
+/// Case-insensitive ordering: the case-mapped UTF-16 code units compared one by one, so a
+/// supplementary-plane character sorts by its surrogates.
 pub fn compare_ordinal_ignore_case(a: &str, b: &str) -> std::cmp::Ordering {
     let units = |s: &str| -> Vec<u16> {
         let mut out = Vec::with_capacity(s.len());
@@ -273,7 +271,7 @@ pub fn compare_ordinal_ignore_case(a: &str, b: &str) -> std::cmp::Ordering {
     units(a).cmp(&units(b))
 }
 
-/// `s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `s` starts with `prefix`, ignoring case as [`eq_ignore_case`] does.
 pub fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
     let mut chars = s.chars();
     for p in prefix.chars() {
@@ -285,8 +283,8 @@ pub fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
     true
 }
 
-/// `Math.Round(value, digits)`: half to even at the given number of decimals, computed as .NET
-/// does (scale, round, unscale) so the last bit agrees.
+/// Rounds half to even at the given number of decimals, computed as scale, round, unscale,
+/// which fixes the last bit of the result.
 pub fn round(value: f64, digits: u32) -> f64 {
     const ROUND_LIMIT: f64 = 1e16;
     if value.abs() >= ROUND_LIMIT {
@@ -297,9 +295,9 @@ pub fn round(value: f64, digits: u32) -> f64 {
 }
 
 /// A double written with the custom format `"0.#"` (`decimals` = 1; `"0.##"` is 2, and so on):
-/// .NET first reads the value to 15 significant digits, rounds those half away from zero at
-/// the last place shown, and drops trailing zeros and a bare point. A negative value keeps its
-/// sign even when it rounds to zero (`"-0"`), as .NET Core 3.0 and later write it.
+/// the value is first read to 15 significant digits, rounded half away from zero at the last
+/// place shown, and written without trailing zeros or a bare point. A negative value keeps its
+/// sign even when it rounds to zero (`"-0"`).
 pub fn format_optional_decimals(value: f64, decimals: u32) -> String {
     if !value.is_finite() {
         return value.to_string();
@@ -361,8 +359,8 @@ pub fn format_fixed(value: f64, decimals: u32) -> String {
     text
 }
 
-/// `Uri.EscapeDataString`: every byte of the UTF-8 encoding percent-encoded (upper-case hex)
-/// except the RFC 3986 unreserved characters `A-Z a-z 0-9 - . _ ~`.
+/// Every byte of the UTF-8 encoding percent-encoded (uppercase hex) except the RFC 3986
+/// unreserved characters `A-Z a-z 0-9 - . _ ~`.
 pub fn escape_data_string(value: &str) -> String {
     const UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
         .remove(b'-')
@@ -372,8 +370,8 @@ pub fn escape_data_string(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, UNRESERVED).to_string()
 }
 
-/// `Uri.UnescapeDataString`: percent-escapes decoded back to text. A sequence that is not
-/// valid UTF-8 is left as it was written, as .NET leaves it.
+/// Percent-escapes decoded back to text. When the decoded bytes are not valid UTF-8, the value
+/// comes back as it was written.
 pub fn unescape_data_string(value: &str) -> String {
     match percent_encoding::percent_decode_str(value).decode_utf8() {
         Ok(text) => text.into_owned(),
@@ -381,8 +379,8 @@ pub fn unescape_data_string(value: &str) -> String {
     }
 }
 
-/// `FormUrlEncodedContent`'s encoding of one name or value: `Uri.EscapeDataString`, then
-/// `%20` written as `+`. So a literal `+` goes out as `%2B`.
+/// The form (`application/x-www-form-urlencoded`) encoding of one name or value:
+/// [`escape_data_string`], then `%20` written as `+`. So a literal `+` goes out as `%2B`.
 pub fn form_url_encode(value: &str) -> String {
     escape_data_string(value).replace("%20", "+")
 }
@@ -426,12 +424,12 @@ mod tests {
     }
 
     #[test]
-    fn character_classes_answer_as_dotnet_did() {
+    fn character_classes_follow_the_general_category() {
         assert!(is_letter('é') && is_letter('ß') && is_letter('漢') && is_letter('ー'));
-        // A letter number and a circled letter are Alphabetic to Rust, not letters to .NET.
+        // A letter number and a circled letter are Alphabetic to Rust, but not letters here.
         assert!(!is_letter('Ⅻ') && 'Ⅻ'.is_alphabetic());
         assert!(!is_letter('ⓐ') && 'ⓐ'.is_alphabetic());
-        // A supplementary letter is a letter as a rune, two surrogates as UTF-16 chars.
+        // A supplementary letter is a letter as a code point, two surrogates as UTF-16 units.
         assert!(is_letter('𠀀') && !is_letter_utf16('𠀀'));
         // Superscripts are numeric to Rust but not decimal digits.
         assert!(!is_digit('²') && '²'.is_numeric());
@@ -440,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn casing_is_simple_with_dotnets_exceptions() {
-        // Each answer below is what .NET 9 on ICU gave.
+    fn casing_is_simple_with_fixed_exceptions() {
+        // Each answer below is the expected reference casing.
         assert_eq!(to_lower_invariant("İSTANBUL"), "İstanbul");
         assert_eq!(to_upper_invariant("ıstanbul"), "ıSTANBUL");
         assert_eq!(to_upper_invariant("ſ"), "S");
@@ -465,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn views_keep_byte_offsets_and_hide_what_dotnet_did_not_see() {
-        // A spacing mark after "live" ends the word for .NET.
+    fn views_keep_byte_offsets_and_hide_what_the_classes_must_not_match() {
+        // A spacing mark after "live" ends the word.
         let text = "live\u{093E} 𠀀 é ۵";
         let view = word_boundary_view(text);
         assert_eq!(view.len(), text.len());

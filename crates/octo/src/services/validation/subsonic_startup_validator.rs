@@ -1,5 +1,3 @@
-//! Port of `Services/Validation/SubsonicStartupValidator.cs`.
-
 use async_trait::async_trait;
 
 use crate::services::http_client_factory::connect_failure_message;
@@ -8,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Validates Subsonic server connectivity at startup
 pub struct SubsonicStartupValidator {
-    /// `IOptions<SubsonicSettings>.Value.Url`: deliberately the value Octo started with.
+    /// The Subsonic URL: deliberately the value Octo started with.
     url: Option<String>,
     http: reqwest::Client,
 }

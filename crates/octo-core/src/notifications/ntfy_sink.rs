@@ -1,5 +1,5 @@
-//! The pure parts of `Services/Notifications/NtfySink.cs`: the topic URL, the body and the tag.
-//! The sink that publishes is `octo::services::notifications::ntfy_sink`.
+//! The ntfy sink's pure parts: the topic URL, the body and the tag. The sink that publishes is
+//! `octo::services::notifications::ntfy_sink`.
 
 use super::i_notification_sink::NotificationMessage;
 use super::notification_event::NotificationEventType;
@@ -24,19 +24,19 @@ pub fn build_body(message: &NotificationMessage) -> String {
     }
 }
 
-/// What `ParseTopicUrl` threw, with the message the admin test button shows verbatim.
+/// Why [`parse_topic_url`] refused a URL, in the message the admin test button shows verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct TopicUrlError(pub String);
 
 /// "https://ntfy.sh/octo" -> ("https://ntfy.sh", "octo");
 /// "https://host/ntfy/octo" -> ("https://host/ntfy", "octo").
-/// The config stays one field (the URL users copy out of the ntfy app) and the
-/// sink derives the server root and topic itself. A URL with no topic throws a
-/// message the admin test button surfaces verbatim.
+/// The config stays one field (the URL users copy out of the ntfy app) and the sink derives the
+/// server root and topic itself. A URL with no topic is refused with a message the admin test
+/// button surfaces verbatim.
 pub fn parse_topic_url(url: &str) -> Result<(String, String), TopicUrlError> {
     let trimmed = url.trim().trim_end_matches('/');
-    // new Uri(trimmed, UriKind.Absolute), and its UriFormatException messages.
+    // An absolute URL only; anything else is refused in the admin test button's wording.
     let uri = url::Url::parse(trimmed).map_err(|error| {
         TopicUrlError(
             match error {
@@ -51,7 +51,7 @@ pub fn parse_topic_url(url: &str) -> Result<(String, String), TopicUrlError> {
             .to_string(),
         )
     })?;
-    // Uri.Segments: "/" and then each segment with its slash; the last one, without it.
+    // The path's segments; the topic is the last one.
     let segments: Vec<&str> = uri
         .path_segments()
         .map(|segments| segments.collect())
@@ -155,9 +155,9 @@ mod tests {
         );
     }
 
-    /// Rust-only: what `new Uri` refused, with .NET 9's messages, and a query after the topic.
+    /// What the URL parser refuses, with the reference messages, and a query after the topic.
     #[test]
-    fn urls_dotnet_refused_say_what_it_said() {
+    fn refused_urls_give_the_reference_messages() {
         assert_eq!(
             parse_topic_url("ntfy.sh/octo").expect_err("relative").0,
             "Invalid URI: The format of the URI could not be determined."

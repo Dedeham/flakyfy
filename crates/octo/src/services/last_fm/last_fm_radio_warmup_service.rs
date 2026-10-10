@@ -1,5 +1,5 @@
-//! Port of `Services/LastFm/LastFmRadioWarmupService.cs`, singleton and hosted: the one instance
-//! is the "LastFmRadioWarmupService" worker and the queue the refresh worker feeds.
+//! The radio warmup: one shared instance is both the "LastFmRadioWarmupService" worker and the
+//! queue the refresh worker feeds.
 //!
 //! Keeps persisted Radio snapshots ready independently of client traffic. Work stays inside core
 //! Octo and uses the temporary Radio cache; it never records a play, scrobbles, learns, or
@@ -25,9 +25,9 @@ const CAPACITY: usize = 100;
 pub struct LastFmRadioWarmupService {
     sender: mpsc::Sender<String>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<String>>,
-    /// The users waiting (`StringComparer.OrdinalIgnoreCase`).
+    /// The users waiting, compared ignoring case.
     queued: Mutex<HashSet<String>>,
-    /// The service each warm resolves a scope of.
+    /// The stream service; each warm runs on an instance of its own.
     streams: LastFmRadioStreamService,
     state: Arc<LastFmRadioStateStore>,
 }
@@ -68,7 +68,7 @@ impl LastFmRadioWarmupService {
         streams.warm_stored_stations(username, cancellation_token).await
     }
 
-    /// `ExecuteAsync`: every persisted profile is warmed at startup, and again whenever the
+    /// The worker's loop: every persisted profile is warmed at startup, and again whenever the
     /// minute scan finds it.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let known_users = self.state.known_users();

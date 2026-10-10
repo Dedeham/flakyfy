@@ -1,5 +1,3 @@
-//! Port of `Services/Common/SingleFlight.cs`.
-//!
 //! Collapses concurrent identical work onto one execution. Callers arriving while a key
 //! is already running join the running task instead of starting their own.
 //!
@@ -9,9 +7,9 @@
 //! of tasks that outlives its usefulness, which on arbitrary user input becomes a
 //! user-triggerable leak.
 //!
-//! Like a C# `Task`, the work is hot: [`SingleFlight::run`] registers the caller (or starts
-//! the work on a tokio task) before it returns, and the work runs to the end even if the
-//! caller drops the returned future. Only awaiting the answer is lazy.
+//! The work is hot: [`SingleFlight::run`] registers the caller (or starts the work on a tokio
+//! task) before it returns, and the work runs to the end even if the caller drops the returned
+//! future. Only awaiting the answer is lazy.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -26,7 +24,7 @@ use parking_lot::Mutex;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// A failure every joined caller sees, as the C# rethrew the one exception to each awaiter.
+/// A failure every joined caller sees: the one error, handed to each awaiter.
 pub type SharedError = Arc<anyhow::Error>;
 
 type Outcome<V> = Option<Result<V, SharedError>>;
@@ -34,10 +32,10 @@ type Outcome<V> = Option<Result<V, SharedError>>;
 struct Entry<V> {
     outcome: watch::Receiver<Outcome<V>>,
 
-    /// Callers currently sharing this execution, including the owner. A supersession
-    /// policy (see [`SupersedableBuildCoordinator`](super::supersedable_build_coordinator::SupersedableBuildCoordinator))
-    /// reads this to decide whether cancelling this key would only hurt its own caller or
-    /// would also take a joined caller down with it.
+    /// Callers currently sharing this execution, including the owner. A supersession policy (see
+    /// [`SupersedableBuildCoordinator`](super::supersedable_build_coordinator::SupersedableBuildCoordinator))
+    /// reads this to decide whether canceling this key would only hurt its own caller or would
+    /// also take a joined caller down with it.
     joins: AtomicUsize,
 }
 
@@ -80,13 +78,12 @@ where
     /// `timeout` is the deadline for the work itself. The factory never sees a caller's
     /// cancellation token: joined callers share one execution, so letting the first one to
     /// disconnect cancel it would take everyone else down with it. A deadline is what stops a
-    /// hung dependency pinning the key instead. (As in C#, the deadline only cancels the token
-    /// the factory is given; the factory decides how to stop.)
+    /// hung dependency pinning the key instead. (The deadline only cancels the token the
+    /// factory is given; the factory decides how to stop.)
     ///
     /// The owner's factory is called before this returns, so it can register itself
-    /// synchronously, as the C# factory ran up to its first await inside `RunAsync`. A factory
-    /// that panics, while being called or while running, fails every caller like a thrown
-    /// exception and is not retained.
+    /// synchronously. A factory that panics, while being called or while running, fails every
+    /// caller like any other failure and is not retained.
     pub fn run<F, Fut>(
         &self,
         key: K,
@@ -188,7 +185,7 @@ mod tests {
 
     const GENEROUS: Duration = Duration::from_secs(30);
 
-    /// A one-shot gate the test opens, cloneable into every factory (TaskCompletionSource).
+    /// A one-shot gate the test opens, cloneable into every factory.
     #[derive(Clone)]
     struct Gate(
         tokio::sync::watch::Receiver<bool>,
@@ -365,8 +362,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_caller_does_not_abandon_the_work_or_its_joiners() {
-        // Rust-only: a C# Task runs whether or not anyone awaits it. Dropping the owner's
-        // future must leave the work running for the joiner and clean up after.
+        // The work runs whether or not anyone awaits it. Dropping the owner's future must
+        // leave the work running for the joiner and clean up after.
         let flight = SingleFlight::<String, i32>::new();
         let (release_tx, release_rx) = oneshot::channel::<()>();
         let owner = flight.run(

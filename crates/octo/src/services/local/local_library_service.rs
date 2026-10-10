@@ -1,10 +1,8 @@
-//! Port of `Services/Local/LocalLibraryService.cs`: `.mappings.json` in the download directory
-//! (state-files.md §4.23), and the Subsonic scan trigger.
+//! The local library: `.mappings.json` in the download directory, and the Subsonic scan trigger.
 //!
-//! Two deliberate differences from the C#, both in known-diffs.md: the file is written
-//! atomically (`.mappings.json.tmp`, then a rename), and a file that does not parse is moved
-//! aside to `.mappings.json.corrupt-<UtcTicks>` and the service starts empty, where the C# threw
-//! the `JsonException` to every caller until the file was fixed by hand.
+//! The file is written atomically (`.mappings.json.tmp`, then a rename), and a file that does not
+//! parse is moved aside to `.mappings.json.corrupt-<UtcTicks>` and the service starts empty,
+//! rather than failing every caller until the file is fixed by hand.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -62,13 +60,13 @@ pub struct LocalSongMapping {
     pub source_file: Option<String>,
 
     /// The MusicBrainz recording a fingerprint confirmed this file is. Optional, like
-    /// SourcePeer; it is what lets a later download of the same recording replace this file
+    /// `source_peer`; it is what lets a later download of the same recording replace this file
     /// rather than sit beside it.
     pub music_brainz_recording_id: Option<String>,
 
-    /// What the file was likely made from when its spectrum said it is a lossy file
-    /// converted to lossless ("about 128 kbps MP3"). Optional, like SourcePeer; null for a
-    /// genuine file and for every mapping written before the check existed.
+    /// What the file was likely made from when its spectrum said it is a lossy file converted to
+    /// lossless ("about 128 kbps MP3"). Optional, like `source_peer`; None for a genuine file and
+    /// for every mapping written before the check existed.
     pub transcoded_from: Option<String>,
 }
 
@@ -82,7 +80,7 @@ impl Default for LocalSongMapping {
             title: String::new(),
             artist: String::new(),
             album: String::new(),
-            // `default(DateTime)`, which STJ writes without a `Z`.
+            // The earliest date, which the mappings file writes without a `Z`.
             downloaded_at: datetime::min_value(),
             source_peer: None,
             source_file: None,
@@ -92,7 +90,7 @@ impl Default for LocalSongMapping {
     }
 }
 
-/// The mappings in `Dictionary` order, as `JsonSerializer.Serialize` wrote them.
+/// The mappings, written in the dictionary's own order.
 struct MappingsFile<'a>(&'a DotnetDictionary<LocalSongMapping>);
 
 impl Serialize for MappingsFile<'_> {
@@ -111,17 +109,14 @@ pub struct LocalLibraryService {
     mapping_file_path: PathBuf,
     download_directory: String,
     http: reqwest::Client,
-    // IOptionsMonitor, not IOptions: the admin UI writes settings.json and the
-    // config provider reloads it, but IOptions.Value is resolved once and this is a
-    // singleton, so a captured copy would serve startup values until a restart. The
-    // admin UI read through IOptionsMonitor and therefore SHOWED the new value while
-    // nothing acted on it.
+    // The live settings store, not a copy taken at startup: the admin UI writes settings.json
+    // and the store reloads it, and this service lives as long as the app, so a captured copy
+    // would serve startup values until a restart while the admin UI SHOWED the new value.
     settings: Arc<SettingsStore>,
     id_registry: Arc<ExternalIdRegistry>,
     nav_identity: NavidromeIdentityService,
-    /// The C# `_mappings` (loaded once, then cached) and its `SemaphoreSlim(1, 1)`. The file
-    /// is small and its reads and writes are blocking `std::fs` under this lock, as the C#
-    /// held its semaphore across them.
+    /// The mappings, loaded once and then cached. The file is small and its reads and writes
+    /// are blocking `std::fs` held under this lock, so no two of them interleave.
     mappings: Mutex<Option<DotnetDictionary<LocalSongMapping>>>,
     /// Debounce to avoid triggering too many scans
     last_scan_trigger: Mutex<Option<DateTime<Utc>>>,
@@ -146,8 +141,7 @@ struct TargetedScan {
 impl LocalLibraryService {
     const SCAN_DEBOUNCE_INTERVAL: TimeDelta = TimeDelta::seconds(30);
 
-    /// `configuration["Library:DownloadPath"]` is read once, here, as the C# constructor did.
-    /// The C# constructor also created the directory; that is
+    /// `Library:DownloadPath` is read once, here. Creating the directory is
     /// [`LocalLibraryService::create_download_directory`], which the app state calls, so that
     /// building a service does no I/O.
     pub fn new(
@@ -213,8 +207,7 @@ impl LocalLibraryService {
         }
     }
 
-    /// `Directory.CreateDirectory(_downloadDirectory)` when it does not exist, which the C#
-    /// constructor did.
+    /// Creates the download directory when it does not exist.
     pub fn create_download_directory(&self) {
         if let Err(e) = std::fs::create_dir_all(&self.download_directory) {
             warn!(
@@ -273,7 +266,7 @@ impl LocalLibraryService {
         Ok(map)
     }
 
-    /// Writes the mappings, indented, as the C# `SaveMappingsAsync` did; atomically here.
+    /// Writes the mappings, indented and atomically.
     fn save(&self, mappings: &DotnetDictionary<LocalSongMapping>) -> anyhow::Result<()> {
         let text = json::to_string_indented(&MappingsFile(mappings));
         state_file::save_atomic(&self.mapping_file_path, &text)?;
@@ -281,7 +274,7 @@ impl LocalLibraryService {
     }
 
     /// A read that could not load the file answers as if there were no mappings, with the
-    /// reason logged; the C# threw it to the caller.
+    /// reason logged, rather than failing the caller.
     fn read<T>(&self, answer: impl FnOnce(&DotnetDictionary<LocalSongMapping>) -> T) -> Option<T> {
         let mut cached = self.mappings.lock();
         match self.loaded(&mut cached) {
@@ -368,7 +361,8 @@ impl LocalLibraryService {
     }
 }
 
-/// `<file>.corrupt-<DateTime.UtcNow.Ticks>`, the name the other stores move a bad file to.
+/// `<file>.corrupt-<ticks>`, ticks being 100 ns intervals since 0001-01-01 UTC: the name the
+/// other stores move a bad file to.
 fn corrupt_path(path: &Path, now: DateTime<Utc>) -> PathBuf {
     const UNIX_EPOCH_TICKS: i64 = 621_355_968_000_000_000;
     let ticks =
@@ -378,7 +372,7 @@ fn corrupt_path(path: &Path, now: DateTime<Utc>) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// `Path.GetFullPath(path)`, or the path itself where that throws (an empty one).
+/// The full path of `path`, or the path itself when it is empty.
 fn full_path_or_self(path: &str) -> String {
     if path.is_empty() {
         return path.to_string();
@@ -433,8 +427,8 @@ impl ILocalLibraryService for LocalLibraryService {
         _external_provider: &str,
         _external_id: &str,
     ) -> Option<String> {
-        // For now, return null as we don't yet have integration
-        // with the Subsonic server to retrieve local ID after scan
+        // For now, return None as we don't yet have integration with the Subsonic server to
+        // retrieve local ID after scan
         None
     }
 
@@ -539,9 +533,9 @@ impl ILocalLibraryService for LocalLibraryService {
 
     /// Drop the mapping for a path Octo no longer owns.
     ///
-    /// Without this, DownloadSongInternalAsync's existing-file short-circuit keeps pointing a
-    /// re-acquire at the file that was just quarantined, and the replacement never happens.
-    /// Answers the mappings it dropped, so a song put back can have them again.
+    /// Without this, the download's existing-file short-circuit keeps pointing a re-acquire at
+    /// the file that was just quarantined, and the replacement never happens. Answers the
+    /// mappings it dropped, so a song put back can have them again.
     async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>> {
         if dotnet::is_blank(local_path) {
             return Ok(Vec::new());
@@ -724,9 +718,9 @@ impl ILocalLibraryService for LocalLibraryService {
     }
 }
 
-/// `subsonic-response.scanStatus`, read as `JsonElement` did: a property of the wrong kind
-/// (`scanning` not a bool, `count` not a number, a node that is not an object) throws; a
-/// `count` that is a number but not an Int32 is none.
+/// `subsonic-response.scanStatus`, read strictly: a property of the wrong kind (`scanning` not
+/// a bool, `count` not a number, a node that is not an object) is an error; a `count` that is a
+/// number but not an `i32` is None.
 fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
     fn property<'a>(element: &'a Value, name: &str) -> anyhow::Result<Option<&'a Value>> {
         match element {
@@ -745,8 +739,8 @@ fn read_scan_status(doc: &Value) -> anyhow::Result<Option<ScanStatus>> {
         Some(_) => anyhow::bail!("scanning is not a boolean"),
         None => false,
     };
-    // TryGetInt32: a number that is not an Int32 reads as none; a count that is not a number
-    // at all still throws.
+    // A number that is not an `i32` reads as None; a count that is not a number at all is
+    // still an error.
     let count = match property(scan_status, "count")? {
         Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
         Some(_) => anyhow::bail!("count is not a number"),

@@ -1,5 +1,4 @@
-//! Port of `Services/Common/SongFinder.cs`: Find songs, and the `UpgradeGate` and
-//! `LibraryActionStates` the C# file declared beside it.
+//! Find songs, and the `UpgradeGate` and `LibraryActionStates` beside it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -54,7 +53,7 @@ pub struct FindTarget {
 }
 
 impl FindTarget {
-    /// The positional part of the C# record; the rest starts empty.
+    /// The song to look for; the rest starts empty.
     pub fn new(
         artist: impl Into<String>,
         title: impl Into<String>,
@@ -218,8 +217,7 @@ pub type FetchFn = Arc<
     dyn Fn(FindTarget, FoundCopy, String) -> BoxFuture<'static, anyhow::Result<PickOutcome>> + Send + Sync,
 >;
 
-/// The seams the C# exposed as internal settable properties, so tests run a look without slskd,
-/// Lidarr or Navidrome.
+/// The seams, so tests run a look without slskd, Lidarr or Navidrome.
 #[derive(Clone)]
 pub struct SongFinderSeams {
     pub resolve: ResolveFn,
@@ -229,8 +227,7 @@ pub struct SongFinderSeams {
     pub fetch: FetchFn,
 }
 
-/// What the C# resolved from its `IServiceProvider` when it needed it. Each may be missing, as
-/// `GetService` could answer null.
+/// The services a look uses when it needs them. Each may be missing.
 #[derive(Default, Clone)]
 pub struct SongFinderServices {
     pub settings: Option<Arc<SettingsStore>>,
@@ -431,7 +428,7 @@ impl SongFinder {
         }
     }
 
-    /// Changes a seam (the C# tests set the internal properties).
+    /// Changes a seam (tests use it).
     pub fn seams(&self, change: impl FnOnce(&mut SongFinderSeams)) {
         change(&mut self.seams.lock());
     }
@@ -879,7 +876,7 @@ impl SongFinder {
                 }
             })
             .collect();
-        // Stable, as LINQ's OrderBy is.
+        // A stable sort: rows that tie keep their order.
         rows.sort_by_key(|row| {
             (
                 row.rank.unwrap_or(i32::MAX),
@@ -894,7 +891,8 @@ impl SongFinder {
 
         let mut kept: HashSet<usize> = HashSet::new();
         if rows.len() > Self::MAX_COPIES {
-            // GroupBy(note) in order of first appearance, each group's first few, then the room.
+            // Grouped by note in order of first appearance, each group's first few, then the
+            // room.
             let mut reasons: Vec<(Option<String>, Vec<usize>)> = Vec::new();
             for (at, row) in rows.iter().enumerate().filter(|(_, row)| row.tier > 0) {
                 match reasons.iter_mut().find(|(note, _)| *note == row.note) {
@@ -1054,7 +1052,7 @@ fn place(copy: &FoundCopy) -> (i32, i32) {
 /// between them, so nothing a person is looking at moves past another. Caller holds the job's
 /// lock. Each source caps its own list.
 fn merge(job: &mut JobState, mut copies: Vec<FoundCopy>) {
-    // OrderBy(Place), stable.
+    // A stable sort by place.
     copies.sort_by_key(place);
     for mut copy in copies {
         job.last_copy += 1;
@@ -1501,5 +1499,4 @@ async fn search_lidarr(
     Ok((copies, vec![record], Some(text)))
 }
 
-// Tested in `download_log_tests.rs` and `find_songs_pick_tests.rs`, as DownloadLogTests and
-// FindSongsPickTests.
+// Tested in `download_log_tests.rs` and `find_songs_pick_tests.rs`.

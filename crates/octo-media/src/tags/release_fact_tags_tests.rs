@@ -1,9 +1,8 @@
-//! Port of the file half of `octo.Tests/ReleaseFactTagsTests.cs` (2463c23): a peer's file carries
-//! the facts of the release it was ripped from. Once Octo files the song, only the facts of the
-//! album it is written under may stay, each under one name, and the values the library server
-//! groups an album by never come from a peer. Checked on real MP3, FLAC and MP4 files, read back
-//! the way the library server reads them. The advisory decisions are in
-//! `octo_core::tagging::explicit_advisory`, `FiledElsewhere_IsAnotherAlbumTitle` in
+//! A peer's file carries the facts of the release it was ripped from. Once Octo files the song,
+//! only the facts of the album it is written under may stay, each under one name, and the values
+//! the library server groups an album by never come from a peer. Checked on real MP3, FLAC and
+//! MP4 files, read back the way the library server reads them. The advisory decisions are in
+//! `octo_core::tagging::explicit_advisory`, `filed_elsewhere_is_another_album_title` in
 //! `octo_core::tagging::release_fact_tags`.
 
 use std::path::{Path, PathBuf};
@@ -407,8 +406,8 @@ fn advisory_on_mp4_is_the_one_byte_rating_atom() {
     assert_eq!(extras::read_advisory(&after), Some(1));
 }
 
-/// `TagWriterExtras.ClearAdvisory` (`d80141f`): the undo of the explicit marking takes the
-/// advisory out of every frame `SetAdvisory` writes, and leaves the rest of the file alone.
+/// `extras::clear_advisory`, the undo of the explicit marking, takes the advisory out of every
+/// frame `extras::set_advisory` writes, and leaves the rest of the file alone.
 #[test]
 fn clear_advisory_takes_it_out_of_every_frame() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -452,7 +451,7 @@ fn clear_advisory_takes_it_out_of_every_frame() {
     }
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- What a tidy reports ----------------------------------------------------------------
 
 /// What a tidy reports: each name once, as the file spelled it, the frames by their ids.
 #[test]

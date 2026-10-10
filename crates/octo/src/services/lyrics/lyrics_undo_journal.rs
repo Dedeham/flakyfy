@@ -1,5 +1,5 @@
-//! Port of `LyricsUndoJournal` from `Services/Lyrics/LyricsLibraryJob.cs`
-//! (`lyrics-undo.jsonl`). The rest of that file, the library job, is task 5-E's.
+//! The lyrics undo journal (`lyrics-undo.jsonl`): every write a Save made, so Undo can put it
+//! back.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::services::state_file::{self, null_as_default};
 
-/// `LyricsUndoJournal.Entry`: one write a Save made. `Kind` is [`LyricsUndoJournal::BESIDE`]
-/// (`Path` is the lyrics file, `Before` its earlier text or None when there was none) or
+/// One write a Save made. `Kind` is [`LyricsUndoJournal::BESIDE`] (`Path` is the lyrics file,
+/// `Before` its earlier text or None when there was none) or
 /// [`LyricsUndoJournal::INSIDE`] (`Path` is the song, `Before` its earlier lyrics tag). Written
 /// with full property names, unlike the other journals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LyricsUndoEntry {
-    // The non-nullable C# strings read a JSON null (or nothing) as empty.
+    // The required strings read a JSON null (or nothing) as empty.
     #[serde(default, deserialize_with = "null_as_default")]
     pub path: String,
     #[serde(default, deserialize_with = "null_as_default")]
@@ -82,7 +82,7 @@ impl LyricsUndoJournal {
     }
 
     /// Appends one entry, stamped now. An error (the folder cannot be made, the disk is full)
-    /// is the caller's, as the C# let it throw: a Save must not go ahead without its undo.
+    /// is the caller's: a Save must not go ahead without its undo.
     pub fn record(&self, path: &str, kind: &str, before: Option<&str>, run_id: &str) -> io::Result<()> {
         let entry = LyricsUndoEntry::new(path, kind, before.map(str::to_string), run_id, Utc::now());
         let mut memory = self.memory.lock();
@@ -172,7 +172,7 @@ mod tests {
         std::fs::read_to_string(path).expect("the fixture is in the repo")
     }
 
-    /// state-files.md §4.22: every line of the fixture reads, and is written back byte for byte.
+    /// Every line of the fixture reads, and is written back byte for byte.
     #[test]
     fn the_fixture_round_trips_byte_for_byte() {
         let text = fixture();
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].path, "/m/a.lrc");
         assert_eq!(entries[1].before.as_deref(), Some("old"));
-        // A null path reads as empty and the entry is still there, as STJ kept it.
+        // A null path reads as empty and the entry is still kept.
         assert_eq!(entries[2].path, "");
         assert_eq!(entries[2].at_utc, octo_core::json::datetime::min_value());
 

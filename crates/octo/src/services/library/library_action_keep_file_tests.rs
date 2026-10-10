@@ -1,8 +1,7 @@
-//! The rest of `LibraryActionKeepTests.cs` whose subjects are already ported: the
-//! `MusicBrainzRecordingPickTests` (2-D's `music_brainz_client::pick`), `AcoustIdSubmissionTests`'
-//! `BuildSubmitForm_NumbersEachItemAndLeavesOutAnUnknownFormat` (2-D's `build_submit_form`) and
-//! the `NavidromePlaylistApiTests` (3-E's `NavidromePlaylistApi`). The file's other classes test
-//! `NoticePlaylistWorker` (5-B) and `SubSonicController` (6-A).
+//! What "Keep" leans on: the MusicBrainz recording pick (`music_brainz_client::pick`), the
+//! AcoustID submit form (`build_submit_form`, each item numbered and an unknown format left out)
+//! and `NavidromePlaylistApi`. The notice worker and the Subsonic controller are tested with
+//! their own code.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,7 +18,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use super::NavidromePlaylistApi;
 use crate::services::subsonic::NavidromeIdentityService;
 
-// ---- MusicBrainzRecordingPickTests ---------------------------------------------------------
+// ---- The MusicBrainz recording pick --------------------------------------------------------
 //
 // The MusicBrainz recording a kept fingerprint is submitted with. MusicBrainz holds
 // near-duplicates, so anything but exactly one fit is no answer: a guess is never sent with
@@ -110,7 +109,7 @@ fn pick_no_recordings_is_no_answer() {
     );
 }
 
-// ---- AcoustIdSubmissionTests: the form -----------------------------------------------------
+// ---- The AcoustID submit form --------------------------------------------------------------
 
 #[test]
 fn build_submit_form_numbers_each_item_and_leaves_out_an_unknown_format() {
@@ -146,7 +145,7 @@ fn build_submit_form_numbers_each_item_and_leaves_out_an_unknown_format() {
     assert_eq!(field("fileformat.1"), None);
 }
 
-// ---- NavidromePlaylistApiTests -------------------------------------------------------------
+// ---- The Navidrome playlist API ------------------------------------------------------------
 //
 // Navidrome's admin token lapses after SessionTimeout (48 hours by default). Before this, every
 // native call answered 401 from then on, read as "nothing there", and library actions stalled
@@ -269,7 +268,7 @@ async fn add_tracks_sends_the_ids_navidrome_expects() {
     assert_eq!(*navidrome.bodies.lock(), [r#"{"ids":["a","b"]}"#]);
 }
 
-/// HttpClient reported its own timeout as a cancellation the caller never asked for.
+/// The client's own timeout is no answer, never a cancellation the caller did not ask for.
 #[tokio::test]
 async fn list_songs_a_navidrome_that_times_out_is_no_answer() {
     let mut navidrome = TokenNavidrome::new(|_| 200);

@@ -1,6 +1,6 @@
-//! Port of `Services/Imports/ImportStore.cs` and its file, `imports.json`: every imported list,
-//! with its songs and what the last match found, so a restart keeps them and their playlist and
-//! fetch switches. Readers get copies, so a list never changes under them.
+//! The import store and its file, `imports.json`: every imported list, with its songs and what
+//! the last match found, so a restart keeps them and their playlist and fetch switches. Readers
+//! get copies, so a list never changes under them.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use super::ImportList;
 use super::import_models::import_sources;
 use crate::services::state_file::null_as_default;
 
-/// `ImportStore.FileShape`: `{"Lists": [...]}`.
+/// The store's file: `{"Lists": [...]}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct ImportFile {
@@ -68,7 +68,7 @@ impl ImportStore {
             .filter(|list| eq_ignore_case(&list.owner, owner))
             .cloned()
             .collect();
-        // Stable, as OrderBy is.
+        // A stable sort: lists that tie keep their order.
         mine.sort_by(|a, b| {
             let liked = |list: &ImportList| i32::from(list.source != import_sources::SPOTIFY_LIKED);
             liked(a)
@@ -159,9 +159,9 @@ fn find(lists: &[ImportList], owner: &str, id: &str) -> Option<usize> {
         .position(|list| eq_ignore_case(&list.owner, owner) && list.id == id)
 }
 
-/// `StringComparer.CurrentCultureIgnoreCase` in the container's invariant culture, near enough:
-/// letters compared without their accents and case first, then with their accents. Names equal
-/// by both compare equal, so a stable sort keeps their order.
+/// A case-insensitive name order that sorts accented letters with plain ones: letters compared
+/// without their accents and case first, then with their accents. Names equal by both compare
+/// equal, so a stable sort keeps their order.
 pub(crate) fn culture_compare_ignore_case(a: &str, b: &str) -> Ordering {
     let primary = |s: &str| -> String {
         to_lower_invariant(&s.nfd().filter(|c| !is_combining_mark(*c)).collect::<String>())

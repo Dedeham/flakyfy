@@ -1,9 +1,7 @@
-//! Port of `Services/Metadata/AcceptLanguageHeader.cs`.
+//! The Accept-Language header the metadata clients send.
 //!
-//! The C# handed each segment to `HttpHeaders.AcceptLanguage.TryParseAdd`, which kept it only
-//! when .NET's `StringWithQualityHeaderValue` parser accepted it, and sent the kept values
-//! joined with ", " (`en-US, en; q=0.9`). That parser is ported here, so the same values are
-//! kept and the header reads the same.
+//! Each configured segment is kept only when it parses as one `token [; q=number]` entry, and
+//! the kept values are sent joined with ", " (`en-US, en; q=0.9`).
 
 use std::fmt;
 
@@ -12,7 +10,7 @@ use http::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
 use crate::common::dotnet::{format_optional_decimals, is_blank};
 use crate::settings::MetadataSettings;
 
-/// One Accept-Language entry as .NET parsed it: a token and an optional quality.
+/// One parsed Accept-Language entry: a token and an optional quality.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringWithQuality {
     pub value: String,
@@ -20,7 +18,7 @@ pub struct StringWithQuality {
 }
 
 impl fmt::Display for StringWithQuality {
-    /// `StringWithQualityHeaderValue.ToString()`: the quality written with `"0.0##"`.
+    /// The entry as sent: the quality written with one to three decimals (`"0.0##"`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.quality {
             None => f.write_str(&self.value),
@@ -41,7 +39,7 @@ impl fmt::Display for StringWithQuality {
 pub struct AcceptLanguageHeader;
 
 impl AcceptLanguageHeader {
-    /// The values `Apply` added to the client's default headers, in order.
+    /// The values [`AcceptLanguageHeader::apply`] adds to the client's default headers, in order.
     pub fn values(settings: &MetadataSettings) -> Vec<StringWithQuality> {
         let configured = settings.language.as_str();
         if is_blank(configured) {
@@ -83,12 +81,13 @@ impl AcceptLanguageHeader {
     }
 }
 
-/// `HttpRuleParser.IsTokenChar`: visible ASCII except the separators.
+/// An HTTP token character: visible ASCII except the separators.
 fn is_token_char(c: char) -> bool {
     c.is_ascii_graphic() && !"()<>@,;:\\\"/[]?={}".contains(c)
 }
 
-/// `HttpRuleParser.GetWhitespaceLength`: spaces, tabs, and a CRLF folded before one of them.
+/// The length of the HTTP white space at `start`: spaces, tabs, and a CRLF folded before one
+/// of them.
 fn whitespace_length(input: &[char], start: usize) -> usize {
     let mut current = start;
     while current < input.len() {
@@ -106,7 +105,7 @@ fn whitespace_length(input: &[char], start: usize) -> usize {
     current - start
 }
 
-/// `HttpRuleParser.GetNumberLength` with decimals allowed: digits and at most one dot, never
+/// The length of the number at `start`, decimals allowed: digits and at most one dot, never
 /// starting with the dot.
 fn number_length(input: &[char], start: usize) -> usize {
     if input.get(start) == Some(&'.') {
@@ -127,8 +126,8 @@ fn number_length(input: &[char], start: usize) -> usize {
     current - start
 }
 
-/// `TryParseAdd` of one trimmed segment, without commas: the whole of it must be one
-/// `token [; q=number]` with the quality between 0 and 1.
+/// One trimmed segment, without commas, parsed: the whole of it must be one `token [; q=number]`
+/// with the quality between 0 and 1.
 fn parse(segment: &str) -> Option<StringWithQuality> {
     let input: Vec<char> = segment.chars().collect();
     let token_length = input.iter().take_while(|c| is_token_char(**c)).count();
@@ -213,7 +212,7 @@ mod tests {
         headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok())
     }
 
-    // ---- AcceptLanguageHeaderTests.cs ----------------------------------------------------
+    // ---- applying the header -------------------------------------------------------------
     // The header this applies is what keeps Deezer from localizing genre names to the
     // server's IP country (issue #24), so the interesting cases are the ones where a
     // user-typed value is messy: blank, padded, garbage, or a whole browser-style list.
@@ -264,10 +263,10 @@ mod tests {
         assert_eq!(all[0], "en");
     }
 
-    // ---- Rust-only: what .NET 9's parser answered for these ------------------------------
+    // ---- the parser's reference answers ---------------------------------------------------
 
     #[test]
-    fn the_header_is_what_dotnet_sent() {
+    fn the_header_matches_the_reference_answers() {
         for (language, expected) in [
             ("en;q=1", Some("en; q=1.0")),
             ("en; q = 0.8765", Some("en; q=0.877")),

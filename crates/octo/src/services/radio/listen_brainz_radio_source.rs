@@ -1,6 +1,6 @@
-//! Port of `Services/Radio/ListenBrainzRadioSource.cs`: ListenBrainz's similar recordings for a
-//! song, found by the recording's MusicBrainz id; LB Radio for an artist or a tag when Octo holds
-//! a ListenBrainz token.
+//! ListenBrainz as a radio source: ListenBrainz's similar recordings for a song, found by the
+//! recording's MusicBrainz id; LB Radio for an artist or a tag when Octo holds a ListenBrainz
+//! token.
 
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ use crate::services::listen_brainz::listen_brainz_radio_client::{
 
 pub struct ListenBrainzRadioSource {
     client: Arc<ListenBrainzRadioClient>,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
 }
 

@@ -1,6 +1,6 @@
-//! Port of `CredentialCheckTests`: the sign-in check that stands in front of outside songs:
-//! what it sends Navidrome, what it keeps, for how long, and what it never keeps.
-//! (`Credential_ToString_HidesTheSecret` is with `SubsonicCredential` in `octo_subsonic`.)
+//! The sign-in check that stands in front of outside songs: what it sends Navidrome, what it
+//! keeps, for how long, and what it never keeps. (That a credential's text hides its secret is
+//! tested with `SubsonicCredential` in `octo_subsonic`.)
 
 use super::*;
 use indexmap::IndexMap;
@@ -224,7 +224,7 @@ async fn a_slow_navidrome_is_unreachable_after_five_seconds() {
 }
 
 #[tokio::test]
-async fn a_url_http_client_cannot_use_is_an_error_as_in_csharp() {
+async fn a_url_http_client_cannot_use_is_an_error() {
     let verdict = CredentialCheck::new()
         .check(Some(&credential("good", "salt")), &relay("localhost:4533"))
         .await;

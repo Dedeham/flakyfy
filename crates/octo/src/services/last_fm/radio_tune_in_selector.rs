@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/RadioTuneInSelector.cs`.
-//!
 //! Picks where a tune-in starts inside a station snapshot. Every listen used to open with the
 //! same three cached tracks in snapshot order, which is most of why a station felt like the same
 //! handful of songs on repeat.
@@ -9,7 +7,7 @@ pub trait IRadioTuneInSelector: Send + Sync {
     fn start(&self, candidate_count: usize) -> usize;
 }
 
-/// `Random.Shared.Next(candidateCount)`.
+/// A uniformly random start among the candidates.
 #[derive(Debug, Default)]
 pub struct RandomRadioTuneInSelector;
 

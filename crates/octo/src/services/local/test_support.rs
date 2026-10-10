@@ -1,4 +1,4 @@
-//! A hand-written `Mock<ILocalLibraryService>` for the tests of the services that take one.
+//! A hand-written stand-in `ILocalLibraryService` for the tests of the services that take one.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,8 +10,8 @@ use parking_lot::Mutex;
 use super::{ILocalLibraryService, LocalSongMapping, ParsedExternalId, ParsedSongId};
 
 /// Knows nothing unless told: `find_mapping_by_tags` answers the mappings set up for exactly
-/// those tags (as `Setup(l => l.FindMappingByTagsAsync("A", "Song", null))` did), scans are
-/// counted and succeed, and every id is local.
+/// those tags (artist, title and album, a missing album matching only a missing one), scans
+/// are counted and succeed, and every id is local.
 #[derive(Default)]
 pub(crate) struct FakeLocalLibrary {
     pub by_tags: Mutex<Vec<(String, String, Option<String>, LocalSongMapping)>>,

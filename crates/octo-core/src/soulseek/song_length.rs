@@ -1,5 +1,4 @@
-//! Port of `Services/Soulseek/SongLength.cs`: the rules for the length a client is shown for a
-//! song Octo found outside the library.
+//! The rules for the length a client is shown for a song Octo found outside the library.
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -38,9 +37,9 @@ pub enum LengthSource {
 /// checks the finished file against, to within 8 seconds. A length filled in so a row can
 /// show one must not start rejecting files a download used to accept.
 ///
-/// The C# locked the routing object around each read and write; in Rust a shared routing sits
-/// behind a mutex (`octo::services::soulseek::external_id_registry::SharedRouting`), so these
-/// take the routing the caller already holds locked.
+/// A shared routing sits behind a mutex
+/// (`octo::services::soulseek::external_id_registry::SharedRouting`), so these take the routing
+/// the caller already holds locked.
 pub struct SongLength;
 
 impl SongLength {

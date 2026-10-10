@@ -1,6 +1,5 @@
-//! Handler tests for task 6-A1's routes, through the assembled pipeline (`tower::oneshot`)
-//! against Navidrome and the other upstreams stood in for by wiremock. The C# drove the same
-//! routes through `WebApplicationFactory<Program>`.
+//! Handler tests for the Subsonic routes, through the assembled pipeline (`tower::oneshot`)
+//! against Navidrome and the other upstreams stood in for by wiremock.
 
 mod native;
 mod radio;
@@ -89,14 +88,14 @@ pub(super) async fn get_string(app: &App, uri: &str) -> String {
 
 type ArtistTitle = Box<dyn Fn(&str, &str, Option<i32>) -> Vec<Song> + Send + Sync>;
 
-/// `Mock<IMusicMetadataService>`: answers what a test sets, records what the controller asked.
+/// A metadata service that answers what a test sets and records what the controller asked.
 #[derive(Default)]
 pub(crate) struct TestMetadata {
-    /// `SearchSongsByArtistTitleAsync`; nothing when unset (the C# setups answered `[]`).
+    /// `search_songs_by_artist_title`; nothing when unset.
     pub by_artist_title: Mutex<Option<ArtistTitle>>,
-    /// The `topN` of every `PrewarmYouTubeIdsAsync` call.
+    /// The `top_n` of every `prewarm_you_tube_ids` call.
     pub prewarms: Mutex<Vec<usize>>,
-    /// The query of every `SearchAlbumsAsync` call.
+    /// The query of every `search_albums` call.
     pub album_searches: Mutex<Vec<String>>,
     pub songs: Mutex<HashMap<String, Song>>,
     /// When set, every `get_song` first waits for a permit from it (and gives it back).

@@ -1,4 +1,4 @@
-//! Port of `Services/Lidarr/LidarrAlbumClaims.cs`.
+//! The Lidarr albums a heart or an upgrade has claimed.
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 /// files its search brought in, which would take a heart's songs.
 #[derive(Default)]
 pub struct LidarrAlbumClaims {
-    // Keyed ignoring case (StringComparer.OrdinalIgnoreCase).
+    // Keyed ignoring case (ordinal case folding).
     hearts: Mutex<HashSet<String>>,
     upgrades: Mutex<HashMap<String, i32>>,
 }

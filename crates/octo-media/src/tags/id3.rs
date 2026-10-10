@@ -19,9 +19,8 @@ use lofty::picture::Picture;
 use super::genres;
 use super::net::parse_byte;
 
-/// The language TagLib# gives a lyrics frame it creates: `CultureInfo.CurrentCulture`'s
-/// three-letter name, read once. The shipped image sets no LANG, so .NET runs with the
-/// invariant culture, whose three-letter name is "ivl".
+/// The language a new lyrics frame gets: "ivl", the invariant culture's three-letter name (the
+/// shipped image sets no LANG).
 pub(crate) const LANGUAGE: [u8; 3] = *b"ivl";
 
 /// TagLib#'s `Tag.DefaultVersion`: the version of a tag it creates.

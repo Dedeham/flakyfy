@@ -1,7 +1,6 @@
-//! Port of `Controllers/ImportsSubsonicController.cs`: octoImports v1, the Spotify import page
-//! for the Octo apps, the same lists and trickle the dashboard shows, for whoever the app signed
-//! in as. Every call checks the caller's sign-in with Navidrome first, as getUpgrades does, and
-//! answers JSON. Version 2 adds getImportServices (where to export a library to a file),
+//! octoImports v1, the Spotify import page for the Octo apps, the same lists and trickle the
+//! dashboard shows, for whoever the app signed in as. Every call checks the caller's sign-in with
+//! Navidrome first, as getUpgrades does, and answers JSON. Version 2 adds getImportServices (where to export a library to a file),
 //! importFile and importText.
 //!
 //! The Spotify sign-in from an app: importAction connect with the app's own loopback redirect

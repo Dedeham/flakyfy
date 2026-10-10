@@ -1,4 +1,4 @@
-//! The layering, binding and reloading contract of config.md §1.
+//! How the settings store layers, binds and reloads the configuration.
 
 use super::*;
 use crate::settings::{SettingsFileWriter, StorageMode};
@@ -29,7 +29,7 @@ fn the_built_in_appsettings_bind_without_warnings() {
     let tree = base_layers(&[]);
     let (settings, warnings) = AppSettings::bind(&tree);
     assert!(warnings.is_empty(), "{warnings:?}");
-    // appsettings.json disagrees with the class defaults on these three (config.md §8.4).
+    // appsettings.json disagrees with the class defaults on these three.
     assert_eq!(settings.subsonic.storage_mode, StorageMode::Stream);
     assert!(!settings.subsonic.enable_external_playlists);
     assert_eq!(settings.metadata.lyrics_sources, "kugou,lrclib,lyricsovh");
@@ -107,8 +107,7 @@ fn raw_keys_read_through_every_layer() {
 }
 
 /// A cleared number field is saved as null. For a typed setting that falls through to the
-/// layer below (the known divergence); for a string it is "" and shadows the layers below, as
-/// in C#.
+/// layer below; for a string it is "" and shadows the layers below.
 #[test]
 fn null_in_settings_json_falls_back_for_typed_settings_and_shadows_strings() {
     let file = settings_file(Some(

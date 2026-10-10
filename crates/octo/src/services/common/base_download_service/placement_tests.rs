@@ -1,9 +1,8 @@
-//! Port of `DownloadPlacementTests`: a download is placed after it is tagged and from the Song
-//! (#48), a list of artists never names a folder (#49), and a path that is already taken is only
-//! ever replaced by the same song. Each of these used to be decided from the search request
-//! before anything knew what the file was.
+//! A download is placed after it is tagged and from the Song (#48), a list of artists never names
+//! a folder (#49), and a path that is already taken is only ever replaced by the same song. Each
+//! of these used to be decided from the search request before anything knew what the file was.
 //!
-//! The three `TagWriterExtras` tests of that file (`SetRecordingId_*`, `SetMultiValue_*`) are in
+//! The tag writer's recording id and multi-value tests are in
 //! `octo_media::tags::tag_writer_extras_tests`, beside the frame models they read.
 
 use std::path::{Path, PathBuf};
@@ -198,7 +197,7 @@ fn choose_layout_request_without_album_takes_the_tagged_album_and_its_track() {
     assert_eq!(choice.track, Some(7));
 }
 
-// ---- PlaceInLibraryAsync ------------------------------------------------------------------
+// ---- placing in the library---------------------------------------------------------------
 
 struct Root {
     dir: tempfile::TempDir,
@@ -633,7 +632,7 @@ async fn enrich_nothing_known_files_the_track_as_a_single() {
     assert_eq!(song.album, "T");
 }
 
-// ---- a library action's replacement (W8) --------------------------------------------------
+// ---- a library action's replacement -------------------------------------------------------
 
 struct Replacement {
     harness: Harness,
@@ -853,9 +852,9 @@ async fn write_sidecars_never_replaces_an_existing_cover() {
     assert_eq!(std::fs::read(&existing).expect("read"), [1, 2, 3]);
 }
 
-/// Rust-only: the small helpers the placement stands on, as .NET answers them.
+/// The small helpers the placement stands on, at their edges: a root, a bare name, no file.
 #[test]
-fn the_path_helpers_answer_as_dotnet_does() {
+fn the_path_helpers_answer_at_their_edges() {
     use super::placement::get_directory_name;
     assert_eq!(get_directory_name("/music/A - T.mp3").as_deref(), Some("/music"));
     assert_eq!(get_directory_name("/a").as_deref(), Some("/"));

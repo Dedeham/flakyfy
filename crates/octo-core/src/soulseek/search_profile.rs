@@ -1,4 +1,4 @@
-//! Port of `Services/Soulseek/SearchProfile.cs`.
+//! How long and how wide one Soulseek search looks.
 
 use crate::settings::SoulseekSettings;
 
@@ -6,7 +6,7 @@ use crate::settings::SoulseekSettings;
 /// first: SearchTimeoutMs with no new answer, ResponseLimit peers, or FileLimit files. The file
 /// limit counts every format. Octo asked for 150 files, so a popular song's first wave of MP3s
 /// ended the search before the FLAC answers arrived (#70). CeilingSeconds is Octo's own limit:
-/// a search still running then is cancelled, and slskd still hands over what it gathered.
+/// a search still running then is canceled, and slskd still hands over what it gathered.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchProfile {
     pub name: String,
@@ -91,8 +91,8 @@ impl SearchProfile {
 mod tests {
     use super::*;
 
-    /// The profile half of SoulseekSearchProfileTests.ThePayloadCarriesEachProfilesLimits; the
-    /// payload half (`SoulseekClient.SearchPayload`) moves with the Soulseek client (4-A).
+    /// Each profile carries its own limits; that the search payload carries them is tested with
+    /// `soulseek_client::search_payload`.
     #[test]
     fn each_profile_carries_its_limits() {
         let s = SoulseekSettings::default();

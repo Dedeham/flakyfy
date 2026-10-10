@@ -1,8 +1,7 @@
-//! The download log and Find songs routes of `Controllers/AdminDownloadsController.cs`: the
-//! dashboard's side of what the Octo apps already do, for admins whose listeners use other
-//! Subsonic apps. A download's full log on Fetched songs, and Find songs (a search run again by
-//! hand, every copy listed, one picked). Recently removed and Put back (`trash`,
-//! `trash/restore`) are the library edits' (groups F and R).
+//! The download log and Find songs routes: the dashboard's side of what the Octo apps already
+//! do, for admins whose listeners use other Subsonic apps. A download's full log on Fetched
+//! songs, and Find songs (a search run again by hand, every copy listed, one picked). Recently
+//! removed and Put back (`trash`, `trash/restore`) are the library edits' (see `trash`).
 //!
 //! Everything here names peers, files or people, or changes the library, so every call needs a
 //! Navidrome admin's own dashboard sign-in (never the recovery code) and acts as that person:

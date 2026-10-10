@@ -1,5 +1,5 @@
-//! `UpgradeQueueTests.cs`: the queue, and the worker that runs it. The Better quality page's
-//! endpoint tests belong to the admin controller (6-B).
+//! The upgrade queue, and the worker that runs it. The Better quality page's endpoint tests
+//! belong to the admin controller.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -328,7 +328,7 @@ fn mp3() -> Vec<u8> {
     bytes
 }
 
-/// The C# test's `FlacOf`: a STREAMINFO block describing `seconds` of 16-bit stereo, no frames.
+/// A FLAC file of only a STREAMINFO block describing `seconds` of 16-bit stereo, no frames.
 fn flac_of(seconds: u64) -> Vec<u8> {
     let mut bytes = b"fLaC".to_vec();
     bytes.extend_from_slice(&[0x80, 0x00, 0x00, 0x22]);
@@ -430,7 +430,7 @@ fn without_acoust_id_the_report_does_not_claim_it() {
     assert!(!result.checks.iter().any(|check| check.contains("AcoustID")));
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- The state file, the limit and the words ---------------------------------------------
 
 /// The state file reads and writes back byte for byte.
 #[test]
@@ -488,7 +488,7 @@ fn a_full_queue_refuses_with_a_reason() {
 }
 
 #[test]
-fn kept_folders_and_sizes_read_as_the_c_sharp_wrote_them() {
+fn kept_folders_and_sizes_keep_their_text() {
     assert_eq!(
         kept_folder("/music/.octo-trash/2026-10-03/a/b.mp3"),
         ".octo-trash/2026-10-03/a"

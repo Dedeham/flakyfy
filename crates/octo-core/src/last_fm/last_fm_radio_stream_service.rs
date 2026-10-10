@@ -1,6 +1,6 @@
-//! The pure half of `Services/LastFm/LastFmRadioStreamService.cs`: the flow picker that orders a
-//! continuous stream by how smoothly one track follows another, and the tags it judges kinship
-//! by. The streaming itself is `octo::services::last_fm::last_fm_radio_stream_service`.
+//! The pure half of the radio stream service: the flow picker that orders a continuous stream by
+//! how smoothly one track follows another, and the tags it judges kinship by. The streaming
+//! itself is `octo::services::last_fm::last_fm_radio_stream_service`.
 
 use std::collections::HashSet;
 
@@ -135,7 +135,6 @@ mod tests {
         profile
     }
 
-    // LastFmRadioCoreTests.Flow_PrefersTheClosestMeasuredTrackAndFallsBackToSnapshotOrder
     #[test]
     fn flow_prefers_the_closest_measured_track_and_falls_back_to_snapshot_order() {
         let current = profile(6.0, 2000.0, 0.10, 6000.0);
@@ -162,7 +161,6 @@ mod tests {
         assert!(flow_distance(&current, &close) < flow_distance(&current, &bright));
     }
 
-    // LastFmRadioCoreTests.KinshipTags_DropYearsTheArtistAndBookkeeping
     #[test]
     fn kinship_tags_drop_years_the_artist_and_bookkeeping() {
         let kept = kinship_tags(
@@ -181,7 +179,6 @@ mod tests {
         assert_eq!(kept, ["hip-hop", "cloud rap", "phonk"]);
     }
 
-    // LastFmRadioCoreTests.Flow_WeighsKinshipBesideSound
     #[test]
     fn flow_weighs_kinship_beside_sound() {
         // The current track is trap. One candidate sounds almost identical but is indie rock;
@@ -235,8 +232,7 @@ mod tests {
         );
     }
 
-    /// GenreNormalizerTests.IsYearLike_MatchesWhatTheRadioKinshipFilterAlsoDrops, the radio
-    /// half: kinship drops exactly the tags the genre normalizer calls a year.
+    /// Kinship drops exactly the tags the genre normalizer calls a year.
     #[test]
     fn is_year_like_matches_what_the_radio_kinship_filter_also_drops() {
         for (tag, expected) in [

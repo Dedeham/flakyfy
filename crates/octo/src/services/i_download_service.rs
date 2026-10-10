@@ -1,9 +1,8 @@
-//! Port of `Services/IDownloadService.cs`: the music download service's interface and
-//! `DirectStreamInfo`. The service itself is 4-B's `BaseDownloadService` and 4-C's
-//! `SoulseekDownloadService`.
+//! The music download service's interface and `DirectStreamInfo`. The service itself is
+//! `BaseDownloadService` and `SoulseekDownloadService`.
 //!
-//! The C# methods threw where a download could not be done; here they answer `Err`, and a
-//! caller that branches on the kind downcasts (`ReplacementRejectedException`).
+//! Where a download cannot be done the methods answer `Err`, and a caller that branches on the
+//! kind downcasts (`ReplacementRejectedException`).
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -18,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 use crate::services::common::AcquisitionPlace;
 use crate::services::library::ReplacementHandoff;
 
-/// An audio body being read, chunk by chunk (the C# `Stream`). Dropping it closes the upstream
-/// response it reads from.
+/// An audio body being read, chunk by chunk. Dropping it closes the upstream response it reads
+/// from.
 pub type AudioStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;
 
 /// Interface for the music download service (Deezspot or other)
@@ -59,8 +58,8 @@ pub trait IDownloadService: Send + Sync {
     /// notification. Empty when Octo started the acquisition itself or when attribution is
     /// switched off. `upgrade_search`: search Soulseek the slow, wide way (Better quality,
     /// weekly upgrade). `replacement`: a library action's replacement, revealed in the
-    /// original's place (W8).
-    #[allow(clippy::too_many_arguments)] // the C# signature, member for member
+    /// original's place.
+    #[allow(clippy::too_many_arguments)] // one argument per input an acquisition takes
     async fn execute_acquisition(
         &self,
         external_provider: &str,

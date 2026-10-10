@@ -1,5 +1,4 @@
-//! Port of `SubsonicResponseBuilder.Lyrics.cs`: getLyricsBySongId, getLyrics, and Octo's lyrics
-//! choice answers.
+//! getLyricsBySongId, getLyrics, and Octo's lyrics choice answers.
 
 use octo_core::lyrics::lyrics_choices::LyricsChoiceCandidate;
 use octo_core::lyrics::lyrics_models::LyricsResult;
@@ -226,9 +225,8 @@ impl SubsonicResponseBuilder {
 /// in UTF-8 bytes of the cue line's value, both ends included, so a client finds the word
 /// the same way whatever alphabet it is written in.
 ///
-/// (A word's range is already in UTF-8 bytes in Rust; C# counted the bytes of its UTF-16
-/// range. A range that does not fall on characters of the text is left out, as one outside
-/// the text was.)
+/// (A word's range is already in UTF-8 bytes. A range that does not fall on characters of the
+/// text is left out, as is one outside the text.)
 pub fn cue_lines(lines: &[LyricLine]) -> Vec<CueLineOut> {
     let mut cue_lines = Vec::new();
     for (index, line) in lines.iter().enumerate() {

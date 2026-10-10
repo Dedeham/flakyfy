@@ -1,6 +1,6 @@
-//! `Services/Sonic`: Sounds alike, octo-sonic's reading of every library song: the client, the
-//! analysis pass, and what the analysis keeps on disk (`sonic-features.json`) with the
-//! nearest-song search, and each song's transition profile (`transition-profiles.json`).
+//! Sounds alike, octo-sonic's reading of every library song: the client, the analysis pass, and
+//! what the analysis keeps on disk (`sonic-features.json`) with the nearest-song search, and each
+//! song's transition profile (`transition-profiles.json`).
 
 pub mod sonic_analysis_worker;
 pub mod sonic_client;

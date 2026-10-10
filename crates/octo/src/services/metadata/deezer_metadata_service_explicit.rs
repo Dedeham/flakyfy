@@ -1,5 +1,4 @@
-//! Port of `Services/Metadata/DeezerMetadataService.Explicit.cs`: the catalog lookups behind the
-//! library's explicit marking, on the background lane.
+//! The Deezer catalog lookups behind the library's explicit marking, on the background lane.
 
 use async_trait::async_trait;
 use octo_core::common::SongIdentity;

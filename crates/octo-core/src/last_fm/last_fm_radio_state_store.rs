@@ -1,5 +1,5 @@
-//! The pure half of `Services/LastFm/LastFmRadioStateStore.cs`: the station ids and the
-//! constants the store prunes by. The store itself is `octo::services::last_fm`.
+//! The pure half of the radio state store: the station ids and the constants the store prunes by.
+//! The store itself is `octo::services::last_fm`.
 
 use chrono::TimeDelta;
 use sha2::{Digest, Sha256};
@@ -60,9 +60,9 @@ pub fn to_base62(bytes: &[u8], length: usize) -> String {
 mod tests {
     use super::*;
 
-    /// What .NET 9 computed (BigInteger over the hash).
+    /// The reference values (the hash read as one big unsigned number).
     #[test]
-    fn station_ids_are_what_dotnet_computed() {
+    fn station_ids_match_the_reference_values() {
         assert_eq!(station_id("alice", "mix"), "or5D611eeSONhWnfZPwUAs");
         assert_eq!(station_id(" Brandon ", " Your-Mix "), "or9Pos9xe8DfTyQJGuZqZG");
         assert_eq!(station_id("Björk", "artist-x"), "orwLd3nTWU1MPqQgsP05zv");

@@ -1,10 +1,9 @@
-//! `System.Net.WebUtility.HtmlDecode`, which KuGou's lyrics need: they carry HTML entities
-//! ("I&apos;m"). Not a C# file of Octo's; .NET's own rules, kept exactly.
+//! HTML entity decoding, which KuGou's lyrics need: they carry HTML entities ("I&apos;m").
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// .NET's entity table: the 252 entities of HTML 4.01 and `apos`, case-sensitive.
+/// The entity table: the 252 entities of HTML 4.01 and `apos`, case-sensitive.
 const ENTITIES: [(&str, u32); 253] = [
     ("quot", 34),
     ("amp", 38),
@@ -273,7 +272,7 @@ static LOOKUP: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
         .collect()
 });
 
-/// `WebUtility.HtmlDecode`: `&name;` from the table, `&#n;` and `&#xh;` for any scalar value
+/// Decodes HTML entities: `&name;` from the table, `&#n;` and `&#xh;` for any scalar value
 /// (a surrogate is not one), and anything else left as it was.
 pub(crate) fn html_decode(value: &str) -> String {
     if !value.contains('&') {
@@ -319,8 +318,8 @@ pub(crate) fn html_decode(value: &str) -> String {
     output
 }
 
-/// `&#...;`: hex after an `x` (`NumberStyles.AllowHexSpecifier`), otherwise a decimal with the
-/// white space and sign `NumberStyles.Integer` allows, as a `uint`.
+/// `&#...;`: hex after an `x`, otherwise a decimal with optional white space either side and a
+/// sign, as a `u32`.
 fn numeric(digits: &str) -> Option<char> {
     let value = if let Some(hex) = digits.strip_prefix(['x', 'X']) {
         if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -345,7 +344,7 @@ fn numeric(digits: &str) -> Option<char> {
         }
         value
     };
-    // char::from_u32 refuses surrogates and anything past U+10FFFF, as .NET did.
+    // char::from_u32 refuses surrogates and anything past U+10FFFF.
     char::from_u32(value)
 }
 
@@ -353,7 +352,7 @@ fn numeric(digits: &str) -> Option<char> {
 mod tests {
     use super::*;
 
-    /// Every expected value here is what .NET 9's `WebUtility.HtmlDecode` returned.
+    /// Every expected value here is the reference decoder's output.
     #[test]
     fn decodes_named_and_numeric_entities_and_leaves_the_rest() {
         let cases = [

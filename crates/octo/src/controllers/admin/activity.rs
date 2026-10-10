@@ -1,16 +1,14 @@
-//! Port of `Controllers/ActivityController.cs`: everything Octo is working on, in one shape, for
-//! the dashboard's progress toasts: a library re-tag, a covers or lyrics run, better copies,
-//! hearted downloads, a Spotify read, a duplicate scan, an slskd rescan and Navidrome's own scan.
-//! The dashboard asks often while something runs and seldom while nothing does, so one cheap read
-//! replaces a poller per page.
+//! Everything Octo is working on, in one shape, for the dashboard's progress toasts: a library
+//! re-tag, a covers or lyrics run, better copies, hearted downloads, a Spotify read, a duplicate
+//! scan, an slskd rescan and Navidrome's own scan. The dashboard asks often while something runs
+//! and seldom while nothing does, so one cheap read replaces a poller per page.
 //!
 //! A job that needs the Navidrome sign-in on its own page is listed only for a signed-in
 //! browser. A job just finished stays listed for [`RECENT_WINDOW`], so a toast can say how it
 //! ended. Behind the same guard as the rest of `/api/admin`.
 //!
 //! Some jobs are read through small views of their own ([`FindLook`], [`ImportsActivity`],
-//! [`HealthActivity`], [`RescanReport`]). Library health (group R, not on this branch yet) lands
-//! as a conversion and one call in [`get_activity`] where its `STUB` marks the place.
+//! [`HealthActivity`], [`RescanReport`]).
 
 use axum::extract::{Request, State};
 use axum::response::Response;
@@ -47,7 +45,7 @@ pub const RESCAN_WATCH: TimeDelta = TimeDelta::minutes(15);
 /// slskd starts a rescan a moment after it is asked, so the first seconds read as starting.
 pub const RESCAN_START: TimeDelta = TimeDelta::seconds(15);
 
-/// One job. `state` is running, done, stopped (cancelled or interrupted) or failed. `done` of
+/// One job. `state` is running, done, stopped (canceled or interrupted) or failed. `done` of
 /// `total` counts `unit`; `fraction` is set when only a share is known. `page` is the dashboard
 /// page that shows it in full.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -183,8 +181,8 @@ async fn get_activity(State(state): State<AppState>, request: Request) -> Respon
     if let Some(requested) = state.soulseek_sharing.last_rescan_utc()
         && now - requested < RESCAN_WATCH
     {
-        // slskd away is a report that says so (the C# caught a report that threw and added
-        // nothing; the port's report never fails): the Soulseek page tells the rest.
+        // slskd away is a report that says so (the report never fails): the Soulseek page tells
+        // the rest.
         let report = state.soulseek_sharing.report(false, None).await;
         items.push(rescan(&RescanReport::from(&report), requested, now));
     }
@@ -222,7 +220,7 @@ fn recent(finished: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     finished.is_some_and(|f| now - f < RECENT_WINDOW)
 }
 
-/// .NET's `{n:N0}` under the invariant culture: thousands with commas.
+/// A whole number with its thousands separated by commas.
 fn n0(value: i64) -> String {
     let digits = value.unsigned_abs().to_string();
     let mut out = String::new();
@@ -631,7 +629,7 @@ fn state_words(state: AcquisitionState) -> &'static str {
     }
 }
 
-/// What the activity view reads of one Find songs look (`FindSnapshot`, group D).
+/// What the activity view reads of one Find songs look (`FindSnapshot`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FindLook {
     pub id: String,
@@ -731,7 +729,7 @@ pub fn find(looks: &[FindLook], now: DateTime<Utc>) -> Option<ActivityItem> {
     })
 }
 
-/// What the activity view reads of a person's imports (`ImportOverview`, group H): the Spotify
+/// What the activity view reads of a person's imports (`ImportOverview`): the Spotify
 /// read and the trickle.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImportsActivity {
@@ -822,7 +820,7 @@ pub fn imports(overview: &ImportsActivity, now: DateTime<Utc>) -> Vec<ActivityIt
     items
 }
 
-/// What the activity view reads of a Library health run (`HealthRun`, group R).
+/// What the activity view reads of a Library health run (`HealthRun`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HealthActivity {
     pub id: String,
@@ -999,7 +997,7 @@ pub fn duplicates(worker: &DuplicateScan, now: DateTime<Utc>) -> Option<Activity
     )
 }
 
-/// What the activity view reads of slskd's sharing report (`SharingReport`, group E).
+/// What the activity view reads of slskd's sharing report (`SharingReport`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RescanReport {
     pub scanning: bool,

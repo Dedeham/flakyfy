@@ -1,7 +1,6 @@
 //! What a download is and what is written to it: identification, the old catalog fill, the
 //! album folder's facts, the loudness, the genre and the cover, the tags themselves, and the
-//! album gain at the end of a walk. Part of `BaseDownloadService.cs`; the tag body itself is
-//! `octo_media::tags::write_song`.
+//! album gain at the end of a walk. The tag body itself is `octo_media::tags::write_song`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -476,15 +475,15 @@ impl BaseDownloadService {
     /// on, embedded or already there, so the same picture can go beside the file as cover.jpg;
     /// `None` when there was none or the write failed.
     ///
-    /// The C# held the file open across the genre and cover lookups; here what they need is read
-    /// first, and the file opened again to write, so no file is held across a wait.
+    /// What the genre and cover lookups need is read first, and the file opened again to write,
+    /// so no file is held across a wait.
     pub async fn write_metadata(&self, file_path: &str, song: &mut Song) -> Option<Vec<u8>> {
         self.write_metadata_replacing(file_path, song, None).await
     }
 
     /// [`Self::write_metadata`] for a download that replaces the library file at
-    /// `replacing_path` (the C# `ReplacingPath`, which flowed with the call): that copy's cover
-    /// is weighed first, since it is the picture the album shows now.
+    /// `replacing_path`: that copy's cover is weighed first, since it is the picture the album
+    /// shows now.
     pub async fn write_metadata_replacing(
         &self,
         file_path: &str,

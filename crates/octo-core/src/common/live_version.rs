@@ -1,5 +1,3 @@
-//! Port of `Services/Common/LiveVersion.cs`.
-//!
 //! Live takes are never what a request meant unless it said so. A title like "Song (Live)" is
 //! already its own version to SongIdentity; this covers the places that rule cannot see: the
 //! album folder a peer files a plainly named track under ("Decade (live at the El Mocambo)"),
@@ -16,7 +14,8 @@ static MARKER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub fn mentions(text: Option<&str>) -> bool {
-    // Matched in the view where \b falls where .NET's did (see `word_boundary_view`).
+    // Matched in the view where \b falls by word characters in one UTF-16 unit (see
+    // `word_boundary_view`).
     !is_null_or_white_space(text) && text.is_some_and(|text| MARKER.is_match(&word_boundary_view(text)))
 }
 
@@ -31,8 +30,8 @@ pub fn requested(title: Option<&str>, album: Option<&str>) -> bool {
 mod tests {
     use super::*;
 
-    // LiveVersionTests.cs exercises this through SoulseekDownloadService.FromLiveFolder and
-    // DownloadVerificationService; these are the LiveVersion halves of its cases.
+    // The Soulseek live-folder check and download verification build on these; the cases here
+    // test the live markers themselves.
 
     #[test]
     fn a_live_request_says_so_by_title_or_album() {

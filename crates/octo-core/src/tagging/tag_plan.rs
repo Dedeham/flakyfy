@@ -1,6 +1,6 @@
-//! Port of `Services/Tagging/TagPlan.cs`: the chooser's decision, how it is applied to a song,
-//! and the report `downloads-history.json` carries (`TagReport`, `TagReportCandidate` and
-//! `FieldDecision` round-trip that file byte for byte; see `state-files.md` §4.2).
+//! The chooser's decision, how it is applied to a song, and the report `downloads-history.json`
+//! carries (`TagReport`, `TagReportCandidate` and `FieldDecision` round-trip that file byte for
+//! byte).
 
 use std::fmt;
 
@@ -28,7 +28,7 @@ pub enum TagConfidence {
 }
 
 impl TagConfidence {
-    /// The C# member name, which the report carries.
+    /// The member's name, which the report carries.
     pub fn name(self) -> &'static str {
         match self {
             Self::None => "None",
@@ -63,7 +63,7 @@ impl FieldDecision {
     }
 }
 
-/// One key's share of a candidate's distance: the C# `(string Key, double Penalty, double Weight)`.
+/// One key's share of a candidate's distance: the key, its penalty and its weight.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BreakdownPart {
     pub key: String,
@@ -102,8 +102,8 @@ pub struct TagPlan {
     pub ranked: Vec<ScoredCandidate>,
     pub evidence: Option<TagEvidence>,
     pub settings: MatchingSettings,
-    /// What the release lookup said, once [`with`](Self::with) added it (a private setter in
-    /// the C#; public here so a plan can be built as a literal).
+    /// What the release lookup said, once [`with`](Self::with) added it (public so a plan can
+    /// be built as a literal).
     pub details: Option<ReleaseDetails>,
 
     /// The catalog's best hit, for the fill-the-blanks rules that run after the plan.
@@ -461,7 +461,7 @@ impl TagPlan {
         format!("'{}'{kind}{year}", c.album_title().unwrap_or("?"))
     }
 
-    /// One line for the log (the C# `Describe(Song)`).
+    /// One line for the log, about the plan applied to `song`.
     pub fn describe_song(&self, song: &Song) -> String {
         let gain = match song.replay_gain_track_gain_db {
             Some(g) => format!("{} dB", signed_fixed(g, 2)),
@@ -510,7 +510,7 @@ impl TagPlan {
             .map(|scored| {
                 let mut penalties: Vec<&BreakdownPart> =
                     scored.breakdown.iter().filter(|b| b.penalty > 0.0).collect();
-                // A stable sort, as OrderByDescending is.
+                // A stable sort, heaviest first: equal shares keep their order.
                 penalties.sort_by(|a, b| (b.penalty * b.weight).total_cmp(&(a.penalty * a.weight)));
                 let c = &scored.candidate;
                 TagReportCandidate {

@@ -1,6 +1,6 @@
-//! Port of `Services/LastFm/LastFmRadioAudioTranscoder.cs`: ffmpeg turns each radio track into
-//! a headerless MP3 segment at the listener's loudness target. The profile record, the gain and
-//! the spectral reading are `octo_core::last_fm::last_fm_radio_audio_transcoder`.
+//! The radio transcoder: ffmpeg turns each radio track into a headerless MP3 segment at the
+//! listener's loudness target. The profile record, the gain and the spectral reading are
+//! `octo_core::last_fm::last_fm_radio_audio_transcoder`.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -165,7 +165,7 @@ async fn transcode(
 }
 
 /// The integrated loudness, loudness range and true peak, or None when ffmpeg could not measure
-/// it. A summary level that is not a number fails the transcode, as the C# `double.Parse` threw.
+/// it. A summary level that is not a number fails the transcode.
 async fn measure_loudness(
     spool: &Path,
     cancellation_token: &CancellationToken,
@@ -330,7 +330,6 @@ mod tests {
         stream_of(wav_tone(0.25, 0.0, 440.0))
     }
 
-    // LastFmRadioCoreTests.FfmpegTranscoder_ProducesConcatenableHeaderlessMp3Segments
     #[tokio::test]
     async fn ffmpeg_transcoder_produces_concatenable_headerless_mp3_segments() {
         require_ffmpeg!();
@@ -356,7 +355,6 @@ mod tests {
         assert_eq!(output[boundary + 1] & 0xe0, 0xe0);
     }
 
-    // LastFmRadioCoreTests.FfmpegTranscoder_BringsATrackToTheLoudnessTargetAndReportsItsProfile
     #[tokio::test]
     async fn ffmpeg_transcoder_brings_a_track_to_the_loudness_target_and_reports_its_profile() {
         require_ffmpeg!();
@@ -403,8 +401,8 @@ mod tests {
         assert_eq!(again.gain_db, 0.0);
     }
 
-    /// Rust-only: input that is not audio fails the encode with ffmpeg's own words, and leaves
-    /// no spool behind.
+    /// Input that is not audio fails the encode with ffmpeg's own words, and leaves no spool
+    /// behind.
     #[tokio::test]
     async fn input_that_is_not_audio_fails_with_ffmpegs_words() {
         require_ffmpeg!();

@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/SpotifyLinkReader.cs`.
+//! Reads a public Spotify playlist or album from its link.
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -60,7 +60,7 @@ impl SpotifyLinkReader {
         }
     }
 
-    /// The client `Program.cs` registered: 20 seconds, `Mozilla/5.0 (compatible; Octo)`.
+    /// The HTTP client: a 20 second timeout, `Mozilla/5.0 (compatible; Octo)`.
     pub fn client() -> reqwest::Client {
         crate::services::http_client_factory::builder()
             .timeout(Duration::from_secs(20))
@@ -223,7 +223,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// `ImportSourceTests.EmbedFor`: an embed page of `count` songs.
+    /// An embed page of `count` songs, for tests.
     pub(crate) fn embed_page(count: usize, name: &str) -> String {
         let rows = (1..=count)
             .map(|i| {

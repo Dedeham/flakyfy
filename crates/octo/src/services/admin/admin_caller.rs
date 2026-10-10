@@ -1,4 +1,4 @@
-//! Port of `Services/Admin/AdminCaller.cs`.
+//! Who a caller of the admin API is, and how they got past the sign-in gate.
 
 /// How a caller got past the sign-in gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

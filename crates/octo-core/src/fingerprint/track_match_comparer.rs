@@ -1,5 +1,3 @@
-//! Port of `Services/Fingerprint/TrackMatchComparer.cs`.
-
 use crate::common::dotnet::utf16_len;
 use crate::common::song_identity::{ArtistAgreement, SongIdentity, SongVerdict};
 
@@ -17,7 +15,7 @@ use crate::common::song_identity::{ArtistAgreement, SongIdentity, SongVerdict};
 /// catch. A different version is never a yes: a live take or a remix the request did not ask
 /// for is the wrong file however alike the rest reads.
 ///
-/// A missing (C# null) title or artist is passed as `""`; the two read the same.
+/// A missing title or artist is passed as `""`; the two read the same.
 pub struct TrackMatchComparer;
 
 impl TrackMatchComparer {
@@ -69,7 +67,7 @@ impl TrackMatchComparer {
     /// Two credits that each name a guest the other lacks ("Bizarrap, Duki" against "Bizarrap &
     /// Rauw Alejandro") are a different collaboration.
     ///
-    /// `credits` empty is the same as the C# null.
+    /// `credits` is empty when the match carries no credit list.
     pub fn artist_matches<S: AsRef<str>>(requested: &str, credited_joined: &str, credits: &[S]) -> bool {
         let a = SongIdentity::key(requested);
         let b = SongIdentity::key(credited_joined);
@@ -208,7 +206,7 @@ mod tests {
     /// The credit used to be joined with ", ", which happened to equal Last.fm's and Deezer's
     /// spelling of a collaboration. MusicBrainz's own join phrase does not, and a confident match
     /// that fails this reads as a DIFFERENT recording: the file is deleted and the peer
-    /// blacklisted. Found by the Phase 1 tests before it shipped.
+    /// blacklisted.
     #[test]
     fn artist_matches_request_naming_every_credit_matches_whatever_the_join() {
         for (requested, credited) in [
@@ -285,7 +283,7 @@ mod tests {
         }
     }
 
-    // ---- from SongIdentityTests (the AcoustId_* cases, deferred there to this port) --------
+    // ---- AcoustID matches read by SongIdentity ----------------------------------------------
 
     #[test]
     fn acoust_id_a_match_of_another_version_is_a_mismatch() {

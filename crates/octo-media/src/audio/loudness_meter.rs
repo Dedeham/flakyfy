@@ -1,5 +1,5 @@
-//! Port of `Services/Audio/LoudnessMeter.cs`: the loudness of a file by ffmpeg's EBU R128
-//! filter, and the ReplayGain values that follow from it.
+//! The loudness of a file by ffmpeg's EBU R128 filter, and the ReplayGain values that follow from
+//! it.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -159,8 +159,8 @@ impl LoudnessMeter {
     }
 
     /// The summary block the loudness filter prints at the end of its stderr. An error is a
-    /// level the pattern let through that is still not a number (`1.2.3`), which C# threw
-    /// from `double.Parse`. Public because the radio transcoder reads the same summary.
+    /// level the pattern let through that is still not a number (`1.2.3`). Public because the
+    /// radio transcoder reads the same summary.
     pub fn parse(report: &str) -> Result<Option<Loudness>, std::num::ParseFloatError> {
         let (mut integrated, mut range, mut peak) = (None, None, None);
         for captures in LOUDNESS_LINE.captures_iter(report) {
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(meter.measure(&path, 5, &CancellationToken::new()).await, None);
     }
 
-    // ---- Rust-only: the real ffmpeg command line ------------------------------------------
+    // ---- Gain text, bad levels and the real ffmpeg command line ---------------------------
 
     /// Zero and positive gains take the "+" section.
     #[test]

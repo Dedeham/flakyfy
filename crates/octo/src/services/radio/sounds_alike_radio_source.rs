@@ -1,5 +1,5 @@
-//! Port of `Services/Radio/SoundsAlikeRadioSource.cs`: library songs that sound like the seed,
-//! from octo-sonic's analysis. Only for library seeds.
+//! Sounds alike as a radio source: library songs that sound like the seed, from octo-sonic's
+//! analysis. Only for library seeds.
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use crate::services::sonic::SonicStore;
 
 pub struct SoundsAlikeRadioSource {
     store: Arc<SonicStore>,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
 }
 

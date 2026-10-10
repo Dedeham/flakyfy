@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LyricsIdentity.cs`.
+//! Whether a lyrics entry is the song asked for.
 
 use std::sync::LazyLock;
 
@@ -98,10 +98,10 @@ impl LyricsIdentity {
     /// The searches a lyrics source tries for a song, the first as asked, then cleaned, with
     /// stylized characters read as letters, and by the primary artist alone, from
     /// [`SongIdentity::query_variants`]. Each has an artist: a lyrics search by title
-    /// alone returns every song of that name, and the sources that need one have their own way
-    /// to look past a renamed artist. At most `max` (three in C#), so a miss costs a source
-    /// three requests. Whatever they find is still held to [`LyricsIdentity::same_song`]
-    /// against the song as asked.
+    /// alone returns every song of that name, and the sources that need one have their own way to
+    /// look past a renamed artist. At most `max`: at three, a miss costs a source three requests.
+    /// Whatever they find is still held to [`LyricsIdentity::same_song`] against the song as
+    /// asked.
     pub fn searches(query: &LyricsQuery, max: usize) -> Vec<SongQuery> {
         let searches: Vec<SongQuery> = SongIdentity::query_variants(&query.title, &query.artist)
             .into_iter()
@@ -147,7 +147,6 @@ impl LyricsIdentity {
 mod tests {
     use super::*;
 
-    /// LyricsWordTimingTests.Identity_SameTitleSameKindSameArtist.
     #[test]
     fn identity_same_title_same_kind_same_artist() {
         let cases = [
@@ -191,7 +190,7 @@ mod tests {
             ("Stronger", "Kanye West", "Stronger", "Kelly Clarkson", false),
         ];
         for (title, artist, got_title, got_artist, same) in cases {
-            // gotArtist.Split('、', StringSplitOptions.TrimEntries)
+            // The entry's artists, split on '、' and trimmed.
             let credits: Vec<&str> = got_artist.split('、').map(str::trim).collect();
             assert_eq!(
                 LyricsIdentity::same_song(title, artist, Some(got_title), Some(got_artist), Some(&credits)),
@@ -226,7 +225,6 @@ mod tests {
         assert!(LyricsIdentity::same_title("Kamin", Some("kamin")));
     }
 
-    /// LyricsWordTimingTests.Identity_AnotherCreditedArtistCounts.
     #[test]
     fn identity_another_credited_artist_counts() {
         assert!(LyricsIdentity::same_artist(
@@ -236,7 +234,6 @@ mod tests {
         ));
     }
 
-    /// LyricsWordTimingTests.Identity_LengthWithinThreeSeconds.
     #[test]
     fn identity_length_within_three_seconds() {
         for (want, got, fits) in [

@@ -1,5 +1,5 @@
-//! The records of `Services/LastFm/LastFmService.cs` (`LastFmService.SimilarTrack`,
-//! `SimilarArtist` and `TrackInfo`). The client is `octo::services::last_fm::last_fm_service`.
+//! The Last.fm service's records ([`SimilarTrack`], [`SimilarArtist`] and [`TrackInfo`]).
+//! The client is `octo::services::last_fm::last_fm_service`.
 
 /// One song Last.fm suggested or found.
 ///
@@ -18,7 +18,7 @@ pub struct SimilarTrack {
 }
 
 impl SimilarTrack {
-    /// `new SimilarTrack(artist, title, match)`, with no duration and no listener count.
+    /// A track from its artist, title and match, with no duration and no listener count.
     pub fn new(artist: impl Into<String>, title: impl Into<String>, r#match: f64) -> Self {
         Self {
             artist: artist.into(),
@@ -31,25 +31,25 @@ impl SimilarTrack {
         }
     }
 
-    /// `with { Duration = .. }`.
+    /// The same track with its duration set.
     pub fn with_duration(mut self, duration: Option<i32>) -> Self {
         self.duration = duration;
         self
     }
 
-    /// `with { Listeners = .. }`.
+    /// The same track with its listener count set.
     pub fn with_listeners(mut self, listeners: Option<i64>) -> Self {
         self.listeners = listeners;
         self
     }
 
-    /// `with { YouTubeId = .. }`.
+    /// The same track with its YouTube id set.
     pub fn with_you_tube_id(mut self, you_tube_id: Option<String>) -> Self {
         self.you_tube_id = you_tube_id;
         self
     }
 
-    /// `with { Provider = .. }`.
+    /// The same track with its provider set.
     pub fn with_provider(mut self, provider: Option<String>) -> Self {
         self.provider = provider;
         self

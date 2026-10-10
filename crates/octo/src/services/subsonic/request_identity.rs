@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/RequestIdentity.cs`.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,7 +69,7 @@ impl RequestIdentity {
     /// request's own (it is scoped to the request, where this is kept across requests). A
     /// caller that gives up drops the future; the call carries on for the others.
     ///
-    /// `Err` only for a failure the C# did not catch either (a URL HttpClient cannot use).
+    /// `Err` only for a URL the HTTP client cannot use.
     pub async fn username(
         &self,
         parameters: &IndexMap<String, String>,

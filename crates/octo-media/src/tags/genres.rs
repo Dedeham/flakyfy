@@ -174,8 +174,7 @@ pub(crate) fn text_to_audio(text: &str) -> Option<&'static str> {
     index_to_audio(string_to_byte(text))
 }
 
-/// `Genres.StringToByte`: "(n)..." or a plain number, as `byte.TryParse` reads them; 255
-/// otherwise.
+/// A genre's number: "(n)..." or a plain number, as [`parse_byte`] reads them; 255 otherwise.
 fn string_to_byte(text: &str) -> u8 {
     if text.chars().count() > 2
         && text.starts_with('(')
@@ -191,7 +190,7 @@ fn string_to_byte(text: &str) -> u8 {
 mod tests {
     use super::*;
 
-    /// The table is TagLib#'s, as the C# generator wrote it out.
+    /// The table is TagLib#'s, as the reference generator wrote it out.
     #[test]
     fn the_table_is_taglibs() {
         let path = concat!(

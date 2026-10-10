@@ -1,4 +1,4 @@
-//! LastFmRadioRecommendationTests: the builds against a stand-in Last.fm answering by `method`.
+//! The recommendation builds against a stand-in Last.fm answering by `method`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use super::*;
 use crate::services::soulseek::ExternalIdRegistry;
 
-/// The C# `RecommendationHandler`.
+/// The usual Last.fm fake: tags, similar tracks and artists, and top tracks, by `method`.
 #[derive(Clone)]
 struct RecommendationHandler;
 
@@ -51,8 +51,7 @@ impl Respond for RecommendationHandler {
     }
 }
 
-/// The C# `SeedSpecificHandler`: Last.fm fake whose similar tracks are specific to the seed asked
-/// about.
+/// A Last.fm fake whose similar tracks are specific to the seed asked about.
 #[derive(Clone)]
 struct SeedSpecificHandler;
 
@@ -72,8 +71,7 @@ impl Respond for SeedSpecificHandler {
     }
 }
 
-/// An empty answer to everything: the C# tests with no key called the real Last.fm, which
-/// answered nothing usable.
+/// An empty answer to everything: a Last.fm with nothing usable to say.
 #[derive(Clone)]
 struct Nothing;
 
@@ -584,7 +582,7 @@ fn record_twelve(state: &LastFmRadioStateStore) {
 }
 
 /// Each dynamic station type is configured on its own (issue #39). Before this the four types
-/// shared one switch and the counts were literals in BuildAsync, so a listener who wanted Your
+/// shared one switch and the counts were fixed in the build, so a listener who wanted Your
 /// Mix also got an artist radio per favorite band.
 #[tokio::test]
 async fn station_type_toggles_build_only_the_enabled_kinds() {
@@ -638,8 +636,8 @@ async fn artist_station_count_decides_how_many_artist_radios_are_built() {
     );
 }
 
-/// Rust-only: switching radio off builds nothing, and a cancelled caller sees the cancellation
-/// rather than a partial build.
+/// Switching radio off builds nothing, and a canceled caller sees the cancellation rather than a
+/// partial build.
 #[tokio::test]
 async fn radio_off_builds_nothing_and_a_canceled_caller_is_told() {
     let fixture = fixture(
@@ -669,7 +667,6 @@ async fn radio_off_builds_nothing_and_a_canceled_caller_is_told() {
 
 // ---- Group L: one-star bans, spacing, the bookkeeping tags and stations from every source ----
 
-// LastFmRadioCoreTests.OneStar_KeepsASongOffEveryStationAndAnyOtherRatingLiftsIt
 #[tokio::test]
 async fn one_star_keeps_a_song_off_every_station_and_any_other_rating_lifts_it() {
     let fixture = fixture(
@@ -727,7 +724,6 @@ async fn one_star_keeps_a_song_off_every_station_and_any_other_rating_lifts_it()
     );
 }
 
-// LastFmRadioCoreTests.OneStar_PullsTheSongFromTheStationsItIsOnNow
 #[tokio::test]
 async fn one_star_pulls_the_song_from_the_stations_it_is_on_now() {
     let fixture = fixture(
@@ -761,7 +757,6 @@ async fn one_star_pulls_the_song_from_the_stations_it_is_on_now() {
     assert_eq!(titles, ["Keep"]);
 }
 
-// LastFmRadioCoreTests.ArtistStation_SpreadsItsArtistsAcrossTheFirstFiveSongs
 #[tokio::test]
 async fn artist_station_spreads_its_artists_across_the_first_five_songs() {
     let fixture = fixture(
@@ -801,7 +796,6 @@ async fn artist_station_spreads_its_artists_across_the_first_five_songs() {
     assert_eq!(artists.len(), 5);
 }
 
-// LastFmRadioCoreTests.BookkeepingTags_AreNotGenres_InEitherSpelling
 #[test]
 fn bookkeeping_tags_are_not_genres_in_either_spelling() {
     use octo_core::last_fm::last_fm_radio_recommendation_service::canonical_tag;
@@ -810,7 +804,6 @@ fn bookkeeping_tags_are_not_genres_in_either_spelling() {
     }
 }
 
-// LastFmRadioCoreTests.ASeedsListsFromEverySource_AreOneSeed
 #[test]
 fn a_seeds_lists_from_every_source_are_one_seed() {
     use octo_core::last_fm::last_fm_radio_recommendation_service::seed_group;
@@ -889,7 +882,7 @@ impl crate::services::radio::IRadioSource for StationSource {
     }
 }
 
-/// The C# `WithSources`: a learned listener, and Last.fm (the fake) beside the given sources.
+/// A learned listener, and Last.fm (the fake) beside the given sources.
 async fn with_sources(extra: Vec<Arc<dyn crate::services::radio::IRadioSource>>) -> Fixture {
     let mut fixture = fixture(learned(), RecommendationHandler).await;
     record_twelve(&fixture.state);
@@ -916,7 +909,6 @@ async fn with_sources(extra: Vec<Arc<dyn crate::services::radio::IRadioSource>>)
     fixture
 }
 
-// LastFmRadioCoreTests.YourMix_DrawsOnEverySource_AndRemembersWhichSuggestedEachSong
 #[tokio::test]
 async fn your_mix_draws_on_every_source_and_remembers_which_suggested_each_song() {
     use octo_core::radio::radio_provider::{HISTORY, LAST_FM, LISTEN_BRAINZ, YOU_TUBE_MUSIC};
@@ -960,7 +952,6 @@ async fn your_mix_draws_on_every_source_and_remembers_which_suggested_each_song(
     );
 }
 
-// LastFmRadioCoreTests.ASourceThatNeverAnswers_DoesNotStopTheStations
 #[tokio::test]
 async fn a_source_that_never_answers_does_not_stop_the_stations() {
     use octo_core::radio::radio_provider::YOU_TUBE_MUSIC;
@@ -983,7 +974,6 @@ async fn a_source_that_never_answers_does_not_stop_the_stations() {
     );
 }
 
-// LastFmRadioCoreTests.AnArtistStation_AsksTheOtherSources_NotLastFmAgain
 #[tokio::test]
 async fn an_artist_station_asks_the_other_sources_not_last_fm_again() {
     use octo_core::radio::radio_provider::{LAST_FM, YOU_TUBE_MUSIC};

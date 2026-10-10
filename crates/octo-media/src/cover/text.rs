@@ -1,10 +1,10 @@
-//! The few .NET text rules the cover code leans on, spelled out so the Rust reads the same:
-//! `Rune.IsLetter` (Unicode general category L*), `Rune.IsWhiteSpace`, ordinal ignore-case
-//! comparison (simple upper-case mapping per character) and lengths in UTF-16 units.
+//! The few text rules the cover code leans on, spelled out: letters (Unicode general category
+//! L*), white space, ordinal ignore-case comparison (simple upper-case mapping per character)
+//! and lengths in UTF-16 units.
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-/// `Rune.IsLetter`: Lu, Ll, Lt, Lm or Lo.
+/// A letter: Lu, Ll, Lt, Lm or Lo.
 pub(crate) fn is_letter(c: char) -> bool {
     matches!(
         get_general_category(c),
@@ -16,12 +16,12 @@ pub(crate) fn is_letter(c: char) -> bool {
     )
 }
 
-/// `Rune.IsWhiteSpace` (the same set as Rust's `char::is_whitespace`).
+/// White space (the set of `char::is_whitespace`).
 pub(crate) fn is_white_space(c: char) -> bool {
     c.is_whitespace()
 }
 
-/// .NET's invariant `ToUpper` of one character: the simple (one to one) mapping, so a letter
+/// The invariant upper case of one character: the simple (one to one) mapping, so a letter
 /// whose upper case is two letters (ß) stays as it is.
 pub(crate) fn upper_simple(c: char) -> char {
     let mut upper = c.to_uppercase();
@@ -31,7 +31,7 @@ pub(crate) fn upper_simple(c: char) -> char {
     }
 }
 
-/// `string.Equals(a, b, StringComparison.OrdinalIgnoreCase)`.
+/// Whether two texts are equal ignoring case: character by character, by the simple upper case.
 pub(crate) fn eq_ignore_case(a: &str, b: &str) -> bool {
     a.chars().count() == b.chars().count()
         && a.chars()
@@ -39,15 +39,15 @@ pub(crate) fn eq_ignore_case(a: &str, b: &str) -> bool {
             .all(|(x, y)| x == y || upper_simple(x) == upper_simple(y))
 }
 
-/// `text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)`, giving the text before the
-/// suffix when it does.
+/// Whether `text` ends with `suffix`, ignoring case, giving the text before the suffix when it
+/// does.
 pub(crate) fn strip_suffix_ignore_case<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
     let count = suffix.chars().count();
     let start = text.char_indices().rev().nth(count.checked_sub(1)?)?.0;
     eq_ignore_case(&text[start..], suffix).then(|| &text[..start])
 }
 
-/// `string.Length`: the text's length in UTF-16 code units.
+/// The text's length in UTF-16 code units.
 pub(crate) fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
 }

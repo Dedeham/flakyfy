@@ -1,5 +1,3 @@
-//! Port of `Services/Library/ReplacementHandoff.cs`.
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,7 +13,7 @@ pub type BeforeReveal = Arc<dyn Fn(String) -> BoxFuture<'static, Option<String>>
 pub type OnRevealed = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// What a library action hands the download so the replacement takes the original's place in
-/// Navidrome rather than arriving as a new song (W8).
+/// Navidrome rather than arriving as a new song.
 pub struct ReplacementHandoff {
     pub original_path: String,
     pub identity: KeptIdentity,
@@ -71,7 +69,7 @@ impl ReplacementHandoff {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        // Path.GetFileNameWithoutExtension: everything before the last dot of the name.
+        // The stem: everything before the last dot of the name.
         let stem = match name.rfind('.') {
             Some(dot) => &name[..dot],
             None => name.as_str(),
@@ -127,7 +125,7 @@ mod tests {
         }
     }
 
-    /// Rust-only: the target keeps the original's folder and name, takes the new extension, and
+    /// The target keeps the original's folder and name, takes the new extension, and
     /// is refused when another file holds it (the original's own path is the original itself).
     #[test]
     fn the_target_is_the_originals_place_with_the_new_extension() {

@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/CoverArtAggregator.cs`.
+//! The cover art chain, with its cache.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +33,7 @@ const MISS_TTL: Duration = Duration::from_secs(5 * 60);
 /// asset we'd have gotten one source earlier.
 pub struct CoverArtAggregator {
     sources: Vec<Arc<dyn ICoverArtSource>>,
-    /// `None` is a cached miss, as the C# `Entry(null)` was.
+    /// `None` is a cached miss.
     cache: MemoryCache<Option<Bytes>>,
 }
 
@@ -137,8 +137,8 @@ mod tests {
         })
     }
 
-    /// Rust-only: the chain stops at the first source with bytes (an empty answer is a miss),
-    /// and both a hit and an all-miss are remembered.
+    /// The chain stops at the first source with bytes (an empty answer is a miss), and both a hit
+    /// and an all-miss are remembered.
     #[tokio::test]
     async fn the_first_hit_wins_and_is_remembered() {
         let empty = fake("deezer", Some(b""));

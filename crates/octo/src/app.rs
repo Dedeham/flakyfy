@@ -1,21 +1,21 @@
-//! The application's shared state: one `Arc` per service, standing in for the singletons
-//! `Program.cs` registered with ASP.NET's container.
+//! The application's shared state: one `Arc` per service, built once at startup and shared by
+//! every handler and worker.
 //!
-//! # Adding a service (the pattern every porter follows)
+//! # Adding a service
 //!
 //! 1. Add a field to [`AppInner`], holding the service as `Arc<YourService>` (or a type that is
-//!    already a cheap handle). Name it after the C# class in snake case
-//!    (`SubsonicProxyService` → `subsonic_proxy`), and put a `///` line on it naming the C#
-//!    registration it replaces.
+//!    already a cheap handle). Name it after the service type in snake case
+//!    (`SubsonicProxyService` → `subsonic_proxy`), and put a `///` line on it saying what it
+//!    is for.
 //! 2. Construct it in [`AppState::build`] (production) **and** in [`AppState::for_tests`]
-//!    (handler tests), in dependency order. A service the C# resolved eagerly at startup
-//!    (`app.Services.GetRequiredService<T>()` in `Program.cs`) is built here; a lazily built one
-//!    is still built here, which is fine unless its constructor does I/O.
-//! 3. A C# class registered "Singleton AND hosted" is one `Arc` field plus a worker:
-//!    register its loop with `state.workers.register("Name", ...)` in [`AppState::build`],
-//!    capturing a clone of the `Arc`. Never start work from a constructor.
-//! 4. Settings: services read `state.settings.current()` at the point of use
-//!    (`IOptionsMonitor`), or copy a value out in their constructor and say so (`IOptions`).
+//!    (handler tests), in dependency order: a service is built after everything it holds.
+//!    Every service is built eagerly here, which is fine unless its constructor does I/O.
+//! 3. A service that also runs in the background is one `Arc` field plus a worker: register its
+//!    loop with `state.workers.register("Name", ...)` in [`AppState::build`], capturing a clone
+//!    of the `Arc`. Never start work from a constructor.
+//! 4. Settings: services read `state.settings.current()` at the point of use (they follow
+//!    changes live), or copy a value out in their constructor and say so (it applies on
+//!    restart).
 //!
 //! Handlers take `State(state): State<AppState>` and reach services as `state.settings`,
 //! `state.restart_tracker`, ... through [`Deref`](std::ops::Deref).
@@ -166,16 +166,16 @@ impl Deref for AppState {
     }
 }
 
-/// The services. Filled in as each part of the port lands.
+/// The services.
 pub struct AppInner {
-    /// The live settings (`IOptionsMonitor<T>` for every section, and raw `IConfiguration`).
+    /// The live settings: every section typed, and the raw configuration by key.
     pub settings: Arc<SettingsStore>,
     /// `RestartTracker`, snapshotted when the state is built, before anything can change a
-    /// setting ("Resolved here so it snapshots the values this process actually started with").
+    /// setting, so it holds the values this process actually started with.
     pub restart_tracker: Arc<RestartTracker>,
     /// `SettingsFileWriter`, writing the store's settings.json.
     pub settings_writer: Arc<SettingsFileWriter>,
-    /// The background workers (`AddHostedService`).
+    /// The background workers.
     pub workers: Arc<WorkerSupervisor>,
     /// `LyricsChoiceStore`: the lyrics pins, `<config>/lyrics-choices.json`.
     pub lyrics_choice_store: Arc<LyricsChoiceStore>,
@@ -184,104 +184,103 @@ pub struct AppInner {
     pub lyrics_service: Arc<LyricsService>,
     /// `LyricsChoiceService`: choosing lyrics by hand, over the pins.
     pub lyrics_choice_service: Arc<LyricsChoiceService>,
-    /// `LyricsSidecarWriter`, singleton and hosted: its queue is the "LyricsSidecarWriter" worker.
+    /// `LyricsSidecarWriter`: its queue is the "LyricsSidecarWriter" worker.
     pub lyrics_sidecar_writer: Arc<LyricsSidecarWriter>,
     /// `LyricsUndoJournal`: what the lyrics page's Save wrote over, `<config>/lyrics-undo.jsonl`.
     pub lyrics_undo_journal: Arc<LyricsUndoJournal>,
-    /// `LyricsLibraryStore`: the "find lyrics for the library" run, `<config>/lyrics-library.json`.
-    /// Its coalescing flush (a timer in C#) is the "LyricsLibraryStore" worker.
+    /// `LyricsLibraryStore`: the "find lyrics for the library" run,
+    /// `<config>/lyrics-library.json`. Its coalescing flush is the "LyricsLibraryStore" worker.
     pub lyrics_library_store: Arc<LyricsLibraryStore>,
-    /// `LyricsLibraryWorker`, singleton and hosted: its queue is the "LyricsLibraryWorker" worker.
+    /// `LyricsLibraryWorker`: its queue is the "LyricsLibraryWorker" worker.
     pub lyrics_library_worker: Arc<LyricsLibraryWorker>,
     /// `GenreBackfillStore`: the genre backfill run, `<config>/genre-backfill.json`. Its
-    /// coalescing flush (a timer in C#) is the "GenreBackfillStore" worker.
+    /// coalescing flush is the "GenreBackfillStore" worker.
     pub genre_backfill_store: Arc<GenreBackfillStore>,
     /// `GenreBackfillJournal`: the genre undo log, `<config>/genre-backfill-journal.jsonl`.
     pub genre_backfill_journal: Arc<GenreBackfillJournal>,
-    /// `GenreBackfillWorker`, singleton and hosted: its queue is the "GenreBackfillWorker" worker.
+    /// `GenreBackfillWorker`: its queue is the "GenreBackfillWorker" worker.
     pub genre_backfill_worker: Arc<GenreBackfillWorker>,
     /// "Tidy artists": its run and plan beside the settings (`tidy-run.json`, `tidy-plan.json`)
     /// and its undo journal (`tidy-journal.jsonl`); singleton and hosted.
     pub tidy_worker: Arc<TidyWorker>,
-    /// `AddSingleton<IAlbumCoverFinder, AlbumCoverFinder>()`: the largest cover of an album.
+    /// `AlbumCoverFinder`: the largest cover of an album.
     pub album_cover_finder: Arc<dyn IAlbumCoverFinder>,
     /// `CoverUpgradeStore`: the cover upgrade run, `<config>/cover-upgrade.json`, and the found
-    /// covers in `<config>/cover-upgrade-found/`. Its coalescing flush (a timer in C#) is the
-    /// "CoverUpgradeStore" worker.
+    /// covers in `<config>/cover-upgrade-found/`. Its coalescing flush is the "CoverUpgradeStore"
+    /// worker.
     pub cover_upgrade_store: Arc<CoverUpgradeStore>,
     /// `CoverUpgradeJournal`: the cover undo log, `<config>/cover-upgrade-journal.jsonl`, with the
     /// old pictures in `<config>/cover-backups/`.
     pub cover_upgrade_journal: Arc<CoverUpgradeJournal>,
-    /// `CoverUpgradeWorker`, singleton and hosted: its queue is the "CoverUpgradeWorker" worker.
+    /// `CoverUpgradeWorker`: its queue is the "CoverUpgradeWorker" worker.
     pub cover_upgrade_worker: Arc<CoverUpgradeWorker>,
-    /// `ExplicitBackfill`, singleton and hosted ("Mark explicit songs"): its queue is the
-    /// "ExplicitBackfill" worker, and its store's coalescing flush (a timer in C#) the
-    /// "ExplicitBackfillStore" worker, `<config>/explicit-backfill.json`.
+    /// `ExplicitBackfill` ("Mark explicit songs"): its queue is the "ExplicitBackfill" worker,
+    /// and its store's coalescing flush the "ExplicitBackfillStore" worker,
+    /// `<config>/explicit-backfill.json`.
     pub explicit_backfill: Arc<ExplicitBackfill>,
     /// `UpdateHost`: the handshake files with the host updater, `<config>/update/`.
     pub update_host: Arc<UpdateHost>,
-    /// `IHostApplicationLifetime`: cancel it (see [`AppInner::stop_application`]) to shut the
-    /// process down gracefully, as `StopApplication()` did.
+    /// The process lifetime: cancel it (see [`AppInner::stop_application`]) to shut the
+    /// process down gracefully.
     pub lifetime: CancellationToken,
-    /// `AddHttpClient()`: the default client `IHttpClientFactory.CreateClient()` handed out.
+    /// The default HTTP client.
     pub http: reqwest::Client,
-    /// `AddScoped<SubsonicProxyService>()`. This one has no request (a background scope);
-    /// handlers make their request's own with `with_request`.
+    /// `SubsonicProxyService`. This one has no request (background work); handlers make their
+    /// request's own with `with_request`.
     pub subsonic_proxy: SubsonicProxyService,
-    /// `AddSingleton<NavidromeIdentityService>()` (a cheap handle).
+    /// `NavidromeIdentityService` (a cheap handle).
     pub navidrome_identity: NavidromeIdentityService,
-    /// `AddSingleton<SubsonicDiscoveryService>()`.
+    /// `SubsonicDiscoveryService`.
     pub subsonic_discovery: Arc<SubsonicDiscoveryService>,
-    /// `AddSingleton<CredentialCheck>()`.
+    /// `CredentialCheck`.
     pub credential_check: Arc<CredentialCheck>,
-    /// `AddSingleton<RequestIdentity>()`.
+    /// `RequestIdentity`.
     pub request_identity: Arc<RequestIdentity>,
-    /// `AddSingleton<SearchSongOrderCache>()`.
+    /// `SearchSongOrderCache`.
     pub search_song_order_cache: Arc<SearchSongOrderCache>,
-    /// `AddSingleton<ILocalLibraryService, LocalLibraryService>()`: `.mappings.json` in the
-    /// configured download directory, and the scan trigger.
+    /// `LocalLibraryService`: `.mappings.json` in the configured download directory, and the
+    /// scan trigger.
     pub local_library: Arc<dyn ILocalLibraryService>,
-    /// `AddSingleton<NavidromeSongPathResolver>()`.
+    /// `NavidromeSongPathResolver`.
     pub navidrome_song_path_resolver: Arc<NavidromeSongPathResolver>,
-    /// `AddSingleton<NavidromePlaylistApi>()`.
+    /// `NavidromePlaylistApi`.
     pub navidrome_playlist_api: Arc<NavidromePlaylistApi>,
-    /// `AddSingleton<LibrarySnapshot>()` (f49fb80): the whole library through Navidrome's song
-    /// list, kept 5 minutes.
+    /// `LibrarySnapshot`: the whole library through Navidrome's song list, kept 5 minutes.
     pub library_snapshot: Arc<LibrarySnapshot>,
-    /// `AddSingleton<AlbumOwnership>()` (f49fb80): how much of an outside album the library holds.
+    /// `AlbumOwnership`: how much of an outside album the library holds.
     pub album_ownership: Arc<AlbumOwnership>,
-    /// `AddHostedService<StartupValidationOrchestrator>()` over the `IStartupValidator`s
-    /// (`SubsonicStartupValidator`, then `SoulseekStartupValidator`). Run by
-    /// [`crate::host::run`] before the listener binds, as the host started it.
+    /// `StartupValidationOrchestrator` over the `IStartupValidator`s (`SubsonicStartupValidator`,
+    /// then `SoulseekStartupValidator`). Run by
+    /// [`crate::host::run`] before the listener binds.
     pub startup_validation: Arc<StartupValidationOrchestrator>,
 
-    /// `DeezerRateLimiter` (singleton): the budget every Deezer call spends.
+    /// `DeezerRateLimiter`: the budget every Deezer call spends.
     pub deezer_rate_limiter: Arc<DeezerRateLimiter>,
-    /// The named "deezer" HttpClient with `DeezerRateLimitHandler` in its chain. Every Deezer
+    /// The "deezer" HTTP client with `DeezerRateLimitHandler` in its chain. Every Deezer
     /// caller goes through it.
     pub deezer_client: Arc<DeezerRateLimitHandler>,
-    /// `DeezerMetadataService` (singleton).
+    /// `DeezerMetadataService`.
     pub deezer_metadata: Arc<DeezerMetadataService>,
-    /// `MusicBrainzClient` (singleton) with its named client.
+    /// `MusicBrainzClient` with its own HTTP client.
     pub music_brainz: Arc<MusicBrainzClient>,
-    /// `AcoustIdRateLimiter` (singleton).
+    /// `AcoustIdRateLimiter`.
     pub acoust_id_rate_limiter: Arc<AcoustIdRateLimiter>,
-    /// `AcoustIdClient` (singleton), over the named "acoustid" client and its handler.
+    /// `AcoustIdClient`, over the "acoustid" HTTP client and its handler.
     pub acoust_id: Arc<AcoustIdClient>,
-    /// `ITunesCoverArtLookup`, registered as itself too: downloads and the cover upgrade ask it
+    /// `ITunesCoverArtLookup`, also held on its own: downloads and the cover upgrade ask it
     /// for an album's master. Its matches persist to itunes-masters.json beside settings.json.
     pub itunes_cover_art: Arc<ITunesCoverArtLookup>,
-    /// `CoverArtAggregator` over the `ICoverArtSource`s in registration order: Deezer, iTunes,
-    /// Last.fm.
+    /// `CoverArtAggregator` over the `ICoverArtSource`s in the order they are asked: Deezer,
+    /// iTunes, Last.fm.
     pub cover_art_aggregator: Arc<CoverArtAggregator>,
-    /// `CoverArtArchiveLookup` (singleton) with its named client.
+    /// `CoverArtArchiveLookup` with its own HTTP client.
     pub cover_art_archive: Arc<CoverArtArchiveLookup>,
-    /// `CoverArtService` (singleton): list covers, the placeholder and the Octo badge. Pictures
-    /// in `<config>/covers` replace the generated cover of the playlist they are named after.
-    /// `Program.cs` warmed it in the background at startup: the "CoverArtService" worker.
+    /// `CoverArtService`: list covers, the placeholder and the Octo badge. Pictures in
+    /// `<config>/covers` replace the generated cover of the playlist they are named after.
+    /// Warmed in the background at startup by the "CoverArtService" worker.
     pub cover_art_service: Arc<CoverArtService>,
-    /// `AmbientPaletteService` (singleton, "ambient-palette" client, 6 s): the colors of the
-    /// fetched songs' covers, the dashboard's light.
+    /// `AmbientPaletteService` ("ambient-palette" client, 6 s): the colors of the fetched songs'
+    /// covers, the dashboard's light.
     pub ambient_palettes: Arc<crate::services::admin::AmbientPaletteService>,
     /// `DownloadHistoryService`: the fetched-songs log, `downloads-history.json` beside settings.json.
     pub download_history: Arc<DownloadHistoryService>,
@@ -312,55 +311,54 @@ pub struct AppInner {
     pub admin_recovery_code: Arc<AdminRecoveryCode>,
     /// `AdminRoleCheck`: ends the sign-ins of someone Navidrome no longer counts as an admin.
     pub admin_role_check: Arc<AdminRoleCheck>,
-    /// The signed-out `GET /api/admin/status` answer, kept ten seconds (a static in C#).
+    /// The signed-out `GET /api/admin/status` answer, kept ten seconds.
     pub anonymous_status: crate::controllers::admin::system::AnonymousStatusCache,
     /// `RejectedPeerRegistry`: peer files that proved wrong, `rejected-peers.json` (flushed by
     /// a worker), with `Soulseek:RejectedPeerTtlDays` read live.
     pub rejected_peers: Arc<RejectedPeerRegistry>,
     /// `ReleaseCheck`: whether a newer release is out, `update/release.json`; also a worker.
     pub release_check: Arc<ReleaseCheck>,
-    /// `LastFmService` (`AddHttpClient<LastFmService>` + singleton): the web service the radio
-    /// and the search bar read, its Accept-Language captured at startup.
+    /// `LastFmService`, with its own HTTP client: the web service the radio and the search bar
+    /// read, its Accept-Language captured at startup.
     pub last_fm: Arc<LastFmService>,
-    /// `LastFmScrobbleService` (singleton, "lastfm-scrobble" client): the scrobble queue and the
+    /// `LastFmScrobbleService` ("lastfm-scrobble" client): the scrobble queue and the
     /// dashboard's Connect flow, saving sessions through `settings_writer`.
     pub last_fm_scrobbles: Arc<LastFmScrobbleService>,
-    /// `ListenBrainzService` (singleton, "listenbrainz" client).
+    /// `ListenBrainzService` ("listenbrainz" client).
     pub listen_brainz: Arc<ListenBrainzService>,
-    /// `NotificationService` over the `INotificationSink`s in registration order (ntfy, then
+    /// `NotificationService` over the `INotificationSink`s in send order (ntfy, then
     /// Discord), sharing the "notifications" client, with Deezer for missing covers.
     pub notifications: Arc<NotificationService>,
     /// `RecentScrobbles`: completed plays reported lately, so one sent twice is learned from once.
     pub recent_scrobbles: Arc<RecentScrobbles>,
     /// `SubsonicResponseBuilder`: every Subsonic answer Octo writes itself, over the external id
-    /// registry, with `Subsonic:WaitForLosslessOnPlay` captured at startup (`IOptions`).
-    /// The app-type answers come with `services::subsonic::SubsonicResponseBuilderExt`.
+    /// registry, with `Subsonic:WaitForLosslessOnPlay` captured at startup. The app-type answers
+    /// come with `services::subsonic::SubsonicResponseBuilderExt`.
     pub subsonic_response_builder: Arc<SubsonicResponseBuilder>,
-    /// `AddSingleton<SoulseekClient>()`: slskd's REST client (a cheap handle), its address and
-    /// login captured at startup.
+    /// `SoulseekClient`: slskd's REST client (a cheap handle), its address and login captured
+    /// at startup.
     pub soulseek_client: SoulseekClient,
-    /// `AddSingleton<SoulseekLink>()`, also registered as `ISoulseekLink`: slskd's Soulseek
-    /// login, read live, for the dashboard and for downloads that wait out an outage.
+    /// `SoulseekLink`, also used as `ISoulseekLink`: slskd's Soulseek login, read live, for the
+    /// dashboard and for downloads that wait out an outage.
     pub soulseek_link: Arc<SoulseekLink>,
-    /// `AddSingleton<SoulseekPortCheck>()`: Soulseek's port test for the Sharing card, one answer
-    /// kept six hours.
+    /// `SoulseekPortCheck`: Soulseek's port test for the Sharing card, one answer kept six hours.
     pub soulseek_port_check: Arc<SoulseekPortCheck>,
-    /// `AddSingleton<SoulseekShareSwitch>()`, also hosted: the Share my library switch, which
-    /// keeps slskd.yml's share list to it and checks every 10 minutes.
+    /// `SoulseekShareSwitch`, also a worker: the Share my library switch, which keeps
+    /// slskd.yml's share list to it and checks every 10 minutes.
     pub soulseek_share_switch: Arc<SoulseekShareSwitch>,
-    /// `AddSingleton<SoulseekSharing>()`: what this server shares back with Soulseek, and whether
-    /// people can connect to it, for the dashboard.
+    /// `SoulseekSharing`: what this server shares back with Soulseek, and whether people can
+    /// connect to it, for the dashboard.
     pub soulseek_sharing: Arc<SoulseekSharing>,
-    /// `AddSingleton<IMusicMetadataService, SoulseekMetadataService>()`.
+    /// `SoulseekMetadataService`, the music metadata service.
     pub music_metadata: Arc<SoulseekMetadataService>,
-    /// `IMusicMetadataService` as the controllers resolve it: `music_metadata` in production,
-    /// a test's fake in handler tests (the C# factories swapped the registration).
+    /// `IMusicMetadataService` as the controllers use it: `music_metadata` in production,
+    /// a test's fake in handler tests.
     pub metadata_service: Arc<dyn IMusicMetadataService>,
-    /// `AddSingleton<IDownloadService, SoulseekDownloadService>()`: the download base over the
-    /// Soulseek backend, which hearts, plays, upgrades, Lidarr and library actions all go through
-    /// (a test's fake in handler tests that swap it).
+    /// `SoulseekDownloadService`: the download base over the Soulseek backend, which hearts,
+    /// plays, upgrades, Lidarr and library actions all go through (a test's fake in handler
+    /// tests that swap it).
     pub download_service: Arc<dyn IDownloadService>,
-    /// `AddSingleton<LidarrClient>()`: the Lidarr v1 client, its address and key read live.
+    /// `LidarrClient`: the Lidarr v1 client, its address and key read live.
     pub lidarr_client: Arc<LidarrClient>,
     /// `LidarrAlbumClaims`: which Lidarr albums a heart or an upgrade is working on.
     pub lidarr_album_claims: Arc<LidarrAlbumClaims>,
@@ -368,18 +366,18 @@ pub struct AppInner {
     pub lidarr_import_handoff: Arc<LidarrImportHandoff>,
     /// `ILidarrTrackFetcher` (`LidarrTrackFetcher`): one song through Lidarr, for a replacement.
     pub lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher>,
-    /// `ILidarrHeartAcquisitionService` (`LidarrHeartAcquisitionService`).
+    /// `ILidarrHeartAcquisitionService` (`LidarrHeartAcquisitionService`): hearts through Lidarr.
     pub lidarr_hearts: Arc<dyn ILidarrHeartAcquisitionService>,
     /// `TrackAcquisitionQueue`: permanent-copy fetches, drained by the "AcquisitionWorker" worker.
     pub track_acquisition_queue: Arc<TrackAcquisitionQueue>,
-    /// `IAcquisitionActivity` (`AcquisitionActivity(sp)`): whether anything is downloading.
+    /// `AcquisitionActivity`: whether anything is downloading.
     pub acquisition_activity: Arc<AcquisitionActivity>,
-    /// `AcquisitionTracker(logger, sp)`: where each hearted download has got to, in memory.
+    /// `AcquisitionTracker`: where each hearted download has got to, in memory.
     pub acquisition_tracker: Arc<AcquisitionTracker>,
     /// `SongFinder`: Find songs, a song's search run again by hand and a copy picked from it.
     pub song_finder: Arc<SongFinder>,
-    /// `StarOnArrival`, built eagerly as `Program.cs` resolved it after `Build()`, so it is
-    /// listening when the first download finishes.
+    /// `StarOnArrival`, built with the state so it is listening when the first download
+    /// finishes.
     pub star_on_arrival: Arc<StarOnArrival>,
     /// `UpgradeQueue`: songs asked to be found in higher quality, `upgrades.json`.
     pub upgrade_queue: Arc<UpgradeQueue>,
@@ -395,65 +393,63 @@ pub struct AppInner {
     pub external_search: Arc<ExternalSearchService>,
     /// `LastFmRadioStateStore`: per-listener plays and stations, `lastfm-radio-state.json`.
     pub last_fm_radio_state: Arc<LastFmRadioStateStore>,
-    /// `LastFmRadioRefreshQueue` (singleton): the rebuilds waiting for the refresh worker.
+    /// `LastFmRadioRefreshQueue`: the rebuilds waiting for the refresh worker.
     pub last_fm_radio_refresh_queue: Arc<LastFmRadioRefreshQueue>,
-    /// `LastFmRadioStreamSessionStore` (singleton): the radio stream tokens, in memory.
+    /// `LastFmRadioStreamSessionStore`: the radio stream tokens, in memory.
     pub last_fm_radio_stream_sessions: Arc<LastFmRadioStreamSessionStore>,
-    /// `LastFmRadioTrackCache` (singleton): `<temp>/octo-cache/radio`.
+    /// `LastFmRadioTrackCache`: `<temp>/octo-cache/radio`.
     pub last_fm_radio_track_cache: Arc<LastFmRadioTrackCache>,
-    /// `LastFmRadioRecommendationService` (scoped in C#; it holds nothing between builds).
+    /// `LastFmRadioRecommendationService` (it holds nothing between builds).
     pub last_fm_radio_recommendations: Arc<LastFmRadioRecommendationService>,
-    /// `LastFmRadioStreamService` (scoped) over the background proxy, with the singleton
-    /// transcoder (`FfmpegLastFmRadioAudioTranscoder`) and tune-in selector
-    /// (`RandomRadioTuneInSelector`). A handler takes its request's scope with `scoped(proxy)`.
+    /// `LastFmRadioStreamService` over the background proxy, with the shared transcoder
+    /// (`FfmpegLastFmRadioAudioTranscoder`) and tune-in selector (`RandomRadioTuneInSelector`).
+    /// A handler makes its request's own with `scoped(proxy)`.
     pub last_fm_radio_streams: LastFmRadioStreamService,
-    /// `LastFmRadioWarmupService`, singleton AND hosted: its loop is the
-    /// "LastFmRadioWarmupService" worker.
+    /// `LastFmRadioWarmupService`: its loop is the "LastFmRadioWarmupService" worker.
     pub last_fm_radio_warmup: Arc<LastFmRadioWarmupService>,
-    /// `LastFmRadioRefreshWorker` (hosted): the "LastFmRadioRefreshWorker" worker, and the only
-    /// settings `OnChange` subscriber.
+    /// `LastFmRadioRefreshWorker`: the "LastFmRadioRefreshWorker" worker, and the only
+    /// subscriber to settings changes.
     pub last_fm_radio_refresh_worker: Arc<LastFmRadioRefreshWorker>,
-    /// `RadioSourceSet` (singleton): every radio source (`IRadioSource`), asked together.
+    /// `RadioSourceSet`: every radio source (`IRadioSource`), asked together.
     pub radio_sources: Arc<RadioSourceSet>,
-    /// `SongRadioService` (scoped in C#): getSimilarSongs over the sources; each request hands it
-    /// its own resolver.
+    /// `SongRadioService`: getSimilarSongs over the sources; each request hands it its own
+    /// resolver.
     pub song_radio: Arc<SongRadioService>,
     /// `RadioOutcomeStore`: what radio learns from listening, `radio-outcomes.json`. Its flush on
-    /// the way out (`ApplicationStopping.Register`) is the "RadioOutcomeStore" worker.
+    /// the way out is the "RadioOutcomeStore" worker.
     pub radio_outcomes: Arc<RadioOutcomeStore>,
     /// `SonicStore`: what every library song sounds like, `sonic-features.json`.
     pub sonic_store: Arc<SonicStore>,
-    /// `SonicAnalysisWorker`, singleton AND hosted: the "SonicAnalysisWorker" worker.
+    /// `SonicAnalysisWorker`: the "SonicAnalysisWorker" worker.
     pub sonic_worker: Arc<SonicAnalysisWorker>,
     /// `GeneratedPlaylistService`: the genre and decade mixes, `generated-playlists.json`.
     pub generated_playlists: Arc<GeneratedPlaylistService>,
     /// `TopSongsService`: an artist's top songs and every chart (Apple Music's pages, Deezer and
     /// Last.fm behind Popular right now).
     pub top_songs: TopSongsService,
-    /// The chart lists as read-only playlists for every listener (`PopularPlaylistService`,
-    /// generalized).
+    /// The chart lists as read-only playlists for every listener.
     pub chart_playlists: Arc<ChartPlaylistService>,
-    /// `AddSingleton<SyncCatalogService>()`: the discovery catalog appended to a syncing
-    /// client's library walk, built over the background proxy (the C# made a scope per build).
+    /// `SyncCatalogService`: the discovery catalog appended to a syncing client's library walk,
+    /// built over the background proxy.
     pub sync_catalog: Arc<SyncCatalogService>,
     /// `LibraryActionJournal`: the write-ahead journal, `<config>/library-actions.json`. Its
-    /// 10-second flush (a timer in C#) is the "LibraryActionJournal" worker.
+    /// 10-second flush is the "LibraryActionJournal" worker.
     pub library_action_journal: Arc<LibraryActionJournal>,
     /// `TagEditJournal`: the tag edits made from the apps and by the explicit marking,
     /// `<config>/tag-edits.json`.
     pub tag_edit_journal: Arc<TagEditJournal>,
     /// The music folder's one-writer gate, shared by every job and placement that writes it.
     pub library_write_gate: LibraryWriteGate,
-    /// `LibraryActionQuarantine` (singleton).
+    /// `LibraryActionQuarantine`.
     pub library_action_quarantine: Arc<LibraryActionQuarantine>,
-    /// `LibraryActionExecutor` (singleton): the only code in library actions that touches a file.
+    /// `LibraryActionExecutor`: the only code in library actions that touches a file.
     pub library_action_executor: Arc<LibraryActionExecutor>,
-    /// `LibraryActionRatingWorker`, singleton AND hosted: the controller enqueues into the
-    /// "LibraryActionRatingWorker" worker. (`LibraryActionPlaylistWorker` is hosted only, and
-    /// `LibraryActionPlaylistProvisioner` is scoped: built per request over its proxy.)
+    /// `LibraryActionRatingWorker`: the controller enqueues into the "LibraryActionRatingWorker"
+    /// worker. (`LibraryActionPlaylistWorker` is a worker only, and
+    /// `LibraryActionPlaylistProvisioner` is built per request over its proxy.)
     pub library_action_rating_worker: Arc<LibraryActionRatingWorker>,
-    /// `NoticeQueue`: what Octo asked each person, `notice-queue.json`. Its 5-second flush (a
-    /// timer in C#) is the "NoticeQueue" worker.
+    /// `NoticeQueue`: what Octo asked each person, `notice-queue.json`. Its 5-second flush is
+    /// the "NoticeQueue" worker.
     pub notice_queue: Arc<NoticeQueue>,
     /// `ILoudnessMeter` (`LoudnessMeter`): ReplayGain for downloads and the tag preview.
     pub loudness_meter: Arc<dyn ILoudnessMeter>,
@@ -469,34 +465,33 @@ pub struct AppInner {
     pub download_verification: Arc<DownloadVerificationService>,
     /// `DownloadCoverResolver`: the download-time cover chain (#51).
     pub download_cover_resolver: Arc<DownloadCoverResolver>,
-    /// `UpgradeWorker`, singleton AND hosted: the "UpgradeWorker" worker.
+    /// `UpgradeWorker`: the "UpgradeWorker" worker.
     pub upgrade_worker: Arc<UpgradeWorker>,
     /// `QualityUpgradeStore`: what the weekly upgrade tried, `quality-upgrade.json`.
     pub quality_upgrade_store: Arc<QualityUpgradeStore>,
-    /// `QualityUpgradeWorker`, singleton AND hosted: the "QualityUpgradeWorker" worker.
+    /// `QualityUpgradeWorker`: the "QualityUpgradeWorker" worker.
     pub quality_upgrade_worker: Arc<QualityUpgradeWorker>,
-    /// `DuplicateScanWorker`, singleton AND hosted, so "Scan now" reaches the running instance:
-    /// the "DuplicateScanWorker" worker.
+    /// `DuplicateScanWorker`, one instance held here and run as a worker, so "Scan now" reaches
+    /// the running instance: the "DuplicateScanWorker" worker.
     pub duplicate_scan_worker: Arc<DuplicateScanWorker>,
     /// `ReviewSweepStore`: the library sweep's cursor, `review-sweep.json`. Its 5-second flush
-    /// (a timer in C#) is the "ReviewSweepStore" worker.
+    /// is the "ReviewSweepStore" worker.
     pub review_sweep_store: Arc<ReviewSweepStore>,
-    /// `LibraryReviewSweepWorker`, singleton AND hosted: the "LibraryReviewSweepWorker" worker.
+    /// `LibraryReviewSweepWorker`: the "LibraryReviewSweepWorker" worker.
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
     /// `FingerprintSweepVerifier`: the sweep's check, over the download verification service.
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
-    /// `LibraryRescan` (singleton): one normal Navidrome scan a few seconds after a run of
-    /// library changes.
+    /// `LibraryRescan`: one normal Navidrome scan a few seconds after a run of library changes.
     pub library_rescan: Arc<LibraryRescan>,
-    /// `LibraryEditService` (singleton): the apps' Library health fixes, tags written in place,
-    /// albums joined, covers added, and a removed song put back.
+    /// `LibraryEditService`: the apps' Library health fixes, tags written in place, albums
+    /// joined, covers added, and a removed song put back.
     pub library_edits: Arc<LibraryEditService>,
-    /// `LibraryHealthService` (singleton, 69f577f): Library health for the dashboard, the app's
-    /// checks and fixes run on the server.
+    /// `LibraryHealthService`: Library health for the dashboard, the app's checks and fixes run
+    /// on the server.
     pub library_health: Arc<LibraryHealthService>,
-    /// `ImportService`, singleton AND hosted, over the import stores (`imports.json`,
-    /// `imports-trickle.json`, `spotify-accounts.json`), the Spotify sign-in and the trickle
-    /// (`TrickleWorker`, also hosted): the "ImportService" and "TrickleWorker" workers.
+    /// `ImportService`, over the import stores (`imports.json`, `imports-trickle.json`,
+    /// `spotify-accounts.json`), the Spotify sign-in and the trickle (`TrickleWorker`): the
+    /// "ImportService" and "TrickleWorker" workers.
     pub imports: Arc<crate::services::imports::ImportService>,
     /// `family.key`: seals members' device secrets and hidden Navidrome passwords, and signs
     /// their browser tokens.
@@ -547,8 +542,8 @@ pub struct AppInner {
     library_index_started: AtomicBool,
 }
 
-/// Library health for the dashboard (`Program.cs`, 69f577f): the app's checks over the library
-/// snapshot, and its fixes through the edit service and the library actions executor.
+/// Library health for the dashboard: the app's checks over the library snapshot, and its fixes
+/// through the edit service and the library actions executor.
 #[allow(clippy::too_many_arguments)]
 fn library_health(
     settings: &Arc<SettingsStore>,
@@ -589,8 +584,8 @@ fn library_health(
     ))
 }
 
-/// The apps' Library health fixes (`Program.cs`, 374dac8): the rescan and the edit service, over
-/// the resolver, the quarantine, both journals and the services a lookup and a cover ask.
+/// The apps' Library health fixes: the rescan and the edit service, over the resolver, the
+/// quarantine, both journals and the services a lookup and a cover ask.
 fn library_edits(
     settings: &Arc<SettingsStore>,
     stores: &Stores,
@@ -618,7 +613,7 @@ fn library_edits(
     (rescan, edits)
 }
 
-/// The tagging and verification services of task 4-B, which the download base
+/// The tagging and verification services, which the download base
 /// (`services::common::BaseDownloadService`) and the tag preview are built over.
 struct Tagging {
     loudness_meter: Arc<dyn ILoudnessMeter>,
@@ -675,19 +670,19 @@ impl Tagging {
     }
 }
 
-/// What the download service (4-C) is built over beyond the acquisition pipeline's own
-/// services: the tagging and verification services, the lyrics writer and slskd's client.
+/// What the download service is built over beyond the acquisition pipeline's own services: the
+/// tagging and verification services, the lyrics writer and slskd's client.
 struct DownloadDeps<'a> {
     tagging: &'a Tagging,
     lyrics: &'a Arc<LyricsSidecarWriter>,
     soulseek_client: &'a SoulseekClient,
 }
 
-/// The acquisition pipeline of task 4-D, over the services it routes to. The C# broke two
-/// cycles with lazy `IServiceProvider` lookups: `AcquisitionActivity` holds the download
-/// service weakly, set once it exists, and `StarOnArrival` listens to the tracker through a weak
-/// reference. The tracker's own lazy lookups (the song path resolver, the identity, the library
-/// service) depend on nothing of this, so they are handed over at construction.
+/// The acquisition pipeline, over the services it routes to. Two links would close a cycle, so
+/// they are weak: `AcquisitionActivity` holds the download service weakly, set once it exists,
+/// and `StarOnArrival` listens to the tracker through a weak reference. The tracker's own
+/// services (the song path resolver, the identity, the library service) depend on nothing of
+/// this, so they are handed over at construction.
 struct Acquisition {
     download_service: Arc<dyn IDownloadService>,
     lidarr_client: Arc<LidarrClient>,
@@ -764,8 +759,8 @@ impl Acquisition {
         // With Family on, a member's own songs are never the shared library's copy.
         library_ownership.set_scope(navidrome.library_scope.clone());
 
-        // Lidarr (4-E). The heart service's lazy IServiceProvider lookups (the download
-        // pipeline, the journal, the ownership check, the upgrade queue) are all built by now.
+        // Lidarr. What the heart service needs besides (the download pipeline, the journal, the
+        // ownership check, the upgrade queue) is built by the time it is.
         let lidarr_client = Arc::new(LidarrClient::new(settings.clone()));
         let lidarr_album_claims = Arc::new(LidarrAlbumClaims::new());
         let lidarr_import_handoff = Arc::new(LidarrImportHandoff::new());
@@ -778,9 +773,9 @@ impl Acquisition {
         ));
         let lidarr_track_fetcher: Arc<dyn ILidarrTrackFetcher> = lidarr_fetcher.clone();
 
-        // The download service (4-C): the base's service-provider lookups are the services built
-        // above, and the Soulseek backend's optional ones the link and Lidarr's two.
-        // A handler test may swap in its own (the C# factories replaced the registration).
+        // The download service: the base is built over the services above, and the Soulseek
+        // backend's optional ones are the link and Lidarr's two. A handler test may swap in its
+        // own.
         let (download_service, soulseek_backend): (Arc<dyn IDownloadService>, _) = match download_service {
             Some(fake) => (fake, None),
             None => {
@@ -801,7 +796,7 @@ impl Acquisition {
                         upgrade_sources: Some(upgrade_sources.clone()),
                         action_journal: Some(stores.library_action_journal.clone()),
                         review_queue: Some(stores.notice_queue.clone()),
-                        // PlaylistSyncService is never registered (see known-diffs).
+                        // No playlist sync service is built.
                         playlist_sync: None,
                         deezer: Some(clients.deezer_metadata.clone()),
                         music_brainz: Some(clients.music_brainz.clone()),
@@ -923,7 +918,7 @@ impl Acquisition {
         }
     }
 
-    /// `AcquisitionWorker`, `SoulseekHoldResumer` and `CacheCleanupService` (`AddHostedService`).
+    /// `AcquisitionWorker`, `SoulseekHoldResumer` and `CacheCleanupService`, as workers.
     fn register_workers(
         &self,
         workers: &WorkerSupervisor,
@@ -956,8 +951,8 @@ impl Acquisition {
     }
 }
 
-/// The Last.fm, ListenBrainz and notification services (3-B). None runs in the background
-/// until it is used: the scrobble queue drains on a task of its own while plays wait.
+/// The Last.fm, ListenBrainz and notification services. None runs in the background until it is
+/// used: the scrobble queue drains on a task of its own while plays wait.
 struct Integrations {
     last_fm: Arc<LastFmService>,
     last_fm_scrobbles: Arc<LastFmScrobbleService>,
@@ -974,7 +969,7 @@ impl Integrations {
         last_fm_base_url: Option<&str>,
     ) -> Self {
         let notifications_client = NotificationService::client();
-        // IEnumerable<INotificationSink>, so adding a transport is one line here.
+        // A list of sinks, so adding a transport is one line here.
         let sinks: Vec<Arc<dyn INotificationSink>> = vec![
             Arc::new(NtfySink::new(notifications_client.clone(), Arc::clone(settings))),
             Arc::new(DiscordSink::new(notifications_client, Arc::clone(settings))),
@@ -999,7 +994,7 @@ impl Integrations {
     }
 }
 
-/// The Navidrome-facing services, built in dependency order (3-E).
+/// The Navidrome-facing services, built in dependency order.
 struct NavidromeServices {
     http: reqwest::Client,
     subsonic_proxy: SubsonicProxyService,
@@ -1017,9 +1012,8 @@ struct NavidromeServices {
 }
 
 impl NavidromeServices {
-    /// `create_download_directory`: whether to create the download directory, as the C#
-    /// `LocalLibraryService` constructor did (not for handler tests). `more_validators` run
-    /// after Subsonic's, in `Program.cs`'s registration order.
+    /// `create_download_directory`: whether to create the download directory (not for handler
+    /// tests). `more_validators` run after Subsonic's, in the order given.
     fn build(
         settings: &Arc<SettingsStore>,
         stores: &Stores,
@@ -1053,7 +1047,7 @@ impl NavidromeServices {
         }
         let local_library: Arc<dyn ILocalLibraryService> = Arc::new(library);
         let mut validators: Vec<Arc<dyn IStartupValidator>> = vec![Arc::new(SubsonicStartupValidator::new(
-            // IOptions<SubsonicSettings>: deliberately the URL Octo started with.
+            // Deliberately the URL Octo started with, not the live one.
             settings.current().subsonic.url.clone(),
             http.clone(),
         ))];
@@ -1123,10 +1117,8 @@ impl NavidromeServices {
     }
 }
 
-/// The stores and clients of task 3-F, over the config directory every state file sits in
-/// (`Path.GetDirectoryName(SettingsFilePath)`).
-/// The dashboard sign-in's services (`Program.cs`, a4333f0): the throttle, the recovery code
-/// beside the settings, and the hourly role check.
+/// The dashboard sign-in's services: the throttle, the recovery code beside the settings, and
+/// the hourly role check.
 struct AdminSignIn {
     throttle: Arc<SignInThrottle>,
     recovery_code: Arc<AdminRecoveryCode>,
@@ -1153,6 +1145,8 @@ impl AdminSignIn {
     }
 }
 
+/// The stores and clients, over the config directory every state file sits in (the directory
+/// of settings.json).
 struct Stores {
     download_history: Arc<DownloadHistoryService>,
     /// Told of every outside song whose file lands in the music folder.
@@ -1273,8 +1267,8 @@ impl Stores {
         }
     }
 
-    /// The C# flushed the registries from a Timer and once more from Dispose on shutdown, and
-    /// ran ReleaseCheck as a hosted service.
+    /// The flushers of the registries, journals and queues (each flushes on a timer and once
+    /// more on shutdown), and the release check.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let registry = self.external_id_registry.clone();
         workers.register("ExternalIdRegistry", move |token| {
@@ -1299,7 +1293,8 @@ impl Stores {
     }
 }
 
-/// The metadata clients of `Program.cs`, built in dependency order.
+/// The metadata clients, built in dependency order: each rate limiter before the client that
+/// spends it, and the cover sources before the aggregator that asks them.
 struct MetadataClients {
     deezer_rate_limiter: Arc<DeezerRateLimiter>,
     deezer_client: Arc<DeezerRateLimitHandler>,
@@ -1339,11 +1334,11 @@ impl MetadataClients {
             Arc::clone(&acoust_id_rate_limiter),
         ))));
 
-        // The cover sources take their settings as IOptions: captured here, at construction.
+        // The cover sources take their settings once: captured here, at construction.
         let current = settings.current();
         let itunes_cover_art = Arc::new(ITunesCoverArtLookup::new(itunes_cache));
-        // Cover-art sources, registered in fallback order. The aggregator queries them
-        // sequentially; adding or removing a source is a one-line change here.
+        // Cover-art sources, in fallback order. The aggregator queries them sequentially; adding
+        // or removing a source is a one-line change here.
         let artwork_hints = Arc::new(ArtworkHints::new());
         let sources: Vec<Arc<dyn ICoverArtSource>> = vec![
             // A chart's own artwork first: it names the cover exactly; the rest search by name.
@@ -1371,8 +1366,8 @@ impl MetadataClients {
     }
 }
 
-/// The lyrics services of task 3-C. `config_dir` None keeps the pins and the undo journal in
-/// memory (handler tests).
+/// The lyrics services. `config_dir` None keeps the pins and the undo journal in memory (handler
+/// tests).
 struct Lyrics {
     choice_store: Arc<LyricsChoiceStore>,
     service: Arc<LyricsService>,
@@ -1423,8 +1418,8 @@ impl Lyrics {
         }
     }
 
-    /// The writer is singleton AND hosted, the same instance both ways, so downloads enqueue
-    /// into the worker the host is running.
+    /// The writer held in the state is the same instance the worker runs, so downloads enqueue
+    /// into the running worker.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let writer = self.sidecar_writer.clone();
         workers.register("LyricsSidecarWriter", move |stopping| {
@@ -1432,8 +1427,8 @@ impl Lyrics {
         });
     }
 
-    /// The library job of task 5-E, over the library service and the music folder, which exist
-    /// only once Navidrome's services are built. `config_dir` None keeps the run in memory.
+    /// The library job, over the library service and the music folder, which exist only once
+    /// Navidrome's services are built. `config_dir` None keeps the run in memory.
     fn library_job(
         &self,
         settings: &Arc<SettingsStore>,
@@ -1469,8 +1464,8 @@ struct LyricsLibraryJob {
 }
 
 impl LyricsLibraryJob {
-    /// The store's flush timer (and the flush its `Dispose` did), and the worker, singleton AND
-    /// hosted: the dashboard enqueues into the loop the host is running.
+    /// The store's flusher (on a timer and once more on shutdown), and the worker, the same
+    /// instance the state holds: the dashboard enqueues into the running loop.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let store = self.store.clone();
         workers.register("LyricsLibraryStore", move |stopping| {
@@ -1539,8 +1534,8 @@ fn build_tidy(
     )
 }
 
-/// The genre backfill and the cover upgrade of task 5-D. `config_dir` None keeps their runs and
-/// journals in memory (handler tests).
+/// The genre backfill and the cover upgrade. `config_dir` None keeps their runs and journals in
+/// memory (handler tests).
 struct GenreAndCoverJobs {
     genre_backfill_store: Arc<GenreBackfillStore>,
     genre_backfill_journal: Arc<GenreBackfillJournal>,
@@ -1639,9 +1634,9 @@ impl GenreAndCoverJobs {
         }
     }
 
-    /// The stores' flush timers (and the flush their `Dispose` did), and the two workers,
-    /// singleton AND hosted, the same instance both ways, so the controllers enqueue into the
-    /// loops the host is running rather than a second copy of them.
+    /// The stores' flushers (on a timer and once more on shutdown), and the workers, the same
+    /// instances the state holds, so the controllers enqueue into the running loops rather than
+    /// a second copy of them.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let store = self.genre_backfill_store.clone();
         workers.register("GenreBackfillStore", move |stopping| {
@@ -1678,16 +1673,14 @@ impl GenreAndCoverJobs {
     }
 }
 
-/// The Soulseek services of task 4-A, over the stores and clients they read.
-/// The Spotify import (group H): `Program.cs`'s Imports block.
+/// The Spotify import: the import service and the trickle that downloads into the library.
 struct Imports {
     service: Arc<crate::services::imports::ImportService>,
     trickle: Arc<crate::services::imports::TrickleWorker>,
 }
 
 impl Imports {
-    /// `config_dir`: where the three files live; None keeps them in memory, as the endpoint
-    /// tests built them.
+    /// `config_dir`: where the three files live; None keeps them in memory (endpoint tests).
     fn build(
         settings: &Arc<SettingsStore>,
         config_dir: Option<&Path>,
@@ -1749,6 +1742,7 @@ impl Imports {
     }
 }
 
+/// The Soulseek services, over the stores and clients they read.
 struct SoulseekServices {
     client: SoulseekClient,
     link: Arc<SoulseekLink>,
@@ -1766,8 +1760,7 @@ impl SoulseekServices {
         clients: &MetadataClients,
         last_fm: &Arc<LastFmService>,
     ) -> Self {
-        // IOptions<SoulseekSettings>: the client deliberately keeps the address and login Octo
-        // started with.
+        // The client deliberately keeps the address and login Octo started with.
         let client = SoulseekClient::new(&settings.current().soulseek);
         let slskd: Arc<dyn ISlskdShares> = Arc::new(client.clone());
         let port_check = Arc::new(SoulseekPortCheck::new(Arc::clone(settings)));
@@ -1795,7 +1788,7 @@ impl SoulseekServices {
     }
 }
 
-/// Last.fm radio and the generated mixes (5-C).
+/// Last.fm radio and the generated mixes.
 struct Radio {
     state: Arc<LastFmRadioStateStore>,
     refresh_queue: Arc<LastFmRadioRefreshQueue>,
@@ -2001,8 +1994,8 @@ impl Radio {
         }
     }
 
-    /// `AddHostedService<LastFmRadioWarmupService>` (the singleton) and
-    /// `AddHostedService<LastFmRadioRefreshWorker>`.
+    /// The radio warmup (the instance the state holds), the refresh worker, the Sounds alike
+    /// analysis and the outcome store's flusher.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let warmup = self.warmup.clone();
         workers.register("LastFmRadioWarmupService", move |stopping| {
@@ -2021,7 +2014,7 @@ impl Radio {
     }
 }
 
-/// Library actions (5-A): the quarantine, the executor and its two workers, over the journal
+/// Library actions: the quarantine, the executor and its two workers, over the journal
 /// the stores hold.
 struct LibraryActions {
     notice_queue: Arc<NoticeQueue>,
@@ -2053,7 +2046,7 @@ impl LibraryActions {
             acquisitions: acquisition.track_acquisition_queue.clone(),
             settings: settings.clone(),
             notices: Some(notice_queue.clone()),
-            // The one AddSingleton<SpectrumAnalyzer>() the downloads use too.
+            // The same spectrum analyzer the downloads use.
             spectrum: Some(spectrum),
             stars: Some(acquisition.star_on_arrival.clone()),
             soulseek_link: Some(soulseek_link),
@@ -2083,8 +2076,7 @@ impl LibraryActions {
         }
     }
 
-    /// `AddHostedService<LibraryActionPlaylistWorker>()` and the rating worker, singleton AND
-    /// hosted, the same instance both ways.
+    /// The playlist worker and the rating worker, the latter the same instance the state holds.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let playlists = self.playlist_worker.clone();
         workers.register("LibraryActionPlaylistWorker", move |stopping| {
@@ -2158,11 +2150,10 @@ impl Charts {
     }
 }
 
-/// What a handler test swaps for fakes, as the C# `WebApplicationFactory`s did in
-/// `ConfigureServices`. Anything left `None` is the production service.
+/// What a handler test swaps for fakes. Anything left `None` is the production service.
 #[derive(Default)]
 pub struct TestServices {
-    /// `IMusicMetadataService` (a `Mock<IMusicMetadataService>` in C#).
+    /// `IMusicMetadataService` (a test's mock).
     pub metadata: Option<Arc<dyn IMusicMetadataService>>,
     /// Where `LastFmService` sends its calls (the fake `ws.audioscrobbler.com`).
     pub last_fm_base_url: Option<String>,
@@ -2178,28 +2169,27 @@ pub struct TestServices {
     pub deezer_base_url: Option<String>,
     /// `ExternalIdRegistry`, when a test's own metadata service shares it.
     pub external_id_registry: Option<Arc<ExternalIdRegistry>>,
-    /// Raw configuration keys (`IConfiguration[key]`), such as `YouTube:ShimUrl`.
+    /// Raw configuration keys, such as `YouTube:ShimUrl`.
     pub raw_settings: Vec<(String, String)>,
-    /// `IDownloadService` (the real one is task 4-C's).
+    /// `IDownloadService` (the real one is `SoulseekDownloadService`).
     pub download_service: Option<Arc<dyn IDownloadService>>,
-    /// `LibrarySnapshot` (the C# tests swapped its `ReadPage`).
+    /// `LibrarySnapshot`, with the test's own song pages.
     pub library_snapshot: Option<Arc<LibrarySnapshot>>,
-    /// `IAlbumCoverFinder` as the library edits ask it (the C# `FixedFinder`).
+    /// `IAlbumCoverFinder` as the library edits ask it (a fixed finder).
     pub album_cover_finder: Option<Arc<dyn IAlbumCoverFinder>>,
     /// octo-sonic (a fake sidecar).
     pub sonic_client: Option<Arc<dyn ISonicClient>>,
     /// Where `ListenBrainzRadioClient` sends its labs and API calls, unpaced.
     pub listen_brainz_radio_urls: Option<(String, String)>,
-    /// `Admin:SignIn`. None runs the test with the sign-in off, as the C# suite's
-    /// `TestDefaults` did for every web test written before the sign-in (they test what an
-    /// endpoint does, not who may call it); the sign-in tests set it.
+    /// `Admin:SignIn`. None runs the test with the sign-in off, for the tests of what an
+    /// endpoint does rather than who may call it; the sign-in tests set it.
     pub sign_in: Option<String>,
     /// Where Apple Music's pages are read from (a test's mock server). None in a handler test
     /// is an address that refuses at once, so no test reaches music.apple.com.
     pub apple_music_base_url: Option<String>,
 }
 
-/// The queues and sweeps of 5-B: the upgrade queue's worker, the weekly quality upgrade, the
+/// The queues and sweeps: the upgrade queue's worker, the weekly quality upgrade, the
 /// notice playlists, the duplicate scan and the library Review sweep, over the stores the
 /// [`Stores`] hold.
 struct LibraryJobs {
@@ -2297,9 +2287,8 @@ impl LibraryJobs {
         }
     }
 
-    /// `AddHostedService<NoticePlaylistWorker>()`, and the duplicate scan, the upgrade worker,
-    /// the weekly upgrade and the review sweep, each singleton AND hosted, the same instance
-    /// both ways.
+    /// The notice playlists, and the duplicate scan, the upgrade worker, the weekly upgrade and
+    /// the review sweep, each the same instance the state holds.
     fn register_workers(&self, workers: &WorkerSupervisor) {
         let notices = self.notice_playlist_worker.clone();
         workers.register("NoticePlaylistWorker", move |stopping| {
@@ -2433,7 +2422,7 @@ impl AppInner {
             .use_audio_gate(Arc::clone(&self.family_audio));
     }
 
-    /// `IHostApplicationLifetime.StopApplication()`: begins a graceful shutdown.
+    /// Begins a graceful shutdown.
     pub fn stop_application(&self) {
         self.lifetime.cancel();
     }
@@ -2577,6 +2566,16 @@ impl AppState {
 
     /// The production state over a loaded settings store. Workers are registered here but not
     /// started; [`crate::host::run`] starts them once the listener is bound.
+    ///
+    /// Built in dependency order, each group over the ones before it: the stores and the
+    /// metadata clients (every state file and outside lookup), the tagging and lyrics services,
+    /// the Last.fm, ListenBrainz and notification services, the Soulseek services (the metadata
+    /// service everything searches through), Navidrome's services (whose startup validation
+    /// checks Subsonic, then Soulseek), the lyrics, genre and cover jobs (over the library
+    /// service), the acquisition pipeline (over all of those), library actions and the queues and
+    /// sweeps (over its executor and queues), radio and the charts, and last the library
+    /// snapshot, the sign-in, the Library health services and the import, which read from the
+    /// rest. Each group's workers are registered as it is built.
     pub fn build(settings: SettingsStore) -> AppState {
         let settings_path = settings
             .settings_path()
@@ -2597,7 +2596,7 @@ impl AppState {
         stores.register_workers(&workers);
         lyrics.register_workers(&workers);
 
-        // The C# lookup's 15-second Timer, and its Dispose's last write.
+        // The iTunes matches flush every 15 seconds, and once more on shutdown.
         let itunes = Arc::clone(&clients.itunes_cover_art);
         workers.register("ITunesCoverArtLookup", move |stopping| {
             let itunes = Arc::clone(&itunes);
@@ -2726,8 +2725,8 @@ impl AppState {
             Clock::system(),
         ));
         sync_catalog.use_library_scope(navidrome.library_scope.clone());
-        // `FingerprintSweepVerifier(sp)` resolved the download verification service when the
-        // sweep first asked; here it is handed over once both exist.
+        // The sweep's verifier and the download verification service are built in different
+        // groups; the service is handed over once both exist.
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
@@ -3068,7 +3067,8 @@ impl AppState {
             tagging.spectrum_analyzer.clone(),
             lyrics.song_answers(&genre_cover_jobs.cover_upgrade_worker),
         );
-        // The 5-B queues keep their files in the test's config directory; no worker is run.
+        // The queues and sweeps keep their files in the test's config directory; no worker is
+        // run.
         let library_jobs = LibraryJobs::build(
             &settings,
             &stores,
@@ -3117,8 +3117,8 @@ impl AppState {
             Clock::system(),
         ));
         sync_catalog.use_library_scope(navidrome.library_scope.clone());
-        // `FingerprintSweepVerifier(sp)` resolved the download verification service when the
-        // sweep first asked; here it is handed over once both exist.
+        // The sweep's verifier and the download verification service are built in different
+        // groups; the service is handed over once both exist.
         library_jobs
             .fingerprint_sweep_verifier
             .set_service(tagging.download_verification.clone() as Arc<dyn SweepVerification>);
@@ -3157,7 +3157,7 @@ impl AppState {
             &library_actions.quarantine,
             &family_navidrome.2,
         );
-        // The import's files stay in memory, as the C# endpoint tests had them; no worker is run.
+        // The import's files stay in memory; no worker is run.
         let imports = Imports::build(
             &settings,
             None,
@@ -3353,8 +3353,8 @@ impl AppState {
 mod tests {
     use super::*;
 
-    /// `Program.cs` resolved RestartTracker right after `Build()`, so it holds the values the
-    /// process started with; a later change shows as pending.
+    /// The restart tracker is built with the state, so it holds the values the process started
+    /// with; a later change shows as pending.
     #[test]
     fn the_restart_tracker_snapshots_the_settings_the_state_was_built_with() {
         let env = vec![("Subsonic__Url".to_string(), "http://navidrome:4533".to_string())];
@@ -3377,7 +3377,7 @@ mod tests {
     /// The iTunes matches are flushed by a worker, and the Deezer metadata service and cover
     /// lookup share one client, and so one budget.
     #[test]
-    fn the_metadata_clients_are_wired_as_program_cs_registered_them() {
+    fn the_metadata_clients_share_one_deezer_budget() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         assert!(
             state
@@ -3392,10 +3392,10 @@ mod tests {
         ));
     }
 
-    /// The sinks in `Program.cs` registration order, ntfy then Discord, and nothing of 3-B's
-    /// sent anywhere with the default settings.
+    /// The sinks in send order, ntfy then Discord, and nothing from the notification, Last.fm or
+    /// ListenBrainz services sent anywhere with the default settings.
     #[tokio::test]
-    async fn the_notification_sinks_and_scrobblers_are_wired_as_program_cs_registered_them() {
+    async fn the_notification_sinks_and_scrobblers_send_nothing_by_default() {
         let state = AppState::for_tests(AppSettings::default());
         let results = state.notifications.send_test().await;
         let sinks: Vec<(&str, bool)> = results.iter().map(|r| (r.sink.as_str(), r.configured)).collect();
@@ -3432,10 +3432,10 @@ mod tests {
         );
     }
 
-    /// The acquisition pipeline (4-D): its three hosted services run as workers, the activity
+    /// The acquisition pipeline: its three background services run as workers, the activity
     /// sees the download service, and StarOnArrival is already listening to the tracker.
     #[tokio::test]
-    async fn the_acquisition_pipeline_is_wired_as_program_cs_registered_it() {
+    async fn the_acquisition_pipeline_is_wired_with_its_workers() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
         for name in ["AcquisitionWorker", "SoulseekHoldResumer", "CacheCleanupService"] {
@@ -3453,8 +3453,8 @@ mod tests {
         assert!(state.local_library.parse_song_id("ext-deezer-1").0);
     }
 
-    /// SoulseekClient took `IOptions<SoulseekSettings>`: the address it started with stays,
-    /// and the metadata service shares the registry the stores hold.
+    /// SoulseekClient reads its settings once: the address it started with stays, and the
+    /// metadata service shares the registry the stores hold.
     #[tokio::test]
     async fn the_soulseek_client_keeps_the_address_it_started_with() {
         use crate::services::i_music_metadata_service::IMusicMetadataService;
@@ -3477,7 +3477,7 @@ mod tests {
         assert!(state.external_id_registry.lookup(&songs[0].id).is_some());
     }
 
-    /// Lidarr (4-E): the client reads the live settings, so with none saved nothing is asked and
+    /// Lidarr: the client reads the live settings, so with none saved nothing is asked and
     /// the track fetcher refuses before any lookup.
     #[tokio::test]
     async fn the_lidarr_services_refuse_until_lidarr_is_set_up() {
@@ -3507,10 +3507,10 @@ mod tests {
         assert!(state.lidarr_import_handoff.take("anything").is_none());
     }
 
-    /// Last.fm radio (5-C): the warmup and the refresh worker run as workers, the refresh worker
+    /// Last.fm radio: the warmup and the refresh worker run as workers, the refresh worker
     /// hands its rebuilds to the warmup, and the stores share the external id registry.
     #[tokio::test]
-    async fn the_radio_is_wired_as_program_cs_registered_it() {
+    async fn the_radio_is_wired_with_its_workers() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
         for name in [
@@ -3546,7 +3546,7 @@ mod tests {
         assert!(state.last_fm_radio_streams.resolve(&session).is_none());
     }
 
-    /// 5-F: the sync catalog is one singleton; nothing is built or pinned until a walk asks.
+    /// The sync catalog is one shared instance; nothing is built or pinned until a walk asks.
     #[test]
     fn the_sync_catalog_is_a_singleton_with_nothing_built() {
         use crate::services::subsonic::SyncCatalogKind;
@@ -3560,10 +3560,10 @@ mod tests {
         );
     }
 
-    /// Library actions (5-A): the journal's flusher and both workers run, the journal sits beside
+    /// Library actions: the journal's flusher and both workers run, the journal sits beside
     /// settings.json, and the Lidarr heart shares it.
     #[tokio::test]
-    async fn library_actions_are_wired_as_program_cs_registered_them() {
+    async fn library_actions_are_wired_with_their_workers() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
         for name in [
@@ -3599,10 +3599,10 @@ mod tests {
         assert!(!state.upgrade_sources.ready());
     }
 
-    /// The genre backfill and the cover upgrade (5-D): their stores flush and their workers run
+    /// The genre backfill and the cover upgrade: their stores flush and their workers run
     /// as workers, and the handler-test state keeps their runs in memory.
     #[tokio::test]
-    async fn the_genre_backfill_and_the_cover_upgrade_are_wired_as_program_cs_registered_them() {
+    async fn the_genre_backfill_and_the_cover_upgrade_are_wired_with_their_workers() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
         for name in [
@@ -3625,10 +3625,11 @@ mod tests {
         );
     }
 
-    /// 5-B: the stores sit beside settings.json, their flushers and the five hosted services run
-    /// as workers, and the queues are the ones library actions and hearts already use.
+    /// The queues and sweeps: the stores sit beside settings.json, their flushers and the five
+    /// background services run as workers, and the queues are the ones library actions and
+    /// hearts already use.
     #[tokio::test]
-    async fn the_queues_and_sweeps_are_wired_as_program_cs_registered_them() {
+    async fn the_queues_and_sweeps_are_wired_with_their_workers() {
         let state = AppState::build(SettingsStore::from_env(Vec::new(), None));
         let names: Vec<String> = state.workers.status().into_iter().map(|s| s.name).collect();
         for name in [

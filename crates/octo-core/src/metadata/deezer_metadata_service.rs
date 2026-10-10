@@ -1,5 +1,5 @@
-//! The data half of `Services/Metadata/DeezerMetadataService.cs`: the records it answers with
-//! and the record-type words. The service itself (HTTP, caches, matching) is
+//! The data half of the Deezer metadata service: the records it answers with and the record-type
+//! words. The service itself (HTTP, caches, matching) is
 //! `octo::services::metadata::deezer_metadata_service`.
 
 use crate::common::dotnet;
@@ -242,7 +242,6 @@ pub fn release_rank(record_type: Option<&str>) -> i32 {
 mod tests {
     use super::*;
 
-    /// Port of `ReleaseTypes_AreNavidromesLowercaseWords` (8 rows).
     #[test]
     fn release_types_are_navidromes_lowercase_words() {
         let cases: &[(Option<&str>, &str)] = &[

@@ -8,14 +8,14 @@ use parking_lot::Mutex;
 use super::import_playlists::PlaylistNavidrome;
 use crate::services::library::quality_upgrade_worker::LibrarySongRow;
 
-/// `ImportMatchTests.Navidrome`: playlists in memory, every call written down.
+/// A Navidrome with its playlists in memory and every call written down. A create hands out the
+/// first free id of `pl1`, `pl2`, ...
 pub struct FakeNavidrome {
     pub playlists: Mutex<HashMap<String, Vec<String>>>,
     pub calls: Mutex<Vec<String>>,
     pub admin: Mutex<String>,
     pub give_works: Mutex<bool>,
     pub given_to: Mutex<Option<String>>,
-    /// Ids a create hands out, in turn; empty makes `pl1`, `pl2`, ...
     pub fail_add: Mutex<bool>,
     pub fail_delete: Mutex<bool>,
     pub fail_create: Mutex<bool>,
@@ -121,7 +121,7 @@ impl PlaylistNavidrome for FakeNavidrome {
     }
 }
 
-/// `ImportMatchTests.Row`.
+/// A library row for a song at `/music/{id}.{suffix}`.
 #[allow(clippy::too_many_arguments)]
 pub fn row(
     id: &str,

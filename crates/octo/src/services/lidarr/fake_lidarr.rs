@@ -1,6 +1,6 @@
-//! `LidarrTrackFetcherTests.FakeLidarr`: enough of Lidarr's v1 API for one album (lookup, add,
-//! monitor, search, tracks and files), served by a mock server. A search imports the files
-//! `on_search` names, the way Lidarr would, onto the disk Octo sees.
+//! A fake Lidarr: enough of Lidarr's v1 API for one album (lookup, add, monitor, search, tracks
+//! and files), served by a mock server. A search imports the files `on_search` names, the way
+//! Lidarr would, onto the disk Octo sees.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-/// `LidarrTrackFetcherTests.AlbumId`.
+/// The fake album's foreign id.
 pub(crate) const ALBUM_ID: &str = "rg-mezzanine";
 
 #[derive(Clone)]
@@ -38,8 +38,7 @@ struct State {
     /// any other guid is refused the way Lidarr refuses a release it has forgotten.
     offered: Vec<(String, i32, String, i64)>,
     grabs: Vec<String>,
-    /// While set, a search's imports wait for [`FakeLidarr::release_imports`] (the C# test's
-    /// `TaskCompletionSource`).
+    /// While set, a search's imports wait for [`FakeLidarr::release_imports`].
     hold_imports: bool,
 }
 

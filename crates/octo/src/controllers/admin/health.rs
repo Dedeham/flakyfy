@@ -1,10 +1,9 @@
-//! Port of `Controllers/LibraryHealthController.cs` (69f577f, c156710): the dashboard's Library
-//! health, what the Octo app's Library health finds, worked out on the server, and its fixes, for
-//! people on other Subsonic clients. Admins only: behind the dashboard sign-in like every admin
-//! endpoint, every call needs a Navidrome admin (the recovery code is not one, and the gate's
-//! `LIBRARY_FILE_ROUTES` refuses it first), and the writes act as that admin, refused unless they
-//! are on the library actions allowed list, exactly as the app's libraryAction is. Writes carry
-//! X-Octo-Admin, as every dashboard write does.
+//! The dashboard's Library health, what the Octo app's Library health finds, worked out on the
+//! server, and its fixes, for people on other Subsonic clients. Admins only: behind the dashboard
+//! sign-in like every admin endpoint, every call needs a Navidrome admin (the recovery code is
+//! not one, and the gate's `LIBRARY_FILE_ROUTES` refuses it first), and the writes act as that
+//! admin, refused unless they are on the library actions allowed list, exactly as the app's
+//! libraryAction is. Writes carry X-Octo-Admin, as every dashboard write does.
 
 use std::collections::{HashMap, HashSet};
 
@@ -655,7 +654,7 @@ struct StepRequest {
     with: Option<IndexMap<String, String>>,
 }
 
-/// The C# record a step was read into.
+/// The shape a step's body is read as.
 const STEP_REQUEST: &Shape = &Shape {
     name: "Octo.Controllers.LibraryHealthController+StepRequest",
     by_constructor: true,

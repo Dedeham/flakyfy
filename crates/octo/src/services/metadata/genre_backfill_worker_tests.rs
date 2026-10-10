@@ -1,9 +1,8 @@
-//! GenreBackfillUndoTests, and Rust-only tests of the walk (the C# tests reached it only through
-//! the admin endpoints, which are 6-B's).
+//! Tests of the genre backfill's undo and of its walk.
 //!
 //! Undo is the only thing that makes an apply reversible, so what it keeps in the journal is
 //! pinned here. Before this, any undo cleared the whole journal when it finished, including one
-//! that was cancelled half way, hit an unreadable file, or ran while the music folder's mount
+//! that was canceled half way, hit an unreadable file, or ran while the music folder's mount
 //! was down, and the undo for everything it had not reached was gone.
 
 use std::collections::HashMap;
@@ -100,8 +99,8 @@ fn undo() -> GenreBackfillRequest {
     GenreBackfillRequest::undo()
 }
 
-/// Undo_KeepsEntriesItCouldNotRestore: a file that cannot be read and a file that is not there
-/// are both left for a later undo rather than dropped.
+/// A file that cannot be read and a file that is not there are both left for a later undo
+/// rather than dropped.
 #[tokio::test]
 async fn undo_keeps_entries_it_could_not_restore() {
     let dir = Dir::new();
@@ -133,8 +132,7 @@ async fn undo_keeps_entries_it_could_not_restore() {
     );
 }
 
-/// Undo_RestoresAWritableFile_AndDropsItsEntry. The C# test tagged a 44-byte WAV and skipped
-/// in effect when TagLib could not; here the song is a real MP3 made by ffmpeg.
+/// Undo restores a writable file and drops its entry. The song is a real MP3 made by ffmpeg.
 #[tokio::test]
 async fn undo_restores_a_writable_file_and_drops_its_entry() {
     let bytes = audio_or_skip!("mp3");
@@ -159,9 +157,8 @@ async fn undo_restores_a_writable_file_and_drops_its_entry() {
     assert_eq!(store.current().changed, 1);
 }
 
-/// TryEnqueue_RefusesWhileARequestIsWaiting: a bounded channel in DropWrite mode reports a
-/// dropped write as a success, so a second request while the first was still enumerating used
-/// to come back 202 and then vanish, or run afterwards without a second confirmation.
+/// A second request while the first is still enumerating is refused, rather than answered 202
+/// and then dropped, or run afterwards without a second confirmation.
 #[test]
 fn try_enqueue_refuses_while_a_request_is_waiting() {
     let store = Arc::new(GenreBackfillStore::new(None));
@@ -272,10 +269,10 @@ fn hash_settings_changes_with_a_mapping() {
     );
 }
 
-/// Rust-only: the hashes the C# `HashSettings` gives for the same settings (run on .NET 9), so
-/// a run the C# build recorded still resumes under the Rust one.
+/// The reference hashes for these settings stay fixed, so a run already recorded in the state
+/// file still resumes.
 #[test]
-fn hash_settings_matches_the_csharp_hashes() {
+fn hash_settings_matches_the_reference_hashes() {
     let mut rich = GenreSettings {
         enabled: true,
         fallback: octo_core::settings::GenreFallbackSource::MusicBrainz,
@@ -303,7 +300,7 @@ fn hash_settings_matches_the_csharp_hashes() {
     }
 }
 
-// ---- Rust-only: the walk -------------------------------------------------------------------
+// ---- The walk ------------------------------------------------------------------------------
 
 /// A library of MP3s tagged with these genre frames, under `<dir>/music`.
 fn library(dir: &Dir, bytes: &[u8], songs: &[(&str, &[&str])]) -> PathBuf {
@@ -434,7 +431,7 @@ async fn a_whole_library_preview_apply_and_undo() {
     assert_eq!(fake.scans(), 2);
 }
 
-/// A cancelled run resumes where it stopped under the same settings, and starts afresh once
+/// A canceled run resumes where it stopped under the same settings, and starts afresh once
 /// the rules changed.
 #[tokio::test]
 async fn a_canceled_run_resumes_unless_the_rules_changed() {
@@ -491,7 +488,7 @@ async fn a_canceled_run_resumes_unless_the_rules_changed() {
 }
 
 /// Octo's downloads come from the mappings (existing files only, once each), and without a
-/// library service the run fails with the container's message, as the C# did.
+/// library service the run fails with the missing-service message.
 #[tokio::test]
 async fn octo_downloads_walks_the_mappings_and_fails_without_a_library() {
     let bytes = audio_or_skip!("mp3");

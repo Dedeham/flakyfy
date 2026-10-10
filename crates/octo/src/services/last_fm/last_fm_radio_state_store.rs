@@ -1,4 +1,4 @@
-//! Port of `Services/LastFm/LastFmRadioStateStore.cs`: `lastfm-radio-state.json`.
+//! The Last.fm radio state store: `lastfm-radio-state.json`.
 //!
 //! Bounded local state for Last.fm radio. This follows DownloadHistoryService's locked cache +
 //! temporary-file rename pattern and is deliberately single-writer. The station ids and the
@@ -32,9 +32,8 @@ use crate::services::state_file;
 
 pub use octo_core::last_fm::last_fm_radio_state_store::{station_id, to_base62};
 
-/// The loaded document. `users` is the C# `Dictionary<string, LastFmRadioUserState>` with
-/// `StringComparer.OrdinalIgnoreCase`: keyed here by the ignore-case key, each entry holding the
-/// key as it was written and the user, in the order a `Dictionary` enumerates.
+/// The loaded document. `users` is keyed by the ignore-case key, each entry holding the key as
+/// it was written and the user, in the order a [`DotnetDictionary`] enumerates.
 struct Document {
     version: i32,
     users: DotnetDictionary<(String, LastFmRadioUserState)>,
@@ -84,7 +83,7 @@ impl Serialize for Document {
 
 pub struct LastFmRadioStateStore {
     path: PathBuf,
-    /// `IOptionsMonitor<LastFmSettings>`: the retention is read at every prune.
+    /// The Last.fm settings: the retention is read at every prune.
     settings: Arc<SettingsStore>,
     registry: Arc<ExternalIdRegistry>,
     clock: Clock,
@@ -100,7 +99,7 @@ impl LastFmRadioStateStore {
         Self::with_clock(path, settings, registry, Clock::system())
     }
 
-    /// The store on another clock (`DateTime.UtcNow` in the C#), for tests.
+    /// The store on another clock, for tests.
     pub fn with_clock(
         path: impl Into<PathBuf>,
         settings: Arc<SettingsStore>,
@@ -426,8 +425,8 @@ impl LastFmRadioStateStore {
             );
             document = LastFmRadioStateDocument::default();
         }
-        // new Dictionary(users, StringComparer.OrdinalIgnoreCase): two keys that differ only in
-        // case throw, and the load starts clean.
+        // Keyed ignoring case: two keys that differ only in case fail the load, and it starts
+        // clean.
         let mut state = Document {
             version: document.version,
             users: DotnetDictionary::new(),
@@ -551,7 +550,7 @@ fn same_snapshot(left: &LastFmRadioStation, right: &LastFmRadioStation) -> bool 
                 .map(|track| seed_normalizer::track_key(&track.artist, &track.title)))
 }
 
-/// `TimeSpan.TotalMinutes`.
+/// The span in fractional minutes.
 fn total_minutes(span: TimeDelta) -> f64 {
     span.num_microseconds().map_or_else(
         || span.num_seconds() as f64 / 60.0,

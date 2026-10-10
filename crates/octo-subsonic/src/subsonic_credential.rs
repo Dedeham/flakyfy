@@ -1,4 +1,4 @@
-//! Port of `Services/Subsonic/SubsonicCredential.cs`.
+//! The sign-in part of a Subsonic request.
 
 use std::fmt;
 
@@ -162,7 +162,6 @@ mod tests {
             .collect()
     }
 
-    /// `CredentialCheckTests.Credential_ToString_HidesTheSecret`.
     #[test]
     fn credential_to_string_hides_the_secret() {
         let token =
@@ -179,7 +178,6 @@ mod tests {
         assert!(!format!("{key:?}").contains("key-b81e"));
     }
 
-    /// The first half of `CredentialCheckTests.NoSignIn_IsRefusedWithoutAsking`.
     #[test]
     fn a_name_alone_is_no_sign_in() {
         assert!(SubsonicCredential::from(&params(&[("u", "alice")])).is_none());

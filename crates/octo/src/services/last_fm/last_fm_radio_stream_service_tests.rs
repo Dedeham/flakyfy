@@ -1,6 +1,6 @@
-//! Rust-only: the stream service end to end over fakes. No C# test drove it directly (the
-//! controller tests, 6-A, did); these pin the orchestration: snapshot order, the ready pool,
-//! failures rejected and skipped, plays recorded, profiles written, and the startup warm.
+//! The stream service end to end over fakes. These pin the orchestration: snapshot order, the
+//! ready pool, failures rejected and skipped, plays recorded, profiles written, and the startup
+//! warm.
 
 use std::collections::HashSet;
 use std::pin::Pin;
@@ -335,8 +335,8 @@ async fn a_station_streams_in_snapshot_order_and_records_what_played() {
 }
 
 /// A failed track is rejected from the station, so the candidates the next replenishment counts
-/// from are one shorter: the C# picked up at the old index in the new list, and "Four" (now at
-/// the index "Five" had) is passed over. Kept as it was.
+/// from are one shorter: the next pick starts at the old index in the new list, so "Four" (now
+/// at the index "Five" had) is passed over.
 #[tokio::test]
 async fn an_unplayable_track_is_rejected_and_skipped() {
     let fixture = fixture(0).await;
@@ -525,7 +525,7 @@ async fn switched_off_stations_are_not_served() {
     assert!(fixture.service.get_ready_pool(&session).is_empty());
 }
 
-/// The warmers of one scope collapse; another scope has its own.
+/// The warmers of one service instance collapse; another instance has its own.
 #[tokio::test]
 async fn a_scope_warms_a_station_once() {
     let fixture = fixture(0).await;

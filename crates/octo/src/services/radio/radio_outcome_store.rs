@@ -1,6 +1,5 @@
-//! Port of `Services/Radio/RadioOutcomeStore.cs`: what radio learns from listening, and its file,
-//! `radio-outcomes.json`: each listener's radio plays per source, faded by age. Only the counts
-//! are saved; what was served lives in memory.
+//! What radio learns from listening, and its file, `radio-outcomes.json`: each listener's radio
+//! plays per source, faded by age. Only the counts are saved; what was served lives in memory.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -147,7 +146,7 @@ struct Inner {
 /// memory for a day.
 pub struct RadioOutcomeStore {
     path: PathBuf,
-    /// `IOptionsMonitor<RadioSourceSettings>`.
+    /// The radio source settings.
     settings: Arc<SettingsStore>,
     inner: Mutex<Inner>,
     /// Held from the snapshot to the file move, so an older snapshot never lands last.
@@ -428,8 +427,8 @@ impl RadioOutcomeStore {
         }
     }
 
-    /// It writes every few seconds at most; whatever changed since goes down on the way out
-    /// (`ApplicationStopping.Register(store.Flush)`).
+    /// It writes every few seconds at most; whatever changed since goes down on the way out,
+    /// once `stopping` fires.
     pub async fn run_flusher(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         stopping.cancelled().await;
         self.flush();
@@ -506,7 +505,7 @@ impl Inner {
     }
 }
 
-/// The latest update of any source of a listener (`DateTime.MinValue` for none).
+/// The latest update of any source of a listener (the minimum time for none).
 fn last_update(by_provider: &IndexMap<String, OutcomeCounts>) -> DateTime<Utc> {
     by_provider
         .values()
@@ -516,7 +515,7 @@ fn last_update(by_provider: &IndexMap<String, OutcomeCounts>) -> DateTime<Utc> {
 }
 
 /// The keys of the `count` entries that are oldest by `at`, the earlier added first among
-/// equals (`OrderBy(...).Take(count)`).
+/// equals.
 fn oldest<V>(map: &IndexMap<Key, V>, count: usize, at: impl Fn(&V) -> DateTime<Utc>) -> Vec<Key> {
     let mut entries: Vec<(&Key, DateTime<Utc>)> = map.iter().map(|(key, value)| (key, at(value))).collect();
     entries.sort_by_key(|(_, at)| *at);
@@ -551,7 +550,7 @@ fn faded(counts: &OutcomeCounts, now: DateTime<Utc>) -> (f64, f64) {
     (counts.kept * keep, counts.skipped * keep)
 }
 
-/// `TimeSpan.TotalDays`, from whole 100-nanosecond ticks.
+/// The span in fractional days, from whole 100-nanosecond ticks.
 fn total_days(span: TimeDelta) -> f64 {
     let ticks = span
         .num_microseconds()

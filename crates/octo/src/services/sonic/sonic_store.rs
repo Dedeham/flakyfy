@@ -1,6 +1,6 @@
-//! Port of `Services/Sonic/SonicStore.cs` and its file, `sonic-features.json`: what every
-//! analyzed song sounds like, by Navidrome song id, on disk beside the settings, and the songs
-//! nearest a seed. Written at most once a minute, like the review sweep's store.
+//! The sonic store and its file, `sonic-features.json`: what every analyzed song sounds like, by
+//! Navidrome song id, on disk beside the settings, and the songs nearest a seed. Written at most
+//! once a minute, like the review sweep's store.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -147,8 +147,8 @@ pub const VERSION2_WEIGHTS: [f32; 23] = [
 pub const FIT_CLOSE: f64 = 1.2;
 pub const FIT_FAR: f64 = 0.6;
 
-/// The distance between two songs' features. Each term is worked out in single precision, as the
-/// C# `float` arithmetic did, and summed in double.
+/// The distance between two songs' features. Each term is worked out in single precision and
+/// summed in double.
 pub fn distance(a: &[f32], b: &[f32], version: i32) -> f64 {
     let weights = (version == 2 && a.len() == VERSION2_WEIGHTS.len()).then_some(&VERSION2_WEIGHTS);
     let mut sum = 0.0_f64;
@@ -249,7 +249,7 @@ impl SonicStore {
             })
             .map(|(id, song)| (id.clone(), song.clone(), distance(&seed.f, &song.f, seed.version)))
             .collect();
-        // A stable sort, as OrderBy: equal distances keep the file's order.
+        // A stable sort: equal distances keep the file's order.
         near.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
         near.truncate(count);
         near
@@ -339,8 +339,8 @@ mod tests {
         SonicStore::new(dir.path().join("sonic-features.json"))
     }
 
-    /// Single-precision features are written as .NET wrote a `float`: shortest round trip,
-    /// exponents as `E-05` and `E+38`.
+    /// Single-precision features are written as the shortest round trip, with exponents as
+    /// `E-05` and `E+38`.
     #[test]
     fn the_fixture_round_trips_byte_for_byte() {
         let text = std::fs::read_to_string(FIXTURE).expect("the fixture is in the repo");
@@ -364,7 +364,6 @@ mod tests {
         assert_eq!(state.pass, 1);
     }
 
-    // SonicStoreTests.Distance_IsBlissWeighted_TempoAQuarter_HarmonyThreeThirteenths
     #[test]
     fn distance_is_bliss_weighted_tempo_a_quarter_harmony_three_thirteenths() {
         let a = vec![0.0_f32; 23];
@@ -381,7 +380,6 @@ mod tests {
         assert!((distance(&a, &tempo, 1) - 1.0).abs() < 1e-6);
     }
 
-    // SonicStoreTests.Nearest_IsClosestFirst_AndOnlySongsOfTheSameVersion
     #[test]
     fn nearest_is_closest_first_and_only_songs_of_the_same_version() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -402,7 +400,6 @@ mod tests {
         assert!(store.nearest("unknown", 5).is_empty());
     }
 
-    // SonicStoreTests.FitFactors_LeanOnTheSeedsOwnSpread
     #[test]
     fn fit_factors_lean_on_the_seeds_own_spread() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -421,7 +418,6 @@ mod tests {
         assert!(!fit.contains_key("nobody"));
     }
 
-    // SonicStoreTests.FitFactors_NeedAnAnalysedSeedAndEnoughSongs
     #[test]
     fn fit_factors_need_an_analyzed_seed_and_enough_songs() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -437,7 +433,6 @@ mod tests {
         assert!(store.fit_factors("unanalysed", ["s1"]).is_empty());
     }
 
-    // SonicStoreTests.WhatWasSaved_IsThereAfterARestart_AndABrokenFileStartsOver
     #[test]
     fn what_was_saved_is_there_after_a_restart_and_a_broken_file_starts_over() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -456,7 +451,6 @@ mod tests {
         assert!(store(&dir).read(|s| s.songs.is_empty()));
     }
 
-    // SonicStoreTests.AFileWithNulls_IsReadWithoutThem
     #[test]
     fn a_file_with_nulls_is_read_without_them() {
         let dir = tempfile::tempdir().expect("a temp dir");

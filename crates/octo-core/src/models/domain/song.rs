@@ -1,5 +1,3 @@
-//! Port of `Models/Domain/Song.cs`.
-
 use serde::{Deserialize, Serialize};
 
 use crate::common::song_identity::SongIdentity;
@@ -112,8 +110,8 @@ pub struct Song {
     /// instead of under a new artist named after all of them (#49).
     pub artists: Vec<String>,
 
-    /// The first credited artist, when a structured source said which one that is.
-    /// Names the artist folder; see BaseDownloadService.PrimaryCredit.
+    /// The first credited artist, when a structured source said which one that is. Names the
+    /// artist folder; see the download base's `placement::primary_credit`.
     pub primary_artist: Option<String>,
 
     pub is_compilation: bool,
@@ -171,7 +169,7 @@ pub struct Song {
     pub tag_plan: Option<Box<TagPlan>>,
 
     /// What AcoustID said about the downloaded file. Carried on the Song because
-    /// DownloadSongInternalAsync threads ONE instance through download, tagging and placement.
+    /// `download_song_internal` threads ONE instance through download, tagging and placement.
     /// Never serialized.
     #[serde(skip)]
     pub verification: Option<Box<VerificationResult>>,

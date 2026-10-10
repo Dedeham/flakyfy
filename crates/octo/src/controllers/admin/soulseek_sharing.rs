@@ -1,8 +1,8 @@
-//! `Controllers/SoulseekSharingController.cs` (`[Route("api/admin/soulseek/sharing")]`): the
-//! Sharing card on the dashboard's Soulseek page: what this server gives back to the Soulseek
-//! network, read from slskd through Octo's own slskd sign-in, and the switch that turns sharing
-//! on and off. Only counts, folder names and states come back; slskd's login stays inside Octo.
-//! Behind the same guard as the rest of /api/admin, so the writes need X-Octo-Admin.
+//! `api/admin/soulseek/sharing`: the Sharing card on the dashboard's Soulseek page: what this
+//! server gives back to the Soulseek network, read from slskd through Octo's own slskd sign-in,
+//! and the switch that turns sharing on and off. Only counts, folder names and states come back;
+//! slskd's login stays inside Octo. Behind the same guard as the rest of /api/admin, so the
+//! writes need X-Octo-Admin.
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -96,8 +96,7 @@ mod tests {
     use crate::controllers::admin::json_body::FromBody;
     use crate::controllers::admin::test_app::{app, get, send};
 
-    /// slskd at a port nothing listens on, and the port test off, as the C# tests ran
-    /// (`TestEnvironment.TurnOffPortChecks`).
+    /// slskd at a port nothing listens on, and the port test off.
     fn state(config_dir: &std::path::Path) -> AppState {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
         let closed = listener.local_addr().expect("an address");
@@ -120,9 +119,8 @@ mod tests {
         )
     }
 
-    // SoulseekSharingTests.Endpoints_WithSlskdOutOfReach: through the real app, with slskd at a
-    // closed port: the card says slskd is out of reach and asks nobody about the port, and the
-    // rescan is a guarded write.
+    // Through the real app, with slskd at a closed port: the card says slskd is out of reach
+    // and asks nobody about the port, and the rescan is a guarded write.
     #[tokio::test]
     async fn endpoints_with_slskd_out_of_reach() {
         let dir = tempfile::tempdir().expect("a folder");
@@ -159,9 +157,8 @@ mod tests {
         assert!(rescan.text().contains("cannot reach slskd"), "{}", rescan.text());
     }
 
-    // SoulseekShareSwitchTests.ShareEndpoint_SavesTheChoice_AndReportsWhatSlskdDid: the switch
-    // is saved to settings.json, and with slskd out of reach the answer says so instead of
-    // pretending.
+    // The switch is saved to settings.json, and with slskd out of reach the answer says so
+    // instead of pretending.
     #[tokio::test]
     async fn share_endpoint_saves_the_choice_and_reports_what_slskd_did() {
         let dir = tempfile::tempdir().expect("a folder");
@@ -235,8 +232,8 @@ mod tests {
         assert_eq!(saved()["Soulseek"]["ShareLibrary"], false);
     }
 
-    /// Where System.Text.Json stopped on a member it could not read as a bool, as the C# answer
-    /// for the body {"on": "maybe"} said (LineNumber 0, BytePositionInLine 14): the member's name
+    /// Where the reader stopped on a member it could not read as a bool, as the reference answer
+    /// for the body {"on": "maybe"} says (LineNumber 0, BytePositionInLine 14): the member's name
     /// as sent, after a plain value or after the opening bracket of an object or a list.
     #[test]
     fn a_wrong_typed_on_is_placed_where_the_reader_stopped() {

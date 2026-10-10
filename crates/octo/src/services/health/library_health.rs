@@ -1,10 +1,10 @@
-//! Port of `Services/Health/LibraryHealth.cs` (69f577f): plain checks over the library's songs
-//! that find what is worth fixing in the files. Nothing is guessed from outside the library; the
-//! same songs always give the same report.
+//! Plain checks over the library's songs that find what is worth fixing in the files. Nothing is
+//! guessed from outside the library; the same songs always give the same report.
 //!
-//! A port of the Octo app's shared core (shared/core/.../health/LibraryHealth.kt), rule for rule,
-//! so the dashboard and the apps find the same things in one library. docs/library-health-cases.json
-//! holds the cases both sides are checked against; change a rule here and there together.
+//! Mirrors the Octo app's shared core (shared/core/.../health/LibraryHealth.kt), rule for rule,
+//! so the dashboard and the apps find the same things in one library.
+//! docs/library-health-cases.json holds the cases both sides are checked against; change a rule
+//! here and there together.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -34,7 +34,7 @@ impl HealthTag {
         HealthTag::Cover,
     ];
 
-    /// The member's name, as `ToString()` gave it.
+    /// The tag's name, in PascalCase.
     pub fn name(self) -> &'static str {
         match self {
             HealthTag::Genre => "Genre",
@@ -327,7 +327,7 @@ impl HealthCheck {
         HealthCheck::NoGenre,
     ];
 
-    /// The member's name, as `ToString()` gave it (the log line and the shared cases).
+    /// The check's name, in PascalCase (the log line and the shared cases).
     pub fn name(self) -> &'static str {
         match self {
             HealthCheck::Duplicates => "Duplicates",

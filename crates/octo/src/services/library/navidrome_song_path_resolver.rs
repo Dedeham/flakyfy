@@ -1,5 +1,3 @@
-//! Port of `Services/Library/NavidromeSongPathResolver.cs`.
-
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -63,7 +61,7 @@ pub struct NavidromeSongPathResolver {
     identity: NavidromeIdentityService,
     library: Arc<dyn ILocalLibraryService>,
     http: reqwest::Client,
-    // Read at the point of use (IOptionsMonitor<SubsonicSettings> and IConfiguration).
+    // The Subsonic and library settings, read at the point of use.
     settings: Arc<SettingsStore>,
 }
 
@@ -252,7 +250,7 @@ impl NavidromeSongPathResolver {
         })
     }
 
-    /// Whether Navidrome has this id as a present song at exactly this file (W8): not missing,
+    /// Whether Navidrome has this id as a present song at exactly this file: not missing,
     /// at this path, at this size. The size proves it read the file after it moved in, since a
     /// replacement at the original's own path is still the old row until the scan.
     pub async fn shows_at(&self, navidrome_id: &str, absolute_path: &str) -> bool {
@@ -440,8 +438,8 @@ impl NavidromeSongPathResolver {
         self.identity.effective_download_path(&configured)
     }
 
-    /// A candidate from a song object. `Err` where the C# threw (a size or duration that is not
-    /// a number), which its callers caught as a failed lookup.
+    /// A candidate from a song object. `Err` for a size or duration that is not a number, which
+    /// its callers take as a failed lookup.
     pub(crate) fn from_json(
         element: &Value,
         id: &str,
@@ -470,7 +468,7 @@ impl NavidromeSongPathResolver {
             album: text(element, "album").unwrap_or_default(),
             suffix: text(element, "suffix").unwrap_or_default(),
             // Navidrome's native API sends seconds with a fraction (301.37); Subsonic's getSong
-            // whole ones (ed0bd7c).
+            // whole ones.
             duration: number("duration")?
                 .and_then(serde_json::Number::as_f64)
                 .filter(|secs| *secs > 0.0)
@@ -489,7 +487,7 @@ fn text(element: &Value, name: &str) -> Option<String> {
     }
 }
 
-/// `Path.Combine(a, b)` for a relative `b`.
+/// A relative `b` joined onto `a` with one separator.
 fn combine(a: &str, b: &str) -> String {
     if a.is_empty() {
         b.to_string()
@@ -500,7 +498,7 @@ fn combine(a: &str, b: &str) -> String {
     }
 }
 
-/// `Path.GetFullPath`: rooted against the working directory, `.` and `..` resolved lexically
+/// The full path: rooted against the working directory, `.` and `..` resolved lexically
 /// (no symbolic links followed), repeated separators collapsed. A trailing separator is kept.
 pub(crate) fn get_full_path(path: &str) -> String {
     let joined = if path.starts_with('/') {
@@ -527,14 +525,14 @@ pub(crate) fn get_full_path(path: &str) -> String {
     full
 }
 
-/// `IsInside`: the full path is strictly under the root (the root itself is not inside it).
+/// Whether the full path is strictly under the root (the root itself is not inside it).
 pub(crate) fn is_inside(full: &str, root: &str) -> bool {
     let normalized = format!("{}/", get_full_path(root).trim_end_matches('/'));
     full.starts_with(&normalized)
 }
 
-/// `Path.GetExtension(path).TrimStart('.')`: the text after the file name's last dot, empty
-/// when there is none or the name ends with it.
+/// The extension without its dot: the text after the file name's last dot, empty when there is
+/// none or the name ends with it.
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

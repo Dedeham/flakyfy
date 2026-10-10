@@ -1,6 +1,6 @@
-//! The pure half of `Services/Soulseek/SoulseekSharing.cs`: the Sharing card's records and the
-//! readers of slskd's answers it is built from. The service that asks slskd, and Soulseek's port
-//! test, are `octo::services::soulseek::soulseek_sharing`.
+//! The pure half of Soulseek sharing: the Sharing card's records and the readers of slskd's
+//! answers it is built from. The service that asks slskd, and Soulseek's port test, are
+//! `octo::services::soulseek::soulseek_sharing`.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -147,7 +147,7 @@ pub struct SharingReport {
 
 /// Puts slskd's answers together. Any of them may be None, which reads as "slskd did not
 /// say", never as zero. No application answer at all means slskd is out of reach.
-#[allow(clippy::too_many_arguments)] // the C# signature: one argument per slskd answer
+#[allow(clippy::too_many_arguments)] // one argument per slskd answer
 pub fn build(
     app_json: Option<&str>,
     options_json: Option<&str>,
@@ -462,7 +462,7 @@ fn text(element: &Value, name: &str) -> Option<String> {
     }
 }
 
-/// `TryGetInt32`: an integer literal that fits.
+/// The property as an `i32`: an integer literal that fits, else None.
 fn int(element: &Value, name: &str) -> Option<i32> {
     match child(element, name) {
         Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
@@ -491,7 +491,7 @@ fn boolean(element: &Value, name: &str) -> Option<bool> {
     }
 }
 
-/// An ISO 8601 time, as slskd writes it (see known-diffs.md, "slskd's sharing answers").
+/// An ISO 8601 time, as slskd writes it.
 fn date(element: &Value, name: &str) -> Option<DateTime<Utc>> {
     datetime::parse_utc(&text(element, name)?)
 }

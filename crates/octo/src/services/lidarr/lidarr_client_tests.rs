@@ -1,5 +1,5 @@
-//! Port of `octo.Tests/LidarrClientTests.cs`. The C# `Handler` answered every request with 200 and
-//! a body chosen by method and path; here a mock server does, and keeps the requests.
+//! Tests of the Lidarr client. A mock server answers every request with 200 and a body chosen by
+//! method and path, and keeps the requests.
 
 use std::sync::Arc;
 
@@ -403,7 +403,7 @@ fn imported_paths_translate_relative_to_selected_root_and_reject_escapes() {
     ));
 }
 
-// Beyond the C# file: what the client threw, by kind.
+// What the client fails with, by kind.
 
 #[tokio::test]
 async fn an_error_status_is_an_http_error_with_the_start_of_the_body() {
@@ -497,7 +497,7 @@ async fn a_lookup_with_no_single_match_is_an_invalid_operation() {
     assert!(lookups.contains(&"/api/v1/album/lookup?term=lidarr%3AA".to_string()));
 }
 
-// ---- Releases: the Lidarr half of Find songs picks (9ac4e5a), ported with G1 K (e3aed24) ----
+// ---- Releases: the Lidarr half of Find songs picks ------------------------------------------
 
 #[tokio::test]
 async fn releases_are_listed_with_their_quality_and_why_lidarr_rejects_one() {
@@ -596,8 +596,8 @@ async fn a_picked_release_is_grabbed_instead_of_an_album_search() {
     assert_eq!(grab["indexerId"], 3);
 }
 
-/// Rust-only, G1 K at the client: a forgotten guid is found again by indexer, title (any case,
-/// trimmed) and size, and a size that differs is another release.
+/// A forgotten guid is found again by indexer, title (any case, trimmed) and size, and a size
+/// that differs is another release.
 #[tokio::test]
 async fn a_forgotten_pick_is_grabbed_again_under_its_new_guid() {
     let server = MockServer::builder().start().await;

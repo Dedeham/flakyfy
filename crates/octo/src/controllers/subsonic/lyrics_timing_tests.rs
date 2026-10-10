@@ -1,4 +1,5 @@
-//! The lyrics actions' statics: `LyricsSongSourceTests.NavidromeTiming_*` and `WithoutCues_*`.
+//! The lyrics actions' statics: reading how Navidrome's lyrics are timed, and taking the cues
+//! out.
 
 use super::*;
 
@@ -37,11 +38,11 @@ fn without_cues_drops_the_cue_lines_and_kind_only() {
     assert!(text.contains(r#""value":"a""#), "{text}");
 }
 
-/// Rust-only: what the C# read as unreadable (a non-object on the way, an entry that is not an
-/// object) is `None`, and a body without lyrics at all is `LyricsTiming::None`; numbers and
-/// escaping survive the rewrite as `JsonNode.ToJsonString` wrote them.
+/// An unreadable answer (a non-object on the way, an entry that is not an object) is `None`,
+/// and a body without lyrics at all is `LyricsTiming::None`; in the rewrite numbers keep their
+/// written form and non-ASCII text is escaped.
 #[test]
-fn navidrome_timing_and_without_cues_handle_odd_answers_as_the_csharp_did() {
+fn navidrome_timing_and_without_cues_handle_odd_answers() {
     assert_eq!(
         navidrome_lyrics_timing(br#"{"subsonic-response":{}}"#),
         Some(LyricsTiming::None)

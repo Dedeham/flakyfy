@@ -1,5 +1,4 @@
-//! `star`, `setRating`, `scrobble` and `reportPlayback` (`SubsonicController.Star` L2374,
-//! `SetRating` L2711, `Scrobble` L2967, `ReportPlayback` L3215; endpoints.md §3.6).
+//! `star`, `setRating`, `scrobble` and `reportPlayback`.
 
 use axum::extract::{Request, State};
 use axum::response::IntoResponse;
@@ -42,7 +41,7 @@ pub fn routes() -> RouteSet {
         .subsonic("reportPlayback", get(report_playback).post(report_playback))
 }
 
-/// The radio's resolver over this request's proxy (it was scoped in C#).
+/// The radio's resolver over this request's proxy, so it is built per request.
 fn resolver(state: &AppState, call: &SubsonicCall) -> LastFmRadioTrackResolver {
     LastFmRadioTrackResolver::new(
         call.proxy.clone(),
@@ -71,8 +70,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
 
     // Check if this is a playlist
     if !item_id.is_empty() && playlist_id_helper::is_external_playlist(Some(&item_id)) {
-        // The C# asked PlaylistSyncService to download the whole playlist in the background
-        // after the sign-in check. That service was never registered, so this was the answer.
+        // Starring an outside playlist is not supported.
         return Ok(builder
             .create_error(&format, 0, "Playlist functionality is not enabled")
             .into_response());
@@ -215,7 +213,7 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         // than inheriting whatever a concurrent play happened to ask for.
         info!("Starring external song {item_id}, queueing permanent download");
 
-        // Keyed by what the pipeline knows, labelled with the id the client starred so the
+        // Keyed by what the pipeline knows, labeled with the id the client starred so the
         // app can find its row. Named from the routing, which is already in memory.
         let who = signed_in_user(&state, &call).await?;
         // Held before the download is queued, so one that finishes at once still finds it.
@@ -546,7 +544,7 @@ fn rating_in_scope(state: &AppState, username: &str, item_id: &str) -> bool {
         || state.notice_queue.is_queued(username, item_id)
 }
 
-/// `int.TryParse`: surrounding white space and a sign are allowed.
+/// An integer parsed from text: surrounding white space and a sign are allowed.
 fn try_parse_int(text: &str) -> Option<i32> {
     text.trim().parse::<i32>().ok()
 }
@@ -815,12 +813,12 @@ async fn learn_from_scrobbles(
     Ok(())
 }
 
-/// `long.TryParse`: surrounding white space and a sign are allowed.
+/// A 64-bit integer: surrounding white space and a sign are allowed.
 fn try_parse_long(text: &str) -> Option<i64> {
     text.trim().parse::<i64>().ok()
 }
 
-/// `DateTimeOffset.FromUnixTimeMilliseconds`, which refused anything outside years 1 to 9999.
+/// A time from Unix milliseconds: `None` outside years 1 to 9999.
 fn from_unix_time_milliseconds(unix: i64) -> Option<DateTime<Utc>> {
     const MIN: i64 = -62_135_596_800_000;
     const MAX: i64 = 253_402_300_799_999;
@@ -868,7 +866,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unix_milliseconds_outside_dotnets_years_are_refused() {
+    fn unix_milliseconds_outside_years_1_to_9999_are_refused() {
         assert!(from_unix_time_milliseconds(0).is_some());
         assert!(from_unix_time_milliseconds(253_402_300_799_999).is_some());
         assert!(from_unix_time_milliseconds(253_402_300_800_000).is_none());

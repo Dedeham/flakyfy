@@ -1,6 +1,6 @@
-//! Port of `Services/Imports/ImportViews.cs`: what the dashboard and the Octo apps read. The
-//! names are a contract with both: the apps decode these fields by name, so a rename here is a
-//! change there. Written as ASP.NET wrote them: camelCase, nulls kept.
+//! What the dashboard and the Octo apps read about imports. The names are a contract with both:
+//! the apps decode these fields by name, so a rename here is a change there. Written in
+//! camelCase, nulls kept.
 
 use chrono::{DateTime, Utc};
 use octo_core::json::datetime;

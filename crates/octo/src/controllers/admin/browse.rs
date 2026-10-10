@@ -1,4 +1,4 @@
-//! `AdminController`'s sign-in and the endpoints that read files: the Navidrome admin sign-in
+//! The dashboard sign-in and the endpoints that read files: the Navidrome admin sign-in
 //! (`browse/auth`), the recovery code (`auth/recovery`), the folder picker (`browse`), who is
 //! signed in (`browse/session`), signing out, and the tag preview.
 
@@ -205,7 +205,7 @@ pub async fn browse(
     if let Some(map) = answer.as_object_mut() {
         // Under Docker this is the container's mount namespace, not the host's drives. Saying
         // so in the payload keeps the UI honest about why a user's D: drive is nowhere to be
-        // seen. (`Directory.Exists`: /.dockerenv is a file, so this is false in practice.)
+        // seen. (Only a directory counts: /.dockerenv is a file, so this is false in practice.)
         map.insert(
             "containerised".into(),
             serde_json::Value::Bool(std::path::Path::new("/.dockerenv").is_dir()),
@@ -423,8 +423,8 @@ pub async fn preview_tags(
     signed_in.finish(answer)
 }
 
-/// `Path.GetFullPath` on Unix: made absolute against the working folder, with `.`, `..`
-/// (never above the root) and repeated separators worked out on the text alone.
+/// Made absolute against the working folder, with `.`, `..` (never above the root) and
+/// repeated separators worked out on the text alone.
 fn full_path(path: &str) -> Option<String> {
     if path.contains('\0') {
         return None;
@@ -453,7 +453,7 @@ fn full_path(path: &str) -> Option<String> {
     Some(full)
 }
 
-/// `Path.GetRelativePath(relativeTo, path)` for two full Unix paths (case-sensitive).
+/// The path from `relative_to` to `path`, for two full Unix paths (case-sensitive).
 fn relative_path(relative_to: &str, path: &str) -> String {
     let from: Vec<&str> = relative_to.split('/').filter(|s| !s.is_empty()).collect();
     let to: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -481,7 +481,7 @@ pub fn resolve_under_root(candidate: &str, root: &str) -> Option<String> {
         return None;
     }
 
-    // FileInfo: a file (not a folder) that exists, and is not itself a link.
+    // A file (not a folder) that exists, and is not itself a link.
     let metadata = std::fs::symlink_metadata(&full).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return None;

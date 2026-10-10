@@ -1,8 +1,7 @@
-//! What the admin controllers of task 6-B2 add to 6-B1's helpers (`plumbing`, which they
-//! reuse for the browse sign-in, the `ObjectResult` writers and `[FromBody]` binding): the
-//! `Validate` session check the cover-upgrade and lyrics controllers make (it does not re-issue
-//! the cookie), `[FromQuery] bool`, the implicit `[Required]` on members, `Enum.TryParse`, dates,
-//! and the anonymous-type name collision.
+//! What the admin controllers add to the helpers in `plumbing` (which they reuse for the browse
+//! sign-in, the answer writers and request body binding): the `signed` session check the
+//! cover-upgrade and lyrics controllers make (it does not re-issue the cookie), boolean query
+//! values, required members, enum names, dates, and the member-name collision in an answer.
 
 use axum::http::StatusCode;
 use axum::http::Uri;
@@ -19,32 +18,32 @@ use crate::app::AppState;
 use crate::http::error::{AppError, validation_problem};
 use crate::middleware::forwarded::RequestScheme;
 
-/// `SignInFirst`: what every session-gated endpoint answers without a session.
+/// What every session-gated endpoint answers without a session.
 pub const SIGN_IN_FIRST: &str = "Sign in with your Navidrome admin account first.";
 
-/// `Unauthorized(new { error = SignInFirst })`.
+/// The 401 carrying [`SIGN_IN_FIRST`].
 pub fn sign_in() -> Response {
     error(StatusCode::UNAUTHORIZED, SIGN_IN_FIRST)
 }
 
-/// `StatusCode(n, new { ... })`, `Accepted(..)` and the rest: an `ObjectResult`, written with
-/// the relaxed encoder (the parity baseline's `&&` and `<release>` in the update card).
+/// A JSON answer with any status, written with the relaxed encoder (the `&&` and `<release>`
+/// in the update card go out as written).
 pub fn status(code: StatusCode, body: &impl serde::Serialize) -> Response {
     object_result(code, body)
 }
 
-/// `StatusCode(n, new { error })` and its shorthands (`BadRequest`, `Conflict`, ...).
+/// An `{"error": ...}` answer with a status (400, 409, ...).
 pub fn error(code: StatusCode, message: impl Into<String>) -> Response {
     error_json(code, &message.into())
 }
 
-/// The `X-Octo-Browse-Token` header (`[FromHeader]`).
+/// The `X-Octo-Browse-Token` header.
 fn header_token(parts: &Parts) -> Option<String> {
     header_value(&parts.headers, BROWSE_TOKEN_HEADER)
 }
 
-/// `AdminController.BrowseUser(token)`: cookie first, header second; a live cookie is renewed
-/// on the answer ([`BrowseUser::finish`]).
+/// The browse sign-in: cookie first, header second; a live cookie is renewed on the answer
+/// ([`BrowseUser::finish`]).
 pub fn browse_user(state: &AppState, parts: &Parts) -> BrowseUser {
     BrowseUser::check(
         state,
@@ -54,10 +53,10 @@ pub fn browse_user(state: &AppState, parts: &Parts) -> BrowseUser {
     )
 }
 
-/// `CoverUpgradeController.Signed` / `LyricsAdminController.Signed`:
-/// `_sessions.NavidromeUserOf(cookie ?? header) is not null`. It slides the server-side expiry
-/// but, unlike `BrowseUser`, never re-issues the cookie. A recovery-code session is not signed
-/// in here: these endpoints read or change library files.
+/// Whether a Navidrome user is signed in (the cookie, else the header), for the cover-upgrade
+/// and lyrics endpoints. It slides the server-side expiry but, unlike [`browse_user`], never
+/// re-issues the cookie. A recovery-code session is not signed in here: these endpoints read or
+/// change library files.
 pub fn signed(state: &AppState, parts: &Parts) -> bool {
     let token = request_cookie(&parts.headers, BROWSE_COOKIE_NAME).or_else(|| header_token(parts));
     state
@@ -66,7 +65,7 @@ pub fn signed(state: &AppState, parts: &Parts) -> bool {
         .is_some()
 }
 
-/// `[FromQuery] string?`: the first value, matched ignoring case; empty binds as null.
+/// An optional query value: the first value, matched ignoring case; empty reads as none.
 pub fn query(uri: &Uri, name: &str) -> Option<String> {
     query_value(uri.query(), name)
 }
@@ -79,8 +78,8 @@ fn query_raw(uri: &Uri, name: &str) -> Option<String> {
         .map(|(_, v)| v.into_owned())
 }
 
-/// `[FromQuery] bool name` (default false): `bool.Parse` on the first value. An unparsable one
-/// is a model-binding error, which `[ApiController]` answered with a 400 before the action ran.
+/// A boolean query value (default false): `true` or `false` in any case, trimmed, from the
+/// first value. Anything else is a 400 validation problem, answered before the action runs.
 pub fn query_bool(uri: &Uri, name: &str) -> Result<bool, Rejection> {
     let Some(value) = query_raw(uri, name) else {
         return Ok(false);
@@ -102,29 +101,26 @@ pub fn query_bool(uri: &Uri, name: &str) -> Result<bool, Rejection> {
 /// An answer given instead of running the action (boxed: a `Response` is large).
 pub type Rejection = Box<Response>;
 
-/// The request's head and its whole body (the raw-body capture buffered every POST anyway).
+/// The request's head and its whole body.
 pub async fn split(request: axum::extract::Request) -> (Parts, axum::body::Bytes) {
     let (parts, body) = request.into_parts();
     let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
     (parts, bytes)
 }
 
-/// `[FromBody] T request` under `[ApiController]`: 6-B1's binder, with the parameter named
-/// `request` as every 6-B2 action named it.
+/// A JSON request body read into `T`, with the parameter named `request` in its errors.
 pub fn bind_body<T: super::json_body::FromBody>(parts: &Parts, body: &[u8]) -> Result<T, Rejection> {
     super::json_body::bind_body(&parts.headers, body, "request").map_err(Box::new)
 }
 
-/// The implicit `[Required]` on a non-nullable string property: null, empty and whitespace all
-/// fail (`AllowEmptyStrings` is false).
+/// A required string member: null, empty and whitespace all fail.
 pub fn required(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.trim().is_empty())
 }
 
-/// `Enum.TryParse<T>(text, ignoreCase: true, out var value)`: a member name in any case, a
-/// number, or several of either joined with commas (OR'ed together). `members` are the names in
-/// the order of their values 0, 1, 2, ... A value no member has fails here (the C# kept the
-/// undefined number; see known-diffs.md).
+/// An enum value from its text: a member name in any case, a number, or several of either
+/// joined with commas (OR'ed together). `members` are the names in the order of their values
+/// 0, 1, 2, ... A value no member has fails.
 pub fn enum_try_parse(members: &[&str], text: Option<&str>) -> Option<usize> {
     let text = text?;
     let mut value: i64 = 0;
@@ -144,20 +140,18 @@ pub fn enum_try_parse(members: &[&str], text: Option<&str>) -> Option<usize> {
     usize::try_from(value).ok().filter(|v| *v < members.len())
 }
 
-/// A C# `DateTime` (kind Utc) as STJ writes it in an API answer.
+/// A UTC time as an API answer writes it.
 pub fn utc(value: &DateTime<Utc>) -> Value {
     Value::String(format_utc(value))
 }
 
-/// A C# `DateTime?` as STJ writes it.
+/// An optional UTC time as an API answer writes it, null when there is none.
 pub fn utc_opt(value: &Option<DateTime<Utc>>) -> Value {
     value.as_ref().map_or(Value::Null, utc)
 }
 
-/// What System.Text.Json made of an anonymous type: its members under the camelCase policy, in
-/// order. Two members whose names meet under the policy cannot both be written, and the
-/// serializer threw `InvalidOperationException` before writing a byte, which the exception
-/// handler answered as a 400 "Operation not valid".
+/// An answer object from its members, in order. Two members with the same name cannot both be
+/// written: nothing is written, and the failure is answered as a 400 "Operation not valid".
 pub fn anonymous(members: Vec<(&str, Value)>) -> Result<Value, AppError> {
     let mut map = serde_json::Map::with_capacity(members.len());
     for (name, value) in members {

@@ -1,13 +1,9 @@
-//! Audio tags: what TagLibSharp 2.3.0 wrote and read for the C# build, written and read with
-//! lofty.
+//! Audio tags, written and read with lofty, laid out the way TagLibSharp 2.3.0 writes them.
 //!
-//! C# sources: `Services/Common/TagWriterExtras.cs`, the tag-writing parts of
-//! `Services/Common/BaseDownloadService.cs`, and `Services/Library/KeptIdentity.cs`.
-//! [`TagFile`] stands for `TagLib.File` and its generic `Tag`: each container's own tag is
-//! kept in TagLib#'s model (ID3v2 frames, a Vorbis comment's fields, an iTunes item list's
-//! boxes) and rendered the way TagLib# renders it, so a file Rust tags reads back as the one
-//! C# tagged. The differences lofty forces are in `docs/rust-migration/known-diffs.md`, and
-//! `fixture_tests` compares both builds' files frame by frame.
+//! [`TagFile`] holds a file's tags and their generic fields: each container's own tag is kept
+//! in TagLib#'s model (ID3v2 frames, a Vorbis comment's fields, an iTunes item list's boxes)
+//! and rendered the way TagLib# renders it, so a file tagged here reads back like one TagLib#
+//! tagged. `fixture_tests` compares the files frame by frame against reference files.
 
 mod apple;
 mod genres;

@@ -1,4 +1,4 @@
-//! Shared helpers: `Services/Common` in the C#, its pure parts.
+//! Shared helpers used across the services.
 
 pub mod acquisition_tracker;
 pub mod album_fill_in;

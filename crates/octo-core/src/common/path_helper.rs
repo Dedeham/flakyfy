@@ -1,8 +1,7 @@
-//! Port of `Services/Common/PathHelper.cs`.
+//! Building and sanitizing paths for downloaded music files.
 //!
-//! Paths are built as strings with `/`, the way .NET's `Path.Combine` does on Linux, where Octo
-//! runs. The characters a file name may not hold are Linux's (`Path.GetInvalidFileNameChars()`:
-//! NUL and `/`).
+//! Paths are built as strings joined with `/`, as on Linux, where Octo runs. The characters a
+//! file name may not hold are Linux's: NUL and `/`.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -16,10 +15,10 @@ use crate::settings::subsonic::FolderStructure;
 /// Provides utilities for creating safe file and folder paths for downloaded music files.
 pub struct PathHelper;
 
-/// `Path.GetInvalidFileNameChars()` on Linux.
+/// The characters a Linux file name may not hold.
 const INVALID_FILE_NAME_CHARS: [char; 2] = ['\0', '/'];
 
-/// `Path.GetInvalidFileNameChars()` and `Path.GetInvalidPathChars()` on Linux, together.
+/// The characters a Linux folder name or path segment may not hold.
 const INVALID_FOLDER_NAME_CHARS: [char; 2] = ['\0', '/'];
 
 static ANNOTATION: LazyLock<Regex> =
@@ -295,13 +294,12 @@ impl PathHelper {
     }
 }
 
-/// `File.Exists`: a file, not a directory.
+/// Whether the path names an existing file, not a directory.
 fn file_exists(path: &str) -> bool {
     !path.is_empty() && Path::new(path).is_file()
 }
 
-/// `Path.Combine(a, b)` on Linux: `b` when it is rooted or `a` is empty, else the two joined by
-/// one `/`.
+/// Joins two paths: `b` when it is rooted or `a` is empty, else the two joined by one `/`.
 fn combine(a: &str, b: &str) -> String {
     if b.is_empty() {
         return a.to_string();
@@ -316,8 +314,8 @@ fn combine(a: &str, b: &str) -> String {
     }
 }
 
-/// `s[..units]` in UTF-16 code units. A character split in two by the cut is left out whole
-/// (.NET would keep a lone surrogate, which a Rust string cannot hold).
+/// `s[..units]` in UTF-16 code units. A character split in two by the cut is left out whole,
+/// since a Rust string cannot hold a lone surrogate.
 fn truncate_utf16(s: &str, units: usize) -> String {
     let mut taken = 0;
     s.chars()
@@ -333,8 +331,8 @@ fn file_name(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
-/// `Path.GetDirectoryName` on Linux, for a path that names a file: everything before the last
-/// `/` ("/" itself for a file in the root), or empty when there is none.
+/// The directory of a path that names a file: everything before the last `/` ("/" itself for a
+/// file in the root), or empty when there is none.
 fn directory_name(path: &str) -> String {
     match path.rfind('/') {
         Some(0) => "/".to_string(),
@@ -343,7 +341,7 @@ fn directory_name(path: &str) -> String {
     }
 }
 
-/// `Path.GetExtension`: from the last `.` of the file name, or empty when there is none or it
+/// The extension: from the last `.` of the file name, or empty when there is none or it
 /// is the last character.
 fn extension_of(path: &str) -> &str {
     let name = file_name(path);
@@ -353,7 +351,7 @@ fn extension_of(path: &str) -> &str {
     }
 }
 
-/// `Path.GetFileNameWithoutExtension`: the file name up to its last `.`.
+/// The file name up to its last `.`.
 fn file_name_without_extension(path: &str) -> &str {
     let name = file_name(path);
     match name.rfind('.') {

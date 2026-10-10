@@ -1,5 +1,3 @@
-//! Port of `Services/Radio/RadioProvider.cs`.
-//!
 //! Where a radio suggestion came from. The keys are stored with station tracks, so they never
 //! change; the display names are what the apps show after "Suggested by".
 

@@ -1,5 +1,4 @@
-//! Port of `SubsonicResponseBuilder.TopSongs.cs`: getArtistTopSongs, getTopChart and the
-//! standard getTopSongs, plus getCharts (Rust only, the charts plan).
+//! getArtistTopSongs, getTopChart and the standard getTopSongs, plus getCharts.
 
 use octo_core::models::domain::Song;
 use serde_json::{Map, Value, json};
@@ -170,7 +169,7 @@ impl SubsonicResponseBuilder {
     }
 }
 
-/// What "Popular right now" says it is, in apps that show a playlist's comment (the C#'s words).
+/// What "Popular right now" says it is, in apps that show a playlist's comment.
 pub const POPULAR_COMMENT: &str =
     "The most played songs right now, made by Octo. Songs you have play from your library.";
 
@@ -189,7 +188,7 @@ pub fn chart_playlist_comment(kind: &str, genre: &str) -> String {
 impl SubsonicResponseBuilder {
     /// A chart list with its songs: library songs as Navidrome described them to the listener,
     /// outside songs in the shape every outside song has. In XML each song is an `entry` with its
-    /// fields as attributes and its lists as child elements (C#'s `CreatePopularPlaylistResponse`).
+    /// fields as attributes and its lists as child elements.
     pub fn create_chart_playlist_response(
         &self,
         format: &str,

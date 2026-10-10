@@ -1,4 +1,4 @@
-//! Port of `Services/Common/SoulseekHoldStore.cs`, the store behind `soulseek-holds.json`.
+//! The Soulseek hold store, the store behind `soulseek-holds.json`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,7 +65,7 @@ impl HeldAcquisition {
     }
 }
 
-/// By hand, because System.Text.Json also wrote the computed `Key` (ignored on read).
+/// By hand, because the file also carries the computed `Key` (ignored on read).
 impl Serialize for HeldAcquisition {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut s = serializer.serialize_struct("HeldAcquisition", 6)?;
@@ -120,7 +120,7 @@ impl SoulseekHoldStore {
     /// Every hold, oldest first.
     pub fn snapshot(&self) -> Vec<HeldAcquisition> {
         let mut list: Vec<HeldAcquisition> = self.held.lock().values().cloned().collect();
-        // OrderBy is stable.
+        // A stable sort: holds from the same instant keep their order.
         list.sort_by_key(|h| h.held_since_utc);
         list
     }

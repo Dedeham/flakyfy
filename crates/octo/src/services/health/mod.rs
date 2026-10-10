@@ -1,5 +1,5 @@
-//! `Services/Health` in the C# (group R, 69f577f and e36d823): Library health on the server, the
-//! Octo app's checks and fixes over the library snapshot, for the dashboard.
+//! Library health on the server: the Octo app's checks and fixes over the library snapshot, for
+//! the dashboard.
 
 pub mod health_fixes;
 pub mod health_words;

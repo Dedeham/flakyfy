@@ -1,6 +1,6 @@
-//! `LibraryActionAllowDownloadTests.cs` (3204161): a song removed with Delete from disk is not
-//! downloaded again. The download's log used to say "clear that entry from the dashboard", which
-//! had no control for it; the Library actions history now has Allow downloading again.
+//! A song removed with Delete from disk is not downloaded again. The download's log used to say
+//! "clear that entry from the dashboard", which had no control for it; the Library actions
+//! history now has Allow downloading again.
 
 use axum::http::{Method, StatusCode};
 use chrono::Utc;

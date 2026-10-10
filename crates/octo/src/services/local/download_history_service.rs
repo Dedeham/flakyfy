@@ -1,4 +1,4 @@
-//! Port of `Services/Local/DownloadHistoryService.cs`, the store behind `downloads-history.json`.
+//! The download history, the store behind `downloads-history.json`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -47,7 +47,7 @@ impl DownloadHistoryService {
         }
     }
 
-    /// The room for every saved log together (the C# `LogRoom`, set by tests).
+    /// The room for every saved log together (set by tests).
     pub fn set_log_room(&self, bytes: i64) {
         self.log_room.store(bytes, Ordering::Relaxed);
     }
@@ -208,7 +208,7 @@ impl DownloadHistoryService {
         self.save_locked(list);
     }
 
-    /// The most recent entries, newest first. The C# default was 200.
+    /// The most recent entries, newest first.
     pub fn get_recent(&self, limit: i32) -> Vec<DownloadHistoryEntry> {
         let mut cache = self.cache.lock();
         let list = self.load_locked(&mut cache);
@@ -237,8 +237,8 @@ impl DownloadHistoryService {
     }
 
     fn save_locked(&self, list: &[DownloadHistoryEntry]) {
-        // Written with WhenWritingNull, as the C# FileOptions are: a saved log's copies are
-        // mostly missing figures, and the file has to stay small enough to read whole.
+        // Written without nulls: a saved log's copies are mostly missing figures, and the file
+        // has to stay small enough to read whole.
         if let Err(e) = state_file::save_atomic(&self.path, &octo_core::json::to_string_without_nulls(list)) {
             warn!("Download history save failed: {e}");
         }
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(all[499].title, "5");
     }
 
-    // ---- AdminDownloadsTests: the saved log ------------------------------------------------
+    // ---- The saved log --------------------------------------------------------------------
 
     fn at_text(at: chrono::DateTime<chrono::Utc>) -> String {
         format!(

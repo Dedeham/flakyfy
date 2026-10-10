@@ -1,8 +1,8 @@
-//! Port of `Services/Health/ServerSongFields.cs` (69f577f): Library health's view of Navidrome's
-//! own song list, read the way the Octo app reads the same songs through Subsonic, so both find
-//! the same things: the length in whole seconds (Subsonic cuts the fraction off), an m4a lossless
-//! only with a bit depth, and the release a part came out on taken for its whole album (Navidrome
-//! keeps one per album, the value most of its songs carry).
+//! Library health's view of Navidrome's own song list, read the way the Octo app reads the same
+//! songs through Subsonic, so both find the same things: the length in whole seconds (Subsonic
+//! cuts the fraction off), an m4a lossless only with a bit depth, and the release a part came out
+//! on taken for its whole album (Navidrome keeps one per album, the value most of its songs
+//! carry).
 
 use std::collections::HashMap;
 use std::sync::Arc;

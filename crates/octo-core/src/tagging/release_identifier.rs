@@ -1,18 +1,15 @@
-//! Port of `Services/Tagging/ReleaseIdentifier.cs`.
+//! Works out which release a downloaded file is.
 //!
-//! The C# resolved its sources from the service provider (`MusicBrainzClient`,
-//! `DeezerMetadataService`, `TagWriterExtras.ReadFacts`). This crate cannot name those, so each
-//! call the identifier makes goes through a trait defined here, which the concrete services in
-//! the `octo` and `octo-media` crates implement:
+//! This crate cannot name the services that answer, so each call the identifier makes goes
+//! through a trait defined here, which the concrete services in the `octo` and `octo-media`
+//! crates implement:
 //!
-//! - [`ReleaseLookup`] stands for `MusicBrainzClient` (`LookupReleaseAsync`, `SearchRecordingsAsync`,
-//!   `LookupIsrcAsync`);
-//! - [`CatalogLookup`] stands for `DeezerMetadataService.EnrichTrackCandidatesAsync`;
-//! - [`FileFactsReader`] stands for `TagWriterExtras.ReadFacts`.
+//! - [`ReleaseLookup`]: the MusicBrainz client (release lookup, recording search, ISRC lookup);
+//! - [`CatalogLookup`]: the Deezer metadata service's ranked track candidates;
+//! - [`FileFactsReader`]: the tag reader, for what a file on disk says about itself.
 //!
-//! Budgets: the C# linked a `CancellationTokenSource` to the caller's token and cancelled it
-//! after each budget. Here each call is a future dropped when its budget runs out
-//! (`tokio::time::timeout`) or the caller's token is cancelled, so the traits take no token.
+//! Budgets: each call is a future dropped when its budget runs out (`tokio::time::timeout`) or
+//! the caller's token is canceled, so the traits take no token.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -42,14 +39,14 @@ use crate::tagging::tag_evidence::{
 };
 use crate::tagging::tag_plan::{TagConfidence, TagPlan};
 
-/// The music database calls the identifier makes (`MusicBrainzClient`). Implemented by the
-/// `octo` crate's MusicBrainz client (task 2-D).
+/// The music database calls the identifier makes. Implemented by the `octo` crate's MusicBrainz
+/// client.
 #[async_trait]
 pub trait ReleaseLookup: Send + Sync {
-    /// `LookupReleaseAsync`: the release's details, None when the database has no answer.
+    /// The release's details, None when the database has no answer.
     async fn lookup_release(&self, release_id: &str) -> anyhow::Result<Option<ReleaseDetails>>;
 
-    /// `SearchRecordingsAsync`: the recording search's JSON answer, None when there is none.
+    /// The recording search's JSON answer, None when there is none.
     async fn search_recordings(
         &self,
         artist: &str,
@@ -57,12 +54,12 @@ pub trait ReleaseLookup: Send + Sync {
         duration_seconds: i32,
     ) -> anyhow::Result<Option<Value>>;
 
-    /// `LookupIsrcAsync`: the code lookup's JSON answer, None when there is none.
+    /// The code lookup's JSON answer, None when there is none.
     async fn lookup_isrc(&self, isrc: &str) -> anyhow::Result<Option<Value>>;
 }
 
-/// The catalog call the identifier makes (`DeezerMetadataService.EnrichTrackCandidatesAsync`).
-/// Implemented by the `octo` crate's Deezer metadata service (task 2-D).
+/// The catalog call the identifier makes. Implemented by the `octo` crate's Deezer metadata
+/// service.
 #[async_trait]
 pub trait CatalogLookup: Send + Sync {
     /// The ranked hits for one song, the best `max` of them with their details.
@@ -74,21 +71,21 @@ pub trait CatalogLookup: Send + Sync {
     ) -> anyhow::Result<CatalogCandidates>;
 }
 
-/// `TagWriterExtras.ReadFacts`: what a file on disk says about itself. Implemented by the tag
-/// reader in `octo-media` (task 3-D). A file that cannot be read is `FileFacts::unknown`.
+/// What a file on disk says about itself. Implemented by the tag reader in `octo-media`. A
+/// file that cannot be read is `FileFacts::unknown`.
 pub trait FileFactsReader: Send + Sync {
     fn read_facts(&self, path: &str, tags_are_evidence: bool) -> FileFacts;
 
-    /// `TagPreview.WouldTakeOff` (099fdd3): what the download writer's
-    /// `ReleaseFactTags.Tidy` would take off the file for a song filed under `album`, worked out
-    /// on the file in memory and never saved. Nothing when the file cannot be read.
+    /// What the download writer's `release_fact_tags::tidy` would take off the file for a song
+    /// filed under `album`, worked out on the file in memory and never saved. Nothing when the
+    /// file cannot be read.
     fn would_take_off(&self, _path: &str, _album: &str) -> Vec<String> {
         Vec::new()
     }
 }
 
-/// The caller's token was cancelled while the release lookup was being asked (the C#
-/// `OperationCanceledException` that escaped `IdentifyAsync`).
+/// The caller's token was canceled while the release lookup was being asked, the one
+/// failure [`ReleaseIdentifier::identify`] passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("The operation was canceled.")]
 pub struct Cancelled;
@@ -112,7 +109,7 @@ impl Failure {
     }
 }
 
-/// Run one call until it answers, its deadline passes, or the caller's token is cancelled.
+/// Run one call until it answers, its deadline passes, or the caller's token is canceled.
 async fn bounded<T>(
     ct: &CancellationToken,
     deadline: Instant,
@@ -148,7 +145,7 @@ impl ReleaseIdentifier {
     pub const DETAILS_BUDGET: Duration = Duration::from_secs(10);
     pub const CATALOG_CANDIDATES: i32 = 2;
 
-    /// `music_brainz` and `deezer` are None where the C# found no such service registered.
+    /// `music_brainz` and `deezer` are None when no such service is available.
     pub fn new(
         settings: Arc<SettingsStore>,
         facts: Arc<dyn FileFactsReader>,
@@ -199,8 +196,8 @@ impl ReleaseIdentifier {
     /// not a peer's. The album context, when the file is one track of a walk, steers the choice
     /// onto the walk's release.
     ///
-    /// Fails only when `ct` is cancelled while the release lookup is being asked; a cancellation
-    /// during the catalog or database stage costs their candidates, as the C# catch-all did.
+    /// Fails only when `ct` is canceled while the release lookup is being asked; a cancellation
+    /// during the catalog or database stage only costs their candidates.
     pub async fn identify<L: Clone>(
         &self,
         song: &Song,

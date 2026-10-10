@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/LyricsfileReader.cs`.
+//! Reads the timed lines of LRCLIB's Lyricsfile.
 
 use std::sync::LazyLock;
 
@@ -21,7 +21,7 @@ struct Entry {
 }
 
 /// One `- key: value` or `key: value` row, its parts sliced from the original row. Matched
-/// over [`word_boundary_view`], so `\w` takes what .NET's did.
+/// over [`word_boundary_view`], so `\w` takes the word characters it should.
 struct Row<'a> {
     indent: usize,
     key: &'a str,
@@ -86,7 +86,7 @@ impl LyricsfileReader {
             if trimmed.chars().count() < 2 || !trimmed.ends_with('"') {
                 return None;
             }
-            // Regex.Unescape threw on a bad escape, and the reader's catch gave up on the file.
+            // A bad escape gives up on the whole file.
             return regex_unescape(&trimmed[1..trimmed.len() - 1]);
         }
         if first == '|' || first == '>' {
@@ -161,7 +161,7 @@ fn parse(rows: &[String]) -> Option<Vec<Entry>> {
         if !has_line {
             return None;
         }
-        // C#: `fieldIndent > lineIndent`, where a null lineIndent compares false.
+        // Deeper than the line's own indent; with no line indent yet, never deeper.
         let deeper_than_line = line_indent.is_some_and(|line_at| field.indent > line_at);
         if field.key == "words" && deeper_than_line {
             in_words = true;
@@ -257,8 +257,8 @@ fn to_line(entry: &Entry) -> LyricLine {
     }
 }
 
-/// `Regex.Unescape`: the escapes a .NET pattern knows, turned into their characters. None
-/// where .NET threw (a dangling backslash, short hex, an unknown letter escape).
+/// Regex-style unescaping: the escapes a regex pattern knows, turned into their characters.
+/// None for a bad escape (a dangling backslash, short hex, an unknown letter escape).
 fn regex_unescape(text: &str) -> Option<String> {
     if !text.contains('\\') {
         return Some(text.to_string());
@@ -353,7 +353,6 @@ fn regex_unescape(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// LyricsWordTimingTests.Lyricsfile_WordsBecomeWordTiming.
     #[test]
     fn lyricsfile_words_become_word_timing() {
         let yaml = "version: '1.0'
@@ -405,7 +404,6 @@ plain: |
         assert!(lines[1].words.is_empty());
     }
 
-    /// LyricsWordTimingTests.Lyricsfile_UnexpectedShape_IsNullSoTheLrcIsUsed.
     #[test]
     fn lyricsfile_unexpected_shape_is_null_so_the_lrc_is_used() {
         assert!(
@@ -417,8 +415,8 @@ plain: |
         assert!(LyricsfileReader::read_lines(None).is_none());
     }
 
-    /// The Lyricsfile half of LyricsWordTimingTests.Lrclib_HasWordSync_UsesTheLyricsfileWords
-    /// (the LRCLIB parsing around it is ported with the LRCLIB source).
+    /// An LRCLIB entry with word sync takes its words from the Lyricsfile (the LRCLIB parsing
+    /// around it lives with the LRCLIB source).
     #[test]
     fn lrclibs_lyricsfile_gives_word_timing() {
         let yaml = "version: '1.0'\nlines:\n  - text: 'Hello me'\n    start_ms: 1000\n    words:\n      - text: 'Hello '\n        start_ms: 1000\n      - text: 'me'\n        start_ms: 1500\n        end_ms: 1900\n";

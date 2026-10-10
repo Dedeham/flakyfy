@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/NavidromeAdminRole.cs`.
-
 use octo_subsonic::SubsonicCredential;
 use serde_json::Value;
 

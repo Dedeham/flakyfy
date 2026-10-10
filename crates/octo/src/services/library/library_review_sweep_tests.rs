@@ -1,5 +1,5 @@
-//! `LibraryReviewSweepTests.cs`: the sweep asks about the library and never acts, and it gets out
-//! of a download's way (#72). And the file's `AcoustIdBackgroundLaneTests`.
+//! The Review sweep asks about the library and never acts, and it gets out of a download's way
+//! (#72). And AcoustID's background lane, which the sweep's lookups use.
 
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicUsize};
@@ -65,7 +65,7 @@ impl IAcquisitionActivity for FakeActivity {
     }
 }
 
-/// `Mock<ILocalLibraryService>`: Octo's downloads, and a callback run while the library is
+/// A stand-in `ILocalLibraryService`: Octo's downloads, and a callback run while the library is
 /// listed, given the worker.
 #[derive(Default)]
 struct FakeLibrary {
@@ -151,7 +151,7 @@ fn confirmed(file: i32, recording: Option<i32>) -> VerificationResult {
     }
 }
 
-/// `ReviewFixtures.Unknown`.
+/// A fingerprint AcoustID has no entry for: the track stays unknown.
 fn unknown() -> VerificationResult {
     VerificationResult {
         reason: InconclusiveReason::NoEntry,
@@ -171,7 +171,7 @@ fn settings_of(per_hour: i32) -> LibraryActionSettings {
     }
 }
 
-/// The test class: a music root, the state file beside it, and every store built so far.
+/// The test setup: a music root, the state file beside it, and every store built so far.
 struct Sweep {
     root: tempfile::TempDir,
     stores: Mutex<Vec<Arc<ReviewSweepStore>>>,
@@ -691,8 +691,8 @@ async fn an_unanswered_lookup_is_tried_again_not_recorded() {
     assert_eq!(verifier.asked(), ["a.flac", "a.flac"]);
 }
 
-// ---- AcoustIdBackgroundLaneTests ---------------------------------------------------------
-// TheBackgroundLane_IsRefusedWhileADownloadWaits_AndNeverQueues is 2-D's
+// ---- AcoustID's background lane ----------------------------------------------------------
+// That the lane is refused while a download waits, and never queues, is
 // `the_background_lane_never_waits` in `acoust_id_rate_limiter.rs`.
 
 #[tokio::test]
@@ -711,7 +711,7 @@ async fn the_background_flag_does_not_leak_to_the_caller() {
     assert!(!AcoustIdRateLimiter::in_background_now());
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- The state file and the verdicts -----------------------------------------------------
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -756,9 +756,9 @@ fn a_corrupt_state_file_is_kept_aside_and_the_sweep_starts_over() {
     assert_eq!(aside, 1);
 }
 
-/// A fresh state writes `NextPassUtc` as `DateTime.MinValue`, with no `Z`, and `Pass` 1.
+/// A fresh state writes `NextPassUtc` as the minimum date, with no `Z`, and `Pass` 1.
 #[test]
-fn a_fresh_state_is_written_as_the_c_sharp_wrote_it() {
+fn a_fresh_state_keeps_its_wire_shape() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = dir.path().join("review-sweep.json");
     let store = ReviewSweepStore::new(Some(path.clone()));
@@ -770,7 +770,7 @@ fn a_fresh_state_is_written_as_the_c_sharp_wrote_it() {
 }
 
 #[test]
-fn classify_reads_the_verdicts_as_the_c_sharp_did() {
+fn classify_sorts_each_verdict_into_its_outcome() {
     let undecodable = VerificationResult {
         verdict: VerificationVerdict::Mismatch,
         ..Default::default()

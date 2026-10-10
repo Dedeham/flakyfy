@@ -1,4 +1,4 @@
-//! The lookup half of `ExplicitBackfillTests`: only a confident catalog match counts. The run
+//! The lookup half of the explicit backfill: only a confident catalog match counts. The run
 //! on real files and the dashboard's calls are in `octo::services::library::explicit_backfill`.
 
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ fn track(
     }
 }
 
-/// `Track(id, title, artist, content)` with the C# defaults: 200 s, no album, no code.
+/// A catalog track from its id, title, artist and content flag: 200 s, no album, no code.
 fn plain(id: &str, title: &str, artist: &str, content: Option<i32>) -> CatalogTrackFacts {
     track(id, title, artist, content, Some(200), None, None)
 }

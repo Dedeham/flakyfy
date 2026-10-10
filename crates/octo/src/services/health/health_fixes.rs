@@ -1,7 +1,6 @@
-//! Port of `Services/Health/HealthFixes.cs` (69f577f): Library health's fixes, what each finding
-//! comes to when it is put right, worked out from the songs alone so it can be shown before
-//! anything changes, and then done one song at a time. The same plans the Octo app makes
-//! (HealthFixes.kt); only the drawing differs.
+//! Library health's fixes: what each finding comes to when it is put right, worked out from the
+//! songs alone so it can be shown before anything changes, and then done one song at a time. The
+//! same plans the Octo app makes (HealthFixes.kt); only the drawing differs.
 
 use std::collections::{HashMap, HashSet};
 
@@ -235,7 +234,7 @@ impl FixStep {
 }
 
 impl PartialEq for FixStep {
-    /// The C# record's own equality: none and empty parameters alike, and the same pairs.
+    /// Value equality: none and empty parameters alike, and the same pairs.
     fn eq(&self, other: &Self) -> bool {
         let (mine, theirs) = (self.params(), other.params());
         self.action == other.action

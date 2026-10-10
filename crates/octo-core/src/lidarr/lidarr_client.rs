@@ -1,5 +1,5 @@
-//! The pure half of `Services/Lidarr/LidarrClient.cs`: its records, the readers for Lidarr's
-//! JSON (with `JsonNode.GetValue<T>`'s strictness), and the album choice. The HTTP side is
+//! The pure half of the Lidarr client: its records, the strict readers for Lidarr's JSON (a
+//! value of the wrong kind is an error), and the album choice. The HTTP side is
 //! `octo::services::lidarr::lidarr_client`.
 
 use serde::Serialize;
@@ -8,37 +8,36 @@ use serde_json::{Map, Value};
 use crate::common::dotnet;
 use crate::common::{ArtistAgreement, SongIdentity};
 
-/// What escaped the C# Lidarr classes, by exception type, so callers can branch on the kind as
-/// the C# `catch` clauses did. Each carries the exception's message.
+/// What can go wrong talking to Lidarr, by kind, so callers can branch on the kind. Each
+/// carries its message.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LidarrError {
-    /// `InvalidOperationException`: not set up, no single album, an answer of the wrong shape,
-    /// and `JsonNode.GetValue<T>` on a value of the wrong kind.
+    /// Not set up, no single album, an answer of the wrong shape, or a JSON value of the wrong
+    /// kind.
     #[error("{0}")]
     InvalidOperation(String),
-    /// `HttpRequestException`: Lidarr answered with an error status, or could not be reached.
+    /// Lidarr answered with an error status, or could not be reached.
     #[error("{0}")]
     Http(String),
-    /// `TaskCanceledException` / `OperationCanceledException`: the client's timeout, or the
-    /// caller's token.
+    /// The client's timeout, or the caller's cancellation.
     #[error("{0}")]
     Canceled(String),
-    /// `JsonException`: an answer that is not JSON.
+    /// An answer that is not JSON.
     #[error("{0}")]
     Json(String),
-    /// `ArgumentException`: two track files with one id (`ToDictionary`).
+    /// Two track files with one id.
     #[error("{0}")]
     Argument(String),
-    /// `FileNotFoundException`: the track fetcher found no album, or no good enough copy.
+    /// The track fetcher found no album, or no good enough copy.
     #[error("{0}")]
     FileNotFound(String),
-    /// `IOException`: copying the file out failed.
+    /// Copying the file out failed.
     #[error("{0}")]
     Io(String),
 }
 
 impl LidarrError {
-    /// `ct.ThrowIfCancellationRequested()`'s `OperationCanceledException`.
+    /// The caller canceled the operation.
     pub fn operation_canceled() -> Self {
         LidarrError::Canceled("The operation was canceled.".to_string())
     }
@@ -87,7 +86,7 @@ pub struct LidarrImportedTrack {
     pub path: Option<String>,
     pub size_bytes: i64,
     pub artist: Option<String>,
-    /// 0 when the track has no file (the C# default).
+    /// 0 when the track has no file.
     pub track_file_id: i32,
     pub quality: Option<String>,
 }
@@ -135,16 +134,16 @@ pub struct LidarrReleasePick {
     pub size: Option<i64>,
 }
 
-/// `LidarrClient.PickGoneText`: a picked release no indexer offers any more.
+/// What a picked release no indexer offers any more is told as.
 pub const PICK_GONE_TEXT: &str =
     "The release you picked is no longer offered by the indexers. Search again and pick another.";
 
-/// What `GrabPickedAsync` says when Lidarr refuses the release found again.
+/// What grabbing a picked release says when Lidarr refuses the release found again.
 pub const PICK_REFUSED_TEXT: &str =
     "Lidarr would not take the release you picked. Search again and pick another.";
 
-/// `SameRelease`: the same release in a newer listing: the same indexer and title, and the same
-/// size when both say.
+/// Whether a release is the picked one in a newer listing: the same indexer and title, and the
+/// same size when both say.
 pub fn same_release(release: &LidarrRelease, pick: &LidarrReleasePick) -> bool {
     release.indexer_id == pick.indexer_id
         && pick.title.as_deref().is_some_and(|title| {
@@ -166,8 +165,8 @@ impl LidarrAlbumImportState {
     }
 }
 
-// --- Reading Lidarr's JSON the way System.Text.Json's JsonNode did. A missing property and a
-// JSON null are both C#'s null; a value of another kind makes `GetValue<T>` throw. ---
+// --- Reading Lidarr's JSON strictly. A missing property and a JSON null both read as absent;
+// a value of another kind is an error, never read as absent. ---
 
 fn kind_name(value: &Value) -> &'static str {
     match value {
@@ -193,12 +192,12 @@ fn cannot_convert(value: &Value, type_name: &str) -> LidarrError {
     }
 }
 
-/// `o[key]`: the property, or None when it is missing or null.
+/// The property, or None when it is missing or null.
 pub fn property<'a>(o: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
     o.get(key).filter(|v| !v.is_null())
 }
 
-/// `node?[key]` on a node that may not be an object: the indexer threw for anything else.
+/// The property of a node that may not be an object: anything but an object is an error.
 pub fn child<'a>(node: &'a Value, key: &str) -> Result<Option<&'a Value>, LidarrError> {
     match node {
         Value::Object(o) => Ok(property(o, key)),
@@ -208,32 +207,32 @@ pub fn child<'a>(node: &'a Value, key: &str) -> Result<Option<&'a Value>, Lidarr
     }
 }
 
-/// `o[key] as JsonObject`.
+/// The property when it is an object, else None.
 pub fn object<'a>(o: &'a Map<String, Value>, key: &str) -> Option<&'a Map<String, Value>> {
     o.get(key).and_then(Value::as_object)
 }
 
-/// `value.GetValue<string>()`.
+/// The value as a string; any other kind is an error.
 pub fn value_str(value: &Value) -> Result<&str, LidarrError> {
     value
         .as_str()
         .ok_or_else(|| cannot_convert(value, "System.String"))
 }
 
-/// `NullableStr`: `o[key]?.GetValue<string>()`.
+/// The property as a string, None when it is missing or null.
 pub fn nullable_str(o: &Map<String, Value>, key: &str) -> Result<Option<String>, LidarrError> {
     property(o, key)
         .map(|v| value_str(v).map(str::to_string))
         .transpose()
 }
 
-/// `Str`: `NullableStr(o, key) ?? ""`.
+/// The property as a string, empty when it is missing or null.
 pub fn str_or_empty(o: &Map<String, Value>, key: &str) -> Result<String, LidarrError> {
     Ok(nullable_str(o, key)?.unwrap_or_default())
 }
 
-/// `NullableInt`: `o[key]?.GetValue<int>()`. A number with a fraction or out of range throws,
-/// as `JsonElement.TryGetInt32` refused it.
+/// The property as an `i32`, None when it is missing or null. A number with a fraction or out
+/// of range is an error.
 pub fn nullable_int(o: &Map<String, Value>, key: &str) -> Result<Option<i32>, LidarrError> {
     property(o, key)
         .map(|v| {
@@ -244,26 +243,26 @@ pub fn nullable_int(o: &Map<String, Value>, key: &str) -> Result<Option<i32>, Li
         .transpose()
 }
 
-/// `Int`: `NullableInt(o, key) ?? 0`.
+/// The property as an `i32`, 0 when it is missing or null.
 pub fn int_or_zero(o: &Map<String, Value>, key: &str) -> Result<i32, LidarrError> {
     Ok(nullable_int(o, key)?.unwrap_or(0))
 }
 
-/// `NullableLong`: `o[key]?.GetValue<long>()`.
+/// The property as an `i64`, None when it is missing or null.
 pub fn nullable_long(o: &Map<String, Value>, key: &str) -> Result<Option<i64>, LidarrError> {
     property(o, key)
         .map(|v| v.as_i64().ok_or_else(|| cannot_convert(v, "System.Int64")))
         .transpose()
 }
 
-/// `o[key]?.GetValue<bool>()`.
+/// The property as a bool, None when it is missing or null.
 pub fn nullable_bool(o: &Map<String, Value>, key: &str) -> Result<Option<bool>, LidarrError> {
     property(o, key)
         .map(|v| v.as_bool().ok_or_else(|| cannot_convert(v, "System.Boolean")))
         .transpose()
 }
 
-/// `MapOptions`: the server's root folders and profiles.
+/// The server's root folders and profiles.
 pub fn map_options(
     roots: &[Map<String, Value>],
     quality: &[Map<String, Value>],
@@ -290,13 +289,12 @@ pub fn map_options(
     })
 }
 
-/// `ParseAlbum`: one row of an album lookup, its year from the first four characters of its
-/// release date.
+/// One row of an album lookup, its year from the first four characters of its release date.
 pub fn parse_album(row: &Map<String, Value>) -> Result<LidarrAlbumCandidate, LidarrError> {
     let artist = object(row, "artist");
     let date = nullable_str(row, "releaseDate")?;
     let year = date.as_deref().and_then(|d| {
-        // date[..4] counts UTF-16 units; a cut surrogate pair is no number either.
+        // The first four UTF-16 units; a cut surrogate pair is no number either.
         if dotnet::utf16_len(d) < 4 {
             return None;
         }
@@ -318,15 +316,15 @@ pub fn parse_album(row: &Map<String, Value>) -> Result<LidarrAlbumCandidate, Lid
     })
 }
 
-/// `NullableNumber`: a whole number however Lidarr wrote it (`TryGetValue<double>`, then
-/// `(int)Math.Round`). Anything but a number is None.
+/// A whole number however Lidarr wrote it: read as a double, then rounded half to even.
+/// Anything but a number is None.
 fn nullable_number(o: &Map<String, Value>, key: &str) -> Option<i32> {
     o.get(key)
         .and_then(Value::as_f64)
         .map(|n| n.round_ties_even() as i32)
 }
 
-/// `ParseRelease`: one row of `GET /api/v1/release`.
+/// One row of `GET /api/v1/release`.
 pub fn parse_release(row: &Map<String, Value>) -> Result<LidarrRelease, LidarrError> {
     let quality = object(row, "quality").and_then(|q| object(q, "quality"));
     let age_days = match row.get("ageHours").and_then(Value::as_f64) {
@@ -406,14 +404,14 @@ pub fn select_best_album<'a>(
     None
 }
 
-/// `ParseTrackNumber`: "3", "1-3", "A/2" and the like, by the part before the first `-`, `/`
+/// A track number from "3", "1-3", "A/2" and the like, by the part before the first `-`, `/`
 /// or `.`.
 pub fn parse_track_number(value: &str) -> Option<i32> {
     let head = value.split(['-', '/', '.']).next().unwrap_or("");
     int_try_parse(head)
 }
 
-/// `int.TryParse(s)`: `NumberStyles.Integer`, so white space around it and a leading sign.
+/// An `i32` from ASCII digits, allowing white space around it and a leading sign.
 fn int_try_parse(s: &str) -> Option<i32> {
     let is_white = |c: char| matches!(c, '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ');
     let s = s.trim_matches(is_white);
@@ -462,7 +460,6 @@ mod tests {
         }
     }
 
-    // LidarrClientTests.AlbumSelectionRequiresExactIdentityAndUsesYearToDisambiguate
     #[test]
     fn album_selection_requires_exact_identity_and_uses_year_to_disambiguate() {
         let candidates = [
@@ -518,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn track_numbers_and_years_parse_as_int_try_parse_did() {
+    fn track_numbers_and_years_parse_as_plain_integers() {
         for (text, expected) in [
             ("3", Some(3)),
             ("1-3", Some(1)),
@@ -545,9 +542,9 @@ mod tests {
         }
     }
 
-    /// `GetValue<T>` threw on a value of another kind, rather than reading it as missing.
+    /// A value of another kind is an error, rather than reading as missing.
     #[test]
-    fn a_value_of_the_wrong_kind_throws_as_get_value_did() {
+    fn a_value_of_the_wrong_kind_is_an_error() {
         let row = json!({ "id": "7", "title": 5, "size": 1.5, "ok": null });
         let row = row.as_object().expect("an object");
         assert_eq!(
@@ -562,8 +559,8 @@ mod tests {
         assert_eq!(int_or_zero(row, "missing"), Ok(0));
     }
 
-    // LidarrClientTests.ImportCompletionUsesAlbumStatisticsNotAlternateReleaseRows (the
-    // IsComplete half; the HTTP half is in octo's client tests)
+    // Completion reads the album's statistics, not alternate release rows (the HTTP half is in
+    // octo's client tests).
     #[test]
     fn an_album_is_complete_once_every_track_has_a_file() {
         let state = |count, files| LidarrAlbumImportState {

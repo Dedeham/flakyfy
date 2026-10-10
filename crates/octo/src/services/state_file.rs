@@ -1,14 +1,12 @@
-//! What every JSON state store under `/app/config` shares (state-files.md §3 and §6). Not a C#
-//! file: each C# store repeated these few lines.
+//! What every JSON state store under `/app/config` shares.
 //!
-//! - [`save_atomic`]: `File.WriteAllText(path + ".tmp", json)` then
-//!   `File.Move(tmp, path, overwrite: true)`, creating the directory first. The temp name stays
-//!   `<file>.tmp`, so a C# and a Rust process never trip over each other's leftovers.
-//! - [`read_text`]: `File.Exists` + `File.ReadAllText`, which skips a UTF-8 BOM.
+//! - [`save_atomic`]: writes `<file>.tmp`, then moves it over the file, creating the directory
+//!   first.
+//! - [`read_text`]: the file's text if it exists, a UTF-8 BOM skipped.
 //! - [`write_atomic`], [`read_all_text`], [`lines`]: the same for bytes, for a file that must
-//!   exist, and `File.ReadLines`' line splitting (the journals).
-//! - [`flush_every`]: the `Timer` a coalescing store flushed from, plus the flush its `Dispose`
-//!   did on a graceful shutdown, as a worker for the supervisor.
+//!   exist, and line splitting (the journals).
+//! - [`flush_every`]: the timer a coalescing store flushes from, plus a last flush on a graceful
+//!   shutdown, as a worker for the supervisor.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -61,8 +59,7 @@ pub fn tmp_path(path: &Path) -> PathBuf {
     PathBuf::from(tmp)
 }
 
-/// The file's text, or None when it does not exist. A leading BOM is dropped, as
-/// `File.ReadAllText` did.
+/// The file's text, or None when it does not exist. A leading BOM is dropped.
 pub fn read_text(path: &Path) -> io::Result<Option<String>> {
     match std::fs::read(path) {
         Ok(bytes) => {
@@ -77,8 +74,7 @@ pub fn read_text(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-/// `<path>.tmp`, the temporary name every C# store used, kept so a C# and a Rust process never
-/// trip over each other's leftovers.
+/// `<path>.tmp`, the temporary name every state store writes through.
 pub fn temp_path(path: &Path) -> PathBuf {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
@@ -86,20 +82,21 @@ pub fn temp_path(path: &Path) -> PathBuf {
 }
 
 /// Creates the file's folder, writes `<path>.tmp` and renames it over `path`. No byte order
-/// mark, as `File.WriteAllText` wrote none.
+/// mark is written.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     write_synced(path, &temp_path(path), contents)
 }
 
-/// `File.ReadAllText` for a file the caller knows exists: UTF-8, a byte order mark skipped, bytes that are not UTF-8 read as U+FFFD.
+/// The text of a file the caller knows exists: UTF-8, a byte order mark skipped, bytes that are
+/// not UTF-8 read as U+FFFD.
 pub fn read_all_text(path: &Path) -> io::Result<String> {
     let bytes = std::fs::read(path)?;
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
-/// `File.ReadLines` / `ReadAllLines`: lines end at "\r\n", "\n" or "\r", and a final line
-/// ending does not start another line.
+/// The file's lines: lines end at "\r\n", "\n" or "\r", and a final line ending does not start
+/// another line.
 pub fn lines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut rest = text;
@@ -119,9 +116,8 @@ pub fn lines(text: &str) -> Vec<&str> {
     lines
 }
 
-/// For a C# property that is a non-nullable reference type (a `string` or a `List<T>`):
-/// System.Text.Json read a JSON `null` into it without complaint, where serde would fail the
-/// whole file. Read `null` as the default instead.
+/// For a field that is a string or a list: a JSON `null` there would fail the whole file under
+/// serde, so existing state files with `null` keep loading. Read `null` as the default instead.
 pub fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -131,9 +127,8 @@ where
 }
 
 /// A coalescing store's flush timer: calls `flush` every `interval` (the first call one interval
-/// in, as `new Timer(_ => Flush(), null, interval, interval)` did), and once more when `token`
-/// is cancelled, standing in for the flush `Dispose()` did on a graceful shutdown. The flush
-/// runs on the blocking pool: a store can be a few megabytes of JSON.
+/// in), and once more when `token` is canceled, for a last flush on a graceful shutdown. The
+/// flush runs on the blocking pool: a store can be a few megabytes of JSON.
 pub async fn flush_every(
     interval: Duration,
     token: CancellationToken,
@@ -161,7 +156,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lines_split_as_dotnet_did() {
+    fn lines_split_on_any_line_ending_without_a_trailing_empty_line() {
         assert_eq!(lines("a\r\nb\nc\rd"), ["a", "b", "c", "d"]);
         assert_eq!(lines("a\n"), ["a"]);
         assert_eq!(lines("a\n\nb"), ["a", "", "b"]);

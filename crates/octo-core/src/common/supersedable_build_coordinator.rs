@@ -1,15 +1,13 @@
-//! Port of `Services/Common/SupersedableBuildCoordinator.cs`.
-//!
 //! Wraps a [`SingleFlight`] keyed build with prefix-based supersession for interactive
-//! type-ahead search: a shorter, still-running query is cancelled the moment a longer query
+//! type-ahead search: a shorter, still-running query is canceled the moment a longer query
 //! that extends it (or vice versa) arrives, since the shorter one's result is about to be
 //! replaced in the client's own UI anyway.
 //!
-//! This exists because Amperfy (and most Subsonic clients' type-ahead) fires one search3
-//! call per keystroke, uncancelled. Each partial-word build competed for the same
-//! rate-limited external lane as the query the user actually meant, and the real query
-//! could blow its own timeout waiting behind three stale ones. Cancelling a superseded
-//! build frees that lane immediately instead of waiting out its own timeout.
+//! This exists because Amperfy (and most Subsonic clients' type-ahead) fires one search3 call per
+//! keystroke, uncancelled. Each partial-word build competed for the same rate-limited external
+//! lane as the query the user actually meant, and the real query could blow its own timeout
+//! waiting behind three stale ones. Canceling a superseded build frees that lane immediately
+//! instead of waiting out its own timeout.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -56,14 +54,13 @@ where
         Self::default()
     }
 
-    /// Run `factory` for `query`, cancelling any still-running build for a shorter or longer
+    /// Run `factory` for `query`, canceling any still-running build for a shorter or longer
     /// query that shares a prefix with this one, then join or start this query's own build.
     ///
-    /// `fallback` is returned if the build fails or times out, instead of throwing.
-    /// `on_failure` is invoked with the query and error on failure, for logging.
+    /// `fallback` is returned if the build fails or times out, instead of an error. `on_failure`
+    /// is invoked with the query and error on failure, for logging.
     ///
-    /// The supersession and the join happen before this returns, as they did synchronously
-    /// inside the C# `RunAsync` before its first await.
+    /// The supersession and the join happen synchronously, before this returns its future.
     pub fn run<F, Fut, OnFailure>(
         &self,
         query: &str,
@@ -98,8 +95,7 @@ where
             let this_is_prefix_of_it = key.len() < active_key.len() && active_key.starts_with(&key);
 
             if (is_prefix_of_this || this_is_prefix_of_it) && self.flight.join_count(&active_key) <= 1 {
-                // Cancelling a token whose build already finished is harmless, as the C#
-                // caught ObjectDisposedException for.
+                // Canceling a token whose build already finished is harmless.
                 token.cancel();
             }
         }
@@ -145,9 +141,9 @@ mod tests {
     use super::*;
     use tokio::sync::watch;
 
-    // The coordinator's join guard is what stops "cage", "cage t" from cancelling a build a
+    // The coordinator's join guard is what stops "cage", "cage t" from canceling a build a
     // second caller already joined. Get that guard wrong and a client sharing a build with
-    // someone else's type-ahead sees its own search cancelled for a query it never typed.
+    // someone else's type-ahead sees its own search canceled for a query it never typed.
 
     const GENEROUS: Duration = Duration::from_secs(30);
 
@@ -165,7 +161,7 @@ mod tests {
         async fn wait(mut self) {
             let _ = self.0.wait_for(|open| *open).await;
         }
-        /// `release.Task.WaitAsync(ct)`: the gate, or a cancellation error.
+        /// Waits for the gate to open, or fails with a cancellation error.
         async fn wait_or_canceled(self, token: CancellationToken) -> anyhow::Result<()> {
             tokio::select! {
                 () = self.wait() => Ok(()),
@@ -264,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn failures_are_reported_with_the_query_as_typed() {
-        // Rust-only: on_failure gets the caller's query, not the lowercased key.
+        // on_failure gets the caller's query, not the lowercased key.
         let coordinator = SupersedableBuildCoordinator::<i32>::new();
         let (sender, receiver) = std::sync::mpsc::channel();
         let value = coordinator

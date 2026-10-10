@@ -1,5 +1,3 @@
-//! `LastFmScrobbleTests.cs` (`LastFmScrobbleServiceTests`).
-//!
 //! Outside songs reach Last.fm because Navidrome never hears of them. Library songs must not,
 //! because Navidrome scrobbles those itself and a second copy would count every play twice.
 //! Everything here talks to [`FakeLastFm`]; no test reaches the real Last.fm.
@@ -882,8 +880,8 @@ async fn check_no_key_at_all_is_missing_and_asks_nothing() {
     assert!(f.last_fm.calls().is_empty());
 }
 
-/// Rust-only: what Finish writes to settings.json and what it says when it cannot finish, and
-/// a disconnect of a session the file does not hold (one set in the environment).
+/// What Finish writes to settings.json and what it says when it cannot finish, and a disconnect
+/// of a session the file does not hold (one set in the environment).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn finish_writes_through_the_settings_file_and_says_why_it_cannot() {
     let f = Fixture::new().await;

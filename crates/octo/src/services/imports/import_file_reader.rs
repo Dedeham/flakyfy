@@ -1,4 +1,4 @@
-//! Port of `Services/Imports/ImportFileReader.cs`.
+//! Reads imported lists from exported files.
 
 use std::io::{Cursor, Read};
 
@@ -27,16 +27,16 @@ pub enum FileRead {
     Text(Vec<text_list::TextList>),
 }
 
-/// Why a file could not be read, as the C# exception it was.
+/// Why a file could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FileReadError {
-    /// `FormatException`: Octo's own words, shown as they are.
+    /// Octo's own words, shown as they are.
     #[error("{0}")]
     Format(String),
-    /// `JsonException`: the parser's words.
+    /// The JSON parser's words.
     #[error("{0}")]
     Json(String),
-    /// `InvalidDataException`: the zip reader's words.
+    /// The zip reader's words.
     #[error("{0}")]
     InvalidData(String),
 }
@@ -123,7 +123,7 @@ fn song_count(lists: &[FileList]) -> usize {
     lists.iter().map(|list| list.tracks.len()).sum()
 }
 
-/// `int.TryParse` with the default styles: white space around, a sign, digits.
+/// A whole number in `i32` range: white space around allowed, an optional sign, then only digits.
 fn int_try_parse(text: &str) -> Option<i32> {
     let text = text.trim();
     let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
@@ -133,13 +133,13 @@ fn int_try_parse(text: &str) -> Option<i32> {
     text.parse::<i32>().ok()
 }
 
-/// `Path.GetFileName` (on Linux, where only `/` separates).
+/// The file name of a path: what follows the last `/` (the only separator on Linux).
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// `Path.GetExtension`: from the last dot, when one follows the last separator and is not the
-/// last character.
+/// The extension of a file name: from the last dot, when there is one and it is not the last
+/// character; otherwise empty.
 fn extension(name: &str) -> &str {
     match name.rfind('.') {
         Some(dot) if dot + 1 < name.len() => &name[dot..],
@@ -147,7 +147,7 @@ fn extension(name: &str) -> &str {
     }
 }
 
-/// `Path.GetFileNameWithoutExtension`.
+/// A file name without its extension: everything before the last dot, or the whole name.
 fn without_extension(name: &str) -> &str {
     match name.rfind('.') {
         Some(dot) => &name[..dot],
@@ -155,7 +155,8 @@ fn without_extension(name: &str) -> &str {
     }
 }
 
-/// `new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true).ReadToEnd()`.
+/// The file's text: UTF-8 by default, or UTF-16 when a byte order mark says so (a UTF-8 mark is
+/// dropped). Invalid bytes become replacement characters.
 fn decode(content: &[u8]) -> String {
     if let Some(rest) = content.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(rest).into_owned();
@@ -283,7 +284,7 @@ fn read_zip(content: &[u8]) -> Result<Vec<FileList>, FileReadError> {
     Ok(lists)
 }
 
-/// The zip reader's refusal in .NET's words where the C# showed them.
+/// The zip reader's refusal: an archive that is not a zip reads as one fixed message.
 fn zip_error(error: zip::result::ZipError) -> FileReadError {
     match error {
         zip::result::ZipError::InvalidArchive(_) | zip::result::ZipError::Io(_) => {
@@ -332,7 +333,9 @@ pub(crate) fn read_json(name: &str, text: &str) -> Result<Vec<FileList>, FileRea
         }
     }
 
-    // Playlist1.json: { "playlists": [ { "name", "items": [ { "track": { "trackName", "artistName", "albumName", "trackUri" } } ] } ] }
+    // Playlist1.json:
+    // { "playlists": [ { "name", "items": [ { "track": {
+    //     "trackName", "artistName", "albumName", "trackUri" } } ] } ] }
     if let Some(playlists) = root.get("playlists").and_then(Value::as_array) {
         for playlist in playlists {
             let mut tracks = Vec::new();

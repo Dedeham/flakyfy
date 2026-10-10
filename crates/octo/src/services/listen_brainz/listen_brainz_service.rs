@@ -1,4 +1,4 @@
-//! Port of `Services/ListenBrainz/ListenBrainzService.cs`.
+//! Submits listens to ListenBrainz, and checks a listener's token for the dashboard.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -16,7 +16,7 @@ use crate::services::framework::HttpAnswer;
 use crate::services::framework::http::client_builder;
 use crate::services::http_client_factory::{connect_failure_message, timeout_message};
 
-/// `ValidateTokenAsync`'s answer: whether the token is valid, whose it is, and what to show.
+/// The token check's answer: whether the token is valid, whose it is, and what to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenValidation {
     pub valid: bool,
@@ -41,7 +41,7 @@ pub struct ListenBrainzService {
     http: reqwest::Client,
     submit_url: String,
     validate_url: String,
-    /// `IOptionsMonitor<ListenBrainzSettings>`: read at every use.
+    /// The ListenBrainz settings: read at every use.
     settings: Arc<SettingsStore>,
     version: &'static str,
     /// Which listeners are family members Octo manages, once the app hands it over.
@@ -122,7 +122,7 @@ impl ListenBrainzService {
         additional.insert("submission_client".into(), json!("Octo"));
         additional.insert("submission_client_version".into(), json!(self.version));
         if let Some(duration) = duration_seconds.filter(|d| *d > 0) {
-            // An int multiplication, unchecked as the C# was.
+            // A 32-bit multiplication that wraps on overflow.
             additional.insert("duration_ms".into(), json!(duration.wrapping_mul(1000)));
         }
         let mut metadata = Map::new();
@@ -219,7 +219,7 @@ impl ListenBrainzService {
     }
 }
 
-/// The `Message` of the exception a failed call threw.
+/// What a failed call says: its timeout, or why the connection failed.
 fn failure_message(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         timeout_message(ListenBrainzService::CLIENT_TIMEOUT)
@@ -258,8 +258,7 @@ mod tests {
         }
     }
 
-    /// Rust-only (no C# test drives the service directly): the listen as ListenBrainz is sent
-    /// it, with the listener's own token.
+    /// The listen as ListenBrainz is sent it, with the listener's own token.
     #[tokio::test]
     async fn a_listen_is_submitted_with_the_listeners_token_and_every_field() {
         let server = MockServer::builder().start().await;
@@ -308,7 +307,7 @@ mod tests {
         );
     }
 
-    /// Rust-only: nothing is sent without a token or a song, and a refusal is false.
+    /// Nothing is sent without a token or a song, and a refusal is false.
     #[tokio::test]
     async fn nothing_goes_without_a_token_and_a_refusal_is_false() {
         let server = MockServer::builder().start().await;
@@ -343,7 +342,7 @@ mod tests {
         assert!(!String::from_utf8_lossy(&requests[0].body).contains("release_name"));
     }
 
-    /// Rust-only: the dashboard's token check and its texts.
+    /// The dashboard's token check and its texts.
     #[tokio::test]
     async fn validate_token_says_whose_it_is() {
         let server = MockServer::start().await;

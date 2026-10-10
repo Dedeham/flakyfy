@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/DownloadCoverResolver.cs`.
+//! The cover a download is tagged with.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -137,9 +137,9 @@ impl Found {
 pub struct DownloadCoverResolver {
     archive: Arc<CoverArtArchiveLookup>,
     aggregator: Arc<CoverArtAggregator>,
-    /// `IHttpClientFactory.CreateClient()`: the default client, for the catalog's cover URL.
+    /// The default client, for the catalog's cover URL.
     http: reqwest::Client,
-    /// `IOptionsMonitor<MetadataSettings>`: read at every resolve.
+    /// The metadata settings, read at every resolve.
     settings: Arc<SettingsStore>,
     itunes: Option<Arc<ITunesCoverArtLookup>>,
 }
@@ -372,8 +372,7 @@ impl DownloadCoverResolver {
     /// [`Self::SHARP_SIDE`] wide. Unusable answers (too small, or not square while video covers
     /// are replaced) count as none.
     async fn gather(&self, song: &Song, settings: &MetadataSettings, require_square: bool) -> Vec<Found> {
-        // The sources share one budget: past it a source counts as having none, as the C#
-        // lookups were cancelled.
+        // The sources share one budget: past it a source counts as having none.
         let deadline = tokio::time::Instant::now() + Self::GATHER_TIMEOUT;
         let mut found = Vec::new();
         let artist = song.primary_artist.as_deref().unwrap_or(&song.artist);
@@ -447,7 +446,7 @@ impl DownloadCoverResolver {
                 album: Some(song.album.clone()),
                 ..Default::default()
             };
-            // The aggregator never fails; the C# caught what a source might throw here.
+            // The aggregator never fails; only the budget can cut it short.
             let searched = tokio::time::timeout_at(deadline, self.aggregator.get_cover(&routing, true))
                 .await
                 .ok()
@@ -479,7 +478,7 @@ impl DownloadCoverResolver {
     }
 }
 
-/// The first of the largest, as LINQ's `OrderByDescending(..).FirstOrDefault()` picks.
+/// The first of the largest: a later item of the same size never replaces an earlier one.
 fn first_largest<T>(items: impl Iterator<Item = T>, side: impl Fn(&T) -> u32) -> Option<T> {
     let mut best: Option<(u32, T)> = None;
     for item in items {

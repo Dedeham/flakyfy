@@ -1,7 +1,6 @@
-//! LyricsLibraryStepsTests: the lyrics page's steps on real files: a scan lists songs with no
-//! lyrics or weaker ones and changes nothing, a preview looks up only the picked songs, Save
-//! writes only those, and Undo puts back what Save wrote. The C# tests wrote tags into an MP3
-//! fixture with TagLib; here the songs' tags are held in memory ([`FakeTags`]), the seam the
+//! The lyrics page's steps on real files: a scan lists songs with no lyrics or weaker ones and
+//! changes nothing, a preview looks up only the picked songs, Save writes only those, and Undo
+//! puts back what Save wrote. The songs' tags are held in memory ([`FakeTags`]), the seam the
 //! writer and the job read them through, and the lyrics files are real.
 
 use std::collections::{HashMap, HashSet};
@@ -306,7 +305,7 @@ async fn preview_nothing_better_is_not_offered_for_saving() {
     assert_eq!(run.rows[0].result, "none");
     assert_eq!(run.written, 0);
     assert!(!worker.can_undo());
-    // Rust-only: the Save had nothing picked, and said so.
+    // The Save had nothing picked, and said so.
     assert_eq!(run.reason.as_deref(), Some("Nothing was picked."));
     assert_eq!(run.status, LyricsLibraryStatus::Completed);
 }
@@ -326,14 +325,14 @@ async fn undo_leaves_a_file_that_changed_since_alone() {
 
     assert_eq!(read(&lrc(&song)), "[00:01.00]the owner's own now\n");
     assert_eq!(store.current().skipped, 1);
-    // Rust-only: the reason, and the row is offered again.
+    // The reason, and the row is offered again.
     assert_eq!(
         store.current().reason.as_deref(),
         Some("1 changed since they were saved, so they were left alone.")
     );
 }
 
-// ---- Rust-only ------------------------------------------------------------------------------
+// ---- What became of each song ---------------------------------------------------------------
 
 /// A preview of a song whose file went away fails it; a song no service answers for is busy;
 /// an instrumental is "none" with the kind said; Save keeps a song that has as good by then.

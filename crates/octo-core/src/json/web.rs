@@ -1,10 +1,10 @@
-//! Reading request bodies the way ASP.NET Core's `JsonSerializerDefaults.Web` reads them.
+//! Lenient reading of request bodies.
 //!
-//! Controllers bound JSON bodies case-insensitively (`"url"`, `"Url"` and `"URL"` all fill
-//! `Url`) and accepted numbers written as strings (`"30"`). The dashboard and the apps rely
-//! on that leniency, so bodies are read through a deserializer over `serde_json::Value`
-//! that matches struct fields ignoring case and underscores, and parses numbers and bools out
-//! of strings when the field wants one.
+//! JSON bodies are read case-insensitively (`"url"`, `"Url"` and `"URL"` all fill `url`) and
+//! accept numbers written as strings (`"30"`). The dashboard and the apps rely on that leniency,
+//! so bodies are read through a deserializer over `serde_json::Value` that matches struct fields
+//! ignoring case and underscores, and parses numbers and bools out of strings when the field
+//! wants one.
 
 use serde::de::{
     self, DeserializeOwned, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess,
@@ -30,12 +30,12 @@ impl de::Error for WebError {
     }
 }
 
-/// Deserializes `T` from a JSON value with Web-defaults leniency.
+/// Deserializes `T` from a JSON value with request-body leniency.
 pub fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, WebError> {
     T::deserialize(Lenient(value))
 }
 
-/// Parses bytes as JSON, then deserializes with Web-defaults leniency.
+/// Parses bytes as JSON, then deserializes with request-body leniency.
 pub fn from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, WebError> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| WebError(e.to_string()))?;
     from_value(&value)
@@ -98,8 +98,8 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, WebError> {
         match self.0 {
             Value::Bool(b) => visitor.visit_bool(*b),
-            // STJ does not read bools from strings even under Web defaults, but being
-            // lenient here costs nothing and the dashboard never sends them quoted.
+            // Bools are read from strings too: being lenient here costs nothing, and the
+            // dashboard never sends them quoted.
             Value::String(s) if s.eq_ignore_ascii_case("true") => visitor.visit_bool(true),
             Value::String(s) if s.eq_ignore_ascii_case("false") => visitor.visit_bool(false),
             other => Err(WebError(format!("expected true or false, found {other}"))),
@@ -229,7 +229,7 @@ impl<'de, 'a> de::Deserializer<'de> for Lenient<'a> {
         let mut entries: Vec<(&'static str, &'a Value)> = Vec::new();
         for (k, v) in m {
             let nk = normalize(k);
-            // Two spellings of one field: the later wins, as STJ sets the property twice.
+            // Two spellings of one field: the later wins.
             let field = fields
                 .iter()
                 .find(|f| **f == k.as_str())

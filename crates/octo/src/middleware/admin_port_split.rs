@@ -1,4 +1,4 @@
-//! `Middleware/AdminPortSplit.cs`: with `Admin:Port` set, the dashboard and the admin API answer
+//! The admin port split: with `Admin:Port` set, the dashboard and the admin API answer
 //! only on that port and everything else only on Octo's main port. A proxy or a port-forward can
 //! then expose the main port for music apps while the admin port stays on this machine or the
 //! home network.
@@ -12,9 +12,8 @@ use axum::response::Response;
 use super::admin_guard::is_admin_path;
 use super::admin_headers::is_dashboard_path;
 
-/// The port a request came in on, put on each request by the listener that took it
-/// (`Connection.LocalPort`). A request without one (a test calling the app directly) came in on
-/// the main port.
+/// The port a request came in on, put on each request by the listener that took it. A request
+/// without one (a test calling the app directly) came in on the main port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalPort(pub u16);
 
@@ -64,8 +63,9 @@ pub async fn admin_port_split(State(admin_port): State<u16>, req: Request, next:
 }
 
 /// The addresses to listen on when the dashboard gets a port of its own: the ones Octo already
-/// uses (ASPNETCORE_URLS as `urls`, else ASPNETCORE_HTTP_PORTS as `http_ports`, else Kestrel's
-/// own default) plus the admin port. None when the admin port is off or is already a main port.
+/// uses (ASPNETCORE_URLS as `urls`, else ASPNETCORE_HTTP_PORTS as `http_ports`, else
+/// `http://localhost:5000`) plus the admin port. None when the admin port is off or is already a
+/// main port.
 pub fn listen_urls(urls: Option<&str>, http_ports: Option<&str>, admin_port: i32) -> Option<String> {
     if admin_port <= 0 {
         return None;
@@ -108,7 +108,6 @@ pub fn effective_admin_port(urls: Option<&str>, http_ports: Option<&str>, config
 mod tests {
     use super::*;
 
-    // AdminSignInTests.TheAdminPortServesOnlyTheDashboard
     #[test]
     fn the_admin_port_serves_only_the_dashboard() {
         let cases: [(u16, &str, u16); 8] = [
@@ -133,7 +132,6 @@ mod tests {
         }
     }
 
-    // AdminSignInTests.TheAdminPortIsAddedToOctosOwnAddresses
     #[test]
     fn the_admin_port_is_added_to_octos_own_addresses() {
         let cases: [(Option<&str>, Option<&str>, i32, Option<&str>); 6] = [

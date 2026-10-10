@@ -1,5 +1,5 @@
-//! Port of `Services/Radio/LastFmRadioSource.cs`: Last.fm's songs like a song, or the top songs
-//! of artists like an artist.
+//! Last.fm as a radio source: Last.fm's songs like a song, or the top songs of artists like an
+//! artist.
 
 use std::sync::Arc;
 

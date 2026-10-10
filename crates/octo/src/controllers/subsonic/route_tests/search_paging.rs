@@ -1,6 +1,5 @@
-//! SearchPagingTests (the ten that page through the real search3/search2 controller) and the
-//! search halves of RequestIdentityTests (`TwoApiKeyUsers_NeverShareASearchOrder`,
-//! `NoIdentity_NeitherReadsNorWritesTheSearchOrder`).
+//! Paging through the real search3/search2 controller, and whose search order a page reads:
+//! two API key users never share one, and a call with no identity neither reads nor writes one.
 //!
 //! A client scrolling a search's songs page by page. Page one is the library's best matches,
 //! then outside songs; each later page has to carry on from there, where it used to go
@@ -552,7 +551,7 @@ async fn a_later_album_page_does_not_repeat_the_outside_albums() {
 }
 
 // ---------------------------------------------------------------------------------------
-// RequestIdentityTests (search3)
+// The search order per caller (search3)
 // ---------------------------------------------------------------------------------------
 
 fn search(offset: i32, count: i32, auth: &str) -> String {

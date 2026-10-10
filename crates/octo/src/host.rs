@@ -1,7 +1,6 @@
-//! The process: what `WebApplication.CreateBuilder` + `app.Run()` did. Logging, the settings
-//! store and its watcher, the state, the listener, the workers, and a graceful shutdown on
-//! SIGINT/SIGTERM (or `StopApplication()`) with the 10 s budget `HostOptions.ShutdownTimeout`
-//! gave.
+//! The process: logging, the settings store and its watcher, the state, the listener, the
+//! workers, and a graceful shutdown on SIGINT/SIGTERM (or a stop the app asks for itself) within
+//! the 10 s shutdown budget.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -19,12 +18,12 @@ use crate::logging::{self, HOSTING_LIFETIME};
 use crate::middleware::admin_port_split::{LocalPort, effective_admin_port};
 use crate::workers::SHUTDOWN_TIMEOUT;
 
-/// Kestrel's address in the C# image (`ASPNETCORE_URLS=http://+:8080`).
+/// The address the container image listens on (`ASPNETCORE_URLS=http://+:8080`).
 pub const DEFAULT_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080);
 
 /// The address to listen on from `ASPNETCORE_URLS`: its first `http://` entry, where `+`, `*`
 /// and an empty host mean every interface and `localhost` the loopback; the port defaults to
-/// 80 as Kestrel's did. Without a usable entry, `0.0.0.0:8080`.
+/// 80. Without a usable entry, `0.0.0.0:8080`.
 pub fn bind_address(urls: Option<&str>) -> SocketAddr {
     let Some(urls) = urls else { return DEFAULT_BIND };
     for entry in urls.split(';').map(str::trim) {
@@ -59,13 +58,13 @@ fn parse_authority(authority: &str) -> Option<SocketAddr> {
     let ip = match host.as_str() {
         "" | "+" | "*" | "0.0.0.0" => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         h if h.eq_ignore_ascii_case("localhost") => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        // Kestrel binds any other host name to every interface (with a warning).
+        // Any other host name binds to every interface.
         h => h.parse().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
     };
     Some(SocketAddr::new(ip, port))
 }
 
-/// Resolves on SIGINT, SIGTERM or a cancelled `lifetime` (`StopApplication()`).
+/// Resolves on SIGINT, SIGTERM or a canceled `lifetime` (the app stopping itself).
 pub async fn shutdown_signal(lifetime: CancellationToken) {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {
@@ -138,11 +137,10 @@ pub async fn run() -> anyhow::Result<()> {
     let warming = assets.clone();
     tokio::task::spawn_blocking(move || warming.warm_all());
 
-    // First-run automation, in the background while the host starts, as Program.cs ran it.
+    // First-run automation, in the background while the host starts.
     tokio::spawn(first_run(state.clone()));
 
-    // StartupValidationOrchestrator: a hosted service, whose StartAsync the host awaited before
-    // the server started listening.
+    // The startup validation, awaited before the server starts listening.
     state.startup_validation.start().await;
 
     let addr = bind_address(urls.as_deref());
@@ -197,8 +195,7 @@ pub async fn run() -> anyhow::Result<()> {
     lifetime.cancel();
     stop.cancel();
 
-    // One budget for the in-flight requests and the workers together, as the host's
-    // StopAsync had.
+    // One budget for the in-flight requests and the workers together.
     let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
     let server_done = async {
         match tokio::time::timeout_at(deadline, server).await {
@@ -218,8 +215,8 @@ pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The app as one listener serves it: every request carries the port it came in on
-/// (`Connection.LocalPort`), which the admin port split reads.
+/// The app as one listener serves it: every request carries the port it came in on, which the
+/// admin port split reads.
 fn on_port(app: App, port: u16) -> App {
     use tower::ServiceExt as _;
     App::new(app.map_request(move |mut req: axum::extract::Request| {
@@ -228,7 +225,7 @@ fn on_port(app: App, port: u16) -> App {
     }))
 }
 
-/// What `Program.cs` said about the sign-in at start: an unknown `Admin:SignIn` value, the
+/// What the log says about the sign-in at start: an unknown `Admin:SignIn` value, the
 /// sign-in being off, or where the recovery code is (the code itself while no Navidrome is set,
 /// since there is no other way in then), and the dashboard's own port.
 fn announce_sign_in(state: &AppState, admin_port: u16) {

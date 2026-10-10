@@ -1,5 +1,4 @@
-//! Port of `LibraryActionWorkerTests` (the parsers) and `LibraryActionKeepTests`'
-//! `WantedPlaylists` case, plus a Rust-only sweep over a stand-in Navidrome.
+//! The playlist worker's parsers, the wanted playlists, and a sweep over a stand-in Navidrome.
 //!
 //! Navidrome's native playlist rows are what the sweep reads. The shapes matter more than they
 //! look: a playlist row's owner is the allowlist check, and a track row's id is a POSITION
@@ -106,7 +105,7 @@ fn wanted_playlists_a_notice_playlist_named_like_an_action_is_never_a_command() 
     );
 }
 
-// ---- Rust-only: a sweep ------------------------------------------------------------------
+// ---- A sweep -----------------------------------------------------------------------------
 
 struct Sweep {
     _dir: tempfile::TempDir,

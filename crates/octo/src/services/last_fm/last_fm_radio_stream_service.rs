@@ -1,7 +1,6 @@
-//! Port of `Services/LastFm/LastFmRadioStreamService.cs`: turns a ready generated station into
-//! one long MP3 response. Recommendation state and stream orchestration stay in core Octo;
-//! ffmpeg is only a codec adapter. The flow picker and the kinship tags are
-//! `octo_core::last_fm::last_fm_radio_stream_service`.
+//! Turns a ready generated station into one long MP3 response. Recommendation state and stream
+//! orchestration stay in core Octo; ffmpeg is only a codec adapter. The flow picker and the
+//! kinship tags are `octo_core::last_fm::last_fm_radio_stream_service`.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, LazyLock, OnceLock};
@@ -101,10 +100,10 @@ pub struct RadioWarmupResult {
     pub ready_track_count: usize,
 }
 
-/// The services the stream service is built over (its C# constructor's parameters).
+/// The services the stream service is built over.
 pub struct LastFmRadioStreamServiceParts {
     pub state: Arc<LastFmRadioStateStore>,
-    /// `IOptionsMonitor<LastFmSettings>`.
+    /// The Last.fm settings.
     pub settings: Arc<SettingsStore>,
     pub library: Arc<dyn ILocalLibraryService>,
     pub proxy: SubsonicProxyService,
@@ -156,14 +155,14 @@ impl RadioCandidate {
     }
 }
 
-/// The C# service was scoped: each request's scope built its own, over that request's proxy,
-/// with its own set of pool warmers. [`LastFmRadioStreamService::scoped`] is that.
+/// The stream service for one request: over that request's proxy, with its own set of pool
+/// warmers, sharing the rest. [`LastFmRadioStreamService::scoped`] makes one.
 #[derive(Clone)]
 pub struct LastFmRadioStreamService {
     shared: Arc<Shared_>,
     proxy: SubsonicProxyService,
     resolver: LastFmRadioTrackResolver,
-    /// `ConcurrentDictionary<string, Task> _poolWarmers`: the warms running from this scope.
+    /// The pool warms running from this service.
     pool_warmers: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -229,8 +228,8 @@ impl LastFmRadioStreamService {
         }
     }
 
-    /// The service as a new scope resolved it: over `proxy` (a request's own), with no pool
-    /// warmers of its own yet.
+    /// The service for one request: over `proxy` (the request's own), with no pool warmers of
+    /// its own yet.
     pub fn scoped(&self, proxy: SubsonicProxyService) -> Self {
         LastFmRadioStreamService {
             shared: Arc::clone(&self.shared),
@@ -244,8 +243,8 @@ impl LastFmRadioStreamService {
         }
     }
 
-    /// The service as a background scope resolved it (the warmup's): the same proxy, and no
-    /// pool warmers of its own yet.
+    /// The service for background work (the warmup's): the same proxy, and no pool warmers of
+    /// its own yet.
     pub fn new_scope(&self) -> Self {
         LastFmRadioStreamService {
             shared: Arc::clone(&self.shared),
@@ -310,9 +309,9 @@ impl LastFmRadioStreamService {
         Some(station)
     }
 
-    /// Streams the station into `output` until `cancellation_token` is cancelled (the client
-    /// went away), which ends it with `Ok`. An error is what the C# threw: the station is gone,
-    /// or nothing in it can be played.
+    /// Streams the station into `output` until `cancellation_token` is canceled (the client
+    /// went away), which ends it with `Ok`. An error means the station is gone, or nothing in it
+    /// can be played.
     pub async fn stream<W: AsyncWrite + Unpin + Send>(
         &self,
         session: &LastFmRadioStreamSession,
@@ -926,7 +925,7 @@ impl LastFmRadioStreamService {
         self.shared.refresh_queue.enqueue(&session.username, None);
     }
 
-    /// `_ = _metadata.PrewarmYouTubeIdsForSongIdsAsync(ids, topN: 8)`: not awaited.
+    /// Prewarms the YouTube ids of the first 8 songs in the background, without waiting.
     fn prewarm(&self, ids: Vec<String>) {
         let metadata = Arc::clone(&self.shared.metadata);
         tokio::spawn(async move { metadata.prewarm_you_tube_ids_for_song_ids(&ids, 8).await });

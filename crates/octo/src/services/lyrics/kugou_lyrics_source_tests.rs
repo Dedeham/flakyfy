@@ -1,4 +1,5 @@
-//! The KuGou parts of LyricsWordTimingTests, SongIdentityTests and QueryVariantLookupTests.
+//! KuGou as a lyrics source: KRC decoding and word timing, song identity, and the spelled-out
+//! query variants.
 
 use std::io::Write;
 
@@ -15,7 +16,7 @@ use super::{KRC_KEY, KugouLyricsSource};
 use crate::services::lyrics::lyrics_http::kugou_http_client;
 use crate::services::lyrics::test_support::{FakeHttp, json, status};
 
-/// SongIdentityTests.OtherVersions: never the same song's lyrics.
+/// Other versions of a song: never the same song's lyrics.
 pub(crate) const OTHER_VERSIONS: [(&str, &str); 7] = [
     ("Creep", "Creep (Live)"),
     ("Heat Waves", "Heat Waves (Sped Up)"),
@@ -50,7 +51,6 @@ fn none() -> CancellationToken {
     CancellationToken::new()
 }
 
-// LyricsWordTimingTests.Krc_DecodesBackToItsText
 #[test]
 fn krc_decodes_back_to_its_text() {
     assert_eq!(
@@ -59,14 +59,12 @@ fn krc_decodes_back_to_its_text() {
     );
 }
 
-// LyricsWordTimingTests.Krc_NotAKrcFile_IsNull
 #[test]
 fn krc_not_a_krc_file_is_null() {
     assert_eq!(KugouLyricsSource::decode_krc(b"[00:01.00]plain lrc"), None);
     assert_eq!(KugouLyricsSource::decode_krc(b"krc1\x01\x02\x03\x04"), None);
 }
 
-// LyricsWordTimingTests.Krc_ParsesLinesAndWordsWithTheirTimes
 #[test]
 fn krc_parses_lines_and_words_with_their_times() {
     let lines = KugouLyricsSource::parse_krc(KRC);
@@ -85,7 +83,6 @@ fn krc_parses_lines_and_words_with_their_times() {
     assert_eq!(first.end_ms, Some(1596));
 }
 
-// LyricsWordTimingTests.Krc_BecomesEnhancedLrcThatReadsBackTheSame (its ParseKrc half)
 #[test]
 fn krc_becomes_enhanced_lrc_that_reads_back_the_same() {
     let lrc = LyricsText::write_lrc(&KugouLyricsSource::parse_krc(KRC));
@@ -115,7 +112,6 @@ fn krc_a_line_without_word_tags_and_entities_and_a_number_too_big() {
     assert_eq!(lines[1].end_ms, Some(2500));
 }
 
-// SongIdentityTests.Lyrics_KuGou_NeverTakesAnotherVersion (7 rows)
 #[test]
 fn lyrics_kugou_never_takes_another_version() {
     for (want, got) in OTHER_VERSIONS {
@@ -137,7 +133,6 @@ fn lyrics_kugou_never_takes_another_version() {
     }
 }
 
-// SongIdentityTests.Lyrics_TheSameSongWrittenOtherwise_IsFound (4 rows)
 #[test]
 fn lyrics_the_same_song_written_otherwise_is_found() {
     let cases = [
@@ -167,8 +162,7 @@ fn lyrics_the_same_song_written_otherwise_is_found() {
     }
 }
 
-// SongIdentityTests.Lyrics_ACleanEditsWordsFitTheSong (3 rows; its KuGou half, with the
-// SongIdentity half again for the contrast)
+// KuGou's half, with the song identity half again for the contrast.
 #[test]
 fn lyrics_a_clean_edits_words_fit_the_song() {
     let cases = [
@@ -194,8 +188,8 @@ fn lyrics_a_clean_edits_words_fit_the_song() {
     }
 }
 
-/// LyricsWordTimingTests.FakeKugou: the lyric search, the catalog, the search by hash and the
-/// downloads, each answered from what the test set, on one local server.
+/// A fake KuGou: the lyric search, the catalog, the search by hash and the downloads, each
+/// answered from what the test set, on one local server.
 #[derive(Clone, Default)]
 struct FakeKugou {
     search_body: Option<String>,
@@ -255,7 +249,6 @@ fn candidate(id: &str, song: &str, singer: &str, ms: i64) -> String {
     )
 }
 
-// LyricsWordTimingTests.Kugou_OnlyAnotherSongOfTheSameLength_IsAMissAndNothingIsDownloaded
 #[tokio::test]
 async fn kugou_only_another_song_of_the_same_length_is_a_miss_and_nothing_is_downloaded() {
     let (http, source) = FakeKugou {
@@ -285,7 +278,6 @@ async fn kugou_only_another_song_of_the_same_length_is_a_miss_and_nothing_is_dow
     assert!(!http.calls().await.iter().any(|call| call.contains("/download")));
 }
 
-// LyricsWordTimingTests.Kugou_TheSong_GivesWordTimedLyricsWithoutItsCreditsOrTitleLine
 #[tokio::test]
 async fn kugou_the_song_gives_word_timed_lyrics_without_its_credits_or_title_line() {
     let krc = "[0,1000]<0,500,0>Kanye West <500,500,0>- Stronger
@@ -320,7 +312,6 @@ async fn kugou_the_song_gives_word_timed_lyrics_without_its_credits_or_title_lin
 
 /// What the 300-song evaluation found KuGou putting in its lyrics: who sings next, HTML
 /// entities, a credit timed before its line, and a title line naming the song.
-// LyricsWordTimingTests.Kugou_Clean_TakesOutSpeakersEntitiesCreditsAndTheTitleLine
 #[test]
 fn kugou_clean_takes_out_speakers_entities_credits_and_the_title_line() {
     let krc = "[0,500]<0,500,0>Sunlight On Your Skin (Explicit) - Lil Peep/iLoveMakonnen
@@ -347,7 +338,6 @@ fn kugou_clean_takes_out_speakers_entities_credits_and_the_title_line() {
     assert_eq!(back[0].words[0].start_ms, 1400);
 }
 
-// LyricsWordTimingTests.Kugou_Clean_FindsTheNameLineAfterTheCredits (2 rows)
 #[test]
 fn kugou_clean_finds_the_name_line_after_the_credits() {
     let cases = [
@@ -389,7 +379,6 @@ fn kugou_clean_counts_a_speakers_name_in_utf16_units() {
     assert_eq!(kept[1].text, sixty_one);
 }
 
-// LyricsWordTimingTests.Kugou_NoKrc_TakesItsLrc
 #[tokio::test]
 async fn kugou_no_krc_takes_its_lrc() {
     let (_http, source) = FakeKugou {
@@ -440,7 +429,6 @@ async fn kugou_plain_text_and_the_instrumental_mark() {
     );
 }
 
-// LyricsWordTimingTests.Kugou_NoLyricEntry_FindsTheSongInTheCatalogueAndAsksByItsHash
 #[tokio::test]
 async fn kugou_no_lyric_entry_finds_the_song_in_the_catalog_and_asks_by_its_hash() {
     let (http, source) = FakeKugou {
@@ -465,7 +453,6 @@ async fn kugou_no_lyric_entry_finds_the_song_in_the_catalog_and_asks_by_its_hash
     assert!(http.calls().await.iter().any(|call| call.contains("hash=abc")));
 }
 
-// LyricsWordTimingTests.Kugou_FailingOver_StopsAskingForAWhile
 #[tokio::test]
 async fn kugou_failing_over_stops_asking_for_a_while() {
     let (http, source) = FakeKugou {
@@ -486,7 +473,6 @@ async fn kugou_failing_over_stops_asking_for_a_while() {
     assert_eq!(http.calls().await.len(), before);
 }
 
-// LyricsWordTimingTests.Kugou_RateLimited_CoolsDownWithoutAnotherRequest
 #[tokio::test]
 async fn kugou_rate_limited_cools_down_without_another_request() {
     let (http, source) = FakeKugou {
@@ -512,8 +498,8 @@ async fn kugou_rate_limited_cools_down_without_another_request() {
     assert!(source.cool_down_until().is_some());
 }
 
-/// QueryVariantLookupTests.Http: answers by the first route whose needle the unescaped URL
-/// contains (or ends with, for a needle ending in $); anything else is a 404.
+/// A fake server: answers by the first route whose needle the unescaped URL contains (or ends
+/// with, for a needle ending in $); anything else is a 404.
 pub(crate) async fn routes(routes: &[(&str, String)]) -> FakeHttp {
     let routes: Vec<(String, String)> = routes.iter().map(|(n, b)| (n.to_string(), b.clone())).collect();
     FakeHttp::start(move |url| {
@@ -535,7 +521,6 @@ fn base64(text: &str) -> String {
     STANDARD.encode(text)
 }
 
-// QueryVariantLookupTests.KuGou_FindsTheSongUnderItsSpelledOutName
 #[tokio::test]
 async fn kugou_finds_the_song_under_its_spelled_out_name() {
     let http = routes(&[
@@ -572,7 +557,6 @@ async fn kugou_finds_the_song_under_its_spelled_out_name() {
     );
 }
 
-// QueryVariantLookupTests.KuGou_AVariantThatFindsOnlyAnotherVersion_IsStillAMiss
 #[tokio::test]
 async fn kugou_a_variant_that_finds_only_another_version_is_still_a_miss() {
     let http = routes(&[

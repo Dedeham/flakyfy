@@ -1,6 +1,6 @@
-//! The pure half of `Services/Soulseek/SoulseekShareSwitch.cs`: Octo's marked block in
-//! slskd.yml and the readers of slskd's answers the switch decides by. The switch itself, which
-//! asks slskd, is `octo::services::soulseek::soulseek_share_switch`.
+//! The pure half of the Soulseek share switch: Octo's marked block in slskd.yml and the readers
+//! of slskd's answers the switch decides by. The switch itself, which asks slskd, is
+//! `octo::services::soulseek::soulseek_share_switch`.
 
 use std::sync::LazyLock;
 
@@ -29,7 +29,7 @@ pub fn read_scan_state(application_json: Option<&str>) -> Option<ScanState> {
     let shares = try_get(&root, "shares")?;
     let flag = |name: &str| matches!(try_get(shares, name), Some(Value::Bool(true)));
     let ready = !matches!(try_get(shares, "ready"), Some(Value::Bool(false)));
-    // GetInt32 threw on a number that is not one (see known-diffs.md, "slskd's sharing answers").
+    // A number that is not a whole `i32` reads as unknown.
     let files = match try_get(shares, "files") {
         Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
         _ => None,
@@ -157,8 +157,7 @@ fn try_get<'a>(element: &'a Value, name: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
-/// `TryGetProperty`: a property by its exact name. (The C# threw on an element that is not an
-/// object; see known-diffs.md, "slskd's sharing answers".)
+/// A property by its exact name; None for an element that is not an object.
 fn exact<'a>(element: &'a Value, name: &str) -> Option<&'a Value> {
     element.as_object()?.get(name)
 }
@@ -172,7 +171,6 @@ mod tests {
     const STOCK_FILE: &str =
         "# debug: false\n# remote_configuration: false\n# shares:\n#   directories:\n#     - 'D:\\Music'";
 
-    // SoulseekShareSwitchTests.TheBlock_IsReplacedInPlace_AndQuotesAreEscaped
     #[test]
     fn the_block_is_replaced_in_place_and_quotes_are_escaped() {
         let once = with_block(

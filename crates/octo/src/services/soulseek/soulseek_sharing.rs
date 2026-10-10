@@ -1,6 +1,5 @@
-//! Port of `Services/Soulseek/SoulseekSharing.cs`: the Sharing card, read from slskd, and
-//! Soulseek's port test. The card's records and the readers of slskd's answers are
-//! `octo_core::soulseek::soulseek_sharing`.
+//! The Sharing card, read from slskd, and Soulseek's port test. The card's records and the
+//! readers of slskd's answers are `octo_core::soulseek::soulseek_sharing`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -126,7 +125,7 @@ impl SoulseekPortCheck {
     pub const KEEP_FOR: TimeDelta = TimeDelta::hours(6);
     /// How soon Test may ask again.
     pub const TEST_AT_MOST_EVERY: TimeDelta = TimeDelta::seconds(30);
-    /// The named client's timeout (`soulseek-port-check`).
+    /// The port test client's timeout.
     pub const TIMEOUT: Duration = Duration::from_secs(20);
 
     pub fn new(settings: Arc<SettingsStore>) -> Self {
@@ -195,7 +194,7 @@ impl SoulseekPortCheck {
         answer
     }
 
-    /// `GetStringAsync`: the page, or the failure (a status that is not a success included).
+    /// The page, or the failure (a status that is not a success included).
     async fn ask(&self, url: &str) -> anyhow::Result<String> {
         let response = self.http.get(url).send().await?;
         let status = response.status();
@@ -268,7 +267,6 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, 4, 21, 0, 0).unwrap()
     }
 
-    // SoulseekSharingTests.PortTest_IsKeptSixHours_AndTestAsksAgainAtMostEvery30Seconds
     #[tokio::test]
     async fn port_test_is_kept_six_hours_and_test_asks_again_at_most_every_30_seconds() {
         let (counting, url) = port_test("Port: 50300/tcp CLOSED.").await;
@@ -293,7 +291,6 @@ mod tests {
         assert_eq!(counting.calls.load(Ordering::SeqCst), 3);
     }
 
-    // SoulseekSharingTests.PortTest_TurnedOff_NeverAsks
     #[tokio::test]
     async fn port_test_turned_off_never_asks() {
         let (counting, url) = port_test("Port: 50300/tcp OPEN.").await;
@@ -303,7 +300,6 @@ mod tests {
         assert_eq!(counting.calls.load(Ordering::SeqCst), 0);
     }
 
-    // SoulseekSharingTests.PortTest_ThatFails_IsUnknownNotClosed
     #[tokio::test]
     async fn port_test_that_fails_is_unknown_not_closed() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");

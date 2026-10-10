@@ -1,9 +1,7 @@
-//! Port of `octo.Tests/DeezerRateLimitHandlerTests.cs`.
-//!
-//! The existing Deezer harness builds the service over a mock server whose host is not the
-//! API's, so it runs WITHOUT the metering. These drive the handler directly, because the traps
-//! here are all silent: a wrongly-metered CDN, a lane that steals another lane's budget, or a
-//! rejection that never surfaces.
+//! Tests of the Deezer rate limit handler. The Deezer service tests build the service over a
+//! mock server whose host is not the API's, so they run WITHOUT the metering. These drive the
+//! handler directly, because the traps here are all silent: a wrongly-metered CDN, a lane that
+//! steals another lane's budget, or a rejection that never surfaces.
 //!
 //! The mock server stands in for every host: requests to `127.0.0.1` are the API (the handler
 //! is told that is the API host), and requests to `localhost`, the same server under another
@@ -133,8 +131,8 @@ async fn background_lane_does_not_consume_interactive_permits() {
     assert!(limiter.acquire(true).now_or_never().is_none());
 }
 
-/// Rust-only: a full queue answers 429 at once instead of waiting, and the caller sees it as
-/// an ordinary refusal.
+/// A full queue answers 429 at once instead of waiting, and the caller sees it as an ordinary
+/// refusal.
 #[tokio::test]
 async fn a_full_queue_answers_429() {
     let (handler, server) = build().await;

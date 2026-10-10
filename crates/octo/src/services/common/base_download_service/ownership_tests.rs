@@ -1,7 +1,6 @@
-//! The download-path half of `LibraryOwnershipTests` (the service through its `Harness`): a
-//! heart, an album walk or a play never adds a second copy of a song already in the library; a
-//! lossy copy is upgraded in place instead. And the two `NotificationServiceTests` whose subject
-//! is the album walk's notices (`AlbumWalkRefusal`, `BuildAlbumSummary`).
+//! Library ownership on the download path (the service through its test backend): a heart, an
+//! album walk or a play never adds a second copy of a song already in the library; a lossy copy
+//! is upgraded in place instead. And the album walk's notices (its refusal and its summary).
 
 use std::sync::Arc;
 
@@ -169,7 +168,7 @@ fn build_owned(library: Vec<Candidate>, source: DownloadSource, better_quality: 
         ..Default::default()
     };
     let harness = build(root.path(), settings, None, Some(Arc::new(metadata)), services);
-    // The transfer lands an MP3 in the incoming folder, as the C# harness did.
+    // The transfer lands an MP3 in the incoming folder.
     let incoming = root.path().join(".octo-incoming");
     harness.backend.land(move |_, track_id| {
         std::fs::create_dir_all(&incoming).expect("made");
@@ -312,7 +311,7 @@ fn the_album_summary_says_what_was_kept() {
     assert!(BaseDownloadService::build_album_summary(&nwts, 0, 0, 0, 0, 0).is_none());
 }
 
-// ---- NotificationServiceTests (the album walk's two) --------------------------------------
+// ---- the album walk's notices -------------------------------------------------------------
 
 /// A heart on an album whose track list never loaded used to do nothing and say nothing: no
 /// download, no notification, and the source chain stopped there.
@@ -356,7 +355,7 @@ fn album_summary_is_skipped_when_the_walk_did_nothing() {
     assert!(BaseDownloadService::build_album_summary(&album, 1, 1, 0, 0, 0).is_some());
 }
 
-/// Rust-only: a walk with no track list refuses, and an album heart says so once.
+/// A walk with no track list refuses, and an album heart says so once.
 #[tokio::test]
 async fn a_walk_with_no_track_list_is_refused_and_downloads_nothing() {
     let root = tempfile::tempdir().expect("a temp dir");

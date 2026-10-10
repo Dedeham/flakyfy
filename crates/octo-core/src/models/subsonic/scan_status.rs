@@ -1,5 +1,3 @@
-//! Port of `Models/Subsonic/ScanStatus.cs`.
-
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 

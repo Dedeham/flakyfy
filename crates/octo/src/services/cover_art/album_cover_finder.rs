@@ -1,5 +1,5 @@
-//! Port of `Services/CoverArt/AlbumCoverFinder.cs`: the largest cover of one album, for the
-//! cover upgrade, behind `IAlbumCoverFinder` so the upgrade can be tested without the network.
+//! The largest cover of one album, for the cover upgrade, behind `IAlbumCoverFinder` so the
+//! upgrade can be tested without the network.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ pub struct AlbumCoverQuery {
 }
 
 impl AlbumCoverQuery {
-    /// `new AlbumCoverQuery(artist, album, title)`.
+    /// An artist, album and title; no MusicBrainz ids or barcode.
     pub fn new(artist: impl Into<String>, album: Option<String>, title: Option<String>) -> Self {
         Self {
             artist: artist.into(),
@@ -95,11 +95,11 @@ impl RejectedCovers {
     }
 }
 
-/// What a priming run says it is doing, in words (`IProgress<string>`).
+/// What a priming run says it is doing, in words.
 pub type PrimeStatus<'a> = &'a (dyn Fn(String) + Send + Sync);
 
 /// Finds the largest cover of one album. A trait so the upgrade can be tested without the
-/// network. Cancelling is dropping the future (the C# methods took a `CancellationToken`).
+/// network. Canceling is dropping the future.
 #[async_trait]
 pub trait IAlbumCoverFinder: Send + Sync {
     async fn find(&self, query: &AlbumCoverQuery) -> Option<FoundCover>;
@@ -137,31 +137,30 @@ pub trait IAlbumCoverFinder: Send + Sync {
 /// already name, and the catalog's album by the same strict match. All three are asked at once
 /// and the largest wins.
 ///
-/// Apple answers about 20 searches a minute, which made a thousand albums an hour. So a run
-/// over many albums is primed: each album's barcode (from its own tags when they carry one,
-/// else from Deezer, which answers far more), and every 20 barcodes found go to Apple as one
-/// lookup. It is a pipeline (Brandon, 2026-10-01): barcodes, Apple's answers and each album's
-/// covers all move at once, and an album waits only for its own batch, never for the whole run.
+/// Apple answers about 20 searches a minute, which made a thousand albums an hour. So a run over
+/// many albums is primed: each album's barcode (from its own tags when they carry one, else from
+/// Deezer, which answers far more), and every 20 barcodes found go to Apple as one lookup. It is
+/// a pipeline: barcodes, Apple's answers and each album's covers all move at once, and an album
+/// waits only for its own batch, never for the whole run.
 pub struct AlbumCoverFinder {
     itunes: Arc<ITunesCoverArtLookup>,
     archive: Arc<CoverArtArchiveLookup>,
     deezer: Arc<DeezerMetadataService>,
-    /// `IHttpClientFactory.CreateClient()`, for the catalog's cover.
+    /// The default client, for the catalog's cover.
     http: reqwest::Client,
-    /// See [`Self::APPLE_BATCH_IDLE`]; the tests shorten it (the C# static setter).
+    /// See [`Self::APPLE_BATCH_IDLE`]; the tests shorten it.
     apple_batch_idle: Duration,
 
     /// The catalog's album found while priming, so its cover needs no second search.
     catalog: Mutex<HashMap<String, Option<AlbumHit>>>,
 
     /// Albums being primed, released once Apple has answered for their batch (or they had no
-    /// barcode): `find` waits for this and no longer. A cancelled token is a set
-    /// `TaskCompletionSource`.
+    /// barcode): `find` waits for this and no longer. A canceled token is a released album.
     ready: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
-/// Releases every album still waiting, however a priming run ended (its `finally`), including
-/// when its future is dropped.
+/// Releases every album still waiting, however a priming run ended, including when its future
+/// is dropped.
 struct ReleaseAll(Arc<Mutex<HashMap<String, CancellationToken>>>);
 
 impl Drop for ReleaseAll {
@@ -205,7 +204,7 @@ impl AlbumCoverFinder {
         }
     }
 
-    /// Another wait before a short batch goes (`AppleBatchIdle`, set by the C# tests).
+    /// Another wait before a short batch goes (tests shorten it).
     pub fn with_apple_batch_idle(mut self, idle: Duration) -> Self {
         self.apple_batch_idle = idle;
         self

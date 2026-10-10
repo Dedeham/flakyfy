@@ -1,7 +1,6 @@
-//! The SoulseekClient tests that talk to a fake slskd: SoulseekSearchProfileTests (all but the
-//! payload half, which is in `octo_core::soulseek::soulseek_client`), SoulseekSlowTransferTests'
-//! waits and cancels, and ParallelDownloadTests' enqueue tests. The C# fakes were
-//! `HttpMessageHandler`s; here they answer from a wiremock server the client is pointed at.
+//! The Soulseek client against a fake slskd: search profiles (the payload half is tested in
+//! `octo_core::soulseek::soulseek_client`), slow transfers' waits and cancels, and parallel
+//! enqueues. The fakes answer from a wiremock server the client is pointed at.
 
 use std::sync::Arc;
 
@@ -49,7 +48,7 @@ fn interactive() -> SearchProfile {
     SearchProfile::interactive(&SoulseekSettings::default())
 }
 
-// ---- SoulseekSearchProfileTests -------------------------------------------------------------
+// ---- Search profiles ------------------------------------------------------------------------
 //
 // slskd hands over a search's answers only when the search ends (#70). These pin how Octo waits
 // for that, cancels a search still running at its ceiling so the answers are kept, and never
@@ -322,8 +321,8 @@ async fn a_start_refused_with_too_many_requests_is_retried_once() {
     assert_eq!(hits.len(), 1);
 }
 
-/// Not in the C#: a caller that drops the search (rather than cancelling its token) leaves
-/// nothing running in slskd either.
+/// A caller that drops the search (rather than canceling its token) leaves nothing running in
+/// slskd either.
 #[tokio::test]
 async fn a_dropped_search_is_cleaned_up_too() {
     let slskd = FakeSearchSlskd::new(None);
@@ -339,12 +338,11 @@ async fn a_dropped_search_is_cleaned_up_too() {
     assert_eq!(slskd.cancels_and_deletes(), ["PUT", "DELETE"]);
 }
 
-// ---- SoulseekSlowTransferTests ---------------------------------------------------------------
+// ---- Slow transfers --------------------------------------------------------------------------
 //
-// A slow peer with the right file is waited for as long as it keeps sending. A peer
-// that sends nothing for the whole window is given up on, and its transfer is
-// cancelled in slskd: left running, it finished minutes later and put a second copy
-// of the song in the library.
+// A slow peer with the right file is waited for as long as it keeps sending. A peer that sends
+// nothing for the whole window is given up on, and its transfer is canceled in slskd: left
+// running, it finished minutes later and put a second copy of the song in the library.
 
 const PEER: &str = "peer";
 const REMOTE_FILE: &str = r"Music\Artist\Album\13 - Song.flac";
@@ -556,8 +554,8 @@ async fn a_transfer_slskd_no_longer_lists_has_nothing_to_cancel() {
     assert!(slskd.deletes().is_empty());
 }
 
-/// Not in the C#: the listener hears every poll that finds the transfer, and a caller who
-/// gives up is told so rather than handed an outcome.
+/// The listener hears every poll that finds the transfer, and a caller who gives up is told so
+/// rather than handed an outcome.
 #[tokio::test]
 async fn the_listener_hears_each_poll_and_a_caller_can_give_up() {
     let slskd = FakeTransferSlskd::new(|poll| {
@@ -597,7 +595,7 @@ async fn the_listener_hears_each_poll_and_a_caller_can_give_up() {
     );
 }
 
-// ---- ParallelDownloadTests (slskd's batch API, through the gate) ---------------------------
+// ---- Parallel downloads (slskd's batch API, through the gate) ------------------------------
 
 const JOB: &str = ".octo-incoming/slskd/job";
 const ACCEPTED: &str = r#"{"batch":{"transfers":[{"id":"t-1","filename":"f.flac"}]},"failures":[]}"#;
@@ -610,8 +608,7 @@ struct ScriptState {
 }
 
 /// Answers slskd's POSTs from a script, each after 30 ms, and records whether two were ever
-/// in flight at once (the C# counted them in and out; here a POST that arrives before the last
-/// one's answer was due overlapped it).
+/// in flight at once (a POST that arrives before the last one's answer was due overlapped it).
 #[derive(Clone)]
 struct ScriptedSlskd {
     answer: Arc<dyn Fn(i32) -> ResponseTemplate + Send + Sync>,
@@ -760,7 +757,7 @@ async fn once_batches_worked_a_bad_request_is_an_error() {
     assert_eq!(client.batches_supported(), Some(true));
 }
 
-// ---- Not in the C#: the session, the other calls ---------------------------------------------
+// ---- The session, the other calls ------------------------------------------------------------
 
 #[derive(Clone, Default)]
 struct Recorder {

@@ -1,10 +1,6 @@
-//! Port of `Services/Metadata/DeezerRateLimitHandler.cs`, together with the named "deezer"
-//! `HttpClient` it sat in.
-//!
-//! In the C#, every Deezer caller resolved the named client from `IHttpClientFactory` and the
-//! handler in its chain spent a permit. Here the client and the handler are one type: the only
-//! way to reach Deezer is through [`DeezerRateLimitHandler::send`] (or [`get`](DeezerRateLimitHandler::get),
-//! which adds the callers' 8 s timeout), which waits on the limiter first.
+//! The Deezer HTTP client and its rate limiting, as one type: the only way to reach Deezer is
+//! through [`DeezerRateLimitHandler::send`] (or [`get`](DeezerRateLimitHandler::get), which adds
+//! the callers' 8 s timeout), which waits on the limiter first.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,8 +25,8 @@ pub struct DeezerRateLimitHandler {
 impl DeezerRateLimitHandler {
     pub const API_HOST: &'static str = "api.deezer.com";
 
-    /// Both callers set `Timeout = 8 s` on the client they made. It covers waiting for a
-    /// permit as well as the call and reading the answer.
+    /// The callers' timeout, 8 seconds. It covers waiting for a permit as well as the call and
+    /// reading the answer.
     pub const TIMEOUT: Duration = Duration::from_secs(8);
 
     pub fn new(limiter: Arc<DeezerRateLimiter>) -> Self {
@@ -51,8 +47,8 @@ impl DeezerRateLimitHandler {
         &self.limiter
     }
 
-    /// `SendAsync`. `background` is the `BackgroundLane` request option: it marks a request
-    /// as background work, so cache warming yields to anything a user is actually waiting on.
+    /// Sends a request. `background` marks it as background work, so cache warming yields to
+    /// anything a user is actually waiting on.
     pub async fn send(
         &self,
         request: reqwest::Request,
@@ -86,8 +82,8 @@ impl DeezerRateLimitHandler {
         self.client.execute(request).await
     }
 
-    /// A GET as the C# callers made it: the given Accept-Language, the body read, and all of
-    /// it (the permit included) inside [`Self::TIMEOUT`].
+    /// A GET with the given Accept-Language, the body read, and all of it (the permit included)
+    /// inside [`Self::TIMEOUT`].
     pub async fn get(
         &self,
         url: &str,

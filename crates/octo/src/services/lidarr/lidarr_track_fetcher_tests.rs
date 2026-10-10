@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/LidarrTrackFetcherTests.cs`.
-//!
 //! One song through Lidarr for a replacement. Lidarr fetches whole albums, so Octo borrows the
 //! album: it copies out the song it asked for, deletes every file that search brought in, and
 //! puts the album's monitoring back. It never touches a file Lidarr had before, a song Lidarr
@@ -253,8 +251,7 @@ async fn two_songs_of_one_album_share_one_search() {
         })
     };
     until(|| f.lidarr.searches() == 1).await;
-    // Both have joined the album's search before Lidarr brings anything (in the C#, the
-    // in-memory handler had them there before the first await).
+    // Both have joined the album's search before Lidarr brings anything.
     until(|| fetcher.users_of(ALBUM_ID) == 2).await;
     // The release: Lidarr imports both songs.
     f.lidarr.import(1, "Angel", "FLAC");
@@ -283,7 +280,7 @@ async fn an_album_lidarr_does_not_know_is_not_found() {
     assert_eq!(f.lidarr.searches(), 0);
 }
 
-// ---- Picked releases (G1 K, e3aed24) ---------------------------------------------------------
+// ---- Picked releases --------------------------------------------------------------------------
 
 const RELEASE: &str = "Massive Attack - Mezzanine (1998) [FLAC]";
 
@@ -405,10 +402,8 @@ async fn a_pick_for_an_album_already_being_fetched_says_it_was_not_grabbed() {
     assert!(f.lidarr.grabs().is_empty());
 }
 
-// TheSongIsMatchedByTitleNeverByNumber is in octo_core::lidarr::lidarr_track_fetcher's tests,
-// with match_track.
-
-// Beyond the C# file.
+// That the song is matched by title, never by number, is tested with match_track, in
+// octo_core::lidarr::lidarr_track_fetcher.
 
 #[tokio::test]
 async fn nothing_is_fetched_until_lidarr_is_set_up() {

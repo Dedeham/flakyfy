@@ -36,7 +36,7 @@ pub struct LastFmSettings {
     /// API only ever shows it masked.
     /// Environment variable form: LASTFM__USERSESSIONS__alice__SESSIONKEY=...
     ///
-    /// The C# dictionary compares keys with OrdinalIgnoreCase; look sessions up with
+    /// Keys compare ignoring case; look sessions up with
     /// [`LastFmSettings::session_for`].
     pub user_sessions: IndexMap<String, LastFmUserSession>,
 
@@ -357,7 +357,6 @@ mod tests {
         }
     }
 
-    // LastFmRadioCoreTests.DiscoverySettings_NormalizeClampAndKeepStableIds
     #[test]
     fn discovery_settings_normalize_clamp_and_keep_stable_ids() {
         let settings = LastFmSettings {
@@ -381,7 +380,6 @@ mod tests {
         assert_eq!(settings.effective_discovery_percent(), 0);
     }
 
-    // LastFmRadioCoreTests.StationCounts_AreClampedAtReadTime
     #[test]
     fn station_counts_are_clamped_at_read_time() {
         for (configured, effective) in [(-3, 0), (0, 0), (2, 2), (99, 5)] {
@@ -403,7 +401,6 @@ mod tests {
         }
     }
 
-    // LastFmRadioCoreTests.StationsExplicitlyEmpty_ExcusesOnlyAnAllKindsOffConfiguration
     #[test]
     fn stations_explicitly_empty_excuses_only_an_all_kinds_off_configuration() {
         let all_off = LastFmSettings {
@@ -441,7 +438,6 @@ mod tests {
         assert!(!personalized_off.stations_explicitly_empty());
     }
 
-    // LastFmRadioCoreTests.StreamBitrate_UsesSupportedMp3Qualities
     #[test]
     fn stream_bitrate_uses_supported_mp3_qualities() {
         for (configured, effective) in [(1, 96), (120, 128), (192, 192), (220, 256), (999, 320)] {

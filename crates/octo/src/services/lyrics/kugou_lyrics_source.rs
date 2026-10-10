@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/KugouLyricsSource.cs`.
+//! KuGou as a lyrics source.
 
 use std::io::Read;
 use std::sync::LazyLock;
@@ -31,8 +31,7 @@ const KRC_KEY: [u8; 16] = [
     0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69,
 ];
 
-// The C# patterns used `\d`, which .NET also matched in other scripts' digits before
-// `long.Parse` threw; ASCII digits only here (known-diffs.md).
+// ASCII digits only: a digit from another script is not a time.
 static KRC_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[([0-9]+),([0-9]+)\](.*)$").expect("a fixed pattern compiles"));
 /// A word's offset can be negative (a credit timed before its line).
@@ -145,7 +144,7 @@ impl KugouLyricsSource {
             .iter()
             .filter(|candidate| Self::is_this_song(candidate, query))
             .collect();
-        // OrderBy is stable.
+        // A stable sort.
         matching.sort_by(|a, b| {
             Self::distance(a, query)
                 .partial_cmp(&Self::distance(b, query))
@@ -203,7 +202,7 @@ impl KugouLyricsSource {
     }
 
     /// The lyric entries for "artist - title", then for the same song written the ways
-    /// `SongIdentity.QueryVariants` gives ("suicideboys - SUICIDE" for "$uicideboy$ -
+    /// `SongIdentity::query_variants` gives ("suicideboys - SUICIDE" for "$uicideboy$ -
     /// $UICIDE"), until one of them is this song. When none is, the song catalog is asked too,
     /// and the lyric entries for each catalog song that IS this song are added under that
     /// song's name and album.
@@ -277,7 +276,7 @@ impl KugouLyricsSource {
                     && LyricsIdentity::length_fits(query.duration_seconds, Some(f64::from(song.seconds)))
             })
             .collect();
-        // OrderByDescending is stable: the named artist's songs first.
+        // A stable sort: the named artist's songs first.
         likely.sort_by_key(|song| std::cmp::Reverse(same_artist(song)));
         for song in likely.into_iter().take(2) {
             let mut url = format!(
@@ -515,7 +514,7 @@ impl KugouLyricsSource {
 
     /// "Singer：", KuGou's own way of saying who sings next, always with a full-width colon,
     /// which an English lyric never uses: `^([^：]{1,60})：\s*`, the label counted in UTF-16
-    /// units as .NET counted it. The label, and where the words after it start.
+    /// units. The label, and where the words after it start.
     fn speaker(text: &str) -> Option<(&str, usize)> {
         let colon = text.find('：')?;
         let label = &text[..colon];
@@ -603,13 +602,12 @@ impl KugouLyricsSource {
                 lines.push(line);
             }
         }
-        // OrderBy is stable, as sort_by_key is.
+        // A stable sort.
         lines.sort_by_key(|line| line.start_ms);
         lines
     }
 
-    /// One KRC line. None when it is not one (or, where C# threw from `long.Parse`, when a
-    /// number does not fit).
+    /// One KRC line. None when it is not one, or when a number does not fit.
     fn parse_krc_line(raw: &str) -> Option<LyricLine> {
         let found = KRC_LINE.captures(raw)?;
         let start: i64 = found[1].parse().ok()?;
@@ -767,8 +765,7 @@ impl ILyricsSource for KugouLyricsSource {
     }
 
     async fn search(&self, query: &LyricsQuery, ct: &CancellationToken) -> LyricsSearch {
-        // An answer of a shape KuGou never sends threw in C#, which the service caught as a
-        // failed lookup.
+        // An answer of a shape KuGou never sends is a failed lookup.
         self.search_inner(query, ct)
             .await
             .unwrap_or_else(|_| LyricsSearch::failed())

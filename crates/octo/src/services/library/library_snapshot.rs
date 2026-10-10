@@ -1,5 +1,3 @@
-//! Port of `Services/Library/LibrarySnapshot.cs` (f49fb80).
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -84,7 +82,7 @@ impl LibrarySnapshot {
         )
     }
 
-    /// Pages from `read_page` and the time from `clock` (the C# test seams).
+    /// Pages from `read_page` and the time from `clock` (the test seams).
     pub fn with(read_page: ReadPage, clock: Clock) -> Self {
         Self {
             inner: Arc::new(Inner {

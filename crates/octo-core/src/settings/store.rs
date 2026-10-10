@@ -1,12 +1,11 @@
-//! The live settings: the layered configuration `WebApplication.CreateBuilder` plus
-//! `Program.cs` built (config.md §1), bound into an [`AppSettings`] snapshot that is rebuilt
-//! whenever `settings.json` changes.
+//! The live settings: the layered configuration (host keys, appsettings.json, the environment
+//! and settings.json), bound into an [`AppSettings`] snapshot that is rebuilt whenever
+//! `settings.json` changes.
 //!
-//! Stand-ins for the .NET pieces:
-//! - `IOptionsMonitor<T>.CurrentValue` → [`SettingsStore::current`], read at the point of use;
-//! - `IConfiguration[key]` → [`SettingsStore::raw`];
-//! - `IOptionsMonitor<T>.OnChange` → [`SettingsStore::subscribe`];
-//! - `TestOptionsMonitor<T>.Set` → [`SettingsStore::for_tests`] + [`SettingsStore::set`].
+//! - [`SettingsStore::current`]: the snapshot, read at the point of use;
+//! - [`SettingsStore::raw`]: one merged key;
+//! - [`SettingsStore::subscribe`]: every new snapshot;
+//! - [`SettingsStore::for_tests`] + [`SettingsStore::set`]: a store a test controls.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -23,29 +22,28 @@ use super::text::lower_invariant;
 use crate::config::{ConfigNode, ConfigTree};
 use crate::json::dom::Node;
 
-/// The C# app's `octo/appsettings.json`, compiled in; the C# image shipped it beside the binary.
+/// `octo/appsettings.json`, compiled in, so the binary needs no file beside it.
 pub const APPSETTINGS_JSON: &str = include_str!("../../../../octo/appsettings.json");
 
 /// `octo/appsettings.Development.json`, layered over it when the environment is Development.
 pub const APPSETTINGS_DEVELOPMENT_JSON: &str = include_str!("../../../../octo/appsettings.Development.json");
 
-/// Where the C# build always read settings.json from.
+/// Where settings.json lives in the container.
 pub const DEFAULT_SETTINGS_PATH: &str = "/app/config/settings.json";
 
-/// Overrides [`DEFAULT_SETTINGS_PATH`], for running outside the container (a Rust addition).
+/// Overrides [`DEFAULT_SETTINGS_PATH`], for running outside the container.
 pub const SETTINGS_PATH_ENV: &str = "OCTO_SETTINGS_PATH";
 
-/// How long a burst of file changes must settle before the file is read again. The .NET file
-/// provider waited `ReloadDelay` = 250 ms.
+/// How long a burst of file changes must settle before the file is read again.
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// How often the store looks for a settings directory that does not exist yet.
 const MISSING_DIR_POLL: Duration = Duration::from_secs(1);
 
-/// The polling watcher's interval, as `DOTNET_USE_POLLING_FILE_WATCHER` used (4 s).
+/// The polling watcher's interval, used under `DOTNET_USE_POLLING_FILE_WATCHER` (4 s).
 const POLLING_WATCHER_INTERVAL: Duration = Duration::from_secs(4);
 
-/// Raw `IConfiguration[key]` reads, so code that needs a raw key (RestartTracker) works on the
+/// Raw `Section:Key` reads, so code that needs a raw key (RestartTracker) works on the
 /// live store and on a plain tree in tests.
 pub trait RawConfig {
     /// The value at a `Section:Key` path, ignoring case. None when absent or null.
@@ -122,8 +120,8 @@ impl SettingsStore {
         });
         let base = base_layers(&env);
 
-        // C# fails to start on a settings.json it cannot parse. Octo keeps running on the
-        // other layers instead, and picks the file up once it is fixed (known-diffs.md).
+        // A settings.json that does not parse does not stop Octo: it keeps running on the
+        // other layers, and picks the file up once it is fixed.
         let file_layer = match &settings_path {
             Some(path) => read_file_layer(path).unwrap_or_else(|e| {
                 error!(
@@ -155,8 +153,8 @@ impl SettingsStore {
         }
     }
 
-    /// A store holding exactly `settings`, with no configuration behind it. Stands in for
-    /// `TestOptions.Monitor(...)` / `TestOptionsMonitor<T>`: change it with [`SettingsStore::set`].
+    /// A store holding exactly `settings`, with no configuration behind it, for tests: change
+    /// it with [`SettingsStore::set`].
     pub fn for_tests(settings: AppSettings) -> SettingsStore {
         let settings = Arc::new(settings);
         let (tx, _) = watch::channel(settings.clone());
@@ -175,19 +173,19 @@ impl SettingsStore {
         }
     }
 
-    /// The current snapshot (`IOptionsMonitor<T>.CurrentValue`). Read it where the value is
-    /// used; holding on to it is the C# `IOptions<T>.Value` capture.
+    /// The current snapshot. Read it where the value is used; holding on to it keeps the
+    /// values from when it was taken.
     pub fn current(&self) -> Arc<AppSettings> {
         self.inner.current.load_full()
     }
 
-    /// `IConfiguration[key]`: the merged value at a `Section:Key` path, ignoring case.
-    /// None when absent or null (an empty object or array in a JSON layer).
+    /// The merged value at a `Section:Key` path, ignoring case. None when absent or null (an
+    /// empty object or array in a JSON layer).
     pub fn raw(&self, key: &str) -> Option<String> {
         self.inner.tree.load().raw(key)
     }
 
-    /// `IConfiguration.GetSection(name)`, as a node tree for [`crate::config::bind`].
+    /// One configuration section, as a node tree for [`crate::config::bind`].
     pub fn section_tree(&self, name: &str) -> ConfigNode {
         self.inner.tree.load().section(name)
     }
@@ -202,22 +200,19 @@ impl SettingsStore {
         self.inner.settings_path.as_deref()
     }
 
-    /// `IOptionsMonitor<T>.OnChange`: the receiver sees every new snapshot, on every reload
-    /// (as OnChange fired on every reload, changed or not) and every `set`.
+    /// The receiver sees every new snapshot: on every reload, changed or not, and every `set`.
     pub fn subscribe(&self) -> watch::Receiver<Arc<AppSettings>> {
         self.inner.tx.subscribe()
     }
 
-    /// Replaces the snapshot and tells subscribers (`TestOptionsMonitor.Set`). The merged
-    /// configuration is left as it was.
+    /// Replaces the snapshot and tells subscribers. The merged configuration is left as it was.
     pub fn set(&self, settings: AppSettings) {
         let settings = Arc::new(settings);
         self.inner.current.store(settings.clone());
         self.inner.tx.send_replace(settings);
     }
 
-    /// Sets one raw key (`config["Soulseek:Password"] = ...` on an in-memory configuration in
-    /// the C# tests). The snapshot is not rebound.
+    /// Sets one raw key (`Soulseek:Password`, say). The snapshot is not rebound.
     pub fn set_raw(&self, key: &str, value: Option<&str>) {
         let mut tree = (*self.inner.tree.load_full()).clone();
         tree.set(key, value.map(str::to_string));
@@ -336,10 +331,9 @@ fn process_env() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Everything below settings.json, lowest first, as `WebApplication.CreateBuilder` adds it:
-/// `DOTNET_*` then `ASPNETCORE_*` variables with the prefix removed (host keys such as
-/// `environment` and `urls`), appsettings.json, appsettings.{Environment}.json, then every
-/// environment variable with `__` meaning `:`.
+/// Everything below settings.json, lowest first: `DOTNET_*` then `ASPNETCORE_*` variables with
+/// the prefix removed (host keys such as `environment` and `urls`), appsettings.json,
+/// appsettings.{Environment}.json, then every environment variable with `__` meaning `:`.
 fn base_layers(env: &[(String, String)]) -> ConfigTree {
     let prefixed = |prefix: &str| {
         ConfigTree::from_env_vars(env.iter().filter_map(|(k, v)| {
@@ -378,8 +372,8 @@ fn embedded_json(name: &str, text: &str) -> ConfigTree {
     }
 }
 
-/// Two variables whose names differ only in case land on one key; which wins was unspecified in
-/// .NET. Here the later one in the environment wins, with a warning.
+/// Two variables whose names differ only in case land on one key. The later one in the
+/// environment wins, with a warning.
 fn warn_case_only_duplicates(env: &[(String, String)]) {
     let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
     for (k, _) in env {

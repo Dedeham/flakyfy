@@ -1,5 +1,3 @@
-//! Port of `octo.Tests/LidarrHeartProtectionTests.cs`.
-//!
 //! A heart through Lidarr keeps the promises a Soulseek heart does. What Lidarr imports goes
 //! through the download pipeline song by song, so it meets the same checks; a song already in the
 //! library is taken back out (an owned MP3 is queued for Better quality instead), a song removed
@@ -78,7 +76,7 @@ impl IDownloadService for Pipeline {
         upgrade_search: bool,
         replacement: Option<Arc<ReplacementHandoff>>,
     ) -> anyhow::Result<String> {
-        // The C# mock was set up for exactly these arguments.
+        // The heart must ask the pipeline with exactly these arguments.
         assert_eq!(
             (
                 provider,
@@ -348,8 +346,8 @@ impl Fixture {
     }
 
     /// The heart is answered as soon as its job ends; giving the album back to Lidarr's
-    /// monitoring and letting go of the claim come right after, over HTTP. The C# test's
-    /// in-memory handler finished those before the answer was read; here they are waited for.
+    /// monitoring and letting go of the claim come right after, over HTTP, so they are waited
+    /// for.
     async fn job_wound_up(&self, unmonitored: bool) {
         until(|| !self.claims.heart_busy(ALBUM_ID)).await;
         if unmonitored {
@@ -508,8 +506,7 @@ async fn a_second_heart_on_the_same_album_joins_and_is_answered_too() {
             within(service.try_acquire_album("soulseek", "mezzanine", true, Some("bob"))).await
         })
     };
-    // Bob has joined the running job before Lidarr brings anything (in the C#, the in-memory
-    // handler had him there before the first await).
+    // Bob has joined the running job before Lidarr brings anything.
     until(|| service.askers_of(ALBUM_ID).is_some_and(|a| a.len() == 2)).await;
     // The release: Lidarr imports both songs.
     f.lidarr.import(1, "Angel", "FLAC");
@@ -521,10 +518,8 @@ async fn a_second_heart_on_the_same_album_joins_and_is_answered_too() {
     assert_eq!(f.taken(), ["Angel", "Teardrop"]);
 }
 
-// ATrackHeartNeverMatchesByTrackNumber is in octo_core::lidarr::lidarr_heart_acquisition_service's
-// tests, with match_song.
-
-// Beyond the C# file.
+// That a track heart never matches by track number is tested with match_song, in
+// octo_core::lidarr::lidarr_heart_acquisition_service.
 
 /// An upgrade borrowing the album holds the heart back until it lets go.
 #[tokio::test]
@@ -563,7 +558,7 @@ async fn an_album_lidarr_does_not_know_is_a_plain_miss() {
 }
 
 #[test]
-fn relative_paths_follow_dotnet() {
+fn relative_paths_and_imported_path_edge_cases() {
     for (from, to, expected) in [
         ("/data/music", "/data/music", "."),
         ("/data/music/", "/data/music/a/b.flac", "a/b.flac"),
@@ -573,7 +568,7 @@ fn relative_paths_follow_dotnet() {
         assert_eq!(get_relative_path(from, to), expected, "{from} -> {to}");
     }
     // A folder whose name starts with two dots is inside the root, but the escape check on
-    // Octo's side reads it as a climb out, as the C# StartsWith("..") did.
+    // Octo's side reads it as a climb out, since the path starts with "..".
     assert!(translate_imported_path("/data/music/..odd/x.flac", Some("/data/music"), "/music").is_err());
     assert_eq!(
         translate_imported_path("/data/music/x.flac", Some(" "), "/music"),

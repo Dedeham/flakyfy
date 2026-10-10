@@ -1,6 +1,6 @@
-//! Port of `Services/LastFm/LastFmService.Charts.cs`: Last.fm's play counts, an artist's most
-//! played songs and the site's chart. Uncached here; the caller keeps what it builds from them,
-//! and must know a call that did not answer apart from an empty one.
+//! Last.fm's play counts, an artist's most played songs and the site's chart. Uncached here; the
+//! caller keeps what it builds from them, and must know a call that did not answer apart from an
+//! empty one.
 
 use octo_core::charts::top_songs::CountedTrack;
 use octo_core::common::dotnet::is_blank;
@@ -71,7 +71,7 @@ fn read_chart(doc: &Value, container: &str, artist: Option<&str>) -> Option<Vec<
     )
 }
 
-/// `long.TryParse(value.ToString())` of a count, kept when not negative.
+/// A count, from its text or number, kept when it is a whole number and not negative.
 fn count(item: &Value, property: &str) -> Option<i64> {
     text(item, property)
         .ok()

@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/SyncCatalogResponse.cs`.
-//!
 //! Reads and extends a relayed search2/search3 page for a sync walk. Navidrome's page goes
 //! out byte-for-byte apart from the catalog rows added after its own, so nothing about the
 //! library rows a syncing client already has can change because this ran.
@@ -52,7 +50,7 @@ pub fn count_rows(body: &[u8], content_type: Option<&str>, envelope: &str) -> Op
 /// date of its own (it is not a file), so it gets this one, which is true of the catalog.
 ///
 /// `added` is the catalog's `Added`: when each id joined it. A page that does not read as the
-/// content type says is an error (C# threw), which the caller only meets after
+/// content type says is an error, which the caller only meets after
 /// [`count_rows`] read the same page.
 pub fn append(
     body: &[u8],

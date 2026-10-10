@@ -1,7 +1,7 @@
-//! Port of `Services/Lyrics/LyricsChoices.cs`, its pure half: the pin, the entry offered to a
-//! person choosing, and how an entry is judged and described. The pins on disk
-//! (`LyricsChoiceStore`) are `octo::services::lyrics::lyrics_choices`; `LyricsChoiceService`,
-//! which asks the sources, comes with them.
+//! Lyrics choices, the pure half: the pin, the entry offered to a person choosing, and how an
+//! entry is judged and described. The pins on disk (`LyricsChoiceStore`) are
+//! `octo::services::lyrics::lyrics_choices`; `LyricsChoiceService`, which asks the sources, comes
+//! with them.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
@@ -19,7 +19,7 @@ use super::lyrics_text::LyricsText;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct LyricsPin {
-    // The non-nullable C# strings read a JSON null as empty (STJ kept the null).
+    // A JSON null in these strings reads as empty.
     #[serde(deserialize_with = "crate::models::null_as_default")]
     pub song_id: String,
     #[serde(deserialize_with = "crate::models::null_as_default")]
@@ -35,7 +35,7 @@ pub struct LyricsPin {
 }
 
 impl Default for LyricsPin {
-    /// What a missing member reads as: `default(T)` for the record's parameters.
+    /// What a missing member reads as: its type's default.
     fn default() -> Self {
         Self {
             song_id: String::new(),
@@ -151,7 +151,7 @@ pub struct LyricsChoiceCandidate {
 }
 
 impl LyricsChoiceCandidate {
-    /// `LyricsChoiceService.KindOf`: how an entry's lyrics are timed, as the choice list names it.
+    /// How an entry's lyrics are timed, as the choice list names it.
     pub fn kind_of(lyrics: &LyricsResult) -> &'static str {
         match lyrics.timing() {
             LyricsTiming::Word => "word",
@@ -161,8 +161,8 @@ impl LyricsChoiceCandidate {
         }
     }
 
-    /// `LyricsChoiceService.IsThisSong`: whether a search entry is the song asked for, its
-    /// artist read one by one where it lists several.
+    /// Whether a search entry is the song asked for, its artist read one by one where it lists
+    /// several.
     pub fn is_this_song(candidate: &LyricsCandidate, query: &LyricsQuery) -> bool {
         let credits: Vec<&str> = candidate
             .artist

@@ -1,16 +1,15 @@
-//! A flat, case-insensitive key/value view of layered configuration, the way
-//! Microsoft.Extensions.Configuration sees it.
+//! A flat, case-insensitive key/value view of layered configuration.
 //!
 //! Every source (appsettings.json, appsettings.{Environment}.json, environment variables,
 //! /app/config/settings.json) is flattened into `Section:Key` paths with string values, and
-//! a later source replaces an earlier one key by key. Keys compare ignoring ASCII case, as
-//! they do in .NET, so `SUBSONIC__URL`, `Subsonic__Url` and `"subsonic": {"url": ...}` all
-//! land on the same setting.
+//! a later source replaces an earlier one key by key. Keys compare ignoring ASCII case, so
+//! `SUBSONIC__URL`, `Subsonic__Url` and `"subsonic": {"url": ...}` all land on the same
+//! setting.
 
 use indexmap::IndexMap;
 use serde_json::Value;
 
-/// The key separator .NET uses for configuration paths.
+/// The key separator in configuration paths.
 pub const KEY_DELIMITER: &str = ":";
 
 /// One layer, or the merge of several: path → value, in insertion order.
@@ -44,7 +43,7 @@ impl ConfigTree {
     }
 
     /// Sets one path. A later `set` of the same path, in any case, replaces the value but
-    /// keeps the first spelling, as .NET's provider dictionary does.
+    /// keeps the first spelling.
     pub fn set(&mut self, path: &str, value: Option<String>) {
         let key = path.to_ascii_lowercase();
         match self.entries.get_mut(&key) {
@@ -99,10 +98,9 @@ impl ConfigTree {
         }
     }
 
-    /// Flattens a JSON document the way JsonConfigurationProvider does: objects become
-    /// `a:b` paths, array items become `a:0`, `a:1`, and every scalar becomes its string
-    /// form (`true`, `12`, `1.5`). A null, and an empty object or array, become a null
-    /// value at that path.
+    /// Flattens a JSON document: objects become `a:b` paths, array items become `a:0`, `a:1`,
+    /// and every scalar becomes its string form (`True`, `12`, `1.5`). A null, and an empty
+    /// object or array, become a null value at that path.
     pub fn from_json(value: &Value) -> Self {
         let mut tree = ConfigTree::new();
         flatten_json(&mut tree, "", value);
@@ -110,12 +108,11 @@ impl ConfigTree {
     }
 
     /// Reads a JSON settings file. A missing file is an empty layer; a file that does not
-    /// parse is an error, which callers report and treat as an empty layer, as an optional
-    /// .NET JSON source does after logging.
+    /// parse is an error, which callers log and then treat as an empty layer.
     pub fn from_json_file(path: &std::path::Path) -> anyhow::Result<Self> {
         match std::fs::read(path) {
             Ok(bytes) => {
-                // .NET accepts a UTF-8 BOM and trailing commas and comments in config JSON.
+                // Config JSON may carry a UTF-8 BOM, trailing commas and comments.
                 let text = String::from_utf8_lossy(&bytes);
                 let text = text.trim_start_matches('\u{feff}');
                 let value = parse_lenient_json(text)?;
@@ -126,9 +123,8 @@ impl ConfigTree {
         }
     }
 
-    /// Environment variables, with `__` standing for the `:` separator, as
-    /// EnvironmentVariablesConfigurationProvider maps them. Every variable is included, with
-    /// no prefix filter, as WebApplication.CreateBuilder adds them.
+    /// Environment variables, with `__` standing for the `:` separator. Every variable is
+    /// included, with no prefix filter.
     pub fn from_env_vars<I, K, V>(vars: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -203,8 +199,8 @@ fn flatten_json(tree: &mut ConfigTree, prefix: &str, value: &Value) {
     }
 }
 
-/// Parses JSON that may carry `//` and `/* */` comments and trailing commas, which the .NET
-/// configuration reader allows.
+/// Parses JSON that may carry `//` and `/* */` comments and trailing commas, which hand-edited
+/// configuration files may hold.
 pub fn parse_lenient_json(text: &str) -> anyhow::Result<Value> {
     match serde_json::from_str(text) {
         Ok(v) => Ok(v),
@@ -266,8 +262,7 @@ fn strip_comments_and_trailing_commas(text: &str) -> String {
     out
 }
 
-/// A configuration section: an optional value of its own plus named children, as
-/// IConfigurationSection exposes them.
+/// A configuration section: an optional value of its own plus named children.
 #[derive(Debug, Clone, Default)]
 pub struct ConfigNode {
     pub value: Option<String>,
@@ -335,9 +330,8 @@ impl ConfigNode {
         self.value.is_some() || !self.children.is_empty()
     }
 
-    /// Children in the order IConfiguration.GetChildren returns them: keys that are
-    /// integers first in numeric order, then the rest ordinally ignoring case. This is the
-    /// order list items bind in.
+    /// Children in order: keys that are integers first in numeric order, then the rest
+    /// ordinally ignoring case. This is the order list items bind in.
     pub fn ordered_children(&self) -> Vec<(&str, &ConfigNode)> {
         let mut items: Vec<(&str, &ConfigNode)> =
             self.children.iter().map(|(k, v)| (k.as_str(), v)).collect();
@@ -374,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn json_arrays_become_indexed_keys_and_bools_their_dotnet_spelling() {
+    fn json_arrays_become_indexed_keys_and_bools_are_capitalized() {
         let tree = ConfigTree::from_json(&json!({"A": {"List": ["x", "y"], "On": true, "N": 1.5}}));
         assert_eq!(tree.get("A:List:0"), Some("x"));
         assert_eq!(tree.get("A:List:1"), Some("y"));

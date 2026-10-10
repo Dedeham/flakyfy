@@ -1,5 +1,4 @@
-//! Port of `SubsonicProxyServiceTests`, with Navidrome stood in for by wiremock, plus the
-//! relay rules endpoints.md §2.3 and §2.7 pin.
+//! The Subsonic relay, with Navidrome stood in for by wiremock.
 
 use super::*;
 use http_body_util::BodyExt;
@@ -148,7 +147,7 @@ async fn relay_encodes_special_characters() {
         .expect("relayed");
 
     let url = received(&server).await[0].url.clone();
-    // Uri.EscapeDataString: a space is %20, & is %26 and / is %2F.
+    // Every reserved character is percent-encoded: a space is %20, & is %26 and / is %2F.
     assert_eq!(url.path(), "/rest/search3");
     assert_eq!(url.query(), Some("query=rock%20%26%20roll&artist=AC%2FDC"));
 }
@@ -248,7 +247,7 @@ async fn relay_stream_http_error_returns_status_code_result() {
         .relay_stream(&params(&[("id", "song123")]))
         .await;
 
-    // A bare StatusCodeResult(404), which [ApiController] turned into a ProblemDetails.
+    // A bare 404 goes out as a problem details body.
     let (status, headers, body) = body_of(response).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
@@ -344,7 +343,7 @@ async fn relay_stream_null_http_context_returns_error() {
     );
 }
 
-// The rules the port relies on beyond the C# tests.
+// The relay's rules for URLs, parameters and bodies.
 
 #[tokio::test]
 async fn a_missing_or_relative_url_is_not_configured() {
@@ -359,7 +358,7 @@ async fn a_missing_or_relative_url_is_not_configured() {
             "{url:?}"
         );
     }
-    // Absolute to .NET, but not something HttpClient can send to.
+    // An absolute URI, but not something the HTTP client can send to.
     let error = service("localhost:4533")
         .relay("rest/ping", &params(&[]))
         .await
@@ -497,7 +496,7 @@ async fn the_faithful_relay_keeps_method_body_status_and_allowlisted_headers() {
     let sent = &received(&server).await[0];
     assert_eq!(sent.body, body.to_vec());
     // A JSON body's members are parameters, and only a url-encoded body keeps them out of the
-    // query, so they go upstream twice, as the C# sent them.
+    // query, so they go upstream twice.
     assert_eq!(sent.url.query(), Some("x=1&username=admin&password=nope"));
     assert_eq!(sent.headers["content-type"], "application/json");
     assert_eq!(sent.headers["x-nd-client-unique-id"], "abc");
@@ -556,7 +555,7 @@ fn content_types_are_rewritten_as_media_type_header_value_wrote_them() {
 }
 
 #[test]
-fn cache_control_is_merged_and_reordered_as_dotnet_did() {
+fn cache_control_is_merged_into_one_ordered_line_or_none_when_invalid() {
     let lines = ["max-age=60, public".to_string(), "no-cache".to_string()];
     assert_eq!(
         normalize_cache_control(&lines).as_deref(),
@@ -571,8 +570,7 @@ fn cache_control_is_merged_and_reordered_as_dotnet_did() {
     assert_eq!(normalize_cache_control(&lines), None);
 }
 
-// ---- RelayedRepeatsTests (the three `RestoreRepeatedParameters` tests; the five that go
-// through the whole app to a fake Navidrome are task 6-A's) ---------------------------------
+// ---- Repeated parameters restored --------------------------------------------------------
 
 const REPEAT_A: &str = "3vXkQ9mTz2LbW8rYcN1pDf";
 const REPEAT_B: &str = "7HqRs4uVw0XyZaBcDeFgHi";
@@ -618,11 +616,11 @@ fn restore_a_changed_form_field_still_reaches_the_query_when_the_body_is_forward
     assert_eq!(sent, pairs(&[("u", "octo")]));
 }
 
-// ---- A transcode's estimated length (G1 S, 67f3c93) ---------------------------------------------
+// ---- A transcode's estimated length ------------------------------------------------------
 
 /// Navidrome as a socket answering every connection with one canned answer and closing it, so a
 /// body shorter than its announced Content-Length fails in the HTTP client exactly as it does
-/// against the real one (the C# `EndsEarlyStream`).
+/// against the real one.
 async fn canned_upstream(status: &str, headers: &[&str], body: Vec<u8>) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -690,8 +688,7 @@ async fn relay_stream_async_estimated_transcode_leaves_the_length_out_and_ends_a
     assert_eq!(body.as_ref(), ninety_seven().as_slice());
 }
 
-/// Rust-only: the C# also read the stream synchronously and once more after its end; here the
-/// tolerant stream itself stays at its end once it has ended short.
+/// The tolerant stream stays at its end once it has ended short.
 #[tokio::test]
 async fn an_estimated_body_stays_ended_after_it_ends_short() {
     let url = canned_upstream(
@@ -796,7 +793,7 @@ async fn relay_raw_async_download_of_an_estimated_transcode_keeps_every_byte() {
     assert_eq!(result.body.as_ref(), ninety_seven().as_slice());
 }
 
-/// Rust-only: an exact length the body falls short of stays a failure in the general relay too.
+/// An exact length the body falls short of stays a failure in the general relay too.
 #[tokio::test]
 async fn relay_raw_async_a_raw_body_that_ends_early_is_a_failure() {
     let url = canned_upstream(

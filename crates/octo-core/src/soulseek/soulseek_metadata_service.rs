@@ -1,8 +1,7 @@
-//! The routing model declared at the bottom of `Services/Soulseek/SoulseekMetadataService.cs`:
-//! [`RoutingKind`] and [`SoulseekRouting`], which `external-ids.json` carries.
+//! The Soulseek metadata service's routing model: [`RoutingKind`] and [`SoulseekRouting`],
+//! which `external-ids.json` carries (checked against the `external-ids.json` fixture).
 //!
-//! These two types are complete ports (checked against the `external-ids.json` fixture). The
-//! service itself is task 4-A's and lives in `octo::services::soulseek::soulseek_metadata_service`.
+//! The service itself lives in `octo::services::soulseek::soulseek_metadata_service`.
 
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
@@ -180,8 +179,8 @@ impl<'de> Deserialize<'de> for SoulseekRouting {
     }
 }
 
-/// By hand, because System.Text.Json also wrote the computed `HasYouTube` and `HasArtistTitle`
-/// (ignored again on read). The stream facts are written only when known, so a routing without
+/// By hand, because the computed `HasYouTube` and `HasArtistTitle` are written too (and
+/// ignored again on read). The stream facts are written only when known, so a routing without
 /// them is written exactly as before.
 impl Serialize for SoulseekRouting {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

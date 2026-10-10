@@ -1,6 +1,5 @@
 //! getTopChart, getCharts, getArtistTopSongs, the standard getTopSongs and the chart playlists in
-//! getPlaylists and getPlaylist, as apps see them (ports of `TopSongsTests.cs`,
-//! `StandardTopSongsTests.cs` and `PopularPlaylistTests.cs`, with the charts plan's own cases).
+//! getPlaylists and getPlaylist, as apps see them.
 
 use octo_core::settings::{AppSettings, GeneratedPlaylistSettings, SubsonicSettings};
 use serde_json::{Value, json};

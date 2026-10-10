@@ -1,5 +1,3 @@
-//! Port of `Services/Library/UpgradeSources.cs`.
-
 use std::sync::Arc;
 
 use octo_core::common::dotnet;
@@ -14,7 +12,7 @@ use crate::services::soulseek::soulseek_link::SoulseekLinkState;
 /// apps, the queue and the weekly worker never disagree. Only lossless sources count: YouTube can
 /// only produce an MP3, which a Better quality check refuses anyway.
 pub struct UpgradeSources {
-    /// `IOptionsMonitor` of the library action, Soulseek and Lidarr settings: read at every use.
+    /// The library action, Soulseek and Lidarr settings, read at every use.
     settings: Arc<SettingsStore>,
     soulseek_link: Option<Arc<dyn ISoulseekLink>>,
 }
@@ -125,10 +123,10 @@ impl UpgradeSources {
 
 #[cfg(test)]
 mod tests {
-    //! Port of `UpgradeSourcesTests`. Where Better quality looks for a lossless copy: Soulseek,
-    //! Lidarr, or both in that order. One place decides it, so the dashboard, the apps and the
-    //! workers never disagree. Only sources that are set up count, and a Soulseek outage leaves
-    //! Lidarr rather than stopping everything.
+    //! Where Better quality looks for a lossless copy: Soulseek, Lidarr, or both in that order.
+    //! One place decides it, so the dashboard, the apps and the workers never disagree. Only
+    //! sources that are set up count, and a Soulseek outage leaves Lidarr rather than stopping
+    //! everything.
 
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};

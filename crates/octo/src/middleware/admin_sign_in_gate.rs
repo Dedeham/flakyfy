@@ -1,13 +1,12 @@
-//! `Middleware/AdminSignInGate.cs`: nothing under /api/admin answers without a sign-in, apart
+//! The admin sign-in gate: nothing under /api/admin answers without a sign-in, apart
 //! from the endpoints listed in [`OPEN_ENDPOINTS`]. The dashboard signs in with a Navidrome admin
 //! account (`browse/auth`) or the recovery code; a script does the same with a cookie jar; the
 //! Octo app signs the calls in [`APP_CALL_ENDPOINTS`] with its own Subsonic sign-in.
 //!
-//! One layer in front of every admin route, denying by default. The C# gate read `[AdminOpen]`
-//! and `[AdminAppCall]` off the matched endpoint; axum has no endpoint attributes to read, so the
-//! open and app routes are named here, by method and template, and everything else, routes
-//! added later and paths no route knows included, asks for a sign-in. A test walks every
-//! registered admin route to prove it (`admin_sign_in_tests.rs`).
+//! One layer in front of every admin route, denying by default. axum has no endpoint attributes
+//! to read, so the open and app routes are named here, by method and template, and everything
+//! else, routes added later and paths no route knows included, asks for a sign-in. A test walks
+//! every registered admin route to prove it (`admin_sign_in_tests.rs`).
 //!
 //! Runs after the request guard (`admin_guard`): that stops other websites, this stops people.
 //! Both are needed: a page on a sibling subdomain or another port of the same host is same-site,
@@ -37,8 +36,8 @@ use crate::services::admin::sign_in_throttle::key_of;
 use crate::services::admin::{AdminCaller, AdminCallerKind, BrowseSessionStore, SessionKind};
 use crate::services::subsonic::{CredentialVerdict, IncomingRequest, navidrome_admin_role};
 
-/// The admin endpoints that answer without a sign-in (`[AdminOpen]`): signing in and out, who is
-/// signed in, and a bare status for `install.sh` and the app's Octo check.
+/// The admin endpoints that answer without a sign-in: signing in and out, who is signed in, and a
+/// bare status for `install.sh` and the app's Octo check.
 pub const OPEN_ENDPOINTS: &[(Method, &str)] = &[
     (Method::POST, "/api/admin/auth/recovery"),
     (Method::POST, "/api/admin/browse/auth"),
@@ -47,9 +46,9 @@ pub const OPEN_ENDPOINTS: &[(Method, &str)] = &[
     (Method::GET, "/api/admin/status"),
 ];
 
-/// The admin endpoints the Octo app may call with its own Subsonic sign-in (`[AdminAppCall]`),
-/// and whether only a Navidrome admin's sign-in will do (`adminOnly`); a listener's reaches the
-/// others, scoped to themselves.
+/// The admin endpoints the Octo app may call with its own Subsonic sign-in, and whether only a
+/// Navidrome admin's sign-in will do (`adminOnly`); a listener's reaches the others, scoped to
+/// themselves.
 pub const APP_CALL_ENDPOINTS: &[(Method, &str, bool)] = &[
     (Method::GET, "/api/admin/downloads", true),
     (Method::GET, "/api/admin/lastfm/radio", false),
@@ -69,12 +68,10 @@ pub const SIGN_IN_FIRST: &str = "Sign in with your Navidrome admin account first
 /// route that is not a prefix exactly, and a prefix route also below it (at a `/`), both
 /// ignoring case.
 ///
-/// The C# left this to each endpoint (`NavidromeUserOf`), and one forgot: the explicit marking
-/// (`ExplicitBackfillController.cs:30` asked `UserOf`), so the recovery code could write explicit
-/// marks into music files. A port fix: the gate refuses a recovery session on every one of these
-/// alike, before any endpoint runs, and an endpoint that still checks finds nothing to refuse
-/// (BACKLOG "Found while building the harness"; known-diffs.md). The words are the ones each
-/// endpoint answered, so nothing else changes.
+/// The gate refuses a recovery session on every one of these alike, before any endpoint runs,
+/// so no endpoint can forget the check and let the recovery code write into music files; an
+/// endpoint that still checks finds nothing to refuse. The words are the ones each endpoint
+/// answers, so nothing else changes.
 pub const LIBRARY_FILE_ROUTES: &[(&str, bool, &str)] = &[
     // The folder picker.
     ("/api/admin/browse", false, "Browse session required."),
@@ -105,7 +102,7 @@ pub const LIBRARY_FILE_ROUTES: &[(&str, bool, &str)] = &[
     ("/api/admin/trash", true, SIGN_IN_FIRST),
     // Library health and its fixes (tags written in place, songs removed).
     ("/api/admin/health", true, SIGN_IN_FIRST),
-    // The explicit marking (writes advisories into files): the route the C# left open.
+    // The explicit marking (writes advisories into files).
     ("/api/admin/explicit", true, SIGN_IN_FIRST),
 ];
 
@@ -149,15 +146,15 @@ fn app_call(method: &Method, endpoint: &str) -> Option<bool> {
         .map(|(_, _, admin_only)| *admin_only)
 }
 
-/// `AdminCookie.Token`: the cookie first (the dashboard), the header second (curl, tests).
+/// The sign-in token: the cookie first (the dashboard), the header second (curl, tests).
 pub fn admin_token(req: &Request) -> Option<String> {
     request_cookie(req.headers(), BROWSE_COOKIE_NAME)
         .filter(|cookie| !cookie.is_empty())
         .or_else(|| header_value(req.headers(), BROWSE_TOKEN_HEADER))
 }
 
-/// `context.Request.Query.ToDictionary(...)`: each name once (matched ignoring case, as
-/// `Request.Query` keys are, and spelled as it first came), repeated values joined with commas.
+/// The query as a dictionary: each name once (matched ignoring case, and spelled as it first
+/// came), repeated values joined with commas.
 fn query_dictionary(query: Option<&str>) -> IndexMap<String, String> {
     let mut values: IndexMap<String, Vec<String>> = IndexMap::new();
     for (key, value) in url::form_urlencoded::parse(query.unwrap_or("").as_bytes()) {
@@ -173,7 +170,7 @@ fn query_dictionary(query: Option<&str>) -> IndexMap<String, String> {
         .collect()
 }
 
-/// The gate's 401, as `WriteAsJsonAsync` wrote it.
+/// The gate's 401.
 fn sign_in_required() -> Response {
     json_relaxed_response(
         StatusCode::UNAUTHORIZED,
@@ -292,8 +289,8 @@ pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request,
                 req.uri().query().map(str::to_string),
                 Bytes::new(),
             )));
-            // A URL the client cannot use at all is an error the C# let out of the gate; here
-            // it counts as Navidrome not answering, so the request is simply not signed in.
+            // A URL the client cannot use at all counts as Navidrome not answering, so the
+            // request is simply not signed in.
             let verdict = state
                 .credential_check
                 .check(Some(&credential), &relay)
@@ -333,12 +330,11 @@ pub async fn admin_sign_in_gate(State(gate): State<GateState>, mut req: Request,
     sign_in_required()
 }
 
-/// Puts a `Set-Cookie` ahead of the ones the endpoint wrote, as the gate's
-/// `Response.Cookies.Append` ran before the endpoint did.
+/// Puts a `Set-Cookie` ahead of the ones the endpoint wrote, since the gate's renewal comes
+/// before anything the endpoint sets.
 ///
-/// When the endpoint deleted that same cookie (a sign-out), the renewal is left out: ASP.NET's
-/// `Response.Cookies.Delete` took back an earlier `Append` of the cookie, so the C# answered
-/// with the deletion alone, and a browser handed both might keep the renewed one.
+/// When the endpoint deleted that same cookie (a sign-out), the renewal is left out and the
+/// answer carries the deletion alone: a browser handed both might keep the renewed one.
 fn prepend_set_cookie(res: &mut Response, cookie: HeaderValue) {
     let existing: Vec<HeaderValue> = res
         .headers()
@@ -366,10 +362,10 @@ fn prepend_set_cookie(res: &mut Response, cookie: HeaderValue) {
     }
 }
 
-/// The caller the gate let in, for an endpoint that answers differently (`AdminCaller.Of`).
+/// The caller the gate let in, for an endpoint that answers differently.
 pub type Caller = Option<Extension<AdminCaller>>;
 
-/// `AdminCaller.Of(HttpContext)` from the extractor.
+/// The caller the gate let in, from the extractor.
 pub fn caller_of(caller: &Caller) -> Option<&AdminCaller> {
     caller.as_ref().map(|Extension(caller)| caller)
 }

@@ -1,23 +1,17 @@
-//! `IHttpClientFactory.CreateClient()`, the default named client `Program.cs` registered with
-//! `AddHttpClient()`, and the words its failures are told in.
+//! The default HTTP client, and the words its failures are told in: what happened, in plain
+//! words, rather than a library's exception text.
 //!
-//! The C# showed .NET's exception texts ("The request was canceled due to the configured
-//! HttpClient.Timeout of 100 seconds elapsing.", "Connection refused (host:port)", "Response
-//! status code does not indicate success: 404 (Not Found)."). The port says what happened in
-//! plain words instead (known-diffs "Plain error words").
-//!
-//! The .NET default client: a 100 second `Timeout` covering the whole buffered exchange, no
-//! automatic decompression (so no `Accept-Encoding` is sent and a body arrives as the server
-//! wrote it), no default request headers, and redirects followed.
+//! The default client: a 100 second timeout covering the whole buffered exchange, no automatic
+//! decompression (so no `Accept-Encoding` is sent and a body arrives as the server wrote it), no
+//! default request headers, and redirects followed.
 
 use std::error::Error as _;
 use std::time::Duration;
 
-/// `HttpClient.Timeout`'s default.
+/// The default client's timeout.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(100);
 
-/// The default client, for buffered calls: the timeout covers reading the body too, as
-/// `HttpCompletionOption.ResponseContentRead` did.
+/// The default client, for buffered calls: the timeout covers reading the body too.
 pub fn default_client() -> reqwest::Client {
     builder()
         .timeout(DEFAULT_TIMEOUT)
@@ -25,19 +19,18 @@ pub fn default_client() -> reqwest::Client {
         .expect("the default HTTP client builds")
 }
 
-/// The same client for calls made with `HttpCompletionOption.ResponseHeadersRead`, whose body
-/// is then streamed for as long as it lasts: `HttpClient.Timeout` only bounded the wait for the
-/// headers, which callers apply themselves with [`DEFAULT_TIMEOUT`].
+/// The same client for calls whose body is streamed for as long as it lasts: only the wait for
+/// the headers is bounded, which callers apply themselves with [`DEFAULT_TIMEOUT`].
 pub fn streaming_client() -> reqwest::Client {
     builder().build().expect("the streaming HTTP client builds")
 }
 
-/// The builder every named client starts from: no decompression, as .NET's default handler.
+/// The builder every named client starts from: no decompression.
 pub fn builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().no_gzip().no_deflate()
 }
 
-/// What a call that gave up waiting says (the C#'s `TaskCanceledException`).
+/// What a call that gave up waiting says.
 pub fn timeout_message(timeout: Duration) -> String {
     let seconds = timeout.as_secs_f64();
     let shown = if seconds.fract() == 0.0 {
@@ -49,8 +42,7 @@ pub fn timeout_message(timeout: Duration) -> String {
     format!("No answer came within {shown} {unit}, so Octo stopped waiting.")
 }
 
-/// What a call answered with a status that is not a success says (the C#'s
-/// `EnsureSuccessStatusCode`).
+/// What a call answered with a status that is not a success says.
 pub fn status_failure_message(status: reqwest::StatusCode) -> String {
     match status.canonical_reason() {
         Some(reason) => format!("The server answered {} ({reason}).", status.as_u16()),

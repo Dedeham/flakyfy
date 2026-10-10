@@ -1,4 +1,4 @@
-//! Port of `Services/LastFm/LastFmSearchCleanup.cs`.
+//! Repairs Last.fm track.search rows that came from mislabeled scrobbles.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -21,7 +21,7 @@ static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("a v
 /// A row carrying fewer than one in this many of its artist's listeners is noise.
 const NOISE_RATIO: i64 = 100;
 
-/// Puts right the rows Last.fm's track.search gets from mislabelled scrobbles, before they become
+/// Puts right the rows Last.fm's track.search gets from mislabeled scrobbles, before they become
 /// outside songs. A search for "Kavinsky Nightcall" answers, among the real song, artist
 /// "Kavinsky Nightcall" with title "Nightcall", title "Kavinsky - Nightcall" under the label
 /// "Record Makers", and the same under "[unknown]". Taken as they are, those rows reach search
@@ -201,8 +201,8 @@ fn is_placeholder(artist: &str) -> bool {
     PLACEHOLDERS.contains(&key.as_str()) || key.is_empty()
 }
 
-/// `text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)`, answering where the matched end
-/// starts in `text` (`text[..^suffix.Length]` is then `text[..cut]`).
+/// Whether `text` ends with `suffix`, ordinally and ignoring case, answering where the matched
+/// end starts in `text` (the text without the suffix is then `text[..cut]`).
 fn ends_with_ignore_case(text: &str, suffix: &str) -> Option<usize> {
     let count = suffix.chars().count();
     let total = text.chars().count();
@@ -329,7 +329,7 @@ mod tests {
         assert!(rows.contains(&pair("David Bowie", "Queen Bitch")), "{rows:?}");
     }
 
-    /// Rust-only: every Unicode dash from U+2010 to U+2015 and the minus sign split a title.
+    /// Every Unicode dash from U+2010 to U+2015 and the minus sign split a title.
     #[test]
     fn every_unicode_dash_and_the_minus_sign_count_as_a_dash() {
         for dash in [
@@ -400,7 +400,7 @@ mod tests {
         assert!(clean(&[t("<Unknown>", "Track 01", 20)]).is_empty());
     }
 
-    /// Rust-only: `EndsWith(OrdinalIgnoreCase)` and the cut it gives.
+    /// A case-insensitive suffix match and the cut it gives.
     #[test]
     fn ends_with_ignore_case_answers_where_the_suffix_starts() {
         assert_eq!(ends_with_ignore_case("Kavinsky Nightcall", "NIGHTCALL"), Some(9));

@@ -1,4 +1,4 @@
-//! `Octo.Models.Settings.NotificationSettings` (the `Notifications` section).
+//! The push notification settings (the `Notifications` section).
 
 use serde::{Deserialize, Serialize};
 
@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 /// this nothing tells the user a starred track landed, settled for a lossy source,
 /// or failed: the SearchWaitSeconds bug went unnoticed for exactly that reason.
 ///
-/// A transport is enabled simply by its URL being non-empty. Every value is read
-/// through IOptionsMonitor at send time, so changes apply without a restart.
+/// A transport is enabled simply by its URL being non-empty. Every value is read fresh at send
+/// time, so changes apply without a restart.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct NotificationSettings {

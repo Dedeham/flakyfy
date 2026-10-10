@@ -1,4 +1,3 @@
-//! `LibraryEditEndpointTests.cs` (374dac8, 8606390, 15e3bb5, 433acff, a4238fa, 6b6b61d, a0fcecb):
 //! octoLibraryActions version 3, as the apps' Library health uses it. Removing needs an admin and
 //! can be put back from the trash, tags are written in place and can be undone, a split album is
 //! joined by copying the album's own tags, and a cover goes only into a file that has none. Real
@@ -902,10 +901,7 @@ async fn lookup_an_unknown_song_is_unresolved_with_the_lookup_shape() {
     assert!(action["suggested"].is_object());
 }
 
-// `Suggested_KeepsOnlyWhatTheLookupFound_InTheAppsNames` is
-// `services::library::library_edit_service::tests::suggested_keeps_only_what_the_lookup_found_in_the_apps_names`.
-
-// ---- Rust-only -----------------------------------------------------------------------------
+// ---- The dashboard's trash, and undoing a cleared tag ------------------------------------
 
 /// The Recently removed half of AdminDownloadsController, which answers from the same trash:
 /// signed out it is refused, signed in it lists the song with its own files and puts it back.
@@ -979,8 +975,7 @@ async fn the_dashboard_lists_the_trash_and_puts_a_song_back() {
     );
 }
 
-/// Fixed in the port only (known-diffs.md, "Clearing a tag field"): the undo of an ISRC retag
-/// takes the code off the file, as its answer says.
+/// The undo of an ISRC retag takes the code off the file, as its answer says.
 #[tokio::test]
 async fn undoing_an_isrc_retag_takes_the_code_off_the_file() {
     let f = Factory::new().await;

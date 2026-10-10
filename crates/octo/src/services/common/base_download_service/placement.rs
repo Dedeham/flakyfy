@@ -1,6 +1,5 @@
 //! Where a download goes: the configured layout, the name it is filed under, a path already
-//! taken, a library action's replacement, the files beside it, and the clean-up behind it. Part
-//! of `BaseDownloadService.cs`.
+//! taken, a library action's replacement, the files beside it, and the clean-up behind it.
 
 use std::path::Path;
 
@@ -282,7 +281,7 @@ impl BaseDownloadService {
     }
 
     /// Give the staged replacement the original's identity, let the library action judge it,
-    /// then move it to the original's folder and name in one rename (W8). Nothing may scan it
+    /// then move it to the original's folder and name in one rename. Nothing may scan it
     /// before its tags are final: Navidrome would file it as a new song for good. A refused one
     /// is deleted here, where no scan ever saw it.
     pub async fn reveal_replacement(
@@ -498,7 +497,7 @@ impl BaseDownloadService {
     }
 }
 
-/// `File.Move`: a rename, or a copy and a delete across file systems. Never over an existing
+/// Moves a file: a rename, or a copy and a delete across file systems. Never over an existing
 /// file.
 pub(super) fn move_file(from: &str, to: &str) -> std::io::Result<()> {
     if Path::new(to).exists() {
@@ -517,7 +516,7 @@ pub(super) fn move_file(from: &str, to: &str) -> std::io::Result<()> {
     }
 }
 
-/// `Path.GetDirectoryName`: everything before the last separator, `"/"` for a file in the root,
+/// The folder of a path: everything before the last separator, `"/"` for a file in the root,
 /// empty for a bare name, and `None` for the root itself or an empty path.
 pub(super) fn get_directory_name(path: &str) -> Option<String> {
     if path.is_empty() || path == "/" {
@@ -530,7 +529,7 @@ pub(super) fn get_directory_name(path: &str) -> Option<String> {
     }
 }
 
-/// `Path.GetFileName`.
+/// The file name of a path: what follows the last `/`, or the whole path when it has none.
 pub(super) fn get_file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }

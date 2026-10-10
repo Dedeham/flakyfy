@@ -1,5 +1,3 @@
-//! Port of `Services/Metadata/DeezerRateLimiter.cs`.
-
 use std::time::Duration;
 
 use crate::services::framework::{RateLimitLease, SlidingWindowRateLimiter, SlidingWindowRateLimiterOptions};
@@ -20,8 +18,8 @@ pub struct DeezerRateLimiter {
 }
 
 impl DeezerRateLimiter {
-    /// Named HttpClient that carries the limiting handler. Both the metadata
-    /// service and the cover-art lookup must resolve this name or they bypass the budget.
+    /// The name of the Deezer client that carries the limiter. Both the metadata service and
+    /// the cover-art lookup must go through that client or they bypass the budget.
     pub const CLIENT_NAME: &'static str = "deezer";
 
     const WINDOW: Duration = Duration::from_secs(5);
@@ -32,7 +30,7 @@ impl DeezerRateLimiter {
     const BACKGROUND_PERMITS: u32 = 10;
 
     pub fn new() -> Self {
-        // Queue depths are bounded by the 8s HttpClient timeout, which now covers waiting for
+        // Queue depths are bounded by the 8s client timeout, which now covers waiting for
         // a permit as well as the call itself. Interactive drains at 6/s, so 32 queued is a
         // ~5s worst case and stays inside it; a deeper queue would just manufacture timeouts.
         Self {
@@ -48,7 +46,7 @@ impl DeezerRateLimiter {
             // One-second granularity, so permits free up smoothly instead of all at once
             // at the end of each window.
             segments_per_window: 5,
-            // Must be set explicitly: it defaults to 0, which makes AcquireAsync return a
+            // Must be set explicitly: it defaults to 0, which makes `acquire` return a
             // NON-acquired lease immediately instead of waiting. Every over-budget call
             // would then be dropped rather than delayed.
             queue_limit,

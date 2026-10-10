@@ -1,15 +1,14 @@
-//! Port of `Services/Soulseek/SoulseekDownloadService.cs`: the service. The candidate matching
-//! (the searches to run, the filename, length and version checks, the quality ranking) is pure
-//! and lives in `octo_core::soulseek::soulseek_download_service`.
+//! The Soulseek download service. The candidate matching (the searches to run, the filename,
+//! length and version checks, the quality ranking) is pure and lives in
+//! `octo_core::soulseek::soulseek_download_service`.
 //!
-//! The C# class was a subclass of `BaseDownloadService`. Here [`SoulseekDownloadService`] is the
-//! base's [`DownloadBackend`]: the members the C# overrode, called back by the base with itself.
+//! [`SoulseekDownloadService`] is the [`DownloadBackend`] of a [`BaseDownloadService`]: the
+//! Soulseek-specific members, called back by the base with itself.
 //! [`SoulseekDownloadService::build`] puts the two together, and the base is what the app holds
 //! as its `IDownloadService`.
 //!
-//! The members the C# reached through `OptionalService<T>()` that the base does not carry (the
-//! Soulseek link, Lidarr's import hand-off and track fetcher) are the `Option` fields of
-//! [`SoulseekDownloadParts`].
+//! The optional services the base does not carry (the Soulseek link, Lidarr's import hand-off and
+//! track fetcher) are the `Option` fields of [`SoulseekDownloadParts`].
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -65,9 +64,9 @@ use crate::services::you_tube::YouTubeResolver;
 use octo_core::common::acquisition_tracker::user_safe;
 use octo_core::lidarr::lidarr_track_fetcher::LidarrStep;
 
-/// `IncomingFolderName`: where the shim writes a download before Octo has decided its name. A dot
-/// folder, which Navidrome's scanner skips (Scanner.IgnoreDotFolders, on by default), the same way
-/// it skips the library-action quarantine.
+/// Where the shim writes a download before Octo has decided its name. A dot folder, which
+/// Navidrome's scanner skips (Scanner.IgnoreDotFolders, on by default), the same way it skips the
+/// library-action quarantine.
 pub const INCOMING_FOLDER_NAME: &str = ".octo-incoming";
 
 /// slskd's default name for the folder a transfer is written into before it is moved.
@@ -78,19 +77,18 @@ pub const DEFAULT_INCOMPLETE_FOLDER_NAME: &str = "incomplete";
 /// just the top hit fails too often.
 ///
 /// Each attempt is bounded by Soulseek:DownloadTimeoutSeconds, so that setting is per peer and a
-/// full walk can spend it MaxPeerAttempts times over. (The ranking lives in octo-core with the
-/// rest of the matching.)
+/// full walk can spend it `MAX_PEER_ATTEMPTS` times over. (The ranking lives in octo-core with
+/// the rest of the matching.)
 pub use octo_core::soulseek::soulseek_download_service::MAX_PEER_ATTEMPTS;
 
-/// `InvalidOperationException`: a download that cannot be made as asked (no artist or title, no
-/// download path, no Lidarr, audio YouTube could not decode). The library-action executor tries
-/// the next source on it, as the C# caught the type.
+/// A download that cannot be made as asked (no artist or title, no download path, no Lidarr,
+/// audio YouTube could not decode). The library-action executor tries the next source on it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct InvalidOperationException(pub String);
 
-/// `FileNotFoundException`: no copy found, or the copy found is gone. Reported as an `io::Error`
-/// of kind `NotFound`, which is how the library-action executor recognizes "no copy here".
+/// No copy found, or the copy found is gone. Reported as an `io::Error` of kind `NotFound`, which
+/// is how the library-action executor recognizes "no copy here".
 fn file_not_found(message: String) -> anyhow::Error {
     std::io::Error::new(std::io::ErrorKind::NotFound, message).into()
 }
@@ -114,7 +112,7 @@ pub(crate) fn played_size(
 }
 
 /// A Soulseek call's failure, with a caller who gave up told apart as the base's
-/// [`OperationCanceled`] (the C# `OperationCanceledException`).
+/// [`OperationCanceled`].
 fn client_error(error: SoulseekClientError) -> anyhow::Error {
     match error {
         SoulseekClientError::Cancelled => OperationCanceled.into(),
@@ -122,8 +120,7 @@ fn client_error(error: SoulseekClientError) -> anyhow::Error {
     }
 }
 
-/// The future, unless the caller gives up first: the C# passed its token to these calls, which
-/// threw `OperationCanceledException` when it was cancelled.
+/// The future, unless the caller gives up first, which is [`OperationCanceled`].
 async fn or_canceled<T>(
     ct: &CancellationToken,
     work: impl Future<Output = anyhow::Result<T>>,
@@ -163,18 +160,18 @@ pub enum ReserveChoice {
     DiscardNew,
 }
 
-/// What the C# constructor took beyond the base's own services.
+/// What the service needs beyond the base's own services.
 pub struct SoulseekDownloadParts {
     pub slskd: SoulseekClient,
     pub rejected_peers: Arc<RejectedPeerRegistry>,
     pub verification: Arc<DownloadVerificationService>,
     pub youtube: Arc<YouTubeResolver>,
     pub id_registry: Arc<ExternalIdRegistry>,
-    /// `OptionalService<ISoulseekLink>()`.
+    /// The Soulseek link, when there is one.
     pub soulseek_link: Option<Arc<dyn ISoulseekLink>>,
-    /// `OptionalService<LidarrImportHandoff>()`.
+    /// Lidarr's import hand-off, when there is one.
     pub lidarr_imports: Option<Arc<LidarrImportHandoff>>,
-    /// `OptionalService<ILidarrTrackFetcher>()`.
+    /// Lidarr's track fetcher, when there is one.
     pub lidarr_fetcher: Option<Arc<dyn ILidarrTrackFetcher>>,
 }
 
@@ -188,9 +185,8 @@ pub struct SoulseekDownloadService {
     slskd: SoulseekClient,
     rejected_peers: Arc<RejectedPeerRegistry>,
     verification: Arc<DownloadVerificationService>,
-    /// `IOptions<SoulseekSettings>.Value`: deliberately captured at construction, as the C#
-    /// did. The search ceilings, the preferred extension, the minimum size and the per-peer
-    /// timeout are restart-only settings.
+    /// Deliberately captured at construction: the search ceilings, the preferred extension, the
+    /// minimum size and the per-peer timeout are restart-only settings.
     settings: SoulseekSettings,
     youtube: Arc<YouTubeResolver>,
     id_registry: Arc<ExternalIdRegistry>,
@@ -216,7 +212,7 @@ pub struct SoulseekDownloadService {
 }
 
 impl SoulseekDownloadService {
-    /// `soulseek_settings` is the `IOptions` value, captured here.
+    /// `soulseek_settings` is captured here.
     pub fn new(soulseek_settings: SoulseekSettings, parts: SoulseekDownloadParts) -> Self {
         SoulseekDownloadService {
             slskd: parts.slskd,
@@ -1139,7 +1135,7 @@ impl SoulseekDownloadService {
         if download.flac_only {
             ranked.retain(|hit| normalize_extension(Some(&hit.extension), &hit.filename) == "flac");
         }
-        // Whether `ranked` is the album folder's copy (the C# compared the hit by reference).
+        // Whether `ranked` is the album folder's copy.
         let mut ranked_is_prepared = prepared.is_some();
 
         if ranked.is_empty() {
@@ -1296,11 +1292,11 @@ impl SoulseekDownloadService {
                     });
                 }
 
-                // Cancelling the WAIT must never cancel the TRANSFER. slskd already
-                // accepted the enqueue and keeps going on its own, so letting this
-                // throw straight out of the loop is what used to lose a finished
-                // download: the disk check, the move, the registration and the
-                // rescan were all skipped while the file quietly landed anyway.
+                // Canceling the WAIT must never cancel the TRANSFER. slskd already accepted the
+                // enqueue and keeps going on its own, so letting this throw straight out of the
+                // loop is what used to lose a finished download: the disk check, the move, the
+                // registration and the rescan were all skipped while the file quietly landed
+                // anyway.
                 //
                 // slskd's size is the real one once the peer answers; the search's is
                 // what the peer advertised, kept for polls that leave it out.
@@ -2064,8 +2060,7 @@ impl DownloadBackend for SoulseekDownloadService {
                 .unwrap_or_default()
         );
 
-        // The response owns the shim's connection: dropping the stream closes it, which is what
-        // the C# OwningStream did on Dispose.
+        // The response owns the shim's connection: dropping the stream closes it.
         Ok(Some(DirectStreamInfo {
             audio_stream: Box::pin(opened.response.bytes_stream().map_err(std::io::Error::other)),
             content_type: opened.content_type,
@@ -2134,9 +2129,9 @@ impl DownloadBackend for SoulseekDownloadService {
                     .await
             }
             DownloadSource::SoulseekThenYouTube => {
-                // The filter matters: a cancelled token means nobody is waiting for
-                // this any more, so falling back would start a second download only
-                // to have it throw on the same token.
+                // The filter matters: a canceled token means nobody is waiting for this any more,
+                // so falling back would start a second download only to have it throw on the same
+                // token.
                 let snapshot = routing.snapshot();
                 match self
                     .download_via_soulseek(base, &snapshot, download, &profile, cancellation_token)
@@ -2294,9 +2289,8 @@ impl DownloadBackend for SoulseekDownloadService {
         };
         match attempt.await {
             Ok(prepared) => prepared,
-            // The C# let a cancellation through to the walk; the trait answers a list, so a walk
-            // whose caller left goes on with nothing prepared, and each of its downloads stops on
-            // the same token.
+            // The trait answers a list, so a walk whose caller left goes on with nothing
+            // prepared, and each of its downloads stops on the same token.
             Err(e) if e.downcast_ref::<OperationCanceled>().is_some() => none,
             Err(e) => {
                 warn!(
@@ -2375,12 +2369,11 @@ pub fn waiting_words(peer: &str, state: &str) -> String {
     }
 }
 
-/// slskd marks a transfer Succeeded before moving the file out of its incomplete
-/// directory, and on bind mounts that move is a copy that can take seconds for a FLAC.
-/// Without this window the attempt fails on "no file on disk" and the next peer
-/// re-downloads the same track. The incomplete folder is never searched (#69), so a full-size
-/// copy that slskd has not moved yet cannot end the wait early. A cancelled caller gets one
-/// final check instead of a wait.
+/// slskd marks a transfer Succeeded before moving the file out of its incomplete directory, and
+/// on bind mounts that move is a copy that can take seconds for a FLAC. Without this window the
+/// attempt fails on "no file on disk" and the next peer re-downloads the same track. The
+/// incomplete folder is never searched (#69), so a full-size copy that slskd has not moved yet
+/// cannot end the wait early. A canceled caller gets one final check instead of a wait.
 pub async fn retry_resolve(
     mut resolve: impl FnMut() -> Option<String>,
     max_wait: Duration,
@@ -2551,7 +2544,7 @@ pub fn resolve_local_path(
     }
 
     // slskd never overwrites: when the name is taken it saves the new file as
-    // <name>_<DateTime.UtcNow ticks><ext> in the same folder. Ticks are 18 digits today, so
+    // <name>_<UTC ticks><ext> in the same folder. Ticks are 18 digits today, so
     // demanding 15 keeps a peer's own "Song_2.flac" out. Only a fallback, behind any exact name.
     let (stem, ext) = split_extension(leaf);
     let renamed = renamed_pattern(leaf);
@@ -2560,8 +2553,8 @@ pub fn resolve_local_path(
         if !Path::new(root).is_dir() {
             continue;
         }
-        // `Directory.EnumerateFiles(root, stem + "*" + ext, AllDirectories)`: the name filters
-        // below are stricter than the wildcard, so every file under the root is looked at.
+        // Every file under the root is looked at, and kept when its name starts with the stem
+        // and ends with the extension.
         let found = files_under(root).map(|files| {
             files
                 .into_iter()
@@ -2714,22 +2707,22 @@ fn names(routing: &SoulseekRouting) -> (String, String) {
     )
 }
 
-/// A nullable value as .NET formats it in a message: empty when null.
+/// An optional value as a message shows it: empty when None.
 fn display_option(value: Option<i32>) -> String {
     value.map(|v| v.to_string()).unwrap_or_default()
 }
 
-/// `{0:P0}` for the log: a whole percentage.
+/// A whole percentage, for the log.
 fn percent(fraction: f64) -> String {
     format!("{}%", dotnet::round(fraction * 100.0, 0))
 }
 
-/// `Guid.NewGuid().ToString("N")`.
+/// A new random UUID as 32 hex digits, no dashes.
 fn new_guid() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
-/// `Path.Combine(a, b)`.
+/// `b` under `a`, or `b` alone when it is absolute or `a` is empty.
 fn combine(a: &str, b: &str) -> String {
     if b.starts_with('/') || a.is_empty() {
         b.to_string()
@@ -2740,12 +2733,12 @@ fn combine(a: &str, b: &str) -> String {
     }
 }
 
-/// `Path.GetFileName`.
+/// The last segment of a path.
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// `Path.GetDirectoryName`.
+/// The folder a path is in; None when it has no slash.
 fn directory_name(path: &str) -> Option<String> {
     let slash = path.rfind('/')?;
     Some(if slash == 0 {
@@ -2755,7 +2748,7 @@ fn directory_name(path: &str) -> Option<String> {
     })
 }
 
-/// `Path.GetFileNameWithoutExtension` and `Path.GetExtension` of a file name.
+/// A file name's stem and extension (the extension with its dot, empty when there is none).
 fn split_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(dot) if dot + 1 < name.len() => (&name[..dot], &name[dot..]),
@@ -2784,7 +2777,7 @@ fn file_length(path: &str) -> Option<i64> {
     i64::try_from(metadata.len()).ok()
 }
 
-/// `File.GetCreationTimeUtc`: the birth time where the file system keeps one, the last write
+/// The file's creation time: the birth time where the file system keeps one, the last write
 /// otherwise.
 fn creation_time(path: &str) -> SystemTime {
     std::fs::metadata(path)
@@ -2802,7 +2795,7 @@ fn newest<'a>(paths: impl Iterator<Item = &'a String>) -> Option<String> {
     paths.first().map(|p| (*p).clone())
 }
 
-/// `Path.GetRelativePath(root, path)` for a path under the root; the path itself otherwise.
+/// The path relative to `root` for a path under the root; the path itself otherwise.
 fn relative_path(root: &str, path: &str) -> String {
     let root = get_full_path(root);
     let path = get_full_path(path);
@@ -2810,7 +2803,7 @@ fn relative_path(root: &str, path: &str) -> String {
     path.strip_prefix(&prefix).map(str::to_string).unwrap_or(path)
 }
 
-/// The files directly in a folder (`Directory.EnumerateFiles(folder)`).
+/// The files directly in a folder.
 fn files_in(folder: &str) -> std::io::Result<Vec<String>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(folder)? {
@@ -2822,8 +2815,7 @@ fn files_in(folder: &str) -> std::io::Result<Vec<String>> {
     Ok(files)
 }
 
-/// Every file under a folder, any depth. A folder that cannot be read fails the whole walk, as
-/// `Directory.EnumerateFiles(.., AllDirectories)` threw.
+/// Every file under a folder, any depth. A folder that cannot be read fails the whole walk.
 fn files_under(root: &str) -> std::io::Result<Vec<String>> {
     let mut files = Vec::new();
     let mut folders = VecDeque::from([root.to_string()]);
@@ -2840,8 +2832,7 @@ fn files_under(root: &str) -> std::io::Result<Vec<String>> {
     Ok(files)
 }
 
-/// The first folder named `name` under `root`, any depth, that `accept` takes
-/// (`Directory.EnumerateDirectories(root, name, AllDirectories).FirstOrDefault(..)`).
+/// The first folder named `name` under `root`, any depth, that `accept` takes.
 fn find_directory(root: &str, name: &str, accept: impl Fn(&str) -> bool) -> std::io::Result<Option<String>> {
     let mut folders = VecDeque::from([root.to_string()]);
     while let Some(folder) = folders.pop_front() {

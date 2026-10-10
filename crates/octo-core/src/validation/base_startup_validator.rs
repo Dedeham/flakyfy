@@ -1,21 +1,19 @@
-//! Port of `Services/Validation/BaseStartupValidator.cs`.
+//! Helpers shared by the startup validators.
 //!
-//! The C# abstract class held the `HttpClient` and gave its subclasses static helpers. A Rust
-//! validator implements [`super::IStartupValidator`], keeps its own HTTP client, and calls these
-//! helpers. Color codes are written only when standard output is a terminal, as .NET's console
-//! did (a container's redirected output got none).
+//! A validator implements [`super::IStartupValidator`], keeps its own HTTP client, and calls
+//! these helpers. Color codes are written only when standard output is a terminal, so a
+//! container's redirected output gets none.
 
 use std::io::{IsTerminal, Write};
 
 use super::validation_result::{ConsoleColor, ValidationResult};
 
-/// What kind of failure [`BaseStartupValidator::handle_exception`] is describing: the C#
-/// matched on the exception's type.
+/// What kind of failure [`BaseStartupValidator::handle_exception`] is describing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExceptionKind {
-    /// `TaskCanceledException`: the request timed out (or was cancelled).
+    /// The request timed out (or was canceled).
     Canceled,
-    /// `HttpRequestException`: the service could not be reached.
+    /// The service could not be reached.
     HttpRequest,
     /// Anything else.
     Other,
@@ -48,7 +46,7 @@ impl BaseStartupValidator {
             return "(empty)".to_string();
         }
 
-        // Lengths in UTF-16 units, as `string.Length` counted.
+        // Lengths in UTF-16 units.
         const VISIBLE_CHARS: usize = 4;
         let units: Vec<u16> = secret.encode_utf16().collect();
         if units.len() <= VISIBLE_CHARS {

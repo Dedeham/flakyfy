@@ -1,4 +1,4 @@
-//! Port of `Services/Library/ExplicitBackfill.cs`: the dashboard's "Mark explicit songs".
+//! The dashboard's "Mark explicit songs".
 //!
 //! Marks the songs already in the library explicit or clean, the way new downloads are marked
 //! (ITUNESADVISORY on MP3 and FLAC, the rtng atom on M4A), so the apps can show it. Navidrome
@@ -13,7 +13,7 @@
 //! goes in the tag-edit journal, so Undo (or an app's own undo of that song) takes it out again.
 //! Then one normal Navidrome scan.
 //!
-//! The run's state file is `explicit_backfill_store` (G1); this module adds the store that keeps
+//! The run's state file is `explicit_backfill_store`; this module adds the store that keeps
 //! it in memory and flushes it, the worker, and its requests.
 
 use std::cmp::Ordering as CmpOrdering;
@@ -68,15 +68,15 @@ impl ExplicitBackfillRequest {
         }
     }
 
-    /// `new ExplicitBackfillRequest(mode)`: the C# default user.
+    /// A request from the dashboard, the default user.
     pub fn of(mode: ExplicitBackfillMode) -> Self {
         Self::new(mode, "dashboard")
     }
 }
 
-/// The run's state, beside the settings, so a preview survives a restart. The C# store ran its
-/// own 10 s timer and flushed once more on `Dispose`; here that is
-/// [`ExplicitBackfillStore::run_flusher`], registered as a worker by the app state.
+/// The run's state, beside the settings, so a preview survives a restart. It is flushed every
+/// 10 s and once more at shutdown by [`ExplicitBackfillStore::run_flusher`], registered as a
+/// worker by the app state.
 pub struct ExplicitBackfillStore {
     path: Option<PathBuf>,
     run: Mutex<ExplicitBackfillRun>,
@@ -165,8 +165,7 @@ impl ExplicitBackfillStore {
         }
     }
 
-    /// The C# flush timer and `Dispose`: flushes every [`Self::FLUSH_INTERVAL`] until
-    /// cancelled, then once more.
+    /// Flushes every [`Self::FLUSH_INTERVAL`] until canceled, then once more.
     pub async fn run_flusher(&self, stopping: CancellationToken) {
         if self.path.is_none() {
             return;
@@ -189,7 +188,7 @@ pub type ListSongs =
     Arc<dyn Fn() -> BoxFuture<'static, Vec<(ExplicitBackfillSong, Option<String>)>> + Send + Sync>;
 
 /// What the worker reaches besides its store, journal and catalog. A service left out is one
-/// the host did not register, which the run copes without, as the C# did with a null.
+/// the host did not register, which the run copes without.
 #[derive(Clone, Default)]
 pub struct ExplicitBackfillServices {
     pub identity: Option<Arc<NavidromeIdentityService>>,
@@ -197,15 +196,15 @@ pub struct ExplicitBackfillServices {
     pub library: Option<Arc<dyn ILocalLibraryService>>,
 }
 
-/// Stopped by the host's shutdown: the run counts as interrupted (`OperationCanceledException`).
+/// Stopped by the host's shutdown: the run counts as interrupted.
 struct Stopped;
 
-/// The marking itself: a BackgroundService in C#, one run at a time.
+/// The marking itself: a background worker, one run at a time.
 pub struct ExplicitBackfill {
     store: Arc<ExplicitBackfillStore>,
     journal: Arc<TagEditJournal>,
     catalog: Arc<dyn IExplicitCatalog>,
-    /// `IConfiguration`: `Library:DownloadPath` and the Navidrome address, read at use.
+    /// `Library:DownloadPath` and the Navidrome address, read at use.
     settings: Arc<SettingsStore>,
     services: ExplicitBackfillServices,
     cancel_requested: AtomicBool,
@@ -240,8 +239,8 @@ impl ExplicitBackfill {
         settings: Arc<SettingsStore>,
         services: ExplicitBackfillServices,
     ) -> Self {
-        // Capacity 1, and a request past it is dropped (`DropWrite`): `pending` keeps a second
-        // one from ever being written while one waits.
+        // Capacity 1, and a request past it is dropped: `pending` keeps a second one from ever
+        // being written while one waits.
         let (sender, receiver) = mpsc::channel(1);
         Self {
             store,
@@ -300,8 +299,7 @@ impl ExplicitBackfill {
     /// What the dashboard calls this job when another one has to wait for it.
     pub const JOB_NAME: &'static str = "Explicit marking";
 
-    /// The songs to look at instead of Navidrome's list, and no waits (tests: the C# set
-    /// `ListSongs`, `Pace` and `BusyWait`).
+    /// The songs to look at instead of Navidrome's list, and no waits (tests).
     pub fn for_tests(mut self, list_songs: ListSongs) -> Self {
         self.list_songs = Some(list_songs);
         self.pace = Duration::ZERO;
@@ -369,7 +367,7 @@ impl ExplicitBackfill {
         }
     }
 
-    /// `ExecuteAsync`: one request at a time until the host stops.
+    /// The worker loop: one request at a time until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut queue = self.receiver.lock().await;
         loop {
@@ -614,8 +612,8 @@ impl ExplicitBackfill {
             ) => listed,
             () = stopping.cancelled() => return Err(Failure::Stopped),
         };
-        // The trash is not part of the library (port fix): a trash folder with no leading dot
-        // is one Navidrome lists.
+        // The trash is not part of the library: a trash folder with no leading dot is one
+        // Navidrome lists.
         let trash = library_walk::trash_folder(Path::new(&root), &self.settings.current().library_actions);
         if !listed.is_empty() {
             return Ok(from_navidrome(listed, &trash));
@@ -848,7 +846,7 @@ enum Failure {
     Error(anyhow::Error),
 }
 
-/// `Task.Delay(delay, ct)`.
+/// Waits `delay`, or stops early when the host stops.
 async fn sleep(delay: Duration, stopping: &CancellationToken) -> Result<(), Failure> {
     tokio::select! {
         () = tokio::time::sleep(delay) => Ok(()),
@@ -1007,7 +1005,7 @@ fn undo_one(entry: &TagEditEntry, journal: &TagEditJournal) -> (bool, Option<Str
     (false, result.error, file_state(&entry.path).unwrap_or_default())
 }
 
-/// `FileInfo.Length` and `LastWriteTimeUtc.Ticks`, or None when the file is not there.
+/// The file's length and last write time in ticks, or None when the file is not there.
 fn file_state(path: &str) -> Option<(i64, i64)> {
     let metadata = std::fs::metadata(path).ok().filter(std::fs::Metadata::is_file)?;
     Some((
@@ -1023,7 +1021,7 @@ fn last_write_ticks(metadata: &std::fs::Metadata) -> i64 {
         .unwrap_or_default()
 }
 
-/// `Path.GetFileNameWithoutExtension`.
+/// The file name up to its last dot.
 fn file_stem(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {
@@ -1032,7 +1030,7 @@ fn file_stem(path: &str) -> String {
     }
 }
 
-/// `Path.GetExtension`: from the file name's last dot, or nothing.
+/// The extension: from the file name's last dot, or nothing.
 fn extension_of(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {
@@ -1041,17 +1039,17 @@ fn extension_of(path: &str) -> String {
     }
 }
 
-/// `StringComparer.Ordinal`: UTF-16 code unit order.
+/// Ordinal comparison: UTF-16 code unit order.
 fn compare_ordinal(a: &str, b: &str) -> CmpOrdering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-/// `Guid.NewGuid().ToString("N")[..12]`.
+/// The first 12 hex digits of a random UUID.
 fn new_run_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
-/// A list's length as the run's `int` counters hold it.
+/// A list's length as the run's `i32` counters hold it, capped at `i32::MAX`.
 fn count(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
 }

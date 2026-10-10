@@ -1,7 +1,6 @@
-//! Port of `Services/Metadata/DeezerMetadataService.Charts.cs`: Deezer's popularity lists, an
-//! artist's most played songs and the chart of the moment. Both keyless, and each track comes
-//! with its album, cover and length, so a row needs no further lookup to be shown. Here the
-//! chart is Popular right now's backup, for when Apple's cannot be read.
+//! Deezer's popularity lists, an artist's most played songs and the chart of the moment. Both
+//! keyless, and each track comes with its album, cover and length, so a row needs no further
+//! lookup to be shown. The chart is Popular right now's backup, for when Apple's cannot be read.
 
 use std::sync::Arc;
 use std::time::Duration;

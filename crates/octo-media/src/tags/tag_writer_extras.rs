@@ -1,8 +1,7 @@
-//! Port of `Services/Common/TagWriterExtras.cs`: the tag frames TagLib's generic Tag does not
-//! expose, written in the frame each container's readers look for. Navidrome's mappings.yaml
-//! maps TXXX:ARTISTS (ID3v2), ARTISTS (Vorbis) and ----:com.apple.iTunes:ARTISTS (MP4) to its
-//! artists tag, and reads the recording id from UFID:http://musicbrainz.org,
-//! MUSICBRAINZ_TRACKID and "MusicBrainz Track Id".
+//! The tag frames the generic tag fields do not cover, written in the frame each container's
+//! readers look for. Navidrome's mappings.yaml maps TXXX:ARTISTS (ID3v2), ARTISTS (Vorbis) and
+//! ----:com.apple.iTunes:ARTISTS (MP4) to its artists tag, and reads the recording id from
+//! UFID:http://musicbrainz.org, MUSICBRAINZ_TRACKID and "MusicBrainz Track Id".
 
 use std::path::Path;
 
@@ -225,9 +224,7 @@ pub fn set_text(file: &mut TagFile, field: TagField, value: Option<&str>) {
 /// writer keeps [`set_text`], where an empty value means "not found", which must never strip
 /// what a peer wrote.
 ///
-/// Fixed in the port only: C# `LibraryTagEdits.Set` wrote an ISRC through `SetText`, so
-/// clearing it, and the undo of an ISRC retag, left the tag in the file
-/// (`TagWriterExtras.cs:98-101`; `docs/rust-migration/known-diffs.md`).
+/// Clearing an ISRC, and the undo of an ISRC retag, take it off the file this way.
 pub fn set_or_clear_text(file: &mut TagFile, field: TagField, value: Option<&str>) {
     if trimmed(value).is_some() {
         set_text(file, field, value);
@@ -423,15 +420,15 @@ pub fn read_advisory(file: &TagFile) -> Option<i32> {
     read_text(file, TagFields::ADVISORY).and_then(|text| super::net::parse_int(&text))
 }
 
-/// `gainDb.ToString("+0.00;-0.00", CultureInfo.InvariantCulture) + " dB"`: a negative value
-/// that rounds to zero takes the first section.
+/// The gain as `+0.00 dB` or `-0.00 dB`: a negative value that rounds to zero is written with a
+/// plus.
 pub fn gain_text(gain_db: f64) -> String {
     let body = net_format::fixed(gain_db.abs(), 2, 2);
     let sign = if gain_db < 0.0 && body != "0.00" { '-' } else { '+' };
     format!("{sign}{body} dB")
 }
 
-/// `peak.ToString("0.000000", CultureInfo.InvariantCulture)`.
+/// The peak with six decimals.
 pub fn peak_text(peak: f64) -> String {
     net_format::fixed(peak, 6, 6)
 }
@@ -521,9 +518,8 @@ pub fn is_compilation(file: &TagFile) -> bool {
 /// The frame names a barcode is kept under, in the order they are asked.
 const BARCODE_NAMES: [&str; 3] = ["BARCODE", "UPC", "EAN"];
 
-/// `CoverUpgradeWorker.BarcodeOf` (`Services/CoverArt/CoverUpgrade.cs`), here because it reads
-/// the containers' own tags: the album's barcode when the song carries one (about one song in
-/// ten of Brandon's), from the Vorbis comment, then the ID3v2 TXXX frames in frame order, then
+/// The album's barcode when the song carries one, read here because it needs the containers'
+/// own tags: from the Vorbis comment, then the ID3v2 TXXX frames in frame order, then
 /// the iTunes freeform boxes. With it, the album needs no lookup to be matched at Apple.
 pub fn barcode_of(file: &TagFile) -> Option<String> {
     let usable = |value: &String| !value.is_empty();
@@ -643,7 +639,7 @@ fn as_strs(values: &[String]) -> Vec<&str> {
     values.iter().map(String::as_str).collect()
 }
 
-/// `TagWriterExtras.ReadFacts` as the release identifier asks for it.
+/// [`read_facts`] as the release identifier asks for it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TagWriterExtras;
 

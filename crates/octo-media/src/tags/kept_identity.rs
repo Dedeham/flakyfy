@@ -1,8 +1,7 @@
-//! Port of `Services/Library/KeptIdentity.cs`: reads a file's identity the way Navidrome 0.64
-//! does and writes it onto a replacement (W8). Navidrome keeps a moved song's id, and every
-//! play, favorite and playlist place on it, only when the new file has the same persistent id
-//! as the one that went missing. Key lists are resources/mappings.yaml's aliases, lowercased,
-//! in its order.
+//! Reads a file's identity the way Navidrome 0.64 does and writes it onto a replacement.
+//! Navidrome keeps a moved song's id, and every play, favorite and playlist place on it, only
+//! when the new file has the same persistent id as the one that went missing. Key lists are
+//! resources/mappings.yaml's aliases, lowercased, in its order.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -326,7 +325,7 @@ impl KeptIdentityTags {
     }
 }
 
-/// `Values(view, keys)`: every value under the keys, in key order, each once.
+/// Every value under the keys, in key order, each once.
 fn values(view: &NavidromeView, keys: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for key in keys {
@@ -364,7 +363,8 @@ fn remove(file: &mut TagFile) {
     }
 }
 
-/// `DateTime.TryParseExact(head, "yyyy-MM-dd")` (or `"yyyy-MM"`), invariant culture.
+/// Whether `text` is a date written `yyyy-MM-dd` (or `yyyy-MM` without the day): ASCII digits,
+/// a month from 1 to 12 and a day that month has.
 fn is_date(text: &str, with_day: bool) -> bool {
     let bytes = text.as_bytes();
     let expected = if with_day { 10 } else { 7 };
@@ -400,7 +400,8 @@ fn is_date(text: &str, with_day: bool) -> bool {
     (1..=days).contains(&day)
 }
 
-/// `Guid.TryParseExact(text, "N" or "D")`, written back as "D" in lower case.
+/// A GUID as 32 hex digits (`compact`) or in the dashed 8-4-4-4-12 form, written back dashed
+/// and in lower case.
 fn parse_guid(text: &str, compact: bool) -> Option<String> {
     let hex: String = if compact {
         (text.len() == 32 && text.bytes().all(|b| b.is_ascii_hexdigit())).then(|| text.to_string())?
@@ -429,7 +430,7 @@ fn parse_guid(text: &str, compact: bool) -> Option<String> {
     ))
 }
 
-/// `Path.GetFileNameWithoutExtension`.
+/// The file name, cut at its last dot (the whole name when it has none).
 fn file_name_without_extension(path: &Path) -> String {
     let name = path
         .file_name()

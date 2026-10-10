@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/IcyMetadataStream.cs`.
-//!
 //! Adds ICY framing around Octo's existing station-track metadata. This stream owns no discovery
 //! or artwork logic; it only transports the artist/title that the radio snapshot already
 //! selected.
@@ -20,7 +18,7 @@ pub struct IcyMetadataStream<W> {
 }
 
 impl<W: AsyncWrite + Unpin> IcyMetadataStream<W> {
-    /// `interval` must be positive (C# threw `ArgumentOutOfRangeException`).
+    /// `interval` must be positive; zero panics.
     pub fn new(inner: W, interval: usize) -> Self {
         assert!(interval > 0, "the ICY interval must be positive");
         IcyMetadataStream {
@@ -113,7 +111,6 @@ mod tests {
         value
     }
 
-    // LastFmRadioCoreTests.IcyMetadataStream_FramesExistingTrackMetadataAtFixedAudioIntervals
     #[tokio::test]
     async fn icy_metadata_stream_frames_existing_track_metadata_at_fixed_audio_intervals() {
         let mut stream = IcyMetadataStream::new(Vec::new(), 4);
@@ -150,7 +147,7 @@ mod tests {
         assert_eq!(bytes.len(), offset);
     }
 
-    /// Rust-only: no track is an empty block, quotes and control characters are made safe, and a
+    /// No track is an empty block, quotes and control characters are made safe, and a
     /// long title is cut on a character boundary.
     #[test]
     fn blocks_are_safe_and_bounded() {

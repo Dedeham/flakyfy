@@ -64,7 +64,7 @@ pub fn paint(
     }
 
     // The words are white over the colors, at their opacity, with eight-or-more steps of edge
-    // smoothing (tiny-skia's anti-aliasing; C# asked ImageSharp for eight).
+    // smoothing (tiny-skia's anti-aliasing).
     let (width, height) = image.dimensions();
     let rgba: Vec<u8> = image
         .pixels()

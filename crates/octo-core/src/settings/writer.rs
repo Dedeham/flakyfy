@@ -1,6 +1,6 @@
-//! `Octo.Services.Admin.SettingsFileWriter`: reads and writes `settings.json` for the admin
-//! API, on top of [`Node`] so numbers keep their text and the output matches
-//! `JsonNode.ToJsonString(WriteIndented = true)` byte for byte (config.md §4).
+//! [`SettingsFileWriter`]: reads and writes `settings.json` for the admin API, on top of
+//! [`Node`] so numbers keep their text and the indented output stays byte for byte what
+//! existing files hold.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use super::text::eq_ignore_case;
 use crate::json::dom::Node;
 
-/// A JSON object as `JsonObject` holds it: properties in order, values as nodes.
+/// A JSON object: properties in order, values as nodes.
 pub type JsonObject = IndexMap<String, Node>;
 
 /// Returned instead of writing when settings.json exists but cannot be parsed. Overwriting it
@@ -80,9 +80,8 @@ impl SettingsFileWriter {
     /// merged. A dictionary setting needs this, or a key the user removed would survive in the
     /// file forever.
     ///
-    /// Unlike the C# (whose `JsonObject` keys are case-sensitive), a patch key matches an
-    /// existing key ignoring case and keeps the existing spelling, so a save can never leave two
-    /// spellings of one key for the configuration reader to reject (config.md §4, known-diffs).
+    /// A patch key matches an existing key ignoring case and keeps the existing spelling, so a
+    /// save can never leave two spellings of one key for the configuration reader to reject.
     pub fn merge(
         &self,
         patch: &JsonObject,
@@ -144,7 +143,7 @@ impl SettingsFileWriter {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(JsonObject::new()),
             Err(e) => return Err(e.into()),
         };
-        // File.ReadAllText: a BOM is dropped and invalid UTF-8 becomes U+FFFD.
+        // A BOM is dropped and invalid UTF-8 becomes U+FFFD.
         let text = String::from_utf8_lossy(&bytes);
         let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
         if text.trim().is_empty() {
@@ -168,14 +167,14 @@ impl SettingsFileWriter {
         let mut tmp = self.path.clone().into_os_string();
         tmp.push(".tmp");
         let tmp = PathBuf::from(tmp);
-        // UTF-8 without a BOM and without a trailing newline, as File.WriteAllText wrote
-        // JsonNode.ToJsonString. rename(2) is atomic on one filesystem; there is no fsync.
+        // UTF-8 without a BOM and without a trailing newline. rename(2) is atomic on one
+        // filesystem; there is no fsync.
         std::fs::write(&tmp, to_indented_json(content))?;
         std::fs::rename(&tmp, &self.path)
     }
 }
 
-/// `content.ToJsonString(new JsonSerializerOptions { WriteIndented = true })`.
+/// The object as indented JSON, as settings.json is written.
 pub fn to_indented_json(content: &JsonObject) -> String {
     // Node::Object owns its map; the clone is cheap next to the disk write.
     Node::Object(content.clone()).to_json_string(true)
@@ -191,9 +190,8 @@ fn known_sections() -> impl Iterator<Item = &'static str> {
 
 /// Every top-level key that names a known section in another case is written with the section's
 /// own spelling, and two spellings of one section become one (the later one's keys winning, in
-/// the place of the first). A port fix: the C# writer kept `"lidarr"` beside `"Lidarr"`, and the
-/// configuration reader then refused the file on reload as a duplicate key (BACKLOG, "Found
-/// while building the harness"; known-diffs.md).
+/// the place of the first). Left as `"lidarr"` beside `"Lidarr"`, the configuration reader
+/// would refuse the file on reload as a duplicate key.
 pub fn canonical_sections(doc: &mut JsonObject) {
     for canonical in known_sections() {
         let spellings: Vec<String> = doc

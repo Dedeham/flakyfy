@@ -1,13 +1,13 @@
-//! Port of `Services/Tagging/TagPreview.cs`.
+//! "Try it on a song": a download's whole identification, run without writing anything.
 //!
-//! The services the C# resolved from the provider go through traits this crate defines:
+//! The services a preview needs go through traits this crate defines:
 //!
-//! - [`FileFactsReader`] (`TagWriterExtras.ReadFacts`, `octo-media`, task 3-D);
-//! - [`FingerprintVerifier`] (`DownloadVerificationService.IsFingerprintingEnabled` and
-//!   `VerifyAsync`, the `octo` crate, task 4-B);
-//! - [`PreviewLoudnessMeter`] (`ILoudnessMeter.MeasureAsync` plus `ReplayGainTags.ForTrack`,
-//!   `octo-media`'s `audio::loudness_meter`, already ported: an adapter wraps it);
-//! - [`CatalogBlankFiller`] (`BaseDownloadService.FillBlanksFromCatalog`, task 4-B).
+//! - [`FileFactsReader`] (the tag reader, `octo-media`);
+//! - [`FingerprintVerifier`] (`DownloadVerificationService::is_fingerprinting_enabled` and
+//!   `verify`, the `octo` crate);
+//! - [`PreviewLoudnessMeter`] (`ILoudnessMeter::measure` plus `ReplayGainTags::for_track`,
+//!   `octo-media`'s `audio::loudness_meter`: an adapter wraps it);
+//! - [`CatalogBlankFiller`] (`BaseDownloadService::fill_blanks_from_catalog`).
 
 use std::sync::Arc;
 
@@ -27,19 +27,20 @@ use crate::tagging::tag_plan::{FieldDecision, TagReport};
 /// The verification calls a preview makes (`DownloadVerificationService`).
 #[async_trait]
 pub trait FingerprintVerifier: Send + Sync {
-    /// `IsFingerprintingEnabled`: verification is on and AcoustID has a key.
+    /// Verification is on and AcoustID has a key.
     fn is_fingerprinting_enabled(&self) -> bool;
 
-    /// `VerifyAsync(path, artist, title)`, with no ISRC and without refusing live takes.
+    /// Verifies the file at `path` as `artist` and `title`, with no ISRC and without refusing
+    /// live takes.
     async fn verify(&self, path: &str, artist: &str, title: &str) -> VerificationResult;
 }
 
-/// The ReplayGain texts `ReplayGainTags.ForTrack` gives for a measurement.
+/// The ReplayGain texts `ReplayGainTags::for_track` gives for a measurement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplayGainText {
-    /// `GainText`: "-6.50 dB".
+    /// The gain: "-6.50 dB".
     pub gain_text: String,
-    /// `PeakText`: "0.966051".
+    /// The peak: "0.966051".
     pub peak_text: String,
 }
 
@@ -48,12 +49,12 @@ pub struct ReplayGainText {
 pub struct MeasuredLoudness {
     pub integrated_lufs: f64,
     pub true_peak_dbfs: f64,
-    /// `ReplayGainTags.ForTrack(measured)`, None when it gives no tags.
+    /// `ReplayGainTags::for_track` of the measurement, None when it gives no tags.
     pub replay_gain: Option<ReplayGainText>,
 }
 
-/// `ILoudnessMeter.MeasureAsync`, read through `ReplayGainTags.ForTrack`. None when the meter
-/// could not measure; an error is what the C# caught as an exception.
+/// `ILoudnessMeter::measure`, read through `ReplayGainTags::for_track`. None when the meter
+/// could not measure; an error is a failure the preview logs and gets past.
 #[async_trait]
 pub trait PreviewLoudnessMeter: Send + Sync {
     async fn measure(
@@ -64,7 +65,8 @@ pub trait PreviewLoudnessMeter: Send + Sync {
     ) -> anyhow::Result<Option<MeasuredLoudness>>;
 }
 
-/// `BaseDownloadService.FillBlanksFromCatalog`: the old fill-the-blanks rules that run after a plan.
+/// `BaseDownloadService::fill_blanks_from_catalog`: the old fill-the-blanks rules that run
+/// after a plan.
 pub trait CatalogBlankFiller: Send + Sync {
     fn fill_blanks_from_catalog(&self, song: &mut Song, meta: Option<&FullTrackMeta>);
 }
@@ -82,7 +84,7 @@ pub struct TagPreview {
 }
 
 impl TagPreview {
-    /// `verification` and `meter` are None where the C# found no such service registered.
+    /// `verification` and `meter` are None when no such service is available.
     pub fn new(
         settings: Arc<SettingsStore>,
         identifier: Arc<ReleaseIdentifier>,

@@ -1,6 +1,5 @@
-//! What the ported service tests share: a mock server that answers by URL substring (the
-//! Moq'd `HttpMessageHandler`s of the C# tests), and a capture of the log lines (`Mock<ILogger>`
-//! verifications).
+//! What the service tests share: a mock server that answers by URL substring, and a capture of
+//! the log lines.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,10 +28,9 @@ pub(crate) fn refused_address() -> String {
 /// How a route's needle is compared with the request URL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Matching {
-    /// `url.Contains(needle, OrdinalIgnoreCase)` on the URL as sent.
+    /// The URL as sent contains the needle, ignoring case.
     IgnoreCase,
-    /// `Uri.UnescapeDataString(url).Contains(needle, Ordinal)`, or `EndsWith` for a needle
-    /// ending in `$` (QueryVariantLookupTests' harness).
+    /// The unescaped URL contains the needle exactly, or ends with it for a needle ending in `$`.
     Unescaped,
 }
 
@@ -66,7 +64,7 @@ impl Routes {
         }
     }
 
-    /// One body per route, as the C# `Dictionary<needle, body>` harness had.
+    /// One body per route.
     pub fn single(routes: Vec<(&str, &str)>) -> Self {
         Self::new(
             routes
@@ -213,8 +211,8 @@ pub fn run_ffmpeg(dir: &std::path::Path, arguments: &str) {
     );
 }
 
-/// `AudioFixtures.Mp3`: twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz, the smallest
-/// file the tag writer opens as an MP3.
+/// Twenty silent MPEG-1 Layer III frames, 128 kbps, 44.1 kHz, the smallest file the tag writer
+/// opens as an MP3.
 pub fn mp3() -> Vec<u8> {
     const FRAME_LENGTH: usize = 417;
     let mut bytes = vec![0u8; FRAME_LENGTH * 20];
@@ -225,8 +223,7 @@ pub fn mp3() -> Vec<u8> {
     bytes
 }
 
-/// `AudioFixtures.Flac`: a FLAC with a STREAMINFO block describing two seconds of 16-bit stereo
-/// and no frames.
+/// A FLAC with a STREAMINFO block describing two seconds of 16-bit stereo and no frames.
 pub fn flac() -> Vec<u8> {
     let mut bytes = b"fLaC".to_vec();
     bytes.extend_from_slice(&[0x80, 0x00, 0x00, 0x22]);

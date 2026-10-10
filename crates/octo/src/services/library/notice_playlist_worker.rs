@@ -1,6 +1,5 @@
-//! Port of `Services/Library/NoticePlaylistWorker.cs`: the reconcile decision for one person's
-//! notice playlist, and the worker that fills and tidies the playlists Octo asks through (#47)
-//! and sends back the answers AcoustID can use.
+//! The reconcile decision for one person's notice playlist, and the worker that fills and tidies
+//! the playlists Octo asks through (#47) and sends back the answers AcoustID can use.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -113,8 +112,8 @@ impl NoticeReconcile {
             })
             .collect();
 
-        // GroupBy(GroupKey ?? Key): groups in the order their first member came, then oldest
-        // first (a stable OrderBy).
+        // Grouped by group key, else key: groups in the order their first member came, then
+        // oldest first (a stable sort).
         let mut groups: Vec<(&str, Vec<&NoticeEntry>)> = Vec::new();
         for entry in waiting {
             let key = entry.group_key.as_deref().unwrap_or(&entry.key);
@@ -164,7 +163,7 @@ pub struct NoticePlaylistWorker {
     identity: NavidromeIdentityService,
     acoust_id: Arc<AcoustIdClient>,
     music_brainz: Arc<MusicBrainzClient>,
-    /// `IOptionsMonitor` of the library action and Soulseek settings, read at each sweep.
+    /// The library action and Soulseek settings, read at each sweep.
     settings: Arc<SettingsStore>,
 }
 
@@ -192,12 +191,12 @@ impl NoticePlaylistWorker {
         }
     }
 
-    /// `ExecuteAsync`.
+    /// The worker loop, until the host stops.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         while !stopping.is_cancelled() {
             let settings = self.settings.current().library_actions.clone();
-            // Per-sweep catch is mandatory: BackgroundServiceExceptionBehavior defaults to
-            // StopHost, so one unhandled exception here would take Octo down.
+            // Per-sweep catch is mandatory: one failed sweep must never stop the worker, so a
+            // sweep that panics is caught here.
             if settings.enabled && settings.notices_enabled() && self.identity.has_admin_identity() {
                 let sweep = tokio::select! {
                     sweep = std::panic::AssertUnwindSafe(self.sweep(&settings)).catch_unwind() => sweep,
@@ -324,7 +323,7 @@ impl NoticePlaylistWorker {
     /// Send the fingerprints people confirmed. Only with consent and a user key, never in a dry
     /// run, never for a track AcoustID confidently called something else, only for the standard
     /// 120-second fingerprint AcoustID's own tools make, and only with one unambiguous recording.
-    /// `Err` where the C# let an exception out: MusicBrainz timed out or answered nonsense.
+    /// `Err` when MusicBrainz timed out or answered nonsense.
     async fn submit_kept(&self, settings: &LibraryActionSettings) -> anyhow::Result<()> {
         let soulseek = self.settings.current().soulseek.clone();
         if !Self::may_submit(settings, &soulseek) {

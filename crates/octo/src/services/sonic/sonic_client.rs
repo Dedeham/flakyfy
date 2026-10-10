@@ -1,5 +1,5 @@
-//! Port of `Services/Sonic/SonicClient.cs`: the octo-sonic sidecar, which reads a song and says
-//! how it sounds, and where it can blend into the next song (its transition profile).
+//! The octo-sonic sidecar's client: octo-sonic reads a song and says how it sounds, and where it
+//! can blend into the next song (its transition profile).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,8 +67,7 @@ pub struct SonicAnswer {
     pub status: u16,
 }
 
-/// The connection dropped, or the call timed out, before octo-sonic answered (the C#
-/// `HttpRequestException` or `TaskCanceledException`).
+/// The connection dropped, or the call timed out, before octo-sonic answered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct SonicDropped(pub String);
@@ -96,7 +95,7 @@ pub trait ISonicClient: Send + Sync {
 pub struct SonicClient {
     /// `octo-sonic`: 11 minutes, longer than the sidecar takes over the longest song it reads.
     http: reqwest::Client,
-    /// `IOptionsMonitor<RadioSourceSettings>`: the address is read at every call.
+    /// The radio source settings: the address is read at every call.
     settings: Arc<SettingsStore>,
 }
 
@@ -125,12 +124,12 @@ impl SonicClient {
     }
 }
 
-/// The body as JSON, an empty body as `{}`. `Err` where `JsonDocument.Parse` threw.
+/// The body as JSON, an empty body as `{}`. `Err` when the body is not JSON.
 fn parse(body: &str) -> serde_json::Result<Value> {
     serde_json::from_str(if body.is_empty() { "{}" } else { body })
 }
 
-/// `TryGetInt32`: a number that is a whole `int`.
+/// A JSON number that is a whole number within `i32`; anything else is None.
 fn int32(value: Option<&Value>) -> Option<i32> {
     value?.as_i64().and_then(|n| i32::try_from(n).ok())
 }
@@ -240,7 +239,7 @@ impl ISonicClient for SonicClient {
             return Ok(unreadable());
         };
         if !status.is_success() {
-            // TryGetProperty on an answer that is not an object threw: that is unreadable too.
+            // An answer that is not an object is unreadable too.
             let Value::Object(_) = &doc else {
                 return Ok(unreadable());
             };
@@ -308,8 +307,7 @@ mod tests {
         client(&server).await.health().await
     }
 
-    /// Rust-only (the C# tests drove this client through a fake handler): health in each of its
-    /// states, read as the C# read it.
+    /// Health in each of its states.
     #[tokio::test]
     async fn health_reads_each_state() {
         assert_eq!(

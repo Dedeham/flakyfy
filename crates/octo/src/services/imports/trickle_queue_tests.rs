@@ -1,4 +1,4 @@
-//! The queue half of `TrickleTests.cs`, and the file's round trip.
+//! The trickle queue, and its file's round trip.
 
 use std::sync::Arc;
 

@@ -401,8 +401,7 @@ impl SubsonicSettings {
     }
 
     pub fn effective_heart_download_sources(&self) -> Vec<HeartDownloadStep> {
-        // GroupBy keeps the first step per source, in first-seen order. (C# also drops steps
-        // whose Source is not a defined enum value; a Rust enum cannot hold one.)
+        // The first step per source is kept, in first-seen order.
         let mut configured: Vec<HeartDownloadStep> = Vec::new();
         for step in &self.heart_download_sources {
             if configured.iter().any(|s| s.source == step.source) {
@@ -456,7 +455,6 @@ impl SubsonicSettings {
 mod tests {
     use super::*;
 
-    // HeartAcquisitionCoordinatorTests.LegacyFallbackMapsToOrderedSourcesWithLidarrLast
     #[test]
     fn legacy_fallback_maps_to_ordered_sources_with_lidarr_last() {
         let settings = SubsonicSettings {
@@ -484,7 +482,6 @@ mod tests {
         );
     }
 
-    // HeartAcquisitionCoordinatorTests.ConfiguredOrderIsPreservedAndMissingSourcesAreAppendedDisabled
     #[test]
     fn configured_order_is_preserved_and_missing_sources_are_appended_disabled() {
         let settings = SubsonicSettings {

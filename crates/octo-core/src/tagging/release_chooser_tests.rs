@@ -1,4 +1,4 @@
-//! `ReleaseChooserTests.cs`: the calibration table. Ten downloads as they arrive, each with the
+//! Release chooser tests: the calibration table. Ten downloads as they arrive, each with the
 //! candidates its sources would offer, and the release, confidence and album-level outcome each
 //! must land on. The fixtures pin outcomes, not numbers, so a constant may be tuned until every
 //! row holds.
@@ -75,7 +75,7 @@ fn evidence(request: TagRequest, file: FileFacts, fingerprinted: &[&str]) -> Tag
     }
 }
 
-/// The C# `Fingerprinted(...)` helper, with its optional arguments as a struct.
+/// A fingerprinted candidate to build, with its optional parts as fields.
 struct Fp<'a> {
     recording_id: &'a str,
     title: &'a str,
@@ -253,8 +253,8 @@ fn a_lone_star_files_under_the_studio_album_the_single_second_and_not_ambiguous(
     assert_eq!(plan.fields["album"].source.as_deref(), Some("Fingerprint"));
 }
 
-/// The same answer when the candidates come from a parsed lookup rather than by hand. (Ported
-/// with 2-D, which brought `AcoustIdClient.ParseLookup`.)
+/// The same answer when the candidates come from a parsed lookup
+/// (`acoust_id_client::parse_lookup`) rather than by hand.
 #[test]
 fn a_from_a_parsed_lookup_gives_the_same_answer() {
     let doc: serde_json::Value = serde_json::from_str(
@@ -979,10 +979,10 @@ fn report_carries_the_top_candidates_their_penalties_and_the_fields() {
     assert_eq!(back.fields["album"].value.as_deref(), Some("Mezzanine"));
 }
 
-// ---- Rust-only: the plan's own rules ----------------------------------------------------
+// ---- the tag plan's own rules -----------------------------------------------------------
 
 #[test]
-fn report_penalties_are_formatted_with_two_decimals_and_the_log_line_reads_like_the_csharp() {
+fn report_penalties_are_formatted_with_two_decimals_and_the_log_line_keeps_its_wording() {
     let (evidence, candidates) = fixture_a();
     let mut plan = ReleaseChooser::choose(&evidence, &candidates, &MatchingSettings::default(), THIS_YEAR);
     let mut song = song_for(&evidence.request);

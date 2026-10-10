@@ -1,5 +1,4 @@
-//! Port of `Services/Metadata/GenreBackfillState.cs`: the backfill run and its store
-//! (`genre-backfill.json`).
+//! The genre backfill run and its store (`genre-backfill.json`).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -219,7 +218,7 @@ impl Serialize for GenreBackfillRun {
 /// temp-and-rename) for the same reason: flushing per file would turn a 1,900-file walk into
 /// 1,900 extra writes, and a torn write would lose the cursor a resume depends on.
 ///
-/// The C# store ran its own 10 s timer and flushed once more on `Dispose`; here that is
+/// The 10 s flush timer, with one more flush on shutdown, is
 /// [`GenreBackfillStore::run_flusher`], registered as a worker by the app state.
 pub struct GenreBackfillStore {
     path: Option<PathBuf>,
@@ -291,8 +290,7 @@ impl GenreBackfillStore {
         }
     }
 
-    /// The C# flush timer and `Dispose`: flushes every [`Self::FLUSH_INTERVAL`] until
-    /// cancelled, then once more.
+    /// The flush timer: flushes every [`Self::FLUSH_INTERVAL`] until canceled, then once more.
     pub async fn run_flusher(&self, stopping: CancellationToken) {
         if self.path.is_none() {
             return;
@@ -370,7 +368,7 @@ mod tests {
         assert_eq!(octo_core::json::to_string(&run), text.trim_end_matches('\n'));
     }
 
-    /// The store loads the fixture and writes it back unchanged (it is Cancelled, so the load
+    /// The store loads the fixture and writes it back unchanged (it is Canceled, so the load
     /// leaves it alone).
     #[test]
     fn the_store_writes_the_fixture_back_unchanged() {
@@ -385,7 +383,6 @@ mod tests {
         );
     }
 
-    /// GenreBackfillStoreTests.Run_SurvivesARestart.
     #[test]
     fn run_survives_a_restart() {
         let (_dir, path) = temp_path();
@@ -406,8 +403,7 @@ mod tests {
         assert_eq!(second.current().changed, 4);
     }
 
-    /// GenreBackfillStoreTests.Load_RunningBecomesInterruptedAndDoesNotRestartItself: a run
-    /// that was going when the process stopped must NOT auto-resume: the user may have
+    /// A run that was going when the process stopped must NOT auto-resume: the user may have
     /// restarted Octo specifically to stop a mass rewrite.
     #[test]
     fn load_running_becomes_interrupted_and_does_not_restart_itself() {
@@ -435,7 +431,6 @@ mod tests {
         );
     }
 
-    /// GenreBackfillStoreTests.CanResume_IsFalseOnceTheQueueIsExhausted.
     #[test]
     fn can_resume_is_false_once_the_queue_is_exhausted() {
         let store = GenreBackfillStore::new(None);
@@ -449,9 +444,8 @@ mod tests {
         assert!(!store.current().can_resume());
     }
 
-    /// GenreBackfillStoreTests.Update_BoundsThePreviewAndTheErrorList: a whole-library
-    /// preview would otherwise grow the state file without limit, and the state file is
-    /// flushed repeatedly during a run.
+    /// A whole-library preview would otherwise grow the state file without limit, and the
+    /// state file is flushed repeatedly during a run.
     #[test]
     fn update_bounds_the_preview_and_the_error_list() {
         let store = GenreBackfillStore::new(None);
@@ -476,8 +470,7 @@ mod tests {
         assert_eq!(current.errors.last().map(String::as_str), Some("error 99"));
     }
 
-    /// GenreBackfillStoreTests.Load_UnreadableFile_StartsIdle: a state file that will not
-    /// parse is a cold start, not a failure to boot.
+    /// A state file that will not parse is a cold start, not a failure to boot.
     #[test]
     fn load_unreadable_file_starts_idle() {
         let (_dir, path) = temp_path();
@@ -487,7 +480,7 @@ mod tests {
         assert!(store.current().dry_run);
     }
 
-    /// An update is written by the flusher, not at once; cancelling it flushes what is left.
+    /// An update is written by the flusher, not at once; canceling it flushes what is left.
     #[tokio::test(start_paused = true)]
     async fn updates_are_flushed_on_the_timer_and_at_shutdown() {
         let (_dir, path) = temp_path();

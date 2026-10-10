@@ -1,8 +1,7 @@
-//! Port of `DownloadAttributionTests`: attribution has to survive the one thing that makes it
-//! interesting, two people wanting the same track. The queue deduplicates by track, so the second
-//! star joins a transfer that is already running rather than starting another, and anything that
-//! reads the requester at enqueue time would credit whoever happened to win that race and drop the
-//! rest.
+//! Download attribution has to survive the one thing that makes it interesting, two people
+//! wanting the same track. The queue deduplicates by track, so the second star joins a transfer
+//! that is already running rather than starting another, and anything that reads the requester
+//! at enqueue time would credit whoever happened to win that race and drop the rest.
 
 use std::sync::Arc;
 

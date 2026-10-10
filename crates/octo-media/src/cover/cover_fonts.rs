@@ -3,9 +3,9 @@
 //! not cover (Chinese, Japanese, Korean, Arabic, Hebrew, emoji). The Docker image installs Noto
 //! CJK and Symbola for that; DejaVu was already there.
 //!
-//! C# set type with SixLabors.Fonts; this port shapes with cosmic-text (harfrust) and draws
-//! the glyph outlines (skrifa) with tiny-skia. Fonts are named as SixLabors named them: by the
-//! name table's family name (name ID 1), so "Inter Display SemiBold", "Noto Sans CJK SC".
+//! Text is shaped with cosmic-text (harfrust), and the glyph outlines (skrifa) are drawn with
+//! tiny-skia. Fonts are named by the name table's family name (name ID 1), so "Inter Display
+//! SemiBold", "Noto Sans CJK SC".
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ const FALLBACK_NAMES: &[&str] = &[
     "Noto Emoji",
 ];
 
-/// Where SixLabors.Fonts' `SystemFonts` looks on Linux, searched recursively.
+/// Where the system's fonts are looked for on Linux, searched recursively.
 fn system_font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -71,7 +71,7 @@ struct Face {
     style: Style,
 }
 
-/// A family as SixLabors grouped them: the faces sharing a name ID 1.
+/// A family: the faces sharing a name ID 1.
 #[derive(Clone, Debug)]
 struct FontFamily {
     name: String,
@@ -82,7 +82,7 @@ struct FontFamily {
 /// The font to set some text in: a family, in bold or not, and the families behind it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FontChoice {
-    /// The family's name (name ID 1), as C#'s `Font.Family.Name`.
+    /// The family's name (name ID 1).
     pub family: String,
     pub bold: bool,
     /// The families tried, in order, for letters it lacks.
@@ -120,14 +120,14 @@ struct Fonts {
 
 static FONTS: LazyLock<Mutex<Fonts>> = LazyLock::new(|| Mutex::new(Fonts::load()));
 
-/// The family name SixLabors knows a face by: its name table's family (name ID 1).
+/// The family name a face goes by: its name table's family (name ID 1).
 fn legacy_family(data: &[u8], index: u32) -> Option<String> {
     let font = FontRef::from_index(data, index).ok()?;
     let name = font.localized_strings(StringId::FAMILY_NAME).english_or_first()?;
     Some(name.to_string())
 }
 
-/// Whether a face is bold, italic, by its OS/2 selection flags (as SixLabors reads its style).
+/// Whether a face is bold, italic, by its OS/2 selection flags.
 fn face_style(data: &[u8], index: u32) -> (bool, bool) {
     let Ok(font) = FontRef::from_index(data, index) else {
         return (false, false);
@@ -236,8 +236,7 @@ impl Fonts {
             let Some((regular, bold)) = wanted.get(*name) else {
                 continue;
             };
-            // A family with only a bold face is no use as a regular one, as SixLabors could
-            // not create its regular font either.
+            // A family with only a bold face is no use as a regular one.
             let Some(regular) = regular.and_then(|id| face_of(&db, id)) else {
                 continue;
             };
@@ -400,7 +399,7 @@ impl Fonts {
     }
 
     /// The chosen face's ascent and descent (both positive) in pixels at `size`, from the line
-    /// metrics SixLabors used: OS/2 typographic ones when the font asks for them, else hhea.
+    /// metrics: OS/2 typographic ones when the font asks for them, else hhea.
     fn vertical_metrics(&self, face: &Face, size: f32) -> (f32, f32) {
         self.metrics_of(face.id, size)
     }
@@ -417,8 +416,8 @@ impl Fonts {
             .unwrap_or((size * 0.8, size * 0.2))
     }
 
-    /// How far below the top of its line SixLabors set a baseline, with the line's fonts'
-    /// largest ascent and descent centerd in a line one size tall (VerticalAlignment.Top).
+    /// How far below the top of its line a baseline sits, with the line's fonts' largest ascent
+    /// and descent centered in a line one size tall, the line aligned to the top.
     fn top_to_baseline(&self, ids: impl IntoIterator<Item = fontdb::ID>, size: f32) -> f32 {
         let (mut ascent, mut descent) = (f32::MIN, f32::MIN);
         for id in ids {
@@ -449,10 +448,10 @@ impl Fonts {
     /// The outlines of shaped glyphs as one path, the line's left edge at `x` and its baseline
     /// at `baseline`.
     ///
-    /// C# drew each line from the top of its box, so that a capital H's foot, measured in the
-    /// same font settings, sat on the baseline. Where the H comes from another font than the
+    /// Each line is drawn from the top of its box, so that a capital H's foot, measured in the
+    /// same font settings, sits on the baseline. Where the H comes from another font than the
     /// text (an Arabic or Hebrew name: Noto has no Latin capitals, so Inter draws the H), the
-    /// two boxes differ, and the text sits that much off the baseline. The port keeps that.
+    /// two boxes differ, and the text sits that much off the baseline. That offset is kept.
     fn outline(
         &self,
         shaped: &Shaped,
@@ -553,7 +552,7 @@ pub fn for_weight(weight: i32) -> String {
     FONTS.lock().for_weight(weight).name.clone()
 }
 
-/// The font to set `text` in at this weight (C# `CoverFonts.For`, less the size).
+/// The font to set `text` in at this weight.
 pub fn for_text(text: &str, weight: i32) -> FontChoice {
     let mut fonts = FONTS.lock();
     let (family, bold) = fonts.choose(text, weight);
@@ -566,7 +565,7 @@ pub fn for_text(text: &str, weight: i32) -> FontChoice {
 }
 
 /// Whether the family (by name) draws the character itself, not its empty box. Its regular
-/// face is asked, as C# asked `family.CreateFont(size)`.
+/// face is asked.
 pub fn has(family: &str, cp: char) -> bool {
     let fonts = FONTS.lock();
     let face = fonts

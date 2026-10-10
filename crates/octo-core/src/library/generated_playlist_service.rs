@@ -1,7 +1,7 @@
-//! The pure half of `Services/Library/GeneratedPlaylistService.cs`: the mix record, the state
-//! file's shape (`generated-playlists.json`), and the rules the C# tests pin: which mixes exist
-//! (hysteresis over counts), what a mix holds for a period (a seeded draw with an artist cap and
-//! a share for new songs), and the Discovery blend. The service that asks Navidrome is
+//! The pure half of the generated playlist service: the mix record, the state file's shape
+//! (`generated-playlists.json`), and the rules the tests pin: which mixes exist (hysteresis over
+//! counts), what a mix holds for a period (a seeded draw with an artist cap and a share for new
+//! songs), and the Discovery blend. The service that asks Navidrome is
 //! `octo::services::library::generated_playlist_service`.
 
 use std::cmp::Ordering;
@@ -69,7 +69,7 @@ impl Default for UserMixes {
         UserMixes {
             active: Vec::new(),
             counts: IndexMap::new(),
-            // default(DateTime): written without a Z, as STJ writes DateTime.MinValue.
+            // The minimum date, written without a Z, as existing state files hold it.
             counts_utc: datetime::min_value(),
             kinds: String::new(),
             for_you: IndexMap::new(),
@@ -79,7 +79,7 @@ impl Default for UserMixes {
 }
 
 /// The file: `{"Users": {"<trimmed lower-cased user>": UserMixes}}`. `users` is None when the
-/// file says `null`, which the C# load skipped.
+/// file says `null`, which loading skips.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct StateDocument {
@@ -91,16 +91,17 @@ pub fn user_key(username: &str) -> String {
     dotnet::to_lower_invariant(username.trim())
 }
 
-/// `DateTime.Ticks`: 100 ns intervals since 0001-01-01.
+/// Ticks: 100 ns intervals since 0001-01-01.
 pub fn dotnet_ticks(value: DateTime<Utc>) -> i64 {
     const UNIX_EPOCH_TICKS: i64 = 621_355_968_000_000_000;
     UNIX_EPOCH_TICKS + value.timestamp() * 10_000_000 + i64::from(value.timestamp_subsec_nanos() / 100)
 }
 
 /// Which kinds the counts and lists were made for: "genre,decade" for the mixes (each only when
-/// the mixes are on), then the Made for you lists that are on ("newReleases+rediscover+deepCuts"),
-/// and what decides their contents: New Releases' weeks, artists and the server's explicit
-/// filter, Rediscover's months. A change to any of them makes the lists again (f54467a, 452f47e).
+/// the mixes are on), then the Made for you lists that are on
+/// ("newReleases+rediscover+deepCuts"), and what decides their contents: New Releases' weeks,
+/// artists and the server's explicit filter, Rediscover's months. A change to any of them makes
+/// the lists again.
 pub fn kinds_of(settings: &GeneratedPlaylistSettings, explicit_filter: ExplicitFilter) -> String {
     let mixes = mixes_on(settings);
     let for_you: Vec<&str> = crate::library::for_you_lists::KINDS
@@ -115,7 +116,7 @@ pub fn kinds_of(settings: &GeneratedPlaylistSettings, explicit_filter: ExplicitF
         for_you.join("+")
     );
     if settings.new_releases {
-        // `(int)explicitFilter`: the C# enum's order.
+        // The filter by number, so kinds already saved in the state file still compare equal.
         let filter = match explicit_filter {
             ExplicitFilter::All => 0,
             ExplicitFilter::ExplicitOnly => 1,
@@ -212,7 +213,7 @@ pub fn parse_genres(rows: Option<&[Node]>, blocked: &IgnoreCaseSet) -> IndexMap<
                 && !blocked.contains(value)
                 && !blocked.contains(&DiscoveryStationSettings::normalize_tag(value))
         });
-    // GroupBy OrdinalIgnoreCase, in first-seen order.
+    // Grouped ignoring case, in first-seen order.
     let mut groups: IndexMap<String, Vec<(String, i32)>> = IndexMap::new();
     for (value, count) in spellings {
         groups
@@ -373,7 +374,7 @@ fn artist_key(song: &Node) -> String {
 
 /// Put up to `wanted` new library songs into the station, spread from the end so the familiar
 /// opening is untouched, never repeating a song already in it. None when nothing was put in:
-/// the station stays as it was (the C# handed back the same list).
+/// the station stays as it was.
 pub fn blend(
     songs: &[Song],
     candidates: &[Node],
@@ -452,7 +453,7 @@ pub fn seed(username: &str, key: &str, period: i64) -> i32 {
     i32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]])
 }
 
-/// `node[name] is JsonValue && TryGetValue<string>`: a JSON string only.
+/// The property when it is a JSON string, else None.
 pub fn str_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
     node.get(name).and_then(Node::as_str)
 }
@@ -489,7 +490,7 @@ pub fn texts_of(node: &Node, name: &str) -> Vec<String> {
     }
 }
 
-/// Ordinal string order (`StringComparer.Ordinal`): UTF-16 code units.
+/// Ordinal string order: UTF-16 code units.
 pub fn compare_ordinal(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }

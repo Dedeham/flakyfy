@@ -1,4 +1,4 @@
-//! Port of `Services/Tagging/ReleaseChooser.cs`.
+//! Chooses the release a download is tagged from.
 
 use std::collections::HashMap;
 

@@ -1,7 +1,7 @@
-//! `GET /api/admin/charts` (Rust only, the charts plan): what the dashboard's Charts card shows:
-//! the chart country (set, detected, used), Apple Music's countries, the lists that can be
-//! turned on (Best New Songs, Trending Songs, the country's genres), and how each list that is on
-//! was last fetched. Behind the sign-in gate like every admin route.
+//! `GET /api/admin/charts`: what the dashboard's Charts card shows: the chart country (set,
+//! detected, used), Apple Music's countries, the lists that can be turned on (Best New Songs,
+//! Trending Songs, the country's genres), and how each list that is on was last fetched. Behind
+//! the sign-in gate like every admin route.
 
 use axum::extract::State;
 use axum::response::Response;

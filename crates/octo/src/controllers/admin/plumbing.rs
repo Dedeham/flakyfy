@@ -1,6 +1,6 @@
-//! Plumbing the AdminController actions share: the browse sign-in (`BrowseUser` and its
-//! cookie), the secret placeholder, and JSON answers written the way MVC wrote them. Request
-//! bodies are read in [`super::json_body`].
+//! Plumbing the admin actions share: the browse sign-in (`BrowseUser` and its cookie), the
+//! secret placeholder, and the JSON answer writers. Request bodies are read in
+//! [`super::json_body`].
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -26,7 +26,7 @@ pub const BROWSE_COOKIE_NAME: &str = "octo_browse";
 /// The header a script signs in with instead of the cookie.
 pub const BROWSE_TOKEN_HEADER: &str = "X-Octo-Browse-Token";
 
-/// `MaskSecret`: the placeholder for a saved secret, `""` for none.
+/// The placeholder for a saved secret, `""` for none.
 pub fn mask_secret(value: Option<&str>) -> String {
     match value {
         Some(v) if !v.is_empty() => SECRET_PLACEHOLDER.to_string(),
@@ -36,8 +36,7 @@ pub fn mask_secret(value: Option<&str>) -> String {
 
 // ---- the browse sign-in ----------------------------------------------------------------
 
-/// `Request.Cookies[name]`: the first cookie of that name, unescaped as ASP.NET unescaped
-/// cookie values.
+/// The first cookie of that name, its value unquoted and percent-decoded.
 pub fn request_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     for value in headers.get_all(header::COOKIE) {
         let Ok(text) = value.to_str() else { continue };
@@ -59,7 +58,7 @@ pub fn request_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     None
 }
 
-/// A request header's value as `[FromHeader]` bound a string: the first one, or None.
+/// A request header's value as a string: the first one, or None.
 pub fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
@@ -67,8 +66,8 @@ pub fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A `[FromQuery] string?` parameter: the first value of the name, matched ignoring case, and
-/// an empty value read as missing (`ConvertEmptyStringToNull`).
+/// An optional query parameter: the first value of the name, matched ignoring case, and an
+/// empty value read as missing.
 pub fn query_value(query: Option<&str>, name: &str) -> Option<String> {
     let query = query?;
     url::form_urlencoded::parse(query.as_bytes())
@@ -77,20 +76,20 @@ pub fn query_value(query: Option<&str>, name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// `Request.IsHttps`, after `UseForwardedHeaders` applied `X-Forwarded-Proto`.
+/// Whether the request came over HTTPS, after `X-Forwarded-Proto` is applied.
 pub fn is_https(scheme: Option<&RequestScheme>) -> bool {
     scheme.is_some_and(|s| s.0.eq_ignore_ascii_case("https"))
 }
 
-/// The cookie's terms (`BrowseCookieOptions`). Secure only over HTTPS, since this is normally
-/// reached over plain HTTP on a LAN and a Secure cookie would simply be dropped there. Its age
-/// is set again on every signed-in request, so the browser keeps it exactly as long as the
-/// server keeps the session. Written in `SetCookieHeaderValue`'s order.
+/// The cookie's terms. Secure only over HTTPS, since this is normally reached over plain HTTP
+/// on a LAN and a Secure cookie would simply be dropped there. Its age is set again on every
+/// signed-in request, so the browser keeps it exactly as long as the server keeps the session.
+/// The attributes are written in a fixed order.
 pub fn browse_cookie(token: &str, https: bool) -> HeaderValue {
     browse_cookie_for(token, https, BrowseSessionStore::TTL)
 }
 
-/// `AdminCookie.Options(request, maxAge)`: [`browse_cookie`] with its own age (an hour for a
+/// [`browse_cookie`] with its own age (an hour for a
 /// recovery-code session). HttpOnly so the page's script cannot read it, SameSite=Strict so no
 /// other site's page sends it, and scoped to /api/admin so it never goes out with the Subsonic
 /// traffic Octo relays.
@@ -104,20 +103,20 @@ pub fn browse_cookie_for(token: &str, https: bool, max_age: chrono::TimeDelta) -
     HeaderValue::from_str(&text).unwrap_or_else(|_| HeaderValue::from_static("octo_browse="))
 }
 
-/// `Response.Cookies.Delete(name, new CookieOptions { Path = "/api/admin" })`.
+/// The sign-in cookie's deletion, on the same path.
 pub fn browse_cookie_deleted() -> HeaderValue {
     HeaderValue::from_static("octo_browse=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/api/admin")
 }
 
-/// `Uri.EscapeDataString`, which ASP.NET applied to a cookie value it wrote.
+/// A cookie value percent-encoded (everything but unreserved characters).
 fn escape_cookie_value(value: &str) -> String {
     octo_core::common::dotnet::escape_data_string(value)
 }
 
-/// The Navidrome admin this request is signed in as (`BrowseUser`), with the cookie to send
-/// back. Cookie first (how the admin UI signs in), header second so the endpoints stay usable
-/// from curl. A live cookie is renewed: [`BrowseUser::finish`] adds it to the answer. A
-/// recovery-code session is not one: it cannot reach the endpoints that touch library files.
+/// The Navidrome admin this request is signed in as, with the cookie to send back. Cookie first
+/// (how the admin UI signs in), header second so the endpoints stay usable from curl. A live
+/// cookie is renewed: [`BrowseUser::finish`] adds it to the answer. A recovery-code session is
+/// not one: it cannot reach the endpoints that touch library files.
 pub struct BrowseUser {
     pub user: Option<String>,
     renew: Option<HeaderValue>,
@@ -142,7 +141,7 @@ impl BrowseUser {
         BrowseUser { user, renew }
     }
 
-    /// `HasBrowseSession`.
+    /// Whether a Navidrome admin is signed in.
     pub fn signed_in(&self) -> bool {
         self.user.is_some()
     }
@@ -158,7 +157,7 @@ impl BrowseUser {
 
 // ---- JSON answers ----------------------------------------------------------------------
 
-/// A JSON document already written as text, with the content type an MVC result gave it.
+/// A JSON document already written as text, with its content type.
 pub fn json_text(status: StatusCode, text: String, content_type: &'static str) -> Response {
     let mut res = Response::new(Body::from(text));
     *res.status_mut() = status;
@@ -167,8 +166,7 @@ pub fn json_text(status: StatusCode, text: String, content_type: &'static str) -
     res
 }
 
-/// `new JsonResult(node)` / `Ok(node)` over a `JsonNode` tree: compact, default escaping,
-/// numbers as written.
+/// A [`Node`] tree as a JSON answer: compact, default escaping, numbers as written.
 pub fn json_node(status: StatusCode, node: &Node) -> Response {
     json_text(
         status,
@@ -177,27 +175,26 @@ pub fn json_node(status: StatusCode, node: &Node) -> Response {
     )
 }
 
-/// An MVC `ObjectResult` (`Ok(obj)`, `BadRequest(obj)`, `Accepted(obj)`, `Conflict(obj)`,
-/// `StatusCode(n, obj)`, ...). In .NET 9 its output formatter swaps the default encoder for
-/// `UnsafeRelaxedJsonEscaping` when none is configured, so `'`, `+` and non-ASCII letters go
-/// out as they are, while `new JsonResult(obj)` (written with [`crate::http::error::json_ok`])
-/// escapes them. The C# baseline shows both: `browse` and `lastfm/scrobble/disconnect` are not
-/// escaped, `settings`, `status` and `config-sources` are.
+/// A JSON answer with any status (200, 400, 202, 409, ...), written with the relaxed encoder,
+/// so `'`, `+` and non-ASCII letters go out as they are, while [`crate::http::error::json_ok`]
+/// escapes them. The recorded answers show both: `browse` and `lastfm/scrobble/disconnect` are
+/// not escaped, `settings`, `status` and `config-sources` are.
 pub fn object_result(status: StatusCode, body: &impl serde::Serialize) -> Response {
     crate::http::error::json_relaxed_response(status, body, "application/json; charset=utf-8")
 }
 
-/// `Ok(obj)`: [`object_result`] with 200.
+/// [`object_result`] with 200.
 pub fn ok(body: &impl serde::Serialize) -> Response {
     object_result(StatusCode::OK, body)
 }
 
-/// `{"error": message}` with a status, as `BadRequest(new { error })` and its kin wrote it.
+/// `{"error": message}` with a status.
 pub fn error_json(status: StatusCode, message: &str) -> Response {
     object_result(status, &serde_json::json!({ "error": message }))
 }
 
-/// STJ's camelCase naming policy (`JsonNamingPolicy.CamelCase`) for one property name.
+/// One property name in camelCase: the leading run of capitals lowered, except a last capital
+/// that starts the next word ("XMLValue" → "xmlValue").
 pub fn camel_case(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     if chars.is_empty() || !chars[0].is_uppercase() {
@@ -224,7 +221,7 @@ pub fn camel_case(name: &str) -> String {
 
 /// A value serialized with its state-file (PascalCase) names, renamed as an API answer writes
 /// it: every property name camelCased, except the keys of the dictionaries named in
-/// `dictionaries` (by their camelCased property name), which STJ left alone.
+/// `dictionaries` (by their camelCased property name), which are left alone.
 pub fn camel_case_value(value: Value, dictionaries: &[&str]) -> Value {
     fn walk(value: Value, dictionaries: &[&str], is_dictionary: bool) -> Value {
         match value {
@@ -250,7 +247,7 @@ pub fn camel_case_value(value: Value, dictionaries: &[&str]) -> Value {
     walk(value, dictionaries, false)
 }
 
-// ---- JsonNode helpers -------------------------------------------------------------------
+// ---- Node helpers -----------------------------------------------------------------------
 
 pub fn n_str(value: &str) -> Node {
     Node::String(value.to_string())
@@ -268,14 +265,14 @@ pub fn n_str_array<S: AsRef<str>>(items: &[S]) -> Node {
     Node::Array(items.iter().map(|s| n_str(s.as_ref())).collect())
 }
 
-/// `KeyOf`: the key in `obj` that matches `name` ignoring case, as configuration keys do.
+/// The key in `obj` that matches `name` ignoring case, as configuration keys do.
 pub fn key_of(obj: &JsonObject, name: &str) -> Option<String> {
     obj.keys()
         .find(|key| octo_core::common::dotnet::eq_ignore_case(key, name))
         .cloned()
 }
 
-/// `Child`: the object under `name` (ignoring case), or None.
+/// The object under `name` (ignoring case), or None.
 pub fn child<'a>(obj: &'a JsonObject, name: &str) -> Option<&'a JsonObject> {
     key_of(obj, name)
         .and_then(|key| obj.get(&key))
@@ -287,7 +284,7 @@ pub fn child_mut<'a>(obj: &'a mut JsonObject, name: &str) -> Option<&'a mut Json
     obj.get_mut(&key).and_then(Node::as_object_mut)
 }
 
-/// `Accepted(new { ... })`.
+/// [`object_result`] with 202 Accepted.
 pub fn accepted(body: &impl serde::Serialize) -> Response {
     object_result(StatusCode::ACCEPTED, body)
 }
@@ -297,7 +294,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn camel_case_follows_the_stj_policy() {
+    fn camel_case_lowers_the_leading_capitals() {
         for (input, expected) in [
             ("Url", "url"),
             ("URLValue", "urlValue"),

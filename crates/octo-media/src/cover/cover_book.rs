@@ -206,14 +206,13 @@ static SHIPPED: LazyLock<CoverBook> = LazyLock::new(|| {
 });
 
 impl CoverBook {
-    /// The book shipped inside the app (C# `CoverBook.Default`).
+    /// The book shipped inside the app.
     pub fn shipped() -> &'static CoverBook {
         &SHIPPED
     }
 
     /// Reads a design, a background library and (optionally) the genre and decade hues. Field
-    /// names are matched ignoring case and numbers may be written as strings, as the C#
-    /// reader's options allowed.
+    /// names are matched ignoring case and numbers may be written as strings.
     pub fn parse(design: &str, library: &str, list_hues: Option<&str>) -> anyhow::Result<CoverBook> {
         let document: Document =
             octo_core::json::web::from_slice(design.as_bytes()).context("the cover design does not parse")?;

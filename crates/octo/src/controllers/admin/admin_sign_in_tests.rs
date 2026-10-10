@@ -1,7 +1,7 @@
-//! `AdminSignInTests.cs`: the dashboard sign-in. Everything here runs with it ON (the rest of
-//! the suite turns it off, as `TestDefaults` did), against a fake Navidrome that knows these
-//! people: admin and listener sign in with "pw"; demoted lost the admin role; gone no longer
-//! exists; admin2 is an admin until a test demotes them.
+//! The dashboard sign-in. Everything here runs with it ON (the rest of the suite turns it off),
+//! against a fake Navidrome that knows these people: admin and listener sign in with "pw";
+//! demoted lost the admin role; gone no longer exists; admin2 is an admin until a test demotes
+//! them.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -918,8 +918,8 @@ async fn sign_out_everywhere_ends_every_browser_of_that_person() {
 }
 
 /// A sign-out answers with the cookie's deletion alone: the gate's renewal of a signed-in
-/// call is left out when the endpoint deletes the cookie (ASP.NET's `Cookies.Delete` took back
-/// the gate's `Append`), for this browser, everywhere, and the recovery code alike.
+/// call is left out when the endpoint deletes the cookie, for this browser, everywhere, and the
+/// recovery code alike.
 #[tokio::test]
 async fn a_sign_out_answers_with_the_deletion_alone() {
     let factory = SignInFactory::new().await;
@@ -1011,7 +1011,7 @@ async fn an_unknown_sign_in_value_keeps_the_sign_in_on() {
     );
 }
 
-// ---- Rust-only ----------------------------------------------------------------------------------
+// ---- Cookie renewal, recovery sessions and saved keys ----------------------------------------
 
 /// A signed-in call carries the cookie again, ahead of the endpoint's own (the gate's renewal,
 /// then `browse`'s), with the recovery code's hour for a recovery session.
@@ -1045,9 +1045,8 @@ async fn the_signed_out_status_is_kept_ten_seconds() {
     assert_eq!(first, second, "the same answer, time included");
 }
 
-/// A port fix: the gate refuses a recovery-code session on every route that reads or changes
-/// library files, the explicit marking included (the C# endpoint asked `UserOf` and let the
-/// recovery code write explicit marks), with the cookie renewed as on any signed-in call.
+/// The gate refuses a recovery-code session on every route that reads or changes library
+/// files, the explicit marking included, with the cookie renewed as on any signed-in call.
 #[tokio::test]
 async fn a_recovery_session_never_reaches_a_library_file_route() {
     let factory = SignInFactory::new().await;
@@ -1118,7 +1117,7 @@ async fn a_recovery_session_never_reaches_a_library_file_route() {
     assert_ne!(reply.status, StatusCode::UNAUTHORIZED);
 }
 
-/// A port fix: `lidarr/test` sends the saved key only to the saved address.
+/// `lidarr/test` sends the saved key only to the saved address.
 #[tokio::test]
 async fn lidarr_test_never_sends_the_saved_key_to_a_new_address() {
     let factory = SignInFactory::with("off", false).await;

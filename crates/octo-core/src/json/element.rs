@@ -1,18 +1,18 @@
-//! `System.Text.Json.JsonElement`'s reading rules over a `serde_json::Value`, for the ports
-//! that walk an external service's answer by hand.
+//! Strict accessors over a `serde_json::Value`, for the readers that walk an external
+//! service's answer by hand.
 //!
-//! The C# readers lean on `JsonElement` throwing where serde_json would quietly answer `None`:
-//! `TryGetProperty` on something that is not an object, `GetString()` on a number,
-//! `GetInt32()` on `3.5`, `GetProperty` on a missing key. Each throw ended the whole read and
-//! landed in the caller's catch, so the Rust readers return a [`Result`] at the same places and
-//! use `?` where the C# let the exception travel.
+//! These fail where serde_json would quietly answer `None`: a property read on something that
+//! is not an object, a string read on a number, an `i32` read on `3.5`, a required property
+//! that is missing. A failure ends the whole read: the accessors return a [`Result`] and the
+//! readers pass it on with `?`, so a malformed answer reads as a failed lookup rather than half
+//! an answer.
 
 use serde_json::Value;
 
-/// What a `JsonElement` accessor threw.
+/// Why an accessor failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ElementError {
-    /// `InvalidOperationException`: the element is not of the kind the accessor needs.
+    /// The element is not of the kind the accessor needs.
     #[error(
         "The requested operation requires an element of type '{expected}', but the target element has type '{actual}'."
     )]
@@ -20,17 +20,17 @@ pub enum ElementError {
         expected: &'static str,
         actual: &'static str,
     },
-    /// `KeyNotFoundException` from `GetProperty`.
+    /// A required property is missing.
     #[error("The given key '{0}' was not present in the dictionary.")]
     KeyNotFound(String),
-    /// `FormatException`: a number that does not fit the type asked for.
+    /// A number that does not fit the type asked for.
     #[error("One or more errors occurred: the JSON value could not be converted to {0}.")]
     Format(&'static str),
 }
 
 pub type ElementResult<T> = Result<T, ElementError>;
 
-/// `JsonElement.ValueKind`, by its .NET name.
+/// The element's kind, by the name the error messages use.
 pub fn kind(value: &Value) -> &'static str {
     match value {
         Value::Object(_) => "Object",
@@ -50,7 +50,7 @@ fn wrong(expected: &'static str, value: &Value) -> ElementError {
     }
 }
 
-/// `TryGetProperty`: throws unless the element is an object.
+/// An optional property: fails unless the element is an object.
 pub fn try_get_property<'a>(element: &'a Value, name: &str) -> ElementResult<Option<&'a Value>> {
     match element {
         Value::Object(map) => Ok(map.get(name)),
@@ -58,12 +58,12 @@ pub fn try_get_property<'a>(element: &'a Value, name: &str) -> ElementResult<Opt
     }
 }
 
-/// `GetProperty`: throws unless the element is an object that has the property.
+/// A required property: fails unless the element is an object that has the property.
 pub fn get_property<'a>(element: &'a Value, name: &str) -> ElementResult<&'a Value> {
     try_get_property(element, name)?.ok_or_else(|| ElementError::KeyNotFound(name.to_string()))
 }
 
-/// `GetString()`: the text of a string, `None` for a JSON null, a throw for anything else.
+/// The text of a string, `None` for a JSON null, an error for anything else.
 pub fn get_string(value: &Value) -> ElementResult<Option<&str>> {
     match value {
         Value::String(text) => Ok(Some(text)),
@@ -72,8 +72,8 @@ pub fn get_string(value: &Value) -> ElementResult<Option<&str>> {
     }
 }
 
-/// `TryGetInt32`: a number written as an integer that fits, else `None`. Never throws for a
-/// number; a non-number throws, as `TryGetInt32` did.
+/// A number written as an integer that fits an `i32`, else `None`. Never fails for a number;
+/// a non-number is an error.
 pub fn try_get_int32(value: &Value) -> ElementResult<Option<i32>> {
     match value {
         Value::Number(number) => Ok(number.as_i64().and_then(|n| i32::try_from(n).ok())),
@@ -81,12 +81,12 @@ pub fn try_get_int32(value: &Value) -> ElementResult<Option<i32>> {
     }
 }
 
-/// `GetInt32()`: throws `FormatException` for a number that is not an integer in range.
+/// An `i32`: fails for a number that is not an integer in range, or a non-number.
 pub fn get_int32(value: &Value) -> ElementResult<i32> {
     try_get_int32(value)?.ok_or(ElementError::Format("Int32"))
 }
 
-/// `GetInt64()`.
+/// An `i64`: fails for a number that is not an integer in range, or a non-number.
 pub fn get_int64(value: &Value) -> ElementResult<i64> {
     match value {
         Value::Number(number) => number.as_i64().ok_or(ElementError::Format("Int64")),
@@ -94,7 +94,7 @@ pub fn get_int64(value: &Value) -> ElementResult<i64> {
     }
 }
 
-/// `GetDouble()`.
+/// A number as an `f64`: fails for a non-number.
 pub fn get_double(value: &Value) -> ElementResult<f64> {
     match value {
         Value::Number(number) => number.as_f64().ok_or(ElementError::Format("Double")),
@@ -102,7 +102,7 @@ pub fn get_double(value: &Value) -> ElementResult<f64> {
     }
 }
 
-/// `GetBoolean()`.
+/// A boolean: fails for anything else.
 pub fn get_boolean(value: &Value) -> ElementResult<bool> {
     match value {
         Value::Bool(flag) => Ok(*flag),
@@ -110,7 +110,7 @@ pub fn get_boolean(value: &Value) -> ElementResult<bool> {
     }
 }
 
-/// `EnumerateArray()`: throws unless the element is an array.
+/// The items of an array: fails unless the element is an array.
 pub fn enumerate_array(value: &Value) -> ElementResult<&[Value]> {
     match value {
         Value::Array(items) => Ok(items),
@@ -118,19 +118,19 @@ pub fn enumerate_array(value: &Value) -> ElementResult<&[Value]> {
     }
 }
 
-/// `GetArrayLength()`.
+/// The length of an array: fails unless the element is an array.
 pub fn array_length(value: &Value) -> ElementResult<usize> {
     enumerate_array(value).map(<[Value]>::len)
 }
 
-/// `GetRawText()`: the element written back compactly. serde_json does not keep the source
-/// text, so this is a re-serialization; the C# only parsed it again.
+/// The element written back compactly. serde_json does not keep the source text, so this is a
+/// re-serialization.
 pub fn raw_text(value: &Value) -> String {
     value.to_string()
 }
 
-/// The readers' common `Str` helper:
-/// `e.TryGetProperty(name, out v) && v.ValueKind == String ? v.GetString() : null`.
+/// A string property: its text when the property is a string, `None` when it is missing or of
+/// another kind. Fails only when the element is not an object.
 pub fn str_prop<'a>(element: &'a Value, name: &str) -> ElementResult<Option<&'a str>> {
     Ok(match try_get_property(element, name)? {
         Some(Value::String(text)) => Some(text),
@@ -149,7 +149,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn accessors_throw_where_json_element_did() {
+    fn accessors_fail_on_the_wrong_kind_or_a_missing_key() {
         assert!(try_get_property(&json!("x"), "a").is_err());
         assert_eq!(try_get_property(&json!({"a": 1}), "b").unwrap(), None);
         assert!(get_property(&json!({}), "id").is_err());

@@ -1,4 +1,4 @@
-//! Port of `Services/Lyrics/NeteaseLyricsSource.cs`.
+//! NetEase as a lyrics source.
 
 use async_trait::async_trait;
 use octo_core::common::dotnet::is_null_or_white_space;
@@ -17,15 +17,15 @@ use super::lyrics_http::{
 
 /// NetEase Cloud Music: much deeper than LRCLIB on non-Western and older music, and often
 /// synced. Its API is undocumented and unlicensed, so it only runs when LYRICS_SOURCES names
-/// it. Every lyric opens with contributor credits, which `LyricsText.StripCredits` removes.
+/// it. Every lyric opens with contributor credits, which `LyricsText::strip_credits` removes.
 pub struct NeteaseLyricsSource {
     /// The `lyrics` client, shared with LRCLIB.
     client: reqwest::Client,
     base_url: String,
 }
 
-/// Why a request gave no JSON: the C# answered a non-success status with null, and let
-/// anything else throw to the method's catch-all.
+/// Why a request gave no JSON: a non-success status, anything else that went wrong, or a
+/// cancellation.
 enum Failure {
     /// Not a success status.
     Status,
@@ -231,7 +231,7 @@ impl NeteaseLyricsSource {
     }
 
     /// The id of the first result that is the same song, by the same artist, of the same length.
-    /// (Internal in C# and called by nothing there either; kept for its tests.)
+    /// (Called by nothing but its tests.)
     #[allow(dead_code)]
     pub(crate) fn pick(root: &Value, query: &LyricsQuery) -> Result<Option<i64>, ShapeError> {
         Ok(Self::read(root)?
@@ -304,7 +304,6 @@ mod tests {
     use crate::services::lyrics::kugou_lyrics_source::tests::{OTHER_VERSIONS, routes};
     use crate::services::lyrics::lyrics_http::lyrics_http_client;
 
-    // SongIdentityTests.Lyrics_NetEase_NeverTakesAnotherVersion (7 rows)
     #[test]
     fn lyrics_netease_never_takes_another_version() {
         for (want, got) in OTHER_VERSIONS {
@@ -318,7 +317,6 @@ mod tests {
         }
     }
 
-    // QueryVariantLookupTests.NetEase_SearchesAgainUntilTheSongIsThere
     #[tokio::test]
     async fn netease_searches_again_until_the_song_is_there() {
         let http = routes(&[
@@ -368,7 +366,7 @@ mod tests {
         assert_eq!(read.len(), 3);
         assert_eq!(read[0].artist, "X & Y");
         assert_eq!(read[0].album.as_deref(), Some("LP"));
-        // Math.Round(200.5) is 200, to even.
+        // 200.5 rounds to 200, half to even.
         assert_eq!(read[0].duration_seconds, Some(200));
         assert_eq!(read[1].title, "");
         assert_eq!(read[1].duration_seconds, None);
@@ -376,7 +374,7 @@ mod tests {
             NeteaseLyricsSource::pick(&root, &LyricsQuery::new("X", "A", None, Some(200))),
             Ok(Some(1))
         );
-        // A name that is not a string threw in C#.
+        // A name that is not a string fails the read.
         let odd: Value = serde_json::from_str(r#"{"result":{"songs":[{"id":1,"name":5}]}}"#).expect("json");
         assert!(NeteaseLyricsSource::read(&odd).is_err());
     }
@@ -402,7 +400,7 @@ mod tests {
         let plain = source.fetch("2", &none).await.result.expect("found");
         assert_eq!(plain.plain.as_deref(), Some("just words"));
         assert_eq!(source.fetch("3", &none).await, LyricsLookup::miss());
-        // "lrc": null is not an object: C# threw, and caught it as a failure.
+        // "lrc": null is not an object, which is a failure.
         assert_eq!(source.fetch("4", &none).await, LyricsLookup::failed());
         // Not found is a failure here, not a miss.
         assert_eq!(source.fetch("5", &none).await, LyricsLookup::failed());

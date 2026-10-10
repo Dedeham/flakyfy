@@ -1,7 +1,7 @@
-//! Port of `Services/Common/TopSongsService.cs`, its pure half: how a catalog's list and
-//! Last.fm's play counts are merged into one ranked list, what the library is searched with
-//! for a row, and which library hit stands for which row. Fetching and the library searches
-//! are `octo::services::common::top_songs_service`.
+//! The pure half of the top songs service: how a catalog's list and Last.fm's play counts are
+//! merged into one ranked list, what the library is searched with for a row, and which library
+//! hit stands for which row. Fetching and the library searches are
+//! `octo::services::common::top_songs_service`.
 
 use serde_json::Value;
 
@@ -20,10 +20,10 @@ pub const APPLE_SOURCE: &str = "apple";
 /// The cover side an Apple row is shown at.
 pub const APPLE_COVER_SIDE: u32 = 1200;
 
-/// `ExplicitStatus.FromCatalog`: Deezer's `explicit_content_lyrics` and `explicit_lyrics` as one
-/// number: 1 explicit, 3 the clean edit, 0 neither, None when it does not say. A partly explicit
-/// album (4) counts as explicit; the other values (2 unknown, 5, 6, 7 no advice) say nothing, so
-/// only the plain flag can answer. Group P ports `ExplicitStatus` whole; this goes to it then.
+/// Deezer's `explicit_content_lyrics` and `explicit_lyrics` as one number: 1 explicit, 3 the
+/// clean edit, 0 neither, None when it does not say. A partly explicit album (4) counts as
+/// explicit; the other values (2 unknown, 5, 6, 7 no advice) say nothing, so only the plain flag
+/// can answer.
 pub fn explicit_from_catalog(content: Option<i32>, explicit_lyrics: Option<bool>) -> Option<i32> {
     match content {
         Some(1 | 4) => Some(1),
@@ -34,8 +34,8 @@ pub fn explicit_from_catalog(content: Option<i32>, explicit_lyrics: Option<bool>
     }
 }
 
-/// A catalog's track: Deezer's chart or artist top list (C# `DeezerMetadataService.ChartTrack`),
-/// or a row of an Apple chart or room.
+/// A catalog's track: a row of Deezer's chart or artist top list, or a row of an Apple chart
+/// or room.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CatalogTrack {
     /// The catalog's own id for the track.
@@ -85,7 +85,7 @@ impl CatalogTrack {
     }
 }
 
-/// Last.fm's ranked track (C# `LastFmService.ChartTrack`).
+/// Last.fm's ranked track.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CountedTrack {
     pub artist: String,

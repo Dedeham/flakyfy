@@ -1,4 +1,5 @@
-//! Port of `Services/Tagging/CandidateSources.cs`.
+//! Where the release chooser's candidates come from: the fingerprint, the music database and
+//! the catalog.
 
 use std::collections::HashMap;
 
@@ -373,10 +374,8 @@ fn blank(value: Option<String>) -> Option<String> {
     value.filter(|v| !is_blank(v))
 }
 
-/// "Various Artists", "Various" or "VA", ignoring case and surrounding space.
-///
-/// Port of `BaseDownloadService.IsVariousArtists` (the download base, task 4-B), which the
-/// catalog candidate needs; that port can call this one.
+/// "Various Artists", "Various" or "VA", ignoring case and surrounding space. The catalog
+/// candidate needs it, and the download base can call this one.
 pub fn is_various_artists(name: Option<&str>) -> bool {
     let value = name.unwrap_or("").trim();
     !value.is_empty()
@@ -390,7 +389,7 @@ mod tests {
     use super::*;
     use crate::fingerprint::acoust_id_client::{AcoustIdCredit, AcoustIdRelease};
 
-    // ---- from MusicBrainzReleaseDetailsTests ----
+    // ---- MusicBrainz release details ----
 
     /// The code lookup's shape: recordings with a first-release-date and their releases.
     #[test]
@@ -451,7 +450,7 @@ mod tests {
         assert_eq!(only.length_seconds, Some(200));
     }
 
-    // ---- Rust-only ----
+    // ---- candidates from each source ----
 
     #[test]
     fn from_fingerprint_fills_each_groups_first_date_from_its_earliest_release() {

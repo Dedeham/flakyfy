@@ -1,7 +1,6 @@
-//! GeneratedPlaylistControllerTests (getPlaylists, getPlaylist and updatePlaylist; getCoverArt is
-//! 6-A2's), RelayedRepeatsTests' UpdatePlaylist_*, SongLengthEndpointTests, and Rust-only
-//! checks of ping, getRandomSongs, the info endpoints, getSimilarSongs and the radio stream's
-//! route.
+//! Generated playlists through getPlaylists, getPlaylist and updatePlaylist, repeated
+//! parameters on updatePlaylist, the song lengths a client receives, and checks of ping,
+//! getRandomSongs, the info endpoints, getSimilarSongs and the radio stream's route.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,10 +39,10 @@ fn json_reply(body: String) -> ResponseTemplate {
 }
 
 // ---------------------------------------------------------------------------------------
-// GeneratedPlaylistControllerTests
+// Generated playlists
 // ---------------------------------------------------------------------------------------
 
-/// GeneratedPlaylistServiceTests' `LibraryNavidrome`: a library of Rock songs.
+/// A library of Rock songs.
 #[derive(Clone, Default)]
 struct LibraryNavidrome {
     calls: Arc<Mutex<Vec<String>>>,
@@ -211,7 +210,7 @@ async fn update_playlist_on_a_mix_is_refused() {
 }
 
 // ---------------------------------------------------------------------------------------
-// RelayedRepeatsTests: UpdatePlaylist_*
+// Repeated parameters on updatePlaylist
 // ---------------------------------------------------------------------------------------
 
 /// One request as Navidrome saw it: its path, its query, and its form body if any.
@@ -307,8 +306,7 @@ async fn update_playlist_form_post_adds_every_song() {
     assert_eq!(all(&pairs, "playlistId"), ["pl1"]);
 }
 
-/// The relay target keeps the client's own spelling of the endpoint (`Request.Path`), less
-/// `.view`.
+/// The relay target keeps the client's own spelling of the endpoint, less `.view`.
 #[tokio::test]
 async fn a_playlist_mutation_is_relayed_under_the_clients_spelling() {
     let (_server, seen, app) = repeats_fixture().await;
@@ -317,8 +315,8 @@ async fn a_playlist_mutation_is_relayed_under_the_clients_spelling() {
 }
 
 // ---------------------------------------------------------------------------------------
-// SongLengthEndpointTests: what a client actually receives, search3 and a station's
-// getPlaylist, through the real metadata service, with Navidrome owning none of the songs.
+// Song lengths: what a client actually receives, search3 and a station's getPlaylist, through the
+// real metadata service, with Navidrome owning none of the songs.
 // ---------------------------------------------------------------------------------------
 
 /// Navidrome with an empty library, Last.fm's track.search and track.getInfo (under `/2.0/`),
@@ -723,7 +721,7 @@ async fn get_song_an_outside_song_carries_its_remembered_length_or_none() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Rust-only
+// ping, getRandomSongs, the info endpoints, getSimilarSongs and the radio stream
 // ---------------------------------------------------------------------------------------
 
 fn unconfigured() -> App {

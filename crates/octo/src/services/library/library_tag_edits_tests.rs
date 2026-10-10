@@ -1,7 +1,5 @@
-//! Tests of `LibraryTagEdits` and `TagEditJournal`. The C# tested them through the endpoints
-//! (`LibraryEditEndpointTests`, ported in `controllers::subsonic::library_edit_tests`) and
-//! `ExplicitBackfillTests.SetAdvisory_RoundTripsAndClears`; the rest here are Rust-only checks of
-//! each function on its own.
+//! Tests of `LibraryTagEdits` and `TagEditJournal`, each function on its own. The endpoints that
+//! use them are tested in `controllers::subsonic::library_edit_tests`.
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +18,7 @@ fn changes(pairs: &[(&str, Option<&str>)]) -> IndexMap<String, Option<String>> {
         .collect()
 }
 
-/// An MP3 with a title, an artist and an album, as the C# tests' `Mp3(name, artist, title)`.
+/// An MP3 with a title, an artist and an album.
 fn song(dir: &Path, name: &str, artist: &str, title: &str, album: &str) -> PathBuf {
     let path = dir.join(name);
     let bytes = if name.ends_with(".flac") { flac() } else { mp3() };
@@ -66,7 +64,7 @@ fn load_and_save_go_through_the_file() {
     assert!(load(&path).is_empty());
 }
 
-// ---- ExplicitBackfillTests (d80141f) ---------------------------------------------------------
+// ---- The explicit advisory -------------------------------------------------------------------
 
 #[test]
 fn set_advisory_round_trips_and_clears() {
@@ -88,7 +86,7 @@ fn set_advisory_round_trips_and_clears() {
     assert_eq!(read_advisory(&file), None);
 }
 
-// ---- Rust-only: each function on its own -----------------------------------------------------
+// ---- Each function on its own ----------------------------------------------------------------
 
 #[test]
 fn read_lists_every_field_in_order_and_none_for_what_is_missing() {
@@ -191,9 +189,7 @@ fn write_changes_only_what_differs_and_says_before_and_after() {
     assert_eq!(same.before, same.after);
 }
 
-/// Fixed in the port only (`known-diffs.md`, "Clearing a tag field"): clearing an ISRC takes it
-/// off the file, so the undo of an ISRC retag leaves no code behind. C# 2026.10.05 wrote it
-/// through `SetText`, which returns on an empty value.
+/// Clearing an ISRC takes it off the file, so the undo of an ISRC retag leaves no code behind.
 #[test]
 fn clearing_an_isrc_takes_it_off_the_file() {
     let dir = tempfile::tempdir().expect("a temp dir");

@@ -1,4 +1,4 @@
-//! The data half of `Services/Lyrics/LyricsLibraryJob.cs`: the run `lyrics-library.json` holds
+//! The data half of the lyrics library job: the run `lyrics-library.json` holds
 //! (`LyricsLibraryRun`, its rows and review entries), its status and mode, and the request the
 //! dashboard queues. The store and the worker are `octo::services::lyrics::lyrics_library_job`.
 
@@ -47,7 +47,7 @@ pub const WHOLE_LIBRARY: &str = "WholeLibrary";
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct LyricsLibraryRow {
-    // The non-nullable C# strings and lists read a JSON null as empty.
+    // A JSON null in these strings and lists reads as empty.
     #[serde(deserialize_with = "null_as_default")]
     pub id: String,
     #[serde(deserialize_with = "null_as_default")]
@@ -103,7 +103,7 @@ impl Default for LyricsLibraryRow {
 
 impl LyricsLibraryRow {
     /// The lyrics a preview found, as the writer takes them; None before a preview found any.
-    /// (The C# computed property `Found`, which System.Text.Json also wrote.)
+    /// Written to the file as `Found`, never read back.
     pub fn found(&self) -> Option<LyricsResult> {
         if self.found_synced.is_none() && self.found_plain.is_none() {
             return None;
@@ -126,7 +126,7 @@ impl LyricsLibraryRow {
     }
 }
 
-/// The shape System.Text.Json wrote: the settable properties, then the computed `Found`.
+/// The row as written: the stored properties, then the computed `Found`.
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct LyricsLibraryRowOut<'a> {
@@ -194,7 +194,7 @@ pub struct LyricsReviewEntry {
 }
 
 impl Default for LyricsReviewEntry {
-    /// What a positional record read from JSON got for a missing member: its type's default.
+    /// What a missing member reads as: its type's default.
     fn default() -> Self {
         Self {
             path: String::new(),
@@ -400,7 +400,7 @@ pub struct LyricsLibraryRequest {
 }
 
 impl LyricsLibraryRequest {
-    /// `new LyricsLibraryRequest(upgrade)`: a walk.
+    /// A walk, with `upgrade` as given and everything else at its default.
     pub fn new(upgrade: bool) -> Self {
         Self {
             upgrade,
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(crate::json::to_string(&run), text.trim_end_matches('\n'));
     }
 
-    /// The row ids in the fixture are the C#'s own, so they pin the hash down.
+    /// The row ids in the fixture are the reference ids, so they pin the hash down.
     #[test]
     fn id_of_is_the_first_sixteen_hex_digits_of_the_paths_sha1() {
         let run: LyricsLibraryRun = serde_json::from_str(&fixture()).expect("the fixture reads");
@@ -548,7 +548,7 @@ mod tests {
         let back: LyricsLibraryRow = serde_json::from_str(&json).expect("reads back");
         assert_eq!(back, row);
 
-        // The defaults of a fresh row and run, and nulls where C# declared non-nullable.
+        // The defaults of a fresh row and run, and nulls in fields that are never null.
         let read: LyricsLibraryRun =
             serde_json::from_str(r#"{"Rows":[{"Path":null}],"Errors":null}"#).expect("reads");
         assert_eq!(read.scope, OCTO_DOWNLOADS);

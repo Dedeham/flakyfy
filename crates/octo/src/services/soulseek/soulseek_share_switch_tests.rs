@@ -1,8 +1,8 @@
-//! `SoulseekShareSwitchTests.cs`: the Share my library switch against a scripted slskd that
-//! behaves like 0.26: slskd.yml is read and replaced through the API, and the share list slskd
-//! reports follows the file once its file watch has caught up. `TheBlock_IsReplacedInPlace` is
-//! in `octo_core::soulseek::soulseek_share_switch`; `ShareEndpoint_SavesTheChoice` is with the
-//! controller's tests.
+//! The Share my library switch against a scripted slskd that behaves like 0.26: slskd.yml is read
+//! and replaced through the API, and the share list slskd reports follows the file once its file
+//! watch has caught up. That the block is replaced in place is tested in
+//! `octo_core::soulseek::soulseek_share_switch`; that the share endpoint saves the choice is
+//! tested with the controller.
 
 use std::sync::Arc;
 use std::time::Duration;

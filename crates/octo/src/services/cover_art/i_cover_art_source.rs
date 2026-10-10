@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/ICoverArtSource.cs`.
+//! A source of cover art, one link of the cover art chain.
 
 use async_trait::async_trait;
 use bytes::Bytes;

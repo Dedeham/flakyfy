@@ -1,4 +1,4 @@
-//! Port of `Services/Local/ILocalLibraryService.cs`.
+//! The local library service trait.
 
 use async_trait::async_trait;
 use octo_core::models::domain::Song;
@@ -26,8 +26,8 @@ pub trait ILocalLibraryService: Send + Sync {
         external_id: &str,
     ) -> Option<String>;
 
-    /// Registers a downloaded song in the local library. `Err` where the C# threw: the
-    /// mappings file could not be written.
+    /// Registers a downloaded song in the local library. `Err` when the mappings file could not
+    /// be written.
     async fn register_downloaded_song(&self, song: &Song, local_path: &str) -> anyhow::Result<()>;
 
     /// Gets the mapping between external ID and local ID
@@ -60,10 +60,9 @@ pub trait ILocalLibraryService: Send + Sync {
         album: Option<&str>,
     ) -> Option<LocalSongMapping>;
 
-    /// Drop the mapping for a path Octo no longer owns, so a re-acquire is not
-    /// short-circuited by a file that has just been moved out of the library. Answers the
-    /// mappings it dropped, so a song put back can have them again. `Err` where the C# threw:
-    /// the mappings file could not be written.
+    /// Drop the mapping for a path Octo no longer owns, so a re-acquire is not short-circuited by
+    /// a file that has just been moved out of the library. Answers the mappings it dropped, so a
+    /// song put back can have them again. `Err` when the mappings file could not be written.
     async fn forget_mapping(&self, local_path: &str) -> anyhow::Result<Vec<LocalSongMapping>>;
 
     /// Puts back mappings a removal dropped, pointing at the song's path again. A song mapped
@@ -80,7 +79,7 @@ pub trait ILocalLibraryService: Send + Sync {
     /// Triggers a Subsonic library scan. `force` bypasses the debounce. Needed when a caller
     /// must guarantee the scan actually runs, e.g. after each track of an album download so the
     /// album fills in progressively and the final tracks are never left stranded by a
-    /// swallowed trigger. (The C# default was `false`.)
+    /// swallowed trigger.
     async fn trigger_library_scan(&self, force: bool) -> bool;
 
     /// Starts a scan of one Navidrome library. A call is never dropped: one made while that

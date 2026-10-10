@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use parking_lot::RwLock;
 
 /// Held for reading by every test that paints covers, and for writing by the timing test, so
-/// the timing test measures a cover and not the rest of the suite (C#'s non-parallel collection).
+/// the timing test measures a cover and not the rest of the suite.
 pub(crate) static HEAVY: RwLock<()> = RwLock::new(());
 
 /// A path in the repository.

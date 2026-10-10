@@ -1,5 +1,3 @@
-//! Port of `Services/LastFm/RadioFiller.cs`.
-//!
 //! Songs a radio leaves out: shorter than 45 seconds or longer than 45 minutes, an interview or a
 //! podcast, or an intro, skit or interlude of four minutes or less. A missing or zero length is
 //! not held against a song. The Octo apps apply the same rule.
@@ -29,8 +27,8 @@ pub fn is_filler(title: Option<&str>, duration_seconds: Option<i32>) -> bool {
 }
 
 /// Whether one of the words stands in the text with no letter or number touching either end.
-/// .NET's `\p{L}` and `\p{N}` test one UTF-16 code unit, so a character outside the Basic
-/// Multilingual Plane (two surrogates) never counts as touching.
+/// `\p{L}` and `\p{N}` test one UTF-16 code unit, so a character outside the Basic Multilingual
+/// Plane (two surrogates) never counts as touching.
 fn has_word(text: &str, words: &[&str]) -> bool {
     // ASCII lower-casing keeps every byte offset, so a match in it is a match in the text.
     let lower = text.to_ascii_lowercase();
@@ -62,7 +60,6 @@ fn letter_or_number(c: char) -> bool {
 mod tests {
     use super::*;
 
-    // RadioFillerTests.IsFiller_LeavesOutShortPiecesTalkAndOddLengths
     #[test]
     fn is_filler_leaves_out_short_pieces_talk_and_odd_lengths() {
         for (title, seconds, filler) in [
@@ -83,8 +80,8 @@ mod tests {
         }
     }
 
-    /// Rust-only: the edges are letters and numbers of any script, a digit counts, and a
-    /// character outside the Basic Multilingual Plane never touches the word.
+    /// The edges are letters and numbers of any script, a digit counts, and a character outside
+    /// the Basic Multilingual Plane never touches the word.
     #[test]
     fn the_word_edges_are_letters_and_numbers() {
         assert!(!is_filler(Some("Intro2"), Some(60)));

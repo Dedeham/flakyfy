@@ -1,8 +1,7 @@
-//! Port of `Controllers/ImportsController.cs`: the dashboard's import page. Connect a
-//! Spotify account, add a public link, an exported file or a pasted list, see what the library has and what it
-//! is missing, keep a list as a playlist, and the trickle that fetches the rest. Lists belong to
-//! the Navidrome user signed in on the page, the same person an Octo app signed in as sees them,
-//! so it needs the dashboard's sign-in.
+//! The dashboard's import page. Connect a Spotify account, add a public link, an exported file
+//! or a pasted list, see what the library has and what it is missing, keep a list as a playlist,
+//! and the trickle that fetches the rest. Lists belong to the Navidrome user signed in on the
+//! page, the same person an Octo app signed in as sees them, so it needs the dashboard's sign-in.
 //!
 //! Also the page Spotify sends the browser back to when the redirect URI is Octo's own address.
 
@@ -80,7 +79,7 @@ fn answer(result: &ImportActionResult) -> Response {
     )
 }
 
-/// An exception the C# let through, as its exception handler answered it.
+/// A failure the import service did not handle, as the error envelope answers it.
 pub(crate) fn app_error(e: anyhow::Error) -> AppError {
     match e.downcast::<reqwest::Error>() {
         Ok(e) => AppError::from_reqwest(e),
@@ -298,7 +297,7 @@ async fn link(State(state): State<AppState>, request: Request) -> AppResult {
 }
 
 async fn file(State(state): State<AppState>, request: Request) -> AppResult {
-    // [FromForm] IFormFile: the action takes a form only; any other body found no action (404).
+    // An uploaded file: the action takes a form only; any other body finds no action (404).
     let content_type = request
         .headers()
         .get(header::CONTENT_TYPE)

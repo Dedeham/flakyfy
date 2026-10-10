@@ -1,6 +1,6 @@
-//! `ReleaseDistanceTests.cs`: each key's penalty function and the accumulator behind the release
-//! chooser. The numbers here are the contract the calibration fixtures in ReleaseChooserTests
-//! are computed from.
+//! Release distance tests: each key's penalty function and the accumulator behind the release
+//! chooser. The numbers here are what the calibration fixtures in `release_chooser_tests` are
+//! computed from.
 
 use super::*;
 
@@ -341,7 +341,7 @@ fn distance_clamps_a_penalty_to_one() {
     assert_near(distance.value(), 1.0, 3, "value");
 }
 
-// ---- Rust-only ----------------------------------------------------------------------
+// ---- barcodes -----------------------------------------------------------------------
 
 #[test]
 fn barcode_forms_keep_digits_and_add_the_upc() {

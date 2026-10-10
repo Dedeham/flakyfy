@@ -1,4 +1,4 @@
-//! Port of `Services/Metadata/DeezerMetadataService.cs`. The records it answers with are in
+//! The Deezer metadata service. The records it answers with are in
 //! `octo_core::metadata::deezer_metadata_service`.
 
 use std::sync::{Arc, LazyLock};
@@ -66,9 +66,9 @@ const ALBUM_TRACKS_LIMIT: i32 = 300;
 /// all but the longest careers.
 const ARTIST_ALBUMS_LIMIT: i32 = 100;
 
-/// What the cache holds, one variant per kind of answer. The C# cache held `Entry<T>`
-/// wrappers, so a cached null was distinguishable from a cache miss; `Option` payloads do that
-/// here. Keys carry a prefix per kind, so a key never meets another kind's value.
+/// What the cache holds, one variant per kind of answer. `Option` payloads keep a cached
+/// "nothing" distinguishable from a cache miss. Keys carry a prefix per kind, so a key never
+/// meets another kind's value.
 #[derive(Clone)]
 enum Cached {
     Track(Option<TrackMeta>),
@@ -137,9 +137,9 @@ struct Inner {
     // be right for both. Every entry counts as 1, so the limit is an entry count.
     cache: MemoryCache<Cached>,
 
-    // Single-flight the album-year fetch: many tracks in one search share an album
-    // (a whole album's tracks), so concurrent lookups collapse onto one HTTP call.
-    // None is a fetch that threw.
+    // Single-flight the album-year fetch: many tracks in one search share an album (a whole
+    // album's tracks), so concurrent lookups collapse onto one HTTP call. None is a fetch that
+    // failed.
     album_year_tasks: InFlight<Option<(Option<i32>, bool)>>,
 
     /// Requests on their way to the catalog, by cache key. The cache only answers
@@ -155,7 +155,7 @@ struct Inner {
     in_flight_charts: InFlight<Option<Arc<Vec<octo_core::charts::top_songs::CatalogTrack>>>>,
 }
 
-/// Flow out of a C# `try` block that could `return` early.
+/// Flow out of a block that can return early.
 enum Flow<T> {
     Return(T),
     Done,
@@ -1338,8 +1338,8 @@ impl DeezerMetadataService {
                 this.fetch_album_year(album_id).await.ok()
             })
             .await;
-        // The fetch threw (an album record of the wrong shape): the awaiting caller saw the
-        // exception in the C#.
+        // The fetch failed (an album record of the wrong shape): the awaiting caller gets the
+        // error.
         answer.ok_or(octo_core::json::element::ElementError::Format(
             "the album's release year",
         ))
@@ -1956,7 +1956,7 @@ fn named_artist_id(doc: Option<&Value>, artist: &str) -> ElementResult<Option<St
 }
 
 /// `root.data` when it is an array. Reading a property of a root that is not an object
-/// throws, as `TryGetProperty` did.
+/// fails.
 /// The artists of a catalog list (`data`), each with an id and a name.
 fn artist_hits(doc: Option<&Value>) -> ElementResult<Vec<ArtistHit>> {
     let mut hits = Vec::new();
@@ -2012,7 +2012,7 @@ fn first_genre(root: &Value) -> ElementResult<Option<String>> {
     Ok(None)
 }
 
-/// The C# `Bool` helper: a true or false, None for anything else.
+/// A boolean property: a true or false, None for anything else.
 fn bool_prop(element: &Value, name: &str) -> ElementResult<Option<bool>> {
     Ok(match try_get_property(element, name)? {
         Some(Value::Bool(said)) => Some(*said),
@@ -2020,7 +2020,8 @@ fn bool_prop(element: &Value, name: &str) -> ElementResult<Option<bool>> {
     })
 }
 
-/// `ExplicitStatus.FromCatalog` of a catalog record's two explicit fields.
+/// The explicit status (`explicit_status::from_catalog`) of a catalog record's two explicit
+/// fields.
 fn catalog_explicit(element: &Value) -> ElementResult<Option<i32>> {
     Ok(explicit_status::from_catalog(
         int(element, "explicit_content_lyrics")?,
@@ -2055,8 +2056,8 @@ pub(crate) fn song_explicitness(
     Ok(mine)
 }
 
-/// The C# `Int` helper: `GetInt32()` of a number, which throws for one that is not an
-/// integer in range.
+/// An `i32` property: `get_int32` of a number, which fails for one that is not an integer in
+/// range; None for anything else.
 fn int(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     match try_get_property(element, name)? {
         Some(value @ Value::Number(_)) => Ok(Some(get_int32(value)?)),
@@ -2064,8 +2065,8 @@ fn int(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     }
 }
 
-/// `rd.Length >= 4 && int.TryParse(rd[..4], out var yr)`: the first four UTF-16 units read as an
-/// integer, with the leading and trailing white space and the sign `int.TryParse` allows.
+/// The first four UTF-16 units of a date at least that long, read as an integer, with leading and
+/// trailing white space and a sign allowed.
 fn year_prefix(release_date: &str) -> Option<i32> {
     if dotnet::utf16_len(release_date) < 4 {
         return None;
@@ -2101,7 +2102,7 @@ pub use tempo::DeezerPublishedTempo;
 use tempo::{tempo_key, tempo_of};
 
 pub use explicit::DeezerExplicitCatalog;
-// `DeezerMetadataService.Charts.cs`, a partial class in the C#: the chart and artist top lists.
+// The chart and artist top lists.
 #[path = "deezer_charts.rs"]
 mod charts;
 pub use charts::CHART_LIMIT;

@@ -1,7 +1,6 @@
-//! The pure half of `Services/LastFm/LastFmRadioRecommendationService.cs`: how candidates are
-//! weighed, drawn and shaped into a station, and how a listener's plays become seeds, artists
-//! and tags. The service that asks Last.fm is
-//! `octo::services::last_fm::last_fm_radio_recommendation_service`.
+//! The pure half of the radio recommendation service: how candidates are weighed, drawn and
+//! shaped into a station, and how a listener's plays become seeds, artists and tags. The service
+//! that asks Last.fm is `octo::services::last_fm::last_fm_radio_recommendation_service`.
 //!
 //! Which candidates make the cut is a weighted draw rather than a fixed top-N, so two refreshes
 //! of the same profile give two different stations; the previous snapshot is demoted so a
@@ -59,8 +58,8 @@ pub const HEARD_LATELY: TimeDelta = TimeDelta::days(8);
 
 /// How many songs apart one artist must be, and one title (a cover counts). Never more than the
 /// station's candidates can give. The artist gap must stay at least the stream's flow window
-/// (`LastFmRadioStreamService.FlowWindow`): the stream may reorder within that window, and the
-/// gap is what keeps an artist from landing back to back after it.
+/// (`last_fm_radio_stream_service::FLOW_WINDOW`): the stream may reorder within that window, and
+/// the gap is what keeps an artist from landing back to back after it.
 pub const ARTIST_GAP: i32 = 4;
 pub const TITLE_GAP: usize = 8;
 
@@ -70,7 +69,7 @@ pub const DISLIKED_ARTIST_WEIGHT: f64 = 0.5;
 /// Seeds asked at once when several sources answer: the sources' own gates still pace them.
 pub const SEEDS_AT_ONCE: usize = 3;
 
-/// The source of a build's draw: `System.Random`'s `NextDouble`.
+/// The source of a build's draw: a double in [0, 1).
 pub trait RadioRandom: Send {
     fn next_double(&mut self) -> f64;
 }
@@ -81,16 +80,15 @@ impl RadioRandom for DotnetRandom {
     }
 }
 
-/// `Func<Random>`: a fresh draw source per build. Tests replace it with a seeded one so a build
-/// repeats exactly.
+/// A fresh draw source per build. Tests replace it with a seeded one so a build repeats exactly.
 pub type Randomizer = Arc<dyn Fn() -> Box<dyn RadioRandom> + Send + Sync>;
 
-/// `() => new Random()`: an unseeded draw, different every build.
+/// An unseeded draw, different every build.
 pub fn default_randomizer() -> Randomizer {
     Arc::new(|| Box::new(DotnetRandom::new(rand::random::<i32>())) as Box<dyn RadioRandom>)
 }
 
-/// `() => new Random(seed)`.
+/// A draw from `seed`, the same every build.
 pub fn seeded_randomizer(seed: i32) -> Randomizer {
     Arc::new(move || Box::new(DotnetRandom::new(seed)) as Box<dyn RadioRandom>)
 }
@@ -242,7 +240,7 @@ pub fn ranked(tracks: Vec<SimilarTrack>, source: &str, affinity: f64) -> Vec<Can
         .collect()
 }
 
-/// A set of strings compared with `StringComparer.OrdinalIgnoreCase`.
+/// A set of strings compared ordinally, ignoring case.
 #[derive(Debug, Clone, Default)]
 pub struct IgnoreCaseKeys(HashSet<String>);
 
@@ -388,7 +386,7 @@ fn shape_walk(
         .map(|play| seed_normalizer::track_key(&play.artist, &play.title))
         .collect();
 
-    // GroupBy the track key (ordinal), keeping each group's heaviest, the first of equals.
+    // Grouped by the track key (ordinal), keeping each group's heaviest, the first of equals.
     let mut groups: IndexMap<String, Candidate> = IndexMap::new();
     for mut item in candidates.into_iter().filter(|item| {
         !item.track.artist.is_empty()
@@ -697,8 +695,7 @@ pub fn suppress_station_overlap(stations: &mut [LastFmRadioStation]) {
     }
 }
 
-/// `Comparer<string>.Default` under the invariant culture, as `ThenBy(pair => pair.Key)` sorted:
-/// case is compared after the letters, lower case first.
+/// Invariant-culture string order: case is compared after the letters, lower case first.
 pub fn invariant_culture_compare(a: &str, b: &str) -> Ordering {
     dotnet::to_lower_invariant(a)
         .cmp(&dotnet::to_lower_invariant(b))
@@ -720,7 +717,7 @@ pub fn invariant_culture_compare(a: &str, b: &str) -> Ordering {
 /// Each artist's three most recent plays, by seed score: the strongest artists first, then by
 /// name. Keyed by the primary artist as the first play spelled it.
 pub fn score_artists(plays: &[LastFmRadioPlay], now: DateTime<Utc>) -> Vec<(String, f64)> {
-    // GroupBy (OrdinalIgnoreCase): the first spelling names the group, in first-seen order.
+    // Grouped ignoring case: the first spelling names the group, in first-seen order.
     let mut groups: IndexMap<String, (String, Vec<&LastFmRadioPlay>)> = IndexMap::new();
     for play in plays {
         let name = seed_normalizer::artist(&play.artist);
@@ -852,7 +849,7 @@ pub struct TagScores {
 }
 
 impl TagScores {
-    /// `AddTag`: the canonical spelling, skipped when it is empty.
+    /// Adds to a tag's score under its canonical spelling, skipped when that is empty.
     pub fn add(&mut self, value: &str, score: f64) {
         let tag = canonical_tag(value);
         if tag.is_empty() {
@@ -869,7 +866,7 @@ impl TagScores {
         self.scores.values().map(|(tag, score)| (tag.as_str(), *score))
     }
 
-    /// `OrderByDescending(Value).ThenBy(Key).Take(n)`: the discovery mix's tags.
+    /// The `n` highest scores, equal scores by name: the discovery mix's tags.
     pub fn top_by_score_then_name(&self, n: usize) -> Vec<String> {
         let mut tags: Vec<(&str, f64)> = self.iter().collect();
         tags.sort_by(|a, b| {
@@ -880,8 +877,8 @@ impl TagScores {
         tags.into_iter().take(n).map(|(tag, _)| tag.to_string()).collect()
     }
 
-    /// `OrderByDescending(Value).Take(n)`: the genre stations' tags, equal scores in the order
-    /// they were first scored.
+    /// The `n` highest scores: the genre stations' tags, equal scores in the order they were
+    /// first scored.
     pub fn top_by_score(&self, n: usize) -> Vec<String> {
         let mut tags: Vec<(&str, f64)> = self.iter().collect();
         tags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
@@ -950,7 +947,7 @@ pub fn key(value: &str) -> String {
     hex::encode(&hash[..6])
 }
 
-/// `TextInfo.ToTitleCase(value.ToLowerInvariant())` in the invariant culture.
+/// The value lower-cased, then title-cased in the invariant culture.
 pub fn title(value: &str) -> String {
     to_title_case(&dotnet::to_lower_invariant(value))
 }
@@ -963,9 +960,9 @@ fn stable_order(artist: &str, title: &str) -> String {
 mod tests {
     use super::*;
 
-    /// What .NET 9 computed.
+    /// The reference values.
     #[test]
-    fn keys_titles_and_versions_are_what_dotnet_computed() {
+    fn keys_titles_and_versions_match_the_reference_values() {
         assert_eq!(key("Björk"), "590a34408cfe");
         assert_eq!(key("Fresh"), "d098ab5e44b9");
         assert_eq!(key("A|T"), "f115f662b5f4");

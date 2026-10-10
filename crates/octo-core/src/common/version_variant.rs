@@ -1,14 +1,12 @@
-//! Port of `Services/Common/VersionVariant.cs`.
-//!
 //! Which versions of a song a peer's file is, read from the places SongIdentity does not look:
 //! the album folder a plainly named track sits in ("Too Close (Radio Edit) - Single", "Club Hits
 //! (Extended Mixes)", "Mezzanine Remix Tapes '98"), and a file name that runs its version on with
 //! no brackets ("09 Next-Too Close-radio edit"). Live takes keep their own, more generous rule in
 //! [`live_version`].
 //!
-//! The C# regexes used lookarounds, which the `regex` crate has none of: `(?!...)` after
+//! Some of these patterns need lookarounds, which the `regex` crate has none of: `(?!...)` after
 //! "extended" and the `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])` name bounds are checked by hand
-//! around each match, trying every start .NET's backtracking would have tried.
+//! around each match, trying every start a backtracking engine would try.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::LazyLock;
@@ -21,7 +19,7 @@ use super::live_version;
 use super::song_identity::SongIdentity;
 use crate::soulseek::soulseek_download_service::name_title;
 
-/// `RegexOptions.IgnoreCase | RegexOptions.CultureInvariant`.
+/// A case-insensitive pattern, with no locale.
 fn rxi(pattern: &str) -> Regex {
     Regex::new(&format!("(?i){pattern}")).expect("a fixed pattern compiles")
 }
@@ -48,7 +46,7 @@ fn word(pattern: &str, name: &'static str) -> Word {
 static WORDS: LazyLock<Vec<Word>> = LazyLock::new(|| {
     vec![
         word(r"\bradio\s+(?:edit|version|mix|cut)s?\b", "radio edit"),
-        // The C# `\bextended\b(?!\s+(?:edition|play)\b)`.
+        // `\bextended\b(?!\s+(?:edition|play)\b)`.
         Word {
             pattern: rxi(r"\bextended\b"),
             not_followed_by: Some(rxi(r"^\s+(?:edition|play)\b")),
@@ -98,8 +96,8 @@ static EDITION: LazyLock<Regex> = LazyLock::new(|| rxi(r"\bextended\s+(?:edition
 /// Every other requested version must show in the file's name or its folder.
 const CUTS: [&str; 2] = ["radio edit", "edit"];
 
-/// The words in a text, in the list's order. Matched in the view where `\b` falls where .NET's
-/// did.
+/// The words in a text, in the list's order. Matched in the view where `\b` falls by word
+/// characters in one UTF-16 unit.
 fn words_in(text: Option<&str>) -> Vec<&'static str> {
     let Some(text) = text.filter(|text| !is_blank(text)) else {
         return Vec::new();
@@ -136,7 +134,7 @@ pub fn requested(title: Option<&str>, album: Option<&str>) -> BTreeSet<String> {
     wanted
 }
 
-/// .NET's `[\p{L}\p{N}]` on one UTF-16 code unit: a supplementary-plane character arrived as two
+/// `[\p{L}\p{N}]` on one UTF-16 code unit: a supplementary-plane character arrives as two
 /// surrogates, neither a letter nor a number.
 fn letter_or_number(c: char) -> bool {
     (c as u32) <= 0xFFFF
@@ -153,8 +151,8 @@ fn stands_alone(text: &str, start: usize, end: usize) -> bool {
         && !text[end..].chars().next().is_some_and(letter_or_number)
 }
 
-/// Every match of the pattern that stands alone, left to right and never overlapping, as the
-/// C# `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])` found them: a start where the bounds fail is
+/// Every match of the pattern that stands alone, left to right and never overlapping, as
+/// `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])` would find them: a start where the bounds fail is
 /// tried again one character on.
 fn alone_matches(pattern: &Regex, text: &str) -> Vec<(usize, usize)> {
     let mut found = Vec::new();
@@ -408,12 +406,12 @@ const JOINED: [&str; 4] = ["mashup", "medley", "megamix", "blend"];
 /// "Get Lucky vs Billie Jean".
 static JOIN_WORD: LazyLock<Regex> = LazyLock::new(|| rxi(r"^\s*(?:x|vs\.?|versus)\s+(\S.*)$"));
 
-/// A song run straight on after the title: "Get Lucky-Billie Jean". (The C# `^-(?=\S)(.+)$`.)
+/// A song run straight on after the title: "Get Lucky-Billie Jean". (`^-(?=\S)(.+)$`.)
 static RUN_ON: LazyLock<Regex> = LazyLock::new(|| rxi(r"^-(\S.*)$"));
 
-/// Whether a joining word stands alone anywhere in the text, as the C#
-/// `(?<![\p{L}\p{N}])(?:x|vs\.?|versus)(?![\p{L}\p{N}])` (case-sensitive) read it: at each start,
-/// the alternatives in the order its backtracking tried them.
+/// Whether a joining word stands alone anywhere in the text, as
+/// `(?<![\p{L}\p{N}])(?:x|vs\.?|versus)(?![\p{L}\p{N}])` (case-sensitive) reads it: at each
+/// start, the alternatives in the order a backtracking engine tries them.
 fn has_join_word(text: &str) -> bool {
     text.char_indices().any(|(start, _)| {
         if text[..start].chars().next_back().is_some_and(letter_or_number) {
@@ -486,5 +484,4 @@ pub fn mash_up(filename: &str, title: Option<&str>, artist: Option<&str>) -> boo
         .is_some_and(|run_on| another_song(&run_on[1]))
 }
 
-// DownloadMatchingTests reads these through the download's checks:
-// `soulseek/download_matching_tests.rs`.
+// The download's checks test these too: `soulseek/download_matching_tests.rs`.

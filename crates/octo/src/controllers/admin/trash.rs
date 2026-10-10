@@ -1,7 +1,6 @@
-//! The Recently removed half of `AdminDownloadsController` (5d3f096): the trash and Put back on
-//! the dashboard, for admins whose listeners use other Subsonic apps. Ported with group F, whose
-//! `LibraryEditService` answers both; the controller's download log and Find songs are group R's
-//! and D's.
+//! The Recently removed routes: the trash and Put back on the dashboard, for admins whose
+//! listeners use other Subsonic apps. `LibraryEditService` answers both; the download log and
+//! Find songs are in `downloads`.
 //!
 //! Everything here names files or people, or changes the library, so every call needs a
 //! Navidrome admin's own dashboard sign-in (never the recovery code) and acts as that person: the

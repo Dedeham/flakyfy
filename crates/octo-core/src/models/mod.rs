@@ -1,13 +1,12 @@
-//! The domain, search, download and Subsonic models: `Models/**` in the C#.
+//! The domain, search, download and Subsonic models.
 //!
-//! Field names serialize as the C# PascalCase property names, since System.Text.Json wrote them
-//! with no naming policy wherever these reach a file.
+//! Field names serialize in PascalCase wherever these reach a file, the names existing state
+//! files already hold.
 
 use serde::{Deserialize, Deserializer};
 
-/// For a C# property that is a non-nullable reference type (a `string` or a `List<T>`):
-/// System.Text.Json read a JSON `null` into it without complaint, where serde would fail the
-/// whole file. Read `null` as the default instead.
+/// For a string or list field that is never absent: a JSON `null` in it (a hand edit, say)
+/// would make serde fail the whole file. Read `null` as the default instead.
 pub(crate) fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,

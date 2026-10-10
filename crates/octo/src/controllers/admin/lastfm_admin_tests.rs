@@ -1,5 +1,5 @@
-//! `LastFmScrobbleTests.cs` (`LastFmScrobbleAdminTests`): the dashboard's Connect, Finish and
-//! Disconnect, and what the admin API shows of them.
+//! The dashboard's Last.fm scrobbling Connect, Finish and Disconnect, and what the admin API
+//! shows of them.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -330,7 +330,7 @@ async fn raw_config_round_trip_keeps_the_secret_and_sessions() {
             .and_then(Node::as_str),
         Some("sk-alice")
     );
-    // The whole effective document went to disk, as the C# Raw save did.
+    // The whole effective document went to disk, as a Raw save writes it.
     assert_eq!(
         put.json()["bytes"].as_u64(),
         Some(factory.saved().encode_utf16().count() as u64)
@@ -373,8 +373,8 @@ async fn raw_config_with_a_session_key_typed_onto_the_placeholder_is_refused() {
 }
 
 /// Last.fm handed over the session but settings.json could not be written. The admin hears
-/// that plainly, as a conflict, rather than as a server error. (The C# locked the file; here
-/// the writer's temporary file is made a folder, which no write can replace.)
+/// that plainly, as a conflict, rather than as a server error. (The writer's temporary file is
+/// made a folder, which no write can replace.)
 #[tokio::test]
 async fn finish_when_the_settings_file_cannot_be_written_says_so() {
     let factory = ScrobbleAdminFactory::new("{}").await;
@@ -404,8 +404,7 @@ async fn finish_when_the_settings_file_cannot_be_written_says_so() {
 
 /// The Soulseek page's Connection form sends the slskd sign-in back as it was shown. The
 /// placeholder keeps the stored password; with a new username it is refused, because the old
-/// password under a new name is a pairing nobody typed. (`FormSave_WithTheSlskdPlaceholder_
-/// KeepsTheStoredPassword`, 9f9502d.)
+/// password under a new name is a pairing nobody typed.
 #[tokio::test]
 async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
     let stored = r#"{ "Soulseek": { "Username": "octo", "Password": "slskd-secret" } }"#;
@@ -440,8 +439,8 @@ async fn form_save_with_the_slskd_placeholder_keeps_the_stored_password() {
     assert_eq!(password(&factory).as_deref(), Some("slskd-secret"));
 }
 
-/// A port fix: Navidrome's address is saved without its trailing slash (and the spaces it was
-/// typed with), so the stream relay never asks for `//rest/stream`; the Raw config save the same.
+/// Navidrome's address is saved without its trailing slash (and the spaces it was typed with), so
+/// the stream relay never asks for `//rest/stream`; the Raw config save the same.
 #[tokio::test]
 async fn navidromes_address_is_saved_without_a_trailing_slash() {
     let factory = ScrobbleAdminFactory::new("{}").await;
@@ -472,8 +471,8 @@ async fn navidromes_address_is_saved_without_a_trailing_slash() {
     assert_eq!(sections, ["Subsonic", "Lidarr"]);
 }
 
-// SoulseekSharingTests.SavingAWebUrl_KeepsOnlyWebAddresses: Open slskd puts the address in a
-// link, so only a whole http or https address is kept; a blank one clears it.
+// Open slskd puts the address in a link, so only a whole http or https address is kept; a blank
+// one clears it.
 #[tokio::test]
 async fn saving_a_web_url_keeps_only_web_addresses() {
     let factory = ScrobbleAdminFactory::new("{}").await;
@@ -493,8 +492,8 @@ async fn saving_a_web_url_keeps_only_web_addresses() {
     }
 }
 
-/// A port fix: slskd's web address is saved without the spaces it was typed with (settings and
-/// Raw config), where the C# kept them and GET settings showed them.
+/// slskd's web address is saved without the spaces it was typed with (settings and Raw
+/// config), so GET settings never shows them.
 #[tokio::test]
 async fn slskds_web_address_is_saved_without_spaces() {
     let factory = ScrobbleAdminFactory::new("{}").await;

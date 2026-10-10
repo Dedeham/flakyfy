@@ -1,5 +1,5 @@
-//! Port of `Services/Soulseek/SoulseekMetadataService.cs`: the service. The routing model at the
-//! bottom of that file is `octo_core::soulseek::soulseek_metadata_service`.
+//! The Soulseek metadata service. The routing model is
+//! `octo_core::soulseek::soulseek_metadata_service`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,16 +33,15 @@ use crate::services::metadata::deezer_metadata_service::fold_editions;
 use crate::services::you_tube::{YouTubeHit, YouTubeResolver};
 
 /// The two members of `LastFmService` the length lookup uses: whether it has an API key, and
-/// the duration `track.getInfo` gives a song, in seconds. A seam rather than the service, which
-/// task 3-B ports.
+/// the duration `track.getInfo` gives a song, in seconds. A seam rather than the service.
 ///
 /// Implemented by `LastFmService`; tests substitute a fake.
 #[async_trait]
 pub trait LastFmTrackLengths: Send + Sync {
-    /// `LastFmService.HasApiKey`.
+    /// Whether Last.fm has an API key.
     fn has_api_key(&self) -> bool;
 
-    /// `(await GetTrackInfoAsync(artist, title, ct))?.Duration`.
+    /// The duration of the song's `get_track_info` answer, if any.
     async fn track_duration(&self, artist: &str, title: &str) -> Option<i32>;
 }
 
@@ -94,7 +93,7 @@ struct Inner {
     prewarm_gate: Semaphore,
 
     // Cover art never touches the shim: it hits Deezer/iTunes/Last.fm over HTTP, and
-    // Deezer's own background lane (DeezerRateLimiter.BackgroundPermits) already bounds
+    // Deezer's own background lane (DeezerRateLimiter::BACKGROUND_PERMITS) already bounds
     // that traffic. It needs its own gate, not prewarm_gate above: sharing that one meant
     // 24 cover-art tasks and 12 YouTube tasks fought over 3 permits with a 2s bounded
     // wait, so most cover fetches timed out and the ones that won starved YouTube prewarm.
@@ -142,18 +141,17 @@ impl Drop for SentOnDrop {
 /// quota and poisoned the metadata caches (issue #8). DeezerRateLimiter now holds that
 /// budget centrally, so this figure is about how long a user waits, not about safety.
 ///
-/// 12 is the same "first page" figure PrewarmYouTubeIdsAsync already uses. It must
-/// stay above TopDurationResolveLimit, or the rows that get a YouTube length hint
-/// would be reading a duration nobody resolved.
+/// 12 is the same "first page" figure `prewarm_you_tube_ids` already uses. It must stay above
+/// `TOP_DURATION_RESOLVE_LIMIT`, or the rows that get a YouTube length hint would be reading a
+/// duration nobody resolved.
 const SEARCH_ENRICH_LIMIT: usize = 12;
 
-/// The whole slice a search can return. Everything between the first page and this is
-/// filled from cache and warmed for next time, because a row with no enrichment goes out
-/// with no length at all, and a page of approximate lengths is better than a page of
-/// none. Deezer's length is the approximation - it is not always the
-/// recording that plays - and the exact value is resolved when a row is opened or
-/// played, where getSong and the native detail endpoint both call
-/// ResolveTopDurationsAsync.
+/// The whole slice a search can return. Everything between the first page and this is filled from
+/// cache and warmed for next time, because a row with no enrichment goes out with no length at
+/// all, and a page of approximate lengths is better than a page of none. Deezer's length is the
+/// approximation (it is not always the recording that plays), and the exact value is resolved
+/// when a row is opened or played, where getSong and the native detail endpoint both call
+/// `resolve_top_durations`.
 const BACKGROUND_ENRICH_LIMIT: usize = 60;
 
 // ---- Lengths for rows that went out without one ---------------------------------
@@ -259,8 +257,8 @@ fn same_name(hits: Vec<ArtistHit>, name: &str) -> Vec<ArtistHit> {
         .collect()
 }
 
-/// `Convert.FromBase64String`, which ignored whitespace and the unused bits of the last
-/// character.
+/// Standard base64 that accepts unused bits in the last character (the decoder strips
+/// whitespace before it).
 const DOTNET_BASE64: GeneralPurpose = GeneralPurpose::new(
     &base64::alphabet::STANDARD,
     GeneralPurposeConfig::new()
@@ -288,11 +286,11 @@ fn b64_url_decode(s: &str) -> Option<String> {
         .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
         .collect();
     let bytes = DOTNET_BASE64.decode(compact).ok()?;
-    // Encoding.UTF8.GetString replaces what is not UTF-8.
+    // Whatever is not UTF-8 is replaced.
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// `int.TryParse` with the default style: surrounding white space and a sign allowed.
+/// An integer with surrounding white space and a sign allowed.
 fn parse_int(text: &str) -> Option<i32> {
     text.trim_matches(|c: char| matches!(c, '\u{9}'..='\u{D}' | ' '))
         .parse()
@@ -1692,10 +1690,10 @@ impl IMusicMetadataService for SoulseekMetadataService {
         }
 
         for track in &detail.tracks {
-            // Album is carried on the ROUTING as well as the Song. The download path
-            // re-resolves each track by id through GetSongAsync, and without this the
-            // tagger re-derives the album from artist+title alone, which for a well
-            // known single often lands on a greatest-hits record instead of this one.
+            // Album is carried on the ROUTING as well as the Song. The download path re-resolves
+            // each track by id through `get_song`, and without this the tagger re-derives the
+            // album from artist+title alone, which for a well known single often lands on a
+            // greatest-hits record instead of this one.
             let track_id = inner.id_registry.register(SoulseekRouting {
                 kind: RoutingKind::Song,
                 artist: Some(track.artist.clone()),

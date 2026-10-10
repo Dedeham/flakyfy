@@ -1,5 +1,5 @@
 //! The catch-all's faithful relay, through the whole pipeline, against a Navidrome stood in
-//! for by wiremock (endpoints.md §2.7, §3.9 step 11).
+//! for by wiremock.
 
 use axum::http::{HeaderMap, Method};
 use http_body_util::BodyExt;
@@ -111,7 +111,7 @@ async fn an_unknown_subsonic_call_is_relayed_with_its_status_body_and_allowliste
     assert_eq!(r.headers["content-type"], "text/plain; charset=utf-8");
     assert_eq!(r.headers["vary"], "Origin");
     assert!(!r.headers.contains_key("x-not-allowlisted"));
-    // Written as a stream, so sent chunked rather than with a length, as Kestrel did.
+    // Written as a stream, so sent chunked rather than with a length.
     assert!(!r.headers.contains_key("content-length"));
     let sent = &server.received_requests().await.expect("recording")[0];
     // The repeated id goes upstream as the client sent it, not as "A,B".
@@ -159,7 +159,7 @@ async fn a_json_body_is_forwarded_as_sent_with_the_parameters_in_the_query() {
     )
     .await;
 
-    // Nothing upstream sets a content type, so the answer is labelled by f.
+    // Nothing upstream sets a content type, so the answer is labeled by f.
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.headers["content-type"], "application/json");
     let sent = &server.received_requests().await.expect("recording")[0];
@@ -240,8 +240,8 @@ async fn octo_owned_paths_and_the_root_are_never_relayed() {
     assert!(server.received_requests().await.expect("recording").is_empty());
 }
 
-/// G1 K (#80): the bare address with another method binds an empty endpoint and is relayed
-/// to Navidrome's own root, as the C# went on past the redirect.
+/// #80: the bare address with another method binds an empty endpoint and is relayed to
+/// Navidrome's own root; only GET and HEAD are redirected.
 #[tokio::test]
 async fn a_post_to_the_bare_address_is_relayed() {
     let server = MockServer::builder().start().await;

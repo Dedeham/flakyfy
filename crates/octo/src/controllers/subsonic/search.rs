@@ -1,4 +1,4 @@
-//! `search3` and `search2` (L954): the search hijack, its later song pages, and the sync walk.
+//! `search3` and `search2`: the search hijack, its later song pages, and the sync walk.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -581,7 +581,7 @@ async fn search_later_song_page(
     )))
 }
 
-/// `Take(n)`/`Skip(n)` of a count that may be negative.
+/// A count that may be negative, as a length (a negative count is 0).
 fn count(value: i32) -> usize {
     usize::try_from(value).unwrap_or(0)
 }
@@ -670,7 +670,7 @@ async fn sync_walk_page(
     let username = call.param_or("u", "").to_string();
     let mut stations = visible_stations(state, &username);
     // The chart lists ride along as stations, so a syncing client holds their outside songs
-    // under the ids the playlists list (C#: popular.Warm + AsSyncStation).
+    // under the ids the playlists list.
     if !username.is_empty() {
         state.chart_playlists.warm(&username, &call.parameters).await;
         stations.extend(state.chart_playlists.as_sync_stations(&username));

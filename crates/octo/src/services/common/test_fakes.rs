@@ -1,6 +1,5 @@
-//! Hand-written fakes for the acquisition tests: the `Mock<IDownloadService>`,
-//! `Mock<ILidarrHeartAcquisitionService>` and `Mock<IMusicMetadataService>` of the C# tests,
-//! an offline Soulseek link, and `Until`.
+//! Hand-written fakes for the acquisition tests: the download service, the Lidarr heart
+//! acquisition service and the metadata service, an offline Soulseek link, and `until`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ use crate::services::lidarr::ILidarrHeartAcquisitionService;
 use crate::services::soulseek::ISoulseekLink;
 use crate::services::soulseek::soulseek_link::{SoulseekLinkState, SoulseekServerReading};
 
-/// `LastFmScrobbleServiceTests.Until`: waits up to ten seconds for a condition.
+/// Waits up to ten seconds for a condition.
 pub(crate) async fn until(condition: impl Fn() -> bool) {
     for _ in 0..1000 {
         if condition() {
@@ -39,7 +38,7 @@ type AlbumAnswer = Box<dyn FnMut(DownloadSource, bool) -> anyhow::Result<bool> +
 /// One album call: provider, album, source, suppress summary, requested by.
 pub(crate) type AlbumCall = (String, String, DownloadSource, bool, Option<Vec<String>>);
 
-/// `Mock<IDownloadService>`: album walks answer `false` unless told otherwise, and every call is
+/// The download service: album walks answer `false` unless told otherwise, and every call is
 /// recorded.
 pub(crate) struct FakeDownloads {
     album: Mutex<AlbumAnswer>,
@@ -151,7 +150,7 @@ type LidarrAnswer = Box<dyn FnMut(&str, &str, bool) -> anyhow::Result<bool> + Se
 /// One Lidarr call: provider, external id, notify on failure, requested by.
 pub(crate) type LidarrCall = (String, String, bool, Option<String>);
 
-/// `Mock<ILidarrHeartAcquisitionService>`: `false` unless told otherwise, every call recorded.
+/// The Lidarr heart acquisition service: `false` unless told otherwise, every call recorded.
 pub(crate) struct FakeLidarr {
     track: Mutex<LidarrAnswer>,
     album: Mutex<LidarrAnswer>,
@@ -246,7 +245,7 @@ impl ILidarrHeartAcquisitionService for FakeLidarr {
 
 type DurationsHook = Arc<dyn Fn(bool) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
 
-/// `Mock<IMusicMetadataService>`: songs and albums by id, a hit per (artist, title), and hooks
+/// The metadata service: songs and albums by id, a hit per (artist, title), and hooks
 /// on the durations pass and the prewarm.
 #[derive(Default)]
 pub(crate) struct FakeMetadata {

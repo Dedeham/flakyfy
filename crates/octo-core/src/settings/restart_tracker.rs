@@ -25,7 +25,7 @@ impl RestartTracker {
         "Subsonic:Url",         // live in most places; a restart is still the safe advice
         "Subsonic:LibraryPath", //
         "Subsonic:WaitForLosslessOnPlay", // SubsonicResponseBuilder, deliberately
-        "Soulseek:BaseUrl",     // SoulseekClient and SoulseekDownloadService take IOptions
+        "Soulseek:BaseUrl",     // SoulseekClient and SoulseekDownloadService read it at startup
         "Soulseek:Username",
         "Soulseek:Password",
         "Soulseek:SearchWaitSeconds",
@@ -85,8 +85,8 @@ fn same(now: Option<&str>, at_startup: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! RestartTrackerTests.cs. The dashboard's "restart to apply" banner is computed from this,
-    //! so it has to name a changed startup-only setting and nothing else.
+    //! The dashboard's "restart to apply" banner is computed from this, so it has to name a
+    //! changed startup-only setting and nothing else.
 
     use super::*;
     use crate::config::ConfigTree;

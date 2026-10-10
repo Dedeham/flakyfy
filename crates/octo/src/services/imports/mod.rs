@@ -1,8 +1,8 @@
-//! `Services/Imports`: importing songs from Spotify, a public link or a file (group H). The
-//! Spotify sign-in, reading every list, matching each song against the library, keeping a list as
-//! a Navidrome playlist, and the trickle that fetches the missing songs a few an hour; and what
-//! the import keeps on disk (`imports.json`, `imports-trickle.json`, `spotify-accounts.json`),
-//! read and written as the C# stores did.
+//! Importing songs from Spotify, a public link or a file. The Spotify sign-in, reading every
+//! list, matching each song against the library, keeping a list as a Navidrome playlist, and the
+//! trickle that fetches the missing songs a few an hour; and what the import keeps on disk
+//! (`imports.json`, `imports-trickle.json`, `spotify-accounts.json`), in the shape existing files
+//! already have.
 
 pub mod import_file_reader;
 pub mod import_matcher;
@@ -45,7 +45,7 @@ use tracing::warn;
 
 use super::state_file;
 
-/// How the C# import stores read their file at start: missing is empty; one that cannot be read
+/// How the import stores read their file at start: missing is empty; one that cannot be read
 /// is a warning ("the imported lists could not be read: ...") and empty too.
 pub(crate) fn load_or_default<T: DeserializeOwned + Default>(path: &Path, what: &str) -> T {
     let loaded = (|| -> anyhow::Result<Option<T>> {

@@ -1,6 +1,5 @@
-//! Port of `Services/Library/NoticeQueue.cs`: what Octo has asked each person about, and what
-//! they answered (`<config>/notice-queue.json`, state-files.md §4.13, the one state file that
-//! writes its enums as names).
+//! What Octo has asked each person about, and what they answered (`<config>/notice-queue.json`,
+//! the one state file that writes its enums as names).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -196,7 +195,7 @@ pub struct NoticeEntry {
     pub lookup_attempts: i32,
     #[serde(default = "datetime::min_value", with = "datetime::utc")]
     pub next_lookup_utc: DateTime<Utc>,
-    /// `DateTime.UtcNow` when the entry is made, and when a file leaves it out.
+    /// The current time when the entry is made, and when a file leaves it out.
     #[serde(default = "Utc::now", with = "datetime::utc")]
     pub created_utc: DateTime<Utc>,
     #[serde(default, with = "datetime::utc_option")]
@@ -243,12 +242,12 @@ impl NoticeEntry {
     }
 }
 
-/// `string.Equals(a, b.Trim(), OrdinalIgnoreCase)`.
+/// The same user, ignoring case and the asker's surrounding spaces.
 fn same_user(entry_user: &str, username: &str) -> bool {
     dotnet::eq_ignore_case(entry_user, username.trim())
 }
 
-/// Where a kind sorts (`OrderBy(entry => entry.Kind)`): Review first.
+/// Where a kind sorts: Review first.
 fn kind_order(kind: NoticeKind) -> u8 {
     match kind {
         NoticeKind::Review => 0,
@@ -263,8 +262,8 @@ fn kind_order(kind: NoticeKind) -> u8 {
 /// moment its entry resolves any way but Keep, and once it has been sent or refused, so the
 /// file stays small.
 ///
-/// The C# flushed from a 5 s `Timer` and from `Dispose`; here [`NoticeQueue::run_flusher`] is
-/// the timer (a worker, which flushes once more on shutdown) and `Drop` is the `Dispose`.
+/// [`NoticeQueue::run_flusher`] flushes every 5 s (a worker, which flushes once more on
+/// shutdown), and `Drop` flushes what is left.
 pub struct NoticeQueue {
     path: Option<PathBuf>,
     entries: Mutex<DotnetDictionary<NoticeEntry>>,
@@ -644,7 +643,7 @@ impl NoticeQueue {
         complete: bool,
     ) -> usize {
         let now = Utc::now();
-        // Distinct(OrdinalIgnoreCase): the first spelling of each user.
+        // Each user once, ignoring case: the first spelling of each user.
         let mut owners: Vec<String> = Vec::new();
         for user in users {
             let user = user.as_ref().trim();
@@ -767,10 +766,10 @@ impl NoticeQueue {
         }
     }
 
-    /// The newest first, at most `limit` (the C# default was 200).
+    /// The newest first, at most `limit`.
     pub fn recent(&self, limit: usize) -> Vec<NoticeEntry> {
         let mut entries: Vec<NoticeEntry> = self.entries.lock().values().cloned().collect();
-        // OrderByDescending is stable: equal times keep their order.
+        // A stable sort: equal times keep their order.
         entries.sort_by(|a, b| {
             let at = |e: &NoticeEntry| e.resolved_utc.or(e.queued_utc).unwrap_or(e.created_utc);
             at(b).cmp(&at(a))
@@ -804,7 +803,7 @@ impl NoticeQueue {
             .filter(|entry| !entry.is_open())
             .map(|entry| (entry.resolved_utc.unwrap_or(entry.created_utc), entry.key.clone()))
             .collect();
-        // OrderBy is stable: equal times go in dictionary order.
+        // A stable sort: equal times go in dictionary order.
         resolved.sort_by_key(|(at, _)| *at);
         let excess = entries.len() - Self::MAX_ENTRIES;
         for (_, key) in resolved.into_iter().take(excess) {
@@ -860,7 +859,7 @@ impl NoticeQueue {
         }
     }
 
-    /// The 5-second flush timer, and the flush `Dispose` did on shutdown, as a worker.
+    /// The 5-second flush timer, and the last flush on shutdown, as a worker.
     pub async fn run_flusher(self: Arc<Self>, token: CancellationToken) -> anyhow::Result<()> {
         let queue = self.clone();
         state_file::flush_every(
@@ -875,13 +874,13 @@ impl NoticeQueue {
 }
 
 impl Drop for NoticeQueue {
-    /// `Dispose`: the last flush.
+    /// The last flush.
     fn drop(&mut self) {
         self.flush();
     }
 }
 
-/// `File.Move(path, $"{path}.corrupt-{DateTime.UtcNow.Ticks}")`, best effort.
+/// Renames the file to `<path>.corrupt-<ticks>` (now, in 100 ns ticks), best effort.
 pub(crate) fn set_aside(path: &Path) {
     let ticks = octo_core::library::generated_playlist_service::dotnet_ticks(Utc::now());
     let mut aside = path.as_os_str().to_owned();
@@ -889,8 +888,8 @@ pub(crate) fn set_aside(path: &Path) {
     let _ = std::fs::rename(path, PathBuf::from(aside));
 }
 
-/// `TimeSpan.FromSeconds(Math.Max(0, seconds)).ToString(seconds >= 3600 ? @"h\:mm\:ss" : @"m\:ss")`:
-/// the hours and minutes are the TimeSpan's components, so a day or more drops its days.
+/// A length as `h:mm:ss` from an hour up, otherwise `m:ss`, negative taken as zero. The hours
+/// are those within the day, so a day or more drops its days.
 fn clock(seconds: i32) -> String {
     let total = i64::from(seconds.max(0));
     let (hours, minutes, secs) = ((total / 3600) % 24, (total / 60) % 60, total % 60);
@@ -914,7 +913,7 @@ fn describe(track: &LibraryTrack) -> String {
     text
 }
 
-/// `Path.GetExtension(path).TrimStart('.')`.
+/// The extension without its dot, or empty.
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

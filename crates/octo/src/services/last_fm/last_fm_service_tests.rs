@@ -1,5 +1,3 @@
-//! `LastFmServiceTests.cs`, and `QueryVariantLookupTests.LastFm_AsksForTheSongWrittenPlainlyBeforeGivingUpOnIt`.
-//!
 //! "Can Last.fm answer at all" and "is the radio feature switched on" are different
 //! questions. They used to be one property, so turning radio off also emptied the search
 //! bar of discovery results: a setting doing something its name does not say.
@@ -35,7 +33,7 @@ fn with(api_key: &str, enable_radio: bool) -> LastFmService {
     LastFmService::with_base_url(store(api_key, enable_radio, "en"), "http://127.0.0.1:1/2.0/")
 }
 
-/// The C# `FixtureHandler`: answers each request from a function of it, with one status.
+/// A Last.fm fake: answers each request from a function of it, with one status.
 struct Fixture {
     answer: Box<dyn Fn(&Request) -> String + Send + Sync>,
     status: u16,
@@ -197,8 +195,8 @@ async fn radio_methods_tolerate_malformed_empty_and_rate_limited_responses() {
     );
 }
 
-/// The caller's cancellation is dropping the future (see known-diffs): the call does not answer
-/// an empty list in its place.
+/// The caller's cancellation is dropping the future: the call does not answer an empty list in
+/// its place.
 #[tokio::test]
 async fn radio_methods_propagate_caller_cancellation() {
     let server = serve(Fixture {
@@ -302,7 +300,6 @@ async fn similar_tracks_an_artist_with_one_name_is_asked_only_under_it() {
     );
 }
 
-/// `QueryVariantLookupTests.LastFm_AsksForTheSongWrittenPlainlyBeforeGivingUpOnIt`.
 #[tokio::test]
 async fn last_fm_asks_for_the_song_written_plainly_before_giving_up_on_it() {
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -334,10 +331,10 @@ async fn last_fm_asks_for_the_song_written_plainly_before_giving_up_on_it() {
     );
 }
 
-/// Rust-only: track.getsimilar's shapes as the C# read them: a string match with a thousands
-/// separator, durations as strings and numbers, "0" as unknown, rows missing a name or artist
-/// skipped; and a `track` that is an object instead of an array failing the whole read, which
-/// answers no tracks (and, being an error, is not cached).
+/// The shapes track.getsimilar answers in: a string match with a thousands separator, durations
+/// as strings and numbers, "0" as unknown, rows missing a name or artist skipped; and a `track`
+/// that is an object instead of an array failing the whole read, which answers no tracks (and,
+/// being an error, is not cached).
 #[tokio::test]
 async fn similar_tracks_read_every_shape_last_fm_sends() {
     let server = serve(answer(|request| {
@@ -377,9 +374,9 @@ async fn similar_tracks_read_every_shape_last_fm_sends() {
     assert!(service.get_similar_tracks("Bad", "Song", 50).await.is_empty());
 }
 
-/// Rust-only: track.search's listener counts, and what fails the radio readers outright.
+/// Track.search's listener counts, and what fails the radio readers outright.
 #[tokio::test]
-async fn search_reads_listeners_and_radio_readers_fail_where_the_csharp_threw() {
+async fn search_reads_listeners_and_radio_readers_fail_on_the_wrong_shape() {
     let server = serve(answer(|request| {
         match query(request, "method").as_str() {
             "track.search" => {
@@ -427,7 +424,6 @@ async fn search_reads_listeners_and_radio_readers_fail_where_the_csharp_threw() 
     assert_eq!(received(&server).await.len(), before);
 }
 
-// LastFmServiceTests.SimilarTracks_ASmallCachedAnswerDoesNotShortChangeABiggerAsk
 #[tokio::test]
 async fn similar_tracks_a_small_cached_answer_does_not_short_change_a_bigger_ask() {
     // A station refresh asks for a few; a player's radio then asks for many.
@@ -461,9 +457,9 @@ async fn similar_tracks_a_small_cached_answer_does_not_short_change_a_bigger_ask
     assert_eq!(received(&server).await.len(), 2);
 }
 
-/// Rust-only (446d393): how a list of songs like a seed was found. A nightcore title found only
-/// as its original is the original's, an upload's own "Artist - Title" is asked under the artist
-/// it names, and similar artists to a name Last.fm barely knows are a guess.
+/// How a list of songs like a seed was found. A nightcore title found only as its original is the
+/// original's, an upload's own "Artist - Title" is asked under the artist it names, and similar
+/// artists to a name Last.fm barely knows are a guess.
 #[tokio::test]
 async fn find_similar_tracks_says_how_the_list_was_found() {
     let server = serve(answer(|request| {

@@ -1,6 +1,6 @@
-//! What `Services/Library/ExplicitBackfill.cs`'s store keeps on disk, `explicit-backfill.json`:
-//! the run marking the library explicit or clean (a preview, then the writes it found), so a
-//! preview survives a restart. The run itself is group P's.
+//! What the explicit marking's store keeps on disk, `explicit-backfill.json`: the run marking
+//! the library explicit or clean (a preview, then the writes it found), so a preview survives a
+//! restart. The run itself is `explicit_backfill`.
 
 use std::path::Path;
 
@@ -71,7 +71,7 @@ pub fn writes(outcome: &str) -> bool {
     matches!(outcome, "explicit" | "clean")
 }
 
-/// The run, written by hand ([`Serialize`] below) because STJ also wrote the computed
+/// The run, serialized by hand ([`Serialize`] below) because the file also carries the computed
 /// `CanResume` and `CanApply`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
@@ -219,7 +219,7 @@ mod tests {
         "/../../docs/rust-migration/fixtures/state/explicit-backfill.json"
     );
 
-    /// The computed CanResume and CanApply are written too, as STJ wrote them.
+    /// The computed CanResume and CanApply are written too.
     #[test]
     fn the_fixture_round_trips_byte_for_byte() {
         let text = std::fs::read_to_string(FIXTURE).expect("the fixture is in the repo");

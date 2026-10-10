@@ -1,10 +1,8 @@
-//! Port of `Services/Library/LibraryActionExecutor.cs`: `LibraryActionRequest`,
-//! `LibraryActionOutcome`, `LibraryActionCodes` and the executor.
+//! `LibraryActionRequest`, `LibraryActionOutcome`, `LibraryActionCodes` and the executor.
 //!
-//! The C# `ApplyAsync` took a `CancellationToken` that only reached the lookups before the file
-//! was touched; here [`LibraryActionExecutor::apply`] takes none, and the workers stop between
-//! actions instead (see known-diffs.md). Where the C# let an exception out of `ApplyAsync` (the
-//! mappings file could not be saved after a delete), `apply` answers `Err`.
+//! [`LibraryActionExecutor::apply`] takes no cancellation token: once started, an action runs to
+//! its end, and the workers stop between actions instead. When the mappings file cannot be saved
+//! after a delete, `apply` answers `Err`.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -157,7 +155,8 @@ pub type ShowsAt = Arc<dyn Fn(String, String) -> BoxFuture<'static, bool> + Send
 /// Asks Navidrome for a forced scan. Tests set it; otherwise the library service.
 pub type ForceScan = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
-/// The C# internal settable properties: `HistoryPoll`, `HistoryAttempts`, `ShowsAt`, `ForceScan`.
+/// The executor's seams, which tests change: the history poll, its attempts, `ShowsAt` and
+/// `ForceScan`.
 #[derive(Clone)]
 pub struct ExecutorSeams {
     pub history_poll: Duration,
@@ -188,7 +187,7 @@ pub struct SongAnswers {
     pub rejections: Arc<RejectionStore>,
 }
 
-/// What the executor is built from: the C# constructor's parameters, the optional ones last.
+/// What the executor is built from, the optional services last.
 pub struct LibraryActionExecutorParts {
     pub resolver: Arc<NavidromeSongPathResolver>,
     pub quarantine: Arc<LibraryActionQuarantine>,
@@ -197,7 +196,7 @@ pub struct LibraryActionExecutorParts {
     pub ids: Arc<ExternalIdRegistry>,
     pub rejected_peers: Arc<RejectedPeerRegistry>,
     pub acquisitions: Arc<TrackAcquisitionQueue>,
-    /// `IOptionsMonitor` of the library action, Soulseek and Subsonic settings: read at use.
+    /// The library action, Soulseek and Subsonic settings, read at use.
     pub settings: Arc<SettingsStore>,
     pub notices: Option<Arc<NoticeQueue>>,
     pub spectrum: Option<Arc<SpectrumAnalyzer>>,
@@ -283,7 +282,7 @@ impl Drop for SongsClaim<'_> {
     }
 }
 
-/// The C# exception types the replacement loop tells apart.
+/// The error types the replacement loop tells apart.
 fn is_rejected(error: &anyhow::Error) -> Option<&ReplacementRejectedException> {
     error.downcast_ref::<ReplacementRejectedException>()
 }
@@ -315,12 +314,12 @@ fn is_invalid_operation(error: &anyhow::Error) -> bool {
         .is_some()
 }
 
-/// `Path.GetFileName`.
+/// Everything after the last separator.
 fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// `Path.GetExtension`: the name's last dot onward, empty when there is none or it ends there.
+/// The extension: the name's last dot onward, empty when there is none or it ends there.
 fn extension(path: &str) -> String {
     let name = file_name(path);
     match name.rfind('.') {
@@ -329,7 +328,7 @@ fn extension(path: &str) -> String {
     }
 }
 
-/// `File.GetLastWriteTimeUtc(path).Ticks`: 1601-01-01 for a file that is not there.
+/// The file's last write time in 100 ns ticks: 1601-01-01 for a file that is not there.
 fn last_write_ticks(path: &str) -> i64 {
     const MISSING: i64 = 504_911_232_000_000_000;
     std::fs::metadata(path)
@@ -946,7 +945,7 @@ impl LibraryActionExecutor {
             );
         } else {
             // The original stays in place, playable, until its replacement has passed; the two
-            // swap places in one moment (W8).
+            // swap places in one moment.
             let done = self.reacquire(request, resolved, key, &music_root).await;
             outcome = done.outcome.clone();
             quarantine_path = done.quarantine_path.clone();
@@ -1054,7 +1053,7 @@ impl LibraryActionExecutor {
             handoff = identity
                 .clone()
                 .map(|identity| Arc::new(admission.clone().handoff(identity)));
-            // DownloadSongInternalAsync hands back a file it has a mapping for instead of
+            // `download_song_internal` hands back a file it has a mapping for instead of
             // fetching. The handoff skips that, so only a download without one needs this.
             if handoff.is_none() {
                 self.library
@@ -1203,7 +1202,7 @@ impl LibraryActionExecutor {
                     return Replaced::failed(format!("The replacement {late}, so nothing changed."));
                 }
                 Err(e) => {
-                    // What the C# caught as any other exception after the download.
+                    // Any other failure after the download.
                     return match quarantine_path() {
                         None => Replaced::failed(format!(
                             "Could not find a replacement ({e}), so nothing changed.{}",
@@ -1257,9 +1256,9 @@ impl LibraryActionExecutor {
         );
     }
 
-    /// One scan, then watch the ORIGINAL id until it shows the replacement (W8): proof that the
+    /// One scan, then watch the ORIGINAL id until it shows the replacement: proof that the
     /// plays, favorites and playlist places stayed with the song. About ten minutes, scanning
-    /// again every two in case Navidrome was busy. If not shown, the rater's favorite (W6).
+    /// again every two in case Navidrome was busy. If not shown, the rater's favorite.
     pub async fn confirm_history_kept(
         &self,
         request: &LibraryActionRequest,
@@ -1566,8 +1565,8 @@ impl LibraryActionExecutor {
     }
 }
 
-/// What the C# `AdmitAsync` and `Revealed` local functions closed over: one replacement's
-/// original, where it started, and where it went once it was moved out.
+/// What the admission check and the reveal note share: one replacement's original, where it
+/// started, and where it went once it was moved out.
 struct Admission {
     executor: Arc<LibraryActionExecutor>,
     action: LibraryAction,
@@ -1587,7 +1586,7 @@ impl Admission {
             let admission = admitting.clone();
             async move {
                 // The download cannot be told of a failure here, so it is logged and the swap
-                // goes ahead: the original is already out (see known-diffs.md).
+                // goes ahead: the original is already out.
                 admission.admit(&candidate).await.unwrap_or_else(|e| {
                     warn!("Library action: the original's mapping could not be forgotten: {e}");
                     None

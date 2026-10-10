@@ -1,7 +1,6 @@
-//! The SoulseekDownloadService tests: SoulseekDenyListTests, SoulseekResolveRetryTests,
-//! SoulseekIncompleteFolderTests, the ResolveInJob and job folder tests of ParallelDownloadTests,
-//! TranscodeDecisionTests' WeighTranscode, and AlbumFolderTests' album walk through the real
-//! service against a fake slskd (a wiremock responder with the C# fake's state).
+//! Tests of the Soulseek download service: the deny-list, the resolve retry, the incomplete
+//! folder, `resolve_in_job` and the job folders, `weigh_transcode`, and the album walk through
+//! the real service against a fake slskd (a wiremock responder that keeps the fake's state).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,9 +56,9 @@ fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
 }
 
-// ---- SoulseekDenyListTests -----------------------------------------------------------------
+// ---- The deny-list -------------------------------------------------------------------------
 //
-// CandidateAllowed is the seam between the deny-list and the ranking. The failure it guards
+// `candidate_allowed` is the seam between the deny-list and the ranking. The failure it guards
 // against is invisible from outside: a filter that denies everything leaves every track
 // unfetchable and looks exactly like Soulseek having no copies.
 
@@ -97,7 +96,7 @@ fn candidate_allowed_no_registry_filters_nothing() {
     assert!(candidate_allowed(&hit("peer1", "a.flac"), None, true));
 }
 
-// ---- SoulseekResolveRetryTests -------------------------------------------------------------
+// ---- The resolve retry ---------------------------------------------------------------------
 //
 // slskd marks a transfer Succeeded before moving the file out of its incomplete
 // directory, and on bind mounts that move is a copy that can take seconds. The
@@ -171,12 +170,12 @@ async fn canceled_caller_gets_one_final_check_instead_of_the_window() {
     )
     .await;
 
-    // First check misses, the delay is cancelled, the final check lands.
+    // First check misses, the delay is canceled, the final check lands.
     assert_eq!(result.as_deref(), Some("/music/song.flac"));
     assert_eq!(calls, 2);
 }
 
-// ---- SoulseekIncompleteFolderTests ---------------------------------------------------------
+// ---- The incomplete folder -----------------------------------------------------------------
 //
 // slskd marks a transfer Succeeded before moving it out of its incomplete folder, and a
 // full-size copy there used to be taken as the download, then deleted under Octo (#69).
@@ -319,7 +318,7 @@ async fn the_wait_outlasts_slskds_move_and_returns_the_final_path() {
 #[test]
 fn a_copy_slskd_renamed_on_a_clash_is_found() {
     let root = Root::new("octo-incomplete-");
-    // slskd names the newcomer <name>_<DateTime.UtcNow.Ticks><ext> when the name is taken.
+    // slskd names the newcomer <name>_<UTC ticks><ext> when the name is taken.
     root.write(&format!("slskd/Album/{INCOMPLETE_LEAF}"), 1_000); // the older file that took the name
     let renamed = root.write("slskd/Album/13 - Song_638950000000000000.flac", INCOMPLETE_SIZE);
     assert_eq!(resolve_incomplete(&root, INCOMPLETE_REMOTE, None), Some(renamed));
@@ -333,7 +332,7 @@ fn a_name_that_only_looks_renamed_is_not() {
     assert_eq!(resolve_incomplete(&root, INCOMPLETE_REMOTE, None), None);
 }
 
-// ---- ParallelDownloadTests: ResolveInJob and the job folders -------------------------------
+// ---- Parallel downloads: resolve_in_job and the job folders --------------------------------
 //
 // Downloads side by side were unsafe while a finished file was found by its name anywhere under
 // the music folder. Each Soulseek download now lands in a job folder of its own; these pin down
@@ -398,7 +397,7 @@ fn job_folders_are_dot_folders_and_unique() {
     assert!(!a.contains(".."), "{a}");
 }
 
-// ---- TranscodeDecisionTests: WeighTranscode ------------------------------------------------
+// ---- The transcode decision: weigh_transcode -----------------------------------------------
 
 fn held() -> String {
     format!("{}/music/Artist/Song.flac", std::env::temp_dir().display())
@@ -446,7 +445,7 @@ fn the_copy_already_held_is_never_discarded_as_a_new_one() {
     );
 }
 
-// ---- AlbumFolderTests: the walk, through the real download service against a fake slskd ----
+// ---- Album folders: the walk, through the real download service against a fake slskd -------
 
 /// A FLAC whose STREAMINFO says it lasts this long, so the length check passes.
 fn flac(seconds: u64) -> Vec<u8> {
@@ -1165,7 +1164,7 @@ async fn no_flac_beside_the_mp3_means_no_download() {
     assert!(walk.slskd.batches().is_empty());
 }
 
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- Rejected files, invalid requests and source fallbacks -------------------------------
 
 #[test]
 fn a_rejected_file_is_deleted_only_when_this_attempt_made_it() {

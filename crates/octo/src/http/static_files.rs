@@ -1,5 +1,4 @@
-//! The admin UI and logo files: what `MapStaticAssets()` served from `wwwroot/` (which the
-//! csproj also filled with a copy of `Assets/`), reproduced header for header (endpoints.md §7):
+//! The admin UI and logo files, served from `wwwroot/` and `Assets/` with these headers:
 //!
 //! - every file under the web root at its relative path (`/admin/index.html`), and every file
 //!   under the assets directory at `/Assets/...`;
@@ -54,8 +53,8 @@ pub struct StaticRoots {
 
 impl StaticRoots {
     /// `OCTO_WWWROOT` / `OCTO_ASSETS` when set; else `wwwroot/` and `Assets/` beside the
-    /// executable (the C# image's `AppContext.BaseDirectory` layout); else, in debug builds, the
-    /// C# app's `octo/wwwroot` and `octo/Assets` in this repository, which both builds serve.
+    /// executable (the container image's layout); else, in debug builds, `octo/wwwroot` and
+    /// `octo/Assets` in this repository.
     pub fn from_env() -> StaticRoots {
         let exe_dir = std::env::current_exe()
             .ok()
@@ -254,7 +253,7 @@ impl StaticAssets {
                 .and_then(|e| e.to_str())
                 .and_then(content_type_for)
             else {
-                // UseStaticFiles serves no file whose type it does not know.
+                // No file whose type is unknown is served.
                 debug!("Not serving {}: unknown content type", path.display());
                 continue;
             };
@@ -401,8 +400,7 @@ fn is_plain_segment(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
 }
 
-/// `FileExtensionContentTypeProvider`'s mapping for the types a web root holds. No charset,
-/// as ASP.NET sent none.
+/// The content type for each file type a web root holds, by extension. No charset.
 pub fn content_type_for(extension: &str) -> Option<&'static str> {
     Some(match extension.to_ascii_lowercase().as_str() {
         "html" | "htm" => "text/html",
@@ -538,7 +536,7 @@ fn split_weak(tag: &str) -> (bool, &str) {
     }
 }
 
-/// A date header, when it parses and is not in the future (ASP.NET ignored future dates).
+/// A date header, when it parses and is not in the future (a future date is ignored).
 fn date_header(headers: &HeaderMap, name: header::HeaderName) -> Option<SystemTime> {
     let date = httpdate::parse_http_date(headers.get(name)?.to_str().ok()?).ok()?;
     (date <= SystemTime::now()).then_some(date)
@@ -664,8 +662,8 @@ pub(crate) fn parse_range(value: &str, length: u64) -> RangeOutcome {
     }
 }
 
-/// An empty body with no known length, so nothing adds a `Content-Length` (ASP.NET sent none
-/// on a 304 or a HEAD).
+/// An empty body with no known length, so nothing adds a `Content-Length` (none is sent on a
+/// 304 or a HEAD).
 fn unsized_empty_body() -> Body {
     Body::from_stream(futures::stream::empty::<Result<Bytes, std::io::Error>>())
 }
@@ -713,7 +711,6 @@ pub fn serve(asset: &StaticAsset, method: &Method, headers: &HeaderMap) -> Respo
     *res.status_mut() = status;
     let h = res.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(asset.content_type));
-    // ASP.NET wrote this header twice (known-diffs.md); once is what it meant.
     h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if let Some(e) = encoding {
@@ -756,7 +753,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ranges_normalize_as_asp_net_did() {
+    fn byte_ranges_are_normalized() {
         let cases: [(&str, u64, Option<(u64, u64)>, bool); 10] = [
             ("bytes=0-9", 100, Some((0, 9)), false),
             ("bytes=90-200", 100, Some((90, 99)), false),

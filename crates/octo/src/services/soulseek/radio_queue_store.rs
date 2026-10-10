@@ -1,5 +1,3 @@
-//! Port of `Services/Soulseek/RadioQueueStore.cs`.
-
 use std::collections::VecDeque;
 
 use parking_lot::Mutex;
@@ -14,7 +12,7 @@ use parking_lot::Mutex;
 /// queue still wins. That's good enough for "skip-fast" prewarming.
 #[derive(Default)]
 pub struct RadioQueueStore {
-    /// Most recent first. (The C# record also kept a creation time that nothing read.)
+    /// Most recent first.
     queues: Mutex<VecDeque<Vec<String>>>,
 }
 

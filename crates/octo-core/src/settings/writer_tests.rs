@@ -1,4 +1,4 @@
-//! SettingsFileWriterTests.cs, plus the golden format checks config.md §4 asks for.
+//! `SettingsFileWriter` tests, plus golden checks of the written format.
 //!
 //! Every dashboard save goes through this writer, so the ways it can lose a user's settings are
 //! pinned here: merging must keep what the patch does not name, an unreadable file must be
@@ -159,12 +159,11 @@ fn replace_writes_exactly_the_given_document() {
     assert_eq!(at(&saved, &["New", "Key"]), Some(&Node::Number("2".into())));
 }
 
-// ---- Beyond the C# tests ---------------------------------------------------------------------
+// ---- golden format and edge cases ----------------------------------------------------------
 
-/// config.md §4's sample: a POST of the Subsonic form over a file holding LibraryActions and a
-/// Last.fm session. Non-ASCII and the HTML-sensitive characters come out \u-escaped (the
-/// sample in config.md shows them unescaped, but its own escaping rules and the
-/// fixtures/state/settings.json capture say JavaScriptEncoder.Default escapes them).
+/// The documented sample: a POST of the Subsonic form over a file holding LibraryActions and a
+/// Last.fm session. Non-ASCII and the HTML-sensitive characters come out \u-escaped, as the
+/// fixtures/state/settings.json capture holds them.
 #[test]
 fn merge_output_matches_the_documented_sample_byte_for_byte() {
     let dir = settings_dir();
@@ -219,7 +218,7 @@ fn merge_output_matches_the_documented_sample_byte_for_byte() {
     );
 }
 
-/// The fixture C# wrote round-trips through a no-op write unchanged.
+/// The reference settings.json fixture round-trips through a no-op write unchanged.
 #[test]
 fn fixture_settings_json_round_trips_byte_for_byte() {
     let fixture =
@@ -320,8 +319,8 @@ fn write_creates_the_directory() {
 }
 
 /// A section sent in another case is written with the section's own name, and a file holding two
-/// spellings of one section is written with one (BACKLOG "Found while building the harness": the
-/// C# wrote "lidarr" beside "Lidarr", which the reader refused on reload).
+/// spellings of one section is written with one ("lidarr" beside "Lidarr" would make the reader
+/// refuse the file on reload).
 #[test]
 fn sections_are_written_with_their_own_names() {
     let dir = tempfile::tempdir().expect("a temp dir");

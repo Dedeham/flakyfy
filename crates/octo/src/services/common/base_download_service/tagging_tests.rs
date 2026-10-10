@@ -1,7 +1,7 @@
-//! Port of `DownloadTaggingTests`: a download end to end, from the landed file to the tags on
-//! disk and the report in the fetched-songs log. The catalog and the music database are the real
-//! clients against one mock server, the loudness meter is a fake, the fingerprint service's
-//! answer is a parsed lookup, and the files are real files in a temp folder.
+//! A download tagged end to end, from the landed file to the tags on disk and the report in the
+//! fetched-songs log. The catalog and the music database are the real clients against one mock
+//! server, the loudness meter is a fake, the fingerprint service's answer is a parsed lookup, and
+//! the files are real files in a temp folder.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -66,7 +66,7 @@ impl ILoudnessMeter for FakeMeter {
     }
 }
 
-/// The C# test's `special` answer: the music database down, the catalog over its quota.
+/// The `special` answer: the music database down, the catalog over its quota.
 #[derive(Clone)]
 struct DownAndThrottled;
 
@@ -622,8 +622,7 @@ async fn compilation_rip_tagged(prefer_original_album: bool, peer: Option<fn(&mu
     tagging
 }
 
-/// A Vorbis field set the way the C# tests set one (`xiph.SetField`), through the writer's own
-/// field setter.
+/// A Vorbis field set directly, through the writer's own field setter.
 fn set_vorbis(file: &mut TagFile, name: &'static str, value: &str) {
     let field = TagField {
         id3_frame: None,
@@ -654,7 +653,7 @@ fn tagged_for_the_compilation(file: &mut TagFile) {
     set_vorbis(file, "REPLAYGAIN_ALBUM_GAIN", "-9.40 dB");
 }
 
-// ---- 2463c23: a download keeps only its own album's facts --------------------------------
+// ---- a download keeps only its own album's facts -----------------------------------------
 
 #[tokio::test]
 async fn compilation_rip_filed_under_the_studio_album_keeps_none_of_the_compilations_facts() {
@@ -899,8 +898,7 @@ async fn the_explicit_copy_that_landed_is_tagged_explicit_and_the_clean_one_clea
     assert_eq!(clean_copy, "2");
 }
 
-/// 099fdd3: Try it on a song shows the advisory and what a download would take off, and writes
-/// nothing.
+/// Try it on a song shows the advisory and what a download would take off, and writes nothing.
 #[tokio::test]
 async fn try_it_on_a_song_shows_the_advisory_and_what_a_download_would_take_off_and_writes_nothing() {
     let tagging = build_with(vec![], serve(money_trees_routes()).await, Options::default()).await;
@@ -1185,7 +1183,7 @@ async fn a_landed_path_with_no_audio_fails_and_is_never_recorded() {
     }
 }
 
-// ---- a file named for another format (85bba0f) ----------------------------------------------
+// ---- a file named for another format --------------------------------------------------------
 
 /// Every file under a folder, at any depth.
 fn files_below(dir: &Path) -> Vec<String> {
@@ -1201,8 +1199,6 @@ fn files_below(dir: &Path) -> Vec<String> {
     found
 }
 
-/// DownloadTaggingTests.TheDownloadsLogSaysWhatCameOffThePeersTagsAndWhetherTheSongIsExplicit
-/// (02cc06b).
 #[tokio::test]
 async fn the_downloads_log_says_what_came_off_the_peers_tags_and_whether_the_song_is_explicit() {
     let song = Song {

@@ -1,11 +1,10 @@
-//! The service-level tests of `octo.Tests/SyncCatalogTests.cs` (IsSyncClient_*,
-//! LocalTotalFromPage_*, Window_*, ResolveLocalTotal_*, Interleave_*, ParseLibraryArtist_*).
-//! The page-writing tests are in `octo_subsonic::sync_catalog_response`, and the walks through
-//! the app (SongWalk_*, AlbumAndArtistWalks_*, ...) move with the controller to 6-A.
+//! The sync catalog service's tests: spotting a sync client, the local total from a page, the
+//! window, resolving the local total, interleaving, and reading a library artist. The
+//! page-writing tests are in `octo_subsonic::sync_catalog_response`.
 //!
-//! Rust-only: the build against a stand-in Navidrome (the `SyncWebFactory` library and stations
-//! of the C# walks, asked of the service directly), the catalog cache and its dates, the walk
-//! memo, `slice`, and the catalog's dates reaching a page through `append`.
+//! Also the build against a stand-in Navidrome (a library and stations asked of the service
+//! directly), the catalog cache and its dates, the walk memo, `slice`, and the catalog's dates
+//! reaching a page through `append`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -211,9 +210,9 @@ fn parse_library_artist_is_null_for_a_failed_response() {
     );
 }
 
-/// Rust-only: where `JsonDocument` threw, the parser errs, and the lookup reads that as failed.
+/// Where the body does not parse, the parser errs, and the lookup reads that as failed.
 #[test]
-fn parse_library_artist_errs_where_the_csharp_threw() {
+fn parse_library_artist_errs_on_an_unreadable_body() {
     assert!(SyncCatalogService::parse_library_artist(b"not json", "Air").is_err());
     assert!(
         SyncCatalogService::parse_library_artist(br#"{"subsonic-response":{"status":3}}"#, "Air").is_err()
@@ -227,7 +226,7 @@ fn parse_library_artist_errs_where_the_csharp_threw() {
 }
 
 // -------------------------------------------------------------------------------
-// Building (Rust-only: the C# exercised the build through the walks of SyncWebFactory)
+// Building
 // -------------------------------------------------------------------------------
 
 /// `SyncUpstreamHandler`'s search3 by artist name: "Owned Artist" is in the library with one
@@ -259,8 +258,8 @@ impl Respond for Navidrome {
     }
 }
 
-/// `SyncWebFactory.InstallStations`: twelve "Stranger" songs, an owned hit, a missing one on an
-/// owned album, and a single with no album.
+/// A Your Mix station: twelve "Stranger" songs, an owned hit, a missing one on an owned album,
+/// and a single with no album.
 fn your_mix(changed_hour: u32) -> LastFmRadioStation {
     let track = |artist: &str, title: &str, album: Option<&str>, duration: i32| LastFmRadioTrack {
         artist: artist.into(),
@@ -299,7 +298,7 @@ fn expected_catalog_titles() -> Vec<String> {
     titles
 }
 
-/// The C# `Mock<IMusicMetadataService>`: a placeholder per artist and title.
+/// A metadata service with a placeholder per artist and title.
 fn metadata(stations: &[LastFmRadioStation]) -> Arc<FakeMetadata> {
     let metadata = FakeMetadata::default();
     for track in stations.iter().flat_map(|station| &station.tracks) {
@@ -655,7 +654,7 @@ fn the_fingerprint_names_each_station_change_the_cap_and_the_filter() {
         explicit_filter: ExplicitFilter::CleanOnly,
         ..Default::default()
     };
-    // 2026-09-01T02:00:00Z in .NET ticks.
+    // 2026-09-01T02:00:00Z in ticks (100 ns units since 0001-01-01).
     assert_eq!(
         SyncCatalogService::fingerprint(&stations, &settings),
         "or-your-mix:639238248000000000#50#CleanOnly"

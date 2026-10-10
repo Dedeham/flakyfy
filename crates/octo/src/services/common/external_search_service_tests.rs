@@ -1,5 +1,5 @@
-//! Port of `ExternalSearchServiceTests`. The Moq'd Last.fm handler is a wiremock server
-//! answering by the `method` query parameter; the metadata service is a hand-written fake.
+//! The external search. Last.fm is a wiremock server answering by the `method` query
+//! parameter; the metadata service is a hand-written fake.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -294,7 +294,7 @@ async fn search_rows_are_built_most_listened_first() {
         ["Rolling in the Deep", "Someone Like You", "Skyfall", "Привет"]
     );
 }
-// ---- Rust-only ---------------------------------------------------------------------------
+// ---- empty inputs and limits -------------------------------------------------------------
 
 /// A search waits for the lengths at most its budget, then answers with what it has.
 #[tokio::test]

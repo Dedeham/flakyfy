@@ -1,4 +1,4 @@
-//! Background workers (the C# `BackgroundService`s) and the supervisor that hosts them.
+//! Background workers and the supervisor that hosts them.
 
 pub mod supervisor;
 

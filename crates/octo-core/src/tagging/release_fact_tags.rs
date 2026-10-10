@@ -1,6 +1,6 @@
-//! The pure half of `Services/Tagging/ReleaseFactTags.cs`: the album grouping a joining track
-//! copies, and whether a file was filed under another album than the one it arrived with. The
-//! file work is `octo_media::tags::release_fact_tags`.
+//! The pure half of the release fact tags: the album grouping a joining track copies, and whether
+//! a file was filed under another album than the one it arrived with. The file work is
+//! `octo_media::tags::release_fact_tags`.
 
 use crate::common::dotnet::is_blank;
 use crate::common::song_identity::SongIdentity;
@@ -45,7 +45,6 @@ pub fn filed_elsewhere(arrived_album: Option<&str>, album: Option<&str>) -> bool
 mod tests {
     use super::*;
 
-    /// `ReleaseFactTagsTests.FiledElsewhere_IsAnotherAlbumTitle`.
     #[test]
     fn filed_elsewhere_is_another_album_title() {
         let cases: [(Option<&str>, Option<&str>, bool); 7] = [

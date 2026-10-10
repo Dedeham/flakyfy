@@ -1,5 +1,5 @@
-//! The pure half of `Services/Fingerprint/MusicBrainzClient.cs`: the query builders and the
-//! readers of its answers. The HTTP half (the one-a-second gate and the cache) is
+//! The pure half of the MusicBrainz client: the query builders and the readers of its answers.
+//! The HTTP half (the one-a-second gate and the cache) is
 //! `octo::services::fingerprint::music_brainz_client`.
 
 use serde_json::Value;
@@ -47,12 +47,12 @@ pub fn escape_query(value: &str) -> String {
     sb
 }
 
-/// The quoting `FindRecordingAsync` and `FindStudioAlbumAsync` use: backslashes and quotes only.
+/// The quoting the recording and studio album lookups use: backslashes and quotes only.
 pub fn escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The relative URL `FindRecordingAsync` asks, or None when the song cannot be asked for.
+/// The relative URL the recording lookup asks, or None when the song cannot be asked for.
 pub fn find_recording_url(artist: &str, title: &str, duration_seconds: i32) -> Option<String> {
     if dotnet::is_blank(artist) || dotnet::is_blank(title) || duration_seconds <= 0 {
         return None;
@@ -68,13 +68,13 @@ pub fn find_recording_url(artist: &str, title: &str, duration_seconds: i32) -> O
     ))
 }
 
-/// The relative URL `FindStudioAlbumAsync` asks and the title its answer is read against, or
+/// The relative URL the studio album lookup asks and the title its answer is read against, or
 /// None when there is nothing to ask.
 pub fn studio_album_search(artist: &str, title: &str) -> Option<(String, String)> {
     let plain_title = SongIdentity::strip_features(title);
     // Words, not a phrase: "They Dont Care About Us" has to find "They Don't Care About Us".
-    // char.IsLetterOrDigit looks at one UTF-16 unit, so a character outside the BMP is two
-    // spaces.
+    // Letters and digits are tested one UTF-16 unit at a time, so a character outside the BMP
+    // becomes two spaces.
     let mut words = String::with_capacity(plain_title.len());
     for c in plain_title.chars() {
         if dotnet::is_letter_utf16(c) || dotnet::is_digit_utf16(c) {

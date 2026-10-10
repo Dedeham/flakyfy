@@ -1,6 +1,6 @@
-//! Port of `Services/Health/HealthWords.cs` (69f577f): the words for library health, the same as
-//! the Octo app's (HealthWords.kt and FixWords.kt), so a finding reads the same on the phone, the
-//! desktop and the dashboard: what each check is called, what it means, and what to do about it.
+//! The words for library health, the same as the Octo app's (HealthWords.kt and FixWords.kt), so
+//! a finding reads the same on the phone, the desktop and the dashboard: what each check is
+//! called, what it means, and what to do about it.
 
 use octo_core::common::dotnet::{is_blank, to_upper_invariant};
 
@@ -10,7 +10,7 @@ use super::library_health::{
     HealthReport, IHealthFields, SplitAlbum, SplitBasis, SplitReason,
 };
 
-/// `count.ToString("N0", InvariantCulture)`: thousands with commas.
+/// A count with its thousands split by commas.
 pub fn n0(count: i64) -> String {
     let digits = count.unsigned_abs().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);

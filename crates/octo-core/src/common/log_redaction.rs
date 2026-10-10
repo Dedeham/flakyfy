@@ -1,6 +1,5 @@
-//! Port of the pure half of `Services/Common/LogRedaction.cs`: the redaction itself. Wrapping
-//! the log pipeline (the C# `RedactingLoggerFactory`, `RedactingLogger` and
-//! `RedactedLogState`) belongs to the tracing setup in the `octo` crate.
+//! The pure half of log redaction: the redaction itself. Wrapping the log pipeline belongs to
+//! the tracing setup in the `octo` crate.
 //!
 //! Keeps Subsonic credentials out of the log. Subsonic clients sign in through the query string,
 //! so every request line written ("Request starting ... /rest/star?u=...&t=...&s=...")
@@ -28,12 +27,12 @@ pub const MASK: &str = "***";
 // sends it anyway never has it written down), code and secret the codes and secrets older
 // Family apps send, and jwt a browser's sign-in.
 //
-// The C# matched the value behind a lookbehind, `(?<=[?&;](?:...)=)[^&#\s"'<>]+`. Here the
+// The `regex` crate has no lookbehind, so rather than `(?<=[?&;](?:...)=)[^&#\s"'<>]+` the
 // name is group 1 and is written back. The two find the same values: a value never holds an
 // `&`, so the next parameter's `[?&;]name=` always starts at or after the end of the last value.
 //
 // Every `s` is spelled `(?-i:[sS])`: Rust's case folding also matches the long s (ſ) there,
-// and .NET's invariant IgnoreCase does not.
+// and the long s must not count as an s.
 static SECRET_PARAMETER: LazyLock<Regex> = LazyLock::new(|| {
     let s = "(?-i:[sS])";
     Regex::new(&format!(
@@ -128,9 +127,8 @@ mod tests {
     }
 
     #[test]
-    fn case_is_ignored_as_dotnet_ignored_it() {
-        // Checked against .NET 9's invariant IgnoreCase: the Kelvin sign is a k, the long s
-        // is not an s. A Kelvin sign alone is the hand-over key `k`, masked too.
+    fn case_is_ignored_with_the_kelvin_sign_but_not_the_long_s() {
+        // The Kelvin sign is a k, the long s is not an s. A Kelvin sign alone is the hand-over key `k`, masked too.
         assert_eq!(
             redact("?apiKEY=1&S=2&\u{212A}=3&s\u{212A}=4"),
             "?apiKEY=***&S=***&\u{212A}=***&s\u{212A}=***"
@@ -149,8 +147,7 @@ mod tests {
 
     #[test]
     fn request_lines_mask_each_secret_parameter() {
-        // The pure core of RequestLines_MaskEachSecretParameter and OctosOwnLines_*: each
-        // secret name, sent on its own, is masked and the rest of the line kept.
+        // Each secret name, sent on its own, is masked and the rest of the line kept.
         for name in SECRET_NAMES {
             let secret = format!("Secret{}", uuid::Uuid::new_v4().simple());
             let line = format!("/rest/ping.view?u=winters&{name}={secret}&v=1.16.1&c=Octo&f=json");

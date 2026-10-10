@@ -1,5 +1,5 @@
-//! Port of `Services/Fingerprint/AcoustIdClient.cs`, its HTTP half. The records and the
-//! reading of the answer are in `octo_core::fingerprint::acoust_id_client`.
+//! The AcoustID client, its HTTP half. The records and the reading of the answer are in
+//! `octo_core::fingerprint::acoust_id_client`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,7 +92,7 @@ impl AcoustIdClient {
     }
 
     /// Send confirmed fingerprints back to AcoustID (#47). Each carries a MusicBrainz recording a
-    /// person vouched for by keeping the track; nothing is ever sent on Octo's own judgement.
+    /// person vouched for by keeping the track; nothing is ever sent on Octo's own judgment.
     /// Posted through the same client as lookups, so one 3/s budget covers both. True
     /// when AcoustID accepted the batch.
     pub async fn submit(

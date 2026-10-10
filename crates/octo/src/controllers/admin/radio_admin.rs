@@ -1,7 +1,5 @@
-//! Ports of `Controllers/SonicAdminController.cs` (`api/admin/sonic`: Sounds alike on the
-//! dashboard's Radio page, where the analysis is, and its controls) and
-//! `Controllers/RadioAdminController.cs` (`api/admin/radio-outcomes`: what radio has learned
-//! from listening).
+//! `api/admin/sonic` (Sounds alike on the dashboard's Radio page: where the analysis is, and
+//! its controls) and `api/admin/radio-outcomes` (what radio has learned from listening).
 
 use axum::extract::State;
 use axum::response::Response;

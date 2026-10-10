@@ -1,9 +1,9 @@
-//! Port of `Models/Radio/LastFmRadioState.cs`: what `lastfm-radio-state.json` holds, per
-//! listener, for Last.fm radio, and the dashboard's summary of a listener.
+//! What `lastfm-radio-state.json` holds, per listener, for Last.fm radio, and the dashboard's
+//! summary of a listener.
 //!
 //! The file is written indented by `LastFmRadioStateStore` (`octo::services::last_fm`). Field
-//! names are the C# property names; the C# property initializers are the defaults a missing
-//! field reads as, including the ones that are "now" (`DateTime.UtcNow`).
+//! names are PascalCase; each field's default is what a missing field reads as, including the
+//! ones that are "now" (the current UTC time).
 
 use chrono::{DateTime, TimeDelta, Utc};
 use indexmap::IndexMap;
@@ -284,7 +284,7 @@ mod tests {
         .expect("the fixture is in the repo")
     }
 
-    /// state-files.md §4.3: the file reads and writes back byte for byte, indented.
+    /// The file reads and writes back byte for byte, indented.
     #[test]
     fn the_fixture_round_trips_byte_for_byte() {
         let text = fixture();
@@ -296,9 +296,9 @@ mod tests {
         assert_eq!(crate::json::to_string_indented(&document), text);
     }
 
-    /// The C# initializers are what a missing field reads as.
+    /// Each field's default is what a missing field reads as.
     #[test]
-    fn missing_fields_read_as_the_csharp_initializers() {
+    fn missing_fields_read_as_their_defaults() {
         let before = Utc::now();
         let document: LastFmRadioStateDocument = serde_json::from_str(
             r#"{"Users":{"a":{"Plays":[{}],"Stations":[{"Tracks":[{}]}],"UnavailableTracks":[{}]}}}"#,
@@ -319,9 +319,9 @@ mod tests {
         assert_eq!(user.stations[0].tracks[0].source, "");
     }
 
-    /// System.Text.Json read a `null` into a non-nullable string or list; so does this.
+    /// A `null` in a string or list field reads as empty.
     #[test]
-    fn nulls_where_csharp_declared_no_null_are_read() {
+    fn nulls_in_string_and_list_fields_are_read() {
         let document: LastFmRadioStateDocument = serde_json::from_str(
             r#"{"Version":1,"Users":{"a":{"Username":null,"Plays":null,"Stations":[{"Seeds":null,"Tracks":null}]}}}"#,
         )
@@ -334,9 +334,9 @@ mod tests {
         assert!(empty.users.is_empty());
     }
 
-    /// An empty document is indented the way STJ writes one.
+    /// An empty document is written indented, with its version.
     #[test]
-    fn an_empty_document_is_written_as_stj_writes_it() {
+    fn an_empty_document_is_written_indented() {
         assert_eq!(
             crate::json::to_string_indented(&LastFmRadioStateDocument::default()),
             "{\n  \"Version\": 1,\n  \"Users\": {}\n}"

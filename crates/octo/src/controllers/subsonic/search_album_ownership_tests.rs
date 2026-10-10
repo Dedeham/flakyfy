@@ -1,7 +1,6 @@
-//! Port of `octo.Tests/SearchAlbumOwnershipTests.cs` (f49fb80): Brandon's "drake" search through
-//! the real controller. search3 listed HABIBTI, HABIBTI (FOMO) and "$ome $exy $ongs 4 U" as not in
-//! the library while the library held them, and What A Time To Be Alive as if none of it were
-//! owned. See `services::library::album_ownership::tests::drake_search`.
+//! A "drake" search through the real controller. search3 listed HABIBTI, HABIBTI (FOMO) and "$ome
+//! $exy $ongs 4 U" as not in the library while the library held them, and What A Time To Be Alive
+//! as if none of it were owned. See `services::library::album_ownership::tests::drake_search`.
 
 use std::sync::Arc;
 
@@ -173,8 +172,8 @@ impl Respond for FakeNavidrome {
     }
 }
 
-/// The C# `WebFactory`: the app over both fakes, with the library snapshot read from the drake
-/// library (or not at all).
+/// The app over both fakes, with the library snapshot read from the drake library (or not at
+/// all).
 struct Web {
     state: AppState,
     _servers: (MockServer, MockServer),

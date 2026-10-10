@@ -1,4 +1,4 @@
-//! The file half of `ImportSourceTests.cs`: exported files, their lengths and their limits.
+//! Imports from exported files: the files, their lengths and their limits.
 
 use std::io::Write;
 
@@ -160,9 +160,9 @@ fn a_zip_of_too_many_files_or_too_much_unpacked_is_refused() {
     );
 }
 
-/// The words the parity corpus checks: a parser's and the zip reader's, as .NET put them.
+/// The exact words a broken file is refused with: the parser's and the zip reader's.
 #[test]
-fn a_broken_file_is_refused_in_the_words_dotnet_used() {
+fn a_broken_file_is_refused_in_the_parsers_words() {
     let error = ImportFileReader::read("broken.json", br#"{"tracks": [oops"#).expect_err("refused");
     assert_eq!(
         octo_core::common::acquisition_tracker::user_safe(Some(&error.to_string())).as_deref(),

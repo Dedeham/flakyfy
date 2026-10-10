@@ -1,5 +1,4 @@
-//! Port of `Services/Notifications/NtfySink.cs`. The topic URL, body and tag are
-//! `octo_core::notifications::ntfy_sink`.
+//! The ntfy sink. The topic URL, body and tag are `octo_core::notifications::ntfy_sink`.
 
 use std::sync::Arc;
 
@@ -17,15 +16,14 @@ use super::i_notification_sink::{INotificationSink, NotificationMessage};
 /// ntfy transport, using JSON publishing mode: POST to the server root with the
 /// topic in the body, not PUT-to-topic with metadata headers.
 ///
-/// Deliberate: ntfy's header mode carries the title in an HTTP header, and .NET's
-/// HttpClient rejects non-ASCII header values: for a music app, "Sigur Rós" and
-/// "坂本龍一" are the normal case, not the edge case. ntfy documents RFC-2047-encoding
-/// each header as the workaround; a UTF-8 JSON body needs none of that. The only
-/// header left is the ASCII Bearer token.
+/// Deliberate: ntfy's header mode carries the title in an HTTP header, and HTTP clients reject
+/// non-ASCII header values: for a music app, "Sigur Rós" and "坂本龍一" are the normal case, not the
+/// edge case. ntfy documents RFC-2047-encoding each header as the workaround; a UTF-8 JSON body
+/// needs none of that. The only header left is the ASCII Bearer token.
 pub struct NtfySink {
     /// The "notifications" named client.
     http: reqwest::Client,
-    /// `IOptionsMonitor<NotificationSettings>`: read at every use.
+    /// The notification settings, read at every use.
     settings: Arc<SettingsStore>,
 }
 
@@ -181,9 +179,9 @@ mod tests {
         assert!(!body.contains("icon"), "{body}");
     }
 
-    /// Rust-only: the whole body, and a failure the test button shows as .NET worded it.
+    /// The whole body, and the plain-words failure the test button shows for a refusal.
     #[tokio::test]
-    async fn the_body_and_a_refusal_read_as_the_csharp_wrote_them() {
+    async fn the_body_and_a_refusal_keep_their_exact_wording() {
         let (sink, server) = build("/ntfy/octo", "").await;
         sink.send(&message("A \u{2013} B", None)).await.expect("sent");
         let request = last(&server).await;

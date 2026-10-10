@@ -1,13 +1,11 @@
-//! Lyrics, the pure parts (`Services/Lyrics`): the models, LRC reading and writing, the rule for
-//! which entry is the song, the Lyricsfile reader, what a song file has now, the pin model, and
-//! the library job's run and the lyrics page's rules.
-//! The sources, the service, the sidecar writer and the pin store live in `octo` under
-//! `octo::services::lyrics`.
+//! Lyrics, the pure parts: the models, LRC reading and writing, the rule for which entry is the
+//! song, the Lyricsfile reader, what a song file has now, the pin model, and the library job's
+//! run and the lyrics page's rules. The sources, the service, the sidecar writer and the pin
+//! store live in `octo` under `octo::services::lyrics`.
 //!
-//! **Text positions.** C# placed a word in its line with UTF-16 indices (`LyricWord.From`/`To`).
-//! The port uses UTF-8 byte offsets into `LyricLine::text`, so a word is `&text[from..to]`
-//! and the OpenSubsonic cues (UTF-8 byte offsets) need no conversion. The positions are never
-//! written anywhere, so nothing outside can tell.
+//! **Text positions.** A word is placed in its line by UTF-8 byte offsets into `LyricLine::text`,
+//! so a word is `&text[from..to]` and the OpenSubsonic cues (UTF-8 byte offsets) need no
+//! conversion. The positions are never written anywhere.
 
 pub mod lyrics_choices;
 pub mod lyrics_identity;

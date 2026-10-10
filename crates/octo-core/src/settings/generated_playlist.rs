@@ -269,13 +269,12 @@ impl GeneratedPlaylistSettings {
     }
 }
 
-/// `string.Format(CultureInfo.InvariantCulture, format, arg)` with one string argument, as
-/// .NET 9 parses a composite format: `{{` and `}}` escapes, `{0}`, an alignment
-/// (`{0,-10}`, padding with spaces) and a format specifier (`{0:x}`, which a string ignores).
-/// None where .NET throws a FormatException: a stray brace, a malformed item, or an index
-/// other than 0.
+/// A composite format filled with one string argument: `{{` and `}}` escapes, `{0}`, an
+/// alignment (`{0,-10}`, padding with spaces) and a format specifier (`{0:x}`, which a string
+/// ignores). None for a malformed format: a stray brace, a malformed item, or an index other
+/// than 0.
 fn dotnet_format_one(format: &str, arg: &str) -> Option<String> {
-    // The largest index and width .NET accepts before it calls the format malformed.
+    // The largest index and width accepted before the format counts as malformed.
     const LIMIT: usize = 1_000_000;
 
     let chars: Vec<char> = format.chars().collect();
@@ -377,7 +376,6 @@ fn dotnet_format_one(format: &str, arg: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    // GeneratedPlaylistTests.Name_FollowsTheFormat_AndABrokenFormatFallsBack
     #[test]
     fn name_follows_the_format_and_a_broken_format_falls_back() {
         for (format, expected) in [

@@ -1,7 +1,6 @@
-//! Port of `Controllers/CoverUpgradeController.cs`: the dashboard's "Upgrade cover art", which
-//! finds the largest cover for every album and embeds it. It rewrites the owner's files, so it
-//! needs a Navidrome admin sign-in like the genre backfill, and a whole-library run (not a
-//! preview) needs the music path typed back.
+//! The dashboard's "Upgrade cover art", which finds the largest cover for every album and
+//! embeds it. It rewrites the owner's files, so it needs a Navidrome admin sign-in like the
+//! genre backfill, and a whole-library run (not a preview) needs the music path typed back.
 //!
 //! Every route checks the session with [`signed`]: a Navidrome sign-in, from the cookie or else the
 //! browse token header. It slides the server-side expiry but never re-issues the cookie, and it
@@ -293,7 +292,7 @@ fn file(bytes: Vec<u8>, content_type: &str) -> Response {
 /// `found=true`, the larger one a preview found for it.
 async fn thumb(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
     let (parts, _) = request.into_parts();
-    // `[FromQuery] bool found`: a value that is not a bool is the binder's 400, before the action.
+    // `found`: a value that is not a bool is the binder's 400, before the action.
     let found = match query_bool(&parts.uri, "found") {
         Ok(found) => found,
         Err(answer) => return *answer,

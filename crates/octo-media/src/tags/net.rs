@@ -1,9 +1,9 @@
-//! The .NET number parsing TagLib# relies on when it reads a tag, with the invariant culture:
-//! `byte.TryParse`, `uint.TryParse`, `int.TryParse` (`NumberStyles.Integer`: surrounding white
-//! space and a leading sign allowed) and `double.TryParse`.
+//! The number parsing a tag's text values go through, the same in every locale: bytes,
+//! unsigned and signed 32-bit integers (surrounding white space and a leading sign allowed) and
+//! doubles.
 
-/// The digits of an integer as `NumberStyles.Integer` accepts them: white space around, an
-/// optional sign, then ASCII digits only. Returns the sign and the digits.
+/// The digits of an integer: white space around, an optional sign, then ASCII digits only.
+/// Returns the sign and the digits.
 fn integer_parts(text: &str) -> Option<(bool, &str)> {
     let text = text.trim_matches(is_number_white_space);
     let (negative, digits) = match text.as_bytes().first() {
@@ -14,12 +14,12 @@ fn integer_parts(text: &str) -> Option<(bool, &str)> {
     (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some((negative, digits))
 }
 
-/// `NumberStyles.AllowLeadingWhite | AllowTrailingWhite` accept only these characters.
+/// The white space allowed around a number: only these characters.
 fn is_number_white_space(c: char) -> bool {
     matches!(c, '\u{09}'..='\u{0D}' | ' ')
 }
 
-/// An unsigned value with the given maximum; "-0" is zero, as .NET reads it.
+/// An unsigned value with the given maximum; "-0" is zero.
 fn parse_unsigned(text: &str, max: u64) -> Option<u64> {
     let (negative, digits) = integer_parts(text)?;
     let digits = digits.trim_start_matches('0');
@@ -39,17 +39,17 @@ fn parse_unsigned(text: &str, max: u64) -> Option<u64> {
     }
 }
 
-/// `byte.TryParse(text, out value)`.
+/// A byte, by the integer rules.
 pub(crate) fn parse_byte(text: &str) -> Option<u8> {
     parse_unsigned(text, u8::MAX as u64).map(|value| value as u8)
 }
 
-/// `uint.TryParse(text, out value)`.
+/// An unsigned 32-bit integer, by the integer rules.
 pub(crate) fn parse_uint(text: &str) -> Option<u32> {
     parse_unsigned(text, u32::MAX as u64).map(|value| value as u32)
 }
 
-/// `int.TryParse(text, out value)`.
+/// A signed 32-bit integer, by the integer rules.
 pub(crate) fn parse_int(text: &str) -> Option<i32> {
     let (negative, digits) = integer_parts(text)?;
     let digits = digits.trim_start_matches('0');
@@ -65,9 +65,8 @@ pub(crate) fn parse_int(text: &str) -> Option<i32> {
     i32::try_from(value).ok()
 }
 
-/// `double.TryParse(text, out value)` with the invariant culture (`NumberStyles.Float |
-/// AllowThousands`): white space, a sign, digits with group commas before the point, a
-/// fraction, an exponent. "NaN" and "Infinity" are numbers too.
+/// A double, the same in every locale: white space, a sign, digits with group commas before the
+/// point, a fraction, an exponent. "NaN" and "Infinity" are numbers too.
 pub(crate) fn parse_double(text: &str) -> Option<f64> {
     let text = text.trim_matches(is_number_white_space);
     match text {
@@ -118,8 +117,7 @@ pub(crate) fn parse_double(text: &str) -> Option<f64> {
     literal.parse().ok()
 }
 
-/// `double.TryParse(text, NumberStyles.AllowDecimalPoint, NumberFormatInfo.InvariantInfo)`:
-/// digits and one point, nothing else (no sign, no white space).
+/// A double written as digits and one point, nothing else (no sign, no white space).
 pub(crate) fn parse_decimal_point_double(text: &str) -> Option<f64> {
     let (whole, fraction) = match text.split_once('.') {
         Some((whole, fraction)) => (whole, fraction),
@@ -138,7 +136,7 @@ pub(crate) fn parse_decimal_point_double(text: &str) -> Option<f64> {
     .ok()
 }
 
-/// `(int)Math.Round(seconds)`: half to even, as TagLib#'s callers turn a duration into seconds.
+/// A duration in whole seconds, rounded half to even.
 pub(crate) fn round_seconds(seconds: f64) -> i32 {
     seconds.round_ties_even() as i32
 }
@@ -148,7 +146,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn integers_parse_as_dotnet_parses_them() {
+    fn integers_allow_white_space_and_a_sign_and_nothing_else() {
         assert_eq!(parse_byte("17"), Some(17));
         assert_eq!(parse_byte(" 17 "), Some(17));
         assert_eq!(parse_byte("+5"), Some(5));
@@ -166,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn doubles_parse_as_dotnet_parses_them() {
+    fn doubles_accept_group_separators_and_exponents() {
         assert_eq!(parse_double("120"), Some(120.0));
         assert_eq!(parse_double(" 120.5 "), Some(120.5));
         assert_eq!(parse_double("1,200"), Some(1200.0));

@@ -1,6 +1,4 @@
-//! `getLyricsBySongId`, `getLyrics`, `getLyricsCandidates` and `setLyricsChoice`
-//! (`SubsonicController.GetLyricsBySongId` L3263, `GetLyrics` L3336, `GetLyricsCandidates`
-//! L3387, `SetLyricsChoice` L3417; endpoints.md §3.7).
+//! `getLyricsBySongId`, `getLyrics`, `getLyricsCandidates` and `setLyricsChoice`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,7 +270,7 @@ fn has_no_legacy_lyrics(body: &[u8], format: &str) -> bool {
         return match value {
             Ok(None) => true,
             Ok(Some(Node::String(text))) => is_null_or_white_space(Some(text)),
-            // GetValue<string> on anything else threw.
+            // Anything else is not empty.
             _ => false,
         };
     }
@@ -427,8 +425,7 @@ pub async fn set_lyrics_choice(State(state): State<AppState>, req: Request) -> R
         .into_response()
 }
 
-/// A token cancelled after `limit` (`CancellationTokenSource.CancelAfter`). The caller cancels
-/// it once done, which ends the timer.
+/// A token canceled after `limit`. The caller cancels it once done, which ends the timer.
 fn budget(limit: Duration) -> CancellationToken {
     let token = CancellationToken::new();
     let timer = token.clone();
@@ -501,8 +498,8 @@ fn still_looking_for_lyrics(state: &AppState, format: &str) -> Response {
         .into_response()
 }
 
-/// `node?[key]` on a `JsonNode`: nothing for a missing node or a JSON null, the member of an
-/// object, and an error (C#'s indexer threw) on anything else.
+/// A member of a node: nothing for a missing node or a JSON null, the member of an object, and
+/// an error on anything else.
 fn index<'a>(node: Option<&'a Node>, key: &str) -> Result<Option<&'a Node>, ()> {
     match node {
         None | Some(Node::Null) => Ok(None),
@@ -594,7 +591,7 @@ async fn library_song(call: &SubsonicCall, id: &str) -> Option<Song> {
     let song = index(Some(&root), "subsonic-response")
         .and_then(|n| index(n, "song"))
         .ok()?;
-    // GetValue<string> threw on anything but a string, which the catch made "no song".
+    // A field that is not a string reads as "no song".
     let string = |key: &str| -> Result<Option<String>, ()> {
         match index(song, key)? {
             None => Ok(None),

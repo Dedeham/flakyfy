@@ -1,5 +1,4 @@
-//! Port of `Services/Library/LibraryActionJournal.cs`: the write-ahead ledger for library
-//! actions, `<config>/library-actions.json` (state-files.md §4.12).
+//! The write-ahead ledger for library actions, `<config>/library-actions.json`.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -47,7 +46,7 @@ pub enum LibraryActionState {
 }
 
 impl LibraryActionState {
-    /// The C# member name.
+    /// The state's name, in PascalCase.
     pub fn name(self) -> &'static str {
         match self {
             LibraryActionState::Pending => "Pending",
@@ -61,7 +60,7 @@ impl LibraryActionState {
     }
 }
 
-/// `action.ToString()`: the C# member name of a library action.
+/// The name of a library action, in PascalCase.
 pub fn action_name(action: LibraryAction) -> &'static str {
     match action {
         LibraryAction::Delete => "Delete",
@@ -74,9 +73,9 @@ pub fn action_name(action: LibraryAction) -> &'static str {
     }
 }
 
-/// One library action, as the journal records it. The fields in the C# record's order, then
-/// the body properties, which is the order System.Text.Json wrote them in. Written by hand
-/// ([`Serialize`] below) because STJ also wrote the computed `BlocksDownloads`.
+/// One library action, as the journal records it, its fields in the state file's order.
+/// Serialized by hand ([`Serialize`] below) because the file also carries the computed
+/// `BlocksDownloads`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LibraryActionEntry {
@@ -108,7 +107,7 @@ pub struct LibraryActionEntry {
     pub dry_run: bool,
     #[serde(default = "datetime::min_value", with = "datetime::utc")]
     pub at_utc: DateTime<Utc>,
-    /// Whether Navidrome kept a replaced song as the same song (W8); None until checked.
+    /// Whether Navidrome kept a replaced song as the same song; None until checked.
     #[serde(default)]
     pub history_kept: Option<bool>,
     /// Where a replacement moved in, recorded the moment it did. A restart after that
@@ -263,8 +262,8 @@ impl Entries {
 ///    principle, and logs scroll away while "which files did this touch" has to be answerable
 ///    a week later.
 ///
-/// The C# flushed from a 10 s `Timer` and from `Dispose`; here [`LibraryActionJournal::run_flusher`]
-/// is the timer (a worker, which flushes once more on shutdown) and `Drop` is the `Dispose`.
+/// [`LibraryActionJournal::run_flusher`] flushes every 10 s (a worker, which flushes once more on
+/// shutdown), and `Drop` flushes what is left.
 pub struct LibraryActionJournal {
     path: Option<PathBuf>,
     /// Where Wrong lyrics and Wrong cover answers are kept, beside `path`. They stay out of the
@@ -334,7 +333,7 @@ impl LibraryActionJournal {
         format!("{}|{navidrome_id}|{fingerprint}", action_name(action))
     }
 
-    /// `{size}:{lastWriteUtc.Ticks}`.
+    /// `{size}:{last write time in ticks}`.
     pub fn fingerprint(size_bytes: i64, last_write_ticks: i64) -> String {
         format!("{size_bytes}:{last_write_ticks}")
     }
@@ -487,7 +486,7 @@ impl LibraryActionJournal {
             .collect()
     }
 
-    /// Newest first, at most `limit` (the C# default was 200).
+    /// Newest first, at most `limit`.
     pub fn recent(&self, limit: usize) -> Vec<LibraryActionEntry> {
         self.entries.lock().ordered().rev().take(limit).cloned().collect()
     }
@@ -693,7 +692,7 @@ impl LibraryActionJournal {
         }
     }
 
-    /// The 10-second flush timer, and the flush `Dispose` did on shutdown, as a worker.
+    /// The 10-second flush timer, and the last flush on shutdown, as a worker.
     pub async fn run_flusher(self: Arc<Self>, token: CancellationToken) -> anyhow::Result<()> {
         let journal = self.clone();
         state_file::flush_every(
@@ -708,7 +707,7 @@ impl LibraryActionJournal {
 }
 
 impl Drop for LibraryActionJournal {
-    /// `Dispose`: the last flush.
+    /// The last flush.
     fn drop(&mut self) {
         self.flush();
     }

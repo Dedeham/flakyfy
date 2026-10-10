@@ -1,6 +1,6 @@
-//! The Rust half of the tag-dump check: every frame, field and atom of a file as this port
-//! reads it back, then Octo's own readers' views, in exactly the text the C# generator's
-//! `Dumper` writes (docs/rust-migration/fixtures/tags/generator/Program.cs).
+//! This side of the tag-dump check: every frame, field and atom of a file as it reads back
+//! here, then Octo's own readers' views, in exactly the text the reference generator's
+//! `Dumper` writes (docs/rust-migration/fixtures/tags/generator).
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -37,7 +37,7 @@ const FIELDS: [(&str, TagField); 19] = [
     ("releasedate", TagFields::RELEASE_DATE),
 ];
 
-/// The dump of one file, line for line as the C# `Dumper.Dump` writes it.
+/// The dump of one file, line for line as the reference `Dumper` writes it.
 pub(crate) fn dump(path: &Path) -> String {
     let mut o = String::new();
     let mut line = |text: String| {
@@ -398,7 +398,7 @@ fn quoted_list(items: &[String]) -> String {
     list(&items.iter().map(|item| q(Some(item))).collect::<Vec<_>>())
 }
 
-/// `Dumper.Q`: quoted, with only '\\', '"' and control characters escaped.
+/// Quoted, with only '\\', '"' and control characters escaped.
 pub(crate) fn q(value: Option<&str>) -> String {
     let Some(value) = value else {
         return "null".into();

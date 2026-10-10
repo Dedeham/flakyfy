@@ -1,5 +1,5 @@
-//! The two request lines ASP.NET's hosting layer wrote at Information for every request
-//! (category `Microsoft.AspNetCore.Hosting.Diagnostics`), in the same words:
+//! The two request lines the hosting layer writes at Information for every request (category
+//! `Microsoft.AspNetCore.Hosting.Diagnostics`):
 //!
 //! ```text
 //! Request starting HTTP/1.1 GET http://host/rest/ping.view?u=a&t=*** - - -
@@ -11,8 +11,8 @@
 //! through the query string, so these lines carry credentials until the log writer redacts
 //! them (`crate::logging`).
 //!
-//! This runs outermost, before the forwarded-headers step, as the hosting layer did, so the
-//! scheme is the connection's own.
+//! This runs outermost, before the forwarded-headers step, so the scheme is the connection's
+//! own.
 
 use std::time::Instant;
 

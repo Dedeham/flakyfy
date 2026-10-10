@@ -1,4 +1,4 @@
-//! Port of `Models/Download/DownloadHistoryEntry.cs`. The entries of `downloads-history.json`.
+//! The entries of `downloads-history.json`.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ use crate::tagging::tag_plan::TagReport;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct DownloadHistoryEntry {
-    // The non-nullable C# strings read a JSON null as the default, as STJ let them be null.
+    // A JSON null in these strings reads as the default.
     #[serde(deserialize_with = "crate::models::null_as_default")]
     pub artist: String,
     #[serde(deserialize_with = "crate::models::null_as_default")]
@@ -59,9 +59,9 @@ pub struct DownloadHistoryEntry {
     pub key: Option<String>,
 
     /// The download's log, saved when it ended so the dashboard can show it after the live list
-    /// forgets it (three hours). Trimmed to stay small (`DownloadHistoryService.AttachLog`). None
-    /// for entries written before this existed, and for older entries whose log was let go to
-    /// keep the file small.
+    /// forgets it (three hours). Trimmed to stay small (`DownloadHistoryService::attach_log`).
+    /// None for entries written before this existed, and for older entries whose log was let go
+    /// to keep the file small.
     pub log: Option<Vec<super::acquisition_event::AcquisitionEvent>>,
 }
 
@@ -89,8 +89,8 @@ mod tests {
     }
 
     #[test]
-    fn a_null_where_csharp_had_a_non_nullable_string_still_reads() {
-        // STJ let a hand-edited null into a C# string; the whole log must not be lost over it.
+    fn a_null_in_a_string_field_still_reads() {
+        // A hand-edited null in a string field must not lose the whole log.
         let entries: Vec<DownloadHistoryEntry> = serde_json::from_str(
             r#"[{"Artist":null,"Title":"T","Tagging":{"Confidence":null,"Notes":null}}]"#,
         )

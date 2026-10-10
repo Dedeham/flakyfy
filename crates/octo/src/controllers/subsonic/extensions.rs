@@ -1,7 +1,5 @@
-//! Octo's own Subsonic extensions and the extension list (`SubsonicController.GetAcquisitions`
-//! L2540, `GetOpenSubsonicExtensions` L2568, `GetLibraryActions` L2587, `GetLibraryTrash`,
-//! `GetUpgrades` L2602, `ApplyLibraryAction` L2629 with `ApplyLibraryEdit` and
-//! `IsCallerAdminAsync`, `JukeboxControl` L3237; endpoints.md §3.1, §3.8).
+//! Octo's own Subsonic extensions and the extension list: acquisitions, the OpenSubsonic
+//! extensions, library actions and edits, the trash, upgrades, and jukebox control.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +30,7 @@ use crate::services::library::{
 };
 use crate::services::subsonic::SubsonicResponseBuilderExt;
 
-/// `UpgradeStates.Working`.
+/// The state of an upgrade job that is running.
 const UPGRADE_WORKING: &str = "working";
 
 pub fn routes() -> RouteSet {
@@ -164,7 +162,7 @@ pub async fn get_library_actions(State(state): State<AppState>, req: Request) ->
             upgrade_ready(&state),
             &upgrade_source_name(&state),
             admin,
-            // `LibraryEditService` is always registered.
+            // Library edits are always available.
             true,
             state.library_edits.has_cover_finder(),
         )

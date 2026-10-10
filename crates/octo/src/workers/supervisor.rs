@@ -1,19 +1,13 @@
-//! The background workers' host: what ASP.NET's `IHostedService` / `BackgroundService` plumbing
-//! did for the C# workers registered with `AddHostedService` in `Program.cs`.
+//! The background workers' host: starts, restarts and stops every long-running background job.
 //!
-//! A worker is a named async function taking a [`CancellationToken`] (the `stoppingToken` of
-//! `ExecuteAsync`). The supervisor starts every worker when the app starts, cancels them all on
-//! shutdown and waits for them up to the shutdown budget (`HostOptions.ShutdownTimeout`, 10 s in
-//! `Program.cs`), then abandons the stragglers.
+//! A worker is a named async function taking a [`CancellationToken`] that is canceled on
+//! shutdown. The supervisor starts every worker when the app starts, cancels them all on
+//! shutdown and waits for them up to the shutdown budget ([`SHUTDOWN_TIMEOUT`], 10 s), then
+//! abandons the stragglers.
 //!
-//! **Failure policy.** In .NET 8+, an exception escaping `ExecuteAsync` stops the whole host
-//! (`BackgroundServiceExceptionBehavior.StopHost`), and Docker's restart policy then restarts
-//! the container. Octo never relied on that: every C# worker wraps each item or tick in a catch
-//! ("Per-item catch is mandatory: BackgroundServiceExceptionBehavior defaults to StopHost, so a
-//! single unhandled exception here would take Octo down"). Here a worker that panics or returns
-//! an error is logged and restarted on its own, after a backoff, and the server keeps running;
-//! see known-diffs.md. A worker that returns `Ok(())` has finished, as an `ExecuteAsync` that
-//! completes does, and is not restarted.
+//! **Failure policy.** One failing job never takes the server down: a worker that panics or
+//! returns an error is logged and restarted on its own, after a backoff, and the server keeps
+//! running. A worker that returns `Ok(())` has finished and is not restarted.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -27,11 +21,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-/// `HostOptions.ShutdownTimeout`: how long shutdown waits for the workers (and the server's
-/// in-flight requests) before giving up on them.
+/// How long shutdown waits for the workers (and the server's in-flight requests) before giving up
+/// on them.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The body of a worker: called once per start, with a token that is cancelled on shutdown.
+/// The body of a worker: called once per start, with a token that is canceled on shutdown.
 pub type WorkerFn = Arc<dyn Fn(CancellationToken) -> BoxFuture<'static, anyhow::Result<()>> + Send + Sync>;
 
 /// How long to wait before restarting a failed worker.
@@ -151,8 +145,8 @@ impl WorkerSupervisor {
         }
     }
 
-    /// Registers a worker (`AddHostedService`). Registering after [`WorkerSupervisor::start`]
-    /// starts it at once. Must be called from within a tokio runtime once started.
+    /// Registers a worker. Registering after [`WorkerSupervisor::start`] starts it at once. Must
+    /// be called from within a tokio runtime once started.
     pub fn register<F, Fut>(&self, name: impl Into<String>, run: F)
     where
         F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
@@ -189,7 +183,7 @@ impl WorkerSupervisor {
         }
     }
 
-    /// A token cancelled when shutdown begins, for work outside the registered workers.
+    /// A token canceled when shutdown begins, for work outside the registered workers.
     pub fn stopping_token(&self) -> CancellationToken {
         self.root.child_token()
     }
@@ -297,7 +291,7 @@ async fn supervise(
             break;
         };
         if root.is_cancelled() {
-            // A worker that fails while being cancelled is not restarted.
+            // A worker that fails while being canceled is not restarted.
             warn!("Background worker {name} failed while stopping: {failure}");
             break;
         }

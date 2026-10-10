@@ -1,5 +1,3 @@
-//! Port of `Models/Domain/Artist.cs`.
-
 use serde::{Deserialize, Serialize};
 
 /// Represents an artist

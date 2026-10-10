@@ -1,4 +1,4 @@
-//! Port of `Services/CoverArt/LastFmCoverArtLookup.cs`.
+//! Cover art from Last.fm.
 
 use std::time::Duration;
 
@@ -28,8 +28,7 @@ use crate::services::framework::http::client_builder;
 /// images. We don't bother calling that endpoint for artist routings.
 pub struct LastFmCoverArtLookup {
     client: reqwest::Client,
-    /// `IOptions<LastFmSettings>.Value.ApiKey`: captured at construction, deliberately, as the
-    /// C# captured the settings object.
+    /// The Last.fm API key, captured at construction, deliberately.
     api_key: String,
     base_url: String,
 }
@@ -43,7 +42,7 @@ impl LastFmCoverArtLookup {
 
     /// A lookup that asks another host: a test's mock server.
     pub fn with_base_url(last_fm: &LastFmSettings, metadata: &MetadataSettings, base_url: &str) -> Self {
-        // The Accept-Language is captured once, as the C# set it on its client at construction.
+        // The Accept-Language is captured once, on the client, at construction.
         let mut headers = HeaderMap::new();
         if let Some(language) = accept_language_header::header_value(metadata)
             && let Ok(value) = HeaderValue::from_str(&language)
@@ -232,7 +231,7 @@ mod tests {
 
     use super::*;
 
-    /// Rust-only: an album with no image of its own falls back to the track lookup, the largest
+    /// An album with no image of its own falls back to the track lookup, the largest
     /// real image wins, and the star placeholder never does.
     #[tokio::test]
     async fn the_largest_real_image_wins_and_an_album_falls_back_to_the_track() {

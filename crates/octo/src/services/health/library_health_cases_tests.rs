@@ -1,7 +1,6 @@
-//! Port of `octo.Tests/LibraryHealthCasesTests.cs`: every case in docs/library-health-cases.json,
-//! the Octo app's Library health tests written as data, so the server's port and the app are
-//! checked against the same songs and the same answers. The songs are Subsonic songs, read here
-//! the way the app's SubsonicHealth reads them.
+//! Every case in docs/library-health-cases.json, the Octo app's Library health tests written as
+//! data, so the server and the app are checked against the same songs and the same answers. The
+//! songs are Subsonic songs, read here the way the app's SubsonicHealth reads them.
 
 use std::collections::{HashMap, HashSet};
 

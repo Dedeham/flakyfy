@@ -1,6 +1,6 @@
-//! The data half of `Services/Fingerprint/AcoustIdClient.cs`: the records an AcoustID lookup
-//! answers with (`VerificationResult` and the release chooser hold them), and the pure reading
-//! of its answer (`ParseLookup`) and building of its forms. The HTTP client and its rate limiter
+//! The data half of the AcoustID client: the records an AcoustID lookup answers with
+//! (`VerificationResult` and the release chooser hold them), and the pure reading of its answer
+//! ([`parse_lookup`]) and building of its forms. The HTTP client and its rate limiter
 //! are in `octo::services::fingerprint`.
 
 use serde_json::Value;
@@ -32,7 +32,7 @@ impl AcoustIdCredit {
 }
 
 /// The release a recording was matched on. It supplies what names the album, numbers the
-/// track and finds the cover, and it is chosen per recording by PickRelease.
+/// track and finds the cover, and it is chosen per recording by `pick_release`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AcoustIdRelease {
     pub release_id: Option<String>,
@@ -86,7 +86,7 @@ pub struct AcoustIdRecording {
 }
 
 impl AcoustIdRecording {
-    /// The positional part of the C# record; everything else starts empty.
+    /// The recording's core fields; everything else starts empty.
     pub fn new<S: Into<String>>(
         recording_id: impl Into<String>,
         title: impl Into<String>,
@@ -189,7 +189,7 @@ impl AcoustIdLookup {
 }
 
 impl AcoustIdRelease {
-    /// The positional record constructor; the init-only properties start empty.
+    /// The release's core fields; everything else starts empty.
     pub fn new(
         release_id: Option<String>,
         release_group_id: Option<String>,
@@ -227,14 +227,14 @@ pub struct AcoustIdSubmission {
 
 /// What to ask AcoustID to return: recordings gives title and artists, releasegroups the
 /// canonical album title, releases the year, and compress asks for a gzipped body (which is
-/// why the named client sets AutomaticDecompression).
+/// why the HTTP client decompresses responses).
 ///
-/// SPACE separated, and that is not cosmetic. FormUrlEncodedContent encodes a literal '+'
-/// as %2B, so writing these joined by '+' sends AcoustID one unknown token rather than four
-/// fields. It answers 200 with a perfectly good score and NO metadata at all, every result
-/// then has zero recordings, and the verdict is permanently Inconclusive: the feature
-/// accepts every file forever while looking like it is working. Verified against the live
-/// API on 2026-09-18, one track, both spellings.
+/// SPACE separated, and that is not cosmetic. The form encoding ([`encode_form`]) writes a
+/// literal '+' as %2B, so writing these joined by '+' sends AcoustID one unknown token rather
+/// than four fields. It answers 200 with a perfectly good score and NO metadata at all, every
+/// result then has zero recordings, and the verdict is permanently Inconclusive: the feature
+/// accepts every file forever while looking like it is working. Verified against the live API on
+/// 2026-09-18, one track, both spellings.
 ///
 /// tracks adds each release's mediums and the track's position on them, which is what numbers
 /// a file named from its match (#48). It only takes effect beside releases.
@@ -251,7 +251,7 @@ const MAX_RECORDINGS: usize = 25;
 const MAX_RELEASE_GROUPS: usize = 50;
 const MAX_RELEASES_PER_GROUP: usize = 10;
 
-/// The lookup form, in the order the C# dictionary listed it.
+/// The lookup form, its fields in a fixed order.
 pub fn build_lookup_form(api_key: &str, fingerprint: &str, duration_seconds: i32) -> Vec<(String, String)> {
     vec![
         ("client".to_string(), api_key.to_string()),
@@ -287,7 +287,7 @@ pub fn build_submit_form(
     form
 }
 
-/// `FormUrlEncodedContent`'s body for a form.
+/// The `application/x-www-form-urlencoded` body for a form, fields joined by `&`.
 pub fn encode_form(form: &[(String, String)]) -> String {
     form.iter()
         .map(|(name, value)| {
@@ -302,7 +302,7 @@ pub fn encode_form(form: &[(String, String)]) -> String {
 }
 
 /// AcoustID answers some refusals with HTTP 200 and an error envelope, the exact shape
-/// that made over-budget Deezer calls silently destructive. IsOk is therefore read from
+/// that made over-budget Deezer calls silently destructive. `is_ok` is therefore read from
 /// the body, never from the status code.
 pub fn parse_lookup(root: &Value) -> ElementResult<AcoustIdLookup> {
     let status = match try_get_property(root, "status")? {
@@ -341,9 +341,8 @@ pub fn parse_lookup(root: &Value) -> ElementResult<AcoustIdLookup> {
     })
 }
 
-/// `root.TryGetProperty("error", out err) && err.ValueKind == Object &&
-/// err.TryGetProperty("message", out m) ? m.GetString() : fallback`: the envelope's message
-/// when it has one (even a null one), otherwise the fallback.
+/// The error envelope's message when the root has an `error` object with a `message` (even a
+/// null one), otherwise the fallback.
 pub fn error_message_or(root: &Value, fallback: Option<&str>) -> ElementResult<Option<String>> {
     if let Some(err @ Value::Object(_)) = try_get_property(root, "error")?
         && let Some(m) = try_get_property(err, "message")?
@@ -540,7 +539,7 @@ fn first_track(medium: &Value) -> ElementResult<Option<&Value>> {
 
 /// Every release of every group, bounded, each with what the chooser weighs: the group's
 /// kind, the release's date and country, the track's position and id. The same reading as
-/// PickRelease, over all of them instead of the one it picks.
+/// [`pick_release`], over all of them instead of the one it picks.
 fn all_releases(recording: &Value) -> ElementResult<Vec<AcoustIdRelease>> {
     let Some(groups @ Value::Array(_)) = try_get_property(recording, "releasegroups")? else {
         return Ok(Vec::new());
@@ -673,7 +672,7 @@ fn group_credit(group: &Value) -> ElementResult<(Option<String>, Vec<String>)> {
     Ok((Some(AcoustIdRecording::join_credits(&credits)), ids))
 }
 
-/// `TryGetProperty && Number && TryGetInt32`: a number that is not an integer reads as none.
+/// An `i32` property: absent, not a number, or a number that is not an integer reads as none.
 fn int(element: &Value, name: &str) -> ElementResult<Option<i32>> {
     match try_get_property(element, name)? {
         Some(value @ Value::Number(_)) => try_get_int32(value),

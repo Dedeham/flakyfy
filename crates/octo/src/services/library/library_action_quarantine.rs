@@ -1,5 +1,5 @@
-//! Port of `Services/Library/LibraryActionQuarantine.cs`, and the `<file>.octo-action.json`
-//! manifest beside each quarantined file (state-files.md §4.24).
+//! The library action trash, and the `<file>.octo-action.json` manifest beside each quarantined
+//! file.
 
 use std::io;
 use std::path::Path;
@@ -84,10 +84,10 @@ pub struct QuarantinedSidecar {
 
 /// Moves a verified file out of the library instead of deleting it.
 ///
-/// There is no File.Delete anywhere in library actions except the retention sweep. These
-/// actions delete files Octo did NOT create, on one tap in a music client with no confirmation
-/// dialog, and the whole point of the feature is that the user is correcting a mistake, which
-/// means they can make one.
+/// Nothing in library actions deletes a file except the retention sweep. These actions delete
+/// files Octo did NOT create, on one tap in a music client with no confirmation dialog, and the
+/// whole point of the feature is that the user is correcting a mistake, which means they can make
+/// one.
 ///
 /// This is where DiscardRejectedDownload's philosophy is reconciled rather than contradicted.
 /// That guard refuses to delete anything created before the attempt started, because its input
@@ -98,7 +98,7 @@ pub struct QuarantinedSidecar {
 /// DiscardRejectedDownload's own approximate-size matching, plus quarantine instead of delete,
 /// which makes getting it wrong recoverable rather than terminal.
 pub struct LibraryActionQuarantine {
-    /// `IOptionsMonitor<LibraryActionSettings>`: the folder and the retention are read at use.
+    /// The library action settings: the folder and the retention are read at use.
     settings: Arc<SettingsStore>,
 }
 
@@ -168,7 +168,7 @@ impl LibraryActionQuarantine {
     }
 
     /// Move a verified file into quarantine, preserving its layout underneath so a restore is a
-    /// straight copy back. (C# `Move`, a keyword here; its `withSidecars` is false.)
+    /// straight copy back. The song's sidecars stay where they are.
     pub fn move_file(
         &self,
         file: &ResolvedSongFile,
@@ -231,12 +231,11 @@ impl LibraryActionQuarantine {
         let destination = unique(&destination);
 
         if let Err(moving) = rename_new(&file.absolute_path, &destination) {
-            // A refused permission was UnauthorizedAccessException, not an IOException, so it
-            // never reached the copy.
+            // A refused permission never falls back to the copy.
             if moving.kind() == io::ErrorKind::PermissionDenied {
                 return Err(moving);
             }
-            // Across devices Move fails, so copy, confirm the length, then remove. The
+            // Across devices the rename fails, so copy, confirm the length, then remove. The
             // length check is what stops a truncated copy from turning into a delete.
             copy_new(&file.absolute_path, &destination)?;
             if std::fs::metadata(&destination)?.len() as i64 != file.size_bytes {
@@ -523,7 +522,7 @@ impl LibraryActionQuarantine {
         moved
     }
 
-    /// Written straight over the path, not through a temporary file, as the C# did.
+    /// Written straight over the path, not through a temporary file.
     fn write_manifest(&self, quarantine_path: &str, manifest: &QuarantineManifest) {
         let path = format!("{quarantine_path}{}", Self::MANIFEST_SUFFIX);
         if let Err(e) = std::fs::write(&path, octo_core::json::to_string(manifest)) {
@@ -540,7 +539,7 @@ impl LibraryActionQuarantine {
     }
 }
 
-/// `Path.GetDirectoryName(path)`: everything before the last separator, or empty.
+/// The directory: everything before the last separator, or empty.
 fn directory_name(path: &str) -> String {
     match path.rfind('/') {
         Some(0) => "/".to_string(),
@@ -549,12 +548,12 @@ fn directory_name(path: &str) -> String {
     }
 }
 
-/// `Path.GetFileName(path)`.
+/// Everything after the last separator.
 fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// `Path.GetFileNameWithoutExtension(path)`: the name up to its last dot.
+/// The file name up to its last dot.
 fn file_name_without_extension(path: &str) -> String {
     let name = file_name(path);
     match name.rfind('.') {
@@ -563,8 +562,8 @@ fn file_name_without_extension(path: &str) -> String {
     }
 }
 
-/// `Path.GetExtension(path)`: the name's last dot and what follows, or empty when there is no
-/// dot or nothing follows it.
+/// The extension: the name's last dot and what follows, or empty when there is no dot or
+/// nothing follows it.
 fn extension_of(path: &str) -> String {
     let name = file_name(path);
     match name.rfind('.') {
@@ -573,7 +572,7 @@ fn extension_of(path: &str) -> String {
     }
 }
 
-/// `File.Move(from, to)` without overwrite: refused when something is already at `to`.
+/// A rename that never overwrites: refused when something is already at `to`.
 fn rename_new(from: &str, to: &str) -> io::Result<()> {
     if std::fs::symlink_metadata(to).is_ok() {
         return Err(io::Error::new(
@@ -584,7 +583,7 @@ fn rename_new(from: &str, to: &str) -> io::Result<()> {
     std::fs::rename(from, to)
 }
 
-/// `File.Copy(from, to, overwrite: false)`.
+/// A copy that never overwrites: refused when something is already at `to`.
 fn copy_new(from: &str, to: &str) -> io::Result<()> {
     if std::fs::symlink_metadata(to).is_ok() {
         return Err(io::Error::new(
@@ -609,7 +608,7 @@ fn unique(path: &str) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // Path.GetFileNameWithoutExtension / GetExtension: split at the name's last dot.
+    // Stem and extension: split at the name's last dot.
     let (stem, extension) = match name.rfind('.') {
         Some(dot) if dot + 1 < name.len() => (name[..dot].to_string(), name[dot..].to_string()),
         Some(dot) => (name[..dot].to_string(), String::new()),
@@ -627,7 +626,7 @@ fn unique(path: &str) -> String {
     )
 }
 
-/// `DateTime.TryParseExact(name, "yyyy-MM-dd", AssumeUniversal | AdjustToUniversal)`.
+/// A dated trash folder's name, exactly `yyyy-MM-dd`, as midnight UTC.
 fn parse_day(name: &str) -> Option<DateTime<Utc>> {
     let bytes = name.as_bytes();
     let shaped = bytes.len() == 10
@@ -665,7 +664,7 @@ fn count_files(dir: &Path) -> io::Result<i32> {
     Ok(count)
 }
 
-/// `Path.Combine(a, b)` on Unix: `b` when it is rooted, otherwise joined with one separator.
+/// Joins two paths: `b` when it is rooted, otherwise joined with one separator.
 pub(crate) fn combine(a: &str, b: &str) -> String {
     if b.starts_with('/') || a.is_empty() {
         b.to_string()
@@ -676,8 +675,8 @@ pub(crate) fn combine(a: &str, b: &str) -> String {
     }
 }
 
-/// `Path.GetRelativePath(relativeTo, path)` for two full paths on Unix (case-sensitive): "."
-/// for the same path, the rest of `path` under `relative_to`, otherwise a climb out with `..`.
+/// The relative path between two full paths (case-sensitive): "." for the same path, the rest of
+/// `path` under `relative_to`, otherwise a climb out with `..`.
 pub(crate) fn get_relative_path(relative_to: &str, path: &str) -> String {
     let from: Vec<&str> = relative_to.split('/').filter(|s| !s.is_empty()).collect();
     let to: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();

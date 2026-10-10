@@ -1,4 +1,4 @@
-//! The matching half of `ImportMatchTests.cs`.
+//! Matching imported songs against the library.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -1,5 +1,5 @@
-//! FindSongsPickTests: Find songs picks as they reach the queues: a second pick of a song waiting
-//! in the upgrade queue, picks no download used, and how many looks one person may run at once.
+//! Find songs picks as they reach the queues: a second pick of a song waiting in the upgrade
+//! queue, picks no download used, and how many looks one person may run at once.
 
 use std::sync::Arc;
 use std::time::Duration;

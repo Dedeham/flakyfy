@@ -1,5 +1,5 @@
-//! Rust-only tests of the album cover finder (no C# test covered it): the three sources against
-//! one mock server standing for Apple, the Cover Art Archive, Deezer and their CDNs.
+//! The album cover finder: the three sources against one mock server standing for Apple, the
+//! Cover Art Archive, Deezer and their CDNs.
 
 use std::io::Cursor;
 use std::sync::Arc;

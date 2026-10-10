@@ -1,11 +1,9 @@
-//! `/rest/scrobble` through the app: `LastFmScrobbleTests.cs` (`LastFmScrobbleEndpointTests`),
-//! the endpoint form of `ScrobbleRetryTests.cs`, and the scrobble-driven tests of
-//! `RequestIdentityTests.cs` (an API key sign-in, named by Navidrome's tokenInfo).
+//! `/rest/scrobble` through the app: Last.fm and ListenBrainz scrobbles, a play sent again after
+//! a failure, and an API key sign-in, named by Navidrome's tokenInfo.
 //!
-//! The C# fixture (`RadioWebFactory` with its `RadioUpstreamHandler`) answered Navidrome, Last.fm
-//! and ListenBrainz from one HttpMessageHandler. Here Navidrome and ListenBrainz are wiremock
-//! servers and Last.fm is a small local fake that checks every call's signature, as the real
-//! one does; the scrobble and ListenBrainz services are pointed at them.
+//! Navidrome and ListenBrainz are wiremock servers and Last.fm is a small local fake that checks
+//! every call's signature, as the real one does; the scrobble and ListenBrainz services are
+//! pointed at them.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -232,7 +230,7 @@ impl Respond for Upstream {
     }
 }
 
-/// `RadioWebFactory`, as far as the scrobble tests use it.
+/// The app over the stand-in upstreams, as far as the scrobble tests use it.
 struct Fixture {
     upstream: Upstream,
     _navidrome: MockServer,
@@ -243,7 +241,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// `new RadioWebFactory(lastFmScrobbling: ..., lastFmLibraryPlays: ...)`.
+    /// The fixture with Last.fm scrobbling and Last.fm library plays switched as given.
     async fn new(last_fm_scrobbling: bool, last_fm_library_plays: bool) -> Fixture {
         Self::with(last_fm_scrobbling, last_fm_library_plays, None).await
     }
@@ -416,7 +414,7 @@ impl Fixture {
     }
 }
 
-/// `LastFmScrobbleServiceTests.Until`.
+/// Waits until `condition` holds.
 async fn until(condition: impl Fn() -> bool) {
     for _ in 0..1000 {
         if condition() {
@@ -432,7 +430,7 @@ fn minutes_ago_ms(minutes: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------------------
-// LastFmScrobbleEndpointTests
+// Scrobbles
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -711,7 +709,7 @@ async fn scrobble_answer_does_not_wait_for_last_fm() {
 }
 
 // ---------------------------------------------------------------------------------------
-// ScrobbleRetryTests
+// A play sent again
 // ---------------------------------------------------------------------------------------
 
 /// A finished play sent twice is learned from once, but only once something did learn from
@@ -734,7 +732,7 @@ async fn a_play_not_taken_the_first_time_counts_when_the_client_sends_it_again()
 }
 
 // ---------------------------------------------------------------------------------------
-// RequestIdentityTests (the scrobble-driven ones)
+// Who an API key sign-in is
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test]

@@ -1,5 +1,5 @@
-//! `getInternetRadioStations` (L484) and the Continuous Radio stream behind the station URLs
-//! it publishes, `radio/stream/{token}` (L640).
+//! `getInternetRadioStations` and the Continuous Radio stream behind the station URLs it
+//! publishes, `radio/stream/{token}`.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -179,8 +179,7 @@ async fn prepare_starter(
     let Some(session) = sessions.get(&token, None) else {
         return Ok(None);
     };
-    // The preparation runs on its own, as the C# Task did: a bound that runs out stops the
-    // waiting, not the work.
+    // The preparation runs on its own: a bound that runs out stops the waiting, not the work.
     let preparing = {
         let streams = streams.clone();
         let session = session.clone();
@@ -268,8 +267,7 @@ pub async fn stream_generated_radio(
         HeaderValue::from_static("no-store, no-transform"),
     );
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
-    // Kestrel refused a header value it could not send when the response started, inside the
-    // C#'s try, and the answer became a 503.
+    // A station name that cannot be sent as a header value answers 503.
     let Ok(name) = HeaderValue::from_str(&station.name) else {
         warn!("Continuous Radio stream failed for station {}", station.id);
         return empty(StatusCode::SERVICE_UNAVAILABLE);
@@ -293,8 +291,7 @@ pub async fn stream_generated_radio(
     );
 
     // The stream writes into a pipe the response body reads. The listener hanging up drops the
-    // body, which cancels the stream (RequestAborted); a failure once bytes have gone out
-    // aborts the connection, as HttpContext.Abort() did.
+    // body, which cancels the stream; a failure once bytes have gone out aborts the connection.
     let (writer, reader) = tokio::io::duplex(64 * 1024);
     let cancel = CancellationToken::new();
     let (done_tx, done_rx) = oneshot::channel::<Option<String>>();
@@ -336,7 +333,7 @@ fn as_sent(mut req: Request) -> Request {
     req
 }
 
-/// A status with nothing else: `Response.StatusCode = n; return;`.
+/// A status with nothing else.
 fn empty(status: StatusCode) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;

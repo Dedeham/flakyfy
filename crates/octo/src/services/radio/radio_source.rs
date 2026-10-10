@@ -1,5 +1,5 @@
-//! `IRadioSource` (`Services/Radio/RadioTypes.cs`): a place radio's suggestions come from. The
-//! records it answers with are `octo_core::radio::radio_types`.
+//! `IRadioSource`: a place radio's suggestions come from. The records it answers with are
+//! `octo_core::radio::radio_types`.
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -14,7 +14,7 @@ pub trait IRadioSource: Send + Sync {
     /// Switched on and set up. A source that is unreachable still says true and answers nothing.
     fn available(&self) -> bool;
 
-    /// Songs like the seed. `Err` where the C# source threw: the set counts it as a failure.
+    /// Songs like the seed. `Err` when the source fails: the set counts it as a failure.
     async fn songs_like(
         &self,
         seed: &RadioSeed,

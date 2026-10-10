@@ -1,5 +1,3 @@
-//! Port of `Services/Soulseek/SoulseekStartupValidator.cs`.
-
 use async_trait::async_trait;
 use octo_core::settings::SettingsStore;
 use octo_core::validation::{BaseStartupValidator, ConsoleColor, IStartupValidator, ValidationResult};
@@ -9,12 +7,12 @@ use super::soulseek_client::SoulseekClient;
 
 /// Validates that slskd is reachable + that the music source is wired correctly.
 pub struct SoulseekStartupValidator {
-    /// `IOptions<SoulseekSettings>`: deliberately the values Octo started with.
+    /// The Soulseek settings: deliberately the values Octo started with.
     base_url: Option<String>,
     search_wait_seconds: i32,
     min_file_size_bytes: i64,
     client: SoulseekClient,
-    /// `configuration["Library:DownloadPath"] ?? "/music"`, read once here.
+    /// `Library:DownloadPath`, or "/music" when it is not set, read once here.
     download_path: String,
 }
 

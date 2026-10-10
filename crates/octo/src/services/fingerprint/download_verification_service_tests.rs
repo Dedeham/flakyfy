@@ -1,7 +1,6 @@
-//! Ports of `DownloadVerificationDecisionTests` (the `Decide` half; `NeedsReview` is in
-//! `octo_core::fingerprint::verification`), the verification half of `IsrcVerificationTests`,
-//! the `Decide`/`OnlyOnLiveAlbums` half of `LiveVersionTests`, and
-//! `SongIdentityTests.AcoustId_AgreeingCandidate_SkipsAnotherVersion`.
+//! The verification decision (whether a file needs review is tested in
+//! `octo_core::fingerprint::verification`), the ISRC check, live takes only on live albums, and
+//! an agreeing AcoustID candidate that skips another version.
 
 use octo_core::fingerprint::{AcoustIdCredit, AcoustIdRelease};
 use octo_core::models::domain::Song;
@@ -34,7 +33,7 @@ fn decide(lookup: &AcoustIdLookup, artist: &str, title: &str, authoritative: boo
     )
 }
 
-// ---- DownloadVerificationDecisionTests ------------------------------------------------------
+// ---- the decision ---------------------------------------------------------------------------
 
 #[test]
 fn decide_confident_agreeing_match_is_confirmed() {
@@ -431,7 +430,7 @@ fn apply_tags_to_confirmed_and_tagging_on_takes_the_releases_track_and_album_art
     assert_eq!(song.album_artist.as_deref(), Some("Massive Attack"));
 }
 
-// ---- IsrcVerificationTests (the verification half) -------------------------------------------
+// ---- the ISRC check --------------------------------------------------------------------------
 
 const ISRC: &str = "JPU901901234";
 
@@ -675,7 +674,7 @@ fn read_isrcs_reads_every_containers_isrc_tag() {
     assert!(read("untagged.flac").is_empty());
 }
 
-// ---- LiveVersionTests (the verification half) ------------------------------------------------
+// ---- live versions ---------------------------------------------------------------------------
 
 fn live_recording(id: &str, albums: &[(&str, &[&str])]) -> AcoustIdRecording {
     let mut found = AcoustIdRecording::new(
@@ -781,7 +780,7 @@ fn a_recording_with_no_albums_listed_is_not_judged() {
     ));
 }
 
-// ---- SongIdentityTests (the AcoustID candidate case) -----------------------------------------
+// ---- the AcoustID candidate case -------------------------------------------------------------
 
 #[test]
 fn acoust_id_agreeing_candidate_skips_another_version() {
@@ -798,7 +797,7 @@ fn acoust_id_agreeing_candidate_skips_another_version() {
     );
 }
 
-/// Rust-only: the verifier the tag preview asks reports the switches, and with verification off
+/// The verifier the tag preview asks reports the switches, and with verification off
 /// a file is never even fingerprinted.
 #[tokio::test]
 async fn the_preview_verifier_answers_through_the_service() {

@@ -1,5 +1,5 @@
-//! Port of `Services/Fingerprint/DownloadVerificationService.cs`, the service. Its types (the
-//! verdict, the reason, the result) are `octo_core::fingerprint::verification`.
+//! The download verification service. Its types (the verdict, the reason, the result) are
+//! `octo_core::fingerprint::verification`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,8 +23,7 @@ use tracing::{debug, info, warn};
 use super::acoust_id_client::AcoustIdClient;
 use super::music_brainz_client::{MusicBrainzClient, MusicBrainzError};
 
-/// The ISRCs MusicBrainz listed per recording id, compared ignoring case (the C#
-/// `Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)`).
+/// The ISRCs MusicBrainz listed per recording id, with ids compared ignoring case.
 pub type RecordingIsrcs = HashMap<String, Vec<String>>;
 
 /// Asks what a finished download actually contains, rather than what its name and advertised
@@ -36,7 +35,7 @@ pub type RecordingIsrcs = HashMap<String, Vec<String>>;
 pub struct DownloadVerificationService {
     fingerprinter: Arc<AudioFingerprinter>,
     client: Arc<AcoustIdClient>,
-    /// `IOptionsMonitor<SoulseekSettings>`: read at every use.
+    /// The Soulseek settings, read at every use.
     settings: Arc<SettingsStore>,
     music_brainz: Option<Arc<MusicBrainzClient>>,
     spectrum: Option<Arc<SpectrumAnalyzer>>,
@@ -395,7 +394,7 @@ impl DownloadVerificationService {
             .iter()
             .filter(|r| !r.recording_id.is_empty())
             .filter(|r| {
-                // DistinctBy, ordinal.
+                // Each recording id once, compared exactly; the first one wins.
                 if asked.contains(&r.recording_id.as_str()) {
                     false
                 } else {
@@ -414,7 +413,7 @@ impl DownloadVerificationService {
                     Ok(None) => {}
                     Err(MusicBrainzError::TimedOut) => return Err(()),
                     Err(error) => {
-                        // The C# let a malformed answer escape VerifyAsync; see known-diffs.md.
+                        // A malformed answer ends the lookup the way a timeout does, logged.
                         warn!("musicbrainz answered the ISRC lookup with something unreadable: {error}");
                         return Err(());
                     }
@@ -517,7 +516,8 @@ impl DownloadVerificationService {
     /// on is typed Live. A studio recording that also appears on a live album is not one; a
     /// recording with no albums listed is not judged.
     pub fn only_on_live_albums(recording: &AcoustIdRecording) -> bool {
-        // GroupBy(group id ?? group title ?? title).Select(First): one release per group.
+        // One release per group, keyed by the group id, else the group title, else the title;
+        // the first release of each group stands for it.
         let mut keys: Vec<Option<&str>> = Vec::new();
         let mut groups = Vec::new();
         for release in &recording.releases {
@@ -546,7 +546,7 @@ impl DownloadVerificationService {
     /// read too. A tag that holds several joins them, so it is split. Empty when there is none or
     /// the tags cannot be read.
     ///
-    /// The same reading the release identifier gets from `TagWriterExtras.ReadFacts`, which
+    /// The same reading the release identifier gets from `tag_writer_extras::read_facts`, which
     /// gathers the codes this way.
     pub fn read_isrcs(path: &str) -> Vec<String> {
         tag_writer_extras::read_facts(path, true).isrcs
@@ -604,8 +604,8 @@ fn best_qualifying(lookup: &AcoustIdLookup, threshold: f64) -> Option<&AcoustIdR
     qualifying(lookup, threshold).into_iter().next()
 }
 
-/// The results at or above the threshold that name a recording, best first (a stable sort, as
-/// `OrderByDescending` is).
+/// The results at or above the threshold that name a recording, best first (a stable sort, so
+/// equal scores keep their order).
 fn qualifying(lookup: &AcoustIdLookup, threshold: f64) -> Vec<&AcoustIdResult> {
     let mut qualifying: Vec<&AcoustIdResult> = lookup
         .results
@@ -818,12 +818,13 @@ fn insert_ignore_case(map: &mut RecordingIsrcs, key: &str, value: Vec<String>) {
     map.insert(existing.unwrap_or_else(|| key.to_string()), value);
 }
 
-/// `{0:P0}` for the log: a whole percentage.
+/// A fraction for the log as a whole percentage, such as `85%`.
 fn percent(fraction: f64) -> String {
     format!("{}%", dotnet::round(fraction * 100.0, 0))
 }
 
-/// `Path.GetExtension`.
+/// The extension of the file name: its last dot and what follows, or empty when the name has
+/// no dot or ends with one.
 fn get_extension(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {
@@ -836,8 +837,8 @@ fn get_extension(path: &str) -> &str {
 #[path = "download_verification_service_tests.rs"]
 mod tests;
 
-/// The review sweep's check (`FingerprintSweepVerifier` over the service): `VerifyAsync(path,
-/// artist, title)` with no ISRC and `refuseLive` off.
+/// The review sweep's check: a verification of the path, artist and title with no ISRC and
+/// live takes not refused.
 #[async_trait::async_trait]
 impl crate::services::library::library_review_sweep_worker::SweepVerification
     for DownloadVerificationService

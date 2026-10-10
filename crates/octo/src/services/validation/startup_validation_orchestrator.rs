@@ -1,13 +1,11 @@
-//! Port of `Services/Validation/StartupValidationOrchestrator.cs`.
-
 use std::sync::Arc;
 
 use octo_core::validation::IStartupValidator;
 use tokio_util::sync::CancellationToken;
 
-/// Orchestrates startup validation for all configured services. A hosted service in C#: the
-/// host awaited its `StartAsync` before the server started listening, so [`crate::host::run`]
-/// awaits [`StartupValidationOrchestrator::start`] before it binds.
+/// Orchestrates startup validation for all configured services. The checks finish before the
+/// server starts listening: [`crate::host::run`] awaits [`StartupValidationOrchestrator::start`]
+/// before it binds.
 pub struct StartupValidationOrchestrator {
     validators: Vec<Arc<dyn IStartupValidator>>,
 }
@@ -25,7 +23,7 @@ impl StartupValidationOrchestrator {
         println!();
 
         // Run all validators. Each one catches its own failures and turns them into a result,
-        // so nothing escapes here; the C# catch around each call never fired.
+        // so nothing escapes here.
         let token = CancellationToken::new();
         for validator in &self.validators {
             validator.validate(&token).await;

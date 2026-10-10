@@ -1,4 +1,4 @@
-//! Port of `Services/Common/AcquisitionWorker.cs`, a worker of the supervisor.
+//! The acquisition worker, a worker of the supervisor.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -63,7 +63,7 @@ impl AcquisitionWorker {
         self
     }
 
-    /// `ExecuteAsync`.
+    /// The worker's loop, until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         info!("Acquisition worker started");
 
@@ -197,10 +197,9 @@ impl AcquisitionWorker {
         self.queue.release(&request);
     }
 
-    /// Kept apart on purpose: a notification error must never disturb the bookkeeping around
-    /// it (the C# wrapped it in its own try/catch; `notify` cannot fail). Metadata comes from
-    /// the same routing pair the download path itself uses, so the names match what the user
-    /// starred.
+    /// Kept apart on purpose: a notification error must never disturb the bookkeeping around it
+    /// (`notify` cannot fail). Metadata comes from the same routing pair the download path itself
+    /// uses, so the names match what the user starred.
     fn notify_failed(&self, request: &AcquisitionRequest, error: &anyhow::Error) {
         let routing = self
             .id_registry

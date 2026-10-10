@@ -1,5 +1,3 @@
-//! Port of `Services/Subsonic/SubsonicDiscoveryService.cs`.
-
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -58,8 +56,7 @@ impl SubsonicDiscoveryService {
             CANDIDATE_PORTS.len()
         );
         // Never this process itself: Octo answers a ping with a Subsonic envelope too, and a
-        // lone container on 8080 would otherwise adopt itself as its Navidrome. The C# had the
-        // same race and only escaped it by starting slowly (known-diffs.md).
+        // lone container on 8080 would otherwise adopt itself as its Navidrome.
         let own_port = crate::host::bind_address(std::env::var("ASPNETCORE_URLS").ok().as_deref()).port();
         let own: HashSet<(String, u16)> = own_addresses().into_iter().map(|ip| (ip, own_port)).collect();
         let found = probe_all(&targets, &CANDIDATE_PORTS, &own).await;
@@ -120,8 +117,8 @@ async fn probe(client: &reqwest::Client, ip: &str, port: u16) -> Option<Discover
     }
 
     let (mut kind, mut version, mut requires_auth) = (None, None, false);
-    // Non-JSON but contained the marker: still count it. A value of the wrong kind stopped the
-    // reading where it was, as GetString threw.
+    // Non-JSON but contained the marker: still count it. A value of the wrong kind stops the
+    // reading where it is.
     if let Ok(document) = serde_json::from_str::<serde_json::Value>(&body)
         && let Some(r) = document.get("subsonic-response")
     {
@@ -148,7 +145,7 @@ async fn probe(client: &reqwest::Client, ip: &str, port: u16) -> Option<Discover
     })
 }
 
-/// `GetString()`: a string or null, and `None` (stop) for anything else.
+/// A string or null, and `None` (stop) for anything else.
 fn string_or_stop(value: &serde_json::Value) -> Option<Option<String>> {
     match value {
         serde_json::Value::String(s) => Some(Some(s.clone())),

@@ -1,7 +1,7 @@
-//! `Controllers/SubSonicController.Downloads.cs`: octoAcquisitions version 2, the apps' downloads
-//! drawer. One download's whole log, clearing finished ones, and Find songs (a search run again
-//! by hand, every copy listed, one picked). Always JSON, and every call is checked with a ping to
-//! Navidrome as getAcquisitions is. Each person sees and picks only their own.
+//! octoAcquisitions version 2, the apps' downloads drawer. One download's whole log, clearing
+//! finished ones, and Find songs (a search run again by hand, every copy listed, one picked).
+//! Always JSON, and every call is checked with a ping to Navidrome as getAcquisitions is. Each
+//! person sees and picks only their own.
 
 use axum::extract::{Request, State};
 use axum::response::IntoResponse;

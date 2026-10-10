@@ -1,8 +1,5 @@
-//! Port of `Services/Library/LibraryActionPlaylistProvisioner.cs`.
-//!
-//! The C# registered it scoped (`AddScoped`), because `SubsonicProxyService` is: one per
-//! request, over that request's proxy. Its once-per-boot set was therefore once per request in
-//! practice. A caller builds one per request the same way (`new(request's proxy, settings)`).
+//! One provisioner per request, over that request's proxy, so its once-per-boot set is once per
+//! request in practice. A caller builds it with `new(request's proxy, settings)`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -29,7 +26,7 @@ pub struct LibraryActionPlaylistProvisioner {
     /// once per user rather than on every playlist listing.
     done: Mutex<HashSet<String>>,
     proxy: SubsonicProxyService,
-    /// `IOptionsMonitor<LibraryActionSettings>`: read at every call.
+    /// The library action settings, read at every call.
     settings: Arc<SettingsStore>,
     /// The family's members, for their own action playlists.
     family: Option<Arc<FamilyStore>>,
@@ -106,7 +103,7 @@ impl LibraryActionPlaylistProvisioner {
         for title in wanted {
             // The user's own credentials, so the playlist belongs to them. Drop anything that
             // would make this look like an edit of an existing playlist. Keys compare ignoring
-            // case, as the C# dictionary did.
+            // case.
             let mut parameters: IndexMap<String, String> = auth_parameters
                 .iter()
                 .filter(|(key, _)| {
@@ -198,8 +195,8 @@ mod tests {
 
     use super::*;
 
-    /// Rust-only (the C# had no test of its own): the missing titles are created once, with the
-    /// user's own sign-in and never an id that would make it an edit.
+    /// The missing titles are created once, with the user's own sign-in and never an id that
+    /// would make it an edit.
     #[tokio::test]
     async fn the_missing_playlists_are_created_once_as_the_user() {
         let navidrome = MockServer::builder().start().await;

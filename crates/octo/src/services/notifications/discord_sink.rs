@@ -1,4 +1,4 @@
-//! Port of `Services/Notifications/DiscordSink.cs`. The payload is
+//! The Discord webhook sink. The payload is
 //! `octo_core::notifications::discord_sink::build_payload`.
 
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use super::i_notification_sink::{INotificationSink, NotificationMessage};
 pub struct DiscordSink {
     /// The "notifications" named client.
     http: reqwest::Client,
-    /// `IOptionsMonitor<NotificationSettings>`: read at every use.
+    /// The notification settings, read at every use.
     settings: Arc<SettingsStore>,
 }
 

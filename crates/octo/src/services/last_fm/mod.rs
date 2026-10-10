@@ -1,8 +1,8 @@
-//! Last.fm with I/O (`Services/LastFm`): the web-service client the radio and search read, the
-//! scrobbler with the dashboard's Connect flow, and Last.fm radio (the state store, the
-//! recommendation build, the refresh queue and worker, the stream and its cache, sessions and
-//! transcoder, and the warmup). The records, the search cleanup, the request signature and the
-//! radio's pure rules are `octo_core::last_fm`.
+//! Last.fm with I/O: the web-service client the radio and search read, the scrobbler with the
+//! dashboard's Connect flow, and Last.fm radio (the state store, the recommendation build, the
+//! refresh queue and worker, the stream and its cache, sessions and transcoder, and the warmup).
+//! The records, the search cleanup, the request signature and the radio's pure rules are
+//! `octo_core::last_fm`.
 
 pub mod icy_metadata_stream;
 pub mod last_fm_radio_audio_transcoder;
@@ -38,21 +38,20 @@ pub use last_fm_scrobble_service::{LastFmConnectError, LastFmScrobbleService, Sc
 pub use last_fm_service::LastFmService;
 pub use radio_tune_in_selector::{IRadioTuneInSelector, RandomRadioTuneInSelector};
 
-/// `OperationCanceledException`: the caller's token, or a deadline, ran out. The radio services
-/// answer it where the C# threw it, so a caller can tell a cancellation from a failure.
+/// The caller's token, or a deadline, ran out. The radio services answer it as an error of its
+/// own, so a caller can tell a cancellation from a failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("The operation was canceled.")]
 pub struct OperationCanceled;
 
-/// The .NET number parsers the Last.fm readers lean on.
+/// The lenient number parsers the Last.fm readers lean on.
 pub(crate) mod net_parse {
-    /// The white space `NumberStyles.AllowLeadingWhite`/`AllowTrailingWhite` skip.
+    /// The white space skipped at either end: spaces and the controls U+0009 to U+000D.
     fn trim(text: &str) -> &str {
         text.trim_matches(|c: char| c == ' ' || ('\u{9}'..='\u{d}').contains(&c))
     }
 
-    /// `long.TryParse(text)` (`NumberStyles.Integer`): optional white space, an optional sign,
-    /// and decimal digits that fit.
+    /// An integer: optional white space, an optional sign, and decimal digits that fit.
     pub fn parse_long(text: &str) -> Option<i64> {
         let text = trim(text);
         let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
@@ -62,9 +61,9 @@ pub(crate) mod net_parse {
         text.parse().ok()
     }
 
-    /// `double.TryParse(text, style, InvariantCulture)` with `NumberStyles.Float`, plus
-    /// `AllowThousands` (commas in the whole part) when `thousands`. "Infinity" and "NaN" read
-    /// as .NET reads them; Rust's own "inf" does not.
+    /// A floating-point number: optional white space, an optional sign, digits with an optional
+    /// fraction and exponent, and commas in the whole part when `thousands`. "Infinity" and
+    /// "NaN" read in any case; Rust's own "inf" does not.
     pub fn parse_double(text: &str, thousands: bool) -> Option<f64> {
         let text = trim(text);
         let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
@@ -98,7 +97,7 @@ pub(crate) mod net_parse {
         use super::*;
 
         #[test]
-        fn numbers_read_as_dotnet_reads_them() {
+        fn numbers_read_with_white_space_signs_and_thousands() {
             assert_eq!(parse_long(" 180000 "), Some(180_000));
             assert_eq!(parse_long("-5"), Some(-5));
             assert_eq!(parse_long("+5"), Some(5));

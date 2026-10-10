@@ -1,5 +1,4 @@
-//! Port of `Services/CoverArt/CoverKeep.cs`: whether the cover a song already has is worth
-//! keeping.
+//! Whether the cover a song already has is worth keeping.
 //!
 //! Whether the cover a song arrived with (or the cover of the library copy a replacement takes
 //! the place of) is worth keeping. Asked before the cover chain replaces it: the chain used to

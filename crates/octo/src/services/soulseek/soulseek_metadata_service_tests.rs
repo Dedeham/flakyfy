@@ -1,10 +1,8 @@
-//! Port of `octo.Tests/SoulseekMetadataServiceTests.cs` and the SongLengthTests that test-map
-//! deferred to here (`Placeholder_*`, `CompleteSongLengths_*`, `ResolveTopDurations_*`).
+//! Tests of the Soulseek metadata service, including the song lengths: the placeholder,
+//! completing a song's length, and resolving the top durations.
 //!
-//! The C# built the real Deezer, YouTube and Last.fm services over a Moq'd
-//! `HttpMessageHandler`; here Deezer and the yt-dlp shim answer from wiremock servers the
-//! services are pointed at, and Last.fm (task 3-B's) is a fake behind the
-//! [`LastFmTrackLengths`] seam that answers from the same table the C# fixture did.
+//! Deezer and the yt-dlp shim answer from wiremock servers the services are pointed at, and
+//! Last.fm is a fake behind the [`LastFmTrackLengths`] seam that answers from a fixed table.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,7 +19,7 @@ use octo_core::settings::SettingsStore;
 
 /// Every url the fake catalog was asked for, and its answers by url substring (the first
 /// needle the url contains, ignoring case; anything else is a 404). A delay holds every answer
-/// back, so callers started together are all in flight before any hears back (the C# gate).
+/// back, so callers started together are all in flight before any hears back.
 #[derive(Clone)]
 struct Catalog {
     routes: Arc<Vec<(String, String)>>,
@@ -346,8 +344,8 @@ async fn get_album_wrong_provider_returns_null() {
 }
 
 /// The album a song row names for a song Deezer cannot place: the row's own title, minted
-/// as the response builder mints it for getSong and search3 (`ConvertSongToJson`, task 3-A's:
-/// an album routing of the row's artist and its album, or its title when it has none).
+/// as the response builder mints it for getSong and search3 (`convert_song_to_json`: an album
+/// routing of the row's artist and its album, or its title when it has none).
 fn album_id_from_song_row(h: &Harness, artist: &str, title: &str) -> String {
     h.registry.register(SoulseekRouting {
         kind: RoutingKind::Album,
@@ -765,7 +763,7 @@ async fn outside_albums_say_what_kind_of_release_they_are() {
     assert!(by_title("Odd One").is_empty());
 }
 
-// ---- Not in the C#: the id codec, the query split and the plain answers ---------------------
+// ---- The id codec, the query split and the plain answers ------------------------------------
 
 #[tokio::test]
 async fn the_long_external_id_round_trips_and_a_bad_one_reads_as_nothing() {
@@ -825,7 +823,7 @@ async fn a_free_text_search_is_split_at_its_first_space() {
     assert!(h.service.get_playlist_tracks(PROVIDER, "x").await.is_empty());
 }
 
-// ---- SongLengthTests: filled from each source, in order --------------------------------------
+// ---- Song lengths: filled from each source, in order -----------------------------------------
 
 /// Deezer, Last.fm and the yt-dlp shim as far as a length lookup needs them. Anything not
 /// listed is a miss, answered the way each service answers one.
@@ -1329,7 +1327,7 @@ async fn resolve_top_durations_in_the_background_keeps_the_video_a_play_pinned()
     assert!(!fixture.requests().iter().any(|url| url.contains("/meta")));
 }
 
-// ---- Not in the C#: the search enrichment and the prewarms ---------------------------------
+// ---- The search enrichment and the prewarms ------------------------------------------------
 
 #[tokio::test]
 async fn a_search_page_is_enriched_from_the_catalog_and_its_misses_warmed() {
@@ -1388,14 +1386,13 @@ async fn the_prewarm_pins_a_video_once_and_skips_warm_songs() {
     fixture.service.prewarm_cover_art(&songs, 12).await;
 }
 
-// ---- OutsideExplicitTests -----------------------------------------------------------------
+// ---- Outside songs' explicit word ---------------------------------------------------------
 //
-// Port of `OutsideExplicitTests`: outside songs and albums carry the catalog's explicit word
-// (OpenSubsonic's explicitStatus), so the apps can mark the explicit version before it is
-// added, and a clean copy gets an id of its own so it can be listed beside the explicit
-// original. The word and id tests are in `explicit_status` and `external_id_registry_tests`,
-// the artist page's pick in `deezer_metadata_service_tests`, the client answers in the
-// response builder's tests.
+// Outside songs and albums carry the catalog's explicit word (OpenSubsonic's explicitStatus), so
+// the apps can mark the explicit version before it is added, and a clean copy gets an id of its
+// own so it can be listed beside the explicit original. The word and id tests are in
+// `explicit_status` and `external_id_registry_tests`, the artist page's pick in
+// `deezer_metadata_service_tests`, the client answers in the response builder's tests.
 
 mod outside_explicit {
     use octo_core::models::domain::explicit_status;

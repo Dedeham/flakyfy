@@ -1,4 +1,4 @@
-//! `Octo.Models.Settings.GenreSettings` and `GenreMappingSettings` (the `Genre` section).
+//! `GenreSettings` and `GenreMappingSettings` (the `Genre` section).
 
 use serde::{Deserialize, Serialize};
 
@@ -73,7 +73,8 @@ pub struct GenreSettings {
     /// never replacing it.
     /// Environment variable: GENRE_BLOCKLIST (comma separated)
     ///
-    /// (Nothing maps GENRE_BLOCKLIST or splits it on commas; see config.md §3.9.)
+    /// (Nothing maps GENRE_BLOCKLIST or splits it on commas: the variable is named here but
+    /// never read.)
     pub blocklist: Vec<String>,
 
     /// Where to look when a file has no usable genre left.
@@ -380,7 +381,6 @@ const BROAD_GENRE_PRESET: &[(&str, &str)] = &[
 mod tests {
     use super::*;
 
-    // GenreNormalizerTests.EffectiveMappings_KeepsTheFirstDuplicateAndTheUsersCasing
     #[test]
     fn effective_mappings_keeps_the_first_duplicate_and_the_users_casing() {
         let settings = GenreSettings {
@@ -405,7 +405,6 @@ mod tests {
         assert_eq!(rules[0].genre, "Hip-Hop");
     }
 
-    // GenreNormalizerTests.EffectiveBlocklist_UserEntriesAddAndCannotRemoveBuiltIns
     #[test]
     fn effective_blocklist_user_entries_add_and_cannot_remove_built_ins() {
         let settings = GenreSettings {

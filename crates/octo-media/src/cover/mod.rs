@@ -1,6 +1,6 @@
-//! List covers and cover image files (C# `Services/CoverArt`): the design shared with the Octo
-//! apps, the painted backgrounds and the veil under the words, the type, and the service that
-//! serves list covers, the placeholder and the Octo badge.
+//! List covers and cover image files: the design shared with the Octo apps, the painted
+//! backgrounds and the veil under the words, the type, and the service that serves list covers,
+//! the placeholder and the Octo badge.
 
 pub mod badged_covers;
 pub mod cover_art_service;

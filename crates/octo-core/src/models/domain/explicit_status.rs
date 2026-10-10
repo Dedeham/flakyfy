@@ -1,5 +1,3 @@
-//! Port of `Models/Domain/ExplicitStatus.cs`.
-//!
 //! Whether a song's words are explicit, the clean edit, or neither, as the catalog says it and
 //! as OpenSubsonic clients read it. Kept as the catalog's own number on a [`Song`]
 //! (`Song::explicit_content_lyrics`), which the explicit filter already reads.

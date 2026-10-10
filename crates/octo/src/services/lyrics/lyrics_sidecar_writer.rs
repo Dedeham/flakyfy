@@ -1,5 +1,5 @@
-//! Port of `Services/Lyrics/LyricsSidecarWriter.cs`: `LyricsJob`, `LyricsWriteOutcome`,
-//! `LyricsWrite` and the writer, a singleton that is also a hosted queue worker.
+//! `LyricsJob`, `LyricsWriteOutcome`, `LyricsWrite` and the writer, one shared instance that is
+//! also a background queue worker.
 
 use std::ffi::OsString;
 use std::io;
@@ -96,43 +96,42 @@ impl LyricsWrite {
     }
 }
 
-/// The lyrics in a song's own tags, and its length: what the C# read and wrote with TagLib. A
-/// seam, so tests can hold a song's tags in memory.
+/// The lyrics in a song's own tags, and its length. A seam, so tests can hold a song's tags in
+/// memory.
 pub trait LyricsTagAccess: Send + Sync {
-    /// `file.Tag.Lyrics`, or an error when the file cannot be read as audio.
+    /// The lyrics tag, or an error when the file cannot be read as audio.
     fn read_lyrics(&self, path: &Path) -> io::Result<Option<String>>;
 
-    /// `file.Tag.Lyrics = lyrics; file.Save()`. None clears them.
+    /// Writes the lyrics tag and saves the file. None clears them.
     fn write_lyrics(&self, path: &Path, lyrics: Option<&str>) -> anyhow::Result<()>;
 
-    /// `file.Properties.Duration`, rounded to whole seconds; None when unknown or not positive.
+    /// The audio's length, rounded to whole seconds; None when unknown or not positive.
     fn duration_seconds(&self, path: &Path) -> Option<i32>;
 
-    /// What the library job reads of a song (`TagLib.File.Create(path)`): its tags and length.
-    /// `Ok(None)` when the file cannot be read as audio (TagLib's own exceptions, which the job
-    /// skips the song for); `Err` for an I/O error (`IOException`/`UnauthorizedAccessException`,
-    /// which a scan counts as failed).
+    /// What the library job reads of a song: its tags and length. `Ok(None)` when the file cannot
+    /// be read as audio (the job skips the song); `Err` for an I/O error, such as a missing
+    /// permission (a scan counts it as failed).
     fn read_song(&self, path: &Path) -> io::Result<Option<LyricsSongTags>>;
 }
 
 /// A song's tags as the library job reads them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LyricsSongTags {
-    /// `Tag.FirstPerformer`: the first performer, None when there is none.
+    /// The first performer, None when there is none.
     pub first_performer: Option<String>,
-    /// `Tag.FirstAlbumArtist`.
+    /// The first album artist.
     pub first_album_artist: Option<String>,
-    /// `Tag.Title`.
+    /// The title tag.
     pub title: Option<String>,
-    /// `Tag.Album`.
+    /// The album tag.
     pub album: Option<String>,
-    /// `Tag.Lyrics`.
+    /// The lyrics tag.
     pub lyrics: Option<String>,
-    /// `Properties.Duration`, rounded (`Math.Round`) to whole seconds; None when not positive.
+    /// The audio's length, rounded to whole seconds; None when not positive.
     pub duration_seconds: Option<i32>,
 }
 
-/// The song's tags, through the tags port (`octo_media::tags`, TagLib's stand-in).
+/// The song's tags, through the tags port (`octo_media::tags`).
 pub struct TagLibLyricsTags;
 
 impl LyricsTagAccess for TagLibLyricsTags {
@@ -163,8 +162,8 @@ impl LyricsTagAccess for TagLibLyricsTags {
                     duration_seconds: (seconds > 0).then_some(seconds),
                 }))
             }
-            // An I/O failure is counted as a failed song; anything TagLib would have thrown
-            // its own exception for (not audio, a format it cannot read) is skipped.
+            // An I/O failure is counted as a failed song; any other tag error (not audio, a
+            // format the tags library cannot read) is skipped.
             Err(octo_media::tags::TagError::Io(e)) => Err(e),
             Err(_) => Ok(None),
         }
@@ -197,8 +196,7 @@ pub struct LyricsSidecarWriter {
     lyrics: Arc<LyricsService>,
     settings: Arc<SettingsStore>,
     tags: Arc<dyn LyricsTagAccess>,
-    /// Resolved when it is needed in C# (`IServiceScopeFactory`); set once the library service
-    /// exists. Without it no scan is asked for, as in the C# tests.
+    /// Set once the library service exists. Without it no scan is asked for (the tests).
     library: OnceLock<Arc<dyn ILocalLibraryService>>,
     sender: mpsc::Sender<LyricsJob>,
     receiver: tokio::sync::Mutex<mpsc::Receiver<LyricsJob>>,
@@ -281,7 +279,7 @@ impl LyricsSidecarWriter {
         self.sender.try_send(job).is_ok()
     }
 
-    /// The hosted service's loop (`ExecuteAsync`): one job at a time until `stopping`.
+    /// The worker's loop: one job at a time until `stopping`.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         let mut queue = self.receiver.lock().await;
         loop {
@@ -626,13 +624,13 @@ impl LyricsSidecarWriter {
         &self.tags
     }
 
-    /// `SongLyrics.Of`, with the tags read through the seam.
+    /// What the song has now, with the tags read through the seam.
     pub fn song_lyrics(&self, audio_path: &Path) -> SongLyrics {
         let inside = self.tags.read_lyrics(audio_path).ok().flatten();
         song_lyrics::of_with_tag_lyrics(audio_path, inside.as_deref())
     }
 
-    /// `SongLyrics.MayWriteInside`: the tags hold no lyrics, or Octo's.
+    /// Whether Octo may write inside the song: the tags hold no lyrics, or Octo's.
     fn may_write_inside(&self, audio_path: &Path) -> bool {
         match self.tags.read_lyrics(audio_path) {
             Ok(Some(text)) if !is_null_or_white_space(Some(&text)) => SongLyrics::is_octos_text(&text),
@@ -650,7 +648,7 @@ impl LyricsSidecarWriter {
             .filter(|text| !text.is_empty())
     }
 
-    /// UTF-8 without a byte order mark; not written atomically, as the C# wrote it.
+    /// UTF-8 without a byte order mark; not written atomically.
     async fn write_file(stem: &Path, found: &LyricsResult) -> io::Result<()> {
         if found.has_synced() {
             let text = found.synced.as_deref().unwrap_or("").replace("\r\n", "\n");
@@ -704,8 +702,7 @@ impl LyricsSidecarWriter {
         runtime.spawn(async move {
             tokio::time::sleep(Self::SCAN_DELAY).await;
             pending.store(false, Ordering::SeqCst);
-            // The C# caught and logged an exception here; the trait's answer is only whether
-            // a scan started, which the C# ignored too.
+            // The answer is only whether a scan started, which nothing here needs.
             library.trigger_library_scan(false).await;
         });
     }
@@ -724,7 +721,7 @@ impl LyricsSidecarWriter {
     }
 }
 
-/// `s.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)`.
+/// Whether `s` ends with `suffix`, ignoring case.
 fn ends_with_ignore_case(s: &str, suffix: &str) -> bool {
     let count = suffix.chars().count();
     let Some((start, _)) = s.char_indices().rev().nth(count.saturating_sub(1)) else {
@@ -739,7 +736,7 @@ fn with_suffix(stem: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// `File.ReadAllText`: UTF-8, a byte order mark skipped, bytes that are not UTF-8 as U+FFFD.
+/// The text as UTF-8: a byte order mark skipped, bytes that are not UTF-8 as U+FFFD.
 fn utf8_text(bytes: &[u8]) -> String {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     String::from_utf8_lossy(bytes).into_owned()

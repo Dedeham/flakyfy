@@ -1,5 +1,5 @@
-//! Port of `Services/Library/LibraryReviewSweepWorker.cs`: the library Review sweep (#72), its
-//! state (`<config>/review-sweep.json`, state-files.md §4.18) and the fingerprint check it asks.
+//! The library Review sweep (#72), its state (`<config>/review-sweep.json`) and the fingerprint
+//! check it asks.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -43,8 +43,8 @@ pub trait IReviewSweepVerifier: Send + Sync {
 }
 
 /// What the sweep needs of `DownloadVerificationService`: whether a lookup can happen
-/// (`IsFingerprintingEnabled`) and `VerifyAsync(path, artist, title)` with no ISRC and
-/// `refuseLive` off.
+/// (`is_fingerprinting_enabled`) and `verify(path, artist, title)` with no ISRC and `refuse_live`
+/// off.
 ///
 /// `DownloadVerificationService` implements it; `AppState::build` hands it to the
 /// [`FingerprintSweepVerifier`] with `set_service`.
@@ -54,8 +54,8 @@ pub trait SweepVerification: Send + Sync {
     async fn verify(&self, path: &str, artist: Option<&str>, title: Option<&str>) -> VerificationResult;
 }
 
-/// The real check, in AcoustID's background lane. Resolved late, because hosted services are
-/// built before the download service is first used: the service is set once it exists, and
+/// The real check, in AcoustID's background lane. Resolved late, because the workers are built
+/// before the download service is first used: the service is set once it exists, and
 /// until then the sweep is not ready.
 #[derive(Default)]
 pub struct FingerprintSweepVerifier {
@@ -146,15 +146,15 @@ struct StoreInner {
     dirty: bool,
 }
 
-/// A hook run between taking a snapshot and writing it (the C# test seam `BeforeWrite`).
+/// A hook run between taking a snapshot and writing it (a test seam).
 pub type BeforeWrite = Arc<dyn Fn() + Send + Sync>;
 
 /// review-sweep.json. [`ReviewSweepState::checked`] holds a line per library file, so the file
 /// is written at most every [`ReviewSweepStore::FLUSH_INTERVAL`], not on every change: at 50,000
 /// files a write per song would rewrite hundreds of megabytes an hour.
 ///
-/// The C# flushed from a 5 s timer and from `Dispose`; here [`ReviewSweepStore::run_flusher`] is
-/// the timer (a worker, which flushes once more on shutdown) and `Drop` is the `Dispose`.
+/// [`ReviewSweepStore::run_flusher`] flushes every 5 s (a worker, which flushes once more on
+/// shutdown), and `Drop` flushes what is left.
 pub struct ReviewSweepStore {
     path: Option<PathBuf>,
     clock: Clock,
@@ -173,8 +173,8 @@ impl ReviewSweepStore {
         Self::with_clock(path, Clock::system())
     }
 
-    /// `new ReviewSweepStore(path, time: ...)`: a store on the given clock. A file that cannot
-    /// be read is set aside as `<file>.corrupt-<ticks>` and the sweep starts over.
+    /// A store kept in `path` on the given clock. A file that cannot be read is set aside as
+    /// `<file>.corrupt-<ticks>` and the sweep starts over.
     pub fn with_clock(path: Option<PathBuf>, clock: Clock) -> Self {
         let path = path.filter(|p| !dotnet::is_blank(&p.to_string_lossy()));
         let mut state = ReviewSweepState::default();
@@ -271,7 +271,7 @@ impl ReviewSweepStore {
     }
 
     /// The 5-second flush timer, which picks up a change made just after a write that no later
-    /// change may come to flush, and the flush `Dispose` did on shutdown, as a worker.
+    /// change may come to flush, and the last flush on shutdown, as a worker.
     pub async fn run_flusher(self: Arc<Self>, token: CancellationToken) -> anyhow::Result<()> {
         let store = self.clone();
         state_file::flush_every(
@@ -286,7 +286,7 @@ impl ReviewSweepStore {
 }
 
 impl Drop for ReviewSweepStore {
-    /// `Dispose`: the last flush.
+    /// The last flush.
     fn drop(&mut self) {
         self.flush();
     }
@@ -321,17 +321,17 @@ pub enum Outcome {
     LookupFailed,
 }
 
-/// `CoverUpgradeWorker.AudioExtensions`: the audio files the sweep walks.
+/// The audio files the sweep walks: the same extensions the cover upgrade walks.
 const AUDIO_EXTENSIONS: [&str; 14] = crate::services::cover_art::CoverUpgradeWorker::AUDIO_EXTENSIONS;
 
-/// What the C# constructor resolved, apart from the clock.
+/// What the sweep is built from, apart from the clock.
 pub struct LibraryReviewSweepParts {
     pub store: Arc<ReviewSweepStore>,
     pub notices: Arc<NoticeQueue>,
     pub verifier: Arc<dyn IReviewSweepVerifier>,
     pub activity: Arc<dyn IAcquisitionActivity>,
     pub library: Arc<dyn ILocalLibraryService>,
-    /// `IOptionsMonitor` of the library action and Subsonic settings, read at use.
+    /// The library action and Subsonic settings, read at use.
     pub settings: Arc<SettingsStore>,
     /// The resolver's root, the same one review actions resolve inside.
     pub music_root: Box<dyn Fn() -> String + Send + Sync>,
@@ -419,7 +419,7 @@ impl LibraryReviewSweepWorker {
         &self.store
     }
 
-    /// `ExecuteAsync`, and the flush `StopAsync` did.
+    /// The worker loop until the host stops, then a last flush.
     pub async fn run(self: Arc<Self>, stopping: CancellationToken) -> anyhow::Result<()> {
         // Never alongside startup, which already works the disk and Navidrome.
         tokio::select! {
@@ -430,7 +430,7 @@ impl LibraryReviewSweepWorker {
             }
         }
         while !stopping.is_cancelled() {
-            // Per-tick catch is mandatory: an unhandled exception would stop the host.
+            // Per-tick catch is mandatory: a tick that panics must never stop the worker.
             let tick = tokio::select! {
                 tick = std::panic::AssertUnwindSafe(self.tick()).catch_unwind() => tick,
                 _ = stopping.cancelled() => break,
@@ -770,10 +770,8 @@ impl LibraryReviewSweepWorker {
     /// Every audio file under `root`, library-relative with `/`, in ordinal order. A leading dot
     /// is the quarantine and anything else kept out of Navidrome's scan; slskd's incomplete
     /// folder holds half-written downloads when it sits in the library. A folder that cannot be
-    /// read is skipped (`IgnoreInaccessible`), and hidden entries, whose names start with a dot,
-    /// are not walked (the default `AttributesToSkip`).
-    /// The trash folder is left out by its configured name too, which may have no dot (port
-    /// fix).
+    /// read is skipped, and hidden entries, whose names start with a dot, are not walked. The
+    /// trash folder is left out by its configured name too, which may have no dot.
     pub fn enumerate(root: &str, trash: Option<&Path>) -> Vec<String> {
         let root = Path::new(root);
         let mut found: Vec<String> = Vec::new();
@@ -812,8 +810,7 @@ impl LibraryReviewSweepWorker {
                     continue;
                 };
                 let relative = relative.to_string_lossy().replace('\\', "/");
-                // `SoulseekDownloadService.ExcludedFolderNames(null)`: slskd's default incomplete
-                // folder and Octo's own staging.
+                // slskd's default incomplete folder and Octo's own staging.
                 let incomplete_folders = excluded_folder_names(None);
                 let kept_out = relative.split('/').any(|segment| {
                     segment.starts_with('.')
@@ -897,13 +894,13 @@ impl LibraryReviewSweepWorker {
     }
 }
 
-/// `Path.GetFullPath(Path.Combine(root, relative))`.
+/// `relative` under `root`, made a full path.
 fn full_path(root: &str, relative: &str) -> String {
     get_full_path(&format!("{root}/{relative}"))
 }
 
-/// `List.BinarySearch(cursor, StringComparer.Ordinal)`: the index after the cursor, or where
-/// it would go.
+/// A binary search for the cursor in ordinal order: the index after the cursor, or where it
+/// would go.
 fn first_after(files: &[String], cursor: &str) -> usize {
     match files.binary_search_by(|file| compare_ordinal(file, cursor)) {
         Ok(index) => index + 1,
@@ -911,7 +908,7 @@ fn first_after(files: &[String], cursor: &str) -> usize {
     }
 }
 
-/// `FileInfo.LastWriteTimeUtc.Ticks`.
+/// The file's last write time in 100 ns ticks since 0001-01-01.
 fn modified_ticks(metadata: &std::fs::Metadata) -> i64 {
     metadata
         .modified()
@@ -919,7 +916,7 @@ fn modified_ticks(metadata: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-/// `Path.GetExtension` of a file name: from its last dot, or nothing.
+/// The extension of a file name: from its last dot, or nothing.
 fn extension_of(name: &str) -> String {
     match name.rfind('.') {
         Some(dot) if dot + 1 < name.len() => name[dot..].to_string(),
@@ -927,7 +924,7 @@ fn extension_of(name: &str) -> String {
     }
 }
 
-/// `Path.GetFileNameWithoutExtension`.
+/// The file name up to its last dot.
 fn file_name_without_extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rfind('.') {

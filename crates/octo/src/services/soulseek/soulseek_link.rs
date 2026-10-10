@@ -1,7 +1,7 @@
-//! Port of `Services/Soulseek/SoulseekLink.cs`: the cached read of slskd's login and the wait for
-//! it. The reading, its state and the dashboard's words are `octo_core::soulseek::soulseek_link`.
+//! The cached read of slskd's login and the wait for it. The reading, its state and the
+//! dashboard's words are `octo_core::soulseek::soulseek_link`.
 //!
-//! The C# methods took a `CancellationToken`; here a caller that gives up drops the future.
+//! The calls take no cancellation token: a caller that gives up drops the future.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,15 +55,15 @@ struct Cached {
 }
 
 pub struct SoulseekLink {
-    /// `IOptionsMonitor<SoulseekSettings>`: the hold is read live.
+    /// The live settings: the hold is read live.
     settings: Arc<SettingsStore>,
     /// Soulseek is off, as the client was built.
     off: bool,
-    // Seams, the same way SoulseekClient exposes Clock and PollInterval.
+    // Seams, the same way the Soulseek client's `Timings` carries its clock and poll interval.
     read: ReadFn,
     clock: Clock,
     delay: DelayFn,
-    // The C# `SemaphoreSlim _readLock`: held across the read, so a burst shares one request.
+    // The read lock: held across the read, so a burst shares one request.
     cached: tokio::sync::Mutex<Cached>,
 }
 
@@ -183,8 +183,8 @@ impl ISoulseekLink for SoulseekLink {
 
 #[cfg(test)]
 mod tests {
-    //! The link half of `octo.Tests/SoulseekOutageTests.cs` (the wait and the cache). The heart
-    //! chain half belongs to 4-D (HeartAcquisitionCoordinator).
+    //! The link's side of a Soulseek outage: the wait and the cache. The heart chain's side is
+    //! tested with the heart acquisition coordinator.
 
     use chrono::TimeZone;
     use octo_core::settings::{AppSettings, SoulseekSettings};
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(SoulseekSettings::default().outage_hold_hours, 6);
     }
 
-    /// Not in the C#: a real link reads slskd's application state through the client.
+    /// A real link reads slskd's application state through the client.
     #[tokio::test]
     async fn a_real_link_reads_slskd_through_the_client() {
         use wiremock::matchers::{method, path};

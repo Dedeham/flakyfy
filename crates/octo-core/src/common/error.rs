@@ -1,8 +1,5 @@
-//! A typed error with a code, a message and metadata. Port of `Services/Common/Error.cs`.
-//!
-//! The C# `Result<T>` and `Result` (`Services/Common/Result.cs`) are plain
-//! `Result<T, Error>` and `Result<(), Error>` here: `IsSuccess` is `is_ok()`, `Value` is
-//! `ok()`, and the implicit conversions are `Ok(..)` and `Err(..)`.
+//! A typed error with a code, a message and metadata. Fallible operations return plain
+//! `Result<T, Error>` or `Result<(), Error>`.
 
 use std::collections::HashMap;
 use std::fmt;

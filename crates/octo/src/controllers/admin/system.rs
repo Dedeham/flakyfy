@@ -1,7 +1,7 @@
-//! `AdminController`'s process and status actions: the service health dots (`status`), the
-//! library path chain (`library-status`), server discovery, Lidarr's choices and connection
-//! test, the restart, the test notification, the fetched-songs log, the hearted downloads, and
-//! the two recovery levers (clear rejected peers, clear the metadata caches).
+//! The process and status actions: the service health dots (`status`), the library path chain
+//! (`library-status`), server discovery, Lidarr's choices and connection test, the restart, the
+//! test notification, the fetched-songs log, the hearted downloads, and the two recovery levers
+//! (clear rejected peers, clear the metadata caches).
 
 use std::time::Duration;
 
@@ -170,7 +170,7 @@ impl ServiceProbe {
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The message an `HttpClient` failure carried in C#, for a probe's detail.
+/// The message of an HTTP client failure, for a probe's detail.
 fn probe_failure(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         timeout_message(PROBE_TIMEOUT)
@@ -346,7 +346,7 @@ async fn probe_last_fm(state: &AppState) -> ServiceProbe {
     }
 }
 
-/// `DateTimeOffset.UtcNow.ToString("O")`: seven fraction digits and `+00:00`.
+/// `now` in the round-trip form with an offset: seven fraction digits and `+00:00`.
 fn round_trip_offset(now: chrono::DateTime<Utc>) -> String {
     format!(
         "{}.{:07}+00:00",
@@ -512,12 +512,11 @@ pub async fn test_lidarr_connection(
 }
 
 /// The key `lidarr/test` sends: the page only ever holds the placeholder for a saved key, and
-/// testing it means the saved one, but only at the saved address. A port fix: the C# sent the
-/// saved key to whatever address the request named, so anyone who could reach the admin API
-/// could have it sent to a server of their own; now the saved key follows the saved address
-/// alone, as a save's does (`secrets::secret_sent_elsewhere`, the same comparison), and a new
-/// address needs the key typed (BACKLOG "Found while building the harness"; known-diffs.md).
-/// Anything other than the placeholder is the key as typed.
+/// testing it means the saved one, but only at the saved address. Sending the saved key to
+/// whatever address the request named would let anyone who can reach the admin API have it
+/// sent to a server of their own, so the saved key follows the saved address alone, as a save's
+/// does (`secrets::secret_sent_elsewhere`, the same comparison), and a new address needs the
+/// key typed. Anything other than the placeholder is the key as typed.
 fn lidarr_test_key<'a>(
     typed_key: Option<&'a str>,
     typed_url: Option<&str>,

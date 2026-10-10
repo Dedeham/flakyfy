@@ -1,6 +1,5 @@
-//! Port of `octo.Tests/SubsonicResponseBuilderTests.cs`, the response-shape tests of
-//! `LyricsWordTimingTests.cs` and `LyricsTests.cs`, and Rust-only checks of the shapes the C#
-//! tests left to the parity recordings.
+//! Tests of the Subsonic response shapes, including the lyrics answers and their word timing,
+//! with exact byte checks of the lyrics, info, error and song row answers.
 
 use std::sync::Arc;
 
@@ -701,7 +700,7 @@ fn create_album_response_carries_its_release_types_in_both_formats() {
     assert_eq!(values, ["single"]);
 }
 
-// ---- The structured lyrics the app parses (LyricsWordTimingTests, LyricsTests) -------------
+// ---- The structured lyrics the app parses: lines and word timing -------------------------
 
 fn structured(result: &LyricsResult, enhanced: bool) -> Value {
     let json = json_of(&builder().create_lyrics_list_response("json", Some(result), "A", "T", enhanced));
@@ -747,7 +746,7 @@ fn cues_use_inclusive_utf8_byte_offsets_into_the_cue_line_value() {
     assert_eq!(ends, [1500, 2500, 3000, 3500]);
 }
 
-/// The Octo app's ServerLyrics.kt Utf8Positions, ported line for line (it works in UTF-16
+/// The Octo app's ServerLyrics.kt Utf8Positions, copied line for line (it works in UTF-16
 /// units), so these tests hold the server to what the app actually does with a cue.
 fn app_char_range(text: &str, byte_start: i64, byte_end: i64) -> Option<(usize, usize)> {
     let units: Vec<u16> = text.encode_utf16().collect();
@@ -893,10 +892,10 @@ fn lyrics_list_xml_carries_timed_lines() {
     assert!(text.contains("synced=\"true\""));
 }
 
-// ---- Rust-only: the shapes the C# tests left to the recordings ------------------------------
+// ---- Exact shapes: lyrics, errors, info, song rows, playlists and library actions -----------
 
 #[test]
-fn lyrics_answers_write_exactly_what_the_csharp_wrote() {
+fn lyrics_answers_keep_their_exact_shape() {
     // Plain lyrics: untimed, trimmed lines, in XML with no start.
     let plain = LyricsResult::new("x", None, Some("  one \r\n\ntwo".into()), false);
     assert_eq!(
@@ -1038,7 +1037,7 @@ fn info_responses_carry_their_fields_in_both_formats() {
 }
 
 #[test]
-fn song_rows_keep_the_csharp_field_order_and_values() {
+fn song_rows_keep_their_field_order_and_values() {
     let now = Utc.with_ymd_and_hms(2026, 10, 4, 8, 7, 45).unwrap() + chrono::Duration::microseconds(947_999);
     let builder = builder().with_clock(Clock::fixed(now));
     let local = Song {
@@ -1337,8 +1336,8 @@ fn library_actions_offer_what_is_enabled() {
         json["subsonic-response"]["libraryActions"]["actions"],
         json!(["remove", "lyrics", "cover-swap"])
     );
-    // Version 3 (374dac8, f2c6a65): remove only for a Navidrome admin; the edits whenever the
-    // server can make them, cover last and only with a cover finder.
+    // Version 3: remove only for a Navidrome admin; the edits whenever the server can make them,
+    // cover last and only with a cover finder.
     let json =
         json_of(&builder().create_library_actions_response(&on, None, 3, true, "Lidarr", false, true, false));
     assert_eq!(
@@ -1559,7 +1558,7 @@ fn merged_responses_write_json_as_it_is_and_xml_by_opensubsonic_rules() {
     );
 }
 
-// ---- OutsideExplicitTests: what a client reads ----------------------------------------------
+// ---- Explicit and clean outside songs: what a client reads ----------------------------------
 
 #[test]
 fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml() {

@@ -1,11 +1,11 @@
-//! A map that enumerates in the order a .NET `Dictionary<string, T>` does, which is the order
-//! TagLib# writes a Vorbis comment's fields in: a new key takes the slot the last removed key
-//! freed, and only goes to the end when no slot is free.
+//! A map that enumerates in slot order, which is the order TagLib# writes a Vorbis comment's
+//! fields in: a new key takes the slot the last removed key freed, and only goes to the end when
+//! no slot is free.
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetDictionary<V> {
     entries: Vec<Option<(String, V)>>,
-    /// Freed slots, the most recently freed last (.NET's free list is a stack).
+    /// Freed slots, the most recently freed last (a stack).
     free: Vec<usize>,
 }
 

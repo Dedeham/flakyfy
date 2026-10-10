@@ -35,7 +35,7 @@ Licence, last release and last push come from the GitHub API on 2026-10-10
 | [Troi](https://github.com/metabrainz/troi-recommendation-playground) (MetaBrainz) | The engine behind ListenBrainz "Weekly Jams" and "Weekly Exploration"; Python pipeline of elements, includes a local-collection resolver for Subsonic servers ([docs](https://troi.readthedocs.io/)) | GPL-2.0 (GitHub). | Release v2026.09.01.0 (2026-09-01); pushed 2026-09-28 | Python CLI/library. A new container, or run by hand. Needs the ListenBrainz API |
 | [ListenBrainz server](https://github.com/metabrainz/listenbrainz-server) | The service itself; recommendations, similar recordings, "created for you" playlists | GPL-2.0 | Release 2026-10-08; pushed 2026-10-09 | Not self-hosted for this: Octo calls the public API (as `ListenBrainzRadioClient` already does) |
 | [Explo](https://github.com/LumePart/Explo) (LumePart) | Self-hosted "Discover Weekly": pulls ListenBrainz Weekly Exploration, Weekly Jams and Daily Jams, requests the tracks from YouTube/Soulseek (or albums from Lidarr), tags them, creates playlists in Navidrome and others, on a schedule ([README](https://github.com/LumePart/Explo/blob/main/README.md)) | MIT | Release v1.2.0 (2026-09-09); pushed 2026-09-09 | Go container (Docker image and Helm chart in its repo), with its own web UI, its own yt-dlp and slskd client |
-| [navidrome-listenbrainz-daily-playlist](https://github.com/kgarner7/navidrome-listenbrainz-daily-playlist) | Navidrome plugin that imports ListenBrainz daily/weekly playlists, matching by MusicBrainz id, per user; library songs only ([README](https://github.com/kgarner7/navidrome-listenbrainz-daily-playlist#readme)) | MIT | Pushed 2026-09-15 (release not checked) | WASM plugin inside Navidrome 0.63 or later; no new container |
+| [navidrome-listenbrainz-daily-playlist](https://github.com/kgarner7/navidrome-listenbrainz-daily-playlist) | Navidrome plugin that imports ListenBrainz daily/weekly playlists, matching by MusicBrainz id, per user; library songs only ([README](https://github.com/kgarner7/navidrome-listenbrainz-daily-playlist#readme)) | MIT | Release v6.0.0 (2026-07-08); pushed 2026-09-15 | WASM plugin inside Navidrome 0.63 or later; no new container |
 | [AudioMuse-AI](https://github.com/NeptuneHub/AudioMuse-AI) | Audio analysis of the library, "rediscover forgotten songs", similarity playlists; Navidrome among several servers ([README](https://github.com/NeptuneHub/AudioMuse-AI#readme)) | AGPL-3.0 | Release v3.6.3 (2026-09-26); pushed 2026-09-27 | Docker Compose stack including PostgreSQL (its README); works on the existing library only, so it cannot propose songs the library lacks. Overlaps `octo-sonic` |
 | [Gorse](https://github.com/gorse-io/gorse) | General recommender engine (collaborative filtering, item-based, popular/latest) with a REST API | Apache-2.0 | Release v0.5.11 (2026-07-14); pushed 2026-10-10 | Go service plus a database, its own container(s). Needs a feed of feedback from many users to learn; a household server has too few |
 | [implicit](https://github.com/benfred/implicit) | Python library, collaborative filtering on implicit feedback | MIT | Release v0.7.3 (2026-05-08) | Library only. Same data problem as Gorse |
@@ -129,12 +129,29 @@ The rule is a gate, not a preference. Three layers, each independent, so a bug i
 publish a violation:
 
 1. **Build the exclusion set for the user** immediately before selecting:
-   - **Playlists:** every playlist the user owns or can see, every track, from
-     `NavidromePlaylistApi.ListPlaylistsAsync` and `ReadAllTracksAsync`. The result also carries
-     Octo's own playlists for the user (action playlists, Review notices, imports kept as playlists):
-     all count. Only the user's current Discover Weekly playlist is left out of the set, because the
-     module is about to replace its contents; its songs go to the ledger instead.
-   - **Likes:** `rest/getStarred2` as the user (songs, and the songs of starred albums).
+   - **Playlists:** the playlists the user can see, which are the ones they own plus other
+     people's public ones. Read as the user: `rest/getPlaylists` returns exactly that set (Subsonic
+     API: own and public playlists), then `rest/getPlaylist` per playlist for its songs, paged to
+     the end. This is chosen because the existing admin helper cannot be used as written:
+     `NavidromePlaylistApi.ListPlaylistsAsync` (`NavidromePlaylistApi.cs:35-49`) returns an empty
+     list on any error, asks for one page of at most 1000 (`_end=1000`) with no paging, and
+     `PlaylistRow` has only `Id`, `Name` and `Owner` (`LibraryActionPlaylistWorker.cs:189`,
+     `ParsePlaylists` :192-204), with no public flag. A failed or truncated listing from it would
+     look like "no playlists". The module therefore has its own reader that pages until a short page,
+     validates the shape of each page (a non-array answer is a failure, unlike `ParsePlaylists`
+     :194 and `ParseTracks`, which turn it into an empty list), and returns **null (unread)** on any
+     error, non-success status, odd shape, or a page count it cannot confirm. The result includes
+     Octo's own playlists for the user (action playlists, Review notices, imports kept as
+     playlists): all count. Only the user's current Discover Weekly playlist is left out, because
+     the module is about to replace its contents; its songs go to the ledger first (4.3).
+   - **Likes:** `rest/getStarred2` as the user returns starred songs, starred albums and starred
+     artists. Songs are likes. A starred album's songs are read with one `rest/getAlbum` per album,
+     and all of them are likes. A starred artist is **not** treated as every song by that artist: the
+     star means "I like this artist", not "I have heard all of it", and excluding the whole catalogue
+     of the artists a user loves would remove the best discoveries (new songs by artists they like).
+     Their individual songs are excluded only if starred, in an album they starred, or in a
+     playlist. This is a decision for the human to confirm (section 8). Any failed `getAlbum`, or a
+     `getStarred2` that fails or looks truncated, makes the whole likes set unread (null).
    - Each entry keeps artist, title, length, any ISRC and MusicBrainz recording id, and the Navidrome
      id.
 2. **Select by identity, not id.** A candidate is dropped if any entry matches by MusicBrainz
@@ -147,10 +164,13 @@ publish a violation:
    Right before every add to the playlist the module re-reads both sets, by the downloaded file's
    Navidrome id and again by identity, and skips the song if it matches. A weekly sweep also removes
    from the live playlist any track the user has since liked or placed in another playlist (it
-   removes it from Discover Weekly only, never from their other lists).
+   removes it from Discover Weekly only, never from their other lists). **If the held user
+   credential has expired by the time of the write, the add is skipped entirely** and retried when a
+   credential is held again; it is never checked against playlists alone, because the likes cannot be
+   read without it, and the admin identity cannot stand in for it (5.2).
 
-**Fail closed.** If either set cannot be read in full (Navidrome error, partial page, expired
-credential), the module publishes nothing for that user that run and tries again later. An unread
+**Fail closed.** Unread means publish nothing. If either set is null (Navidrome error, partial
+page, a failed per-playlist or per-album call, expired credential), the module publishes nothing for that user that run and tries again later. An unread
 set is never treated as an empty one (compare `ReadAllTracksAsync`, which returns null on failure
 for this reason: `NavidromePlaylistApi.cs:195-196`).
 
@@ -185,7 +205,10 @@ are stubbed as the existing tests do):
 - Default target 30 songs per user per week, at most 20 to fetch from outside, configurable. If fewer
   than a minimum (default 10) land by Sunday, the playlist keeps what it has; it is never padded
   with songs that fail the rule.
-- A new week replaces the old contents in place. The old songs go to the ledger; they stay in the
+- A new week replaces the old contents in place. **Order:** first the old playlist's songs and the
+  new picks are written to the ledger and saved, then the old playlist is replaced. A crash between
+  the two steps leaves the old list showing and a ledger that already counts it, never a replaced
+  playlist whose songs are missing from the ledger. The old songs stay recorded; they stay in the
   library (the module never deletes files; see 7).
 - All of the module's work stops with the switch off, including the worker's sweeps.
 
@@ -307,7 +330,8 @@ The module is removable by the five steps in `docs/modules.md` "Removing a modul
    no-edit route fails.
 4. **ListenBrainz user names** (5.1): confirm a dashboard map is acceptable if `validate-token`
    does not return one.
-5. **Admin fill of user-owned playlists** (5.4): Security to confirm it matches R2.4/R2.5 for this
+5. **Starred artists** (4.2): confirm that a starred artist does not exclude all of its songs.
+6. **Admin fill of user-owned playlists** (5.4): Security to confirm it matches R2.4/R2.5 for this
    module.
 
 ## 9. Open items for the build issue (FLA-23)

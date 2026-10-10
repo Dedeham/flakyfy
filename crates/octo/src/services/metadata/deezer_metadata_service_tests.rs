@@ -454,6 +454,24 @@ async fn enrich_track_async_throttled_not_cached_and_recovers_on_retry() {
     assert_eq!(second.album_title.as_deref(), Some("Canciones Prohibidas"));
 }
 
+/// Rust-only: two lookups asking Deezer the same thing at once share one request, so the
+/// budget a search shares with everything else is spent once.
+#[tokio::test]
+async fn the_same_call_asked_twice_at_once_is_one_request() {
+    let json = r#"{"data":[{"title":"Reckoner","duration":290,
+        "album":{"id":1,"title":"In Rainbows"},"artist":{"name":"Radiohead"}}]}"#;
+    let h = Harness::new(vec![("/search", json)]).await;
+
+    let (first, second) = tokio::join!(
+        h.service.enrich_track("Radiohead", "Reckoner", false, false),
+        h.service.enrich_track("Radiohead", "Reckoner", false, false),
+    );
+
+    assert_eq!(first.and_then(|m| m.duration), Some(290));
+    assert_eq!(second.and_then(|m| m.duration), Some(290));
+    assert_eq!(h.calls("/search"), 1);
+}
+
 // ---- Plain-query regression (Deezer dropped field-qualified search) ------
 // Octo used to ask for artist:"X" track:"Y". Deezer now reads that as free text, so
 // the literal words "artist" and "track" had to appear in the record and nothing ever

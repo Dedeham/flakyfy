@@ -251,7 +251,7 @@ No Critical finding. Totals: **Critical 0, High 2, Medium 5, Low 6.**
 | SEC-6 | Medium | Service passwords and API keys kept in plain text in `settings.json`, written without restricting its mode | `octo/Services/Admin/SettingsFileWriter.cs:156-164` |
 | SEC-7 | Medium | Unpinned downloads and images, runtime self-update, no dependency scan in CI | `yt-dlp-shim/Dockerfile:3-4, 15-16, 36-37, 47`; `yt-dlp-shim/app.py:668`; `docker-compose.yml:393, 453`; `.github/workflows/ci.yml` |
 | SEC-8 | Low | Shim does not validate the video id and passes `dest` unescaped into a yt-dlp output template | `yt-dlp-shim/app.py:806-807, 931-947, 563-569` |
-| SEC-9 | Low | Dashboard sessions last 90 days sliding; sessions file written without a mode; sign-in throttle is per address in memory | `octo/Services/Admin/BrowseSessionStore.cs:27, 156-157`; `octo/Services/Admin/SignInThrottle.cs:164` |
+| SEC-9 | Low | Dashboard sessions last 90 days sliding; sessions file written without a mode; sign-in throttle is per address in memory | `octo/Services/Admin/BrowseSessionStore.cs:27, 156-157`; `octo/Services/Admin/SignInThrottle.cs:16, 52` |
 | SEC-10 | Low | Directory browser lists any folder of the container for a signed-in admin | `octo/Services/Admin/DirectoryBrowser.cs:73-80`; `octo/Controllers/AdminController.cs:556` |
 | SEC-11 | Low | Octo and shim containers run as root | `Dockerfile:17` (no `USER`), `yt-dlp-shim/Dockerfile` (no `USER`) |
 | SEC-12 | Low | `ADMIN_SIGN_IN=off` removes all admin protection | `octo/Middleware/AdminSignInGate.cs:32-37`; `octo/Program.cs:643` |
@@ -374,7 +374,7 @@ in `dest`; add the checks to the shim's tests (R4.2, R4.3).
 Dashboard sessions slide for 90 days (`BrowseSessionStore.cs:27`); only a hash of the token is
 stored (good), but the sessions file is written without a restricted mode (`:156-157`). The
 sign-in throttle (10 failures in 15 minutes) is keyed by remote address in memory
-(`SignInThrottle.cs:164`); behind a reverse proxy where only `X-Forwarded-Proto` is honoured
+(`SignInThrottle.cs:16, 52`); behind a reverse proxy where only `X-Forwarded-Proto` is honoured
 (`Program.cs:35-42`) every client shares one address, as the class comment says: this fails
 closed, so it is a nuisance rather than a bypass.
 **Fix:** shorten the sliding lifetime or add an absolute maximum (for example 30 days), list and

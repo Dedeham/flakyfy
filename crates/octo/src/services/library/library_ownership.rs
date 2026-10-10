@@ -363,8 +363,14 @@ impl LibraryOwnership {
             return false;
         };
         let a = SongRef::new(wanted.title, wanted.artist).with_seconds(f64::from(want));
-        let b = SongRef::new(candidate.title.as_str(), candidate.artist.as_str()).with_seconds(f64::from(theirs));
-        SongIdentity::same(&a, &b, Some(&SongIdentity::owned(Self::DURATION_TOLERANCE_SECONDS))).is_same()
+        let b =
+            SongRef::new(candidate.title.as_str(), candidate.artist.as_str()).with_seconds(f64::from(theirs));
+        SongIdentity::same(
+            &a,
+            &b,
+            Some(&SongIdentity::owned(Self::DURATION_TOLERANCE_SECONDS)),
+        )
+        .is_same()
     }
 
     async fn in_navidrome(

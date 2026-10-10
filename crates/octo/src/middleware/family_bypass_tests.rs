@@ -1862,11 +1862,7 @@ async fn import_file(f: &Family, who: &str) -> Reply {
 #[tokio::test]
 async fn imports_are_refused_when_the_import_ability_is_off() {
     let f = family(true, Alex::with(json!({ "importPlaylists": false })), |_| {}).await;
-    for call in [
-        "getImportServices",
-        "importText",
-        "importAction",
-    ] {
+    for call in ["getImportServices", "importText", "importAction"] {
         let r = get(
             &f,
             &format!("/rest/{call}?{ALEX}&action=pause&text=A%20-%20B"),
@@ -1885,10 +1881,20 @@ async fn imports_are_refused_when_the_import_ability_is_off() {
     assert!(f.state.imports.overview("alex").lists.is_empty());
     // Reading the lists already there stays open.
     let lists = get(&f, &format!("/rest/getImports?{ALEX}"), HOME).await;
-    assert_eq!(lists.json()["subsonic-response"]["status"], "ok", "{}", lists.body);
+    assert_eq!(
+        lists.json()["subsonic-response"]["status"],
+        "ok",
+        "{}",
+        lists.body
+    );
     // The owner is never asked about abilities.
     let owner = get(&f, &format!("/rest/getImportServices?{OWNER}"), HOME).await;
-    assert_eq!(owner.json()["subsonic-response"]["status"], "ok", "{}", owner.body);
+    assert_eq!(
+        owner.json()["subsonic-response"]["status"],
+        "ok",
+        "{}",
+        owner.body
+    );
 }
 
 #[tokio::test]

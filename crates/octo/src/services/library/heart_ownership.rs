@@ -87,10 +87,7 @@ impl HeartOwnership {
         let mut found = Vec::with_capacity(album.songs.len());
         for song in &album.songs {
             // `song.Album ?? album.Title`: the song's own album, which is never null here.
-            let owned = self
-                .ownership
-                .find_song_in(&LibraryScope::Shared, song)
-                .await?;
+            let owned = self.ownership.find_song_in(&LibraryScope::Shared, song).await?;
             found.push((song.clone(), owned));
         }
         Some((album, found))

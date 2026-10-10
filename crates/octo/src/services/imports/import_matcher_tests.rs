@@ -277,23 +277,41 @@ fn with_isrc(mut t: ImportTrack, isrc: &str) -> ImportTrack {
 fn a_shared_isrc_wins_over_the_words_and_takes_the_closest_length() {
     let index = LibraryIndex::new([
         r("words", "Massive Attack", "Teardrop", 330),
-        coded(r("coded-far", "Massive Attack", "Teardrop (Album Version)", 400), "GBAAA9800003"),
-        coded(r("coded-near", "Elizabeth Fraser", "Tear Drop", 331), "GB-AAA-98-00003"),
+        coded(
+            r("coded-far", "Massive Attack", "Teardrop (Album Version)", 400),
+            "GBAAA9800003",
+        ),
+        coded(
+            r("coded-near", "Elizabeth Fraser", "Tear Drop", 331),
+            "GB-AAA-98-00003",
+        ),
     ]);
-    let wanted = with_isrc(track("Massive Attack", "Teardrop", Some(330), None), "gbaaa9800003");
+    let wanted = with_isrc(
+        track("Massive Attack", "Teardrop", Some(330), None),
+        "gbaaa9800003",
+    );
     assert_eq!(found(&index, &wanted), Some("coded-near"));
     // An ISRC the library does not carry falls back to the words.
-    let other = with_isrc(track("Massive Attack", "Teardrop", Some(330), None), "USRC17607839");
+    let other = with_isrc(
+        track("Massive Attack", "Teardrop", Some(330), None),
+        "USRC17607839",
+    );
     assert_eq!(found(&index, &other), Some("words"));
 }
 
 #[test]
 fn a_title_in_another_script_is_the_same_song() {
     let index = LibraryIndex::new([r("cyr", "Эмин", "Камин", 210)]);
-    assert_eq!(found(&index, &track("Emin", "Kamin", Some(212), None)), Some("cyr"));
+    assert_eq!(
+        found(&index, &track("Emin", "Kamin", Some(212), None)),
+        Some("cyr")
+    );
     assert_eq!(found(&index, &track("Emin", "Kamin", None, None)), Some("cyr"));
     let latin = LibraryIndex::new([r("lat", "Emin", "Kamin", 210)]);
-    assert_eq!(found(&latin, &track("Эмин", "Камин", Some(210), None)), Some("lat"));
+    assert_eq!(
+        found(&latin, &track("Эмин", "Камин", Some(210), None)),
+        Some("lat")
+    );
     // Another length is another recording, in any script.
     assert_eq!(found(&index, &track("Emin", "Kamin", Some(260), None)), None);
 }
@@ -346,7 +364,10 @@ fn a_tribute_band_is_not_the_artist() {
 #[test]
 fn a_title_with_stylized_letters_is_found_through_the_artist() {
     let index = LibraryIndex::new([r("1", "Kesha", "Ca$h Flow", 200)]);
-    assert_eq!(found(&index, &track("Kesha", "Cash Flow", Some(201), None)), Some("1"));
+    assert_eq!(
+        found(&index, &track("Kesha", "Cash Flow", Some(201), None)),
+        Some("1")
+    );
 }
 
 #[test]
@@ -357,7 +378,10 @@ fn among_several_copies_the_best_fit_wins_first() {
         row("unknown", "Adele", "Hello", None, None, "flac", 900),
         row("known", "Adele", "Hello", Some(295), None, "mp3", 320),
     ]);
-    assert_eq!(found(&index, &track("Adele", "Hello", Some(295), None)), Some("known"));
+    assert_eq!(
+        found(&index, &track("Adele", "Hello", Some(295), None)),
+        Some("known")
+    );
 }
 
 #[tokio::test]
@@ -370,8 +394,14 @@ async fn every_lookup_keeps_to_the_members_scope() {
             "/members/sam/Teardrop.flac",
         ),
         at(r("sam-cyr", "Эмин", "Камин", 210), "/members/sam/Kamin.flac"),
-        at(r("sam-credit", "Luis Fonsi", "Despacito", 229), "/members/sam/Despacito.flac"),
-        at(r("sam-name", "Kesha", "Ca$h Flow", 200), "/members/sam/CashFlow.flac"),
+        at(
+            r("sam-credit", "Luis Fonsi", "Despacito", 229),
+            "/members/sam/Despacito.flac",
+        ),
+        at(
+            r("sam-name", "Kesha", "Ca$h Flow", 200),
+            "/members/sam/CashFlow.flac",
+        ),
     ];
     let tracks = || {
         vec![
@@ -387,7 +417,12 @@ async fn every_lookup_keeps_to_the_members_scope() {
     let ids: Vec<Option<&str>> = mine.iter().map(|t| t.library_id.as_deref()).collect();
     assert_eq!(
         ids,
-        vec![Some("sam-isrc"), Some("sam-cyr"), Some("sam-credit"), Some("sam-name")]
+        vec![
+            Some("sam-isrc"),
+            Some("sam-cyr"),
+            Some("sam-credit"),
+            Some("sam-name")
+        ]
     );
     let mut theirs = tracks();
     assert!(matcher.match_tracks_for("alex", &mut theirs).await);
@@ -401,9 +436,15 @@ fn a_name_on_thousands_of_songs_reads_only_the_first_two_thousand() {
         .collect();
     rows.push(r("late", "Traditional", "Ca$h Air", 200));
     let index = LibraryIndex::new(rows);
-    assert_eq!(found(&index, &track("Traditional", "Cash Air", Some(200), None)), None);
+    assert_eq!(
+        found(&index, &track("Traditional", "Cash Air", Some(200), None)),
+        None
+    );
     let early = LibraryIndex::new([r("early", "Traditional", "Ca$h Air", 200)]);
-    assert_eq!(found(&early, &track("Traditional", "Cash Air", Some(200), None)), Some("early"));
+    assert_eq!(
+        found(&early, &track("Traditional", "Cash Air", Some(200), None)),
+        Some("early")
+    );
 }
 
 #[tokio::test]
@@ -414,7 +455,11 @@ async fn a_list_written_title_first_is_read_the_other_way_round() {
         r("1", "Adele", "Hello", 295),
         r("2", "Massive Attack", "Teardrop", 330),
     ]);
-    let backward = read_lines("Mine", "Hello - Adele\nTeardrop - Massive Attack\nNew Song - Nobody\n").expect("lines");
+    let backward = read_lines(
+        "Mine",
+        "Hello - Adele\nTeardrop - Massive Attack\nNew Song - Nobody\n",
+    )
+    .expect("lines");
     assert_eq!(
         matcher.orientation_for("alex", &backward[0].lines).await,
         Orientation::TitleArtist

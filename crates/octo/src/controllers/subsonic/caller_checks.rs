@@ -44,7 +44,11 @@ impl SubsonicCall {
     }
 
     /// The call over a request already read: its parts and its whole body.
-    pub fn from_parts(state: &AppState, parts: &axum::http::request::Parts, body: axum::body::Bytes) -> SubsonicCall {
+    pub fn from_parts(
+        state: &AppState,
+        parts: &axum::http::request::Parts,
+        body: axum::body::Bytes,
+    ) -> SubsonicCall {
         let incoming = Arc::new(IncomingRequest::from_parts(parts, body));
         let parameters = incoming.parameters();
         let proxy = state.subsonic_proxy.with_request(Arc::clone(&incoming));

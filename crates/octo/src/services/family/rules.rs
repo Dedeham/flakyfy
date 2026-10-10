@@ -88,9 +88,7 @@ pub fn request_rules(
         return if strict { refuse(0, NOT_AVAILABLE) } else { None };
     }
     if !caller.abilities.import_playlists
-        && IMPORT_ENDPOINTS
-            .iter()
-            .any(|name| eq_ignore_case(endpoint, name))
+        && IMPORT_ENDPOINTS.iter().any(|name| eq_ignore_case(endpoint, name))
     {
         return refuse(50, IMPORTS_OFF);
     }

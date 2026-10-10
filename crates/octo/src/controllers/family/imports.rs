@@ -79,9 +79,18 @@ pub async fn import_text(State(state): State<AppState>, web: Web, body: Bytes) -
     let imports = state.imports.clone();
     let user = actor.user;
     // Not tied to the request: a closed tab must not leave a list half matched.
-    match tokio::spawn(async move { imports.add_text(&user, request.name.as_deref(), &request.text).await }).await {
+    match tokio::spawn(async move {
+        imports
+            .add_text(&user, request.name.as_deref(), &request.text)
+            .await
+    })
+    .await
+    {
         Ok(done) => result(&done),
-        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "Octo could not read that list."),
+        Err(_) => refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Octo could not read that list.",
+        ),
     }
 }
 
@@ -145,6 +154,9 @@ pub async fn import_file(State(state): State<AppState>, web: Web, request: Reque
     let user = actor.user;
     match tokio::spawn(async move { imports.add_file(&user, &name, &bytes).await }).await {
         Ok(done) => result(&done),
-        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "Octo could not read that file."),
+        Err(_) => refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Octo could not read that file.",
+        ),
     }
 }

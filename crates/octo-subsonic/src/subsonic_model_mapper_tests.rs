@@ -560,11 +560,21 @@ fn an_outside_song_in_another_script_or_credit_is_left_out_when_both_lengths_agr
     let xml_local = vec![
         xml_row(
             "song",
-            &[("id", "l-kamin"), ("artist", "Emin"), ("title", "Kamin"), ("duration", "210")],
+            &[
+                ("id", "l-kamin"),
+                ("artist", "Emin"),
+                ("title", "Kamin"),
+                ("duration", "210"),
+            ],
         ),
         xml_row(
             "song",
-            &[("id", "l-fonsi"), ("artist", "Luis Fonsi"), ("title", "Despacito"), ("duration", "229")],
+            &[
+                ("id", "l-fonsi"),
+                ("artist", "Luis Fonsi"),
+                ("title", "Despacito"),
+                ("duration", "229"),
+            ],
         ),
     ];
     let merged = mapper().merge_search_results(xml_local, vec![], vec![], &result, &[], false, None);

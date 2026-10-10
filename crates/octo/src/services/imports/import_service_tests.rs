@@ -741,9 +741,15 @@ async fn a_plain_list_is_read_whichever_way_round_names_the_library() {
     let rig = rig().await;
     // Written Title - Artist: read that way, both songs are in the library.
     let backward = "Teardrop - Massive Attack\nHalo - Beyonce\nNope - Nobody\n";
-    let file = rig.service.add_file("bob", "Backward.txt", backward.as_bytes()).await;
+    let file = rig
+        .service
+        .add_file("bob", "Backward.txt", backward.as_bytes())
+        .await;
     assert!(file.ok, "{}", file.message);
-    let detail = rig.service.detail("bob", file.list_id.as_deref().unwrap_or_default()).expect("the list");
+    let detail = rig
+        .service
+        .detail("bob", file.list_id.as_deref().unwrap_or_default())
+        .expect("the list");
     assert_eq!(detail.list.name, "Backward");
     assert_eq!((detail.list.have, detail.list.missing), (2, 1));
     assert_eq!(detail.tracks[0].artist, "Massive Attack");
@@ -752,10 +758,17 @@ async fn a_plain_list_is_read_whichever_way_round_names_the_library() {
     // Written Artist - Title: kept that way round.
     let forward = rig
         .service
-        .add_text("bob", Some("Forward"), "Massive Attack - Teardrop\nBeyonce - Halo\n")
+        .add_text(
+            "bob",
+            Some("Forward"),
+            "Massive Attack - Teardrop\nBeyonce - Halo\n",
+        )
         .await;
     assert!(forward.ok, "{}", forward.message);
-    let detail = rig.service.detail("bob", forward.list_id.as_deref().unwrap_or_default()).expect("the list");
+    let detail = rig
+        .service
+        .detail("bob", forward.list_id.as_deref().unwrap_or_default())
+        .expect("the list");
     assert_eq!((detail.list.have, detail.list.missing), (2, 0));
     assert_eq!(detail.tracks[1].artist, "Beyonce");
 }
@@ -768,11 +781,17 @@ async fn pasted_text_is_a_list_of_its_own_name_and_says_what_it_needs() {
     assert_eq!(pasted.message, "Added Pasted list, 1 songs.");
     assert_eq!(Rig::list(&rig.service.overview("bob"), "Pasted list").have, 1);
     // The same name again replaces it.
-    let again = rig.service.add_text("bob", Some("  "), "Massive Attack - Teardrop\nBeyonce - Halo\n").await;
+    let again = rig
+        .service
+        .add_text("bob", Some("  "), "Massive Attack - Teardrop\nBeyonce - Halo\n")
+        .await;
     assert!(again.ok, "{}", again.message);
     assert_eq!(rig.service.overview("bob").lists.len(), 1);
 
-    let empty = rig.service.add_text("bob", Some("Nothing"), "\n# only a note\n").await;
+    let empty = rig
+        .service
+        .add_text("bob", Some("Nothing"), "\n# only a note\n")
+        .await;
     assert!(!empty.ok);
     assert_eq!(empty.message, crate::services::imports::text_list::NO_SONGS);
 }
@@ -797,7 +816,10 @@ async fn the_overview_says_who_approves_only_when_a_member_waits_for_approval() 
     });
 
     let alice = serde_json::to_value(rig.service.overview("alice")).expect("json");
-    assert_eq!(alice["approval"], serde_json::json!({"needed": true, "by": "winters"}));
+    assert_eq!(
+        alice["approval"],
+        serde_json::json!({"needed": true, "by": "winters"})
+    );
     for (user, why) in [
         ("bob", "adds songs at once"),
         ("cara", "requests approved at once"),

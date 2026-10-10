@@ -16,19 +16,19 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::import_file_reader::{FileList, FileRead, FileReadError, ImportFileReader};
-use super::text_list::{self, TextLine, TextList};
 use super::import_matcher::ImportMatcher;
 use super::import_models::{import_sources, import_track_states};
 use super::import_playlists::ImportPlaylists;
 use super::import_store::ImportStore;
 use super::import_views::{
-    ApprovalView, ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView, TrackView,
-    TrickleView,
+    ApprovalView, ImportActionResult, ImportOverview, ListDetail, ListSummary, ReadView, SpotifyView,
+    TrackView, TrickleView,
 };
 use super::spotify_account_store::SpotifyAccountStore;
 use super::spotify_auth::{SpotifyAuth, absolute};
 use super::spotify_link_reader::SpotifyLinkReader;
 use super::spotify_web_api::{SpotifyException, SpotifyPlaylistInfo, SpotifyWebApi};
+use super::text_list::{self, TextLine, TextList};
 use super::trickle_queue::TrickleQueue;
 use super::trickle_worker::TrickleWorker;
 use super::tunemymusic::ImportServices;
@@ -846,7 +846,12 @@ impl ImportService {
     }
 
     /// Keeps lists read from a file or pasted text, each by its name, and matches them.
-    async fn save_file_lists(&self, user: &str, source_ref: &str, lists: Vec<FileList>) -> ImportActionResult {
+    async fn save_file_lists(
+        &self,
+        user: &str,
+        source_ref: &str,
+        lists: Vec<FileList>,
+    ) -> ImportActionResult {
         let gate = self.gate(user);
         let _held = gate.lock().await;
         let incoming: Vec<(String, usize)> = lists

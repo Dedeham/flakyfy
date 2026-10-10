@@ -496,9 +496,7 @@ async fn an_app_pastes_a_list_and_reads_it_back() {
     let answer = &pasted["subsonic-response"]["importAction"];
     assert_eq!(answer["ok"], true, "{pasted}");
     assert_eq!(answer["message"], "Added Gym, 2 songs.");
-    let lists = get(&rig.app, &format!("/rest/getImports?{AUTH}"))
-        .await
-        .json();
+    let lists = get(&rig.app, &format!("/rest/getImports?{AUTH}")).await.json();
     let list = &lists["subsonic-response"]["imports"]["lists"][0];
     assert_eq!(list["name"], "Gym");
     assert_eq!(list["have"], 1);
@@ -529,9 +527,7 @@ async fn an_app_pastes_a_list_and_reads_it_back() {
         "No songs found. Each line should read Artist - Title."
     );
 
-    let missing = get(&rig.app, &format!("/rest/importText?{AUTH}"))
-        .await
-        .json();
+    let missing = get(&rig.app, &format!("/rest/importText?{AUTH}")).await.json();
     assert_eq!(missing["subsonic-response"]["error"]["code"], 10);
 }
 
@@ -585,10 +581,7 @@ async fn an_app_uploads_a_file_as_a_multipart_form() {
         "{answer}"
     );
 
-    let no_file = rig
-        .post_form(&uri, "other", Some("x.csv"), "a", &[])
-        .await
-        .json();
+    let no_file = rig.post_form(&uri, "other", Some("x.csv"), "a", &[]).await.json();
     assert_eq!(
         no_file["subsonic-response"]["importAction"]["message"],
         "Choose a file first."
@@ -636,14 +629,7 @@ async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
     assert_eq!(empty.status, StatusCode::BAD_REQUEST);
     assert_eq!(empty.json()["message"], "Paste a list first.");
 
-    let services = send(
-        &rig.app,
-        Method::GET,
-        "/api/admin/imports/services",
-        &auth,
-        None,
-    )
-    .await;
+    let services = send(&rig.app, Method::GET, "/api/admin/imports/services", &auth, None).await;
     assert_eq!(services.status, StatusCode::OK);
     let services = services.json();
     assert_eq!(services["services"].as_array().expect("services").len(), 10);

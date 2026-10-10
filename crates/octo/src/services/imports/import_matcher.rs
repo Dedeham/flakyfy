@@ -352,7 +352,7 @@ impl LibraryIndex {
         if self
             .by_key
             .get(&SongIdentity::match_key(&track.artist, &track.title))
-            .is_some_and(|same| self.rows_of(same).any(|row| visible(row)))
+            .is_some_and(|same| self.rows_of(same).any(visible))
         {
             return true;
         }

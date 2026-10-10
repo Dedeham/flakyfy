@@ -400,7 +400,10 @@ async fn a_shared_isrc_is_the_same_song_whatever_the_words() {
     let root = Root::new();
     let ownership = ownership(
         &root,
-        Some(vec![coded(c("coded", "Elizabeth Fraser", "Tear Drop (Demo)", Some(400)), "GBAAA9800003")]),
+        Some(vec![coded(
+            c("coded", "Elizabeth Fraser", "Tear Drop (Demo)", Some(400)),
+            "GBAAA9800003",
+        )]),
         None,
     );
     let owned = ownership
@@ -413,7 +416,9 @@ async fn a_shared_isrc_is_the_same_song_whatever_the_words() {
     assert_eq!(owned.navidrome_id.as_deref(), Some("coded"));
     // Without the ISRC the words decide, and these are another song.
     assert_eq!(
-        ownership.find(Some("Massive Attack"), Some("Teardrop"), Some(330), None).await,
+        ownership
+            .find(Some("Massive Attack"), Some("Teardrop"), Some(330), None)
+            .await,
         None
     );
 }
@@ -421,29 +426,81 @@ async fn a_shared_isrc_is_the_same_song_whatever_the_words() {
 #[test]
 fn a_credit_written_another_way_needs_both_lengths() {
     let fonsi = c("1", "Luis Fonsi", "Despacito", Some(229));
-    assert!(LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", Some(230), None));
-    assert!(!LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", None, None));
-    assert!(!LibraryOwnership::same_song(&fonsi, "Fonsi, Luis", "Despacito", Some(260), None));
-    assert!(!LibraryOwnership::same_song(&fonsi, "Luis Miguel", "Despacito", Some(229), None));
+    assert!(LibraryOwnership::same_song(
+        &fonsi,
+        "Fonsi, Luis",
+        "Despacito",
+        Some(230),
+        None
+    ));
+    assert!(!LibraryOwnership::same_song(
+        &fonsi,
+        "Fonsi, Luis",
+        "Despacito",
+        None,
+        None
+    ));
+    assert!(!LibraryOwnership::same_song(
+        &fonsi,
+        "Fonsi, Luis",
+        "Despacito",
+        Some(260),
+        None
+    ));
+    assert!(!LibraryOwnership::same_song(
+        &fonsi,
+        "Luis Miguel",
+        "Despacito",
+        Some(229),
+        None
+    ));
 }
 
 #[test]
 fn a_typo_or_a_tribute_is_never_owned() {
     let believer = c("1", "Imagine Dragons", "Believer", Some(204));
-    assert!(!LibraryOwnership::same_song(&believer, "Imagine Dragons", "Beleiver", Some(204), None));
+    assert!(!LibraryOwnership::same_song(
+        &believer,
+        "Imagine Dragons",
+        "Beleiver",
+        Some(204),
+        None
+    ));
     let tribute = c("2", "Queen Tribute Band", "Bohemian Rhapsody", Some(354));
-    assert!(!LibraryOwnership::same_song(&tribute, "Queen", "Bohemian Rhapsody", Some(354), None));
+    assert!(!LibraryOwnership::same_song(
+        &tribute,
+        "Queen",
+        "Bohemian Rhapsody",
+        Some(354),
+        None
+    ));
 }
 
 #[test]
 fn a_title_in_another_script_is_the_same_song_at_the_same_length() {
     let latin = c("1", "Emin", "Kamin", Some(210));
-    assert!(LibraryOwnership::same_song(&latin, "Эмин", "Камин", Some(211), None));
-    assert!(!LibraryOwnership::same_song(&latin, "Эмин", "Камин", Some(250), None));
+    assert!(LibraryOwnership::same_song(
+        &latin,
+        "Эмин",
+        "Камин",
+        Some(211),
+        None
+    ));
+    assert!(!LibraryOwnership::same_song(
+        &latin,
+        "Эмин",
+        "Камин",
+        Some(250),
+        None
+    ));
 }
 
 /// A search that answers only `query`, and remembers every query it was asked.
-fn answers_only(query: &'static str, library: Vec<Candidate>, asked: Arc<parking_lot::Mutex<Vec<String>>>) -> SearchFn {
+fn answers_only(
+    query: &'static str,
+    library: Vec<Candidate>,
+    asked: Arc<parking_lot::Mutex<Vec<String>>>,
+) -> SearchFn {
     Arc::new(move |q: String| {
         asked.lock().push(q.clone());
         let found = if q == query { library.clone() } else { Vec::new() };
@@ -470,7 +527,12 @@ async fn a_song_in_another_script_is_searched_again_in_latin_letters() {
 
     // Plain Latin text is searched once.
     asked.lock().clear();
-    assert_eq!(ownership.find(Some("Adele"), Some("Hello"), Some(295), None).await, None);
+    assert_eq!(
+        ownership
+            .find(Some("Adele"), Some("Hello"), Some(295), None)
+            .await,
+        None
+    );
     assert_eq!(*asked.lock(), ["Adele Hello"]);
 }
 
@@ -507,7 +569,10 @@ async fn the_second_search_keeps_to_the_same_scope() {
                 .and_then(|copy| copy.navidrome_id)
         }
     };
-    assert_eq!(find(LibraryScope::Viewer("sam".into())).await.as_deref(), Some("sam-1"));
+    assert_eq!(
+        find(LibraryScope::Viewer("sam".into())).await.as_deref(),
+        Some("sam-1")
+    );
     assert_eq!(find(LibraryScope::Viewer("alex".into())).await, None);
     assert_eq!(find(LibraryScope::Shared).await, None);
 }

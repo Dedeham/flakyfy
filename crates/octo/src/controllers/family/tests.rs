@@ -3930,7 +3930,10 @@ async fn a_member_imports_a_file_and_a_pasted_list_from_the_family_page() {
         .map(|l| l["name"].as_str().unwrap_or_default())
         .collect();
     assert_eq!(names.len(), 2, "{names:?}");
-    assert!(names.contains(&"Mine") && names.contains(&"Road trip"), "{names:?}");
+    assert!(
+        names.contains(&"Mine") && names.contains(&"Road trip"),
+        "{names:?}"
+    );
     // The lists are Alex's own: Sam sees none of them.
     assert_eq!(f.state.imports.overview("sam").lists.len(), 0);
 }
@@ -3946,8 +3949,12 @@ async fn the_family_page_refuses_imports_without_the_ability_or_outside_the_fami
     assert_eq!(session["importPlaylists"], false);
     for reply in [
         f.get("/api/family/me/imports", Some(&cookie)).await,
-        f.post("/api/family/me/imports/text", Some(&cookie), json!({"text": "A - B"}))
-            .await,
+        f.post(
+            "/api/family/me/imports/text",
+            Some(&cookie),
+            json!({"text": "A - B"}),
+        )
+        .await,
         upload_list(&f, &cookie, "A - B").await,
     ] {
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.body);

@@ -79,7 +79,8 @@ pub use reading::{GateReading, Unverified, Verified, credential_of};
 const MAX_BODY: usize = 30_000_000;
 /// The largest body an `importFile` call may carry: the file reader's own limit, and room for
 /// the form around it.
-const IMPORT_FILE_BODY: usize = crate::services::imports::import_file_reader::ImportFileReader::MAX_BYTES as usize + 64 * 1024;
+const IMPORT_FILE_BODY: usize =
+    crate::services::imports::import_file_reader::ImportFileReader::MAX_BYTES as usize + 64 * 1024;
 
 /// The largest body the gate reads for a `/rest` call at `gate_path`.
 fn body_limit(gate_path: &str) -> usize {

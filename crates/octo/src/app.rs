@@ -1223,14 +1223,16 @@ impl Lyrics {
         // The writer is given the library service (for the scan after writing inside songs)
         // with `set_library` once that is built.
         let sidecar_writer = Arc::new(LyricsSidecarWriter::new(service.clone(), settings.clone()));
+        let undo_journal = Arc::new(LyricsUndoJournal::new(
+            config_dir.map(|dir| dir.join("lyrics-undo.jsonl")),
+        ));
+        sidecar_writer.set_undo_journal(undo_journal.clone());
         Lyrics {
             choice_service: Arc::new(LyricsChoiceService::new(service.clone(), choice_store.clone())),
             choice_store,
             service,
             sidecar_writer,
-            undo_journal: Arc::new(LyricsUndoJournal::new(
-                config_dir.map(|dir| dir.join("lyrics-undo.jsonl")),
-            )),
+            undo_journal,
             rejections: Arc::new(RejectionStore::new(
                 config_dir.map(|dir| dir.join("rejections.json")),
             )),

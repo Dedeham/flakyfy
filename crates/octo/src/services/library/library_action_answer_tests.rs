@@ -125,6 +125,8 @@ struct Fixture {
     executor: Arc<LibraryActionExecutor>,
     gate: LibraryWriteGate,
     root: PathBuf,
+    sidecars: Arc<LyricsSidecarWriter>,
+    undo: Arc<crate::services::lyrics::LyricsUndoJournal>,
     _navidrome: MockServer,
 }
 
@@ -230,6 +232,8 @@ impl Fixture {
         ));
         let sidecars = Arc::new(LyricsSidecarWriter::new(lyrics.clone(), settings.clone()));
         sidecars.set_write_gate(gate.clone());
+        let undo = Arc::new(crate::services::lyrics::LyricsUndoJournal::new(None));
+        sidecars.set_undo_journal(undo.clone());
         let rejections = Arc::new(RejectionStore::new(Some(config.join("rejections.json"))));
         let queue = Arc::new(TrackAcquisitionQueue::new());
         let journal = Arc::new(LibraryActionJournal::new());
@@ -242,7 +246,7 @@ impl Fixture {
                 answers: Some(SongAnswers {
                     lyrics: lyrics.clone(),
                     choices: choices.clone(),
-                    sidecars,
+                    sidecars: sidecars.clone(),
                     covers: covers.clone(),
                     rejections: rejections.clone(),
                 }),
@@ -260,6 +264,8 @@ impl Fixture {
             executor,
             gate,
             root,
+            sidecars,
+            undo,
             _navidrome: navidrome,
         }
     }
@@ -431,4 +437,23 @@ async fn wrong_cover_waits_while_a_job_writes_the_music_folder() {
     let outcome = pressing.await.expect("joined");
     assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
     assert_eq!(t.front(), right);
+}
+
+#[tokio::test]
+async fn wrong_lyrics_writes_go_through_the_lyrics_undo() {
+    let t = Fixture::new(LibraryAction::WrongLyrics, None, Vec::new()).await;
+
+    let outcome = t.press(LibraryAction::WrongLyrics).await;
+
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    let written = lyrics_files(&t.root);
+    assert_eq!(written.len(), 1);
+    let entries = t.undo.read_all().expect("read");
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].path, written[0].to_string_lossy());
+    assert_eq!(entries[0].before, None);
+
+    // The lyrics page's Undo takes the file Wrong lyrics added back out.
+    assert!(t.sidecars.restore(&entries[0]));
+    assert!(lyrics_files(&t.root).is_empty());
 }

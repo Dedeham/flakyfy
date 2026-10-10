@@ -15,7 +15,7 @@
 //! library as they see it, and kept on disk, so opening one never waits on a build (f54467a,
 //! 452f47e). The picking is `octo_core::library::for_you_lists`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,6 +101,9 @@ pub struct GeneratedPlaylistService {
     for_you: Option<ForYouServices>,
     /// The library walk and artist countries the country mixes share. None: no country mixes.
     countries: Option<Arc<CountryLibrary>>,
+    /// Each listener's library song ids from their last walk: their country mixes count only
+    /// their own songs.
+    listener_songs: Mutex<HashMap<String, Arc<HashSet<String>>>>,
 }
 
 /// The services New Releases is made with: the catalog walk, and the outside song's JSON.
@@ -129,6 +132,7 @@ impl GeneratedPlaylistService {
             state: Mutex::new(Mixes::default()),
             for_you: None,
             countries: None,
+            listener_songs: Mutex::new(HashMap::new()),
         };
         service.load();
         service
@@ -175,7 +179,9 @@ impl GeneratedPlaylistService {
     }
 
     /// Every listener's country mixes counted again from the last walk and what is known of
-    /// its artists, with the same thresholds as before; nothing else of their mixes changes.
+    /// its artists, over the songs of their own library, with the same thresholds as before;
+    /// nothing else of their mixes changes. A listener whose library has not been walked since
+    /// Octo started keeps their counts until their next refresh.
     fn recount_countries(&self) {
         let settings = self.settings.current().generated_playlists.clone();
         let Some(countries) = self.countries.as_ref() else {
@@ -187,10 +193,15 @@ impl GeneratedPlaylistService {
         if !country_mixes_on(&settings) {
             return;
         }
-        let counts = walked.counts(countries.lookup(), &settings.country_codes());
+        let listeners = self.listener_songs.lock().clone();
+        let codes = settings.country_codes();
         let kinds = kinds_of(&settings, self.explicit_filter_now());
         let mut state = self.state.lock();
-        for mixes in state.users.values_mut().filter(|mixes| mixes.kinds == kinds) {
+        for (user, mixes) in state.users.iter_mut().filter(|(_, mixes)| mixes.kinds == kinds) {
+            let Some(ids) = listeners.get(user) else {
+                continue;
+            };
+            let counts = walked.counts_among(countries.lookup(), &codes, ids);
             mixes.counts.retain(|key, _| !key.starts_with(COUNTRY_PREFIX));
             mixes.counts.extend(counts.clone());
             let shown = apply_hysteresis(
@@ -206,19 +217,53 @@ impl GeneratedPlaylistService {
         self.save_locked(&state);
     }
 
-    /// The songs of the library whose artists are from `code`, from the shared walk.
-    async fn country_pool(&self, code: &str) -> Vec<Node> {
+    /// The listener's own songs whose artists are from `code`: which songs those are comes from
+    /// the shared walk, and each song is as the listener's own walk describes it, with their
+    /// plays and ratings.
+    async fn country_pool(
+        &self,
+        username: &str,
+        code: &str,
+        auth: &IndexMap<String, String>,
+        cancellation_token: &CancellationToken,
+    ) -> anyhow::Result<Vec<Node>> {
         let Some(countries) = &self.countries else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let walked = match countries.last_walk() {
             Some(walked) => walked,
             None => match countries.walk().await {
                 Some(walked) => walked,
-                None => return Vec::new(),
+                None => return Ok(Vec::new()),
             },
         };
-        walked.songs_from(countries.lookup(), code)
+        let from = walked.ids_from(countries.lookup(), code);
+        if from.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(mine) = self.walk_library(auth, cancellation_token).await? else {
+            return Ok(Vec::new());
+        };
+        self.remember_songs(username, &mine);
+        Ok(mine
+            .into_iter()
+            .filter(|song| str_of(song, "id").is_some_and(|id| from.contains(id)))
+            .collect())
+    }
+
+    /// The ids of the listener's library as their walk read it, for counting their country
+    /// mixes.
+    fn remember_songs(&self, username: &str, songs: &[Node]) -> Arc<HashSet<String>> {
+        let ids: Arc<HashSet<String>> = Arc::new(
+            songs
+                .iter()
+                .filter_map(|song| str_of(song, "id").map(str::to_string))
+                .collect(),
+        );
+        self.listener_songs
+            .lock()
+            .insert(user_key(username), Arc::clone(&ids));
+        ids
     }
 
     /// The server's explicit filter, which New Releases' outside songs obey as search and radio's
@@ -413,13 +458,44 @@ impl GeneratedPlaylistService {
                 decade += 10;
             }
         }
+        // One walk of the listener's own library, for Made for you and their country mixes.
+        let countries_on = country_mixes_on(&settings) && self.countries.is_some();
+        let library = if settings.any_for_you() || countries_on {
+            self.walk_library(auth, cancellation_token).await?
+        } else {
+            None
+        };
         // Countries from the walk every listener shares, as far as their artists are known by
-        // now: a pass that learns more counts them again for everyone.
-        if country_mixes_on(&settings)
-            && let Some(countries) = &self.countries
-            && let Some(walked) = countries.last_walk()
-        {
-            counts.extend(walked.counts(countries.lookup(), &settings.country_codes()));
+        // now, counted over the listener's own songs: a pass that learns more counts them again.
+        // A walk that failed keeps the country counts they had.
+        if countries_on {
+            let mine = library
+                .as_deref()
+                .map(|songs| self.remember_songs(username, songs));
+            if let Some(countries) = &self.countries
+                && let Some(walked) = countries.last_walk()
+            {
+                match mine {
+                    Some(ids) => {
+                        counts.extend(walked.counts_among(
+                            countries.lookup(),
+                            &settings.country_codes(),
+                            &ids,
+                        ));
+                    }
+                    None => {
+                        if let Some(before) = self.state.lock().users.get(&user_key(username)) {
+                            counts.extend(
+                                before
+                                    .counts
+                                    .iter()
+                                    .filter(|(key, _)| key.starts_with(COUNTRY_PREFIX))
+                                    .map(|(key, count)| (key.clone(), *count)),
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         let explicit_filter = self.explicit_filter_now();
@@ -427,7 +503,7 @@ impl GeneratedPlaylistService {
         let (for_you, covers) = if settings.any_for_you() {
             self.build_for_you(
                 username,
-                auth,
+                library,
                 &settings,
                 explicit_filter,
                 before.as_ref(),
@@ -468,13 +544,13 @@ impl GeneratedPlaylistService {
         Ok(true)
     }
 
-    /// Made for you, from one walk of the listener's library as they see it. A list that could
-    /// not be made this time (Navidrome or the catalog not answering) keeps what it had, so a bad
-    /// day never empties it.
+    /// Made for you, from one walk of the listener's library as they see it (None when it
+    /// failed). A list that could not be made this time (Navidrome or the catalog not answering)
+    /// keeps what it had, so a bad day never empties it.
     async fn build_for_you(
         &self,
         username: &str,
-        auth: &IndexMap<String, String>,
+        library: Option<Vec<Node>>,
         settings: &GeneratedPlaylistSettings,
         explicit_filter: ExplicitFilter,
         before: Option<&UserMixes>,
@@ -490,7 +566,7 @@ impl GeneratedPlaylistService {
             }
         };
 
-        let Some(library) = self.walk_library(auth, cancellation_token).await? else {
+        let Some(library) = library else {
             for kind in for_you_lists::KINDS
                 .iter()
                 .filter(|kind| for_you_on(settings, kind))
@@ -711,7 +787,9 @@ impl GeneratedPlaylistService {
         let settings = self.settings.current().generated_playlists.clone();
         let mut pool: Vec<Node> = Vec::new();
         if let Some(code) = playlist.key.strip_prefix(COUNTRY_PREFIX) {
-            pool = self.country_pool(code).await;
+            pool = self
+                .country_pool(username, code, auth, cancellation_token)
+                .await?;
         } else if playlist.kind == "decade" {
             let decade: i32 = playlist
                 .key

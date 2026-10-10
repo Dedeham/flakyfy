@@ -93,6 +93,21 @@ impl Respond for LibraryNavidrome {
                     .collect();
                 ok(&format!(r#""searchResult3":{{"song":[{}]}}"#, rows.join(",")))
             }
+            // A listener's library as they see it, with their own plays and ratings: alice holds
+            // 20 of the Rosalía songs and 20 of the Bad Bunny ones, bob only Bad Bunny's 25.
+            "rest/search3" if query.get("songOffset").map(String::as_str) == Some("0") => {
+                let alice = query.get("u").map(String::as_str) == Some("alice");
+                let rows: Vec<String> = (0..60)
+                    .filter(|i| if alice { (0..20).contains(i) || (30..50).contains(i) } else { (30..55).contains(i) })
+                    .map(|i| {
+                        let (artist, id) = if i < 30 { ("Rosalía", "arES") } else { ("Bad Bunny", "arPR") };
+                        format!(
+                            r#"{{"id":"c{i}","title":"Song {i}","artist":"{artist}","artistId":"{id}","playCount":2,"played":"2026-09-01T00:00:00Z","userRating":4}}"#
+                        )
+                    })
+                    .collect();
+                ok(&format!(r#""searchResult3":{{"song":[{}]}}"#, rows.join(",")))
+            }
             "rest/getArtists" => ok(
                 r#""artists":{"index":[{"name":"B","artist":[{"id":"arPR","name":"Bad Bunny","musicBrainzId":""}]},{"name":"R","artist":[{"id":"arES","name":"Rosalía","musicBrainzId":"mb-es"}]}]}"#,
             ),
@@ -648,19 +663,18 @@ async fn country_mixes_come_from_where_the_artists_are_from_and_keep_the_artist_
     assert_eq!(asked, ["id mb-es", "name Bad Bunny", "name Nobody Knows"]);
     // One walk as the admin, whoever asked.
     let calls = fixture.navidrome.calls.lock().clone();
-    let walked: Vec<&String> = calls
+    let walked = calls
         .iter()
-        .filter(|call| call.starts_with("rest/search3"))
-        .collect();
-    assert_eq!(walked.len(), 1);
-    assert!(walked[0].contains("u=admin"));
+        .filter(|call| call.starts_with("rest/search3") && call.contains("u=admin"))
+        .count();
+    assert_eq!(walked, 1);
 
     let spain = service
         .find("alice", &playlist_id("alice", "country:ES"))
         .expect("Spain Mix");
     assert_eq!(
         (spain.kind.as_str(), spain.label.as_str(), spain.pool_size),
-        ("country", "Spain", 30)
+        ("country", "Spain", 20)
     );
     let songs = service
         .materialize("alice", &spain, &auth(), &CancellationToken::new())
@@ -669,12 +683,55 @@ async fn country_mixes_come_from_where_the_artists_are_from_and_keep_the_artist_
     // Every song is Rosalía's, so the artist cap of 3 is the mix.
     assert_eq!(songs.len(), 3);
     assert!(songs.iter().all(|song| str_of(song, "artist") == Some("Rosalía")));
-    // The admin's own plays and hearts never reach a listener.
-    assert!(
-        songs
-            .iter()
-            .all(|song| song.get("starred").is_none() && song.get("playCount").is_none())
-    );
+    // The admin's own plays and hearts never reach a listener; the listener's own do.
+    assert!(songs.iter().all(|song| {
+        song.get("starred").is_none() && song.get("playCount").and_then(node_i64) == Some(2)
+    }));
+}
+
+#[tokio::test]
+async fn country_mixes_are_counted_and_drawn_from_the_listeners_own_songs_and_plays() {
+    let fixture = fixture().await;
+    let source = Arc::new(Countries::default());
+    let service = country_service(&fixture, countries_only(), &source);
+    names_once_counted(&service).await;
+
+    // bob holds no Rosalía song, so he has no Spain Mix, and his Puerto Rico Mix counts his own.
+    let mut bobs = Vec::new();
+    for _ in 0..100 {
+        bobs = service.list("bob", &bob()).await;
+        if !bobs.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let bobs: Vec<(&str, i32)> = bobs
+        .iter()
+        .map(|mix| (mix.name.as_str(), mix.pool_size))
+        .collect();
+    assert_eq!(bobs, [("Puerto Rico Mix", 25)]);
+
+    let spain = service
+        .find("alice", &playlist_id("alice", "country:ES"))
+        .expect("Spain Mix");
+    let songs = service
+        .materialize("alice", &spain, &auth(), &CancellationToken::new())
+        .await
+        .expect("drawn");
+    assert!(!songs.is_empty());
+    for song in &songs {
+        let at: usize = str_of(song, "id").unwrap()[1..].parse().unwrap();
+        assert!(at < 20, "not one of alice's songs: {song:?}");
+        assert_eq!(song.get("playCount").and_then(node_i64), Some(2));
+        assert_eq!(song.get("userRating").and_then(node_i64), Some(4));
+        assert_eq!(str_of(song, "played"), Some("2026-09-01T00:00:00Z"));
+    }
+}
+
+fn bob() -> IndexMap<String, String> {
+    let mut auth = auth();
+    auth.insert("u".into(), "bob".into());
+    auth
 }
 
 #[tokio::test]

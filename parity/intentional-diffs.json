@@ -427,7 +427,8 @@
         "^B:\\ f92579c3d44ee0cf8b6a0f8139566f09211413bb4ca77717a203dbcb4f5938ae\\ \\(394373\\ bytes,\\ text\\)$"
       ],
       "reason": "The dashboard files the Rust build serves (octo/wwwroot/admin) changed on purpose since dashboard-files-2026-10-08: the Library health sections and run card (admin.js, admin.css, index.html), Liked Songs and the country mixes on the Mixes page, the Wrong lyrics and Wrong cover actions, Soulseek's on switch, the Lidarr webhook password, the ListenBrainz radio difficulty and the Tidy artists card (index.html, admin.js). Pinned to these exact files: any later dashboard change shows again until this entry is updated. Supersedes dashboard-files-2026-10-08 once reviewed.",
-      "knownDiff": "Dashboard files, 2026-10-09"
+      "knownDiff": "Dashboard files, 2026-10-09",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "update-card-pulls-octo",
@@ -564,7 +565,8 @@
         "^/subsonic\\-response\\[0\\]/playlist@octoCoverTitle:\\ \\(absent\\)\\ !=\\ Popular$"
       ],
       "reason": "Popular right now's row carries octoCoverTitle \"Popular\" so the Octo apps draw \"Popular\" over \"Chart\" at full title size, as the server's own cover now does. A list name ending in Mix, Radio or Chart reads as two lines whatever kind of list it is (\"Discovery Mix\" is \"Discovery\" over \"Mix\"); no corpus request draws such a cover, so only the row field shows.",
-      "knownDiff": "List covers: the kind word and Popular"
+      "knownDiff": "List covers: the kind word and Popular",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "notice-glyph-covers",
@@ -587,7 +589,8 @@
         "^@@ "
       ],
       "reason": "The listener's own Review and Duplicates playlists carry coverArt oc-notice-review or oc-notice-duplicates (Octo's painted cover with a magnifier or two squares) and octoNotice, so every client shows the glyph cover and the Octo apps know the list. Only rows the parity stack has as notice playlists of the caller change.",
-      "knownDiff": "Review, Duplicates and Liked Songs covers"
+      "knownDiff": "Review, Duplicates and Liked Songs covers",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "liked-songs-first",
@@ -691,7 +694,8 @@
         "^\\$\\.subsonic\\-response\\.playlists\\.playlist\\[1\\]\\.duration:\\ 1050\\ !=\\ 210$"
       ],
       "reason": "Every listener with a heart gets Liked Songs (octoList \"liked\"), newest heart first, listed before every other playlist; the dashboard's settings and config sources gain GeneratedPlaylists LikedSongs, LikedSongsName and LikedSongsMax.",
-      "knownDiff": "Liked Songs"
+      "knownDiff": "Liked Songs",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "lists-show-current-hearts",
@@ -715,7 +719,8 @@
         "^@@ "
       ],
       "reason": "Mixes, Made for you and the chart lists put the listener's hearts and ratings as Navidrome holds them now onto their library songs, so a heart given after a list was made (16-lists/listener-star-hjarta) shows on it at once. Outside songs keep their own marks.",
-      "knownDiff": "Lists show current hearts"
+      "knownDiff": "Lists show current hearts",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "country-mix-settings",
@@ -756,7 +761,8 @@
         "^\\$\\.persisted\\.GeneratedPlaylists\\.MaxCountryPlaylists:\\ only\\ in\\ B\\ \\(5\\)$"
       ],
       "reason": "Country mixes (off by default): the dashboard's settings and config sources gain GeneratedPlaylists CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh. With the switch off nothing else answers differently: no library walk, no MusicBrainz lookup, no country rows.",
-      "knownDiff": "Country mixes"
+      "knownDiff": "Country mixes",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "wrong-lyrics-wrong-cover-actions",
@@ -819,7 +825,8 @@
         "^\\$\\.subsonic\\-response\\.error\\.message:\\ Unknown\\ action\\ \"rename\";\\ this\\ server\\ knows\\ remove,\\ upgrade,\\ retag,\\ joinAlbum,\\ cover,\\ lookup,\\ undo,\\ restore\\ !=\\ Unknown\\ action\\ \"rename\";\\ this\\ server\\ knows\\ remove,\\ upgrade,\\ lyrics,\\ cover\\-swap,\\ retag,\\ joinAlbum,\\ cover,\\ lookup,\\ undo\\.\\.\\.$"
       ],
       "reason": "Two new library actions, Wrong lyrics and Wrong cover, appended after Keep (the journal stores actions as numbers). Every settings answer lists all actions, so the list grows from five to seven (both new ones off, with no star), and libraryAction's unknown-action message names the two new app names, lyrics and cover-swap. The lines are estimated; they are pinned on the first parity run at integration.",
-      "knownDiff": "Wrong lyrics and Wrong cover actions"
+      "knownDiff": "Wrong lyrics and Wrong cover actions",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "outside-song-true-size",
@@ -861,7 +868,8 @@
         "^\\$\\.subsonic\\-response\\.similarSongs\\.song\\[3\\]\\.size:\\ only\\ in\\ B\\ \\(12245\\)$"
       ],
       "reason": "An outside song's size is the true byte count of the stream Octo relays, learned from the shim (yt-dlp's filesize, the URL's clen when that is unknown, and the bytes of a play over both), and absent until it is known. The C# native rows sent duration x bit rate as the size, an estimate that never matched the bytes; strict clients use the size to seek. Subsonic rows (search3 and the rest) gain the true size once known, so a corpus row whose stream the parity stub never sized is unchanged there. The lines need pinning against a parity run. A native row whose size is not known yet writes 0, as the native API writes an unknown number.",
-      "knownDiff": "Outside songs: the true stream size"
+      "knownDiff": "Outside songs: the true stream size",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "duplicates-keep-marks",
@@ -879,7 +887,8 @@
         "^\\$\\.meaning:\\ Keeps\\ the\\ best\\ copy\\ of\\ each\\ song,\\ fills\\ in\\ the\\ tags\\ it\\ lacks\\ from\\ the\\ others,\\ and\\ moves\\ the\\ others\\ to\\ the\\ server's\\ tr\\.\\.\\.\\ !=\\ Keeps\\ the\\ best\\ sound\\ of\\ each\\ song\\ in\\ the\\ copy\\ people\\ starred,\\ rated,\\ played\\ or\\ put\\ in\\ playlists,\\ fills\\ in\\ the\\ tags\\ it\\.\\.\\.$"
       ],
       "reason": "Fixing duplicates keeps the best sound in the copy people marked: the copy whose id carries the most stars, ratings and plays (then playlist entries, then the oldest) keeps its id and path, and the best-sounding copy of the same format moves into it under its identity tags. Duplicates' fix meaning says so, a set in the list notes that Fix these copies picks the marked copy, and the preview's side by side view marks the copy whose sound moves in (\"sound\"). With the planted Harbor Lights pair (FLAC and MP3, nobody's marks) the plan itself stays the best-sound one.",
-      "knownDiff": "Duplicates keep the marked copy's id"
+      "knownDiff": "Duplicates keep the marked copy's id",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "lidarr-webhook-secret-listed",
@@ -948,7 +957,8 @@
         "^\\$\\.persisted\\.Lidarr\\.WebhookSecret:\\ only\\ in\\ B\\ \\(\\)$"
       ],
       "reason": "Lidarr's webhook (POST /api/lidarr/webhook) is off until Lidarr.WebhookSecret is set, the password Lidarr's Webhook connection sends. It is a credential like the Lidarr API key: GET settings, a save's persisted answer and Raw config list it masked (blank when unset), config-sources lists Lidarr:WebhookSecret as a secret, so every key after it moves one place on. C# 2026.10.05 has neither the setting nor the route. The lines are proposed from the shape of the charts entry and must be confirmed against the parity run at integration, together with the index pins of config-sources-fixed-mask that this key shifts.",
-      "knownDiff": "Lidarr webhook password in the settings answers"
+      "knownDiff": "Lidarr webhook password in the settings answers",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "soulseek-enabled-listed",
@@ -1017,7 +1027,8 @@
         "^\\$\\.persisted\\.Soulseek\\.Enabled:\\ only\\ in\\ B\\ \\(true\\)$"
       ],
       "reason": "Soulseek is optional: Soulseek.Enabled (true by default) turns it off even with an address set, and a blank address is off too. GET settings, a save's persisted answer and Raw config list it, and config-sources lists Soulseek:Enabled, so every key after it moves one place on. C# 2026.10.05 has no such setting and called http://localhost:5030 without an address. The lines are proposed from the shape of the charts entry and must be confirmed against the parity run at integration, together with lidarr-webhook-secret-listed (the config-sources count here assumes both keys).",
-      "knownDiff": "Soulseek is optional"
+      "knownDiff": "Soulseek is optional",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "lb-radio-mode-listed",
@@ -1083,7 +1094,8 @@
         "^\\$\\.persisted\\.RadioSources\\.ListenBrainzRadioMode:\\ only\\ in\\ B\\ \\(easy\\)$"
       ],
       "reason": "LB Radio has a difficulty setting (easy, medium or hard; easy by default, which is what C# 2026.10.05 always asked for): GET settings, a save's persisted answer, Raw config and the settings file list RadioSources.ListenBrainzRadioMode after ListenBrainzAlgorithm, and config-sources lists its key (180). Values only added; no other setting changes. The lines were written ahead of a parity run; the integration run pins the exact diff lines, a Raw config save's byte count included.",
-      "knownDiff": "ListenBrainz radio difficulty in the settings answers"
+      "knownDiff": "ListenBrainz radio difficulty in the settings answers",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "settings-keys-2026-10-09",
@@ -1529,7 +1541,8 @@
         "^\\$\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$"
       ],
       "reason": "Every settings answer (settings, raw-config, config-sources, a save's persisted copy, settings.json) now carries all of the new keys at once: GeneratedPlaylists Charts and ChartCountry, LikedSongs, LikedSongsName and LikedSongsMax, CountryMixes, Countries, MaxCountryPlaylists and CountryLookupsPerRefresh, Lidarr WebhookSecret, Soulseek Enabled, RadioSources ListenBrainzRadioMode, Subsonic StreamSizeWarmPerMinute and SearchDurationWaitMs (both listed last in config-sources, so they shift no row; SearchDurationWaitMs adds 34 bytes to the saved settings.json, 7806 to 7840) and the two new LibraryActions (seven actions), with the config-sources rows they shift and the trimmed slskd web address. One answer can be explained by one entry only, so the single-change entries (charts-settings-listed, liked-songs-first, country-mix-settings, lidarr-webhook-secret-listed, soulseek-enabled-listed, lb-radio-mode-listed, wrong-lyrics-wrong-cover-actions, config-sources-fixed-mask, slskd-web-url-trimmed) no longer match these answers; this entry pins the combined diff line by line.",
-      "knownDiff": "Settings answers with every new key"
+      "knownDiff": "Settings answers with every new key",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "outside-unknown-length-omitted",
@@ -1606,7 +1619,8 @@
         "^/subsonic\\-response\\[0\\]/topSongs\\[3\\]/song@duration:\\ 180\\ !=\\ \\(absent\\)$"
       ],
       "reason": "An outside song whose length no source knows goes out without duration (the native API writes 0), where C# made up 180 seconds. A client shows no length instead of a wrong 3:00, and a length learned later (Deezer, Last.fm, the video, the file) fills it in.",
-      "knownDiff": "Outside songs with no known length"
+      "knownDiff": "Outside songs with no known length",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "outside-length-omitted-and-true-size",
@@ -1659,7 +1673,8 @@
         "^\\$\\.subsonic\\-response\\.similarSongs\\.song\\[4\\]\\.duration:\\ only\\ in\\ A\\ \\(180\\)$"
       ],
       "reason": "Radio rows carry two outside-song changes at once, so one entry pins them together: a song with no known length goes out without duration instead of 180 (entry outside-unknown-length-omitted), and a song whose stream Octo has measured carries its true byte size (entry outside-song-true-size).",
-      "knownDiff": "Outside songs: no made-up length, true size"
+      "knownDiff": "Outside songs: no made-up length, true size",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "outside-range-past-end-416",
@@ -1684,7 +1699,8 @@
         "^B:\\ null$"
       ],
       "reason": "A Range that starts at or past the end of an outside stream whose size is known answers 416 with Content-Range bytes */<size> and nothing is relayed, as HTTP asks, where C# relayed the request and answered the shim's failure as a 200 Subsonic error.",
-      "knownDiff": "Outside streams: a range past the end"
+      "knownDiff": "Outside streams: a range past the end",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "search-ranks-outside-songs-by-listeners",
@@ -1829,7 +1845,8 @@
         "^\\$\\[4\\]\\.size:\\ 2880000\\ !=\\ 0$"
       ],
       "reason": "Searches list library songs first, then outside songs by how many listeners they have, so the cleanup searches show their songs in another order. The same rows also carry the outside-song length change (no made-up 180, 0 on the native API), the true stream size, and an album title Deezer only fills when the song names none; one answer is explained by one entry, so they are pinned together here.",
-      "knownDiff": "Search order by listeners"
+      "knownDiff": "Search order by listeners",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "outside-artist-editions-one-row",
@@ -1869,7 +1886,8 @@
         "^/subsonic\\-response\\[0\\]/artist\\[1\\]/album\\[0\\]/releaseTypes\\ text:\\ album\\ !=\\ single$"
       ],
       "reason": "An outside artist page lists repeat editions of one record as one row: the catalog's \"Northern Lights (2020 Remaster)\" and \"Northern Lights\" are one album, shown as the first listed, so the page has two rows where C# had three; the single \"Borealis\" keeps its own row.",
-      "knownDiff": "Outside artist pages: one row per record"
+      "knownDiff": "Outside artist pages: one row per record",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "imports-octo-imports-version-2",
@@ -1908,7 +1926,8 @@
         "^   </openSubsonicExtensions>$"
       ],
       "reason": "octoImports version 2 tells an app that getImportServices (the services TuneMyMusic exports from, with each one's export page), importFile (a multipart upload of an exported file, up to 64 MB) and importText (a pasted list) are there (import plan, Track 2). Version 1 is still listed, so an app that knows only that one keeps working. The other lines on these answers are other entries': octoTopSongs [1, 2] and octoAcquisitions [1, 2].",
-      "knownDiff": "`octoImports` version 2"
+      "knownDiff": "`octoImports` version 2",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "dashboard-files-import-pane",
@@ -1957,7 +1976,8 @@
         "^B:\\ \\['bytes\\ (0-9|\\*)/199276'\\]$"
       ],
       "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the Import page (import plan, Track 2): the tab is Import, the Get my music card lists the services from /api/admin/imports/services with TuneMyMusic's steps for the one picked (accent fill and a check on the pick), the file upload takes .txt too, and a paste box sends to /api/admin/imports/text. The Spotify card is unchanged. These hashes also carry the Library health run card changes already on rust/main (7d9630a, a16c33e), so the B lines of dashboard-files-2026-10-08 are superseded by these once reviewed.",
-      "knownDiff": "Dashboard Import page"
+      "knownDiff": "Dashboard Import page",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "imports-file-error-names-plain-lists",
@@ -1977,7 +1997,8 @@
         "^\\+\\{\"ok\":false,\"message\":\"Octo could not read that file: The file needs a title column and an artist column, named in its first row, or a plain list with one Artist - Title per line\\.\""
       ],
       "reason": "Plain lists (one Artist - Title a line, from a .txt file, a file whose first line names no columns, or pasted text) import as lists (import plan, Track 1), so a CSV whose header names no title or artist column says the plain list works too. A .txt file whose first line is a CSV header (12-imports/file-text-csv) is still read as a table, as C# read it. The exact A words are from the C# source; check them against the first run.",
-      "knownDiff": "Import: plain lists"
+      "knownDiff": "Import: plain lists",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "imports-matcher-lookups",
@@ -1995,7 +2016,8 @@
         "body"
       ],
       "reason": "The import matcher finds a library song by ISRC first (the closest length among the songs carrying it), then by MatchKey, then among songs with the same title, the same title in Latin letters, or a credited name in common, each accepted only by SongIdentity.Same with the Owned lookup (another script and a credit written another way count, a typo does not; a name on more than 2,000 songs reads the first 2,000). Within each step the best fit by SongIdentity.Score wins before C#'s tie-breaks (length, album, lossless, bitrate). Answers that can move: a list's have and missing counts, a track's state and libraryId. A plain list is read Title - Artist when that names more of the library. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Import: matching"
+      "knownDiff": "Import: matching",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "search-leaves-out-owned-songs-by-lookup",
@@ -2016,7 +2038,8 @@
         "body"
       ],
       "reason": "Search leaves out an outside song you already own also when its key differs but both lengths are known, within 8 seconds, and SongIdentity.Same with the Owned lookup accepts it (a title in another script, a credit written another way). Library songs and outside songs are never merged among themselves. Answers can lose an outside song row and shift the later ones; a later page leaves out the same songs. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Search: owned songs by lookup"
+      "knownDiff": "Search: owned songs by lookup",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "ownership-isrc-and-other-scripts",
@@ -2031,7 +2054,8 @@
         "status"
       ],
       "reason": "Whether a hearted outside song is already owned: an ISRC in common first (the catalog song's isrc and isrcs against search3's isrc list), then C#'s MatchKey and 8 s (or the same album when a length is unknown), then, with both lengths known, SongIdentity.Same with the Owned lookup over the same search3 hits; when none is the song and the artist or title has letters outside ASCII, one more search3 for the Latin spelling, within the same scope. Album ownership's third tier reads the same way. Answers can say a song is already in the library where C# downloaded it again; stubs see one more search3 for a non-Latin song. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Ownership: ISRC and other scripts"
+      "knownDiff": "Ownership: ISRC and other scripts",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "soulseek-whole-words-and-artist-ties",
@@ -2046,7 +2070,8 @@
         "body"
       ],
       "reason": "A Soulseek file name must hold each title word as a whole word (a title of two or more words whose joined key is 8 letters or more may also run together, \"BohemianRhapsody.flac\"), so \"Four\" never takes \"Fourteen.flac\"; and among files of the same quality, one whose name or two parent folders name the artist comes first (import plan, Track 1). Answers can name another file, peer or log line. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Soulseek: whole words and the artist"
+      "knownDiff": "Soulseek: whole words and the artist",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "deezer-containment-floor",
@@ -2061,7 +2086,8 @@
         "body"
       ],
       "reason": "Deezer matching counts one name inside another only when the shorter key has 6 characters or more, and two known lengths more than 8 s apart are another recording (import plan, Track 1). Answers can name another Deezer track or none. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Deezer: containment floor"
+      "knownDiff": "Deezer: containment floor",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "covers-artist-name-score",
@@ -2076,7 +2102,8 @@
         "body"
       ],
       "reason": "The Deezer and iTunes cover searches rank hits with one shared artist-name score (the same name, the same name in Latin letters, word-order-free similarity, whole-word containment) instead of two lowercase containment scorers (import plan, Track 1). Answers can pick another cover. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Covers: one artist-name score"
+      "knownDiff": "Covers: one artist-name score",
+      "reviewed": "Brandon 2026-10-10"
     },
     {
       "id": "radio-lyrics-lidarr-lookups",
@@ -2090,7 +2117,8 @@
         "body"
       ],
       "reason": "Radio's owned-song check and lyrics' same-song check read a title in another script and a credit written another way (Owned); the YouTube Music radio seed is the best pick among its results (Pick, a near tie picks none); Lidarr's album pick compares artists as credits (Agree or Loose) with the album key unchanged (import plan, Track 1). Answers can list another radio song, find lyrics C# missed, or pick another Lidarr album. Lines to be pinned from the first parity run over this branch; until then the entry is a proposal only.",
-      "knownDiff": "Lookups: radio, lyrics and Lidarr"
+      "knownDiff": "Lookups: radio, lyrics and Lidarr",
+      "reviewed": "Brandon 2026-10-10"
     }
   ]
 }

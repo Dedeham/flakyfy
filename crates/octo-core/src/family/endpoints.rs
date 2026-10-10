@@ -131,6 +131,7 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("getCharts", Read),
     ("getFoundSongs", Read),
     ("getImport", Read),
+    ("getImportServices", Read),
     ("getImports", Read),
     ("getLibraryActions", Read),
     ("getLibraryTrash", Read),
@@ -138,6 +139,8 @@ pub const REST_ENDPOINTS: &[(&str, EndpointClass)] = &[
     ("getTopChart", Read),
     ("getUpgrades", Read),
     ("importAction", LibraryWrite),
+    ("importFile", LibraryWrite),
+    ("importText", LibraryWrite),
     ("libraryAction", LibraryWrite),
     ("pickFoundSong", LibraryWrite),
     ("setLyricsChoice", LibraryWrite),
@@ -400,11 +403,14 @@ mod tests {
             "libraryAction",
             "pickFoundSong",
             "importAction",
+            "importFile",
+            "importText",
             "setLyricsChoice",
             "findSongs",
         ] {
             assert_eq!(rest_class(name), Some(LibraryWrite), "{name}");
         }
+        assert_eq!(rest_class("getImportServices"), Some(Read));
         for name in ["createUser", "updateUser", "deleteUser", "changePassword"] {
             assert_eq!(rest_class(name), Some(AccountWrite), "{name}");
         }

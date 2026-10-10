@@ -53,6 +53,13 @@ use super::saved_store::{SavedAlbum, SavedSong};
 use crate::app::AppState;
 use crate::http::error::json_relaxed_response;
 
+/// What a member without the import ability reads.
+pub const IMPORTS_OFF: &str = "Importing playlists is off for this account.";
+
+/// The calls that bring lists into Octo, or offer to: a member needs the import ability for
+/// each of them. Reading the lists already there (getImports, getImport) stays open.
+pub const IMPORT_ENDPOINTS: [&str; 4] = ["importAction", "importFile", "importText", "getImportServices"];
+
 /// The rules to run before a request goes on. None lets it through. `endpoint` is a `/rest`
 /// endpoint name, or the path of any other request.
 pub fn request_rules(
@@ -79,6 +86,13 @@ pub fn request_rules(
     let strict = audio_gate::is_strict(caller);
     if endpoint.is_empty() {
         return if strict { refuse(0, NOT_AVAILABLE) } else { None };
+    }
+    if !caller.abilities.import_playlists
+        && IMPORT_ENDPOINTS
+            .iter()
+            .any(|name| eq_ignore_case(endpoint, name))
+    {
+        return refuse(50, IMPORTS_OFF);
     }
     match classify_for(&format!("/rest/{endpoint}"), method, strict) {
         EndpointClass::Refused => {

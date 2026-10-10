@@ -77,6 +77,18 @@ pub use reading::{GateReading, Unverified, Verified, credential_of};
 
 /// The largest body the gate reads (Kestrel's default request limit, as the handlers use).
 const MAX_BODY: usize = 30_000_000;
+/// The largest body an `importFile` call may carry: the file reader's own limit, and room for
+/// the form around it.
+const IMPORT_FILE_BODY: usize = crate::services::imports::import_file_reader::ImportFileReader::MAX_BYTES as usize + 64 * 1024;
+
+/// The largest body the gate reads for a `/rest` call at `gate_path`.
+fn body_limit(gate_path: &str) -> usize {
+    match rest_endpoint_name(gate_path) {
+        Some(name) if eq_ignore_case(name, "importFile") => IMPORT_FILE_BODY,
+        _ => MAX_BODY,
+    }
+}
+
 /// The largest body the web player's sign-in may carry: a username and a password.
 const SIGN_IN_BODY: usize = 16 * 1024;
 /// How long an answer waits, at most, for Navidrome to confirm an unchecked sign-in so the
@@ -618,7 +630,7 @@ enum Caller {
 /// endpoint.
 async fn rest(state: AppState, req: Request, next: Next, at: Whereabouts, gate_path: &str) -> Response {
     let (parts, body) = req.into_parts();
-    let Ok(body) = axum::body::to_bytes(body, MAX_BODY).await else {
+    let Ok(body) = axum::body::to_bytes(body, body_limit(gate_path)).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
     let content_type = header_text(&parts.headers, "content-type");

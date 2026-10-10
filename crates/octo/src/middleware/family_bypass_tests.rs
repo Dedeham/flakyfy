@@ -1830,3 +1830,115 @@ async fn a_right_owner_sign_in_notes_its_device_once_navidrome_takes_it() {
     .await;
     assert_eq!(f.asked("/rest/ping").await.len(), 1);
 }
+
+// ---- Imports need the import ability ---------------------------------------------------------
+
+/// A multipart `importFile` with one small list, sent as `who`.
+async fn import_file(f: &Family, who: &str) -> Reply {
+    let boundary = "octo-test-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"Mine.txt\"\r\n\r\nMassive Attack - Teardrop\r\n--{boundary}--\r\n"
+    );
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/rest/importFile.view?{who}"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .expect("request");
+    let address: SocketAddr = format!("{HOME}:50000").parse().expect("an address");
+    req.extensions_mut().insert(ConnectInfo(address));
+    let res = f.app.clone().oneshot(req).await.expect("infallible");
+    let status = res.status();
+    let body = res.into_body().collect().await.expect("body").to_bytes();
+    Reply {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+#[tokio::test]
+async fn imports_are_refused_when_the_import_ability_is_off() {
+    let f = family(true, Alex::with(json!({ "importPlaylists": false })), |_| {}).await;
+    for call in [
+        "getImportServices",
+        "importText",
+        "importAction",
+    ] {
+        let r = get(
+            &f,
+            &format!("/rest/{call}?{ALEX}&action=pause&text=A%20-%20B"),
+            HOME,
+        )
+        .await;
+        assert_eq!(r.error_code(), Some(50), "{call}: {}", r.body);
+        assert!(
+            r.body.contains("Importing playlists is off for this account."),
+            "{call}: {}",
+            r.body
+        );
+    }
+    let r = import_file(&f, ALEX).await;
+    assert_eq!(r.error_code(), Some(50), "{}", r.body);
+    assert!(f.state.imports.overview("alex").lists.is_empty());
+    // Reading the lists already there stays open.
+    let lists = get(&f, &format!("/rest/getImports?{ALEX}"), HOME).await;
+    assert_eq!(lists.json()["subsonic-response"]["status"], "ok", "{}", lists.body);
+    // The owner is never asked about abilities.
+    let owner = get(&f, &format!("/rest/getImportServices?{OWNER}"), HOME).await;
+    assert_eq!(owner.json()["subsonic-response"]["status"], "ok", "{}", owner.body);
+}
+
+#[tokio::test]
+async fn a_member_with_the_import_ability_imports_from_a_file_and_pasted_text() {
+    let f = family(true, Alex::listener(), |_| {}).await;
+    let services = get(&f, &format!("/rest/getImportServices?{ALEX}"), HOME).await;
+    let answer = services.json();
+    assert_eq!(
+        answer["subsonic-response"]["importServices"]["services"]
+            .as_array()
+            .map(Vec::len),
+        Some(10),
+        "{}",
+        services.body
+    );
+    let file = import_file(&f, ALEX).await;
+    assert_eq!(file.status, StatusCode::OK);
+    assert_eq!(
+        file.json()["subsonic-response"]["importAction"]["ok"],
+        true,
+        "{}",
+        file.body
+    );
+    let text = get(
+        &f,
+        &format!("/rest/importText?{ALEX}&name=Pasted&text=Air%20-%20La%20Femme%20d%27Argent"),
+        HOME,
+    )
+    .await;
+    assert_eq!(
+        text.json()["subsonic-response"]["importAction"]["ok"],
+        true,
+        "{}",
+        text.body
+    );
+    let names: Vec<String> = f
+        .state
+        .imports
+        .overview("alex")
+        .lists
+        .iter()
+        .map(|l| l.name.clone())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    // A Listener asks before anything is fetched, and is told who says yes.
+    let lists = get(&f, &format!("/rest/getImports?{ALEX}"), HOME).await;
+    assert_eq!(
+        lists.json()["subsonic-response"]["imports"]["approval"],
+        json!({"needed": true, "by": "winters"}),
+        "{}",
+        lists.body
+    );
+}

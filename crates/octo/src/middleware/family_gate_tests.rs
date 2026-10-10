@@ -1755,3 +1755,11 @@ fn the_gate_reads_a_path_as_an_upstream_server_may() {
         assert_eq!(gate_path(sent), read, "{sent}");
     }
 }
+
+#[test]
+fn an_import_file_may_carry_a_whole_export_and_everything_else_keeps_the_usual_limit() {
+    assert!(body_limit("/rest/importFile.view") > 64 * 1024 * 1024);
+    assert_eq!(body_limit("/REST/importfile"), IMPORT_FILE_BODY);
+    assert_eq!(body_limit("/rest/importText"), MAX_BODY);
+    assert_eq!(body_limit("/rest/stream"), MAX_BODY);
+}

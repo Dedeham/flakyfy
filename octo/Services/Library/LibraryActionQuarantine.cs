@@ -200,9 +200,9 @@ public sealed class LibraryActionQuarantine
     /// is removed and false is returned; the original is never touched here.</summary>
     private static bool CopyVerified(string from, string to, long expectedLength)
     {
-        File.Copy(from, to, overwrite: false);
         try
         {
+            File.Copy(from, to, overwrite: false);
             if (new FileInfo(to).Length == expectedLength && new FileInfo(from).Length == expectedLength
                 && HashOf(from).AsSpan().SequenceEqual(HashOf(to)))
                 return true;
@@ -279,6 +279,8 @@ public sealed class LibraryActionQuarantine
             return "the file is not in the trash";
         if (LinkBelow(musicRoot, quarantinePath) is { } trashLink)
             return $"the trash path goes through a link ({trashLink})";
+        if (new FileInfo(quarantinePath).Attributes.HasFlag(FileAttributes.ReparsePoint))
+            return "the trashed file is a link, not a song file";
         if (LinkBelow(musicRoot, original) is { } link)
             return $"a folder on the way to its old place is a link ({link})";
         if (Directory.Exists(original)) return "its old place is a folder";

@@ -1284,12 +1284,14 @@ impl IMusicMetadataService for SoulseekMetadataService {
             if r.kind != RoutingKind::Song {
                 continue;
             }
-            // A pinned video's length is the one the durations pass writes on the routing.
+            // A pinned video's length is the one the durations pass writes on the routing, shown
+            // only inside the sane range as that pass shows it. A row with no length takes the
+            // remembered one, as a new search row does; never a length nothing vouched for.
             let pinned = r.you_tube_id.as_deref().is_some_and(|y| !y.is_empty());
             if pinned && let Some(video) = SongLength::sane_video_length(r.duration) {
                 song.duration = Some(video);
             } else if song.duration.is_none_or(|d| d <= 0) {
-                song.duration = SongLength::shown(&r).0.or(r.duration).filter(|&d| d > 0);
+                song.duration = SongLength::shown(&r).0.filter(|&d| d > 0);
             }
         }
     }

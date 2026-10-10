@@ -1834,13 +1834,23 @@ async fn refreshed_rows_carry_the_pinned_videos_length() {
         r.you_tube_id = Some("quick".into());
         r.duration = Some(203);
     }
-    let mut songs = vec![pinned, unpinned, blank];
+    // A pinned clip's length is no song's: the row keeps having none.
+    let mut clip = fixture.search("Clip Band", "Teaser").await;
+    clip.duration = None;
+    {
+        let routing = fixture.registry.lookup(&clip.id).expect("registered");
+        let mut r = routing.lock();
+        r.you_tube_id = Some("teaser".into());
+        r.duration = Some(3);
+    }
+    let mut songs = vec![pinned, unpinned, blank, clip];
 
     fixture.service.refresh_song_lengths(&mut songs);
 
     assert_eq!(songs[0].duration, Some(203));
     assert_eq!(songs[1].duration, Some(180));
     assert_eq!(songs[2].duration, Some(150));
+    assert_eq!(songs[3].duration, None);
 }
 
 #[tokio::test]

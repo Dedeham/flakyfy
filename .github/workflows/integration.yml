@@ -8,6 +8,9 @@ on:
     types: [opened, synchronize, reopened]
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: integration-${{ github.ref }}
   cancel-in-progress: true
@@ -27,9 +30,6 @@ jobs:
           python-version: "3.12"
 
       - name: Run the harness
+        # run.sh prints the container logs itself on failure, before it tears the stack down.
         run: tests/integration/run.sh
 
-      - name: Stack logs on failure
-        if: failure()
-        working-directory: tests/integration
-        run: docker compose logs --no-color --tail 200 || true

@@ -29,7 +29,14 @@ case "${1:-}" in
   up) up ;;
   *)
     keep=0; [ "${1:-}" = "--keep" ] && keep=1
-    [ "$keep" = 1 ] || trap down EXIT
+    # On failure, print the container logs before teardown removes them.
+    finish() {
+      rc=$?
+      [ "$rc" = 0 ] || "${compose[@]}" logs --no-color --tail 200 || true
+      down
+      exit "$rc"
+    }
+    [ "$keep" = 1 ] || trap finish EXIT
     up
     python3 -m unittest discover -v -s . -p 'test_*.py'
     ;;

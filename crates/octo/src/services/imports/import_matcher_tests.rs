@@ -262,3 +262,166 @@ async fn a_hidden_copy_never_stands_in_for_a_visible_one() {
     assert!(matcher.match_tracks_for("alex", &mut tracks).await);
     assert_eq!(tracks[0].library_id.as_deref(), Some("shared"));
 }
+
+fn coded(mut song: LibrarySongRow, isrc: &str) -> LibrarySongRow {
+    song.isrcs = vec![isrc.to_string()];
+    song
+}
+
+fn with_isrc(mut t: ImportTrack, isrc: &str) -> ImportTrack {
+    t.isrc = Some(isrc.to_string());
+    t
+}
+
+#[test]
+fn a_shared_isrc_wins_over_the_words_and_takes_the_closest_length() {
+    let index = LibraryIndex::new([
+        r("words", "Massive Attack", "Teardrop", 330),
+        coded(r("coded-far", "Massive Attack", "Teardrop (Album Version)", 400), "GBAAA9800003"),
+        coded(r("coded-near", "Elizabeth Fraser", "Tear Drop", 331), "GB-AAA-98-00003"),
+    ]);
+    let wanted = with_isrc(track("Massive Attack", "Teardrop", Some(330), None), "gbaaa9800003");
+    assert_eq!(found(&index, &wanted), Some("coded-near"));
+    // An ISRC the library does not carry falls back to the words.
+    let other = with_isrc(track("Massive Attack", "Teardrop", Some(330), None), "USRC17607839");
+    assert_eq!(found(&index, &other), Some("words"));
+}
+
+#[test]
+fn a_title_in_another_script_is_the_same_song() {
+    let index = LibraryIndex::new([r("cyr", "Эмин", "Камин", 210)]);
+    assert_eq!(found(&index, &track("Emin", "Kamin", Some(212), None)), Some("cyr"));
+    assert_eq!(found(&index, &track("Emin", "Kamin", None, None)), Some("cyr"));
+    let latin = LibraryIndex::new([r("lat", "Emin", "Kamin", 210)]);
+    assert_eq!(found(&latin, &track("Эмин", "Камин", Some(210), None)), Some("lat"));
+    // Another length is another recording, in any script.
+    assert_eq!(found(&index, &track("Emin", "Kamin", Some(260), None)), None);
+}
+
+#[test]
+fn a_credit_written_last_name_first_is_the_same_artist() {
+    let index = LibraryIndex::new([r("1", "Luis Fonsi", "Despacito", 229)]);
+    assert_eq!(
+        found(&index, &track("Fonsi, Luis", "Despacito", Some(229), None)),
+        Some("1")
+    );
+    // A different singer of the same title is not.
+    assert_eq!(
+        found(&index, &track("Luis Miguel", "Despacito", Some(229), None)),
+        None
+    );
+}
+
+#[test]
+fn a_typo_is_not_owned() {
+    let index = LibraryIndex::new([r("1", "Imagine Dragons", "Believer", 204)]);
+    assert_eq!(
+        found(&index, &track("Imagine Dragons", "Beleiver", Some(204), None)),
+        None
+    );
+}
+
+#[test]
+fn a_live_take_is_not_the_studio_song_by_any_lookup() {
+    let index = LibraryIndex::new([
+        r("live", "Nirvana", "Lithium (Live)", 257),
+        r("cyr-live", "Нирвана", "Литиум (Live)", 257),
+    ]);
+    assert_eq!(found(&index, &track("Nirvana", "Lithium", Some(257), None)), None);
+    assert_eq!(found(&index, &track("Nirvana", "Litium", Some(257), None)), None);
+}
+
+#[test]
+fn a_tribute_band_is_not_the_artist() {
+    let index = LibraryIndex::new([
+        r("1", "Luis Fonsi Tribute Band", "Despacito", 229),
+        r("2", "Fonsi, Luis (Karaoke)", "Despacito", 229),
+    ]);
+    assert_eq!(
+        found(&index, &track("Luis Fonsi", "Despacito", Some(229), None)),
+        None
+    );
+}
+
+#[test]
+fn a_title_with_stylized_letters_is_found_through_the_artist() {
+    let index = LibraryIndex::new([r("1", "Kesha", "Ca$h Flow", 200)]);
+    assert_eq!(found(&index, &track("Kesha", "Cash Flow", Some(201), None)), Some("1"));
+}
+
+#[test]
+fn among_several_copies_the_best_fit_wins_first() {
+    // Both are the song by its MatchKey; the copy with a known, equal length fits better than
+    // one with no length, whatever their order.
+    let index = LibraryIndex::new([
+        row("unknown", "Adele", "Hello", None, None, "flac", 900),
+        row("known", "Adele", "Hello", Some(295), None, "mp3", 320),
+    ]);
+    assert_eq!(found(&index, &track("Adele", "Hello", Some(295), None)), Some("known"));
+}
+
+#[tokio::test]
+async fn every_lookup_keeps_to_the_members_scope() {
+    use crate::services::family::library_index::scope_for_tests;
+
+    let library = vec![
+        at(
+            coded(r("sam-isrc", "Massive Attack", "Teardrop", 330), "GBAAA9800003"),
+            "/members/sam/Teardrop.flac",
+        ),
+        at(r("sam-cyr", "Эмин", "Камин", 210), "/members/sam/Kamin.flac"),
+        at(r("sam-credit", "Luis Fonsi", "Despacito", 229), "/members/sam/Despacito.flac"),
+        at(r("sam-name", "Kesha", "Ca$h Flow", 200), "/members/sam/CashFlow.flac"),
+    ];
+    let tracks = || {
+        vec![
+            with_isrc(track("Someone", "Something", Some(330), None), "GBAAA9800003"),
+            track("Emin", "Kamin", Some(210), None),
+            track("Fonsi, Luis", "Despacito", Some(229), None),
+            track("Kesha", "Cash Flow", Some(200), None),
+        ]
+    };
+    let matcher = matcher_over(library).with_library_scope(scope_for_tests(true, &[("alex", 3), ("sam", 4)]));
+    let mut mine = tracks();
+    assert!(matcher.match_tracks_for("sam", &mut mine).await);
+    let ids: Vec<Option<&str>> = mine.iter().map(|t| t.library_id.as_deref()).collect();
+    assert_eq!(
+        ids,
+        vec![Some("sam-isrc"), Some("sam-cyr"), Some("sam-credit"), Some("sam-name")]
+    );
+    let mut theirs = tracks();
+    assert!(matcher.match_tracks_for("alex", &mut theirs).await);
+    assert!(theirs.iter().all(|t| t.library_id.is_none()), "{theirs:?}");
+}
+
+#[test]
+fn a_name_on_thousands_of_songs_reads_only_the_first_two_thousand() {
+    let mut rows: Vec<LibrarySongRow> = (0..2_500)
+        .map(|i| r(&i.to_string(), "Traditional", &format!("Air {i}"), 200))
+        .collect();
+    rows.push(r("late", "Traditional", "Ca$h Air", 200));
+    let index = LibraryIndex::new(rows);
+    assert_eq!(found(&index, &track("Traditional", "Cash Air", Some(200), None)), None);
+    let early = LibraryIndex::new([r("early", "Traditional", "Ca$h Air", 200)]);
+    assert_eq!(found(&early, &track("Traditional", "Cash Air", Some(200), None)), Some("early"));
+}
+
+#[tokio::test]
+async fn a_list_written_title_first_is_read_the_other_way_round() {
+    use super::super::text_list::{Orientation, read_lines};
+
+    let matcher = matcher_over(vec![
+        r("1", "Adele", "Hello", 295),
+        r("2", "Massive Attack", "Teardrop", 330),
+    ]);
+    let backward = read_lines("Mine", "Hello - Adele\nTeardrop - Massive Attack\nNew Song - Nobody\n").expect("lines");
+    assert_eq!(
+        matcher.orientation_for("alex", &backward[0].lines).await,
+        Orientation::TitleArtist
+    );
+    let forward = read_lines("Mine", "Adele - Hello\nMassive Attack - Teardrop\n").expect("lines");
+    assert_eq!(
+        matcher.orientation_for("alex", &forward[0].lines).await,
+        Orientation::ArtistTitle
+    );
+}

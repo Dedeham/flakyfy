@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "any_ascii"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90c6333e01ba7235575b6ab53e5af10f1c327927fd97c36462917e289557ea64"
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1630,7 @@ dependencies = [
 name = "octo-core"
 version = "2026.10.5"
 dependencies = [
+ "any_ascii",
  "anyhow",
  "arc-swap",
  "async-trait",
@@ -1639,6 +1646,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "rand",
+ "rapidfuzz",
  "regex",
  "serde",
  "serde_json",
@@ -1651,6 +1659,7 @@ dependencies = [
  "tracing",
  "unicode-general-category",
  "unicode-normalization",
+ "unicode-script",
  "url",
  "uuid",
 ]
@@ -1928,6 +1937,12 @@ name = "rangemap"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
+
+[[package]]
+name = "rapidfuzz"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "270e04e5ea61d40841942bb15e451c29ee1618637bcf97fc7ede5dd4a9b1601b"
 
 [[package]]
 name = "read-fonts"

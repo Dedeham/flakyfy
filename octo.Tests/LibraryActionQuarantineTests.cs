@@ -303,4 +303,68 @@ public class LibraryActionQuarantineTests : IDisposable
         Assert.Equal(0, quarantine.Sweep(_root));
         Assert.True(File.Exists(Path.Combine(elsewhere, "keep.flac")));
     }
+
+    [Fact]
+    public void Move_RefusesAPathOutsideTheRoot()
+    {
+        var elsewhere = OutsideFolder("other");
+        var path = Path.Combine(elsewhere, "Song.flac");
+        File.WriteAllBytes(path, new byte[64]);
+        var file = new ResolvedSongFile("id", path, 64, "T", "A", "B", "flac", 1, PathSource.NativeApi);
+
+        var result = Quarantine().Move(file, _root, LibraryAction.Delete, "alice");
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(path));
+    }
+
+    /// <summary>Dot-dot segments are collapsed before the check, so a path that climbs out of the root is refused.</summary>
+    [Fact]
+    public void Move_RefusesAPathThatClimbsOutOfTheRootWithDotDot()
+    {
+        var elsewhere = OutsideFolder("other");
+        var path = Path.Combine(elsewhere, "Song.flac");
+        File.WriteAllBytes(path, new byte[64]);
+        var climbing = Path.Combine(_root, "Artist", "..", "..", Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(path))!),
+            "other", "Song.flac");
+        Directory.CreateDirectory(Path.Combine(_root, "Artist"));
+        var file = new ResolvedSongFile("id", climbing, 64, "T", "A", "B", "flac", 1, PathSource.NativeApi);
+
+        var result = Quarantine().Move(file, _root, LibraryAction.Delete, "alice");
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(path));
+    }
+
+    /// <summary>A dot-dot that stays inside the root is the same file as its plain path, and moves.</summary>
+    [Fact]
+    public void Move_AcceptsDotDotThatStaysInsideTheRoot()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        Directory.CreateDirectory(Path.Combine(_root, "Other"));
+        var roundabout = new ResolvedSongFile("id", Path.Combine(_root, "Other", "..", "Artist", "Album", "Song.flac"),
+            track.SizeBytes, "T", "A", "B", "flac", 1, PathSource.NativeApi);
+
+        Assert.True(Quarantine().Move(roundabout, _root, LibraryAction.Delete, "alice").Moved);
+        Assert.False(File.Exists(track.AbsolutePath));
+    }
+
+    [Fact]
+    public void Restore_RefusesATrashedFileThatIsALink()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        var quarantine = Quarantine();
+        var moved = quarantine.Move(track, _root, LibraryAction.Delete, "alice");
+        Assert.True(moved.Moved);
+        var elsewhere = OutsideFolder("target");
+        var target = Path.Combine(elsewhere, "Song.flac");
+        File.WriteAllBytes(target, new byte[64]);
+        File.Delete(moved.QuarantinePath!);
+        File.CreateSymbolicLink(moved.QuarantinePath!, target);
+
+        var result = quarantine.Restore(moved.QuarantinePath!, _root);
+
+        Assert.False(result.Moved);
+        Assert.False(File.Exists(track.AbsolutePath));
+    }
 }

@@ -133,7 +133,7 @@ public sealed class LibraryActionExecutor
         // startup, but an install with only star ratings enabled never starts that worker, so an
         // interrupted action there was never looked at again.
         if (Interlocked.Exchange(ref _reconciled, 1) == 0)
-            _journal.Reconcile(path => _quarantine.Restore(path).Moved);
+            _journal.Reconcile(path => _quarantine.Restore(path, _resolver.MusicRoot()).Moved);
         if (!settings.IsAllowed(request.Username))
             return new(LibraryActionState.Skipped, $"{request.Username} is not on the allowlist.");
 
@@ -549,7 +549,7 @@ public sealed class LibraryActionExecutor
 
     private LibraryActionOutcome RestoreOriginal(string quarantinePath, string detail)
     {
-        var restored = _quarantine.Restore(quarantinePath);
+        var restored = _quarantine.Restore(quarantinePath, _resolver.MusicRoot());
         return restored.Moved
             ? new(LibraryActionState.Failed, detail)
             : new(LibraryActionState.Failed,

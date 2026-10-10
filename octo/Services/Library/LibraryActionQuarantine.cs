@@ -105,8 +105,17 @@ public sealed class LibraryActionQuarantine
 
             var destination = Path.Combine(RootFor(musicRoot),
                 DateTime.UtcNow.ToString("yyyy-MM-dd"), relative);
+            // Nothing is created while a folder on the way to the trash is a link.
+            if (LinkBelow(musicRoot, destination) is { } trashLink)
+                return new QuarantineResult(false, null, $"the trash path goes through a link ({trashLink})");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             destination = Unique(destination);
+
+            // The checks above ran before folders were created; run them again with nothing
+            // between them and the move.
+            if (Outside(file.AbsolutePath, musicRoot) is { } refusedNow) return new QuarantineResult(false, null, refusedNow);
+            if (LinkBelow(musicRoot, destination) is { } trashLinkNow)
+                return new QuarantineResult(false, null, $"the trash path goes through a link ({trashLinkNow})");
 
             try
             {
@@ -114,14 +123,10 @@ public sealed class LibraryActionQuarantine
             }
             catch (IOException)
             {
-                // Across devices Move fails, so copy, confirm the length, then remove. The
-                // length check is what stops a truncated copy from turning into a delete.
-                File.Copy(file.AbsolutePath, destination, overwrite: false);
-                if (new FileInfo(destination).Length != file.SizeBytes)
-                {
-                    TryDelete(destination);
-                    return new QuarantineResult(false, null, "the copy did not match the original's size");
-                }
+                // Across devices Move fails, so copy, confirm the copy is identical, then remove.
+                // The comparison is what stops a damaged copy from turning into a delete.
+                if (!CopyVerified(file.AbsolutePath, destination, file.SizeBytes))
+                    return new QuarantineResult(false, null, "the copy did not match the original");
                 File.Delete(file.AbsolutePath);
             }
 
@@ -164,7 +169,53 @@ public sealed class LibraryActionQuarantine
         if (NavidromeSongPathResolver.IsInside(full, RootFor(musicRoot))) return "the file is in the trash already";
         var info = new FileInfo(full);
         if (info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return "the file is a link, not a song file";
+        if (Directory.Exists(full)) return "the path is a folder, not a song file";
+        if (LinkBelow(musicRoot, full) is { } link) return $"a folder on the way to the file is a link ({link})";
         return null;
+    }
+
+    /// <summary>
+    /// The first folder between the music root and <paramref name="path"/> that is a link, or
+    /// null when there is none. The root itself may be a link (it is the one place the library
+    /// is mounted), so it is the start: with no link below it, the real path of the file is the
+    /// root's real path plus the same relative path. Folders that do not exist yet cannot be
+    /// links. A path outside the root answers with itself.
+    /// </summary>
+    internal static string? LinkBelow(string musicRoot, string path)
+    {
+        var root = Path.GetFullPath(musicRoot).TrimEnd(Path.DirectorySeparatorChar);
+        var full = Path.GetFullPath(path);
+        if (!NavidromeSongPathResolver.IsInside(full, root)) return full;
+        for (var dir = Path.GetDirectoryName(full); dir is not null && dir.Length > root.Length;
+             dir = Path.GetDirectoryName(dir))
+        {
+            var info = new DirectoryInfo(dir);
+            if (info.Exists && (info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint)))
+                return dir;
+        }
+        return null;
+    }
+
+    /// <summary>Copy, then compare length and SHA-256 with the original. A copy that differs
+    /// is removed and false is returned; the original is never touched here.</summary>
+    private static bool CopyVerified(string from, string to, long expectedLength)
+    {
+        File.Copy(from, to, overwrite: false);
+        try
+        {
+            if (new FileInfo(to).Length == expectedLength && new FileInfo(from).Length == expectedLength
+                && HashOf(from).AsSpan().SequenceEqual(HashOf(to)))
+                return true;
+        }
+        catch { /* an unreadable copy is a bad copy */ }
+        TryDelete(to);
+        return false;
+    }
+
+    private static byte[] HashOf(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return System.Security.Cryptography.SHA256.HashData(stream);
     }
 
     /// <summary>Put a quarantined file back where it came from. With <paramref name="musicRoot"/>,
@@ -179,20 +230,31 @@ public sealed class LibraryActionQuarantine
             var manifest = ReadManifest(quarantinePath);
             if (manifest is null)
                 return new QuarantineResult(false, null, "no manifest, so the original path is unknown");
-            if (musicRoot is not null && !NavidromeSongPathResolver.IsInside(Path.GetFullPath(manifest.OriginalPath), musicRoot))
+            // The manifest is only a note beside the file, so the root it must stay inside comes
+            // from the caller, or else from where the trash sits (the folder above the trash).
+            musicRoot ??= RootOfTrashedFile(quarantinePath);
+            if (musicRoot is null)
+                return new QuarantineResult(false, null, "the file is not in the trash");
+            if (!NavidromeSongPathResolver.IsInside(Path.GetFullPath(manifest.OriginalPath), musicRoot))
                 return new QuarantineResult(false, null, "its old place is not under the music root");
+            if (RestoreRefusal(quarantinePath, manifest.OriginalPath, musicRoot) is { } blocked)
+                return new QuarantineResult(false, null, blocked);
 
             Directory.CreateDirectory(Path.GetDirectoryName(manifest.OriginalPath)!);
             if (File.Exists(manifest.OriginalPath))
                 return new QuarantineResult(false, null, "something already exists at the original path");
 
+            // Again with nothing between the check and the move.
+            if (RestoreRefusal(quarantinePath, manifest.OriginalPath, musicRoot) is { } blockedNow)
+                return new QuarantineResult(false, null, blockedNow);
             File.Move(quarantinePath, manifest.OriginalPath);
             foreach (var sidecar in manifest.Sidecars ?? [])
             {
                 // Each one meets the same rule as the song: back only into the music folder.
-                if (musicRoot is not null && !NavidromeSongPathResolver.IsInside(Path.GetFullPath(sidecar.OriginalPath), musicRoot))
+                if (!NavidromeSongPathResolver.IsInside(Path.GetFullPath(sidecar.OriginalPath), musicRoot))
                     continue;
                 if (!File.Exists(sidecar.QuarantinePath) || File.Exists(sidecar.OriginalPath)) continue;
+                if (RestoreRefusal(sidecar.QuarantinePath, sidecar.OriginalPath, musicRoot) is not null) continue;
                 try { File.Move(sidecar.QuarantinePath, sidecar.OriginalPath); }
                 catch (Exception ex) { _logger.LogWarning("Library action could not put back {Path}: {M}", sidecar.OriginalPath, ex.Message); }
             }
@@ -208,6 +270,32 @@ public sealed class LibraryActionQuarantine
         }
     }
 
+    /// <summary>Why a trashed file may not go back to <paramref name="original"/>, or null: both
+    /// ends must sit under the music root with no link in any folder on the way, the trash side
+    /// included, and the old place must not be a folder.</summary>
+    private string? RestoreRefusal(string quarantinePath, string original, string musicRoot)
+    {
+        if (!NavidromeSongPathResolver.IsInside(Path.GetFullPath(quarantinePath), RootFor(musicRoot)))
+            return "the file is not in the trash";
+        if (LinkBelow(musicRoot, quarantinePath) is { } trashLink)
+            return $"the trash path goes through a link ({trashLink})";
+        if (LinkBelow(musicRoot, original) is { } link)
+            return $"a folder on the way to its old place is a link ({link})";
+        if (Directory.Exists(original)) return "its old place is a folder";
+        return null;
+    }
+
+    /// <summary>The music root a trashed file sits under: the folder holding the trash folder. Null
+    /// when the path is not under a trash folder of this name.</summary>
+    private string? RootOfTrashedFile(string quarantinePath)
+    {
+        var marker = Path.DirectorySeparatorChar + _settings.CurrentValue.EffectiveQuarantineDirectory
+            + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(quarantinePath);
+        var at = full.LastIndexOf(marker, NameComparison);
+        return at <= 0 ? null : full[..at];
+    }
+
     /// <summary>
     /// The only code in this feature that really deletes, and it goes on age rather than on
     /// which action produced the file. Retention 0 means never sweep.
@@ -219,6 +307,8 @@ public sealed class LibraryActionQuarantine
 
         var root = RootFor(musicRoot);
         if (!Directory.Exists(root)) return 0;
+        // A trash folder, or a dated folder in it, that is a link is not swept: it may lead out of the library.
+        if (LinkBelow(musicRoot, Path.Combine(root, "x")) is not null) return 0;
 
         var cutoff = DateTime.UtcNow.AddDays(-days);
         var removed = 0;
@@ -231,6 +321,7 @@ public sealed class LibraryActionQuarantine
                         System.Globalization.DateTimeStyles.AssumeUniversal
                         | System.Globalization.DateTimeStyles.AdjustToUniversal, out var day)) continue;
                 if (day >= cutoff) continue;
+                if (LinkBelow(musicRoot, Path.Combine(dated, "x")) is not null) continue;
 
                 var count = Directory.EnumerateFiles(dated, "*", SearchOption.AllDirectories)
                     .Count(path => !path.EndsWith(ManifestSuffix, StringComparison.Ordinal));
@@ -258,19 +349,14 @@ public sealed class LibraryActionQuarantine
                 return false;
             }
             if (File.Exists(to)) return false;
+            if (LinkBelow(musicRoot, to) is not null) return false;
             try
             {
                 File.Move(from, to);
             }
             catch (IOException)
             {
-                var length = new FileInfo(from).Length;
-                File.Copy(from, to, overwrite: false);
-                if (new FileInfo(to).Length != length)
-                {
-                    TryDelete(to);
-                    return false;
-                }
+                if (!CopyVerified(from, to, new FileInfo(from).Length)) return false;
                 File.Delete(from);
             }
             return true;

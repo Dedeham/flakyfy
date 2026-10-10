@@ -18,6 +18,7 @@ public class LibraryActionQuarantineTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, true); } catch { }
+        foreach (var d in _outsideDirs) try { Directory.Delete(d, true); } catch { }
         GC.SuppressFinalize(this);
     }
 
@@ -175,4 +176,131 @@ public class LibraryActionQuarantineTests : IDisposable
     public void RootFor_UsesTheConfiguredDirectory()
         => Assert.Equal(Path.Combine(_root, "my-bin"),
             Quarantine(new LibraryActionSettings { QuarantineDirectory = "my-bin" }).RootFor(_root));
+
+    // Real links in a temp folder. "outside" stands for anywhere that is not the library.
+    private string OutsideFolder(string name)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "octo-outside-" + Guid.NewGuid(), name);
+        Directory.CreateDirectory(dir);
+        _outsideDirs.Add(Path.GetDirectoryName(dir)!);
+        return dir;
+    }
+
+    private readonly List<string> _outsideDirs = [];
+
+    private static void Link(string link, string target)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        Directory.CreateSymbolicLink(link, target);
+    }
+
+    private static string[] AllFiles(string dir) => Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+
+    [Fact]
+    public void Move_RefusesAFileReachedThroughALinkedParentFolder()
+    {
+        var elsewhere = OutsideFolder("album");
+        File.WriteAllBytes(Path.Combine(elsewhere, "Song.flac"), new byte[64]);
+        Link(Path.Combine(_root, "Artist"), elsewhere);
+        var file = new ResolvedSongFile("id", Path.Combine(_root, "Artist", "Song.flac"), 64, "T", "A", "B", "flac", 1, PathSource.NativeApi);
+
+        var result = Quarantine().Move(file, _root, LibraryAction.Delete, "alice");
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(Path.Combine(elsewhere, "Song.flac")));
+        Assert.False(Directory.Exists(Quarantine().RootFor(_root)));
+    }
+
+    [Fact]
+    public void Move_RefusesALinkedTrashRoot()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        var elsewhere = OutsideFolder("trash");
+        var quarantine = Quarantine();
+        Link(quarantine.RootFor(_root), elsewhere);
+
+        var result = quarantine.Move(track, _root, LibraryAction.Delete, "alice");
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(track.AbsolutePath));
+        Assert.Empty(AllFiles(elsewhere));
+    }
+
+    [Fact]
+    public void Move_RefusesALinkedDatedTrashFolder()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        var elsewhere = OutsideFolder("dated");
+        var quarantine = Quarantine();
+        Link(Path.Combine(quarantine.RootFor(_root), DateTime.UtcNow.ToString("yyyy-MM-dd")), elsewhere);
+
+        var result = quarantine.Move(track, _root, LibraryAction.Delete, "alice");
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(track.AbsolutePath));
+        Assert.Empty(AllFiles(elsewhere));
+    }
+
+    [Fact]
+    public void Restore_RefusesAnOldPlaceBehindALinkedFolder()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        var quarantine = Quarantine();
+        var moved = quarantine.Move(track, _root, LibraryAction.Delete, "alice");
+        Assert.True(moved.Moved);
+        // The folder that held the song is now a link to somewhere else.
+        var elsewhere = OutsideFolder("album");
+        Directory.Delete(Path.Combine(_root, "Artist"), true);
+        Link(Path.Combine(_root, "Artist"), Path.GetDirectoryName(elsewhere)!);
+
+        var result = quarantine.Restore(moved.QuarantinePath!, _root);
+
+        Assert.False(result.Moved);
+        Assert.True(File.Exists(moved.QuarantinePath!));
+        Assert.Empty(AllFiles(Path.GetDirectoryName(elsewhere)!));
+    }
+
+    /// <summary>Without a root from the caller, the root comes from where the trash sits.</summary>
+    [Fact]
+    public void Restore_WithoutARoot_StillRefusesALinkedAncestor()
+    {
+        var track = WriteTrack("Artist/Album/Song.flac");
+        var quarantine = Quarantine();
+        var moved = quarantine.Move(track, _root, LibraryAction.Delete, "alice");
+        var elsewhere = OutsideFolder("album");
+        Directory.Delete(Path.Combine(_root, "Artist"), true);
+        Link(Path.Combine(_root, "Artist"), Path.GetDirectoryName(elsewhere)!);
+
+        Assert.False(quarantine.Restore(moved.QuarantinePath!).Moved);
+    }
+
+    /// <summary>The library may be mounted through a link; only folders below it count.</summary>
+    [Fact]
+    public void Move_AllowsAMusicRootThatIsItselfALink()
+    {
+        var real = OutsideFolder("music");
+        var linkedRoot = Path.Combine(_root, "mount");
+        Link(linkedRoot, real);
+        Directory.CreateDirectory(Path.Combine(real, "Artist"));
+        var path = Path.Combine(linkedRoot, "Artist", "Song.flac");
+        File.WriteAllBytes(path, new byte[64]);
+        var file = new ResolvedSongFile("id", path, 64, "T", "A", "B", "flac", 1, PathSource.NativeApi);
+
+        var result = Quarantine().Move(file, linkedRoot, LibraryAction.Delete, "alice");
+
+        Assert.True(result.Moved);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void Sweep_SkipsALinkedDatedFolder()
+    {
+        var quarantine = Quarantine(new LibraryActionSettings { QuarantineRetentionDays = 1 });
+        var elsewhere = OutsideFolder("dated");
+        File.WriteAllBytes(Path.Combine(elsewhere, "keep.flac"), new byte[8]);
+        Link(Path.Combine(quarantine.RootFor(_root), DateTime.UtcNow.AddDays(-30).ToString("yyyy-MM-dd")), elsewhere);
+
+        Assert.Equal(0, quarantine.Sweep(_root));
+        Assert.True(File.Exists(Path.Combine(elsewhere, "keep.flac")));
+    }
 }

@@ -292,3 +292,29 @@ async fn liked_songs_has_a_heart_cover() {
     assert_eq!(&cover.body[..3], &[0xFF, 0xD8, 0xFF]);
     assert_eq!(upstream.calls_ending("getCoverArt"), 0);
 }
+
+#[tokio::test]
+async fn liked_songs_never_answers_a_caller_without_a_username() {
+    let (upstream, app) = setup().await;
+    heart(&upstream, "alice", "big1", "2026-10-01T10:00:00.000Z");
+    let blank = octo_core::library::generated_playlist_service::playlist_id("", "liked");
+
+    let mut seen = Vec::new();
+    for key in ["alice-key", "bob-key"] {
+        let answer = get(
+            &app,
+            &format!("/rest/getPlaylist.view?apiKey={key}&v=1.16.1&c=test&f=json&id={blank}"),
+        )
+        .await
+        .json();
+        seen.extend(
+            answer["subsonic-response"]["playlist"]["entry"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+
+    assert!(seen.is_empty(), "{seen:?}");
+    assert_eq!(upstream.calls_ending("getStarred2"), 0);
+}

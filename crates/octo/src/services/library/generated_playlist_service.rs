@@ -868,6 +868,10 @@ impl GeneratedPlaylistService {
         username: &str,
         auth: &IndexMap<String, String>,
     ) -> Option<(Arc<MarksById>, Arc<Vec<Node>>)> {
+        // Kept by username, so a caller without one would share what it read with every other.
+        if dotnet::is_blank(username) {
+            return None;
+        }
         let songs = self
             .fetch_songs(auth, "rest/getStarred2", "starred2", &[])
             .await?;
@@ -928,8 +932,12 @@ impl GeneratedPlaylistService {
     }
 
     /// Liked Songs' songs: the listener's hearted songs, newest heart first (then by id), at most
-    /// the setting's number. None when Navidrome did not answer.
+    /// the setting's number. None when Navidrome did not answer, or for a caller without a
+    /// username.
     pub async fn liked_songs(&self, username: &str, auth: &IndexMap<String, String>) -> Option<Vec<Node>> {
+        if dotnet::is_blank(username) {
+            return None;
+        }
         let max = self
             .settings
             .current()

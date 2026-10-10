@@ -1,8 +1,8 @@
 """ReplayGain for streamed videos: EBU R128 loudness, measured with ffmpeg on play.
 
 Measuring reads the whole audio again, so it happens only when a video is played (never on a
-search or a resolve), at most a few times a minute, never twice for one video at once, and never
-again once known. Kept free of any app.py import so it stays cheap to unit test.
+search or a resolve), at most a few times a minute, one measurement at a time, and never again
+once known. Kept free of any app.py import so it stays cheap to unit test.
 """
 from __future__ import annotations
 
@@ -20,11 +20,15 @@ _TRUE_PEAK = re.compile(r"True peak:\s*\n\s*Peak:\s*(-?\d+(?:\.\d+)?|-inf)\s*dBF
 
 
 def ffmpeg_args(url: str, user_agent: str = "") -> list[str]:
-    """The ffmpeg run that measures a stream's integrated loudness and true peak."""
-    args = ["ffmpeg", "-nostats", "-hide_banner", "-nostdin"]
+    """The ffmpeg run that measures a stream's integrated loudness and true peak.
+
+    It reads only over HTTPS, and the filter's per-frame lines go to the verbose level, which
+    ffmpeg does not print, so the output is the summary alone.
+    """
+    args = ["ffmpeg", "-nostats", "-hide_banner", "-nostdin", "-protocol_whitelist", "https,tls,tcp"]
     if user_agent:
         args += ["-user_agent", user_agent]
-    return args + ["-i", url, "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"]
+    return args + ["-i", url, "-vn", "-af", "ebur128=peak=true:framelog=verbose", "-f", "null", "-"]
 
 
 def parse_ebur128(output: str) -> Optional[tuple[float, Optional[float]]]:
@@ -50,7 +54,11 @@ def replay_gain(integrated_lufs: float, true_peak_dbfs: Optional[float]) -> dict
 
 
 class LoudnessBook:
-    """What is known, what is being measured, and how many measurements started this minute."""
+    """What is known, what is being measured, and how many measurements started this minute.
+
+    One measurement runs at a time: its own limit, apart from the yt-dlp gate, so measuring never
+    takes a slot a play or a resolve needs.
+    """
 
     def __init__(self, per_minute: int = 2, keep: int = 4096, clock: Callable[[], float] = time.monotonic):
         self.per_minute = max(1, per_minute)
@@ -69,11 +77,11 @@ class LoudnessBook:
             return dict(known) if known is not None else None
 
     def begin(self, video_id: str) -> bool:
-        """Whether to measure `video_id` now: not known, not running, and the minute has room.
-        True counts the measurement against the minute and marks it running."""
+        """Whether to measure `video_id` now: not known, no measurement running, and the minute
+        has room. True counts the measurement against the minute and marks it running."""
         now = self._clock()
         with self._lock:
-            if not video_id or video_id in self._known or video_id in self._running:
+            if not video_id or video_id in self._known or self._running:
                 return False
             while self._starts and now - self._starts[0] >= 60.0:
                 self._starts.popleft()

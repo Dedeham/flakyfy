@@ -1433,11 +1433,13 @@ fn names_alike(a: &str, b: &str) -> f64 {
     }
 }
 
+/// The tribute words a credit carries, read from the credit as given, so a bracketed "(Karaoke)"
+/// that the parsed credit drops still counts.
 fn tribute_words(artists: &SongArtists) -> BTreeSet<&'static str> {
-    let text = if has_non_ascii_letters(&artists.display) {
-        romanized_words(&artists.display)
+    let text = if has_non_ascii_letters(&artists.raw) {
+        romanized_words(&artists.raw)
     } else {
-        words(&artists.display)
+        words(&artists.raw)
     };
     let found: HashSet<&str> = text.split(' ').collect();
     TRIBUTE_WORDS
@@ -1871,6 +1873,11 @@ impl SongIdentity {
             featured,
             pieces,
         }
+    }
+
+    /// A name that credits nobody: empty, "Various Artists", "Unknown Artist" and the like.
+    pub fn is_placeholder_artist(name: &str) -> bool {
+        is_placeholder(name)
     }
 
     /// The artist a credit names first, as written: "Beyoncé" for "Beyoncé feat. Jay-Z",

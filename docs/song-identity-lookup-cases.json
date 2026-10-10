@@ -441,6 +441,21 @@
     },
     {
       "a": {
+        "title": "Despacito",
+        "artist": "Luis Fonsi",
+        "seconds": 229
+      },
+      "b": {
+        "title": "Despacito",
+        "artist": "Fonsi, Luis (Karaoke)",
+        "seconds": 229
+      },
+      "owned": "different",
+      "pick": "different",
+      "note": "A karaoke credit is never the artist, even when the word is in brackets."
+    },
+    {
+      "a": {
         "title": "Hello",
         "artist": "Adele",
         "seconds": 295

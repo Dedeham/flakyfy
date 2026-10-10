@@ -1244,6 +1244,28 @@ fn an_entries_playlist_passes_navidromes_entries_through() {
 }
 
 #[test]
+fn an_entries_playlist_keeps_each_entrys_replay_gain_in_xml() {
+    let entries = [
+        Node::parse(r#"{"id":"n1","duration":200,"replayGain":{"trackGain":-6.5,"trackPeak":0.98}}"#)
+            .unwrap(),
+        Node::parse(r#"{"id":"n2","duration":100,"replayGain":{}}"#).unwrap(),
+    ];
+
+    let root = xml_of(&builder().create_entries_playlist_response("xml", Fields::new(), &entries));
+
+    let playlist = child(&root, "playlist");
+    let rows: Vec<&XElement> = playlist.elements_named(NS, "entry").collect();
+    let gain = rows[0]
+        .elements()
+        .find(|e| e.is(NS, "replayGain"))
+        .expect("a replayGain element");
+    assert_eq!(gain.attribute("trackGain"), Some("-6.5"));
+    assert_eq!(gain.attribute("trackPeak"), Some("0.98"));
+    // Nothing measured, nothing written.
+    assert!(rows[1].elements().next().is_none());
+}
+
+#[test]
 fn library_actions_offer_what_is_enabled() {
     let off = LibraryActionSettings::default();
     assert_eq!(

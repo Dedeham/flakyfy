@@ -373,6 +373,14 @@ impl SubsonicResponseBuilder {
         for entry in entries {
             let mut element = subsonic_element("entry");
             scalar_attributes(&mut element, entry);
+            // OpenSubsonic's replayGain is a child element in XML; only a measured one is written.
+            if let Some(gain) = entry
+                .get("replayGain")
+                .map(Node::to_value)
+                .filter(|gain| gain.as_object().is_some_and(|g| !g.is_empty()))
+            {
+                element.push(json_shape_to_xml(Some(SUBSONIC_NAMESPACE), "replayGain", &gain));
+            }
             playlist.push(element);
         }
         SubsonicReply::xml(&envelope("ok").child(playlist))

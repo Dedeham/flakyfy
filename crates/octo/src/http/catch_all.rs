@@ -21,6 +21,7 @@ use octo_subsonic::subsonic_request_parser::unescape_data_string;
 
 use super::error::problem;
 use crate::app::AppState;
+use crate::controllers::subsonic::action_helpers::is_successful_subsonic_response;
 use crate::controllers::subsonic::native::{self, NativeRequest};
 use crate::services::subsonic::{IncomingRequest, RawRelayResult};
 use octo_subsonic::SubsonicResponseBuilder;
@@ -76,13 +77,16 @@ pub async fn catch_all(State(state): State<AppState>, req: Request) -> Response 
             if raw.status == 200 && endpoint.eq_ignore_ascii_case("auth/login") {
                 state.navidrome_identity.capture_login(&raw.body);
             }
-            // An unheart reaches Navidrome through here: the listener's lists read their
-            // hearts again.
+            // An unheart reaches Navidrome through here: once Navidrome took it, the listener's
+            // lists read their hearts again. A refusal is HTTP 200 too, so the envelope decides,
+            // and an API key sign-in names its listener the way every request's identity does.
             if raw.status == 200
                 && is_unstar(&endpoint)
-                && let Some(username) = parameters.get("u").filter(|u| !u.is_empty())
+                && is_successful_subsonic_response(&raw.body, &format)
+                && let Ok(Some(username)) = state.request_identity.username(&parameters, &relay).await
+                && !username.is_empty()
             {
-                state.generated_playlists.forget_marks(username);
+                state.generated_playlists.forget_marks(&username);
             }
             write_raw_relay(raw, &format, &state.subsonic_response_builder)
         }

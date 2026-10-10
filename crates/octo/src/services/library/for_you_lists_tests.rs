@@ -259,8 +259,16 @@ async fn answer(State(upstream): State<Arc<ForYouUpstream>>, uri: Uri, RawQuery(
                 }
                 plain(&query, "")
             }
+            // Navidrome refuses a bad password with HTTP 200 and a failed envelope.
+            "rest/unstar" | "rest/unstar.view" if query.get("t").map(String::as_str) == Some("bad") => json_body(
+                r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"#.into(),
+            ),
+            "rest/tokenInfo" | "rest/tokenInfo.view" => json_body(format!(
+                r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1","tokenInfo":{{"username":"{}"}}}}}}"#,
+                caller(&query)
+            )),
             "rest/unstar" | "rest/unstar.view" => {
-                let user = query.get("u").cloned().unwrap_or_default();
+                let user = caller(&query);
                 let id = query.get("id").cloned().unwrap_or_default();
                 upstream
                     .hearts

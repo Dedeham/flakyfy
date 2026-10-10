@@ -247,6 +247,7 @@ pub async fn session(State(state): State<AppState>, web: Web) -> Response {
         "role": signed.actor.role,
         "displayName": member.as_ref().map_or(signed.user().to_string(), |m| m.shown_name().to_string()),
         "managed": member.is_some(),
+        "importPlaylists": member.as_ref().is_some_and(|m| m.abilities().import_playlists),
         "manager": manager,
         "approver": approver,
         "owner": signed.actor.is_owner(),

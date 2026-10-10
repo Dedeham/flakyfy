@@ -14,6 +14,7 @@ pub mod account;
 pub mod address;
 pub mod admin_entry;
 pub mod handover;
+pub mod imports;
 pub mod manage;
 
 #[cfg(test)]
@@ -105,6 +106,12 @@ pub fn routes() -> RouteSet {
         .route("/api/family/me/quality", put(set_quality))
         .route("/api/family/me/ntfy", put(set_ntfy))
         .route("/api/family/me/lastfm", get(my_last_fm))
+        .route("/api/family/me/imports", get(imports::my_imports))
+        .route("/api/family/me/imports/text", post(imports::import_text))
+        .route(
+            "/api/family/me/imports/file",
+            post(imports::import_file).layer(DefaultBodyLimit::max(imports::FILE_BODY)),
+        )
         .route("/api/family/cover/{id}", get(cover))
         .route("/api/family/me/lastfm/{action}", post(last_fm_action))
         .route("/api/family/members", get(members).post(add_member))

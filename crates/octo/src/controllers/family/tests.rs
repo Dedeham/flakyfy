@@ -3857,3 +3857,123 @@ async fn hand_over_through_octo_family_calls() {
         .subsonic();
     assert_eq!(again["familySignInRedeem"]["state"], "Expired");
 }
+
+// ---- A member's own imports ---------------------------------------------------------------
+
+/// A multipart upload of `text` as `Mine.txt` to the Family page's file import.
+async fn upload_list(f: &Fam, cookie: &str, text: &str) -> Reply {
+    let boundary = "octo-test-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"Mine.txt\"\r\nContent-Type: text/plain\r\n\r\n{text}\r\n--{boundary}--\r\n"
+    );
+    let headers = [
+        ("cookie", cookie.to_string()),
+        ("x-octo-family", "1".to_string()),
+        (
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        ),
+    ];
+    raw(
+        &f.app,
+        Method::POST,
+        "/api/family/me/imports/file",
+        &headers,
+        body,
+        HOME,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_member_imports_a_file_and_a_pasted_list_from_the_family_page() {
+    let f = fam().await;
+    let alex = f.alex();
+    let session = f.get("/api/family/session", Some(&alex)).await.json();
+    assert_eq!(session["importPlaylists"], true);
+
+    let page = f.get("/api/family/me/imports", Some(&alex)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    let page = page.json();
+    assert_eq!(page["services"].as_array().map(Vec::len), Some(10));
+    assert_eq!(
+        page["services"][0]["exportUrl"],
+        "https://www.tunemymusic.com/transfer/spotify-to-file"
+    );
+    // Alex is a Listener: the missing songs wait for the owner.
+    assert_eq!(page["approval"], json!({"needed": true, "by": "winters"}));
+    assert_eq!(page["lists"], json!([]));
+
+    let file = upload_list(&f, &alex, "Massive Attack - Teardrop\nAdele - Hello\n").await;
+    assert_eq!(file.status, StatusCode::OK, "{}", file.body);
+    assert_eq!(file.json()["message"], "Added Mine, 2 songs.");
+
+    let pasted = f
+        .post(
+            "/api/family/me/imports/text",
+            Some(&alex),
+            json!({"name": "Road trip", "text": "Air - La Femme d'Argent"}),
+        )
+        .await;
+    assert_eq!(pasted.status, StatusCode::OK, "{}", pasted.body);
+    let empty = f
+        .post("/api/family/me/imports/text", Some(&alex), json!({"text": " "}))
+        .await;
+    assert_eq!(empty.status, StatusCode::BAD_REQUEST);
+    assert_eq!(empty.json()["message"], "Paste a list first.");
+
+    let page = f.get("/api/family/me/imports", Some(&alex)).await.json();
+    let names: Vec<&str> = page["lists"]
+        .as_array()
+        .expect("lists")
+        .iter()
+        .map(|l| l["name"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(names.contains(&"Mine") && names.contains(&"Road trip"), "{names:?}");
+    // The lists are Alex's own: Sam sees none of them.
+    assert_eq!(f.state.imports.overview("sam").lists.len(), 0);
+}
+
+#[tokio::test]
+async fn the_family_page_refuses_imports_without_the_ability_or_outside_the_family() {
+    let f = fam().await;
+    let mut alex = f.state.family_store.member("alex").expect("alex");
+    alex.edits.insert("ImportPlaylists".into(), json!(false));
+    f.state.family_store.upsert_member(alex);
+    let cookie = f.alex();
+    let session = f.get("/api/family/session", Some(&cookie)).await.json();
+    assert_eq!(session["importPlaylists"], false);
+    for reply in [
+        f.get("/api/family/me/imports", Some(&cookie)).await,
+        f.post("/api/family/me/imports/text", Some(&cookie), json!({"text": "A - B"}))
+            .await,
+        upload_list(&f, &cookie, "A - B").await,
+    ] {
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.body);
+        assert_eq!(reply.error(), "Importing playlists is off for this account.");
+    }
+    assert!(f.state.imports.overview("alex").lists.is_empty());
+
+    // The owner imports from the dashboard, not here.
+    let owner = f.get("/api/family/me/imports", Some(&f.owner_cookie())).await;
+    assert_eq!(owner.status, StatusCode::FORBIDDEN);
+
+    // A write without the Family page's header is refused.
+    let sam = f.sam();
+    let headers = [
+        ("cookie", sam.clone()),
+        ("content-type", "application/json".to_string()),
+    ];
+    let bare = raw(
+        &f.app,
+        Method::POST,
+        "/api/family/me/imports/text",
+        &headers,
+        r#"{"text":"A - B"}"#.to_string(),
+        HOME,
+    )
+    .await;
+    assert_eq!(bare.status, StatusCode::FORBIDDEN);
+    assert!(f.state.imports.overview("sam").lists.is_empty());
+}

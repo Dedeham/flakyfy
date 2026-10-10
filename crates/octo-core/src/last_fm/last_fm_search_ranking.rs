@@ -3,14 +3,14 @@
 //!
 //! [`LastFmSearchCleanup`]: super::LastFmSearchCleanup
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
 
 use super::last_fm_service::SimilarTrack;
 use crate::common::SongIdentity;
-use crate::common::song_versions::strip_versions;
+use crate::common::song_versions::{has_variant_word, strip_versions};
 
 /// One letter of any script.
 static LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\p{L}").expect("a valid pattern"));
@@ -26,7 +26,9 @@ const NON_LATIN_SHARE: f64 = 0.5;
 /// top:
 ///
 ///   1. Versions of one song ("Hello", "Hello - Live", "Hello (2011 Remaster)") are one row, the
-///      most listened. Remixes and features are other songs and stay.
+///      most listened. Remixes and features are other songs and stay. A query that names a take
+///      ("love story taylor's version") folds nothing, and a version whose marker shares a word
+///      with the query keeps its own row, so the take asked for is never folded away.
 ///   2. For a Latin query, rows whose letters are mostly in another script ("Adele" answered with
 ///      Cyrillic scrobbles of a cover) go after every Latin row. They stay listed, since a
 ///      romanized search ("yorushika") can have its real answers in the native script. A Latin
@@ -41,7 +43,16 @@ impl LastFmSearchRanking {
         let demote_foreign = !Self::is_mostly_non_latin(query);
 
         // One row per song and version-less title, the most listened (the first on a tie).
-        let keys: Vec<String> = tracks.iter().map(version_key).collect();
+        let fold = !has_variant_word(query);
+        let query_words = words(query);
+        let keys: Vec<String> = tracks
+            .iter()
+            .enumerate()
+            .map(|(at, track)| match version_key(track, &query_words) {
+                Some(key) if fold => key,
+                _ => format!("row|{at}"),
+            })
+            .collect();
         let mut best: HashMap<&str, usize> = HashMap::new();
         for (at, key) in keys.iter().enumerate() {
             match best.get(key.as_str()) {
@@ -110,13 +121,30 @@ fn is_latin_letter(letter: char) -> bool {
         || (0xFF41..=0xFF5A).contains(&cp)
 }
 
-/// The primary artist and the title without its version markers, as one key.
-fn version_key(track: &SimilarTrack) -> String {
-    format!(
+/// The primary artist and the title without its version markers, as one key. None when the
+/// markers taken off share a word with the query: that version is what was asked for.
+fn version_key(track: &SimilarTrack, query_words: &HashSet<String>) -> Option<String> {
+    let title = track.title.trim();
+    let stripped = strip_versions(title);
+    let tail = title.get(stripped.len()..).unwrap_or_default();
+    if words(tail).iter().any(|word| query_words.contains(word)) {
+        return None;
+    }
+    Some(format!(
         "{}|{}",
         SongIdentity::key(&SongIdentity::primary_artist(&track.artist)),
-        SongIdentity::key(&strip_versions(&track.title))
-    )
+        SongIdentity::key(&stripped)
+    ))
+}
+
+/// The words of `text`, lower case, apostrophes dropped ("Taylor's" is "taylors").
+fn words(text: &str) -> HashSet<String> {
+    text.to_lowercase()
+        .replace(['\'', '\u{2019}'], "")
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

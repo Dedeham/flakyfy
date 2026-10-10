@@ -269,3 +269,45 @@ fn letters_decide_the_script_not_digits_or_marks() {
     assert!(!LastFmSearchRanking::is_mostly_non_latin("Beyoncé Ｈｅｌｌｏ"));
     assert!(LastFmSearchRanking::is_mostly_non_latin("Привет 2024"));
 }
+
+#[test]
+fn a_query_naming_a_version_keeps_the_version_asked_for() {
+    let rows = rank(
+        "love story taylor's version",
+        vec![
+            t("Taylor Swift", "Love Story", Some(2_000_000)),
+            t("Taylor Swift", "Love Story (Taylor's Version)", Some(800_000)),
+            t("Taylor Swift", "Love Story - Live", Some(10_000)),
+        ],
+    );
+
+    assert_eq!(
+        rows,
+        pairs(&[
+            ("Taylor Swift", "Love Story"),
+            ("Taylor Swift", "Love Story (Taylor's Version)"),
+            ("Taylor Swift", "Love Story - Live"),
+        ])
+    );
+}
+
+#[test]
+fn a_version_whose_marker_shares_a_word_with_the_query_keeps_its_row() {
+    let rows = rank(
+        "love story taylor's",
+        vec![
+            t("Taylor Swift", "Love Story", Some(2_000_000)),
+            t("Taylor Swift", "Love Story (Taylor's Version)", Some(800_000)),
+            t("Taylor Swift", "Love Story - Live", Some(10_000)),
+        ],
+    );
+
+    // The marker the query names stays; one it does not is still folded away.
+    assert_eq!(
+        rows,
+        pairs(&[
+            ("Taylor Swift", "Love Story"),
+            ("Taylor Swift", "Love Story (Taylor's Version)"),
+        ])
+    );
+}

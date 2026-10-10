@@ -527,3 +527,72 @@ fn parse_keeps_the_rows_read_before_a_bad_one() {
         "<song id=\"1\" isExternal=\"false\" xmlns=\"http://subsonic.org/restapi\">\n  <genres name=\"x\"></genres>\n</song>"
     );
 }
+
+fn timed(id: &str, artist: &str, title: &str, seconds: Option<i32>) -> Song {
+    Song {
+        id: id.into(),
+        artist: artist.into(),
+        title: title.into(),
+        duration: seconds,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn an_outside_song_in_another_script_or_credit_is_left_out_when_both_lengths_agree() {
+    let result = external(
+        vec![
+            timed("e-cyr", "Эмин", "Камин", Some(211)),
+            timed("e-fonsi", "Fonsi, Luis", "Despacito", Some(229)),
+            timed("e-far", "Fonsi, Luis", "Despacito", Some(300)),
+            timed("e-nolength", "Эмин", "Камин", None),
+        ],
+        vec![],
+        vec![],
+    );
+    let json_local = json_rows(vec![
+        json!({"id": "l-kamin", "artist": "Emin", "title": "Kamin", "duration": 210}),
+        json!({"id": "l-fonsi", "artist": "Luis Fonsi", "title": "Despacito", "duration": 229}),
+    ]);
+    let merged = mapper().merge_search_results(json_local, vec![], vec![], &result, &[], true, None);
+    assert_eq!(ids(&merged.0), ["l-kamin", "l-fonsi", "e-far", "e-nolength"]);
+
+    let xml_local = vec![
+        xml_row(
+            "song",
+            &[("id", "l-kamin"), ("artist", "Emin"), ("title", "Kamin"), ("duration", "210")],
+        ),
+        xml_row(
+            "song",
+            &[("id", "l-fonsi"), ("artist", "Luis Fonsi"), ("title", "Despacito"), ("duration", "229")],
+        ),
+    ];
+    let merged = mapper().merge_search_results(xml_local, vec![], vec![], &result, &[], false, None);
+    assert_eq!(ids(&merged.0), ["l-kamin", "l-fonsi", "e-far", "e-nolength"]);
+}
+
+#[test]
+fn a_library_row_without_a_length_merges_by_key_alone() {
+    let result = external(vec![timed("e-cyr", "Эмин", "Камин", Some(210))], vec![], vec![]);
+    let local = json_rows(vec![json!({"id": "l-kamin", "artist": "Emin", "title": "Kamin"})]);
+    let merged = mapper().merge_search_results(local, vec![], vec![], &result, &[], true, None);
+    assert_eq!(ids(&merged.0), ["l-kamin", "e-cyr"]);
+}
+
+#[test]
+fn outside_songs_are_never_merged_with_each_other_and_a_typo_stays() {
+    let result = external(
+        vec![
+            timed("e-1", "Emin", "Kamin", Some(210)),
+            timed("e-2", "Эмин", "Камин", Some(210)),
+            timed("e-typo", "Imagine Dragons", "Beleiver", Some(204)),
+        ],
+        vec![],
+        vec![],
+    );
+    let local = json_rows(vec![
+        json!({"id": "l-believer", "artist": "Imagine Dragons", "title": "Believer", "duration": 204}),
+    ]);
+    let merged = mapper().merge_search_results(local, vec![], vec![], &result, &[], true, None);
+    assert_eq!(ids(&merged.0), ["l-believer", "e-1", "e-2", "e-typo"]);
+}

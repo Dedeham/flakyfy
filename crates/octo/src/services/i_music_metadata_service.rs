@@ -3,10 +3,13 @@
 //! The C# methods that took a `CancellationToken` drop it here: a caller that gives up drops the
 //! future, which stops the work at its next await as the token did.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use octo_core::models::domain::{Album, Artist, Song};
 use octo_core::models::search::SearchResult;
 use octo_core::models::subsonic::ExternalPlaylist;
+use tokio::task::JoinHandle;
 
 /// Interface for external music metadata search service
 /// (Deezer API, Spotify API, MusicBrainz, etc.)
@@ -52,6 +55,26 @@ pub trait IMusicMetadataService: Send + Sync {
     /// pinned is kept, and the shim's background lane is used.
     async fn resolve_top_durations(&self, _songs: &mut [Song], _background: bool) {}
 
+    /// [`Self::resolve_top_durations`] for a caller that waits at most `budget`: the rows
+    /// resolved by then carry their video's length, and the others keep the length they have
+    /// and are resolved in the background, as when `background` is true, without `songs` being
+    /// touched again. Returns that background work while it still runs, for a caller whose next
+    /// step must come after it. The default waits for the whole foreground pass at most
+    /// `budget` and leaves nothing running.
+    async fn resolve_top_durations_within(
+        &self,
+        songs: &mut [Song],
+        budget: Duration,
+    ) -> Option<JoinHandle<()>> {
+        let _ = tokio::time::timeout(budget, self.resolve_top_durations(songs, false)).await;
+        None
+    }
+
+    /// Gives outside rows from an earlier answer the length the registry now holds for them:
+    /// the pinned video's length once a lookup pinned one, else the remembered length for a
+    /// row that has none. Reads the registry only; nothing is looked up.
+    fn refresh_song_lengths(&self, _songs: &mut [Song]) {}
+
     /// Looks up the length of one outside song that has none known yet, right away and on the
     /// interactive lane, for a caller that answers with this one song (getSong). The video
     /// found is pinned for playback, so the length shown is the length that plays. A song
@@ -71,6 +94,15 @@ pub trait IMusicMetadataService: Send + Sync {
     /// prewarm where the controller only has the scrobbled song id and the
     /// upcoming-songs list it stored at search time.
     async fn prewarm_you_tube_ids_for_song_ids(&self, _song_ids: &[String], _top_n: usize) {}
+
+    /// Readies the first `count` outside songs of `song_ids`, in order, to start playing at
+    /// once: a song with no video gets one, and a video whose stream was never resolved has
+    /// it resolved, so the shim holds its stream URL when the play arrives. For the songs that
+    /// play next in a queue. Returns the ids of the songs it took on, so a wider prewarm can
+    /// leave them out.
+    async fn prewarm_next_streams(&self, _song_ids: &[String], _count: usize) -> Vec<String> {
+        Vec::new()
+    }
 
     /// Best-effort pre-fetch of cover art for the first N songs of a freshly-built
     /// search result, so a client that renders them a moment later finds the image

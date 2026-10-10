@@ -1203,6 +1203,16 @@ impl IMusicMetadataService for SoulseekMetadataService {
         futures::future::join_all(tasks).await;
     }
 
+    fn prefetch_top_videos(&self, songs: &[Song]) {
+        for song in songs
+            .iter()
+            .filter(|s| !s.is_local)
+            .take(TOP_DURATION_RESOLVE_LIMIT)
+        {
+            self.inner.youtube.prefetch_music_song(&song.artist, &song.title);
+        }
+    }
+
     async fn resolve_top_durations_within(
         &self,
         songs: &mut [Song],

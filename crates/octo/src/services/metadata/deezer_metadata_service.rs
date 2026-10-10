@@ -88,6 +88,7 @@ enum Cached {
 /// Result of one Deezer call. Deezer answers HTTP 200 even when it is refusing the
 /// request, so "we parsed a document" is not the same as "the call succeeded", and
 /// callers must never cache anything derived from a transient failure.
+#[derive(Clone)]
 struct DeezerResponse {
     doc: Option<Value>,
 
@@ -102,6 +103,13 @@ impl DeezerResponse {
             doc: None,
             transient: true,
         }
+    }
+}
+
+/// A call that never answered (its task ended early) is transient, never "nothing found".
+impl Default for DeezerResponse {
+    fn default() -> Self {
+        Self::transient()
     }
 }
 
@@ -139,6 +147,10 @@ struct Inner {
     in_flight_artists: InFlight<Vec<ArtistHit>>,
     in_flight_counts: InFlight<Option<i32>>,
     in_flight_albums: InFlight<AlbumLookup>,
+
+    /// Calls running, by lane and address: a caller asking for what another is already
+    /// asking joins it instead of spending a second request of the budget.
+    in_flight_calls: InFlight<DeezerResponse>,
     /// The chart and artist top lists on their way (`deezer_charts.rs`).
     in_flight_charts: InFlight<Option<Arc<Vec<octo_core::charts::top_songs::CatalogTrack>>>>,
 }
@@ -172,6 +184,7 @@ impl DeezerMetadataService {
                 in_flight_artists: InFlight::new(),
                 in_flight_counts: InFlight::new(),
                 in_flight_albums: InFlight::new(),
+                in_flight_calls: InFlight::new(),
                 in_flight_charts: InFlight::new(),
             }),
         }
@@ -1396,6 +1409,17 @@ impl DeezerMetadataService {
     }
 
     async fn get_json(&self, url: &str, background: bool) -> DeezerResponse {
+        let this = self.clone();
+        let address = url.to_string();
+        self.inner
+            .in_flight_calls
+            .run(&format!("{background}|{url}"), async move {
+                this.fetch_json(&address, background).await
+            })
+            .await
+    }
+
+    async fn fetch_json(&self, url: &str, background: bool) -> DeezerResponse {
         // Genre names in album payloads localize to the caller's IP country
         // unless this header pins them. Read per request, so a settings
         // change reaches the next lookup without a restart.

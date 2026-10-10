@@ -1,14 +1,18 @@
 //! Port of `Services/YouTube/YouTubeResolver.cs`: the client for the yt-dlp shim.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::{BoxFuture, Shared};
 use octo_core::settings::SettingsStore;
 use octo_core::soulseek::StreamFacts;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
+use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
-use super::you_tube_music_client::{YouTubeMusicClient, pick_song};
+use super::you_tube_music_client::{YouTubeMusicClient, YtmRow, pick_song};
+use crate::services::framework::InFlight;
 
 /// One video the shim found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -50,7 +54,11 @@ pub struct YouTubeResolver {
     /// answer). Held while a read is in flight, so callers at the same moment share one read.
     busy_cache: tokio::sync::Mutex<Option<(tokio::time::Instant, Option<ShimBusy>)>>,
     /// YouTube Music through the same shim; off while the shim's address is not set.
-    music: YouTubeMusicClient,
+    music: Arc<YouTubeMusicClient>,
+    /// YouTube Music searches running, by query.
+    music_lookups: InFlight<Option<Vec<YtmRow>>>,
+    /// YouTube Music searches sent to the shim at once: the shim's own YTM_MAX_CONCURRENT.
+    music_gate: Arc<Semaphore>,
 }
 
 /// How busy the shim is, from its `/health`.
@@ -95,6 +103,9 @@ impl YouTubeResolver {
     /// Rows one YouTube Music lookup asks for.
     pub const MUSIC_ROWS: i32 = 5;
 
+    /// YouTube Music lookups sent to the shim at once.
+    pub const MUSIC_AT_ONCE: usize = 3;
+
     /// Reads `YouTube:ShimUrl` once: the address is deliberately captured at startup (it is a
     /// restart-only setting; see RestartTracker).
     pub fn new(settings: &SettingsStore) -> Self {
@@ -122,7 +133,9 @@ impl YouTubeResolver {
             stream_client,
             base_url: Self::resolve_base_url(configured),
             busy_cache: tokio::sync::Mutex::new(None),
-            music: YouTubeMusicClient::with_shim_url(shim),
+            music: Arc::new(YouTubeMusicClient::with_shim_url(shim)),
+            music_lookups: InFlight::new(),
+            music_gate: Arc::new(Semaphore::new(Self::MUSIC_AT_ONCE)),
         }
     }
 
@@ -237,29 +250,8 @@ impl YouTubeResolver {
     /// failed or unreachable), or when the shim's address is not set; the caller then asks
     /// yt-dlp. The hit names no stream, since YouTube Music only searches.
     pub async fn music_song(&self, artist: &str, title: &str, length: Option<i32>) -> Option<YouTubeHit> {
-        if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
-            return None;
-        }
+        let rows = self.music_rows(artist, title)?.await?;
         let query = format!("{artist} {title}");
-        let lookup = self.music.search_limited(&query, "songs", Self::MUSIC_ROWS);
-        let rows = match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
-            Ok(Ok(Some(rows))) => rows,
-            Ok(Ok(None)) => {
-                debug!("YouTube Music could not answer for '{query}'");
-                return None;
-            }
-            Ok(Err(e)) => {
-                debug!("YouTube Music failed for '{query}': {e}");
-                return None;
-            }
-            Err(_) => {
-                debug!(
-                    "YouTube Music did not answer within {:?} for '{query}'",
-                    Self::MUSIC_TIMEOUT
-                );
-                return None;
-            }
-        };
         let Some(row) = pick_song(artist, title, length, &rows) else {
             debug!("no YouTube Music row is '{query}' (length {length:?})");
             return None;
@@ -271,6 +263,57 @@ impl YouTubeResolver {
             channel: None,
             stream: StreamFacts::default(),
         })
+    }
+
+    /// Starts YouTube Music's songs search for `artist - title` without waiting for it, so a
+    /// [`Self::music_song`] for the song moments later joins it instead of starting its own.
+    pub fn prefetch_music_song(&self, artist: &str, title: &str) {
+        let _ = self.music_rows(artist, title);
+    }
+
+    /// YouTube Music's songs rows for `artist - title`, from one request shared by every caller
+    /// asking while it runs. It waits at most [`Self::MUSIC_TIMEOUT`] for its turn
+    /// ([`Self::MUSIC_AT_ONCE`]) and as long again for the answer. None (no future) when the shim's
+    /// address is not set or there is nothing to search for; the future answers None when
+    /// YouTube Music could not answer.
+    fn music_rows(
+        &self,
+        artist: &str,
+        title: &str,
+    ) -> Option<Shared<BoxFuture<'static, Option<Vec<YtmRow>>>>> {
+        if !self.music.configured() || (artist.trim().is_empty() && title.trim().is_empty()) {
+            return None;
+        }
+        let query = format!("{artist} {title}");
+        let music = Arc::clone(&self.music);
+        let gate = Arc::clone(&self.music_gate);
+        Some(self.music_lookups.run(&query.to_lowercase(), async move {
+            // As many at once as the shim runs, so the time cap counts the lookup itself and
+            // not a wait in the shim's queue.
+            let _permit = tokio::time::timeout(Self::MUSIC_TIMEOUT, gate.acquire_owned())
+                .await
+                .ok()?
+                .ok()?;
+            let lookup = music.search_limited(&query, "songs", Self::MUSIC_ROWS);
+            match tokio::time::timeout(Self::MUSIC_TIMEOUT, lookup).await {
+                Ok(Ok(Some(rows))) => Some(rows),
+                Ok(Ok(None)) => {
+                    debug!("YouTube Music could not answer for '{query}'");
+                    None
+                }
+                Ok(Err(e)) => {
+                    debug!("YouTube Music failed for '{query}': {e}");
+                    None
+                }
+                Err(_) => {
+                    debug!(
+                        "YouTube Music did not answer within {:?} for '{query}'",
+                        Self::MUSIC_TIMEOUT
+                    );
+                    None
+                }
+            }
+        }))
     }
 
     /// Fast metadata-only lookup via the shim's /meta (flat search, no URL
@@ -925,6 +968,31 @@ mod tests {
                 stream: StreamFacts::default(),
             })
         );
+    }
+
+    /// A lookup started ahead is joined by the pick that follows it: one request to the shim.
+    #[tokio::test]
+    async fn a_prefetched_lookup_is_joined_by_the_pick() {
+        let shim = MockServer::start().await;
+        Mock::given(path("/ytm/search"))
+            .and(query_param("q", "Adele Hello"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(HELLO_ROWS)
+                    .set_delay(Duration::from_millis(300)),
+            )
+            .expect(1)
+            .mount(&shim)
+            .await;
+        let resolver = YouTubeResolver::with_base_url(Some(&shim.uri()));
+
+        resolver.prefetch_music_song("Adele", "Hello");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let started = std::time::Instant::now();
+        let hit = resolver.music_song("Adele", "Hello", Some(296)).await;
+
+        assert_eq!(hit.map(|h| h.video_id).as_deref(), Some("atv1"));
+        assert!(started.elapsed() < Duration::from_millis(300));
     }
 
     /// A busy or failed YouTube Music, a row too far from the known length, a slow answer and a

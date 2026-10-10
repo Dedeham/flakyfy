@@ -35,6 +35,7 @@ use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind};
 use octo_core::settings::{ExplicitFilter, GeneratedPlaylistSettings, SettingsStore};
 use octo_subsonic::subsonic_response_builder::SubsonicResponseBuilder;
 use parking_lot::Mutex;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -92,9 +93,10 @@ pub struct GeneratedPlaylistService {
     marks: MemoryCache<Arc<MarksById>>,
     /// The same read's songs, as Navidrome described them, for Liked Songs.
     starred_songs: MemoryCache<Arc<Vec<Node>>>,
-    /// Ratings set through Octo, per listener: Navidrome lists ratings only on hearted songs,
-    /// so these keep the rest of a list current.
-    rated: Mutex<HashMap<String, IndexMap<String, i64>>>,
+    /// Ratings set through Octo, per listener, with when: Navidrome lists ratings only on
+    /// hearted songs, so these keep the rest of a list current for as long as a read of the
+    /// hearts is (a rating changed in another app since is not seen here).
+    rated: Mutex<HashMap<String, IndexMap<String, (i64, Instant)>>>,
     state: Mutex<Mixes>,
     /// What New Releases needs (the C# resolved them from a scope when it built the list):
     /// None leaves New Releases as it was, as a provider without them did.
@@ -1059,7 +1061,7 @@ impl GeneratedPlaylistService {
             let mut rated = self.rated.lock();
             let mine = rated.entry(user).or_default();
             mine.shift_remove(id);
-            mine.insert(id.to_string(), rating);
+            mine.insert(id.to_string(), (rating, Instant::now()));
             while mine.len() > RATED_KEPT {
                 mine.shift_remove_index(0);
             }
@@ -1081,13 +1083,20 @@ impl GeneratedPlaylistService {
     }
 
     /// Puts the listener's hearts and ratings as they are now onto library songs drawn
-    /// earlier. Outside songs keep their own marks, which Navidrome does not hold.
+    /// earlier. Outside songs keep their own marks, which Navidrome does not hold. A hearted
+    /// song's rating is the one Navidrome read; a rating set through Octo counts for the rest,
+    /// for a minute.
     pub fn overlay(&self, username: &str, songs: &mut [Node], marks: &MarksById) {
-        let rated = self
+        let rated: HashMap<String, i64> = self
             .rated
             .lock()
             .get(&user_key(username))
-            .cloned()
+            .map(|mine| {
+                mine.iter()
+                    .filter(|(_, (_, at))| at.elapsed() < MARKS_FOR)
+                    .map(|(id, (rating, _))| (id.clone(), *rating))
+                    .collect()
+            })
             .unwrap_or_default();
         for song in songs {
             let Some(fields) = song.as_object_mut() else {
@@ -1108,7 +1117,12 @@ impl GeneratedPlaylistService {
                     fields.shift_remove("starred");
                 }
             }
-            match mark.and_then(|m| m.rating).or_else(|| rated.get(&id).copied()) {
+            // Navidrome leaves a hearted song's rating of 0 out, so a heart read without one is 0.
+            let rating = match mark {
+                Some(mark) => Some(mark.rating.unwrap_or(0)),
+                None => rated.get(&id).copied(),
+            };
+            match rating {
                 Some(0) => {
                     fields.shift_remove("userRating");
                 }

@@ -550,6 +550,42 @@ async fn a_rating_set_through_octo_reaches_unhearted_songs_and_zero_clears_it() 
     assert!(bobs[0].get("userRating").is_none());
 }
 
+#[tokio::test]
+async fn a_rating_set_through_octo_lapses_after_a_minute() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    lists.rated("alice", "b", 3);
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    let mut songs = vec![song_node(r#"{"id":"b"}"#)];
+    lists.overlay("alice", &mut songs, &MarksById::new());
+
+    assert!(songs[0].get("userRating").is_none());
+}
+
+#[tokio::test]
+async fn a_fresh_read_that_disagrees_wins_over_a_rating_set_through_octo() {
+    let fixture = fixture().await;
+    let lists = service(&fixture, GeneratedPlaylistSettings::default());
+    lists.rated("alice", "a", 4);
+    // Read since: hearted, and unrated on Navidrome (which leaves a rating of 0 out).
+    let marks: MarksById = [(
+        "a".to_string(),
+        Marks {
+            starred: Some("2026-10-09T10:00:00Z".into()),
+            rating: None,
+        },
+    )]
+    .into_iter()
+    .collect();
+    let mut songs = vec![song_node(r#"{"id":"a"}"#)];
+
+    lists.overlay("alice", &mut songs, &marks);
+
+    assert!(songs[0].get("userRating").is_none());
+}
+
 // ---- Country mixes ---------------------------------------------------------------------------
 
 /// MusicBrainz as a table, counting what it is asked.

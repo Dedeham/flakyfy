@@ -1,7 +1,10 @@
 # Design: 30-day retention cleanup
 
 Issue FLA-16. Written for the Security sign-off, and as the input to the build issue FLA-24.
-This is a design. It changes no code and nothing in it has been run. Every claim about Octo cites
+This is a design. It changes no code and nothing in it has been run. The Security review of this
+design is on the FLA-16 Linear issue (comment `[Security agent] Approved (design).`); its 19
+conditions for the build are in section 11, and the body below has been changed where it conflicted
+with them. `docs/modules.md`, which section 8 relies on, comes from FLA-8 and is not on `main` yet. Every claim about Octo cites
 the file it was read from (line numbers drift; search for the symbol if one is off). Where a claim
 is about Navidrome behaviour that this repository cannot prove, it is marked **verify** and
 FLA-24 must check it against the pinned Navidrome in the FLA-12 harness before relying on it.
@@ -34,8 +37,14 @@ works out what Octo can and cannot learn, and from which credential.
 - **Playlists: readable for all users.** `LibraryActionPlaylistWorker` lists every playlist with
   the admin token and reads each playlist's `ownerName` (`LibraryActionPlaylistWorker.cs:78-100,
   192-205`), and `NavidromePlaylistApi` says an admin may edit any user's playlist (`:11-14`).
-  Reading private playlists of others as admin is therefore already how Octo works. **verify**
-  that the native list returns private playlists of all users on the pinned version.
+  Reading private playlists of others as admin is therefore already how Octo works. This is
+  checked at run time, not assumed. Each covered user's snapshot also records the ids of the
+  playlists that user can see as themselves (`getPlaylists` with their verified credentials). The
+  admin's playlist list must contain every one of those ids, and every owner it shows must be in
+  Navidrome's user list (`/api/user`). If a playlist a user sees is missing from the admin's list,
+  or an owner is unknown, the admin does not see everything and the run ends
+  `skipped_playlist_visibility`. Also **verify** this on the pinned version in the FLA-12 harness
+  (condition 18). The snapshot then stores playlist ids as well as song ids and dates.
 - **Plays, favorites (hearts) and ratings: per user, in Navidrome, and not readable with the
   admin credential for anybody else.** Navidrome keeps them per user; Octo reads them "as the
   listener, so each song carries their own playCount, played (last played), starred and
@@ -54,12 +63,14 @@ as having played nothing. That is the failure this design exists to prevent.
 | # | Option | Covers | Cost and risk | Verdict |
 |---|---|---|---|---|
 | A | **Protection snapshots taken from live requests.** When a user's request passes through Octo with credentials Octo has just verified, a background step (rate-limited, at most once per user per day) uses that same request's credentials to read that user's starred items, ratings and last-played dates, and stores only the derived facts (song ids and dates, never the credential). | Every user who uses Octo at least once per snapshot window | No new secret stored, no new service, same pattern as `StarOnArrival` and Made for you (which already walks the library as the listener, `GeneratedPlaylistService.WalkLibraryAsync` :442). A user who does not appear for longer than the window is "uncovered" and handled by section 5.2. Direct-to-Navidrome plays are still seen, because the snapshot reads Navidrome's own record | **Recommended default** |
-| B | Navidrome's database mounted read-only into Octo and read directly | All users, all history, no credentials | A new mount and a dependency on Navidrome's internal schema (**verify**), which can change between releases; compose currently uses `deluan/navidrome:latest` (`docker-compose.yml:474`) | Needs human approval. Offer as an opt-in alternative |
-| C | Each user hands Octo a long-lived Navidrome API key | Everyone who does it | A new stored credential class. `docs/security-requirements.md` R1.5 allows tokens a user hands Octo if stored apart from `settings.json`, keyed by user, `0600`, and removed on disconnect, but a full-access key held at rest is the most sensitive thing Octo would keep | Not recommended. Needs human approval |
+| B | Navidrome's database mounted read-only into Octo and read directly | All users, all history, no credentials | Security: gives Octo every user's password material and API keys, not just play data, and Octo runs as root (SEC-11). Also ties Octo to Navidrome's internal schema (**verify**), which can change between releases, and needs a live SQLite database with its WAL files opened read-only. Compose currently uses `deluan/navidrome:latest` (`docker-compose.yml:474`) | **Not recommended (Security).** Needs written human approval |
+| C | Each user hands Octo a long-lived Navidrome API key | Everyone who does it | Security: the highest-risk class under R1.5, because the key is full access and long-lived. R1.5 allows tokens a user hands Octo if stored apart from `settings.json`, keyed by user, `0600`, removed on disconnect, but a full-access key held at rest is the most sensitive thing Octo would keep | **Not recommended (Security).** Needs written human approval |
 | D | A play ledger kept by Octo from the plays it proxies (`rest/scrobble`, `rest/stream`) | Plays through Octo only, from the day it starts | History is empty at first, so alone it can never show "no plays for 30 days" | Used only as a cheap extra check (section 4.4), not as the source |
 
-**Decision for the design: Option A, with the extra checks from section 4.** B and C are listed so
-the human can choose them; nothing below depends on them.
+**Decision for the design: Option A, with the extra checks from section 4.** Security found A
+acceptable and the right default (it stores no secret; a snapshot holds only song ids, dates and
+flags). B and C are recorded as not recommended and need written human approval; nothing below
+depends on them. Snapshot rules (keying, files, lifetime) are conditions 13, 14 and 16.
 
 ### 2.4 What happens for users whose credentials Octo does not hold
 
@@ -101,7 +112,7 @@ are raised to 30 so a typo cannot shorten the window).
 |---|---|---|---|
 | E1 | The file has a mapping in `.mappings.json` and Navidrome resolves its id to the same full path | `LocalLibraryService`, `NavidromeSongPathResolver` native leg | See 4.2 |
 | E2 | Age: `T` minus the latest of the mapping's `DownloadedAt`, the file's last write time and the newest journal entry for it is at least `W` | mapping, file system, `LibraryActionJournal` | A song hearted yesterday and not yet played is protected by this alone. A Better quality swap resets the clock |
-| E3 | **Last play, every user.** For every Navidrome user, the user's last played time for the song (`played`) is missing or at least `W` before `T`. A time that cannot be parsed, or is in the future, counts as recent | one snapshot per user (2.3 A); parse like `ForYouLists.Played` (`:170`) | "Missing" is only trusted for a covered user |
+| E3 | **Last play, every user.** For every Navidrome user, the user's last played time for the song (`played`) is missing or at least `W` before `T`. A time that cannot be parsed, is in the future, or has **no UTC offset** counts as recent | one snapshot per user (2.3 A) | "Missing" is only trusted for a covered user. All times are UTC. `ForYouLists.Played` (`:170`) parses with `RoundtripKind` and then calls `ToUniversalTime`, which treats a value without an offset as local time; retention must not reuse it as it is, and must reject such a value instead |
 | E4 | **Favorites/hearts, every user.** Not starred by any user as a song, and neither the song's album nor its artist is starred by any user | snapshots: `getStarred2` returns songs, albums and artists | An album heart downloads the whole album (`architecture.md` section 3), so an album or artist heart protects every song of it. Conservative on purpose |
 | E5 | **Ratings, every user.** No user has rated the song above 0 | snapshots (`userRating`) | See open question 1: a 1-star rating is also the "Delete" command when rating actions are on (`LibraryActionSettings.cs`, `Defaults`), but those act through their own worker; retention does not interpret it |
 | E6 | **Playlists, all users.** In no Navidrome playlist of any owner, public or private, including Octo's own action and notice playlists | admin native `/api/playlist` and every playlist's tracks | Complete read required (4.1). Playlists that Octo serves without writing to Navidrome (Made for you and the genre/decade mixes, `generated-playlists.json`) also protect the songs currently in them |
@@ -174,8 +185,21 @@ There is no single piece of code with this name. What exists, and what retention
 - **Recheck at move time:** immediately before each move, E1 and E6 are read again for that song,
   and the play ledger (Option D: last proxied play/star/playlist-change time per song, from this
   server's own traffic) is consulted. Any activity since the evaluation cancels the move.
-- **Snapshots are bounded in age** (14 days) and a play that happened after the snapshot is the
-  gap that the 30-day trash (section 6) exists to cover, along with the ledger recheck.
+- **Fresh snapshots before a move (conditions 6 and 7).** A snapshot may be up to 14 days old
+  when a song first becomes a candidate, and a play, heart or rating made after it, through a
+  client that bypasses Octo, would be seen by nothing but the trash. To close that window: a song
+  is moved only if **every covered user's snapshot was taken after the song's first evaluation as
+  a candidate** (after the 24 h dwell began). A covered user without such a newer snapshot means
+  the song waits. At move time the file's size, last write time and (where available) file id are
+  captured again and compared with the evaluation, under the same per-song busy lock the library
+  actions use (`LibraryActionExecutor._busy`, `:82`) so a download or action cannot touch the same
+  file; any change cancels the move.
+- **Clock sanity (conditions 8 and 9).** The state file keeps the last run's time. The run is
+  skipped (`skipped_clock`) if `T` is earlier than the last run, if it is more than 3 days after it
+  on the daily schedule, or if `T` differs from Navidrome's reported server time by more than a few
+  minutes. This matters because E2/E3 use the local clock, and because `Sweep` decides what is old
+  by comparing a dated folder name with `UtcNow` (`LibraryActionQuarantine.cs:223-233`): a clock
+  that jumps forward would make everything look old and sweep the trash early.
 
 ## 5. When to do nothing
 
@@ -189,7 +213,10 @@ The whole run does nothing, removes nothing, and records why, in each of these c
 | Any list was read incompletely (4.1) | `aborted_incomplete` |
 | Any user uncovered and not ignored (2.4) | `skipped_uncovered` |
 | **Play history missing**: a covered user's snapshot has no play dates for any song at all while the library has songs; or the oldest snapshot data is younger than `W` (Octo cannot yet say "30 days with no play"); or Navidrome reports a scan in progress | `skipped_no_history` |
-| Library looks wrong: the music root is missing or empty, or Navidrome's song count dropped more than 20 % since the last run | `aborted_library_changed` |
+| Library looks wrong: the music root is missing or empty, Navidrome's song count is zero or unreadable, or it dropped more than 20 % since the last run (no division by zero) | `aborted_library_changed` |
+| The clock check of section 4.4 fails | `skipped_clock` |
+| The playlist owners seen do not match the user list (section 2.2) | `skipped_playlist_visibility` |
+| Navidrome's version differs from the one the verify items were checked against (condition 18) | `aborted_version` |
 | A cap would be exceeded (section 7) | `aborted_cap` |
 | The journal or the module's state file cannot be written | `aborted_no_journal` (the file must not move until the record is on disk, as `LibraryActionExecutor` does, `:236-247`) |
 
@@ -218,22 +245,31 @@ retention either useless or harmful:
    `LibraryActions:Enabled` and `PlaylistsEnabled` are on (`:80-81`) and an action playlist is
    wanted. With Library actions off (the default), retention would fill the trash and never free
    space. The retention module calls `Sweep` itself on its own schedule, and its docs say the
-   trash window is shared.
+   trash window is shared. That sweep applies the same clock check as the run, never runs in dry
+   run or with the retention switch off, skips any dated folder that is a link, and does not
+   follow links (condition 9).
 2. **A retention removal must not block re-download.** A Delete action's journal entry makes the
    song "not downloaded again" (`LibraryActionEntry.BlocksDownloads`, `LibraryActionJournal.cs:54`).
    A song removed for being unplayed is not something the user rejected: if somebody hearts it
    later it must download again. The retention entries use a new `LibraryAction` value, appended
    at the end of the enum (the journal stores numbers, `LibraryActionSettings.cs`, the comment on
-   `LibraryAction`), and `BlocksDownloads` must be false for it. Restore from the dashboard's
+   `LibraryAction`), and `BlocksDownloads` must be false for it (it is true only for `Delete`,
+   `LibraryActionJournal.cs:54-55`). **`LibraryActionJournal.Resolve` (`:237-280`) must handle the
+   new value explicitly.** Today every non-Delete action is treated as "a replacement was being
+   fetched": a Pending entry whose file is in the trash goes down that branch and calls
+   `restoreOriginal`, putting the file back. That is the safe direction but the wrong logic. For
+   retention: Pending with the file in the trash completes as Applied; Pending with the source
+   still present completes as Failed, with no restore. Both are tested (condition 11). Restore from the dashboard's
    trash list (`LibraryEditService.RestoreAsync` :191) currently matches only `Delete` entries,
    so restoring a retention entry needs a small, admin-only addition there (R3.3).
 3. **Navidrome only forgets the song at the next scan.** After a move, request a rescan the way
    the actions do (`LibraryRescan.Soon`, `LibraryEditService.cs:185-209`), and drop the mapping
    (`ForgetMappingAsync`, kept in the manifest so a restore re-links it).
 
-Shared journal limit: the journal keeps 2000 entries (`LibraryActionJournal.cs:74`), so a run's
-full report is kept in the module's own file (section 8), and the journal holds one entry per
-moved song.
+Shared journal limit: the journal keeps 2000 entries (`LibraryActionJournal.cs:74`, trimmed by
+`Trim`), so it cannot be the only record of a bulk removal. The per-run report and each trash
+manifest are the durable record: the manifest is written before the journal entry is completed,
+and reports are kept for the full trash window (condition 12).
 
 ## 7. Dry run, caps, and the report
 
@@ -246,7 +282,9 @@ moved song.
   `MaxLibraryPercent` (default 5 %) of the library. If more are eligible, the run **aborts**
   (`aborted_cap`) rather than taking the first 25: a sudden large count means the data is wrong,
   not that the library is suddenly full of dead songs. The cap is a ceiling, not a throttle.
-  Hard-coded upper bounds apply whatever is configured.
+  Hard-coded upper bounds apply whatever is configured. On top of that there is a **rolling
+  cap**, default at most 100 songs in 7 days, also with a hard upper bound, because the per-run cap
+  alone would let a consistent data error remove 25 songs every day (condition 10).
 - **Report**, one JSON file per run (`retention-report-<timestamp>.json` under the config
   folder, last 30 kept) and a dashboard view. It contains:
   - run state, dry-run flag, times, the Navidrome and music-root identity, counts;
@@ -259,8 +297,11 @@ moved song.
     `kept`, `lidarr`, `too new`, `pending acquisition`), so an admin can see the rule working
     and notice a reason that looks wrong;
   - everything that stopped the run, in words.
-  Usernames and titles appear in the report, so the endpoint is admin-only and answers
-  `Cache-Control: no-store` (R3.3, R3.6).
+  The report shows an Octo admin per-user listening data, which an admin cannot otherwise read
+  from Navidrome. So: per song it shows the reason class and the users' names, and only the date
+  of the most recent play per user; the endpoint is admin-only and answers `Cache-Control:
+  no-store` (R3.3, R3.6); the file is created `0600`; reports older than 30 days are deleted; and
+  the README says that the report shows listening dates to an Octo admin (conditions 13, 14).
 
 ## 8. Module boundary (per `docs/modules.md`)
 
@@ -272,6 +313,7 @@ moved song.
 | Registration | one line in `Program.cs`: `builder.Services.AddRetentionModule(builder.Configuration);` |
 | Controller | `octo/Controllers/RetentionController.cs`, under `/api/admin/retention`: read the latest report, run a dry-run now, apply. All admin-session only; the apply action refuses unless dry-run is off and the latest report is recent |
 | Tests | `octo.Tests/Retention/` |
+| Dependency | This section follows `docs/modules.md`, which comes from FLA-8 and is not on `main` yet |
 | Hotspot edits | The one `Program.cs` line; the snapshot trigger needs a call from the Subsonic proxy path (it observes a verified request). That is an edit to `SubSonicController*.cs`, a hotspot, and per `docs/modules.md` should be a single call into the module after the credential check, claimed first. Alternative that avoids it: take the snapshot from the existing `CredentialCheck`/`RequestIdentity` path, which is not a hotspot. FLA-24 picks one |
 
 Off means off: with the switch off the module makes no calls, writes no files, takes no snapshots,
@@ -286,7 +328,8 @@ How each requirement of `docs/security-requirements.md` section 5 is met, and wh
 | Req | Met by |
 |---|---|
 | R5.1 No direct delete; trash with manifest and retention | Only `LibraryActionQuarantine.Move`. Retention contains no `File.Delete`/`Directory.Delete`. The only real deletion is the existing `Sweep` after the trash window (section 6) |
-| R5.2 Path inside root with separator boundary; regular file, no link | `NavidromeSongPathResolver.IsInside` appends the separator (`:328-334`) and `LibraryActionQuarantine.Outside` re-checks, refuses the trash itself, and refuses a reparse point (`:158-168`). **Gap to close in the build:** `Outside` checks only the final file. A directory further up (`/music/Artist -> /elsewhere`) can be a symlink and `IsInside` compares text, so the file would pass. Retention must resolve the real path of the file and of the music root (`ResolveLinkTarget` on every ancestor, or a realpath) and require the real path to be inside the real root, refuse if any ancestor is a link, and require `FileInfo.Exists` as a regular file (not a directory). Add the same to `Outside` since the other actions benefit |
+| R5.2 Path inside root with separator boundary; regular file, no link | `NavidromeSongPathResolver.IsInside` appends the separator (`:328-334`) and `LibraryActionQuarantine.Outside` re-checks, refuses the trash itself, and refuses a reparse point (`:158-168`). **Gap to close in the build (Security finding 1, high):** `Outside` checks only the final file. A directory further up (`/music/Artist -> /elsewhere`) can be a symlink and `IsInside` compares text, so the file would pass. Fix in `Outside` itself, so every action that uses `Move` benefits: resolve the real path of the music root first (the root itself may be a link), require the file's real path to be inside it with a separator boundary, refuse if any directory between the root and the file is a link, and require a regular file, not a directory. Apply it to the move source, the trash destination and `Restore`, and **repeat it immediately before each move** (conditions 1, 2) |
+| (new) Links and devices | A file with a link count above 1 (shared with a seeding folder or the Soulseek share) is skipped and reported as protected, since only its library name would move and no space would be freed (condition 4). The trash must be on the same device as the file, and the copy-then-delete fallback in `Move` (`:117-126`, length check then `File.Delete`) is refused for retention (condition 5). Paths under `.octo-incoming` or the trash, and any file not in `.mappings.json`, are refused in code (condition 3) |
 | R5.3 Dry run default, reports, hard cap per run | Section 7. `DryRun` true, report always written, caps abort the run, upper bounds hard-coded |
 | R5.4 Decision on an id Octo issued, not on text | The candidate is the Navidrome id resolved by the native leg and equal to Octo's own mapping path (4.2). No user-supplied text becomes a path. Titles and artists are used for display only |
 | R5.5 Cleanup deletes only inside one named folder Octo created | Not applicable to the move (it acts on the library on purpose, only on files Octo downloaded, section 3). The sweep deletes only dated folders in `.octo-trash`. Hardening: `Sweep` should skip a dated directory that is a reparse point |
@@ -344,8 +387,8 @@ How each requirement of `docs/security-requirements.md` section 5 is met, and wh
    worker. Treat 1-2 stars as "not protected"? Recommended: no, keep it conservative for v1.
 2. **Album and artist hearts (E4)** protecting every song of the album/artist. Conservative and
    will keep more disk. Recommended: keep as designed.
-3. **Option A vs B vs C** (2.3). A needs no approval. B (read-only database mount) and C (stored API
-   keys) each need written approval under `AGENTS.md` ("adding a new ... dependency").
+3. **Option A vs B vs C** (2.3). A needs no approval. Security does not recommend B (read-only
+   database mount) or C (stored API keys); each needs written human approval (condition 19).
 4. **Uncovered users pause cleanup** (2.4). Confirm that is acceptable on this server, and who
    maintains `IgnoredUsers`.
 5. **Where the snapshot trigger lives** (section 8): in the proxy path (a `SubSonicController*.cs`
@@ -353,3 +396,37 @@ How each requirement of `docs/security-requirements.md` section 5 is met, and wh
 6. **Pin Navidrome.** Compose uses `deluan/navidrome:latest`; several **verify** items depend on
    native API behaviour that can change with it.
 7. Going live (`RETENTION_DRY_RUN=false`) on real data requires written human approval.
+
+## 11. Conditions for the build (Security, FLA-16 sign-off)
+
+Source: the Linear comment `[Security agent] Approved (design).` on FLA-16, which reviewed this
+document at `fa22024` against `docs/security-requirements.md` section 5, R1 and R2. All 19 are
+required of FLA-24, and Security checks them on that PR. Summarised; the comment is the record.
+Where the body above changed because of one, the section is named.
+
+| # | Condition | Body |
+|---|---|---|
+| 1 | Real-path confinement in `Outside`: resolve the real path of the root, require the file's real path inside it with a separator boundary, refuse a link in any directory between, require a regular file. Applied to move source, trash destination and `Restore`, and done immediately before each move | 9 |
+| 2 | Tests: symlinked parent directory, symlinked trash root, symlinked dated trash folder, symlinked ancestor on restore, each ending in no move | 9 |
+| 3 | Refuse `.octo-incoming` and the trash in code, and any file not in `.mappings.json` | 3, 9 |
+| 4 | Skip and report as protected any file with a link count above 1 | 9 |
+| 5 | Same-device trash only; no copy-then-delete fallback; retention code has no `File.Delete` or `Directory.Delete` | 9 |
+| 6 | A song is moved only if every covered user's snapshot was taken after its first evaluation as a candidate; the move-time recheck of E1 and E6 stands | 4.4 |
+| 7 | At move time recapture size, last write time and file id and compare; take the per-song busy lock shared with library actions and downloads; any change cancels | 4.4 |
+| 8 | Clock sanity: skip (`skipped_clock`) if `T` is before the last run, more than about 3 days after it, or differs from Navidrome's time by more than a few minutes | 4.4, 5 |
+| 9 | The sweep retention runs applies the same clock check, never runs in dry run or with the switch off, skips linked dated folders and does not follow links | 4.4, 6 |
+| 10 | Rolling cap (for example 100 songs per 7 days) on top of 25 / 5 %, with hard upper bounds; abort on an empty or unreadable library count | 5, 7 |
+| 11 | New `LibraryAction` value appended; `Resolve` handles it explicitly (Pending with file in trash: Applied; source present: Failed, no restore); tests for both; `BlocksDownloads` false, with a test that a hearted song downloads again | 6 |
+| 12 | Report and trash manifest are the durable record: manifest written before the journal entry completes; reports kept for the full trash window | 6 |
+| 13 | Snapshot and report files: temp file `0600` from the start (R1.4), apart from `settings.json`, in the config folder, one file per user for snapshots, written atomically; if the mode cannot be set the file is not used for per-user data; never served to a non-admin | 7 |
+| 14 | Store the least that works (song id, last-played date, starred and rated flags); the report shows reason class, user names and only the latest play date per user; delete a snapshot when Navidrome no longer lists the user; delete reports after 30 days; README says the report shows listening dates to an Octo admin | 7 |
+| 15 | Apply endpoint: POST only, under `/api/admin/retention`, Navidrome admin session (not recovery, R3.3) plus `AdminRequestGuard`; takes no path or song id; acts only on the latest stored report's candidates, re-verified at that time | 8 |
+| 16 | Snapshot keyed by the username Navidrome returns for the verified credentials, never the `u` parameter alone; reads are all-or-nothing (a failed read keeps the old snapshot); credentials in memory only, never on disk or in logs, no query string logged; the trigger runs after the credential check; claim `SubSonicController*.cs` first if the proxy path is chosen | 2.3, 8 |
+| 17 | Tests per section 9 plus the failure cases of conditions 1-12; with the module off, no outgoing call and no file written | 9 |
+| 18 | Pin Navidrome to a version tag, or record its version in the report and abort when it changes from the one the verify items were checked against (`aborted_version`); settle every verify item in the FLA-12 harness before going live; a failed verify item makes the affected condition skip the run, never act | 2.2, 5, 10 |
+| 19 | Going live (`RETENTION_DRY_RUN=false`) on real data, and choosing option B or C, each need written human approval; the first live run must follow a dry-run report a human has read | 7, 10 |
+
+**QA gaps folded in** (QA comment on FLA-16): the post-snapshot window (condition 6); a runtime
+fail-closed check that the admin sees every user's private playlists (section 2.2,
+`skipped_playlist_visibility`); UTC-only dates, rejecting `played` values without an offset
+(E3); and the `docs/modules.md` dependency on FLA-8 (header and section 8).

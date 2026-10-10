@@ -164,7 +164,7 @@ async fn a_wide_picture_is_no_cover() {
 /// Apple's master without a search.
 #[tokio::test]
 async fn priming_matches_barcodes_at_apple_in_bulk() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let art = |name: &str| format!("{}/image/{name}/100x100bb.jpg", server.uri());
     serve_json(
         &server,

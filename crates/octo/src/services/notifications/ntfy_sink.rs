@@ -96,7 +96,7 @@ mod tests {
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     async fn build(topic_path: &str, token: &str) -> (NtfySink, MockServer) {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)

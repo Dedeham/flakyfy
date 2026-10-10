@@ -769,7 +769,7 @@ async fn build_with_soulseek(
         folders: Arc::new(Mutex::new(None)),
         state: Arc::new(Mutex::new(SlskdState::default())),
     };
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(slskd.clone())
         .mount(&server)

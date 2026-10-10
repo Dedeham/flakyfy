@@ -60,7 +60,7 @@ fn query(request: &Request, name: &str) -> String {
 }
 
 async fn serve(fixture: Fixture) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any()).respond_with(fixture).mount(&server).await;
     server
 }

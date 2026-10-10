@@ -262,7 +262,7 @@ mod tests {
     /// it, with the listener's own token.
     #[tokio::test]
     async fn a_listen_is_submitted_with_the_listeners_token_and_every_field() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path("/1/submit-listens"))
             .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"status":"ok"}"#))
@@ -311,7 +311,7 @@ mod tests {
     /// Rust-only: nothing is sent without a token or a song, and a refusal is false.
     #[tokio::test]
     async fn nothing_goes_without_a_token_and_a_refusal_is_false() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(401).set_body_string(" bad token "))
             .mount(&server)

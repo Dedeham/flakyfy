@@ -244,7 +244,7 @@ mod tests {
     /// that needs undoing, so its rating stays. Any other consumed rating is cleared.
     #[tokio::test]
     async fn rating_worker_never_clears_a_keep_but_clears_another_consumed_rating() {
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         let responder = RatingNavidrome::default();
         Mock::given(any())
             .respond_with(responder.clone())

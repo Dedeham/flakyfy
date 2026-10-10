@@ -215,7 +215,7 @@ impl Respond for TokenNavidrome {
 }
 
 async fn api(navidrome: &TokenNavidrome, http: reqwest::Client) -> (MockServer, NavidromePlaylistApi) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(navidrome.clone())
         .mount(&server)

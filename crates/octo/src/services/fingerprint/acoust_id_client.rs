@@ -153,7 +153,7 @@ mod tests {
     #[tokio::test]
     async fn lookup_posts_the_form_and_reads_a_gzipped_answer() {
         use std::io::Write;
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let json = r#"{"status":"ok","results":[{"id":"x","score":0.9,"recordings":[{"id":"r1","title":"Song","artists":[{"name":"A"}]}]}]}"#;
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(json.as_bytes()).expect("compresses");

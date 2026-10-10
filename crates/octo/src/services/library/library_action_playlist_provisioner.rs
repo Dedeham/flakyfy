@@ -202,7 +202,7 @@ mod tests {
     /// user's own sign-in and never an id that would make it an edit.
     #[tokio::test]
     async fn the_missing_playlists_are_created_once_as_the_user() {
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         Mock::given(path("/rest/createPlaylist"))
             .respond_with(
                 ResponseTemplate::new(200)

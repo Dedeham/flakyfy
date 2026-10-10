@@ -414,7 +414,7 @@ async fn walk_worker(
     tracks: usize,
     fail_second_page: bool,
 ) -> (MockServer, DuplicateScanWorker, Arc<Mutex<Vec<String>>>) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/auth/login"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(

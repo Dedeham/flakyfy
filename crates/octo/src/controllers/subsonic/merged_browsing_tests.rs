@@ -179,13 +179,13 @@ struct Merged {
 impl Merged {
     async fn new() -> Merged {
         let navidrome = FakeNavidrome::default();
-        let navidrome_server = MockServer::start().await;
+        let navidrome_server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(navidrome.clone())
             .mount(&navidrome_server)
             .await;
         let deezer = FakeDeezer::default();
-        let deezer_server = MockServer::start().await;
+        let deezer_server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(deezer.clone())
             .mount(&deezer_server)

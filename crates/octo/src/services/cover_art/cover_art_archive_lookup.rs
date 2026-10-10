@@ -82,7 +82,7 @@ mod tests {
     /// another host is followed.
     #[tokio::test]
     async fn the_release_comes_before_its_group_and_redirects_are_followed() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let elsewhere = format!("http://localhost:{}/archive/front.jpg", server.address().port());
         Mock::given(path("/release-group/g1/front-1200"))
             .respond_with(ResponseTemplate::new(307).insert_header("location", elsewhere.as_str()))

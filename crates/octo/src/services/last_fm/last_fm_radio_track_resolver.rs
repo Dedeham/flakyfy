@@ -461,7 +461,7 @@ mod tests {
     use crate::services::test_support::received;
 
     async fn resolver(body: &str, metadata: Arc<FakeMetadata>) -> (LastFmRadioTrackResolver, MockServer) {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)

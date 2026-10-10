@@ -94,7 +94,7 @@ async fn build_service_with_delay(routes: Vec<(&str, &str)>, delay: Option<Durat
         calls: Arc::new(Mutex::new(Vec::new())),
         delay,
     };
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(catalog.clone())
         .mount(&server)
@@ -939,12 +939,12 @@ struct LengthFixture {
 impl LengthFixture {
     async fn new() -> Self {
         let tables = LengthTables::default();
-        let deezer_server = MockServer::start().await;
+        let deezer_server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(DeezerTable(tables.clone()))
             .mount(&deezer_server)
             .await;
-        let shim_server = MockServer::start().await;
+        let shim_server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ShimTable(tables.clone()))
             .mount(&shim_server)

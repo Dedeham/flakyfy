@@ -646,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn tracks_are_added_as_json_and_removed_by_position() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         login(&server, &["jwt"]).await;
         Mock::given(method("POST"))
             .and(path("/api/playlist/pl%201/tracks"))

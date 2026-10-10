@@ -110,7 +110,7 @@ struct MixFixture {
 async fn mix_fixture() -> MixFixture {
     let dir = TempDir::new().unwrap();
     let navidrome = LibraryNavidrome::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(navidrome.clone())
         .mount(&server)
@@ -253,7 +253,7 @@ fn all(pairs: &[(String, String)], key: &str) -> Vec<String> {
 
 async fn repeats_fixture() -> (MockServer, SeenRequests, App) {
     let seen = SeenRequests::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any()).respond_with(seen.clone()).mount(&server).await;
     let state = AppState::for_tests(AppSettings {
         subsonic: SubsonicSettings {
@@ -458,7 +458,7 @@ struct LengthFixture {
 
 async fn length_fixture() -> LengthFixture {
     let upstream = LengthUpstream::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(upstream.clone())
         .mount(&server)
@@ -865,7 +865,7 @@ async fn info_for_outside_ids_carries_the_catalog_picture_in_both_formats() {
 
 #[tokio::test]
 async fn similar_songs_need_an_id_and_relay_their_own_path_with_radio_off() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(json_reply(ok_json(r#""similarSongs2":{}"#)))
         .mount(&server)
@@ -899,7 +899,7 @@ async fn similar_songs_need_an_id_and_relay_their_own_path_with_radio_off() {
 
 #[tokio::test]
 async fn radio_stream_tokens_of_another_length_are_relayed_and_unknown_ones_are_404() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200).set_body_string("relayed"))
         .mount(&server)

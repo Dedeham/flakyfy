@@ -261,7 +261,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_private_playlists_link_says_it_needs_the_sign_in() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)

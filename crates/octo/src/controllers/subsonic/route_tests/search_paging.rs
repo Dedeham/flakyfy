@@ -226,7 +226,7 @@ struct Fixture {
 
 async fn fixture(discovery: bool) -> Fixture {
     let upstream = Upstream::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(upstream.clone())
         .mount(&server)

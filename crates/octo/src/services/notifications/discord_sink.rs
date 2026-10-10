@@ -63,7 +63,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_goes_to_the_configured_webhook_as_json() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)

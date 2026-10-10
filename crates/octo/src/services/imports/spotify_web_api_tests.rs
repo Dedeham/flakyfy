@@ -22,7 +22,7 @@ struct Rig {
 }
 
 async fn rig() -> Rig {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let api = SpotifyWebApi::with_urls(
         SpotifyWebApi::client(),
         &format!("{}/v1", server.uri()),

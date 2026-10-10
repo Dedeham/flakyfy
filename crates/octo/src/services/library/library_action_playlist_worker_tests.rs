@@ -122,7 +122,7 @@ async fn sweep_fixture(enabled: bool) -> Sweep {
     let song = root.join("Artist/Song.flac");
     std::fs::write(&song, [7u8; 64]).expect("written");
 
-    let navidrome = MockServer::start().await;
+    let navidrome = MockServer::builder().start().await;
     let answer = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(path("/auth/login"))
         .respond_with(answer(

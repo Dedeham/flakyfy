@@ -27,7 +27,7 @@ impl Respond for FakePing {
 }
 
 async fn navidrome(delay: Duration) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(wiremock::matchers::method("GET"))
         .respond_with(FakePing { delay })
         .mount(&server)
@@ -205,7 +205,7 @@ async fn no_sign_in_is_refused_without_asking() {
 async fn a_slow_navidrome_is_unreachable_after_five_seconds() {
     assert_eq!(CredentialCheck::new().check_timeout(), Duration::from_secs(5));
     let server = navidrome(Duration::from_secs(10)).await;
-    let check = CredentialCheck::with_timings(Duration::from_secs(30), Duration::from_millis(50));
+    let check = CredentialCheck::with_timings(Duration::from_secs(30), Duration::from_secs(1));
     let relay = relay(&server.uri());
 
     let started = Instant::now();

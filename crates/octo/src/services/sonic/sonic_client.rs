@@ -379,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn analyze_reads_features_errors_and_odd_answers() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path("/analyse"))
             .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"features":[0.5,1],"version":2}"#))

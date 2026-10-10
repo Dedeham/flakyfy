@@ -16,7 +16,7 @@ use crate::services::common::test_fakes::FakeMetadata;
 /// A Last.fm whose track.search answers `hits` rows ("Song 1".. by "Artist") and whose
 /// artist.gettoptracks answers none.
 async fn last_fm(hits: usize) -> (Arc<LastFmService>, MockServer) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(move |request: &Request| {
             let url = request.url.to_string();

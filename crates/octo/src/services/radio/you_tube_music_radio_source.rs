@@ -264,7 +264,7 @@ mod tests {
     }
 
     async fn source() -> (YouTubeMusicRadioSource, Shim, MockServer) {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let shim = Shim::default();
         Mock::given(any()).respond_with(shim.clone()).mount(&server).await;
         let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));

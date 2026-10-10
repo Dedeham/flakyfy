@@ -127,7 +127,7 @@ struct Fixture {
 
 async fn fixture() -> Fixture {
     let navidrome = LibraryNavidrome::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(navidrome.clone())
         .mount(&server)

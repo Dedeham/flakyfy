@@ -112,7 +112,7 @@ struct Fixture {
 /// MergedFormatTests' `WebFactory`: the production metadata service over a fake Deezer.
 async fn fixture() -> Fixture {
     let servers = FakeServers::default();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(servers.clone())
         .mount(&server)

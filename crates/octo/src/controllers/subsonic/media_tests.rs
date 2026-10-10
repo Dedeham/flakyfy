@@ -232,7 +232,7 @@ struct SignIn {
 
 impl SignIn {
     async fn new() -> SignIn {
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(SignInNavidrome)
             .mount(&navidrome)

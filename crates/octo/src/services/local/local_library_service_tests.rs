@@ -32,7 +32,7 @@ impl Fixture {
     }
 
     async fn answering(body: &str) -> Fixture {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)

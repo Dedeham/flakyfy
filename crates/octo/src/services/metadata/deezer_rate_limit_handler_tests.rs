@@ -17,7 +17,7 @@ use super::*;
 
 /// Terminates the chain and records what actually reached the network.
 async fn build() -> (DeezerRateLimitHandler, MockServer) {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)

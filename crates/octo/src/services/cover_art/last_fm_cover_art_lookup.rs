@@ -236,7 +236,7 @@ mod tests {
     /// real image wins, and the star placeholder never does.
     #[tokio::test]
     async fn the_largest_real_image_wins_and_an_album_falls_back_to_the_track() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let img = |name: &str| format!("{}/img/{name}", server.uri());
         Mock::given(query_param("method", "album.getInfo"))
             .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"album":{"image":[]}}"#))

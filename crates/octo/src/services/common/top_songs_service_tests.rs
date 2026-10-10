@@ -42,7 +42,7 @@ struct Charts {
 
 impl Charts {
     async fn new(country: &str, deezer_chart: Option<&str>, last_fm: Option<&MockServer>) -> Charts {
-        let apple = MockServer::start().await;
+        let apple = MockServer::builder().start().await;
         let deezer_routes = Routes::new(
             deezer_chart
                 .map(|body| vec![("/chart/0/tracks", vec![body])])

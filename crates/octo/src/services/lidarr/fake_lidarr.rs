@@ -64,7 +64,7 @@ impl FakeLidarr {
                 hold_imports: false,
             })),
         };
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(any()).respond_with(fake.clone()).mount(&server).await;
         (fake, server)
     }

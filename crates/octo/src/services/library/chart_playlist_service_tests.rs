@@ -59,7 +59,7 @@ impl Lists {
     }
 
     async fn with(charts: &str, discovery: bool, filter: ExplicitFilter) -> Lists {
-        let navidrome = MockServer::start().await;
+        let navidrome = MockServer::builder().start().await;
         let apple = MockServer::start().await;
         for (at, genre, body) in [
             ("/us/new/top-charts/songs", None, fixture!("us_all")),

@@ -66,6 +66,9 @@ public sealed class YtDlpFallbackService : IAcquisitionFallback
         var heart = miss.Origin == MissOrigin.Heart;
         var now = Clock();
         var by = miss.RequestedBy ?? "";
+        // A heart taken back while this run was going: nothing is written or counted for it.
+        if (TakenBackSince(YtDlpFallbackStore.KeyOf(miss.Provider, miss.ExternalId, by), miss.StartedUtc))
+            return FallbackResult.Declined;
         var existing = _store.Get(miss.Provider, miss.ExternalId, by);
 
         // A new song needs room: one person's pile cannot crowd out another's or grow the file forever.
@@ -108,8 +111,29 @@ public sealed class YtDlpFallbackService : IAcquisitionFallback
         finally { _oneAtATime.Release(); }
     }
 
-    public void Forget(string provider, string externalId, string? requestedBy) =>
-        _store.Remove(YtDlpFallbackStore.KeyOf(provider, externalId, requestedBy ?? ""));
+    // Hearts taken back, in memory only: a chain run that was already going when the heart was
+    // taken back must not write the entry again. Kept longer than a run can wait for Soulseek.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _forgotten = new();
+    internal static readonly TimeSpan TombstoneFor = TimeSpan.FromHours(12);
+
+    public void Forget(string provider, string externalId, string? requestedBy)
+    {
+        var key = YtDlpFallbackStore.KeyOf(provider, externalId, requestedBy ?? "");
+        var now = Clock();
+        foreach (var old in _forgotten.Where(t => now - t.Value > TombstoneFor).Select(t => t.Key).ToList())
+            _forgotten.TryRemove(old, out _);
+        _forgotten[key] = now;
+        _store.Remove(key);
+    }
+
+    /// <summary>True when the heart was taken back after this run began. A run that began after
+    /// it is a new heart: the mark is cleared and the song counts again.</summary>
+    private bool TakenBackSince(string key, DateTime? startedUtc)
+    {
+        if (!_forgotten.TryGetValue(key, out var at)) return false;
+        if (startedUtc is { } started && started > at) { _forgotten.TryRemove(key, out _); return false; }
+        return true;
+    }
 
     private async Task<bool> SoulseekIsUpAsync(CancellationToken ct)
     {

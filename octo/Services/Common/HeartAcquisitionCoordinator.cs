@@ -183,6 +183,7 @@ public sealed class HeartAcquisitionCoordinator
     internal async Task AcquireTrackAsync(string provider, string externalId,
         string? requestedBy = null, DateTime? heldSinceUtc = null, MissOrigin origin = MissOrigin.Heart)
     {
+        var startedUtc = DateTime.UtcNow;
         if (await AlreadyYoursAsync(provider, externalId, requestedBy)) return;
         var steps = EnabledSteps(albumHeart: false);
         // A fallback that may still fetch the song after the last source has failed: the last
@@ -239,25 +240,25 @@ public sealed class HeartAcquisitionCoordinator
                 steps[index], provider, externalId, failure.Message);
             if (isLast)
             {
-                await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, failure.Message);
+                await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, failure.Message, startedUtc);
                 return;
             }
             // The next enabled source owns the fallback.
         }
         // Only reached when the last source was Lidarr and it said no. It records its own
         // reason first; this is the fallback when it could not.
-        await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, "No download source could get this song.");
+        await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, "No download source could get this song.", startedUtc);
     }
 
     /// <summary>Every source has had its go. A fallback may still fetch the song, or ask for the
     /// chain to run again later; otherwise the row fails with the last reason, as always.</summary>
     private async Task EndOfChainAsync(IAcquisitionFallback? fallback, string provider, string externalId,
-        string? requestedBy, MissOrigin origin, IReadOnlyList<HeartDownloadSource> steps, string reason)
+        string? requestedBy, MissOrigin origin, IReadOnlyList<HeartDownloadSource> steps, string reason, DateTime startedUtc)
     {
         var result = FallbackResult.Declined;
         if (fallback is not null)
         {
-            try { result = await fallback.OfferAsync(new ChainMiss(provider, externalId, requestedBy, origin, steps)); }
+            try { result = await fallback.OfferAsync(new ChainMiss(provider, externalId, requestedBy, origin, steps, startedUtc)); }
             catch (Exception ex)
             {
                 _logger.LogWarning("The fallback for {Provider}:{Id} failed: {Type}", provider, externalId, ex.GetType().Name);

@@ -11,7 +11,7 @@ public enum MissOrigin { Heart, Trickle }
 /// run used, in order.
 /// </summary>
 public sealed record ChainMiss(string Provider, string ExternalId, string? RequestedBy, MissOrigin Origin,
-    IReadOnlyList<HeartDownloadSource> Steps);
+    IReadOnlyList<HeartDownloadSource> Steps, DateTime? StartedUtc = null);
 
 /// <summary>What the fallback did with a miss. Declined: nothing, the row fails as it always did.
 /// Obtained: the file arrived by another way. Parked: not yet, the fallback will have the chain run

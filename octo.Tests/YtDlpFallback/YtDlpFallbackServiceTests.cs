@@ -242,6 +242,76 @@ public sealed class YtDlpFallbackServiceTests
         Assert.Equal(1, rig.Store.Get("soulseek", "song-1", "bob")!.CountedAttempts);
     }
 
+    private static ChainMiss RunStartedAt(DateTime started, string by = "alice") =>
+        new("soulseek", "song-1", by, MissOrigin.Heart,
+            [HeartDownloadSource.Soulseek, HeartDownloadSource.Lidarr], started);
+
+    [Fact]
+    public async Task ARunThatWasGoingWhenTheHeartWasTakenBackLeavesNoEntry()
+    {
+        using var rig = new FallbackRig();
+        var started = rig.Now;
+        Wait(rig, 0.01);
+        rig.Service.Forget("soulseek", "song-1", "alice");
+
+        Assert.Equal(FallbackResult.Declined, await rig.Service.OfferAsync(RunStartedAt(started)));
+
+        Assert.Null(rig.Store.Get("soulseek", "song-1", "alice"));
+        Assert.False(File.Exists(rig.StorePath));
+    }
+
+    [Fact]
+    public async Task ARunThatWasGoingAfterATakenBackHeartNeverCountsEvenForAnEntryThatExisted()
+    {
+        using var rig = new FallbackRig();
+        await Run(rig);
+        var started = rig.Now;
+        Wait(rig, 1);
+        rig.Service.Forget("soulseek", "song-1", "alice");
+        Assert.Null(rig.Store.Get("soulseek", "song-1", "alice"));
+
+        await rig.Service.OfferAsync(RunStartedAt(started));
+
+        Assert.Null(rig.Store.Get("soulseek", "song-1", "alice"));
+    }
+
+    [Fact]
+    public async Task AReHeartAfterTakingItBackCountsAgainFromOne()
+    {
+        using var rig = new FallbackRig();
+        rig.Service.Forget("soulseek", "song-1", "alice");
+        Wait(rig, 1);
+
+        Assert.Equal(FallbackResult.Parked, await rig.Service.OfferAsync(RunStartedAt(rig.Now)));
+
+        Assert.Equal(1, rig.Store.Get("soulseek", "song-1", "alice")!.CountedAttempts);
+        // And the mark is gone: a later run is not mistaken for an old one.
+        Wait(rig, 6);
+        await rig.Service.OfferAsync(RunStartedAt(rig.Now));
+        Assert.Equal(2, rig.Store.Get("soulseek", "song-1", "alice")!.CountedAttempts);
+    }
+
+    [Fact]
+    public async Task TakingBackOnePersonsHeartDoesNotStopAnotherPersonsRun()
+    {
+        using var rig = new FallbackRig();
+        var started = rig.Now;
+        Wait(rig, 0.01);
+        rig.Service.Forget("soulseek", "song-1", "alice");
+        await rig.Service.OfferAsync(RunStartedAt(started, "bob"));
+        Assert.NotNull(rig.Store.Get("soulseek", "song-1", "bob"));
+    }
+
+    [Fact]
+    public async Task WithoutARecordedRequesterOneUnstarDropsTheSharedEntry()
+    {
+        using var rig = new FallbackRig();
+        await rig.Service.OfferAsync(RunStartedAt(rig.Now, ""));
+        Assert.NotNull(rig.Store.Get("soulseek", "song-1", ""));
+        rig.Service.Forget("soulseek", "song-1", null);
+        Assert.Null(rig.Store.Get("soulseek", "song-1", ""));
+    }
+
     [Fact]
     public async Task TheCountSurvivesARestart()
     {

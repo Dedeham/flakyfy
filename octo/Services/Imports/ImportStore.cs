@@ -11,12 +11,31 @@ public sealed class ImportStore
     private sealed class FileShape
     {
         public List<ImportList> Lists { get; set; } = [];
+        public Dictionary<string, StarState> Stars { get; set; } = [];
     }
+
+    /// <summary>
+    /// The favorites an import still has to set for one person, as Navidrome song ids and nothing
+    /// else, and the ids already offered once, so a favorite they took away is not set again.
+    /// </summary>
+    public sealed class StarState
+    {
+        public List<string> Pending { get; set; } = [];
+        public List<string> Offered { get; set; } = [];
+        /// <summary>Taken to be favorited and not yet answered. Still here at startup means Octo stopped mid-way.</summary>
+        public List<string> InFlight { get; set; } = [];
+        /// <summary>How many times Navidrome (or a crash) kept each id from becoming a favorite.</summary>
+        public Dictionary<string, int> Attempts { get; set; } = [];
+    }
+
+    /// <summary>After this many failed tries a song is left alone: Navidrome keeps refusing it.</summary>
+    internal const int MaxStarAttempts = 5;
 
     private readonly string? _path;
     private readonly ILogger<ImportStore>? _logger;
     private readonly object _lock = new();
     private readonly List<ImportList> _lists = [];
+    private readonly Dictionary<string, StarState> _stars = new(StringComparer.OrdinalIgnoreCase);
 
     public ImportStore(string? path = null, ILogger<ImportStore>? logger = null)
     {
@@ -24,8 +43,12 @@ public sealed class ImportStore
         _logger = logger;
         try
         {
-            if (_path is not null && File.Exists(_path))
-                _lists.AddRange(JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_path))?.Lists ?? []);
+            if (_path is not null && File.Exists(_path) && JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_path)) is { } shape)
+            {
+                _lists.AddRange(shape.Lists ?? []);
+                foreach (var (owner, state) in shape.Stars ?? []) _stars[owner] = state;
+                RequeueInterrupted();
+            }
         }
         catch (Exception ex) { _logger?.LogWarning("the imported lists could not be read: {M}", ex.Message); }
     }
@@ -113,6 +136,109 @@ public sealed class ImportStore
         }
     }
 
+    /// <summary>
+    /// The songs the library has for this person's liked lists right now. Those not offered before
+    /// wait to be favorited; waiting ones the library no longer has (a deleted song, a changed
+    /// match) are dropped, so a stale id is never tried again and again.
+    /// </summary>
+    public void QueueStars(string owner, IReadOnlyCollection<string> current)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state))
+            {
+                if (current.Count == 0) return;
+                _stars[owner] = state = new StarState();
+            }
+            var now = current.ToHashSet(StringComparer.Ordinal);
+            var offered = state.Offered.ToHashSet(StringComparer.Ordinal);
+            var kept = state.Pending.Where(now.Contains).ToList();
+            var queued = kept.ToHashSet(StringComparer.Ordinal);
+            kept.AddRange(current.Where(id => !offered.Contains(id) && queued.Add(id)));
+            if (kept.SequenceEqual(state.Pending)) return;
+            state.Pending = kept;
+            Write();
+        }
+    }
+
+    /// <summary>
+    /// Up to this many song ids to favorite now. They count as offered from here: a favorite that
+    /// fails is not retried by itself, because the next match queues it again only if it is new.
+    /// </summary>
+    public IReadOnlyList<string> TakeStars(string owner, int most)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state) || state.Pending.Count == 0) return [];
+            var taken = state.Pending.Take(most).ToList();
+            state.Pending.RemoveRange(0, taken.Count);
+            state.Offered.AddRange(taken);
+            state.InFlight.AddRange(taken);
+            Write();
+            return taken;
+        }
+    }
+
+    /// <summary>Whether this person has favorites waiting. Cheap enough for every request.</summary>
+    public bool HasStars(string owner)
+    {
+        lock (_lock) return _stars.TryGetValue(owner, out var state) && state.Pending.Count > 0;
+    }
+
+    /// <summary>These favorites were set (or were already): nothing is left to retry for them.</summary>
+    public void DoneStars(string owner, IEnumerable<string> songIds)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state)) return;
+            var done = songIds.ToHashSet(StringComparer.Ordinal);
+            state.InFlight.RemoveAll(done.Contains);
+            foreach (var id in done) state.Attempts.Remove(id);
+            Write();
+        }
+    }
+
+    /// <summary>
+    /// Gives ids back after a favorite failed, so the next request tries them again, up to
+    /// MaxStarAttempts times each; after that Navidrome's refusal is accepted.
+    /// </summary>
+    public void RequeueStars(string owner, IEnumerable<string> songIds)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state)) return;
+            GiveBack(state, songIds);
+            Write();
+        }
+    }
+
+    private static void GiveBack(StarState state, IEnumerable<string> songIds)
+    {
+        foreach (var id in songIds.Distinct(StringComparer.Ordinal))
+        {
+            state.InFlight.Remove(id);
+            var tries = state.Attempts.GetValueOrDefault(id) + 1;
+            if (tries >= MaxStarAttempts) { state.Attempts.Remove(id); continue; }
+            state.Attempts[id] = tries;
+            state.Offered.Remove(id);
+            if (!state.Pending.Contains(id)) state.Pending.Add(id);
+        }
+    }
+
+    /// <summary>At startup: ids taken but never answered (Octo stopped) go back, counted as one try.</summary>
+    private void RequeueInterrupted()
+    {
+        var changed = false;
+        foreach (var state in _stars.Values)
+        {
+            if (state.InFlight.Count == 0) continue;
+            GiveBack(state, state.InFlight.ToList());
+            state.InFlight.Clear();
+            changed = true;
+        }
+        if (changed) Write();
+    }
+
     // Called with the lock held.
     private ImportList? Find(string owner, string id) =>
         _lists.FirstOrDefault(list => Same(list.Owner, owner) && list.Id == id);
@@ -126,7 +252,12 @@ public sealed class ImportStore
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path + ".tmp", JsonSerializer.Serialize(new FileShape { Lists = _lists }));
+            // Who imported what is theirs alone: only the Octo user may read the file.
+            var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            using (var stream = new FileStream(_path + ".tmp", options))
+            using (var writer = new StreamWriter(stream))
+                writer.Write(JsonSerializer.Serialize(new FileShape { Lists = _lists, Stars = _stars }));
             File.Move(_path + ".tmp", _path, overwrite: true);
         }
         catch (Exception ex) { _logger?.LogWarning("the imported lists could not be written: {M}", ex.Message); }

@@ -84,6 +84,14 @@ public sealed class ImportList
     /// <summary>No longer on the account. Kept while it is a playlist or fetching, so nothing is lost.</summary>
     public bool Gone { get; set; }
 
+    /// <summary>
+    /// Their liked songs: Spotify's, or a file named like Spotify's own ("Liked Songs", also
+    /// "liked_songs" as Exportify writes it). These are the songs that become favorites.
+    /// </summary>
+    public bool IsLikedSongs() =>
+        Source == ImportSources.SpotifyLiked
+        || (Source == ImportSources.File && Name.Replace('_', ' ').Replace('-', ' ').Trim().Equals("liked songs", StringComparison.OrdinalIgnoreCase));
+
     public ImportList Copy()
     {
         var copy = (ImportList)MemberwiseClone();

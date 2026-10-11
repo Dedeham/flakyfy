@@ -752,6 +752,13 @@ from Spotify's own **Download your data**, which holds every playlist whole.
 `IMPORTS_SONGS_PER_HOUR` (20) paces the trickle and `IMPORTS_REFRESH_HOURS` (6) reads lists
 that are kept or fetching again, so new songs on Spotify reach them.
 
+Imported lists belong to the person who imported them and are separate from each other. A list
+kept as a playlist is a private Navidrome playlist in the source's order, and songs that arrive
+later are put in their place. A liked-songs list (Spotify's liked songs, or a file named
+"Liked Songs") also makes those songs favorites for that person: `IMPORTS_STAR_LIKED` (default
+`true`; `false` turns it off). Octo sets the favorites the next time that person's app talks to
+Octo, signed in as them, and keeps only the song ids, never a password.
+
 ### Download path on Windows and manual installs
 
 `DOWNLOAD_PATH` in `.env` is a HOST path: it is bind-mounted as `/music` into the octo, yt-dlp-shim, and slskd containers, and it is the only path you change to move the library. Container-side settings (Octo's `Library__DownloadPath`, slskd's downloads dir) stay `/music`.

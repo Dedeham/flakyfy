@@ -373,6 +373,7 @@ public partial class SubsonicController : ControllerBase
                 : _responseBuilder.CreateError(format, 0, "Unable to authenticate with Navidrome");
 
         var username = parameters.GetValueOrDefault("u", "");
+        VerifiedRequests.Notify(HttpContext.RequestServices, parameters);
 
         // Navidrome answered ok above, so `u` is authenticated. Ensure this user's action
         // playlists exist, using the body we already have so the common case costs no extra

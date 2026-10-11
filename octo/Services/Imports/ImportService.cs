@@ -605,6 +605,11 @@ public sealed class ImportService : BackgroundService
                 if (found.TryGetValue(track.Key, out var id)) track.LibraryId = id;
             list.MatchedUtc = now;
         });
+        // Liked songs the library has are to become this person's favorites (ImportStarsOnRequest).
+        if (_settings.CurrentValue.StarLiked)
+            _store.QueueStars(user, _store.ListsOf(user).Where(list => list.IsLikedSongs())
+                .SelectMany(list => list.Tracks).Select(track => track.LibraryId).OfType<string>()
+                .Distinct(StringComparer.Ordinal).ToList());
         foreach (var list in _store.ListsOf(user))
         {
             if (list.GetMissing) _queue.Add(user, list.Tracks.Where(track => track.LibraryId is null));

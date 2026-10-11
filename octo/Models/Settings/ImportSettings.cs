@@ -40,6 +40,15 @@ public class ImportSettings
     /// </summary>
     public int RefreshHours { get; set; } = 6;
 
+    /// <summary>
+    /// Whether a liked-songs list (Spotify's liked songs, or a file named "Liked Songs") also
+    /// makes those songs favorites in Navidrome for the person who imported it. The favorites
+    /// are set the next time that person's app talks to Octo, as them, without Octo keeping
+    /// their password. The list stays a separate, private playlist if you keep it as one.
+    /// Environment variable: IMPORTS__STARLIKED (IMPORTS_STAR_LIKED in .env)
+    /// </summary>
+    public bool StarLiked { get; set; } = true;
+
     public string EffectiveRedirectUri =>
         string.IsNullOrWhiteSpace(SpotifyRedirectUri) ? DefaultRedirectUri : SpotifyRedirectUri.Trim();
 

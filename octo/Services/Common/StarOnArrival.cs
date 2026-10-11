@@ -180,22 +180,28 @@ public sealed class StarOnArrival : IDisposable
             });
     }
 
-    private async Task StarSongAsync(SubsonicCredential credential, string who, string libraryId)
+    /// <summary>
+    /// Favorites a library song as this person, unless it already is one. True when it is a
+    /// favorite afterwards, false when Navidrome would not or could not. Imported liked songs use
+    /// this too, so there is one way to favorite as a user.
+    /// </summary>
+    public async Task<bool> StarSongAsync(SubsonicCredential credential, string who, string libraryId)
     {
         try
         {
             // Already a favorite: starring again would only move it to the top of the list.
-            if (SongFacts(await CallAsync("rest/getSong", credential.Parameters(("id", libraryId))))?.Starred == true) return;
-            Report(await CallAsync("rest/star", credential.Parameters(("id", libraryId))), who, libraryId);
+            if (SongFacts(await CallAsync("rest/getSong", credential.Parameters(("id", libraryId))))?.Starred == true) return true;
+            return Report(await CallAsync("rest/star", credential.Parameters(("id", libraryId))), who, libraryId);
         }
-        catch (Exception ex) { _logger.LogInformation("Could not favorite {Id} for {User}: {Reason}", libraryId, who, ex.Message); }
+        catch (Exception ex) { _logger.LogInformation("Could not favorite {Id} for {User}: {Reason}", libraryId, who, ex.Message); return false; }
     }
 
-    private void Report(byte[] body, string who, string what)
+    private bool Report(byte[] body, string who, string what)
     {
-        if (CredentialCheck.Status(body) == "ok") _logger.LogInformation("Favorited {What} for {User}, who starred it", what, who);
+        if (CredentialCheck.Status(body) == "ok") { _logger.LogInformation("Favorited {What} for {User}, who starred it", what, who); return true; }
         // Most likely the password changed while the download ran.
-        else _logger.LogInformation("Navidrome would not favorite {What} for {User}", what, who);
+        _logger.LogInformation("Navidrome would not favorite {What} for {User}", what, who);
+        return false;
     }
 
     internal static (bool Starred, string? AlbumId)? SongFacts(byte[] body)

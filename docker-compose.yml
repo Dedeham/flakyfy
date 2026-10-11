@@ -150,6 +150,12 @@ services:
       RadioSources__SonicPauseSeconds: ${RADIO_SONIC_PAUSE_SECONDS:-2}
       RadioSources__LearnFromListening: ${RADIO_LEARN_FROM_LISTENING:-true}
 
+      # ----- yt-dlp fallback: a song no source can get, after several counted tries, as a YouTube MP3 -----
+      YtDlpFallback__Enabled: ${YTDLP_FALLBACK_ENABLED:-true}
+      YtDlpFallback__FailedAttempts: ${YTDLP_FALLBACK_FAILED_ATTEMPTS:-3}
+      YtDlpFallback__AttemptSpacingHours: ${YTDLP_FALLBACK_ATTEMPT_SPACING_HOURS:-6}
+      YtDlpFallback__MaxWaitHours: ${YTDLP_FALLBACK_MAX_WAIT_HOURS:-72}
+
       # ----- Popular right now: the chart of the moment as a playlist in every app -----
       # Per listener, read-only, made again every 6 hours; on whether or not the mixes are.
       GeneratedPlaylists__PopularNow: ${POPULAR_NOW:-true}

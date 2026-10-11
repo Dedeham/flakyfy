@@ -18,6 +18,8 @@ internal static class TagFields
     public static readonly TagField ReleaseType = new(null, "MusicBrainz Album Type", "RELEASETYPE", "MusicBrainz Album Type");
     public static readonly TagField ReleaseStatus = new(null, "MusicBrainz Album Status", "RELEASESTATUS", "MusicBrainz Album Status");
     public static readonly TagField ReleaseCountry = new(null, "MusicBrainz Album Release Country", "RELEASECOUNTRY", "MusicBrainz Album Release Country");
+    public static readonly TagField OctoSource = new(null, "OCTO_SOURCE", "OCTO_SOURCE", "OCTO_SOURCE");
+    public static readonly TagField OctoSourceId = new(null, "OCTO_SOURCE_ID", "OCTO_SOURCE_ID", "OCTO_SOURCE_ID");
     public static readonly TagField ReleaseTrackId = new(null, "MusicBrainz Release Track Id", "MUSICBRAINZ_RELEASETRACKID", "MusicBrainz Release Track Id");
     public static readonly TagField AlbumArtistId = new(null, "MusicBrainz Album Artist Id", "MUSICBRAINZ_ALBUMARTISTID", "MusicBrainz Album Artist Id");
     public static readonly TagField ArtistId = new(null, "MusicBrainz Artist Id", "MUSICBRAINZ_ARTISTID", "MusicBrainz Artist Id");
@@ -163,6 +165,14 @@ internal static class TagWriterExtras
             xiph.SetField("ORIGINALYEAR", year);
         }
         apple?.SetDashBox(AppleMean, "originaldate", text);
+    }
+
+    /// <summary>Where a stopgap copy came from, for a person or a script to find it later. The
+    /// values are a constant and an id; never a user, a path or a time.</summary>
+    public static void SetSourceMark(TagLib.File file, string? mark, string? id)
+    {
+        SetText(file, TagFields.OctoSource, mark);
+        SetText(file, TagFields.OctoSourceId, id);
     }
 
     /// <summary>The release track id, in the frame taggers and the library server read it from.</summary>

@@ -311,12 +311,23 @@ public class SoulseekDownloadService : BaseDownloadService
         if (string.IsNullOrEmpty(videoId))
         {
             var hit = await _youtube.SearchAsync($"{routing.Artist} {routing.Title}", routing.Duration, ct: cancellationToken);
+            // A stopgap copy must be the right video, so for the fallback a hit whose length is
+            // clearly not the song's is no hit.
+            if (AcquisitionMarks.Get(song.ExternalId) is not null && routing.Duration is int want && hit?.Duration is int got
+                && Math.Abs(want - got) > Octo.Services.YtDlpFallback.YtDlpFallbackSettings.DurationToleranceSeconds)
+                hit = null;
             videoId = hit?.VideoId;
             if (!string.IsNullOrEmpty(videoId)) routing.YouTubeId = videoId;
         }
         if (string.IsNullOrEmpty(videoId))
             throw new FileNotFoundException($"No YouTube match for '{routing.Artist} - {routing.Title}'");
         LogStep(trackKey, AcquisitionEventKinds.Found, "Found it on YouTube", $"Video {videoId}, saved as an MP3");
+        // A copy the yt-dlp fallback asked for says so in its tags: the id of the video, and nothing of who asked.
+        if (AcquisitionMarks.Get(song.ExternalId) is { } mark)
+        {
+            song.SourceMark = mark;
+            song.SourceMarkId = videoId;
+        }
 
         if (!suppressNotify && announceStart)
         {

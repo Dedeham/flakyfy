@@ -132,7 +132,10 @@ public sealed class NavidromePlaylistApi
         using var response = await SendAsync(jwt =>
         {
             var request = Request(HttpMethod.Post, $"{BaseUrl}/api/playlist", jwt);
-            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+            request.Content = new StringContent(body, Encoding.UTF8);
+            // Exactly application/json: Navidrome 0.64 reads "application/json; charset=utf-8" as an
+            // M3U file to import and answers with one, so no playlist is made.
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
             return request;
         }, ct);
         if (response is not { IsSuccessStatusCode: true })
@@ -140,8 +143,16 @@ public sealed class NavidromePlaylistApi
             _logger.LogWarning("Could not create playlist '{Name}': HTTP {Status}", name, (int?)response?.StatusCode);
             return null;
         }
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(ct));
-        return doc.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
+        try
+        {
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(ct));
+            return doc.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            _logger.LogWarning("Navidrome's answer to creating playlist '{Name}' was not a playlist", name);
+            return null;
+        }
     }
 
     /// <summary>

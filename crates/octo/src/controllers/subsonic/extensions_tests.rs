@@ -867,6 +867,21 @@ async fn pick_found_song_asks_before_replacing_with_a_copy_no_better_and_replace
         asked["detail"],
         "This copy is FLAC like yours, so it is not better. Replace yours anyway?"
     );
+    assert_eq!(asked["compare"]["yours"]["quality"], "FLAC");
+    assert_eq!(asked["compare"]["yours"]["length"], 331);
+    assert_eq!(asked["compare"]["copy"]["quality"], "FLAC");
+    assert!(asked["compare"]["copy"]["take"].is_null());
+    // The list said so before anything was picked.
+    let listed = get(
+        &t.app,
+        &format!("/rest/getFoundSongs.view?{}&search={search}", acq_auth("alice")),
+    )
+    .await
+    .envelope();
+    let copy_json = &listed["foundSongs"]["candidate"][0];
+    assert_eq!(copy_json["vsYours"], "same");
+    assert_eq!(copy_json["vsYoursText"], "Same as yours");
+    assert!(listed["foundSongs"]["song"]["take"].is_null());
     assert!(t.state.upgrade_queue.snapshot().is_empty());
 
     let replaced = pick_as_alice(&t, &search, &copy, "&anyway=true").await;

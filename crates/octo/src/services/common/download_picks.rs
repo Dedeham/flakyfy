@@ -62,6 +62,10 @@ pub struct AnywaySong {
     pub title: String,
     pub album: Option<String>,
     pub length: Option<i32>,
+    /// The library file was another take: once the replacement keeps the song's place, its
+    /// title and album become the plain song's.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub retitle: bool,
 }
 
 impl Default for PickedCopy {

@@ -763,6 +763,12 @@ impl UpgradeWorker {
                     size(result.before_bytes)
                 ))
             }
+            // A copy someone picked that did not go in: what stopped it, in plain words.
+            UpgradeStates::NOT_FOUND | UpgradeStates::SKIPPED | UpgradeStates::FAILED
+                if job.pick.is_some() =>
+            {
+                Some(Self::pick_not_taken(outcome.detail.as_deref()))
+            }
             UpgradeStates::NOT_FOUND => Some(format!(
                 "No lossless copy of this song on {} right now. Your copy is unchanged.",
                 (self.seams.source_name)()
@@ -773,6 +779,12 @@ impl UpgradeWorker {
         if let (Some(acquired), Some(tracker)) = (&acquired, &self.tracker) {
             let text = match state {
                 UpgradeStates::UPGRADED => "Took the place of your old copy",
+                _ if job.pick.is_some()
+                    && state != UpgradeStates::UPGRADED
+                    && state != UpgradeStates::WAITING =>
+                {
+                    "The copy you picked did not go in; your copy was kept"
+                }
                 UpgradeStates::NOT_FOUND => "No lossless copy found; your copy is unchanged",
                 UpgradeStates::WAITING => "Waiting for Soulseek",
                 UpgradeStates::REHEARSED => "Only rehearsed; nothing changed",
@@ -875,6 +887,33 @@ impl UpgradeWorker {
                 .push("the spectrum: really lossless, not a converted MP3".to_string());
         }
         result
+    }
+
+    /// Why a copy someone picked did not take their song's place, ending with what happened to
+    /// theirs: "The copy you picked did not replace yours: it was the wrong recording. Your copy
+    /// was kept."
+    pub fn pick_not_taken(detail: Option<&str>) -> String {
+        let why = user_safe(detail).unwrap_or_default();
+        let why = why.split(", so nothing changed").next().unwrap_or("").trim();
+        let why = why.trim_end_matches('.');
+        let why = why
+            .strip_prefix("The replacement ")
+            .map_or_else(|| why.to_string(), |rest| format!("it {rest}"));
+        if why.is_empty() {
+            "The copy you picked did not replace yours. Your copy was kept.".to_string()
+        } else {
+            let mut chars = why.chars();
+            let first = chars
+                .next()
+                .map(|c| c.to_lowercase().collect::<String>())
+                .unwrap_or_default();
+            let why = if why.starts_with("Octo") || why.starts_with("Soulseek") || why.starts_with("Lidarr") {
+                why.clone()
+            } else {
+                format!("{first}{}", chars.as_str())
+            };
+            format!("The copy you picked did not replace yours: {why}. Your copy was kept.")
+        }
     }
 
     /// How an action's outcome reads as a job state. On the reason code, never the words.

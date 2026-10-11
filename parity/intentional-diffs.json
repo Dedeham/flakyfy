@@ -2446,7 +2446,8 @@
         "^\\+    <versions>3</versions>$"
       ],
       "reason": "octoAcquisitions version 3 tells an app that pickFoundSong takes anyway and may answer confirm, so a copy no better than the library's (or the plain song in place of a live take) is asked about and can then be replaced anyway. Versions 1 and 2 are still listed, and a pick without anyway answers as before, so older apps keep working. The other lines on these answers are other entries': octoTopSongs [1, 2] and octoImports [1, 2].",
-      "knownDiff": "`octoAcquisitions` version 3"
+      "knownDiff": "`octoAcquisitions` version 3",
+      "reviewed": "Brandon 2026-10-11"
     }
   ]
 }

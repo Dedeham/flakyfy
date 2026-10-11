@@ -31,7 +31,9 @@ use crate::http::routes::RouteSet;
 use crate::services::common::acquisition_tracker::AcquisitionSnapshot;
 use crate::services::local::DownloadHistoryService;
 use crate::services::soulseek::SoulseekMetadataService;
-use crate::services::subsonic::subsonic_response_builder::{acquisition_json, event_json, found_songs_json};
+use crate::services::subsonic::subsonic_response_builder::{
+    acquisition_json, event_json, found_songs_json, pick_json,
+};
 
 /// Outside songs a search on the Find songs page lists.
 pub const OUTSIDE_LIMIT: usize = 20;
@@ -215,7 +217,7 @@ pub async fn pick_found(
         .song_finder
         .pick_copy(&search, copy.trim(), &user, anyway)
         .await;
-    ok(&json!({ "state": outcome.state, "detail": outcome.detail, "key": outcome.key }))
+    ok(&pick_json(&outcome))
 }
 
 /// Songs Octo can find outside the library for this search, the ones the apps' search lists

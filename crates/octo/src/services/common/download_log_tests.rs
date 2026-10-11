@@ -1199,7 +1199,19 @@ async fn an_upgrade_with_a_pick_fetches_only_that_copy_and_logs_the_verdict() {
     );
     assert_eq!(
         events.last().expect("a line").text,
-        "No lossless copy found; your copy is unchanged"
+        "The copy you picked did not go in; your copy was kept"
+    );
+    let job = &queue.snapshot()[0];
+    assert_eq!(job.state, "notFound");
+    assert_eq!(
+        job.detail.as_deref(),
+        Some("The copy you picked did not replace yours: nothing. Your copy was kept.")
+    );
+    assert_eq!(
+        UpgradeWorker::pick_not_taken(Some(
+            "The replacement was the wrong recording, so nothing changed."
+        )),
+        "The copy you picked did not replace yours: it was the wrong recording. Your copy was kept."
     );
 }
 

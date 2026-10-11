@@ -152,6 +152,7 @@ fn the_same_quality_asks_and_keeps_the_library_song() {
             title: "Sexy Boy".into(),
             album: Some("Moon Safari".into()),
             length: Some(298),
+            retitle: false,
         }
     );
 }
@@ -302,6 +303,7 @@ fn the_plain_song_in_place_of_a_live_take_asks_and_is_held_to_the_plain_song() {
             title: "Sexy Boy".into(),
             album: None,
             length: Some(298),
+            retitle: true,
         }
     );
 }

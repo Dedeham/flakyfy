@@ -13,6 +13,7 @@ use std::time::Duration;
 use chrono::Utc;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use indexmap::IndexMap;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::lidarr::lidarr_client::LidarrError;
 use octo_core::lyrics::{LyricsQuery, LyricsResult, LyricsTiming};
@@ -39,6 +40,8 @@ use super::{NavidromeSongPathResolver, ResolvedSongFile};
 use crate::services::common::download_picks::AnywaySong;
 use crate::services::common::{StarOnArrival, TrackAcquisitionQueue};
 use crate::services::cover_art::{CoverUpgradeWorker, RejectedCovers};
+use crate::services::library::library_tag_edits::{self, song_tag_fields};
+use crate::services::library::replacement_handoff::ArrivedTags;
 use crate::services::local::ILocalLibraryService;
 use crate::services::lyrics::{LyricsChoiceService, LyricsService, LyricsSidecarWriter};
 use crate::services::soulseek::soulseek_link::{OFFLINE_TEXT, SoulseekLinkState};
@@ -216,6 +219,8 @@ struct Replaced {
     outcome: LibraryActionOutcome,
     quarantine_path: Option<String>,
     new_path: Option<String>,
+    /// The replacement's own title and album, before it took the original's identity.
+    arrived: Option<ArrivedTags>,
 }
 
 impl Replaced {
@@ -224,6 +229,7 @@ impl Replaced {
             outcome: LibraryActionOutcome::said(LibraryActionState::Failed, detail),
             quarantine_path: None,
             new_path: None,
+            arrived: None,
         }
     }
 }
@@ -971,6 +977,7 @@ impl LibraryActionExecutor {
             notices.mark_acted(&request.navidrome_id);
         }
         self.journal.flush();
+        let arrived = replaced.as_ref().and_then(|r| r.arrived.clone());
         let new_path = replaced.and_then(|r| r.new_path);
         // Off this call, which the rating and playlist workers wait on: it can take ten minutes.
         if outcome.state == LibraryActionState::Applied
@@ -982,6 +989,13 @@ impl LibraryActionExecutor {
                 executor
                     .confirm_history_kept(&request, &original, &new_path, &key, carry_star)
                     .await;
+                // Only now that the song's place is settled: the same path keeps the same song
+                // in Navidrome whatever its tags say.
+                if let Some(song) = request.anyway.as_ref().filter(|song| song.retitle) {
+                    executor
+                        .retitle(&original, &new_path, song, arrived.as_ref())
+                        .await;
+                }
             });
         }
         Ok(LibraryActionOutcome {
@@ -1183,6 +1197,7 @@ impl LibraryActionExecutor {
                         ),
                         quarantine_path: quarantined,
                         new_path: Some(revealed),
+                        arrived: handoff.as_ref().and_then(|h| h.arrived()),
                     };
                 }
                 // A search that found nothing usable reports not found, passed through the queue
@@ -1199,6 +1214,7 @@ impl LibraryActionExecutor {
                         ),
                         quarantine_path: None,
                         new_path: None,
+                        arrived: None,
                     };
                 };
                 // Out, and nothing moved in: back to its exact path, whose row Navidrome still has.
@@ -1209,6 +1225,7 @@ impl LibraryActionExecutor {
                     ),
                     quarantine_path: Some(quarantined),
                     new_path: None,
+                    arrived: None,
                 };
             }
         };
@@ -1245,6 +1262,7 @@ impl LibraryActionExecutor {
                             ),
                             quarantine_path: Some(quarantined),
                             new_path: None,
+                            arrived: None,
                         },
                     };
                 }
@@ -1263,6 +1281,57 @@ impl LibraryActionExecutor {
             ),
             quarantine_path: quarantined,
             new_path: Some(replacement),
+            arrived: handoff.as_ref().and_then(|h| h.arrived()),
+        }
+    }
+
+    /// Gives a replacement that took another take's place the plain song's title and album, in
+    /// place: its own, as the download tagged it, or else the ones it was held to. The album is
+    /// left as it is when neither says one. Then scans, so the apps show the new names.
+    pub async fn retitle(
+        &self,
+        original: &ResolvedSongFile,
+        path: &str,
+        song: &AnywaySong,
+        arrived: Option<&ArrivedTags>,
+    ) {
+        let title = arrived
+            .and_then(|tags| tags.title.clone())
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| song.title.clone());
+        let album = arrived
+            .and_then(|tags| tags.album.clone())
+            .filter(|album| !album.trim().is_empty())
+            .or_else(|| song.album.clone());
+        let mut changes: IndexMap<String, Option<String>> = IndexMap::new();
+        changes.insert(song_tag_fields::TITLE.to_string(), Some(title.clone()));
+        if let Some(album) = &album {
+            changes.insert(song_tag_fields::ALBUM.to_string(), Some(album.clone()));
+        }
+        let written = library_tag_edits::write(Path::new(path), &changes);
+        if let Some(error) = &written.error {
+            warn!(
+                "Library action Better quality: '{} - {}' was replaced anyway, but its new title could not be written ({error})",
+                original.artist, original.title
+            );
+            return;
+        }
+        info!(
+            "Library action Better quality: '{} - {}' replaced anyway is now titled '{title}'{}",
+            original.artist,
+            original.title,
+            album
+                .as_deref()
+                .map_or_else(String::new, |album| format!(" on '{album}'"))
+        );
+        let scan = self.seams.lock().force_scan.clone();
+        match scan {
+            Some(scan) => {
+                scan().await;
+            }
+            None => {
+                self.library.trigger_library_scan(false).await;
+            }
         }
     }
 

@@ -29,8 +29,12 @@ pub enum ReplaceCheck {
     /// Nothing: the copy is better and fits the library song.
     Fits,
     /// Only the person's word. `words` ask them; `song` is what the copy is held to once they
-    /// say yes.
-    Confirm { words: String, song: AnywaySong },
+    /// say yes; `take` is how the library file differs from the plain song, when it does.
+    Confirm {
+        words: String,
+        song: AnywaySong,
+        take: Option<OtherTake>,
+    },
     /// The copy may not replace the library song, with the words why.
     Refused(String),
 }
@@ -107,6 +111,7 @@ pub fn library_song(target: &FindTarget) -> AnywaySong {
         title: target.title.clone(),
         album: target.album.clone(),
         length: target.duration,
+        retitle: false,
     }
 }
 
@@ -139,6 +144,21 @@ pub fn other_take(
     copy: &FoundCopy,
     cx: CheckContext<'_>,
 ) -> Option<(OtherTake, AnywaySong)> {
+    take_of(target, cx, copy.pick.length.filter(|l| *l > 0), true)
+}
+
+/// How the library file is another take of the song, read before anything is picked, for the
+/// list's header: [`other_take`]'s reading without the picked copy's length.
+pub fn library_take(target: &FindTarget, cx: CheckContext<'_>) -> Option<(OtherTake, AnywaySong)> {
+    take_of(target, cx, None, false)
+}
+
+fn take_of(
+    target: &FindTarget,
+    cx: CheckContext<'_>,
+    picked_length: Option<i32>,
+    picked: bool,
+) -> Option<(OtherTake, AnywaySong)> {
     let artist = Some(target.artist.as_str());
     let title_versions = version_variant::requested(Some(&target.title), None);
     let title_live = live_version::mentions(Some(&target.title));
@@ -168,7 +188,6 @@ pub fn other_take(
     };
     let album = if marked_album { None } else { target.album.clone() };
     let usual = usual_length(target, &title, album.as_deref(), cx);
-    let picked_length = copy.pick.length.filter(|l| *l > 0);
 
     let take = if title_live || album_live || folder_versions.contains("live") {
         OtherTake::Live
@@ -177,10 +196,10 @@ pub fn other_take(
     } else {
         let yours = target.duration.filter(|d| *d > 0)?;
         let usual = usual?;
-        let picked = picked_length?;
-        if (yours - usual).abs() <= DURATION_TOLERANCE_SECONDS
-            || (picked - usual).abs() > DURATION_TOLERANCE_SECONDS
-        {
+        if (yours - usual).abs() <= DURATION_TOLERANCE_SECONDS {
+            return None;
+        }
+        if picked && (picked_length? - usual).abs() > DURATION_TOLERANCE_SECONDS {
             return None;
         }
         OtherTake::Length { yours, usual }
@@ -191,6 +210,7 @@ pub fn other_take(
             title,
             album,
             length: usual.or(picked_length),
+            retitle: true,
         },
     ))
 }
@@ -206,6 +226,7 @@ pub fn check(target: &FindTarget, copy: &FoundCopy, cx: CheckContext<'_>) -> Rep
             Some(quality) => ReplaceCheck::Confirm {
                 words: format!("{quality} Replace yours anyway?"),
                 song: own,
+                take: None,
             },
         };
     };
@@ -233,7 +254,112 @@ pub fn check(target: &FindTarget, copy: &FoundCopy, cx: CheckContext<'_>) -> Rep
         Some(quality) => format!("{take_words} {quality} Replace yours anyway?"),
         None => format!("{take_words} Replace yours anyway?"),
     };
-    ReplaceCheck::Confirm { words, song: plain }
+    ReplaceCheck::Confirm {
+        words,
+        song: plain,
+        take: Some(take),
+    }
+}
+
+/// The list's header line for a library file that is another take of the song.
+pub fn take_header(take: OtherTake) -> String {
+    match take {
+        OtherTake::Live => {
+            "Yours looks like a live recording. Pick the plain song to replace it.".to_string()
+        }
+        OtherTake::Version => {
+            "Yours looks like another version of this song. Pick the plain song to replace it.".to_string()
+        }
+        OtherTake::Length { yours, usual } => format!(
+            "Yours runs {} and this song usually runs {}, so it looks like another take. Pick the plain song to replace it.",
+            soulseek_candidates::length_text(yours),
+            soulseek_candidates::length_text(usual)
+        ),
+    }
+}
+
+/// The take's kind as the apps read it: "live", "version" or "length".
+pub fn take_kind(take: OtherTake) -> &'static str {
+    match take {
+        OtherTake::Live => "live",
+        OtherTake::Version => "version",
+        OtherTake::Length { .. } => "length",
+    }
+}
+
+/// What the library file is, in a few words, beside the copy.
+fn take_name(take: OtherTake) -> &'static str {
+    match take {
+        OtherTake::Live => "live recording",
+        OtherTake::Version => "another version",
+        OtherTake::Length { .. } => "another take",
+    }
+}
+
+/// How a copy compares with the library's by quality alone, for a small tag on the list: None
+/// when it is better (or the look is not for a library song).
+pub fn vs_yours(target: &FindTarget, copy: &FoundCopy) -> Option<(&'static str, &'static str)> {
+    target.library_id.as_ref()?;
+    quality_words(target, copy)?;
+    let yours = owned_short(target);
+    let lidarr_choice = !copy.pick.is_soulseek() && copy.pick.release().is_none();
+    let theirs = if lidarr_choice { None } else { copy_short(copy) };
+    let copy_lossless = theirs
+        .as_deref()
+        .is_some_and(|t| is_lossless(first_word(Some(t))));
+    let owned_lossless = is_lossless(target.owned_format.as_deref());
+    let same = theirs
+        .as_deref()
+        .is_some_and(|t| dotnet::eq_ignore_case(t, &yours))
+        || (owned_lossless && copy_lossless);
+    let lower = theirs.as_deref().is_some_and(|t| {
+        (owned_lossless && !copy_lossless)
+            || matches!((bit_rate_of(t), bit_rate_of(&yours)), (Some(a), Some(b)) if a < b)
+    });
+    Some(if same {
+        ("same", "Same as yours")
+    } else if lower {
+        ("lower", "Lower than yours")
+    } else {
+        ("notBetter", "Not better than yours")
+    })
+}
+
+/// One side of the comparison the confirm shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CopyFacts {
+    pub quality: Option<String>,
+    pub length: Option<i32>,
+    pub take: Option<String>,
+}
+
+/// The library's copy and the picked one, side by side.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PickCompare {
+    pub yours: CopyFacts,
+    pub copy: CopyFacts,
+}
+
+/// The two copies side by side: their quality in a word or two, their lengths, and, when the
+/// library file is another take, what each one is.
+pub fn compare(target: &FindTarget, copy: &FoundCopy, take: Option<OtherTake>) -> PickCompare {
+    let lidarr_choice = !copy.pick.is_soulseek() && copy.pick.release().is_none();
+    PickCompare {
+        yours: CopyFacts {
+            quality: Some(owned_short(target)),
+            length: target.duration.filter(|d| *d > 0),
+            take: take.map(|take| take_name(take).to_string()),
+        },
+        copy: CopyFacts {
+            quality: if lidarr_choice {
+                Some("Lidarr's choice".to_string())
+            } else {
+                copy_short(copy)
+            },
+            length: copy.pick.length.or(copy.shown.length).filter(|l| *l > 0),
+            take: take.map(|_| "the plain song".to_string()),
+        },
+    }
 }
 
 /// The length most listed copies of the plain song agree on: the middle one of the Soulseek
@@ -243,6 +369,7 @@ fn usual_length(target: &FindTarget, title: &str, album: Option<&str>, cx: Check
         title: title.to_string(),
         album: album.map(str::to_string),
         length: None,
+        retitle: false,
     };
     let song = judged(target, &plain, cx);
     let mut lengths: Vec<i32> = cx

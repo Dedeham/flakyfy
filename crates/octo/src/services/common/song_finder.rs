@@ -23,7 +23,7 @@ use tracing::{info, warn};
 
 use super::acquisition_tracker::{AcquisitionState, AcquisitionTracker, acquisition_kinds, key_of};
 use super::download_picks::{DownloadPicks, LIDARR_SOURCE, PickedCopy, SOULSEEK_SOURCE};
-use super::replace_anyway::{self, ReplaceCheck};
+use super::replace_anyway::{self, OtherTake, PickCompare, ReplaceCheck};
 use super::track_acquisition_queue::TrackAcquisitionQueue;
 use crate::services::common::AcquisitionTarget;
 use crate::services::family::LibraryWriteGate;
@@ -89,6 +89,9 @@ pub mod library_action_states {
     /// The pick waits for the person's word: the copy is no better than the library's, or the
     /// library's is another take of the song. Picking again with `anyway` replaces it.
     pub const CONFIRM: &str = "confirm";
+    /// Asked first (`anyway=false`) about a better copy of the right song: nothing is fetched yet,
+    /// and picking again with `anyway=true` replaces the library's copy with it.
+    pub const READY: &str = "ready";
 }
 
 /// How one source's look went: searching, done, failed or off, in words, and what was asked.
@@ -130,6 +133,8 @@ pub struct FindSnapshot {
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub error: Option<String>,
+    /// For a library song, how its file is another take of the song, read once the search ends.
+    pub take: Option<OtherTake>,
 }
 
 /// What picking a copy did: queued (with the downloads row to follow, when there is one) or
@@ -139,6 +144,8 @@ pub struct PickOutcome {
     pub state: String,
     pub detail: String,
     pub key: Option<String>,
+    /// For a pick that asks first, the library's copy and the picked one side by side.
+    pub compare: Option<PickCompare>,
 }
 
 impl PickOutcome {
@@ -147,6 +154,7 @@ impl PickOutcome {
             state: state.to_string(),
             detail: detail.into(),
             key: None,
+            compare: None,
         }
     }
 
@@ -309,6 +317,7 @@ struct JobState {
     last_copy: i32,
     updated_at: DateTime<Utc>,
     error: Option<String>,
+    take: Option<OtherTake>,
 }
 
 struct Job {
@@ -331,6 +340,7 @@ impl Job {
             started_at: self.started_at,
             updated_at: state.updated_at,
             error: state.error.clone(),
+            take: state.take,
         }
     }
 
@@ -483,6 +493,7 @@ impl SongFinder {
             last_copy: 0,
             updated_at: now,
             error: None,
+            take: None,
         };
         // A library song's look leads only to replacing its file, which only the people on the
         // library actions allowed list may do: they hear why before a search is spent on it.
@@ -617,8 +628,25 @@ impl SongFinder {
             .map(|s| s.name.clone())
             .collect();
         futures::future::join_all(names.iter().map(|name| self.search_one(&job, name))).await;
+        let take = if job.target.library_id.is_some() {
+            let listed = job.state.lock().copies.clone();
+            let settings = self.services.soulseek_settings();
+            replace_anyway::library_take(
+                &job.target,
+                replace_anyway::CheckContext {
+                    settings: &settings,
+                    rejected: self.services.rejected(),
+                    remembers: self.services.remembers(),
+                    listed: &listed,
+                },
+            )
+            .map(|(take, _)| take)
+        } else {
+            None
+        };
         let now = self.now();
         let mut state = job.state.lock();
+        state.take = take;
         state.state = if state.sources.iter().any(|s| s.state == find_states::DONE) {
             find_states::DONE
         } else {
@@ -1164,15 +1192,32 @@ fn fetch(
                     listed: &ask.listed,
                 };
                 match replace_anyway::check(target, copy, cx) {
-                    ReplaceCheck::Fits => {}
+                    ReplaceCheck::Fits => {
+                        // Asked first: nothing is fetched until the person says yes.
+                        if !anyway {
+                            if let Some(gate) = services.upgrade_refusal(user) {
+                                return PickOutcome::skipped(gate);
+                            }
+                            return PickOutcome {
+                                compare: Some(replace_anyway::compare(target, copy, None)),
+                                ..PickOutcome::new(
+                                    library_action_states::READY,
+                                    "This copy is better than yours. Replace yours with it?",
+                                )
+                            };
+                        }
+                    }
                     ReplaceCheck::Refused(refused) => return PickOutcome::skipped(refused),
-                    ReplaceCheck::Confirm { words, song } => {
+                    ReplaceCheck::Confirm { words, song, take } => {
                         // Someone who may not replace it hears that, never a question first.
                         if let Some(gate) = services.upgrade_refusal(user) {
                             return PickOutcome::skipped(gate);
                         }
                         if !anyway {
-                            return PickOutcome::new(library_action_states::CONFIRM, words);
+                            return PickOutcome {
+                                compare: Some(replace_anyway::compare(target, copy, take)),
+                                ..PickOutcome::new(library_action_states::CONFIRM, words)
+                            };
                         }
                         pick.anyway = Some(song);
                         asked = Some(words);

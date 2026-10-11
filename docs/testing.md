@@ -74,7 +74,8 @@ fetched; with YouTube in the person's own list the fallback does nothing; the st
 counts only; and during a stubbed Soulseek outage nothing is taken from YouTube. Waiting three times
 six hours is not testable in a run, so each test writes the counting store as it would stand after two
 counted tries (Octo reads it at start) and hearts the song, which is the third; the counting itself is
-covered with a fake clock in `octo.Tests/YtDlpFallback`. The test for "a Discover Weekly fetch is never
+covered with a fake clock in `octo.Tests/YtDlpFallback`. The fallback refuses to start a download below 5 GB of free space on the download volume, so on a nearly
+full disk its fetch tests stall (the song waits and never arrives); free some space and run again. The test for "a Discover Weekly fetch is never
 offered to the fallback" comes with FLA-23, which owns that code; until then a unit test shows that
 only hearts and the import trickle reach the fallback.
 

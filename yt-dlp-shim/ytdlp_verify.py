@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import urllib.parse
 from typing import Optional
 
 import requests
@@ -66,17 +67,34 @@ def record(path: str, digest: str) -> None:
         fh.write(digest + "\n")
 
 
+MAX_REDIRECTS = 5
+_REDIRECTS = (301, 302, 303, 307, 308)
+
+
+def _https(url: str) -> bool:
+    return url.lower().startswith("https://")
+
+
 def _get(session, url: str, limit: int, timeout=(8, 60)) -> bytes:
+    """GET over https only. Redirects are followed by hand, and one that leaves https (or goes
+    on too long) is refused, so a downgrade cannot hand the checksum or the binary to plain HTTP."""
     try:
-        with session.get(url, stream=True, timeout=timeout) as resp:
-            if resp.status_code != 200:
-                raise VerifyError(f"HTTP {resp.status_code} for {url.rsplit('/', 1)[-1]}")
-            data = bytearray()
-            for chunk in resp.iter_content(1 << 16):
-                data.extend(chunk)
-                if len(data) > limit:
-                    raise VerifyError("download larger than allowed")
-            return bytes(data)
+        for _ in range(MAX_REDIRECTS + 1):
+            if not _https(url):
+                raise VerifyError("refusing a non-https address")
+            with session.get(url, stream=True, timeout=timeout, allow_redirects=False) as resp:
+                if resp.status_code in _REDIRECTS:
+                    url = urllib.parse.urljoin(url, resp.headers.get("Location", ""))
+                    continue
+                if resp.status_code != 200:
+                    raise VerifyError(f"HTTP {resp.status_code}")
+                data = bytearray()
+                for chunk in resp.iter_content(1 << 16):
+                    data.extend(chunk)
+                    if len(data) > limit:
+                        raise VerifyError("download larger than allowed")
+                return bytes(data)
+        raise VerifyError("too many redirects")
     except requests.RequestException as e:
         raise VerifyError(f"download failed: {type(e).__name__}") from e
 

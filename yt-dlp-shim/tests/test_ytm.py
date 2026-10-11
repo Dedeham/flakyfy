@@ -68,7 +68,7 @@ def test_a_burst_of_radios_never_pushes_the_searches_out(client, monkeypatch):
     monkeypatch.setitem(app._YTM_LIMIT, "radio", 3)
     client.get("/ytm/search?q=kept")
     for i in range(10):
-        client.get(f"/ytm/radio?videoId=v{i}")
+        client.get(f"/ytm/radio?videoId=abcdefghi{i:02d}")
     assert len(app._YTM_CACHE["radio"]) == 3
     assert len(app._YTM_CACHE["search"]) == 1
 
@@ -77,7 +77,7 @@ def test_a_full_gate_answers_busy_quickly(client, monkeypatch):
     monkeypatch.setattr(app, "_YTM_GATE_WAIT", 0.05)
     held = [app._YTM_GATE.acquire(timeout=1) for _ in range(3)]
     try:
-        assert client.get("/ytm/radio?videoId=v").status_code == 503
+        assert client.get("/ytm/radio?videoId=abcdefghijk").status_code == 503
     finally:
         for got in held:
             if got:
@@ -102,13 +102,13 @@ def test_search_answers_rows_and_is_cached(client, monkeypatch):
 def test_a_junk_limit_falls_back_to_the_default(client, monkeypatch):
     seen = []
     monkeypatch.setattr(ytm, "radio", lambda v, n: seen.append(n) or [])
-    assert client.get("/ytm/radio?videoId=v&limit=lots").status_code == 200
+    assert client.get("/ytm/radio?videoId=abcdefghijk&limit=lots").status_code == 200
     assert seen == [50]
 
 
 def test_radio_answers_rows(client, monkeypatch):
     monkeypatch.setattr(ytm, "radio", lambda v, n: [{"videoId": "next", "title": "Next"}])
-    assert client.get("/ytm/radio?videoId=v").get_json() == {"tracks": [{"videoId": "next", "title": "Next"}]}
+    assert client.get("/ytm/radio?videoId=abcdefghijk").get_json() == {"tracks": [{"videoId": "next", "title": "Next"}]}
     assert client.get("/ytm/radio").status_code == 400
 
 
@@ -116,7 +116,7 @@ def test_a_youtube_music_failure_is_a_502_not_a_crash(client, monkeypatch):
     def broken(*_):
         raise KeyError("contents")
     monkeypatch.setattr(ytm, "radio", broken)
-    response = client.get("/ytm/radio?videoId=v")
+    response = client.get("/ytm/radio?videoId=abcdefghijk")
     assert response.status_code == 502
     assert response.get_json() == {"error": "ytm_failed"}
 

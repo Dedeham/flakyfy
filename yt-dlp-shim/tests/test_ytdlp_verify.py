@@ -17,9 +17,10 @@ DIGEST = hashlib.sha256(BODY).hexdigest()
 
 
 class FakeResp:
-    def __init__(self, data, status=200):
+    def __init__(self, data, status=200, headers=None):
         self.status_code = status
         self._data = data
+        self.headers = headers or {}
 
     def __enter__(self):
         return self
@@ -33,12 +34,16 @@ class FakeResp:
 
 
 class FakeSession:
-    def __init__(self, files):
+    def __init__(self, files, redirects=None):
         self.files = files
+        self.redirects = redirects or {}
         self.urls = []
 
     def get(self, url, **kw):
         self.urls.append(url)
+        assert kw.get("allow_redirects") is False, "redirects must be followed by hand"
+        if url in self.redirects:
+            return FakeResp(b"", 302, {"Location": self.redirects[url]})
         name = url.rsplit("/", 1)[-1]
         if name not in self.files:
             return FakeResp(b"", 404)
@@ -87,6 +92,39 @@ class TestDownload:
         session = FakeSession({"SHA2-256SUMS": sums(), "yt-dlp": BODY})
         with pytest.raises(v.VerifyError):
             v.download_verified(str(tmp_path), session, base="https://example.test/r")
+
+
+class TestHttpsOnly:
+    def test_a_plain_http_address_is_refused_without_a_request(self, tmp_path):
+        session = FakeSession({"SHA2-256SUMS": sums(), "yt-dlp": BODY})
+        with pytest.raises(v.VerifyError):
+            v.download_verified(str(tmp_path), session, base="http://example.test/r")
+        assert session.urls == []
+
+    def test_a_redirect_to_plain_http_is_refused(self, tmp_path):
+        session = FakeSession({"SHA2-256SUMS": sums(), "yt-dlp": BODY},
+                              redirects={"https://example.test/r/latest/download/yt-dlp": "http://evil.test/yt-dlp"})
+        with pytest.raises(v.VerifyError):
+            v.download_verified(str(tmp_path), session, base="https://example.test/r")
+        assert "http://evil.test/yt-dlp" not in session.urls
+
+    def test_a_redirect_that_stays_on_https_is_followed(self, tmp_path):
+        session = FakeSession({"SHA2-256SUMS": sums(), "yt-dlp": BODY},
+                              redirects={"https://example.test/r/latest/download/yt-dlp": "https://cdn.example.test/yt-dlp"})
+        path, digest = v.download_verified(str(tmp_path), session, base="https://example.test/r")
+        assert digest == DIGEST
+
+    def test_a_redirect_loop_gives_up(self, tmp_path):
+        url = "https://example.test/r/latest/download/SHA2-256SUMS"
+        with pytest.raises(v.VerifyError):
+            v.download_verified(str(tmp_path), FakeSession({}, redirects={url: url}), base="https://example.test/r")
+
+    def test_the_dockerfile_curls_allow_only_https(self):
+        text = open(os.path.join(os.path.dirname(__file__), "..", "Dockerfile")).read()
+        curls = [line for line in text.splitlines() if "curl " in line and "curl -" in line and not line.lstrip().startswith("#")]
+        assert len(curls) == 3
+        for line in curls:
+            assert "--proto '=https'" in line and "--proto-redir '=https'" in line
 
 
 class TestSelfUpdate:

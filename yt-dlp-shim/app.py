@@ -888,13 +888,13 @@ def ytm_search():
 @app.get("/ytm/radio")
 def ytm_radio():
     video_id = request.args.get("videoId", "").strip()
-    if not video_id:
-        abort(400, "missing videoId")
+    if not _valid_video_id(video_id):
+        abort(400, "bad videoId")
     limit = _arg_int("limit", 50, 1, 100)
     try:
         rows = _ytm_cached("radio", (video_id, limit), lambda: ytm.radio(video_id, limit))
     except Exception as e:
-        log.warning("ytm radio failed for %s: %s", video_id, e)
+        log.warning("ytm radio failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if rows is None:
         return jsonify(error="busy"), 503

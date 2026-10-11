@@ -172,3 +172,23 @@ def test_the_run_logs_never_carry_the_search_text(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG):
         app_module._run(["ytsearch1:secret-song-text"], label="search+resolve")
     assert "secret-song-text" not in caplog.text
+
+
+@pytest.mark.parametrize("bad", ["", "short", "dQw4w9WgXcQQ", "dQw4w9WgXc/", "../../x", "dQw4w9WgX\nQ"])
+def test_ytm_radio_refuses_a_malformed_video_id(client, monkeypatch, bad):
+    called = []
+    monkeypatch.setattr(app_module.ytm, "radio", lambda *a, **k: called.append(a))
+    assert client.get("/ytm/radio", query_string={"videoId": bad}).status_code == 400
+    assert called == []
+
+
+def test_ytm_radio_takes_a_good_id_and_a_failure_logs_no_id(client, monkeypatch, caplog):
+    def boom(*a, **k):
+        raise RuntimeError("secret detail dQw4w9WgXcQ")
+
+    monkeypatch.setattr(app_module.ytm, "radio", boom)
+    app_module._YTM_CACHE["radio"].clear()
+    with caplog.at_level(logging.DEBUG):
+        assert client.get("/ytm/radio", query_string={"videoId": GOOD_ID}).status_code == 502
+    assert GOOD_ID not in caplog.text
+    assert "secret detail" not in caplog.text

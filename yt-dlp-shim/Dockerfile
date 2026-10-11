@@ -20,8 +20,8 @@ RUN if [ "$YTDLP_VERSION" = "latest" ]; then \
     else \
         base=https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}; \
     fi \
-    && curl -fsSL -o /tmp/yt-dlp "$base/yt-dlp" \
-    && curl -fsSL -o /tmp/SHA2-256SUMS "$base/SHA2-256SUMS" \
+    && curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/yt-dlp "$base/yt-dlp" \
+    && curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/SHA2-256SUMS "$base/SHA2-256SUMS" \
     && (cd /tmp && grep -E '^[0-9a-f]{64}  yt-dlp$' SHA2-256SUMS | sha256sum -c -) \
     && install -m 0755 /tmp/yt-dlp /usr/local/bin/yt-dlp \
     && sha256sum /usr/local/bin/yt-dlp | cut -d' ' -f1 > /usr/local/bin/yt-dlp.sha256 \
@@ -46,7 +46,7 @@ RUN set -eux; \
     else \
         url="https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${target}.zip"; \
     fi; \
-    curl -fsSL -o /tmp/deno.zip "$url"; \
+    curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/deno.zip "$url"; \
     unzip -q /tmp/deno.zip -d /usr/local/bin; \
     rm /tmp/deno.zip; \
     chmod +x /usr/local/bin/deno; \

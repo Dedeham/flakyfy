@@ -115,9 +115,17 @@ class ImportFidelity(unittest.TestCase):
         dashboard_post(cls.headers, f"/api/admin/imports/lists/{cls.liked_id}/playlist", {"On": True})
         # Nothing has been favorited yet: the import has no sign-in of the importer's to do it with.
         cls.stars_after_import = set(cls.ivy_nd.starred_ids())
+        # Others talk to Octo first, as verified requests: waiting favorites are the importer's, so
+        # none of these may use them (they would if the lookup ignored whose they are).
+        cls.bob.playlists()
+        cls.carol.playlists()
+        time.sleep(3)  # the favorites are set in the background after a request
         # The importer's app talks to Octo; that is the moment the favorites are set.
         cls.ivy.playlists()
-        h.wait_for(lambda: len(cls.ivy_nd.starred_ids()) >= len(LIKED), "the importer's favorites", 60)
+        try:
+            h.wait_for(lambda: len(cls.ivy_nd.starred_ids()) >= len(LIKED), "the importer's favorites", 30)
+        except TimeoutError:
+            pass  # the tests below say what is missing
 
     def playlist_named(self, user, name):
         return next((p for p in user.playlists() if p["name"] == name), None)

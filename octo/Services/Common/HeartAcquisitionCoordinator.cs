@@ -58,6 +58,16 @@ public sealed class HeartAcquisitionCoordinator
         _holds = holds;
     }
 
+    /// <summary>A heart on an outside song was taken back. Fallbacks forget the song for that person.</summary>
+    public void ForgetTrack(string provider, string externalId, string? requestedBy = null)
+    {
+        foreach (var fallback in _fallbacks)
+        {
+            try { fallback.Forget(provider, externalId, requestedBy); }
+            catch (Exception ex) { _logger.LogWarning("A fallback could not forget a song ({Type})", ex.GetType().Name); }
+        }
+    }
+
     public void QueueTrack(string provider, string externalId, string? requestedBy = null)
     {
         _ = AcquireTrackAsync(provider, externalId, requestedBy);

@@ -108,6 +108,9 @@ public sealed class YtDlpFallbackService : IAcquisitionFallback
         finally { _oneAtATime.Release(); }
     }
 
+    public void Forget(string provider, string externalId, string? requestedBy) =>
+        _store.Remove(YtDlpFallbackStore.KeyOf(provider, externalId, requestedBy ?? ""));
+
     private async Task<bool> SoulseekIsUpAsync(CancellationToken ct)
     {
         if (_soulseek is null) return false;

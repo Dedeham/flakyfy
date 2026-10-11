@@ -64,6 +64,33 @@ public sealed class YtDlpFallbackWorkerTests
     }
 
     [Fact]
+    public async Task AHeartTakenBackIsForgottenSoNothingIsRetriedOrFetched()
+    {
+        using var rig = new Rig();
+        rig.Put("song-1", counted: 2, firstHoursAgo: 14, lastCountedHoursAgo: 7);
+        rig.Put("song-2", counted: 2, firstHoursAgo: 14, lastCountedHoursAgo: 7);
+
+        rig.Hearts.ForgetTrack("soulseek", "song-1", "alice");
+
+        Assert.Null(rig.Fallback.Store.Get("soulseek", "song-1", "alice"));
+        Assert.NotNull(rig.Fallback.Store.Get("soulseek", "song-2", "alice")); // only that song
+        Assert.Equal(1, await rig.Worker.TickAsync(default));
+        await rig.Worker.DrainAsync();
+        rig.Lidarr.Verify(l => l.TryAcquireTrackAsync("soulseek", "song-1", It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
+        Assert.DoesNotContain(rig.Fallback.Requests, r => r.ExternalId == "song-1");
+    }
+
+    [Fact]
+    public void ForgettingIsPerPersonAndAnUnknownSongIsHarmless()
+    {
+        using var rig = new Rig();
+        rig.Put("song-1", counted: 1);
+        rig.Hearts.ForgetTrack("soulseek", "song-1", "bob");
+        rig.Hearts.ForgetTrack("soulseek", "never-seen", "alice");
+        Assert.NotNull(rig.Fallback.Store.Get("soulseek", "song-1", "alice"));
+    }
+
+    [Fact]
     public async Task ASongNotYetDueIsLeftAlone()
     {
         using var rig = new Rig();

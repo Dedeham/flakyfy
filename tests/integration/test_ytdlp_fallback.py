@@ -187,6 +187,22 @@ class YtDlpFallback(unittest.TestCase):
         mode = h.docker("exec", h.container("octo"), "stat", "-c", "%a", "/app/config/ytdlp-fallback.json").strip()
         self.assertEqual(mode, "600")
 
+    def test_5_taking_a_heart_back_makes_octo_forget_the_song(self):
+        artist, title = "Fallback Artist Five", "Hearted Then Unhearted"
+        ext_id = song_id(artist, title)
+        store = store_after_two_counted_tries(ext_id)
+        store["entries"][0].update(countedAttempts=1)
+        write_store("octo", store)
+        self.assertEqual(len(read_store("octo")["entries"]), 1)
+
+        h.Subsonic(h.OCTO, "alice", h.USERS["alice"]).call("unstar", {"id": SONG_ID_PREFIX + ext_id})
+
+        wait_until(lambda: not (read_store("octo") or {}).get("entries"), "the song to be forgotten", 30)
+        before = len(stub_calls("shim-download"))
+        time.sleep(35)  # past one pass of Octo's own worker: it must not run the song
+        self.assertEqual(len(stub_calls("shim-download")), before)
+        self.assertEqual(library_files(artist), [])
+
     def test_9_during_a_soulseek_outage_nothing_is_taken_from_youtube(self):
         artist, title = "Fallback Artist Nine", "Waiting For Soulseek"
         ext_id = song_id(artist, title)

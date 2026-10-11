@@ -31,6 +31,10 @@ public interface IAcquisitionFallback
     bool Applies(IReadOnlyList<HeartDownloadSource> steps);
 
     Task<FallbackResult> OfferAsync(ChainMiss miss, CancellationToken ct = default);
+
+    /// <summary>A person took their heart back: forget what is counted for that song and person,
+    /// so nothing is retried or fetched for it.</summary>
+    void Forget(string provider, string externalId, string? requestedBy);
 }
 
 /// <summary>

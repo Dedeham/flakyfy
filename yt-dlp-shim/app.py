@@ -57,6 +57,57 @@ PORT = int(os.environ.get("PORT", "8080"))
 # is internal-only.
 _DOWNLOAD_ROOT = os.path.realpath(os.environ.get("DOWNLOAD_ROOT", "/music"))
 
+# Downloads are further confined to this staging folder under the root: Octo moves a finished
+# file into the library itself, so the shim never needs to write anywhere else.
+_INCOMING_NAME = ".octo-incoming"
+_INCOMING_ROOT = os.path.join(_DOWNLOAD_ROOT, _INCOMING_NAME)
+
+# A YouTube video id is exactly 11 characters of this alphabet. Checked at every route that
+# takes one, before it reaches a cache, a log line, a path or a URL.
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_MAX_QUERY = 200
+_MAX_DURATION = 24 * 3600
+# What /download will take: a video no longer than this, no live stream, and at most this
+# many bytes (a 15 minute MP3 at 320 kbit/s is about 36 MB).
+_DOWNLOAD_MAX_SECONDS = int(os.environ.get("DOWNLOAD_MAX_MINUTES", "15")) * 60
+_DOWNLOAD_MAX_BYTES = 60 * 1024 * 1024
+
+
+def _valid_video_id(value: str) -> bool:
+    return bool(_VIDEO_ID.fullmatch(value or ""))
+
+
+def _clean_query(value: str) -> Optional[str]:
+    """The query as given, or None when it is empty, too long or holds a control character
+    (newlines included). Nothing is rewritten here: Octo cleans text before it sends it, and
+    the shim only refuses what should never have arrived."""
+    value = (value or "").strip()
+    if not value or len(value) > _MAX_QUERY:
+        return None
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    return value
+
+
+def _parse_duration(value: str) -> Optional[int]:
+    """A duration hint in seconds, or None when absent or not a plain number in range."""
+    value = (value or "").strip()
+    if not value.isascii() or not value.isdigit() or len(value) > 6:
+        return None
+    seconds = int(value)
+    return seconds if 0 < seconds <= _MAX_DURATION else None
+
+
+def _confined_dest(dest: str) -> Optional[str]:
+    """dest resolved through symlinks, or None unless it lies strictly inside the staging
+    folder (a sibling such as /music/.octo-incoming-evil does not)."""
+    if not dest or "\0" in dest:
+        return None
+    full = os.path.realpath(dest)
+    if not full.startswith(_INCOMING_ROOT + os.sep):
+        return None
+    return full
+
 # Audio format selector shared by /search (single-extraction warm) and
 # /stream's _resolve_url (cold path), so both request the exact same format.
 # Format 140 is audio-only m4a (AAC); yt-dlp -g / --print returns one
@@ -202,6 +253,9 @@ log.info(
 )
 
 
+_LOGGABLE_STDERR = frozenset({"version", "self-update"})
+
+
 def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
          bg: bool = False, capture: bool = False):
     """Run yt-dlp with a hard timeout. Returns stdout or None on any failure.
@@ -217,8 +271,7 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
     t_acquire = time.monotonic()
     wait = _BG_GATE_WAIT_SEC if bg else _GATE_WAIT_SEC
     if not _GATE.acquire(bg, wait):
-        log.warning("yt-dlp gate full after %ds (bg=%d), dropping: %s",
-                    wait, int(bg), " ".join(args))
+        log.warning("yt-dlp gate full after %ds (bg=%d), dropping (%s)", wait, int(bg), label)
         return None
     gate_ms = (time.monotonic() - t_acquire) * 1000.0
     try:
@@ -237,7 +290,7 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            log.warning("yt-dlp timed out (%s, gate_wait_ms=%.0f): %s", label, gate_ms, " ".join(args))
+            log.warning("yt-dlp timed out (%s, gate_wait_ms=%.0f)", label, gate_ms)
             return None
         except OSError as e:
             # Binary missing or not executable. Every caller already handles
@@ -251,7 +304,10 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
         log.info("ytdlp label=%s bg=%d gate_wait_ms=%.0f wall_ms=%.0f rc=%d",
                  label, int(bg), gate_ms, wall_ms, cp.returncode)
         if cp.returncode != 0:
-            log.warning("yt-dlp exit %d (%s): %s", cp.returncode, label, cp.stderr.strip()[:300])
+            # stderr can quote the search text or the video, so only the labels that carry
+            # neither get it in the log.
+            detail = cp.stderr.strip()[:300] if label in _LOGGABLE_STDERR else "(not logged)"
+            log.warning("yt-dlp exit %d (%s): %s", cp.returncode, label, detail)
             return cp if capture else None
         return cp if capture else cp.stdout
     finally:
@@ -276,12 +332,11 @@ def _is_bg() -> bool:
 
 @app.get("/search")
 def search():
-    q = request.args.get("q", "").strip()
-    if not q:
-        abort(400, "missing q")
+    q = _clean_query(request.args.get("q", ""))
+    if q is None:
+        abort(400, "bad q")
 
-    hint_str = request.args.get("duration", "").strip()
-    duration_hint = int(hint_str) if hint_str.isdigit() else None
+    duration_hint = _parse_duration(request.args.get("duration", ""))
     bg = _is_bg()
 
     cache_key = f"{q.lower()}|{duration_hint or ''}"
@@ -477,11 +532,10 @@ def meta():
     duration on search rows. With a duration hint it picks the closest-length of
     5 candidates (avoids long-form/compilation uploads); otherwise the top result.
     Cached, so repeat searches are a dict lookup."""
-    q = request.args.get("q", "").strip()
-    if not q:
-        abort(400, "missing q")
-    hint_str = request.args.get("duration", "").strip()
-    duration_hint = int(hint_str) if hint_str.isdigit() else None
+    q = _clean_query(request.args.get("q", ""))
+    if q is None:
+        abort(400, "bad q")
+    duration_hint = _parse_duration(request.args.get("duration", ""))
     bg = _is_bg()
 
     key = _norm_q(q)
@@ -566,6 +620,7 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
             [
                 "-g",
                 "-f", _AUDIO_FORMAT,
+                "--",
                 f"https://www.youtube.com/watch?v={video_id}",
             ],
             timeout=15,
@@ -762,7 +817,7 @@ def ytm_search():
     try:
         rows = _ytm_cached("search", (q.lower(), filter_name, limit), lambda: ytm.search(q, filter_name, limit))
     except Exception as e:  # ytmusicapi raises plain exceptions when YouTube Music changes its pages
-        log.warning("ytm search failed for %r: %s", q, e)
+        log.warning("ytm search failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if rows is None:
         return jsonify(error="busy"), 503
@@ -794,7 +849,7 @@ def ytm_artist_radio():
     try:
         found = _ytm_cached("artist", (q.lower(), limit), lambda: ytm.artist_radio(q, limit))
     except Exception as e:
-        log.warning("ytm artist radio failed for %r: %s", q, e)
+        log.warning("ytm artist radio failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if found is None:
         return jsonify(error="busy"), 503
@@ -805,8 +860,8 @@ def ytm_artist_radio():
 @app.get("/stream")
 def stream():
     video_id = request.args.get("id", "").strip()
-    if not video_id:
-        abort(400, "missing id")
+    if not _valid_video_id(video_id):
+        abort(400, "bad id")
     t_enter = time.monotonic()
 
     url = _resolve_url(video_id)
@@ -932,24 +987,31 @@ def download():
     dest = request.args.get("dest", "").strip()
     artist = request.args.get("artist", "").strip()
     title = request.args.get("title", "").strip()
-    if not video_id or not dest:
-        abort(400, "missing id or dest")
-
-    # Confine writes to the shared music root.
-    full_dest = os.path.realpath(dest)
-    if not (full_dest == _DOWNLOAD_ROOT or full_dest.startswith(_DOWNLOAD_ROOT + os.sep)):
-        abort(400, "dest outside download root")
-    os.makedirs(os.path.dirname(full_dest) or ".", exist_ok=True)
+    if not _valid_video_id(video_id):
+        abort(400, "bad id")
+    # Confine writes to the staging folder; a symlink or a sibling folder does not pass.
+    full_dest = _confined_dest(dest)
+    if full_dest is None:
+        abort(400, "dest outside the staging folder")
+    if len(artist) > _MAX_QUERY or len(title) > _MAX_QUERY:
+        abort(400, "artist or title too long")
+    if any(ord(c) < 32 or ord(c) == 127 for c in artist + title):
+        abort(400, "bad artist or title")
+    os.makedirs(os.path.dirname(full_dest), exist_ok=True)
 
     ytdlp_args = [
         "-x",
         "-f", "141/140/bestaudio[ext=m4a]/bestaudio",
         "--audio-format", "mp3",
         "--audio-quality", "0",
+        "--match-filters", f"duration<={_DOWNLOAD_MAX_SECONDS} & !is_live",
+        "--max-filesize", str(_DOWNLOAD_MAX_BYTES),
         "--embed-metadata",
         "--embed-thumbnail",
         "--convert-thumbnails", "jpg",
-        "-o", f"{full_dest}.%(ext)s",
+        # A literal % in the path must not be read as an output-template field.
+        "-o", f"{full_dest.replace('%', '%%')}.%(ext)s",
+        "--",
         f"https://www.youtube.com/watch?v={video_id}",
     ]
     path = f"{full_dest}.mp3"
@@ -985,6 +1047,10 @@ def download():
         _sweep_partials()
         return jsonify(error="download_failed", expected=path), 502
 
+    if os.path.getsize(path) > _DOWNLOAD_MAX_BYTES:
+        _sweep_partials()
+        return jsonify(error="download_too_large"), 502
+
     # Overwrite yt-dlp's video-derived title/artist with the clean values Octo
     # passed, so Navidrome groups the track correctly. Codec-copy keeps the audio
     # and the embedded cover; list args are quoting-safe for spaces. Best-effort:
@@ -999,7 +1065,9 @@ def download():
         try:
             rc = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-i", path, "-map", "0", "-map_metadata", "0", "-codec", "copy",
+                 # -1: drop what YouTube put in the tags (comment, description, uploader); only
+                 # the artist and title Octo passed are written, and the cover stream stays.
+                 "-i", path, "-map", "0", "-map_metadata", "-1", "-codec", "copy",
                  *meta, tagged],
                 timeout=60, check=False,
             ).returncode
@@ -1008,7 +1076,7 @@ def download():
             elif os.path.exists(tagged):
                 os.remove(tagged)
         except Exception as e:
-            log.warning("retag failed for %s: %s", video_id, e)
+            log.warning("retag failed for %s: %s", video_id, type(e).__name__)
 
     log.info("downloaded %s -> %s", video_id, path)
     return jsonify(path=path)

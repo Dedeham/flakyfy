@@ -108,7 +108,8 @@ public class SoulseekDownloadService : BaseDownloadService
         var routing = _idRegistry.Lookup(externalId) ?? SoulseekMetadataService.TryDecodeExternalId(externalId);
         if (routing is null) return null;
 
-        var videoId = routing.YouTubeId;
+        // An id that is not exactly a video id (it can arrive inside an external id) is ignored.
+        var videoId = YouTubeResolver.IsVideoId(routing.YouTubeId) ? routing.YouTubeId : null;
         if (string.IsNullOrEmpty(videoId) && routing.HasArtistTitle)
         {
             var hit = await _youtube.SearchAsync($"{routing.Artist} {routing.Title}", routing.Duration, ct: cancellationToken);
@@ -306,7 +307,7 @@ public class SoulseekDownloadService : BaseDownloadService
         var trackKey = song.ExternalId ?? "";
         Track(t => t.Stage(ProviderName, trackKey, AcquisitionState.Searching, "YouTube"));
 
-        var videoId = routing.YouTubeId;
+        var videoId = YouTubeResolver.IsVideoId(routing.YouTubeId) ? routing.YouTubeId : null;
         if (string.IsNullOrEmpty(videoId))
         {
             var hit = await _youtube.SearchAsync($"{routing.Artist} {routing.Title}", routing.Duration, ct: cancellationToken);

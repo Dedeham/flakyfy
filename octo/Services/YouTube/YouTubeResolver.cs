@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Octo.Services.YouTube;
 
@@ -34,6 +36,41 @@ public class YouTubeResolver
     /// </summary>
     public string BaseUrl => _baseUrl;
 
+    /// <summary>The longest search text sent to the shim.</summary>
+    internal const int MaxQueryLength = 200;
+
+    private static readonly Regex VideoIdPattern = new("^[A-Za-z0-9_-]{11}$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+
+    /// <summary>
+    /// True for exactly a YouTube video id: 11 ASCII letters, digits, '-' or '_'. Checked before an
+    /// id reaches a URL, a path or a log line, and on ids the shim hands back.
+    /// </summary>
+    public static bool IsVideoId(string? value) =>
+        value is { Length: 11 } && VideoIdPattern.IsMatch(value);
+
+    /// <summary>
+    /// The one place search text is cleaned before it goes to the shim: control characters and
+    /// line breaks become spaces, runs of white space collapse, the result is trimmed and cut to
+    /// <see cref="MaxQueryLength"/>. Null when nothing is left. Every search, metadata lookup and
+    /// download goes through here, so a song title from an import cannot carry a line break or
+    /// an oversize string to the shim.
+    /// </summary>
+    public static string? CleanQuery(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var sb = new StringBuilder(Math.Min(text.Length, MaxQueryLength));
+        var space = false;
+        foreach (var ch in text)
+        {
+            if (char.IsControl(ch) || char.IsWhiteSpace(ch)) { space = sb.Length > 0; continue; }
+            if (space) { sb.Append(' '); space = false; }
+            sb.Append(ch);
+            if (sb.Length >= MaxQueryLength) break;
+        }
+        var cleaned = sb.ToString().Trim();
+        return cleaned.Length == 0 ? null : cleaned;
+    }
+
     internal const string DefaultBaseUrl = "http://yt-dlp-shim:8080";
 
     internal static string ResolveBaseUrl(string? configured)
@@ -54,7 +91,9 @@ public class YouTubeResolver
     public async Task<YouTubeHit?> SearchAsync(string query, int? durationHint = null,
         bool background = false, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(query)) return null;
+        var cleaned = CleanQuery(query);
+        if (cleaned is null) return null;
+        query = cleaned;
         var url = $"{_baseUrl}/search?q={Uri.EscapeDataString(query)}"
             + (durationHint is int dh && dh > 0 ? $"&duration={dh}" : "")
             + (background ? "&bg=1" : "");
@@ -64,17 +103,17 @@ public class YouTubeResolver
             using var resp = await http.GetAsync(url, ct);
             if (!resp.IsSuccessStatusCode)
             {
-                _logger.LogDebug("shim /search HTTP {Code} for '{Q}'", (int)resp.StatusCode, query);
+                _logger.LogDebug("shim /search HTTP {Code}", (int)resp.StatusCode);
                 return null;
             }
             var json = await resp.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var videoId = root.TryGetProperty("video_id", out var v) ? v.GetString() : null;
-            if (string.IsNullOrEmpty(videoId)) return null;
+            if (!IsVideoId(videoId)) return null;
             return new YouTubeHit
             {
-                VideoId = videoId,
+                VideoId = videoId!,
                 Title = root.TryGetProperty("title", out var t) ? t.GetString() : null,
                 Duration = root.TryGetProperty("duration", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt32() : null,
                 Channel = root.TryGetProperty("channel", out var c) ? c.GetString() : null
@@ -82,7 +121,7 @@ public class YouTubeResolver
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("shim /search failed for '{Q}': {Msg}", query, ex.Message);
+            _logger.LogWarning("shim /search failed: {Type}", ex.GetType().Name);
             return null;
         }
     }
@@ -99,7 +138,9 @@ public class YouTubeResolver
     public async Task<YouTubeHit?> MetaAsync(string query, int? durationHint = null,
         bool background = false, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(query)) return null;
+        var cleaned = CleanQuery(query);
+        if (cleaned is null) return null;
+        query = cleaned;
         var url = $"{_baseUrl}/meta?q={Uri.EscapeDataString(query)}"
             + (durationHint is int dh && dh > 0 ? $"&duration={dh}" : "")
             + (background ? "&bg=1" : "");
@@ -112,10 +153,10 @@ public class YouTubeResolver
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var vid = root.TryGetProperty("video_id", out var v) ? v.GetString() : null;
-            if (string.IsNullOrEmpty(vid)) return null;
+            if (!IsVideoId(vid)) return null;
             return new YouTubeHit
             {
-                VideoId = vid,
+                VideoId = vid!,
                 Title = root.TryGetProperty("title", out var t) ? t.GetString() : null,
                 Duration = root.TryGetProperty("duration", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt32() : null,
             };
@@ -145,7 +186,7 @@ public class YouTubeResolver
     /// </summary>
     public async Task<(Stream stream, string contentType, long? contentLength, int statusCode, string? contentRange, HttpResponseMessage owner)?> OpenStreamAsync(string videoId, string? rangeHeader = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(videoId)) return null;
+        if (!IsVideoId(videoId)) return null;
         var url = $"{_baseUrl}/stream?id={Uri.EscapeDataString(videoId)}";
 
         var http = _httpClientFactory.CreateClient(StreamClientName);
@@ -177,7 +218,7 @@ public class YouTubeResolver
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("shim /stream failed for {Vid}: {Msg}", videoId, ex.Message);
+            _logger.LogWarning("shim /stream failed for {Vid}: {Type}", videoId, ex.GetType().Name);
             resp?.Dispose();
             return null;
         }
@@ -192,7 +233,9 @@ public class YouTubeResolver
     public async Task<string?> DownloadAsync(string videoId, string destWithoutExt,
         string? artist = null, string? title = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(videoId) || string.IsNullOrWhiteSpace(destWithoutExt)) return null;
+        if (!IsVideoId(videoId) || string.IsNullOrWhiteSpace(destWithoutExt)) return null;
+        artist = CleanQuery(artist);
+        title = CleanQuery(title);
         var url = $"{_baseUrl}/download?id={Uri.EscapeDataString(videoId)}&dest={Uri.EscapeDataString(destWithoutExt)}"
             + (string.IsNullOrEmpty(artist) ? "" : $"&artist={Uri.EscapeDataString(artist)}")
             + (string.IsNullOrEmpty(title) ? "" : $"&title={Uri.EscapeDataString(title)}");
@@ -211,7 +254,7 @@ public class YouTubeResolver
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("shim /download failed for {Vid}: {Msg}", videoId, ex.Message);
+            _logger.LogWarning("shim /download failed for {Vid}: {Type}", videoId, ex.GetType().Name);
             return null;
         }
     }

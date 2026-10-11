@@ -28,15 +28,23 @@ builds the Octo image, which takes a few minutes.
 ### The stack
 
 `tests/integration/docker-compose.yml` is separate from the root `docker-compose.yml` and starts
-two containers under the project name `fla12-it` (set `HARNESS_PROJECT` to change it):
+four containers under the project name `fla12-it` (set `HARNESS_PROJECT` to change it):
 
 - **Navidrome** (`deluan/navidrome`, the image the main stack already uses), on `127.0.0.1:14533`.
   It is the source of truth for users, plays, favorites and playlists
   (`docs/architecture.md`, section 4.2).
 - **Octo**, built from the repository's `Dockerfile`, on `127.0.0.1:15274`, pointed at that Navidrome.
+- **The stub** (`tests/integration/stub/stub.py`, test-only, Python standard library), on
+  `127.0.0.1:18080`. It answers like slskd (a session, an application state that a test can switch
+  between logged in and out, searches that always end empty) and like the yt-dlp shim (`/search`, and
+  `/download`, which writes a tiny generated MP3 into Octo's staging folder). `GET /__log` lists what
+  it served and `POST /__control {"soulseek": "up"|"down"}` switches the Soulseek state. Later modules
+  add their own stand-ins to it (Deezer, Last.fm, ListenBrainz base URLs).
+- **A second Octo** (`octo-yt`, port `15275`) with YouTube in its source list, for the test that shows
+  the yt-dlp fallback does nothing when a person already chose YouTube. Own config volume.
 
-External sources are stubbed by being switched off or pointed at a host that does not resolve:
-the yt-dlp shim, Soulseek, the Sounds alike service, YouTube Music and ListenBrainz radio,
+External sources are stubbed by being switched off or pointed at a host that does not resolve,
+except slskd and the yt-dlp shim, which point at the stub above. The rest: the Sounds alike service, YouTube Music and ListenBrainz radio,
 Last.fm, Lidarr, cover and release lookups, and the update check. A test therefore never touches
 the internet or a real account. If a module needs a working stand-in for one of them, add it to
 the harness compose file as part of that module.
@@ -59,6 +67,16 @@ Built by `tests/integration/seed/`:
 `harness.py` (a small Subsonic client). The first is `test_playlist_isolation.py`: each user sees
 only their own playlists through Octo and directly on Navidrome, a playlist made through Octo
 stays private to its owner, and deleting one user's playlist leaves the others alone.
+
+`test_ytdlp_fallback.py` (FLA-21): a song missing from the stubbed Soulseek arrives through the stubbed
+shim after its counted tries and is tagged `OCTO_SOURCE=youtube-fallback`; one try short, nothing is
+fetched; with YouTube in the person's own list the fallback does nothing; the status is admin-only and
+counts only; and during a stubbed Soulseek outage nothing is taken from YouTube. Waiting three times
+six hours is not testable in a run, so each test writes the counting store as it would stand after two
+counted tries (Octo reads it at start) and hearts the song, which is the third; the counting itself is
+covered with a fake clock in `octo.Tests/YtDlpFallback`. The test for "a Discover Weekly fetch is never
+offered to the fallback" comes with FLA-23, which owns that code; until then a unit test shows that
+only hearts and the import trickle reach the fallback.
 
 ## The rule for Wave 2 and later modules
 

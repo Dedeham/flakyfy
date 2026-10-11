@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -10,6 +11,9 @@ import urllib.request
 
 NAVIDROME = os.environ.get("HARNESS_NAVIDROME_URL", "http://127.0.0.1:14533")
 OCTO = os.environ.get("HARNESS_OCTO_URL", "http://127.0.0.1:15274")
+OCTO_YT = os.environ.get("HARNESS_OCTO_YT_URL", "http://127.0.0.1:15275")
+STUB = os.environ.get("HARNESS_STUB_URL", "http://127.0.0.1:18080")
+PROJECT = os.environ.get("HARNESS_PROJECT", "fla12-it")
 ADMIN = (os.environ.get("HARNESS_ADMIN_USER", "admin"),
          os.environ.get("HARNESS_ADMIN_PASSWORD", "harness-admin-pw"))
 # Throwaway accounts that exist only inside the disposable test stack.
@@ -87,3 +91,14 @@ def wait_for(fn, what, seconds=180):
             last = e
         time.sleep(2)
     raise TimeoutError(f"timed out waiting for {what} ({last})")
+
+
+def container(service):
+    """The container name of a harness service (project name, then the service)."""
+    return f"{PROJECT}-{service}"
+
+
+def docker(*args, stdin=None, check=True):
+    """Run `docker <args>`, answering stdout as text."""
+    done = subprocess.run(["docker", *args], input=stdin, capture_output=True, text=True, check=check)
+    return done.stdout

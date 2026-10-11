@@ -2,7 +2,10 @@
 # Start it with ./run.sh (generates the library, starts the stack, seeds it, runs the tests).
 # External sources (slskd, the yt-dlp shim, sonic, Lidarr, Last.fm, update checks) are not
 # started; Octo's settings below point them at nothing or switch them off, so a test never
-# reaches the internet or a real account.
+# reaches the internet or a real account. The exception is `stub`, a small test-only server
+# (stub/stub.py) that answers like slskd and the yt-dlp shim, so the yt-dlp fallback (FLA-21)
+# can be tested end to end. Later modules add their own stand-ins to it (Deezer, Last.fm,
+# ListenBrainz base URLs, per docs/plan.md).
 name: ${HARNESS_PROJECT:-fla12-it}
 
 services:
@@ -22,12 +25,26 @@ services:
       - ./.data/music:/music:ro
       - navidrome-data:/data
 
+  # Test-only stand-in for slskd and the yt-dlp shim. Python's standard library, no packages.
+  # It shares Octo's music volume so its /download can put a file where Octo expects it.
+  stub:
+    image: python:3.12-slim
+    container_name: ${HARNESS_PROJECT:-fla12-it}-stub
+    command: ["python", "/stub/stub.py"]
+    ports:
+      - "127.0.0.1:${HARNESS_STUB_PORT:-18080}:8080"
+    volumes:
+      - ./stub:/stub:ro
+      - octo-music:/music
+
   octo:
     build:
       context: ../..
+    image: ${HARNESS_PROJECT:-fla12-it}-octo
     container_name: ${HARNESS_PROJECT:-fla12-it}-octo
     depends_on:
       - navidrome
+      - stub
     ports:
       - "127.0.0.1:${HARNESS_OCTO_PORT:-15274}:8080"
     environment:
@@ -40,8 +57,12 @@ services:
       Subsonic__EnableSyncCatalog: "false"
       Library__DownloadPath: /music
       # Stubbed external sources: unreachable on purpose, so any call fails fast and offline.
-      YouTube__ShimUrl: http://stub.invalid:8080
-      Soulseek__BaseUrl: http://stub.invalid:5030
+      YouTube__ShimUrl: http://stub:8080
+      Soulseek__BaseUrl: http://stub:8080
+      Soulseek__Username: stub
+      Soulseek__Password: stub
+      Soulseek__SearchWaitSeconds: "2"
+      Soulseek__DownloadTimeoutSeconds: "30"
       RadioSources__SonicUrl: http://stub.invalid:8080
       RadioSources__YouTubeMusic: "false"
       RadioSources__ListenBrainz: "false"
@@ -56,7 +77,51 @@ services:
       - octo-music:/music
       - octo-config:/app/config
 
+  # The same Octo with YouTube in its source list, for the test that shows the yt-dlp fallback
+  # does nothing when a person already chose YouTube. Own config volume, same music volume.
+  octo-yt:
+    build:
+      context: ../..
+    image: ${HARNESS_PROJECT:-fla12-it}-octo
+    container_name: ${HARNESS_PROJECT:-fla12-it}-octo-yt
+    depends_on:
+      - navidrome
+      - stub
+      - octo
+    ports:
+      - "127.0.0.1:${HARNESS_OCTO_YT_PORT:-15275}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Subsonic__Url: http://navidrome:4533
+      Subsonic__AdminUsername: ${HARNESS_ADMIN_USER:-admin}
+      Subsonic__AdminPassword: ${HARNESS_ADMIN_PASSWORD:-harness-admin-pw}
+      Subsonic__EnableExternalPlaylists: "false"
+      Subsonic__EnableSearchDiscovery: "false"
+      Subsonic__EnableSyncCatalog: "false"
+      Subsonic__DownloadSource: SoulseekThenYouTube
+      Library__DownloadPath: /music
+      YouTube__ShimUrl: http://stub:8080
+      Soulseek__BaseUrl: http://stub:8080
+      Soulseek__Username: stub
+      Soulseek__Password: stub
+      Soulseek__SearchWaitSeconds: "2"
+      Soulseek__DownloadTimeoutSeconds: "30"
+      RadioSources__SonicUrl: http://stub.invalid:8080
+      RadioSources__YouTubeMusic: "false"
+      RadioSources__ListenBrainz: "false"
+      RadioSources__SoundsAlike: "false"
+      LastFm__ApiKey: ""
+      LastFm__ApiSecret: ""
+      Lidarr__BaseUrl: ""
+      Updates__Check: "false"
+      Metadata__UseCoverArtArchive: "false"
+      Metadata__ReleaseDetailsLookup: "false"
+    volumes:
+      - octo-music:/music
+      - octo-yt-config:/app/config
+
 volumes:
   navidrome-data:
   octo-music:
   octo-config:
+  octo-yt-config:

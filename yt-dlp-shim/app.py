@@ -39,6 +39,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from flask import Flask, Response, abort, jsonify, request, stream_with_context
 
+import ytdlp_verify
 import ytm
 
 from gate import TieredGate
@@ -137,6 +138,8 @@ _CACHE_PURGE_MIN_INTERVAL_SEC = int(os.environ.get("CACHE_PURGE_MIN_INTERVAL_SEC
 _SELF_UPDATE_ON_403 = os.environ.get("SELF_UPDATE_ON_403", "1").lower() not in ("0", "false", "no")
 _SELF_UPDATE_MIN_INTERVAL_SEC = int(os.environ.get("SELF_UPDATE_MIN_INTERVAL_SEC", "21600"))
 _SELF_UPDATE_LOCK = threading.Lock()
+# False when the binary on disk no longer matches the checksum recorded for it: nothing runs it.
+_BINARY_TRUSTED = True
 # None means "never attempted". Not 0.0: time.monotonic() is time since boot on
 # Linux, so on a host up for less than the interval, `now - 0.0` is inside the
 # window and the very first self-update would be rate-limited away. That is
@@ -268,6 +271,8 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
     resolves are queuing behind background prewarm (grep `gate_wait_ms`), and
     `bg` so the two can actually be told apart in the log.
     """
+    if not _BINARY_TRUSTED:
+        return None
     t_acquire = time.monotonic()
     wait = _BG_GATE_WAIT_SEC if bg else _GATE_WAIT_SEC
     if not _GATE.acquire(bg, wait):
@@ -710,6 +715,8 @@ def _seed_writable_ytdlp() -> None:
             return
         shutil.copy2(YTDLP_DIST, YTDLP)
         os.chmod(YTDLP, 0o755)
+        if (digest := ytdlp_verify.read_recorded(YTDLP_DIST)):
+            ytdlp_verify.record(YTDLP, digest)
         log.info("seeded %s from %s", YTDLP, YTDLP_DIST)
     except OSError as e:
         log.warning("could not seed %s from %s: %s", YTDLP, YTDLP_DIST, e)
@@ -718,6 +725,60 @@ def _seed_writable_ytdlp() -> None:
 def _ytdlp_version() -> str:
     out = _run(["--version"], timeout=30, label="version", bg=False)
     return (out or "").strip()
+
+
+def _verified_update() -> bool:
+    """Fetch the latest official release and install it, but only when its SHA2-256 matches the
+    list yt-dlp publishes with it. Replaces `yt-dlp -U`, which installs without that check.
+    True when a file was installed; a failed check or download leaves the running binary alone."""
+    directory = os.path.dirname(YTDLP) or "."
+    tmp = None
+    try:
+        tmp, digest = ytdlp_verify.download_verified(directory, _SESSION)
+        # Only a file that matched is run, and only to prove it starts before it replaces the old one.
+        probe = subprocess.run([tmp, "--version"], capture_output=True, text=True, timeout=30, check=False)
+        if probe.returncode != 0:
+            log.warning("verified yt-dlp release did not start; keeping the current binary")
+            return False
+        os.replace(tmp, YTDLP)
+        tmp = None
+        ytdlp_verify.record(YTDLP, digest)
+        return True
+    except (ytdlp_verify.VerifyError, OSError, subprocess.SubprocessError) as e:
+        log.warning("yt-dlp update refused: %s", e)
+        return False
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _check_installed_binary() -> None:
+    """Before the first run: the copy that will execute must be the file that was verified when
+    it was installed. A changed or unrecorded copy on the volume is replaced by the image's own
+    (verified at build); if the image copy fails its own record, nothing is run."""
+    global _BINARY_TRUSTED
+    try:
+        if YTDLP != YTDLP_DIST:
+            recorded = ytdlp_verify.read_recorded(YTDLP)
+            if os.path.isfile(YTDLP) and (recorded is None or ytdlp_verify.sha256_file(YTDLP) != recorded):
+                log.warning("yt-dlp at %s does not match its verified checksum; using the image copy", YTDLP)
+                shutil.copy2(YTDLP_DIST, YTDLP)
+                os.chmod(YTDLP, 0o755)
+                dist_digest = ytdlp_verify.read_recorded(YTDLP_DIST)
+                if dist_digest:
+                    ytdlp_verify.record(YTDLP, dist_digest)
+        target = YTDLP
+        recorded = ytdlp_verify.read_recorded(target)
+        if recorded is None:
+            log.warning("no recorded checksum for %s; cannot verify it", target)
+        elif ytdlp_verify.sha256_file(target) != recorded:
+            log.error("yt-dlp at %s does not match its recorded checksum; not running it", target)
+            _BINARY_TRUSTED = False
+    except OSError as e:
+        log.warning("could not verify yt-dlp: %s", e)
 
 
 def _maybe_self_update(reason: str) -> bool:
@@ -741,7 +802,7 @@ def _maybe_self_update(reason: str) -> bool:
 
     before = _ytdlp_version()
     log.warning("%s: attempting yt-dlp self-update (current %s)", reason, before or "unknown")
-    _run(["-U"], timeout=180, label="self-update", bg=True)
+    _verified_update()
     after = _ytdlp_version()
     if after and after != before:
         # The old player cache belongs to the old binary; keep them together.
@@ -1087,6 +1148,7 @@ def download():
 # stale yt-dlp still answers /health with ok:true and still resolves metadata,
 # so "which version is this" needs to be answerable without docker exec.
 _seed_writable_ytdlp()
+_check_installed_binary()
 log.info("yt-dlp %s at %s", _ytdlp_version() or "unknown", YTDLP)
 
 

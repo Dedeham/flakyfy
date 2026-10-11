@@ -85,13 +85,13 @@ class TestSelfUpdate:
     def test_reports_success_only_when_the_version_moves(self, monkeypatch):
         versions = iter(["2026.07.04", "2026.08.19"])
         monkeypatch.setattr(app, "_ytdlp_version", lambda: next(versions))
-        monkeypatch.setattr(app, "_run", lambda *a, **k: "")
+        monkeypatch.setattr(app, "_verified_update", lambda: True)
 
         assert app._maybe_self_update("test") is True
 
     def test_reports_failure_when_already_current(self, monkeypatch):
         monkeypatch.setattr(app, "_ytdlp_version", lambda: "2026.08.19")
-        monkeypatch.setattr(app, "_run", lambda *a, **k: "")
+        monkeypatch.setattr(app, "_verified_update", lambda: True)
 
         # Same version both sides means the refusal is something else, and the
         # caller must not retry on the strength of an update that did nothing.
@@ -100,7 +100,7 @@ class TestSelfUpdate:
     def test_rate_limit_blocks_a_second_attempt(self, monkeypatch):
         versions = iter(["a", "b", "c", "d"])
         monkeypatch.setattr(app, "_ytdlp_version", lambda: next(versions))
-        monkeypatch.setattr(app, "_run", lambda *a, **k: "")
+        monkeypatch.setattr(app, "_verified_update", lambda: True)
 
         assert app._maybe_self_update("first") is True
         # An outage means every play 403s; without this the shim would fetch a
@@ -115,7 +115,7 @@ class TestSelfUpdate:
         monkeypatch.setattr(app, "_SELF_UPDATE_MIN_INTERVAL_SEC", 10 ** 9)
         versions = iter(["old", "new"])
         monkeypatch.setattr(app, "_ytdlp_version", lambda: next(versions))
-        monkeypatch.setattr(app, "_run", lambda *a, **k: "")
+        monkeypatch.setattr(app, "_verified_update", lambda: True)
 
         assert app._maybe_self_update("first ever") is True
 

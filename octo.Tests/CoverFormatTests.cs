@@ -99,4 +99,12 @@ public class CoverFormatTests
         var service = new CoverArtService(Microsoft.Extensions.Logging.Abstractions.NullLogger<CoverArtService>.Instance);
         Assert.Same(tiff, service.AddOctoBadge(tiff));
     }
+
+    [Fact]
+    public void The_badge_asset_is_shipped_and_loads()
+    {
+        var service = new CoverArtService(Microsoft.Extensions.Logging.Abstractions.NullLogger<CoverArtService>.Instance);
+        Assert.True(File.Exists(Path.Combine(AppContext.BaseDirectory, "Assets", CoverArtService.BadgeFileName)));
+        Assert.True(service.BadgeLoaded);
+    }
 }

@@ -17,6 +17,12 @@ namespace Octo.Services.CoverArt;
 public class CoverArtService
 {
     private readonly ILogger<CoverArtService> _logger;
+    /// <summary>
+    /// The badge picture, a file in octo/Assets. Swap the file (or change this name) to change the
+    /// badge on every badged cover and on the placeholder; nothing else is tied to it.
+    /// </summary>
+    internal const string BadgeFileName = "flakyfy_logo.png";
+
     private Image? _octoLogo;
     private readonly object _logoLock = new();
     private volatile bool _logoLoadAttempted;
@@ -60,8 +66,8 @@ public class CoverArtService
             // build. AppContext.BaseDirectory is the publish root at runtime.
             string[] candidates = new[]
             {
-                System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "octo_logo.png"),
-                System.IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "Assets", "octo_logo.png"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", BadgeFileName),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "Assets", BadgeFileName),
             };
             string? loadedFrom = null;
             foreach (var path in candidates)
@@ -98,6 +104,9 @@ public class CoverArtService
             return _octoLogo;
         }
     }
+
+    /// <summary>True when the badge picture was found and decoded.</summary>
+    internal bool BadgeLoaded => GetOctoLogo() is not null;
 
     private Image? CloneOctoLogo(int width, int height)
     {

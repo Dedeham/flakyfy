@@ -29,6 +29,10 @@ namespace Octo.Tests;
 /// </summary>
 public class SongLengthTests
 {
+    /// <summary>The shim only hands back real video ids (11 characters), so the fake makes one per query.</summary>
+    internal static string VideoIdFor(string query) =>
+        "v" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(query)))[..10];
+
     // ---- The rules ----------------------------------------------------------------
 
     [Theory]
@@ -268,7 +272,7 @@ public class SongLengthTests
         await svc.ResolveTopDurationsAsync([song]);
 
         Assert.Equal(180, song.Duration);
-        Assert.Equal("vid-Someone Live Set", fixture.Registry.Lookup(song.Id)!.YouTubeId);
+        Assert.Equal(VideoIdFor("Someone Live Set"), fixture.Registry.Lookup(song.Id)!.YouTubeId);
     }
 
     [Fact]
@@ -283,7 +287,7 @@ public class SongLengthTests
         Assert.Equal(180, song.Duration);
         var routing = fixture.Registry.Lookup(song.Id)!;
         Assert.Equal(417, routing.Duration);
-        Assert.Equal("vid-Daft Punk Emotion", routing.YouTubeId);
+        Assert.Equal(VideoIdFor("Daft Punk Emotion"), routing.YouTubeId);
         Assert.Contains(fixture.Requests, url => url.Contains("/meta") && url.Contains("bg=1"));
     }
 
@@ -405,7 +409,7 @@ internal sealed class LengthFixture
         }
         if (uri.Host == "yt-dlp-shim" && uri.AbsolutePath == "/meta"
             && fixture.Video.TryGetValue(query["q"] ?? "", out var length))
-            return $"{{\"video_id\":\"vid-{query["q"]}\",\"duration\":{length}}}";
+            return $"{{\"video_id\":\"{SongLengthTests.VideoIdFor(query["q"] ?? "")}\",\"duration\":{length}}}";
         status = HttpStatusCode.NotFound;
         return "";
     }

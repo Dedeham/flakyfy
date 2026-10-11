@@ -1584,6 +1584,7 @@ public abstract class BaseDownloadService : IDownloadService
             // The group id is written only when the album really is that release.
             if (!string.IsNullOrEmpty(song.MusicBrainzRecordingId))
                 TagWriterExtras.SetRecordingId(tagFile, song.MusicBrainzRecordingId);
+            if (!string.IsNullOrEmpty(song.SourceMark)) TagWriterExtras.SetSourceMark(tagFile, song.SourceMark, song.SourceMarkId);
             var albumIsRelease = !string.IsNullOrEmpty(song.MusicBrainzReleaseGroupId)
                 && Octo.Services.Fingerprint.VerificationResult.AlbumIsFromRelease(song);
             if (albumIsRelease) tagFile.Tag.MusicBrainzReleaseGroupId = song.MusicBrainzReleaseGroupId;

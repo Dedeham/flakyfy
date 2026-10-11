@@ -544,6 +544,25 @@ function setSettingsAvailable(ok, reason = '') {
 }
 document.getElementById('settings-retry')?.addEventListener('click', () => loadSettings());
 
+// One plain line about the yt-dlp fallback: counts only, never a song or a person.
+async function loadYtDlpFallbackLine() {
+  const row = document.getElementById('ytdlp-fallback-row');
+  const line = document.getElementById('ytdlp-fallback-line');
+  if (!row || !line) return;
+  try {
+    const r = await api('/api/admin/ytdlp-fallback', { cache: 'no-store' });
+    const d = r.ok ? await r.json() : null;
+    if (!d?.enabled) { row.hidden = true; return; }
+    const parts = [];
+    if (d.waiting > 0) parts.push(`${d.waiting} song${d.waiting === 1 ? ' is' : 's are'} waiting for another try.`);
+    if (d.line) parts.push(d.line);
+    line.textContent = parts.join(' ');
+    row.hidden = parts.length === 0;
+  } catch (e) {
+    row.hidden = true;
+  }
+}
+
 async function loadSettings() {
   let r;
   try {
@@ -593,6 +612,7 @@ async function loadSettings() {
   loadLyricsChoices();
   loadRadioStatus();
   loadQualityUpgrade();
+  loadYtDlpFallbackLine();
   // Again here, so saving a songs-an-hour value enables its Pause button straight away.
   loadReviewSweep();
   loadLastFmScrobbling();

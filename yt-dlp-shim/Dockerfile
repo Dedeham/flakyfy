@@ -12,12 +12,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pull yt-dlp directly from GitHub releases. Pinning to "latest" by default so
 # rebuilds keep up with YouTube's frequent format-extractor breakage; pin to a
 # specific tag with --build-arg YTDLP_VERSION=2025.10.22 if you need stability.
+# The binary is kept only if its SHA2-256 matches the SHA2-256SUMS the yt-dlp project
+# publishes with the same release; the hash is recorded next to it so the shim can check,
+# before each start, that the file it runs is the one that was verified.
 RUN if [ "$YTDLP_VERSION" = "latest" ]; then \
-        curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp; \
+        base=https://github.com/yt-dlp/yt-dlp/releases/latest/download; \
     else \
-        curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp; \
+        base=https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}; \
     fi \
-    && chmod +x /usr/local/bin/yt-dlp \
+    && curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/yt-dlp "$base/yt-dlp" \
+    && curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/SHA2-256SUMS "$base/SHA2-256SUMS" \
+    && (cd /tmp && grep -E '^[0-9a-f]{64}  yt-dlp$' SHA2-256SUMS | sha256sum -c -) \
+    && install -m 0755 /tmp/yt-dlp /usr/local/bin/yt-dlp \
+    && sha256sum /usr/local/bin/yt-dlp | cut -d' ' -f1 > /usr/local/bin/yt-dlp.sha256 \
+    && rm -f /tmp/yt-dlp /tmp/SHA2-256SUMS \
     && yt-dlp --version
 
 # yt-dlp solves YouTube's JavaScript challenges (signatures, nsig) with an
@@ -38,19 +46,22 @@ RUN set -eux; \
     else \
         url="https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${target}.zip"; \
     fi; \
-    curl -fsSL -o /tmp/deno.zip "$url"; \
+    curl -fsSL --proto '=https' --proto-redir '=https' -o /tmp/deno.zip "$url"; \
     unzip -q /tmp/deno.zip -d /usr/local/bin; \
     rm /tmp/deno.zip; \
     chmod +x /usr/local/bin/deno; \
     deno --version
 
-RUN pip install --no-cache-dir flask gunicorn requests "ytmusicapi>=1.12,<2"
+# pip itself first: the base image ships a pip with published advisories (the CI pip-audit job
+# checks the same package list).
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir flask gunicorn requests "ytmusicapi>=1.12,<2"
 
-# gate.py and ytm.py too, not just app.py -- app.py imports them at module scope, so omitting
+# gate.py, ytm.py and ytdlp_verify.py too, not just app.py -- app.py imports them at module scope, so omitting
 # one here is a ModuleNotFoundError at startup and total loss of playback. CI
 # builds this image only to publish it, after a merge, so no pull request
 # check would catch that.
-COPY app.py gate.py ytm.py /app/
+COPY app.py gate.py ytm.py ytdlp_verify.py /app/
 
 EXPOSE 8080
 

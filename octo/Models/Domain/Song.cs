@@ -235,5 +235,14 @@ public class Song
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public Octo.Services.Fingerprint.VerificationResult? Verification { get; set; }
+
+    /// <summary>What a feature asked to have recorded in the file's own tags about where it came
+    /// from (<see cref="Octo.Services.Common.AcquisitionMarks"/>): a constant, never a person. Not serialized.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SourceMark { get; set; }
+
+    /// <summary>The source's own id for the mark, a validated YouTube video id. Not serialized.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SourceMarkId { get; set; }
 }
 

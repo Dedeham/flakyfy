@@ -3965,6 +3965,13 @@ public partial class SubsonicController : ControllerBase
         // tracks. Endpoints that need real external data have their own handlers.
         if (HasExternalId(parameters))
         {
+            // A heart taken back on an outside song: Navidrome has no record of it, but whatever a
+            // fallback was counting for this person and song is forgotten.
+            if (endpoint.StartsWith("rest/unstar", StringComparison.OrdinalIgnoreCase)
+                && parameters.GetValueOrDefault("id", "") is { Length: > 0 } unstarred
+                && _localLibraryService.ParseSongId(unstarred) is (true, { } provider, { } externalId)
+                && await SignedInUserAsync(parameters) is { } who)
+                _heartAcquisitions.ForgetTrack(provider, externalId, RequesterFor(who));
             return _responseBuilder.CreateResponse(format, ElementFor(endpoint), new { });
         }
 

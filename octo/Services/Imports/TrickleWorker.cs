@@ -80,7 +80,7 @@ public sealed class TrickleWorker : BackgroundService
             _queue.Update(job.Owner, job.Key, j => j.AcquisitionKey = key);
             // The tracker follows only rows that were opened, so the download gets one, as a heart's does.
             tracker?.Begin(SoulseekMetadataService.ProviderName, externalId, null, job.Owner, job.Artist, job.Title, job.Album);
-            await hearts.AcquireTrackAsync(SoulseekMetadataService.ProviderName, externalId, job.Owner);
+            await hearts.AcquireTrackAsync(SoulseekMetadataService.ProviderName, externalId, job.Owner, origin: MissOrigin.Trickle);
             return key;
         };
         Row = key => tracker?.All().FirstOrDefault(row => AcquisitionTracker.KeyOf(row.Provider, row.ExternalId) == key);

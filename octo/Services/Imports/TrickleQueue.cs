@@ -23,6 +23,11 @@ public sealed class TrickleQueue
         public DateTime? LastStartUtc { get; set; }
     }
 
+    /// <summary>How long a song that was not found waits before it is queued again. Null means
+    /// <see cref="RetryNotFoundAfter"/>; a feature that fetches such songs another way can ask for
+    /// sooner (the yt-dlp fallback counts a few tries first).</summary>
+    public Func<TrickleJob, TimeSpan>? RetryAfter { get; set; }
+
     private readonly string? _path;
     private readonly ILogger<TrickleQueue>? _logger;
     private readonly object _lock = new();
@@ -73,7 +78,7 @@ public sealed class TrickleQueue
                 if (string.IsNullOrWhiteSpace(track.Key)) continue;
                 if (_jobs.TryGetValue(KeyOf(owner, track.Key), out var existing))
                 {
-                    var stale = existing.State == ImportTrackStates.NotFound && now - existing.UpdatedUtc >= RetryNotFoundAfter;
+                    var stale = existing.State == ImportTrackStates.NotFound && now - existing.UpdatedUtc >= (RetryAfter?.Invoke(existing) ?? RetryNotFoundAfter);
                     if (!stale) continue;
                 }
                 _jobs[KeyOf(owner, track.Key)] = new TrickleJob

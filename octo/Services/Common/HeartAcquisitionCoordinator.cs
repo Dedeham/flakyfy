@@ -31,6 +31,7 @@ public sealed class HeartAcquisitionCoordinator
     /// notices a song that is already there, as before.</summary>
     private readonly Octo.Services.Library.HeartOwnership? _owned;
     private readonly StarOnArrival? _stars;
+    private readonly IReadOnlyList<IAcquisitionFallback> _fallbacks;
 
     // Plays waiting for Soulseek, one per song however often it is played meanwhile.
     private readonly ConcurrentDictionary<string, byte> _heldPlays = new();
@@ -40,8 +41,10 @@ public sealed class HeartAcquisitionCoordinator
         ILidarrHeartAcquisitionService lidarr, ILogger<HeartAcquisitionCoordinator> logger,
         AcquisitionTracker? tracker = null, ExternalIdRegistry? idRegistry = null,
         ISoulseekLink? soulseek = null, SoulseekHoldStore? holds = null,
-        Octo.Services.Library.HeartOwnership? owned = null, StarOnArrival? stars = null)
+        Octo.Services.Library.HeartOwnership? owned = null, StarOnArrival? stars = null,
+        IEnumerable<IAcquisitionFallback>? fallbacks = null)
     {
+        _fallbacks = fallbacks?.ToList() ?? [];
         _owned = owned;
         _stars = stars;
         _settings = settings;
@@ -53,6 +56,16 @@ public sealed class HeartAcquisitionCoordinator
         _idRegistry = idRegistry;
         _soulseek = soulseek;
         _holds = holds;
+    }
+
+    /// <summary>A heart on an outside song was taken back. Fallbacks forget the song for that person.</summary>
+    public void ForgetTrack(string provider, string externalId, string? requestedBy = null)
+    {
+        foreach (var fallback in _fallbacks)
+        {
+            try { fallback.Forget(provider, externalId, requestedBy); }
+            catch (Exception ex) { _logger.LogWarning("A fallback could not forget a song ({Type})", ex.GetType().Name); }
+        }
     }
 
     public void QueueTrack(string provider, string externalId, string? requestedBy = null)
@@ -168,13 +181,17 @@ public sealed class HeartAcquisitionCoordinator
     }
 
     internal async Task AcquireTrackAsync(string provider, string externalId,
-        string? requestedBy = null, DateTime? heldSinceUtc = null)
+        string? requestedBy = null, DateTime? heldSinceUtc = null, MissOrigin origin = MissOrigin.Heart)
     {
         if (await AlreadyYoursAsync(provider, externalId, requestedBy)) return;
         var steps = EnabledSteps(albumHeart: false);
+        // A fallback that may still fetch the song after the last source has failed: the last
+        // source then stays quiet, and the fallback or the final failure below speaks.
+        var fallback = _fallbacks.FirstOrDefault(f => f.Applies(steps));
         for (var index = 0; index < steps.Count; index++)
         {
             var isLast = index == steps.Count - 1;
+            var notify = isLast && fallback is null;
             // One entry for the whole chain. The first direct source is still waiting for the
             // worker; every later source, and Lidarr, starts over by looking.
             _tracker?.Stage(provider, externalId,
@@ -184,7 +201,7 @@ public sealed class HeartAcquisitionCoordinator
                 index == 0 ? null : $"{SourceName(steps[index - 1])} couldn't get it, trying {SourceName(steps[index])}");
             if (steps[index] == HeartDownloadSource.Lidarr)
             {
-                if (await _lidarr.TryAcquireTrackAsync(provider, externalId, isLast, requestedBy)) return;
+                if (await _lidarr.TryAcquireTrackAsync(provider, externalId, notify, requestedBy)) return;
                 continue;
             }
 
@@ -200,7 +217,7 @@ public sealed class HeartAcquisitionCoordinator
                 {
                     await _directQueue.Enqueue(provider, externalId, isStar: true,
                         triggerAlbumDownload: false, forcePermanent: true,
-                        sourceOverride: ToDirectSource(steps[index]), notifyOnFailure: isLast,
+                        sourceOverride: ToDirectSource(steps[index]), notifyOnFailure: notify,
                         // Passed on every step, not only the first. A track that fails its way
                         // down the source chain is still the same person's star.
                         requestedBy: requestedBy);
@@ -222,14 +239,42 @@ public sealed class HeartAcquisitionCoordinator
                 steps[index], provider, externalId, failure.Message);
             if (isLast)
             {
-                _tracker?.Fail(provider, externalId, failure.Message);
+                await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, failure.Message);
                 return;
             }
             // The next enabled source owns the fallback.
         }
         // Only reached when the last source was Lidarr and it said no. It records its own
         // reason first; this is the fallback when it could not.
-        _tracker?.Fail(provider, externalId, "No download source could get this song.");
+        await EndOfChainAsync(fallback, provider, externalId, requestedBy, origin, steps, "No download source could get this song.");
+    }
+
+    /// <summary>Every source has had its go. A fallback may still fetch the song, or ask for the
+    /// chain to run again later; otherwise the row fails with the last reason, as always.</summary>
+    private async Task EndOfChainAsync(IAcquisitionFallback? fallback, string provider, string externalId,
+        string? requestedBy, MissOrigin origin, IReadOnlyList<HeartDownloadSource> steps, string reason)
+    {
+        var result = FallbackResult.Declined;
+        if (fallback is not null)
+        {
+            try { result = await fallback.OfferAsync(new ChainMiss(provider, externalId, requestedBy, origin, steps)); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("The fallback for {Provider}:{Id} failed: {Type}", provider, externalId, ex.GetType().Name);
+            }
+        }
+        switch (result)
+        {
+            case FallbackResult.Obtained:
+                return;
+            case FallbackResult.Parked:
+                _tracker?.Stage(provider, externalId, AcquisitionState.Queued, "Waiting",
+                    "No source has it yet. Octo will look again in a few hours.");
+                return;
+            default:
+                _tracker?.Fail(provider, externalId, reason);
+                return;
+        }
     }
 
     internal async Task AcquireAlbumAsync(string provider, string albumExternalId,

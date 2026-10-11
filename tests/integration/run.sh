@@ -10,6 +10,8 @@ cd "$(dirname "$0")"
 export HARNESS_PROJECT="${HARNESS_PROJECT:-fla12-it}"
 export HARNESS_NAVIDROME_URL="http://127.0.0.1:${HARNESS_NAVIDROME_PORT:-14533}"
 export HARNESS_OCTO_URL="http://127.0.0.1:${HARNESS_OCTO_PORT:-15274}"
+export HARNESS_OCTO_YT_URL="http://127.0.0.1:${HARNESS_OCTO_YT_PORT:-15275}"
+export HARNESS_STUB_URL="http://127.0.0.1:${HARNESS_STUB_PORT:-18080}"
 compose=(docker compose -f docker-compose.yml)
 
 down() { "${compose[@]}" down -v --remove-orphans; rm -rf .data; }
@@ -21,6 +23,8 @@ up() {
   python3 - <<'PY'
 import harness as h
 h.wait_for(lambda: h.http_ok(h.OCTO + "/rest/ping?u=x&p=x&v=1.16.1&c=probe&f=json"), "octo")
+h.wait_for(lambda: h.http_ok(h.OCTO_YT + "/rest/ping?u=x&p=x&v=1.16.1&c=probe&f=json"), "octo-yt")
+h.wait_for(lambda: h.http_ok(h.STUB + "/__log"), "stub")
 PY
 }
 

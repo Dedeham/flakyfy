@@ -9,6 +9,7 @@ using Octo.Services.Subsonic;
 using Octo.Services.Common;
 using Octo.Services.LastFm;
 using Octo.Services.Lidarr;
+using Octo.Services.YtDlpFallback;
 using Octo.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -424,6 +425,8 @@ builder.Services.AddSingleton<Octo.Services.Lidarr.LidarrImportHandoff>();
 builder.Services.AddSingleton<Octo.Services.Lidarr.ILidarrTrackFetcher, Octo.Services.Lidarr.LidarrTrackFetcher>();
 builder.Services.AddSingleton<HeartAcquisitionCoordinator>();
 builder.Services.AddHostedService<Octo.Services.Common.SoulseekHoldResumer>();
+// The yt-dlp fallback: a song no source can get is fetched from YouTube as an MP3 after several counted tries.
+builder.Services.AddYtDlpFallbackModule(builder.Configuration);
 
 // Discovery results are built once per query and shared. Clients fire several search
 // calls for one typed query, and they all resolve to the same routing objects, so without

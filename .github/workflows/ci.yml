@@ -79,6 +79,27 @@ jobs:
       - name: Shim tests
         run: pytest yt-dlp-shim/tests -q
 
+  # Known vulnerabilities in the Python packages the shim installs. The shim downloads and runs
+  # yt-dlp, and plays and downloads go through it, so a vulnerable Flask or requests matters.
+  # Dockerfile installs flask, gunicorn, requests and ytmusicapi; audit those at the same bounds.
+  shim-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the shim's packages and pip-audit
+        run: python -m pip install --upgrade pip && pip install flask gunicorn requests "ytmusicapi>=1.12,<2" pip-audit
+
+      - name: Audit
+        run: pip-audit
+
   # octo-sonic, the Sounds alike reader (Rust, bliss-rs over FFmpeg). Nothing else builds its
   # image, so the image build is checked here too.
   sonic:

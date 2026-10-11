@@ -39,6 +39,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from flask import Flask, Response, abort, jsonify, request, stream_with_context
 
+import ytdlp_verify
 import ytm
 
 from gate import TieredGate
@@ -56,6 +57,57 @@ PORT = int(os.environ.get("PORT", "8080"))
 # dest arrives over the wire, so downloads are confined here even though the shim
 # is internal-only.
 _DOWNLOAD_ROOT = os.path.realpath(os.environ.get("DOWNLOAD_ROOT", "/music"))
+
+# Downloads are further confined to this staging folder under the root: Octo moves a finished
+# file into the library itself, so the shim never needs to write anywhere else.
+_INCOMING_NAME = ".octo-incoming"
+_INCOMING_ROOT = os.path.join(_DOWNLOAD_ROOT, _INCOMING_NAME)
+
+# A YouTube video id is exactly 11 characters of this alphabet. Checked at every route that
+# takes one, before it reaches a cache, a log line, a path or a URL.
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_MAX_QUERY = 200
+_MAX_DURATION = 24 * 3600
+# What /download will take: a video no longer than this, no live stream, and at most this
+# many bytes (a 15 minute MP3 at 320 kbit/s is about 36 MB).
+_DOWNLOAD_MAX_SECONDS = int(os.environ.get("DOWNLOAD_MAX_MINUTES", "15")) * 60
+_DOWNLOAD_MAX_BYTES = 60 * 1024 * 1024
+
+
+def _valid_video_id(value: str) -> bool:
+    return bool(_VIDEO_ID.fullmatch(value or ""))
+
+
+def _clean_query(value: str) -> Optional[str]:
+    """The query as given, or None when it is empty, too long or holds a control character
+    (newlines included). Nothing is rewritten here: Octo cleans text before it sends it, and
+    the shim only refuses what should never have arrived."""
+    value = (value or "").strip()
+    if not value or len(value) > _MAX_QUERY:
+        return None
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    return value
+
+
+def _parse_duration(value: str) -> Optional[int]:
+    """A duration hint in seconds, or None when absent or not a plain number in range."""
+    value = (value or "").strip()
+    if not value.isascii() or not value.isdigit() or len(value) > 6:
+        return None
+    seconds = int(value)
+    return seconds if 0 < seconds <= _MAX_DURATION else None
+
+
+def _confined_dest(dest: str) -> Optional[str]:
+    """dest resolved through symlinks, or None unless it lies strictly inside the staging
+    folder (a sibling such as /music/.octo-incoming-evil does not)."""
+    if not dest or "\0" in dest:
+        return None
+    full = os.path.realpath(dest)
+    if not full.startswith(_INCOMING_ROOT + os.sep):
+        return None
+    return full
 
 # Audio format selector shared by /search (single-extraction warm) and
 # /stream's _resolve_url (cold path), so both request the exact same format.
@@ -86,6 +138,8 @@ _CACHE_PURGE_MIN_INTERVAL_SEC = int(os.environ.get("CACHE_PURGE_MIN_INTERVAL_SEC
 _SELF_UPDATE_ON_403 = os.environ.get("SELF_UPDATE_ON_403", "1").lower() not in ("0", "false", "no")
 _SELF_UPDATE_MIN_INTERVAL_SEC = int(os.environ.get("SELF_UPDATE_MIN_INTERVAL_SEC", "21600"))
 _SELF_UPDATE_LOCK = threading.Lock()
+# False when the binary on disk no longer matches the checksum recorded for it: nothing runs it.
+_BINARY_TRUSTED = True
 # None means "never attempted". Not 0.0: time.monotonic() is time since boot on
 # Linux, so on a host up for less than the interval, `now - 0.0` is inside the
 # window and the very first self-update would be rate-limited away. That is
@@ -202,6 +256,9 @@ log.info(
 )
 
 
+_LOGGABLE_STDERR = frozenset({"version", "self-update"})
+
+
 def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
          bg: bool = False, capture: bool = False):
     """Run yt-dlp with a hard timeout. Returns stdout or None on any failure.
@@ -214,11 +271,12 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
     resolves are queuing behind background prewarm (grep `gate_wait_ms`), and
     `bg` so the two can actually be told apart in the log.
     """
+    if not _BINARY_TRUSTED:
+        return None
     t_acquire = time.monotonic()
     wait = _BG_GATE_WAIT_SEC if bg else _GATE_WAIT_SEC
     if not _GATE.acquire(bg, wait):
-        log.warning("yt-dlp gate full after %ds (bg=%d), dropping: %s",
-                    wait, int(bg), " ".join(args))
+        log.warning("yt-dlp gate full after %ds (bg=%d), dropping (%s)", wait, int(bg), label)
         return None
     gate_ms = (time.monotonic() - t_acquire) * 1000.0
     try:
@@ -237,7 +295,7 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            log.warning("yt-dlp timed out (%s, gate_wait_ms=%.0f): %s", label, gate_ms, " ".join(args))
+            log.warning("yt-dlp timed out (%s, gate_wait_ms=%.0f)", label, gate_ms)
             return None
         except OSError as e:
             # Binary missing or not executable. Every caller already handles
@@ -251,7 +309,10 @@ def _run(args: list[str], timeout: int = 20, label: str = "ytdlp",
         log.info("ytdlp label=%s bg=%d gate_wait_ms=%.0f wall_ms=%.0f rc=%d",
                  label, int(bg), gate_ms, wall_ms, cp.returncode)
         if cp.returncode != 0:
-            log.warning("yt-dlp exit %d (%s): %s", cp.returncode, label, cp.stderr.strip()[:300])
+            # stderr can quote the search text or the video, so only the labels that carry
+            # neither get it in the log.
+            detail = cp.stderr.strip()[:300] if label in _LOGGABLE_STDERR else "(not logged)"
+            log.warning("yt-dlp exit %d (%s): %s", cp.returncode, label, detail)
             return cp if capture else None
         return cp if capture else cp.stdout
     finally:
@@ -276,12 +337,11 @@ def _is_bg() -> bool:
 
 @app.get("/search")
 def search():
-    q = request.args.get("q", "").strip()
-    if not q:
-        abort(400, "missing q")
+    q = _clean_query(request.args.get("q", ""))
+    if q is None:
+        abort(400, "bad q")
 
-    hint_str = request.args.get("duration", "").strip()
-    duration_hint = int(hint_str) if hint_str.isdigit() else None
+    duration_hint = _parse_duration(request.args.get("duration", ""))
     bg = _is_bg()
 
     cache_key = f"{q.lower()}|{duration_hint or ''}"
@@ -477,11 +537,10 @@ def meta():
     duration on search rows. With a duration hint it picks the closest-length of
     5 candidates (avoids long-form/compilation uploads); otherwise the top result.
     Cached, so repeat searches are a dict lookup."""
-    q = request.args.get("q", "").strip()
-    if not q:
-        abort(400, "missing q")
-    hint_str = request.args.get("duration", "").strip()
-    duration_hint = int(hint_str) if hint_str.isdigit() else None
+    q = _clean_query(request.args.get("q", ""))
+    if q is None:
+        abort(400, "bad q")
+    duration_hint = _parse_duration(request.args.get("duration", ""))
     bg = _is_bg()
 
     key = _norm_q(q)
@@ -566,6 +625,7 @@ def _resolve_url(video_id: str, bg: bool = False) -> Optional[str]:
             [
                 "-g",
                 "-f", _AUDIO_FORMAT,
+                "--",
                 f"https://www.youtube.com/watch?v={video_id}",
             ],
             timeout=15,
@@ -655,6 +715,8 @@ def _seed_writable_ytdlp() -> None:
             return
         shutil.copy2(YTDLP_DIST, YTDLP)
         os.chmod(YTDLP, 0o755)
+        if (digest := ytdlp_verify.read_recorded(YTDLP_DIST)):
+            ytdlp_verify.record(YTDLP, digest)
         log.info("seeded %s from %s", YTDLP, YTDLP_DIST)
     except OSError as e:
         log.warning("could not seed %s from %s: %s", YTDLP, YTDLP_DIST, e)
@@ -663,6 +725,60 @@ def _seed_writable_ytdlp() -> None:
 def _ytdlp_version() -> str:
     out = _run(["--version"], timeout=30, label="version", bg=False)
     return (out or "").strip()
+
+
+def _verified_update() -> bool:
+    """Fetch the latest official release and install it, but only when its SHA2-256 matches the
+    list yt-dlp publishes with it. Replaces `yt-dlp -U`, which installs without that check.
+    True when a file was installed; a failed check or download leaves the running binary alone."""
+    directory = os.path.dirname(YTDLP) or "."
+    tmp = None
+    try:
+        tmp, digest = ytdlp_verify.download_verified(directory, _SESSION)
+        # Only a file that matched is run, and only to prove it starts before it replaces the old one.
+        probe = subprocess.run([tmp, "--version"], capture_output=True, text=True, timeout=30, check=False)
+        if probe.returncode != 0:
+            log.warning("verified yt-dlp release did not start; keeping the current binary")
+            return False
+        os.replace(tmp, YTDLP)
+        tmp = None
+        ytdlp_verify.record(YTDLP, digest)
+        return True
+    except (ytdlp_verify.VerifyError, OSError, subprocess.SubprocessError) as e:
+        log.warning("yt-dlp update refused: %s", e)
+        return False
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _check_installed_binary() -> None:
+    """Before the first run: the copy that will execute must be the file that was verified when
+    it was installed. A changed or unrecorded copy on the volume is replaced by the image's own
+    (verified at build); if the image copy fails its own record, nothing is run."""
+    global _BINARY_TRUSTED
+    try:
+        if YTDLP != YTDLP_DIST:
+            recorded = ytdlp_verify.read_recorded(YTDLP)
+            if os.path.isfile(YTDLP) and (recorded is None or ytdlp_verify.sha256_file(YTDLP) != recorded):
+                log.warning("yt-dlp at %s does not match its verified checksum; using the image copy", YTDLP)
+                shutil.copy2(YTDLP_DIST, YTDLP)
+                os.chmod(YTDLP, 0o755)
+                dist_digest = ytdlp_verify.read_recorded(YTDLP_DIST)
+                if dist_digest:
+                    ytdlp_verify.record(YTDLP, dist_digest)
+        target = YTDLP
+        recorded = ytdlp_verify.read_recorded(target)
+        if recorded is None:
+            log.warning("no recorded checksum for %s; cannot verify it", target)
+        elif ytdlp_verify.sha256_file(target) != recorded:
+            log.error("yt-dlp at %s does not match its recorded checksum; not running it", target)
+            _BINARY_TRUSTED = False
+    except OSError as e:
+        log.warning("could not verify yt-dlp: %s", e)
 
 
 def _maybe_self_update(reason: str) -> bool:
@@ -686,7 +802,7 @@ def _maybe_self_update(reason: str) -> bool:
 
     before = _ytdlp_version()
     log.warning("%s: attempting yt-dlp self-update (current %s)", reason, before or "unknown")
-    _run(["-U"], timeout=180, label="self-update", bg=True)
+    _verified_update()
     after = _ytdlp_version()
     if after and after != before:
         # The old player cache belongs to the old binary; keep them together.
@@ -762,7 +878,7 @@ def ytm_search():
     try:
         rows = _ytm_cached("search", (q.lower(), filter_name, limit), lambda: ytm.search(q, filter_name, limit))
     except Exception as e:  # ytmusicapi raises plain exceptions when YouTube Music changes its pages
-        log.warning("ytm search failed for %r: %s", q, e)
+        log.warning("ytm search failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if rows is None:
         return jsonify(error="busy"), 503
@@ -772,13 +888,13 @@ def ytm_search():
 @app.get("/ytm/radio")
 def ytm_radio():
     video_id = request.args.get("videoId", "").strip()
-    if not video_id:
-        abort(400, "missing videoId")
+    if not _valid_video_id(video_id):
+        abort(400, "bad videoId")
     limit = _arg_int("limit", 50, 1, 100)
     try:
         rows = _ytm_cached("radio", (video_id, limit), lambda: ytm.radio(video_id, limit))
     except Exception as e:
-        log.warning("ytm radio failed for %s: %s", video_id, e)
+        log.warning("ytm radio failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if rows is None:
         return jsonify(error="busy"), 503
@@ -794,7 +910,7 @@ def ytm_artist_radio():
     try:
         found = _ytm_cached("artist", (q.lower(), limit), lambda: ytm.artist_radio(q, limit))
     except Exception as e:
-        log.warning("ytm artist radio failed for %r: %s", q, e)
+        log.warning("ytm artist radio failed: %s", type(e).__name__)
         return jsonify(error="ytm_failed"), 502
     if found is None:
         return jsonify(error="busy"), 503
@@ -805,8 +921,8 @@ def ytm_artist_radio():
 @app.get("/stream")
 def stream():
     video_id = request.args.get("id", "").strip()
-    if not video_id:
-        abort(400, "missing id")
+    if not _valid_video_id(video_id):
+        abort(400, "bad id")
     t_enter = time.monotonic()
 
     url = _resolve_url(video_id)
@@ -932,24 +1048,31 @@ def download():
     dest = request.args.get("dest", "").strip()
     artist = request.args.get("artist", "").strip()
     title = request.args.get("title", "").strip()
-    if not video_id or not dest:
-        abort(400, "missing id or dest")
-
-    # Confine writes to the shared music root.
-    full_dest = os.path.realpath(dest)
-    if not (full_dest == _DOWNLOAD_ROOT or full_dest.startswith(_DOWNLOAD_ROOT + os.sep)):
-        abort(400, "dest outside download root")
-    os.makedirs(os.path.dirname(full_dest) or ".", exist_ok=True)
+    if not _valid_video_id(video_id):
+        abort(400, "bad id")
+    # Confine writes to the staging folder; a symlink or a sibling folder does not pass.
+    full_dest = _confined_dest(dest)
+    if full_dest is None:
+        abort(400, "dest outside the staging folder")
+    if len(artist) > _MAX_QUERY or len(title) > _MAX_QUERY:
+        abort(400, "artist or title too long")
+    if any(ord(c) < 32 or ord(c) == 127 for c in artist + title):
+        abort(400, "bad artist or title")
+    os.makedirs(os.path.dirname(full_dest), exist_ok=True)
 
     ytdlp_args = [
         "-x",
         "-f", "141/140/bestaudio[ext=m4a]/bestaudio",
         "--audio-format", "mp3",
         "--audio-quality", "0",
+        "--match-filters", f"duration<={_DOWNLOAD_MAX_SECONDS} & !is_live",
+        "--max-filesize", str(_DOWNLOAD_MAX_BYTES),
         "--embed-metadata",
         "--embed-thumbnail",
         "--convert-thumbnails", "jpg",
-        "-o", f"{full_dest}.%(ext)s",
+        # A literal % in the path must not be read as an output-template field.
+        "-o", f"{full_dest.replace('%', '%%')}.%(ext)s",
+        "--",
         f"https://www.youtube.com/watch?v={video_id}",
     ]
     path = f"{full_dest}.mp3"
@@ -985,6 +1108,10 @@ def download():
         _sweep_partials()
         return jsonify(error="download_failed", expected=path), 502
 
+    if os.path.getsize(path) > _DOWNLOAD_MAX_BYTES:
+        _sweep_partials()
+        return jsonify(error="download_too_large"), 502
+
     # Overwrite yt-dlp's video-derived title/artist with the clean values Octo
     # passed, so Navidrome groups the track correctly. Codec-copy keeps the audio
     # and the embedded cover; list args are quoting-safe for spaces. Best-effort:
@@ -999,7 +1126,9 @@ def download():
         try:
             rc = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-i", path, "-map", "0", "-map_metadata", "0", "-codec", "copy",
+                 # -1: drop what YouTube put in the tags (comment, description, uploader); only
+                 # the artist and title Octo passed are written, and the cover stream stays.
+                 "-i", path, "-map", "0", "-map_metadata", "-1", "-codec", "copy",
                  *meta, tagged],
                 timeout=60, check=False,
             ).returncode
@@ -1008,7 +1137,7 @@ def download():
             elif os.path.exists(tagged):
                 os.remove(tagged)
         except Exception as e:
-            log.warning("retag failed for %s: %s", video_id, e)
+            log.warning("retag failed for %s: %s", video_id, type(e).__name__)
 
     log.info("downloaded %s -> %s", video_id, path)
     return jsonify(path=path)
@@ -1019,6 +1148,7 @@ def download():
 # stale yt-dlp still answers /health with ok:true and still resolves metadata,
 # so "which version is this" needs to be answerable without docker exec.
 _seed_writable_ytdlp()
+_check_installed_binary()
 log.info("yt-dlp %s at %s", _ytdlp_version() or "unknown", YTDLP)
 
 

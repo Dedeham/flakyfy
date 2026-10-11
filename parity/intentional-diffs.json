@@ -2402,6 +2402,51 @@
       "reason": "getSong for an outside song carries its album year: from what is known, else one album lookup on the interactive lane waited for at most 1.5 s. C# 2026.10.05 sent no year there. Only the year is pinned.",
       "knownDiff": "getSong: outside songs carry their year",
       "reviewed": "Brandon 2026-10-10"
+    },
+    {
+      "id": "acquisitions-octo-acquisitions-version-3",
+      "backlog": "D",
+      "requests": [
+        "16-lists/extensions-json",
+        "16-lists/extensions-xml",
+        "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-discovery-off-json",
+        "16-lists/extensions-final-json",
+        "01-system/extensions-json",
+        "01-system/extensions-xml",
+        "01-system/extensions-json-noauth",
+        "01-system/extensions-xml-badpass",
+        "13-downloads/extensions-json",
+        "13-downloads/extensions-xml",
+        "15-radio/extensions-radio-on-json",
+        "15-radio/extensions-radio-on-xml",
+        "15-radio/extensions-radio-off-json",
+        "20-library-edits/extensions-on-json",
+        "20-library-edits/extensions-on-xml",
+        "20-library-edits/extensions-off-again"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 2 != 3$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 2 children != 3$",
+        "^@@ -\\d+,3 \\+\\d+,4 @@$",
+        "^     <versions>2</versions>$",
+        "^\\+    <versions>3</versions>$"
+      ],
+      "reason": "octoAcquisitions version 3 tells an app that pickFoundSong takes anyway and may answer confirm, so a copy no better than the library's (or the plain song in place of a live take) is asked about and can then be replaced anyway. Versions 1 and 2 are still listed, and a pick without anyway answers as before, so older apps keep working. The other lines on these answers are other entries': octoTopSongs [1, 2] and octoImports [1, 2].",
+      "knownDiff": "`octoAcquisitions` version 3"
     }
   ]
 }

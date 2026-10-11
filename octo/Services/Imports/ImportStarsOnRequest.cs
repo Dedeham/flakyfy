@@ -34,7 +34,9 @@ public sealed class ImportStarsOnRequest : IVerifiedRequestObserver
         _store = store; _stars = stars; _settings = settings; _logger = logger;
     }
 
-    /// <summary>The work of the last request, for tests to wait on.</summary>
+    /// <summary>Tests only: set to keep the last task to wait on. Off in Octo, so no task (and what it
+    /// closed over) is held after it ends.</summary>
+    internal bool KeepLast { get; set; }
     internal Task Last { get; private set; } = Task.CompletedTask;
 
     public void OnVerifiedRequest(string user, SubsonicCredential credential)
@@ -44,7 +46,10 @@ public sealed class ImportStarsOnRequest : IVerifiedRequestObserver
         if (!_running.TryAdd(user, 0)) return;
         var token = credential.WithoutPassword();
         using (ExecutionContext.SuppressFlow())
-            Last = Task.Run(() => StarAsync(user, token));
+        {
+            var task = Task.Run(() => StarAsync(user, token));
+            if (KeepLast) Last = task;
+        }
     }
 
     private async Task StarAsync(string user, SubsonicCredential credential)
@@ -56,6 +61,7 @@ public sealed class ImportStarsOnRequest : IVerifiedRequestObserver
             var failed = new List<string>();
             foreach (var id in ids)
                 if (!await _stars.StarSongAsync(credential, user, id)) failed.Add(id);
+            _store.DoneStars(user, ids.Except(failed));
             if (failed.Count > 0) _store.RequeueStars(user, failed);
             _logger.LogInformation("Favorited {Count} imported liked song(s) for {User}{Failed}", ids.Count - failed.Count, user,
                 failed.Count > 0 ? $"; {failed.Count} will be tried again on their next request" : "");

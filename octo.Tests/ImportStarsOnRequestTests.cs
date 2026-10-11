@@ -37,7 +37,7 @@ public sealed class ImportStarsOnRequestTests
                 return Task.FromResult(Encoding.UTF8.GetBytes(body));
             },
         };
-        return new ImportStarsOnRequest(_store, stars, _settings, NullLogger<ImportStarsOnRequest>.Instance);
+        return new ImportStarsOnRequest(_store, stars, _settings, NullLogger<ImportStarsOnRequest>.Instance) { KeepLast = true };
     }
 
     private static SubsonicCredential Credential(string user, string secret = "t") => SubsonicCredential.From(new Dictionary<string, string>
@@ -183,6 +183,88 @@ public sealed class ImportStarsOnRequestTests
         VerifiedRequests.Notify(services, new Dictionary<string, string> { ["u"] = "bob" });
 
         Assert.Equal(["alice", "alice"], seen);
+    }
+
+    [Fact]
+    public void ObserversGetTheSignInWithoutThePassword_AndNothingWhenAKeyOrJwtComesWithTheName()
+    {
+        var seen = new List<IReadOnlyDictionary<string, string>>();
+        var services = new ServiceCollection().AddSingleton<IVerifiedRequestObserver>(new Capture(seen)).BuildServiceProvider();
+
+        VerifiedRequests.Notify(services, new Dictionary<string, string> { ["u"] = "alice", ["p"] = "hunter2", ["c"] = "app" });
+        VerifiedRequests.Notify(services, new Dictionary<string, string> { ["u"] = "alice", ["t"] = "x", ["s"] = "y", ["apiKey"] = "k" });
+        VerifiedRequests.Notify(services, new Dictionary<string, string> { ["u"] = "alice", ["t"] = "x", ["s"] = "y", ["jwt"] = "j" });
+
+        var only = Assert.Single(seen);
+        Assert.False(only.ContainsKey("p"));
+        Assert.DoesNotContain("hunter2", string.Join(" ", only.Values));
+        Assert.True(only.ContainsKey("t") && only.ContainsKey("s"));
+    }
+
+    [Fact]
+    public void ASongNavidromeKeepsRefusingIsGivenUpOnAfterFiveTries_AndNotQueuedAgain()
+    {
+        _store.QueueStars("alice", ["nd-1"]);
+        for (var attempt = 1; attempt <= ImportStore.MaxStarAttempts; attempt++)
+        {
+            Assert.Equal(["nd-1"], _store.TakeStars("alice", 10));
+            _store.RequeueStars("alice", ["nd-1"]);
+        }
+        Assert.False(_store.HasStars("alice"));
+        _store.QueueStars("alice", ["nd-1"]);
+        Assert.False(_store.HasStars("alice"));
+    }
+
+    [Fact]
+    public void SongsTakenWhenOctoStoppedAreQueuedAgainAtStartup_AndFinishedOnesAreNot()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"fla19-{Guid.NewGuid():N}.json");
+        try
+        {
+            var before = new ImportStore(path);
+            before.QueueStars("alice", ["nd-1", "nd-2"]);
+            before.TakeStars("alice", 10);
+            before.DoneStars("alice", ["nd-1"]);   // nd-2 never got an answer: Octo stopped
+
+            var after = new ImportStore(path);
+            Assert.Equal(["nd-2"], after.TakeStars("alice", 10));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ASongThatKeepsCrashingOctoIsGivenUpOn()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"fla19-{Guid.NewGuid():N}.json");
+        try
+        {
+            new ImportStore(path).QueueStars("alice", ["nd-1"]);
+            for (var start = 0; start < ImportStore.MaxStarAttempts; start++)
+                new ImportStore(path).TakeStars("alice", 10);   // taken, then the process ends
+            Assert.False(new ImportStore(path).HasStars("alice"));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void TheImportFileIsReadableByOctoAloneEvenWhenItWasOpenBefore()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(Path.GetTempPath(), $"fla19-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, "{}");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            new ImportStore(path).QueueStars("alice", ["nd-1"]);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+            Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally { File.Delete(path); }
+    }
+
+    private sealed class Capture(List<IReadOnlyDictionary<string, string>> seen) : IVerifiedRequestObserver
+    {
+        public void OnVerifiedRequest(string user, SubsonicCredential credential) => seen.Add(credential.Parameters());
     }
 
     private sealed class Recorder(List<string> seen, bool throws) : IVerifiedRequestObserver

@@ -37,7 +37,11 @@ public static class VerifiedRequests
     public static void Notify(IServiceProvider services, IReadOnlyDictionary<string, string> parameters)
     {
         var user = parameters.GetValueOrDefault("u")?.Trim();
-        if (string.IsNullOrEmpty(user) || SubsonicCredential.From(parameters) is not { } credential) return;
+        if (string.IsNullOrEmpty(user) || SubsonicCredential.From(parameters) is not { } signedIn) return;
+        // An API key or token beside a name is not a sign-in as that name; nobody is named.
+        if (parameters.GetValueOrDefault("apiKey") is { Length: > 0 } || parameters.GetValueOrDefault("jwt") is { Length: > 0 }) return;
+        // Observers never see the raw password: a token made from it, or nothing they could replay.
+        var credential = signedIn.WithoutPassword();
         var logger = services.GetService<ILoggerFactory>()?.CreateLogger("Octo.VerifiedRequests");
         foreach (var observer in services.GetServices<IVerifiedRequestObserver>())
         {

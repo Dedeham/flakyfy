@@ -349,9 +349,10 @@ impl Job {
 /// A look runs in the background and is read by its id while it goes, the way the apps already
 /// follow downloads. It never downloads anything; a pick does, through the same pipeline and
 /// checks as any download, with the picked copy instead of a search. A pick for a song already
-/// in the library goes through Better quality, so it only ever replaces a copy with a lossless
-/// one, and the original stays until the new one passes. Looks are kept in memory for half an
-/// hour, then forgotten.
+/// in the library goes through Better quality, so it replaces a copy with a lossless one, or
+/// with one no better only once the person says so (see [`super::replace_anyway`]), and the
+/// original stays until the new one passes. Looks are kept in memory for half an hour, then
+/// forgotten.
 pub struct SongFinder {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     /// Held while a look is counted and added, so two starts never both take the last place.

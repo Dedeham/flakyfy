@@ -4643,7 +4643,7 @@ function renderFindLook() {
     : searching ? stateBlock('loading', 'Asking every peer. This takes up to a minute.') : stateBlock('empty', 'No copies were found.');
   const failed = found.state === 'failed' && found.error ? `<div class="notice notice-warn">${escapeHtml(found.error)}</div>` : '';
   const replaces = song.libraryId && copies.length
-    ? `<p class="set-info-d">A copy you pick replaces the one in your library through Better quality: only a lossless copy can, and yours stays until the new one passes every check.</p>` : '';
+    ? `<p class="set-info-d">A copy you pick replaces the one in your library through Better quality. One that is no better than yours asks first, and yours stays until the new one passes every check.</p>` : '';
   look.innerHTML = `${findTargetHead(song, finder.hint)}
     <div class="find-sources">${sources}</div>
     ${failed}${replaces}${list}`;
@@ -4673,9 +4673,18 @@ findEl('find-look')?.addEventListener('click', async event => {
   }
   pick.disabled = true;
   try {
-    const response = await parityFetch(`/api/admin/find/${encodeURIComponent(found.id)}/pick`, parityJson({ copy: pick.dataset.findPick }), findEl('find-look'));
-    if (!response.ok) throw new Error(await parityError(response));
-    const outcome = await response.json();
+    const send = async anyway => {
+      const response = await parityFetch(`/api/admin/find/${encodeURIComponent(found.id)}/pick`, parityJson({ copy: pick.dataset.findPick, anyway }), findEl('find-look'));
+      if (!response.ok) throw new Error(await parityError(response));
+      return response.json();
+    };
+    let outcome = await send(false);
+    // A copy no better than yours, or the plain song in place of another take: the server asks.
+    if (outcome.state === 'confirm') {
+      const replace = await askDialog({ title: `Replace your copy of ${song.title} anyway?`, message: outcome.detail, confirm: 'Replace anyway', cancel: 'Keep mine' });
+      if (!replace) { note(pick, 'Kept yours. Nothing was fetched.', 'info'); return; }
+      outcome = await send(true);
+    }
     const queued = outcome.state === 'queued';
     note(pick, song.libraryId && queued ? `${outcome.detail} Follow it on Better quality.` : outcome.detail, queued ? 'ok' : 'info');
     if (queued) loadAcquisitions();

@@ -23,6 +23,7 @@ use tracing::{info, warn};
 
 use super::acquisition_tracker::{AcquisitionState, AcquisitionTracker, acquisition_kinds, key_of};
 use super::download_picks::{DownloadPicks, LIDARR_SOURCE, PickedCopy, SOULSEEK_SOURCE};
+use super::replace_anyway::{self, ReplaceCheck};
 use super::track_acquisition_queue::TrackAcquisitionQueue;
 use crate::services::common::AcquisitionTarget;
 use crate::services::family::LibraryWriteGate;
@@ -85,6 +86,9 @@ pub mod find_states {
 pub mod library_action_states {
     pub const QUEUED: &str = "queued";
     pub const SKIPPED: &str = "skipped";
+    /// The pick waits for the person's word: the copy is no better than the library's, or the
+    /// library's is another take of the song. Picking again with `anyway` replaces it.
+    pub const CONFIRM: &str = "confirm";
 }
 
 /// How one source's look went: searching, done, failed or off, in words, and what was asked.
@@ -214,8 +218,21 @@ pub type SourcesFn = Arc<dyn Fn(&FindTarget) -> Vec<(String, Option<String>)> + 
 
 /// Fetches a picked copy for a person.
 pub type FetchFn = Arc<
-    dyn Fn(FindTarget, FoundCopy, String) -> BoxFuture<'static, anyhow::Result<PickOutcome>> + Send + Sync,
+    dyn Fn(FindTarget, FoundCopy, String, PickAsk) -> BoxFuture<'static, anyhow::Result<PickOutcome>>
+        + Send
+        + Sync,
 >;
+
+/// What comes with a pick besides the copy: whether the person was asked, and the look's list.
+#[derive(Debug, Clone, Default)]
+pub struct PickAsk {
+    /// None from an app that cannot ask (it hears the old refusal); Some(false) for a first
+    /// pick, which may answer [`library_action_states::CONFIRM`]; Some(true) once the person
+    /// said to replace their copy anyway.
+    pub anyway: Option<bool>,
+    /// Every copy the look listed.
+    pub listed: Vec<FoundCopy>,
+}
 
 /// The seams, so tests run a look without slskd, Lidarr or Navidrome.
 #[derive(Clone)]
@@ -413,9 +430,9 @@ impl SongFinder {
             },
             fetch: {
                 let services = services.clone();
-                Arc::new(move |target, copy, user| {
+                Arc::new(move |target, copy, user, ask| {
                     let services = services.clone();
-                    async move { Ok(fetch(&services, &target, &copy, &user)) }.boxed()
+                    async move { Ok(fetch(&services, &target, &copy, &user, &ask)) }.boxed()
                 })
             },
         };
@@ -674,19 +691,29 @@ impl SongFinder {
     // Picking
     // ---------------------------------------------------------------------------------------
 
-    /// Fetches exactly the copy with this id on the look's list.
+    /// Fetches exactly the copy with this id on the look's list, for an app that cannot ask.
     pub async fn pick_by_id(&self, id: &str, copy_id: &str, user: &str) -> PickOutcome {
+        self.pick_copy(id, copy_id, user, None).await
+    }
+
+    /// Fetches exactly the copy with this id on the look's list. `anyway` as [`PickAsk`] has it.
+    pub async fn pick_copy(&self, id: &str, copy_id: &str, user: &str, anyway: Option<bool>) -> PickOutcome {
         let copy_id = copy_id.trim().to_string();
-        self.pick_with(id, user, |copies| {
+        self.pick_with(id, user, anyway, |copies| {
             copies.iter().find(|copy| copy.id == copy_id).cloned()
         })
         .await
     }
 
+    /// Fetches the copy at this place on the look's list, for an app that cannot ask.
+    pub async fn pick_at(&self, id: &str, index: i32, user: &str) -> PickOutcome {
+        self.pick_place(id, index, user, None).await
+    }
+
     /// Fetches the copy at this place on the look's list. Kept for apps that pick by place; it is
     /// only safe once the search has ended, so a pick while it runs is refused.
-    pub async fn pick_at(&self, id: &str, index: i32, user: &str) -> PickOutcome {
-        self.pick_with(id, user, |copies| {
+    pub async fn pick_place(&self, id: &str, index: i32, user: &str, anyway: Option<bool>) -> PickOutcome {
+        self.pick_with(id, user, anyway, |copies| {
             usize::try_from(index).ok().and_then(|at| copies.get(at)).cloned()
         })
         .await
@@ -696,6 +723,7 @@ impl SongFinder {
         &self,
         id: &str,
         user: &str,
+        anyway: Option<bool>,
         find: impl FnOnce(&[FoundCopy]) -> Option<FoundCopy>,
     ) -> PickOutcome {
         let Some(job) = self
@@ -707,19 +735,20 @@ impl SongFinder {
         else {
             return PickOutcome::skipped("This search is gone. Search again.");
         };
-        let copy = {
+        let (copy, listed) = {
             let state = job.state.lock();
             // A source that answers later adds copies to the list, so a pick waits for the end.
             if state.state == find_states::SEARCHING {
                 return PickOutcome::skipped(Self::STILL_SEARCHING_TEXT);
             }
-            find(&state.copies)
+            (find(&state.copies), state.copies.clone())
         };
         let Some(copy) = copy else {
             return PickOutcome::skipped("That copy is not on the list.");
         };
         let fetch = self.seams.lock().fetch.clone();
-        match fetch(job.target.clone(), copy, user.to_string()).await {
+        let ask = PickAsk { anyway, listed };
+        match fetch(job.target.clone(), copy, user.to_string(), ask).await {
             Ok(outcome) => outcome,
             Err(e) => {
                 warn!(
@@ -1103,23 +1132,76 @@ fn first_word(quality: Option<&str>) -> Option<&str> {
 // The defaults behind the seams
 // ---------------------------------------------------------------------------------------
 
-fn fetch(services: &SongFinderServices, target: &FindTarget, copy: &FoundCopy, user: &str) -> PickOutcome {
+fn fetch(
+    services: &SongFinderServices,
+    target: &FindTarget,
+    copy: &FoundCopy,
+    user: &str,
+    ask: &PickAsk,
+) -> PickOutcome {
     if let Some(library_id) = &target.library_id {
         let settings = services.soulseek_settings();
-        if let Some(refused) = SongFinder::replace_refusal(
-            target,
-            copy,
-            Some(&settings),
-            services.rejected(),
-            services.remembers(),
-        ) {
-            return PickOutcome::skipped(refused);
+        let mut pick = (*copy.pick).clone();
+        let mut asked: Option<String> = None;
+        match ask.anyway {
+            None => {
+                if let Some(refused) = SongFinder::replace_refusal(
+                    target,
+                    copy,
+                    Some(&settings),
+                    services.rejected(),
+                    services.remembers(),
+                ) {
+                    return PickOutcome::skipped(refused);
+                }
+            }
+            Some(anyway) => {
+                let cx = replace_anyway::CheckContext {
+                    settings: &settings,
+                    rejected: services.rejected(),
+                    remembers: services.remembers(),
+                    listed: &ask.listed,
+                };
+                match replace_anyway::check(target, copy, cx) {
+                    ReplaceCheck::Fits => {}
+                    ReplaceCheck::Refused(refused) => return PickOutcome::skipped(refused),
+                    ReplaceCheck::Confirm { words, song } => {
+                        // Someone who may not replace it hears that, never a question first.
+                        if let Some(gate) = services.upgrade_refusal(user) {
+                            return PickOutcome::skipped(gate);
+                        }
+                        if !anyway {
+                            return PickOutcome::new(library_action_states::CONFIRM, words);
+                        }
+                        pick.anyway = Some(song);
+                        asked = Some(words);
+                    }
+                }
+            }
         }
         if let Some(gate) = services.upgrade_refusal(user) {
             return PickOutcome::skipped(gate);
         }
         let Some(queue) = &services.upgrade_queue else {
             return PickOutcome::skipped("Library actions are off.");
+        };
+        if let (Some(words), Some(song)) = (&asked, &pick.anyway) {
+            info!(
+                "Find songs: {user} said to replace '{} - {}' anyway with {} ({words}); it is held to '{}'{}{} and to no quality check",
+                target.artist,
+                target.title,
+                pick.describe(),
+                song.title,
+                song.album
+                    .as_deref()
+                    .map_or_else(String::new, |album| format!(" on '{album}'")),
+                song.length
+                    .map_or_else(String::new, |length| format!(", {length} s long")),
+            );
+        }
+        let copy = &FoundCopy {
+            pick: Arc::new(pick),
+            ..copy.clone()
         };
         let (jobs, full) = queue.add(
             vec![UpgradeAsk {

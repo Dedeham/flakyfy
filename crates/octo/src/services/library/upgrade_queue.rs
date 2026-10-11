@@ -735,6 +735,7 @@ impl UpgradeWorker {
                 DownloadSource::Lidarr
             }
         });
+        request.anyway = pick.as_ref().and_then(|only| only.anyway.clone());
         let outcome = (self.seams.apply)(request).await;
         // A pick the replacement never used (it joined another download, or found the song
         // needed nothing) is let go with the job, not left for a later download.
@@ -850,12 +851,25 @@ impl UpgradeWorker {
         };
         (result.after, result.after_bytes) = AudioSummary::describe(outcome.new_path.as_deref());
         (result.before, result.before_bytes) = AudioSummary::describe(outcome.quarantine_path.as_deref());
-        // Every replacement is held to these before it may take the original's place.
-        result.checks.push("the same length".to_string());
+        // Every replacement is held to these before it may take the original's place. One the
+        // person said to take whatever its quality is held to the song they picked it as.
+        let anyway = job.pick.as_ref().is_some_and(|pick| pick.anyway.is_some());
+        result.checks.push(
+            if anyway {
+                "the length of the song you picked"
+            } else {
+                "the same length"
+            }
+            .to_string(),
+        );
         if settings.verify_downloads && !dotnet::is_blank(&settings.acoust_id_api_key) {
             result.checks.push("AcoustID: the same recording".to_string());
         }
-        if settings.detect_transcodes {
+        if anyway {
+            result
+                .checks
+                .push("no quality check: you said to replace yours anyway".to_string());
+        } else if settings.detect_transcodes {
             result
                 .checks
                 .push("the spectrum: really lossless, not a converted MP3".to_string());

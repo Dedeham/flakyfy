@@ -794,7 +794,7 @@ async fn with_every_source_off_a_look_fails_at_once_and_says_why() {
 }
 
 fn fetching(fetched: Arc<Mutex<Option<FoundCopy>>>) -> super::song_finder::FetchFn {
-    Arc::new(move |_, copy, _| {
+    Arc::new(move |_, copy, _, _| {
         *fetched.lock() = Some(copy);
         async { Ok(PickOutcome::new("queued", "Getting it.")) }.boxed()
     })

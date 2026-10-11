@@ -615,6 +615,102 @@ async fn better_quality_with_no_source_set_up_fails_without_downloading() {
     assert!(Path::new(&f.original).exists());
 }
 
+// ---- Replaced anyway ----------------------------------------------------------------------
+
+fn replaced_anyway(song: AnywaySong) -> LibraryActionRequest {
+    LibraryActionRequest {
+        only_source: Some(DownloadSource::Soulseek),
+        anyway: Some(song),
+        ..better_quality()
+    }
+}
+
+fn plain_teardrop(length: i32) -> AnywaySong {
+    AnywaySong {
+        title: "Teardrop".into(),
+        album: None,
+        length: Some(length),
+    }
+}
+
+#[tokio::test]
+async fn a_copy_replaced_anyway_goes_in_though_it_is_no_better_and_the_original_is_kept() {
+    let f = Fixture::new().await;
+    let action = spawn_apply(
+        &f.executor(true, None, None),
+        replaced_anyway(AnywaySong {
+            title: "Teardrop".into(),
+            album: Some("Mezzanine".into()),
+            length: Some(330),
+        }),
+    );
+
+    let download = f.next_download().await;
+    assert_eq!(download.source_override, Some(DownloadSource::Soulseek));
+    // The same MP3 as the original: refused by Better quality, taken when the person said so.
+    let staged = f.staged(&mp3(), ".mp3");
+    let placed = reveal(&download, &staged)
+        .await
+        .expect("admitted though not better");
+    f.finish(&download, &placed);
+    let outcome = outcome_of(action).await;
+
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    assert!(Path::new(&placed).exists());
+    // The original waits in the trash folder, and the journal says where.
+    let kept = f.quarantined();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(f.action().quarantine_path.as_deref(), Some(kept[0].as_str()));
+    assert_eq!(outcome.quarantine_path.as_deref(), Some(kept[0].as_str()));
+}
+
+#[tokio::test]
+async fn without_anyway_the_same_copy_is_refused_and_the_original_stays() {
+    let f = Fixture::new().await;
+    let action = spawn_apply(
+        &f.executor(true, None, None),
+        LibraryActionRequest {
+            only_source: Some(DownloadSource::Soulseek),
+            ..better_quality()
+        },
+    );
+
+    let download = f.next_download().await;
+    let staged = f.staged(&mp3(), ".mp3");
+    let refused = reveal(&download, &staged).await.expect_err("refused");
+    assert_eq!(refused.problem, "is not lossless");
+    f.fail(&download, anyhow::Error::new(refused));
+
+    assert_eq!(outcome_of(action).await.state, LibraryActionState::Failed);
+    assert!(Path::new(&f.original).exists());
+    assert!(f.quarantined().is_empty());
+}
+
+#[tokio::test]
+async fn a_replacement_anyway_is_looked_for_and_checked_as_the_song_it_was_picked_as() {
+    let f = Fixture::new().await;
+    // The library's file is another take; the copy is held to the plain song's name and length.
+    let action = spawn_apply(
+        &f.executor(true, None, None),
+        replaced_anyway(plain_teardrop(270)),
+    );
+
+    let download = f.next_download().await;
+    let routing = f
+        .ids
+        .lookup(&download.external_id)
+        .expect("the replacement's routing")
+        .snapshot();
+    assert_eq!(routing.title.as_deref(), Some("Teardrop"));
+    assert_eq!(routing.album, None);
+    assert_eq!(routing.duration, Some(270));
+    assert_eq!(routing.artist.as_deref(), Some("Massive Attack"));
+    f.fail(&download, not_found("no peer had it"));
+
+    assert_eq!(outcome_of(action).await.state, LibraryActionState::Failed);
+    assert!(Path::new(&f.original).exists());
+}
+
 // ---- Delete, dry run and the write-ahead rule --------------------------------------------
 
 /// A delete moves the file to quarantine, writes the journal before and after, forgets the

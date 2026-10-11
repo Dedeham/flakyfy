@@ -36,6 +36,7 @@ use super::replacement_handoff::{
 };
 use super::upgrade_sources::UpgradeSources;
 use super::{NavidromeSongPathResolver, ResolvedSongFile};
+use crate::services::common::download_picks::AnywaySong;
 use crate::services::common::{StarOnArrival, TrackAcquisitionQueue};
 use crate::services::cover_art::{CoverUpgradeWorker, RejectedCovers};
 use crate::services::local::ILocalLibraryService;
@@ -63,6 +64,9 @@ pub struct LibraryActionRequest {
     /// The one source to fetch the replacement from, for a copy someone picked in Find songs; no
     /// other source is tried after it.
     pub only_source: Option<DownloadSource>,
+    /// Better quality for a copy someone picked and said to take whatever its quality: the song
+    /// the replacement is held to, and no quality check on it.
+    pub anyway: Option<AnywaySong>,
 }
 
 impl LibraryActionRequest {
@@ -75,6 +79,7 @@ impl LibraryActionRequest {
             on_replacement_queued: None,
             only_a_copy: false,
             only_source: None,
+            anyway: None,
         }
     }
 
@@ -1013,6 +1018,7 @@ impl LibraryActionExecutor {
             music_root: music_root.to_string(),
             started_last_write: last_write_ticks(&original.absolute_path),
             quarantine_path: Mutex::new(None),
+            any_quality: request.anyway.is_some(),
         });
         // What each source tried before the last one said, for the words when all of them miss.
         let mut misses: Vec<String> = Vec::new();
@@ -1026,13 +1032,37 @@ impl LibraryActionExecutor {
 
         let mut handoff: Option<Arc<ReplacementHandoff>> = None;
         let attempt: Result<Option<String>, Arc<anyhow::Error>> = async {
-            let routing = SoulseekRouting {
-                kind: RoutingKind::Song,
-                artist: Some(original.artist.clone()),
-                title: Some(original.title.clone()),
-                album: Some(original.album.clone()),
-                duration: original.duration_seconds,
-                ..Default::default()
+            // Replaced anyway: the download looks for, and checks the copy against, the song the
+            // person picked it as, which is the plain song when the library file is another take.
+            let routing = match &request.anyway {
+                Some(song) => {
+                    info!(
+                        "Library action {}: replacing '{} - {}' anyway for {}, held to '{}'{} and to no quality check",
+                        action_name(request.action),
+                        original.artist,
+                        original.title,
+                        request.username,
+                        song.title,
+                        song.length
+                            .map_or_else(String::new, |length| format!(", {length} s long")),
+                    );
+                    SoulseekRouting {
+                        kind: RoutingKind::Song,
+                        artist: Some(original.artist.clone()),
+                        title: Some(song.title.clone()),
+                        album: song.album.clone(),
+                        duration: song.length,
+                        ..Default::default()
+                    }
+                }
+                None => SoulseekRouting {
+                    kind: RoutingKind::Song,
+                    artist: Some(original.artist.clone()),
+                    title: Some(original.title.clone()),
+                    album: Some(original.album.clone()),
+                    duration: original.duration_seconds,
+                    ..Default::default()
+                },
             };
             let external_id = self.ids.register(routing);
             if let Some(listener) = &request.on_replacement_queued {
@@ -1415,8 +1445,14 @@ impl LibraryActionExecutor {
         stars.is_starred(credential, &request.navidrome_id).await
     }
 
-    /// Why a replacement is not good enough to keep, or None when it is.
-    fn unacceptable(action: LibraryAction, path: &str, original: &ResolvedSongFile) -> Option<String> {
+    /// Why a replacement is not good enough to keep, or None when it is. With `any_quality`, a
+    /// replacement the person said to take whatever its quality only has to have arrived.
+    fn unacceptable(
+        action: LibraryAction,
+        path: &str,
+        original: &ResolvedSongFile,
+        any_quality: bool,
+    ) -> Option<String> {
         if path.is_empty() || !file_exists(path) {
             return Some("never arrived".into());
         }
@@ -1426,7 +1462,7 @@ impl LibraryActionExecutor {
             return Some("was empty".into());
         }
 
-        if action != LibraryAction::BetterQuality {
+        if action != LibraryAction::BetterQuality || any_quality {
             return None;
         }
 
@@ -1576,6 +1612,8 @@ struct Admission {
     music_root: String,
     started_last_write: i64,
     quarantine_path: Mutex<Option<String>>,
+    /// The person said to take the replacement whatever its quality.
+    any_quality: bool,
 }
 
 impl Admission {
@@ -1604,8 +1642,9 @@ impl Admission {
     /// without the handoff, so a scan never sees the song missing for the length of a download.
     async fn admit(&self, candidate: &str) -> anyhow::Result<Option<String>> {
         let executor = &self.executor;
-        let mut problem = LibraryActionExecutor::unacceptable(self.action, candidate, &self.original);
-        if problem.is_none() && self.action == LibraryAction::BetterQuality {
+        let mut problem =
+            LibraryActionExecutor::unacceptable(self.action, candidate, &self.original, self.any_quality);
+        if problem.is_none() && self.action == LibraryAction::BetterQuality && !self.any_quality {
             problem = LibraryActionExecutor::not_really_lossless(&executor.spectrum_of(candidate).await);
         }
         if problem.is_some() {

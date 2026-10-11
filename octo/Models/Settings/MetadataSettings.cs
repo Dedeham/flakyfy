@@ -12,6 +12,24 @@ public class MetadataSettings
     public string Language { get; set; } = "en";
 
     /// <summary>
+    /// Where Deezer's public API lives. Only a test stack changes it (to a stand-in server);
+    /// an admin sets it in the environment, never a request. Anything that is not an absolute
+    /// http or https URL is ignored and the default is used.
+    /// Environment variable form: Metadata__DeezerBaseUrl
+    /// </summary>
+    public string DeezerBaseUrl { get; set; } = DefaultDeezerBaseUrl;
+
+    public const string DefaultDeezerBaseUrl = "https://api.deezer.com";
+
+    /// <summary><see cref="DeezerBaseUrl"/> checked, without a trailing slash.</summary>
+    public string EffectiveDeezerBaseUrl =>
+        Uri.TryCreate(DeezerBaseUrl?.Trim(), UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+        && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.UserInfo)
+            ? uri.ToString().TrimEnd('/')
+            : DefaultDeezerBaseUrl;
+
+    /// <summary>
     /// A download that still has no album after Deezer and its own tags is filed as a single
     /// under its title, instead of joining every other album-less track in Navidrome's one
     /// "[Unknown Album]" (#50). A single filed under its title is a real release, and it gives

@@ -16,6 +16,24 @@ public class LastFmSettings
     public string ApiSecret { get; set; } = string.Empty;
 
     /// <summary>
+    /// Where Last.fm's API lives. Only a test stack changes it (to a stand-in server); an admin
+    /// sets it in the environment, never a request. Anything that is not an absolute http or
+    /// https URL is ignored and the default is used.
+    /// Environment variable form: LastFm__BaseUrl
+    /// </summary>
+    public string BaseUrl { get; set; } = DefaultBaseUrl;
+
+    public const string DefaultBaseUrl = "https://ws.audioscrobbler.com/2.0/";
+
+    /// <summary><see cref="BaseUrl"/> checked, with exactly one trailing slash.</summary>
+    public string EffectiveBaseUrl =>
+        Uri.TryCreate(BaseUrl?.Trim(), UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+        && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.UserInfo)
+            ? uri.ToString().TrimEnd('/') + "/"
+            : DefaultBaseUrl;
+
+    /// <summary>
     /// Send plays to each connected listener's Last.fm. Outside songs always go when this
     /// is on; library songs go too while <see cref="ScrobbleLibraryPlays"/> is on.
     /// </summary>

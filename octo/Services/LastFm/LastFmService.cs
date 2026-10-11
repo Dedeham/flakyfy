@@ -13,7 +13,7 @@ public partial class LastFmService
     private readonly IOptionsMonitor<LastFmSettings> _settingsOptions;
     private LastFmSettings _settings => _settingsOptions.CurrentValue;
     private readonly ILogger<LastFmService> _logger;
-    private const string BaseUrl = "https://ws.audioscrobbler.com/2.0/";
+    private string BaseUrl => _settings.EffectiveBaseUrl;
     
     // Concurrent because radio requests arrive on request threads and this is written on
     // every miss. A plain Dictionary written from two threads at once does not merely lose

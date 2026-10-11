@@ -103,7 +103,8 @@ public partial class DeezerMetadataService : IDisposable
     /// <summary>An album's detail, when there is one, and what the catalog said.</summary>
     public sealed record AlbumLookup(AlbumDetail? Detail, AlbumAnswer Answer);
 
-    private const string Base = "https://api.deezer.com";
+    /// <summary>Deezer's API root: the public host unless a test stack points it elsewhere.</summary>
+    private string Base => _metadataOptions.CurrentValue.EffectiveDeezerBaseUrl;
     private const int MaxCache = 4096;
 
     /// <summary>

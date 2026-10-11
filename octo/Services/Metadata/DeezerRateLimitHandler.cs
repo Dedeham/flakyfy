@@ -1,4 +1,6 @@
 using System.Net;
+using Microsoft.Extensions.Options;
+using Octo.Models.Settings;
 
 namespace Octo.Services.Metadata;
 
@@ -13,16 +15,22 @@ public sealed class DeezerRateLimitHandler : DelegatingHandler
     /// a user is actually waiting on.</summary>
     public static readonly HttpRequestOptionsKey<bool> BackgroundLane = new("octo.deezer.background");
 
-    private const string ApiHost = "api.deezer.com";
 
     private readonly DeezerRateLimiter _limiter;
     private readonly ILogger<DeezerRateLimitHandler> _logger;
+    private readonly IOptionsMonitor<MetadataSettings>? _settings;
 
-    public DeezerRateLimitHandler(DeezerRateLimiter limiter, ILogger<DeezerRateLimitHandler> logger)
+    public DeezerRateLimitHandler(DeezerRateLimiter limiter, ILogger<DeezerRateLimitHandler> logger,
+        IOptionsMonitor<MetadataSettings>? settings = null)
     {
         _limiter = limiter;
         _logger = logger;
+        _settings = settings;
     }
+
+    /// <summary>The metered host: the configured Deezer API host (api.deezer.com by default).</summary>
+    private string ApiHost => new Uri(
+        (_settings?.CurrentValue ?? new MetadataSettings()).EffectiveDeezerBaseUrl).Host;
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {

@@ -21,6 +21,8 @@ namespace Octo.Services.CoverArt;
 public class DeezerCoverArtLookup : ICoverArtSource
 {
     private readonly HttpClient _http;
+    private readonly IOptions<MetadataSettings> _metadata;
+    private string ApiBase => _metadata.Value.EffectiveDeezerBaseUrl;
     private readonly ILogger<DeezerCoverArtLookup> _logger;
 
     public string Name => "deezer";
@@ -34,6 +36,7 @@ public class DeezerCoverArtLookup : ICoverArtSource
         _http.Timeout = TimeSpan.FromSeconds(8);
         Octo.Services.Metadata.AcceptLanguageHeader.Apply(_http, metadataSettings.Value);
         _logger = logger;
+        _metadata = metadataSettings;
     }
 
     public async Task<byte[]?> TryFetchAsync(SoulseekRouting routing, bool background = false, CancellationToken ct = default)
@@ -73,7 +76,7 @@ public class DeezerCoverArtLookup : ICoverArtSource
         // (`artist:"X" track:"Y"`), which left every lookup here empty and handed covers to
         // a smaller source. The picking below does the matching instead.
         var q = $"{artist} {title}";
-        var url = $"https://api.deezer.com/search?q={Uri.EscapeDataString(q)}&limit=10";
+        var url = $"{ApiBase}/search?q={Uri.EscapeDataString(q)}&limit=10";
         var doc = await GetJsonAsync(url, background, ct);
         if (doc is null) return null;
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
@@ -86,7 +89,7 @@ public class DeezerCoverArtLookup : ICoverArtSource
         if (string.IsNullOrEmpty(artist) || string.IsNullOrEmpty(album)) return null;
         // Plain, for the same reason as a track's.
         var q = $"{artist} {album}";
-        var url = $"https://api.deezer.com/search/album?q={Uri.EscapeDataString(q)}&limit=10";
+        var url = $"{ApiBase}/search/album?q={Uri.EscapeDataString(q)}&limit=10";
         var doc = await GetJsonAsync(url, background, ct);
         if (doc is null) return null;
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
@@ -100,7 +103,7 @@ public class DeezerCoverArtLookup : ICoverArtSource
     /// <summary>An album's own cover by its catalog id, or null when the catalog has none.</summary>
     private async Task<string?> AlbumCoverByIdAsync(string albumId, bool background, CancellationToken ct)
     {
-        var doc = await GetJsonAsync($"https://api.deezer.com/album/{Uri.EscapeDataString(albumId.Trim())}", background, ct);
+        var doc = await GetJsonAsync($"{ApiBase}/album/{Uri.EscapeDataString(albumId.Trim())}", background, ct);
         if (doc is null) return null;
         return ReadString(doc.RootElement, "cover_xl")
             ?? ReadString(doc.RootElement, "cover_big")
@@ -110,7 +113,7 @@ public class DeezerCoverArtLookup : ICoverArtSource
     private async Task<string?> ResolveArtistCoverAsync(string artist, bool background, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(artist)) return null;
-        var url = $"https://api.deezer.com/search/artist?q={Uri.EscapeDataString(artist)}&limit=5";
+        var url = $"{ApiBase}/search/artist?q={Uri.EscapeDataString(artist)}&limit=5";
         var doc = await GetJsonAsync(url, background, ct);
         if (doc is null) return null;
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)

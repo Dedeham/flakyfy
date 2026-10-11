@@ -40,6 +40,8 @@ public class AdminContractTests
     /// <summary>Settings deliberately absent from the admin API, each with its reason.</summary>
     private static readonly HashSet<string> Excluded = new(StringComparer.Ordinal)
     {
+        // An environment setting for now (IMPORTS_STAR_LIKED); whether the dashboard shows it is FLA-20's call.
+        "Imports.StarLiked",
     };
 
     private static IEnumerable<string> SettableProperties(Type type) =>

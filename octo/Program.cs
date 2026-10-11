@@ -355,6 +355,7 @@ builder.Services.AddSingleton<Octo.Services.Library.AlbumOwnership>();
 builder.Services.AddSingleton<Octo.Services.Imports.ImportPlaylists>();
 builder.Services.AddSingleton<Octo.Services.Imports.TrickleWorker>();
 builder.Services.AddSingleton<Octo.Services.Imports.ImportService>();
+builder.Services.AddSingleton<Octo.Services.Common.IVerifiedRequestObserver, Octo.Services.Imports.ImportStarsOnRequest>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Octo.Services.Imports.TrickleWorker>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Octo.Services.Imports.ImportService>());
 // The library Review sweep (#72): asks about music that was already there, a few songs an hour,

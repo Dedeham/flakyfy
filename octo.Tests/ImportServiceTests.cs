@@ -81,6 +81,7 @@ public sealed class ImportServiceTests
         public readonly SpotifyAuth Auth = new();
         public readonly TrickleWorker Trickle;
         public readonly ImportService Service;
+        public readonly ImportMatcher Matcher;
         public readonly List<LibrarySongRow> Library =
         [
             new("nd-teardrop", "/m/t.flac", null, 1, "flac", 900, "Teardrop", "Massive Attack", 331, "Mezzanine"),
@@ -92,7 +93,7 @@ public sealed class ImportServiceTests
         {
             Trickle = new TrickleWorker(Queue, Settings, NullLogger<TrickleWorker>.Instance);
             var http = new Factory(Web);
-            var matcher = new ImportMatcher(null!, NullLogger<ImportMatcher>.Instance)
+            var matcher = Matcher = new ImportMatcher(null!, NullLogger<ImportMatcher>.Instance)
             {
                 ReadPage = (start, count, _) =>
                 {
@@ -348,6 +349,47 @@ public sealed class ImportServiceTests
         Assert.False(refused.Ok);
         Assert.Equal("That would make more than 500 lists, the most Octo keeps for one person. Remove some first.", refused.Message);
         Assert.True((await rig.Service.AddFileAsync("alice", "Gym.csv", new MemoryStream(Encoding.UTF8.GetBytes(csv)), CancellationToken.None)).Ok);
+    }
+
+    [Fact]
+    public async Task LikedSongsTheLibraryHasWaitToBecomeFavorites_ForTheirOwnerOnly()
+    {
+        var rig = new Rig();
+        await rig.ConnectAndRead();
+        // Bob's file also holds Teardrop, but it is not a liked list, so it queues nothing for him.
+        var csv = "Track Name,Artist Name(s)\nTeardrop,Massive Attack\n";
+        Assert.True((await rig.Service.AddFileAsync("bob", "Gym.csv", new MemoryStream(Encoding.UTF8.GetBytes(csv)), CancellationToken.None)).Ok);
+        // Carol's file is her liked songs, in the shape Exportify names it.
+        Assert.True((await rig.Service.AddFileAsync("carol", "liked_songs.csv", new MemoryStream(Encoding.UTF8.GetBytes(csv)), CancellationToken.None)).Ok);
+
+        Assert.Equal(["nd-teardrop"], rig.Store.TakeStars("alice", 10));
+        Assert.Empty(rig.Store.TakeStars("bob", 10));
+        Assert.Equal(["nd-teardrop"], rig.Store.TakeStars("carol", 10));
+        // Playlists are separate: nothing about favorites touches them.
+        Assert.False(rig.Service.Overview("alice").Lists.Single(l => l.Name == "Road trip").KeepPlaylist);
+    }
+
+    [Fact]
+    public async Task WithTheSwitchOffNothingWaitsToBecomeAFavorite()
+    {
+        var rig = new Rig();
+        rig.Settings.Set(new ImportSettings { SpotifyClientId = "client-1", StarLiked = false });
+        await rig.ConnectAndRead();
+        Assert.False(rig.Store.HasStars("alice"));
+    }
+
+    [Fact]
+    public async Task ALikedSongThatArrivesLaterIsQueuedThen_AndOnlyOnce()
+    {
+        var rig = new Rig();
+        await rig.ConnectAndRead();
+        Assert.Equal(["nd-teardrop"], rig.Store.TakeStars("alice", 10));
+        rig.Library.Add(new("nd-angel", "/m/a.mp3", null, 1, "mp3", 320, "Angel", "Massive Attack", 379, "Mezzanine"));
+        rig.Matcher.Forget();
+        await rig.Service.ReadSpotifyAsync("alice", CancellationToken.None);
+        await rig.Service.ReadSpotifyAsync("alice", CancellationToken.None);
+        Assert.Equal(["nd-angel"], rig.Store.TakeStars("alice", 10));
+        Assert.Empty(rig.Store.TakeStars("alice", 10));
     }
 
     [Fact]

@@ -11,12 +11,24 @@ public sealed class ImportStore
     private sealed class FileShape
     {
         public List<ImportList> Lists { get; set; } = [];
+        public Dictionary<string, StarState> Stars { get; set; } = [];
+    }
+
+    /// <summary>
+    /// The favorites an import still has to set for one person, as Navidrome song ids and nothing
+    /// else, and the ids already offered once, so a favorite they took away is not set again.
+    /// </summary>
+    public sealed class StarState
+    {
+        public List<string> Pending { get; set; } = [];
+        public List<string> Offered { get; set; } = [];
     }
 
     private readonly string? _path;
     private readonly ILogger<ImportStore>? _logger;
     private readonly object _lock = new();
     private readonly List<ImportList> _lists = [];
+    private readonly Dictionary<string, StarState> _stars = new(StringComparer.OrdinalIgnoreCase);
 
     public ImportStore(string? path = null, ILogger<ImportStore>? logger = null)
     {
@@ -24,8 +36,11 @@ public sealed class ImportStore
         _logger = logger;
         try
         {
-            if (_path is not null && File.Exists(_path))
-                _lists.AddRange(JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_path))?.Lists ?? []);
+            if (_path is not null && File.Exists(_path) && JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_path)) is { } shape)
+            {
+                _lists.AddRange(shape.Lists ?? []);
+                foreach (var (owner, state) in shape.Stars ?? []) _stars[owner] = state;
+            }
         }
         catch (Exception ex) { _logger?.LogWarning("the imported lists could not be read: {M}", ex.Message); }
     }
@@ -113,6 +128,67 @@ public sealed class ImportStore
         }
     }
 
+    /// <summary>
+    /// The songs the library has for this person's liked lists right now. Those not offered before
+    /// wait to be favorited; waiting ones the library no longer has (a deleted song, a changed
+    /// match) are dropped, so a stale id is never tried again and again.
+    /// </summary>
+    public void QueueStars(string owner, IReadOnlyCollection<string> current)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state))
+            {
+                if (current.Count == 0) return;
+                _stars[owner] = state = new StarState();
+            }
+            var now = current.ToHashSet(StringComparer.Ordinal);
+            var offered = state.Offered.ToHashSet(StringComparer.Ordinal);
+            var kept = state.Pending.Where(now.Contains).ToList();
+            var queued = kept.ToHashSet(StringComparer.Ordinal);
+            kept.AddRange(current.Where(id => !offered.Contains(id) && queued.Add(id)));
+            if (kept.SequenceEqual(state.Pending)) return;
+            state.Pending = kept;
+            Write();
+        }
+    }
+
+    /// <summary>
+    /// Up to this many song ids to favorite now. They count as offered from here: a favorite that
+    /// fails is not retried by itself, because the next match queues it again only if it is new.
+    /// </summary>
+    public IReadOnlyList<string> TakeStars(string owner, int most)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state) || state.Pending.Count == 0) return [];
+            var taken = state.Pending.Take(most).ToList();
+            state.Pending.RemoveRange(0, taken.Count);
+            state.Offered.AddRange(taken);
+            Write();
+            return taken;
+        }
+    }
+
+    /// <summary>Whether this person has favorites waiting. Cheap enough for every request.</summary>
+    public bool HasStars(string owner)
+    {
+        lock (_lock) return _stars.TryGetValue(owner, out var state) && state.Pending.Count > 0;
+    }
+
+    /// <summary>Gives ids back after a favorite failed, so the next request tries them again.</summary>
+    public void RequeueStars(string owner, IEnumerable<string> songIds)
+    {
+        lock (_lock)
+        {
+            if (!_stars.TryGetValue(owner, out var state)) return;
+            var back = songIds.ToHashSet(StringComparer.Ordinal);
+            state.Offered.RemoveAll(back.Contains);
+            state.Pending.AddRange(back.Where(id => !state.Pending.Contains(id)));
+            Write();
+        }
+    }
+
     // Called with the lock held.
     private ImportList? Find(string owner, string id) =>
         _lists.FirstOrDefault(list => Same(list.Owner, owner) && list.Id == id);
@@ -126,7 +202,7 @@ public sealed class ImportStore
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path + ".tmp", JsonSerializer.Serialize(new FileShape { Lists = _lists }));
+            File.WriteAllText(_path + ".tmp", JsonSerializer.Serialize(new FileShape { Lists = _lists, Stars = _stars }));
             File.Move(_path + ".tmp", _path, overwrite: true);
         }
         catch (Exception ex) { _logger?.LogWarning("the imported lists could not be written: {M}", ex.Message); }

@@ -185,6 +185,7 @@ services:
       Imports__SpotifyRedirectUri: ${IMPORTS_SPOTIFY_REDIRECT_URI:-http://127.0.0.1/callback}
       Imports__SongsPerHour: ${IMPORTS_SONGS_PER_HOUR:-20}
       Imports__RefreshHours: ${IMPORTS_REFRESH_HOURS:-6}
+      Imports__StarLiked: ${IMPORTS_STAR_LIKED:-true}
 
       # ----- Genre normalization -----
       # Collapses the genres downloads arrive with into a browsable list. Off by

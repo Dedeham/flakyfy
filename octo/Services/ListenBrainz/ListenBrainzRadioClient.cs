@@ -7,7 +7,7 @@ using Octo.Models.Settings;
 namespace Octo.Services.ListenBrainz;
 
 /// <summary>A song ListenBrainz suggested.</summary>
-public sealed record ListenBrainzTrack(string Artist, string Title, double Score, int? DurationSeconds);
+public sealed record ListenBrainzTrack(string Artist, string Title, double Score, int? DurationSeconds, string? RecordingMbid = null);
 
 /// <summary>
 /// ListenBrainz's listening data for radio: the labs datasets (no token, at most one call a
@@ -17,8 +17,8 @@ public sealed class ListenBrainzRadioClient(IHttpClientFactory http, IOptionsMon
     ILogger<ListenBrainzRadioClient> logger) : IDisposable
 {
     public const string ClientName = "listenbrainz-radio";
-    internal const string LabsUrl = "https://labs.api.listenbrainz.org";
-    internal const string ApiUrl = "https://api.listenbrainz.org";
+    private string LabsUrl => listenBrainz.CurrentValue.LabsBase;
+    private string ApiUrl => listenBrainz.CurrentValue.ApiBase;
     internal static TimeSpan MinimumGap { get; set; } = TimeSpan.FromSeconds(1);
     /// <summary>Longest a call waits for its one-a-second slot. Past that it gives up with nothing,
     /// which is not a failure: a station build's calls queued ahead are not the source going wrong,
@@ -52,13 +52,13 @@ public sealed class ListenBrainzRadioClient(IHttpClientFactory http, IOptionsMon
             var rows = await LabsAsync($"/similar-recordings/json?recording_mbids={Uri.EscapeDataString(recordingMbid)}&algorithm={Uri.EscapeDataString(algorithm)}", ct);
             if (rows is null) return [];
             var parsed = rows.Select(row => (Artist: Text(row, "artist_credit_name"), Title: Text(row, "recording_name"),
-                    Score: Number(row, "score") ?? 0))
+                    Score: Number(row, "score") ?? 0, Mbid: Text(row, "recording_mbid")))
                 .Where(row => row.Artist is not null && row.Title is not null).ToList();
             // ListenBrainz's score is a count of shared listening sessions (216, 149, ...), so it
             // is scaled to the answer's best, 0 to 1, like every other source's match.
             var best = parsed.Select(row => row.Score).DefaultIfEmpty(0).Max();
             tracks = parsed.Select(row => new ListenBrainzTrack(row.Artist!, row.Title!,
-                best > 0 ? row.Score / best : 1.0, null)).ToList();
+                best > 0 ? row.Score / best : 1.0, null, row.Mbid)).ToList();
             // ListenBrainz rebuilds these every Sunday.
             _cache.Set(key, tracks, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1) });
         }

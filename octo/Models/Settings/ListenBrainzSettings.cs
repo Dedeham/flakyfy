@@ -28,6 +28,29 @@ public class ListenBrainzSettings
     /// external id, or a Continuous Radio track played to the end).</summary>
     public bool SubmitExternalPlays { get; set; } = true;
 
+    /// <summary>
+    /// Where ListenBrainz's API is. Only a test stack changes this, so a stand-in can answer; any value that
+    /// is not an http(s) address is ignored. Environment variable: LISTENBRAINZ__APIURL
+    /// </summary>
+    public string ApiUrl { get; set; } = DefaultApiUrl;
+
+    /// <summary>Where ListenBrainz's labs datasets are; same rules as <see cref="ApiUrl"/>.
+    /// Environment variable: LISTENBRAINZ__LABSURL</summary>
+    public string LabsUrl { get; set; } = DefaultLabsUrl;
+
+    public const string DefaultApiUrl = "https://api.listenbrainz.org";
+    public const string DefaultLabsUrl = "https://labs.api.listenbrainz.org";
+
+    /// <summary><see cref="ApiUrl"/> without a trailing slash, or the default when it is not an http(s) address.</summary>
+    public string ApiBase => Base(ApiUrl, DefaultApiUrl);
+
+    /// <summary><see cref="LabsUrl"/> without a trailing slash, or the default when it is not an http(s) address.</summary>
+    public string LabsBase => Base(LabsUrl, DefaultLabsUrl);
+
+    private static string Base(string? value, string fallback) =>
+        Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+            ? uri.GetLeftPart(UriPartial.Path).TrimEnd('/') : fallback;
+
     /// <summary>The token that applies to this listener, or null when none is configured.</summary>
     public string? TokenFor(string username)
     {

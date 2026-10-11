@@ -14,8 +14,8 @@ namespace Octo.Services.ListenBrainz;
 public sealed class ListenBrainzService
 {
     public const string ClientName = "listenbrainz";
-    internal const string SubmitUrl = "https://api.listenbrainz.org/1/submit-listens";
-    internal const string ValidateUrl = "https://api.listenbrainz.org/1/validate-token";
+    private string SubmitUrl => _settings.CurrentValue.ApiBase + "/1/submit-listens";
+    private string ValidateUrl => _settings.CurrentValue.ApiBase + "/1/validate-token";
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<ListenBrainzSettings> _settings;

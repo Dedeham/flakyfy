@@ -198,7 +198,7 @@ There are three triggers, all ending in the same chain.
    the last failure notifies and marks the row failed.
 3. *Soulseek waits out an outage* (`HoldForSoulseekAsync`, :368) up to `Soulseek:OutageHoldHours`
    (6), persisted in `soulseek-holds.json`, rather than falling through to a lossy copy. The wait
-   is skipped when Lidarr comes later in the chain.
+   applies whether or not Lidarr comes later in the chain.
 
 **Which sources are on is decided by one legacy switch unless the dashboard has written an
 explicit list.** With no `HeartDownloadSources` configured, `DOWNLOAD_SOURCE` picks one of four

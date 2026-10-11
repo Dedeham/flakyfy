@@ -352,12 +352,12 @@ public sealed class HeartAcquisitionCoordinator
 
     /// <summary>
     /// When a Soulseek step stops waiting for slskd, or null when it never waits: another source,
-    /// no link, the wait switched off, or Lidarr later in the chain. The wait exists so an outage
-    /// does not turn a lossless heart into a YouTube MP3; Lidarr can bring a lossless copy now.
+    /// no link, or the wait switched off. Lidarr later in the chain does not skip it: a failed
+    /// search during an outage looks like "not found", so Lidarr would be asked about a song
+    /// Soulseek never looked for, and a later YouTube step would take an MP3 of it.
     /// </summary>
     private DateTime? SoulseekDeadline(IReadOnlyList<HeartDownloadSource> steps, int index, DateTime? heldSinceUtc) =>
         steps[index] == HeartDownloadSource.Soulseek && _soulseek is { } link && link.HoldLimit > TimeSpan.Zero
-        && !steps.Skip(index + 1).Contains(HeartDownloadSource.Lidarr)
             ? (heldSinceUtc ?? link.UtcNow) + link.HoldLimit
             : null;
 

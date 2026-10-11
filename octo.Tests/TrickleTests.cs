@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Octo.Models.Settings;
 using Octo.Services.Common;
 using Octo.Services.Imports;
+using Octo.Services.Soulseek;
 
 namespace Octo.Tests;
 
@@ -256,6 +257,44 @@ public sealed class TrickleTests : IDisposable
 
         rig.SoulseekOut = false;
         Assert.True(await rig.Tick());
+    }
+
+    private sealed class OutLink(SoulseekLinkState? state) : ISoulseekLink
+    {
+        public Task<SoulseekServerReading?> ReadAsync(bool fresh, CancellationToken ct) =>
+            Task.FromResult(state is { } s ? new SoulseekServerReading(s, s.ToString(), null, null) : null);
+        public TimeSpan HoldLimit => TimeSpan.FromHours(6);
+        public DateTime UtcNow => DateTime.UtcNow;
+        public Task<bool> WaitForLoginAsync(DateTime deadlineUtc, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    private static TrickleWorker WorkerWith(SoulseekLinkState? link, params (HeartDownloadSource Source, bool On)[] chain) =>
+        new(new TrickleQueue(), TestOptions.Monitor(new ImportSettings()), NullLogger<TrickleWorker>.Instance,
+            subsonic: TestOptions.Monitor(new SubsonicSettings
+            {
+                HeartDownloadSources = chain.Select(c => new HeartDownloadStep { Source = c.Source, Enabled = c.On }).ToList(),
+            }),
+            soulseek: new OutLink(link));
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task TheTrickleWaitsOutASoulseekOutage_WhereverLidarrIsInTheList(bool lidarr, bool youTube)
+    {
+        var worker = WorkerWith(SoulseekLinkState.NotLoggedIn,
+            (HeartDownloadSource.Soulseek, true), (HeartDownloadSource.YouTube, youTube), (HeartDownloadSource.Lidarr, lidarr));
+        Assert.True(await worker.SoulseekOut(default));
+    }
+
+    [Fact]
+    public async Task TheTrickleDoesNotWaitWhenSoulseekIsUp_OffTheListOrNotAnswering()
+    {
+        var chain = new[] { (HeartDownloadSource.Soulseek, true), (HeartDownloadSource.Lidarr, true) };
+        Assert.False(await WorkerWith(SoulseekLinkState.LoggedIn, chain).SoulseekOut(default));
+        Assert.False(await WorkerWith(null, chain).SoulseekOut(default));
+        Assert.False(await WorkerWith(SoulseekLinkState.NotLoggedIn,
+            (HeartDownloadSource.Soulseek, false), (HeartDownloadSource.Lidarr, true)).SoulseekOut(default));
     }
 
     [Fact]

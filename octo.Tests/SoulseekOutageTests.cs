@@ -232,13 +232,14 @@ public class SoulseekOutageTests
     };
 
     private static (HeartAcquisitionCoordinator Hearts, TrackAcquisitionQueue Queue, Mock<IDownloadService> Direct)
-        Chain(FakeLink link, SoulseekHoldStore? holds = null, SubsonicSettings? settings = null)
+        Chain(FakeLink link, SoulseekHoldStore? holds = null, SubsonicSettings? settings = null,
+            Mock<ILidarrHeartAcquisitionService>? lidarr = null)
     {
         var queue = new TrackAcquisitionQueue(new Mock<ILogger<TrackAcquisitionQueue>>().Object);
         var direct = new Mock<IDownloadService>();
         var hearts = new HeartAcquisitionCoordinator(
             TestOptions.Monitor(settings ?? SoulseekThenYouTube()), queue, direct.Object,
-            new Mock<ILidarrHeartAcquisitionService>().Object,
+            (lidarr ?? new Mock<ILidarrHeartAcquisitionService>()).Object,
             new Mock<ILogger<HeartAcquisitionCoordinator>>().Object,
             soulseek: link, holds: holds ?? new SoulseekHoldStore());
         return (hearts, queue, direct);
@@ -287,6 +288,77 @@ public class SoulseekOutageTests
 
         Assert.True(queue.IsIdle);
         Assert.Empty(holds.Snapshot());
+    }
+
+    private static SubsonicSettings SoulseekThenLidarr(bool youTube = false) => new()
+    {
+        HeartDownloadSources =
+        [
+            new() { Source = HeartDownloadSource.Soulseek, Enabled = true },
+            new() { Source = HeartDownloadSource.YouTube, Enabled = youTube },
+            new() { Source = HeartDownloadSource.Lidarr, Enabled = true },
+        ],
+    };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnOutageIsWaitedOutEvenWhenLidarrComesLater(bool youTubeInTheList)
+    {
+        var link = new FakeLink();
+        link.Set(SoulseekLinkState.NotLoggedIn);
+        var lidarr = new Mock<ILidarrHeartAcquisitionService>();
+        var (hearts, queue, _) = Chain(link, settings: SoulseekThenLidarr(youTubeInTheList), lidarr: lidarr);
+
+        var heart = hearts.AcquireTrackAsync("soulseek", "song-1", "winters");
+        await link.Waiting.Task.WaitAsync(Soon);
+
+        // Held: Soulseek was not asked, Lidarr was not asked, nothing from YouTube.
+        Assert.True(queue.IsIdle);
+        lidarr.Verify(l => l.TryAcquireTrackAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
+
+        link.Set(SoulseekLinkState.LoggedIn);
+        var request = await Next(queue);
+        Assert.Equal(DownloadSource.Soulseek, request.SourceOverride);
+        Land(queue, request);
+        await heart.WaitAsync(Soon);
+    }
+
+    [Fact]
+    public async Task WithLidarrLater_ADropMidSearchIsWaitedOutAndSoulseekTriedAgain()
+    {
+        var link = new FakeLink();
+        var lidarr = new Mock<ILidarrHeartAcquisitionService>();
+        var (hearts, queue, _) = Chain(link, settings: SoulseekThenLidarr(), lidarr: lidarr);
+
+        var heart = hearts.AcquireTrackAsync("soulseek", "song-1");
+        var first = await Next(queue);
+        link.Set(SoulseekLinkState.NotLoggedIn);
+        Fail(queue, first, "search start failed");
+        await link.Waiting.Task.WaitAsync(Soon);
+        lidarr.Verify(l => l.TryAcquireTrackAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
+
+        link.Set(SoulseekLinkState.LoggedIn);
+        Land(queue, await Next(queue));
+        await heart.WaitAsync(Soon);
+    }
+
+    [Fact]
+    public async Task WithLidarrLater_WhenTheWaitRunsOutTheChainGoesOnToLidarr()
+    {
+        var link = new FakeLink();
+        link.Set(SoulseekLinkState.NotLoggedIn);
+        var lidarr = new Mock<ILidarrHeartAcquisitionService>();
+        lidarr.Setup(l => l.TryAcquireTrackAsync("soulseek", "song-1", true, null)).ReturnsAsync(true);
+        var (hearts, queue, _) = Chain(link, settings: SoulseekThenLidarr(), lidarr: lidarr);
+
+        var heart = hearts.AcquireTrackAsync("soulseek", "song-1");
+        await link.Waiting.Task.WaitAsync(Soon);
+        link.Advance(TimeSpan.FromHours(6));
+
+        Fail(queue, await Next(queue));
+        await heart.WaitAsync(Soon);
+        lidarr.Verify(l => l.TryAcquireTrackAsync("soulseek", "song-1", true, null), Times.Once);
     }
 
     [Fact]

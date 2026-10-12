@@ -175,6 +175,13 @@ async fn settings_list_how_many_stream_sizes_are_learned_a_minute() {
 }
 
 #[tokio::test]
+async fn settings_list_the_apps_given_a_size_on_every_song() {
+    let (_, app) = factory();
+    let document = get(&app, "/api/admin/settings").await.json();
+    assert_eq!(document["Subsonic"]["SizeFlagClients"], "Amperfy");
+}
+
+#[tokio::test]
 async fn settings_list_how_long_search_waits_for_lengths() {
     let (_, app) = factory();
     let document = get(&app, "/api/admin/settings").await.json();
@@ -742,8 +749,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
     // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
     // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
-    // Subsonic:SearchDurationWaitMs and Subsonic:SearchLastFmWaitMs.
-    assert_eq!(rows.len(), 192);
+    // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs and Subsonic:SizeFlagClients.
+    assert_eq!(rows.len(), 193);
+    assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("Subsonic:SearchDurationWaitMs")["IsSecret"], false);
     assert_eq!(row("Subsonic:SearchLastFmWaitMs")["IsSecret"], false);

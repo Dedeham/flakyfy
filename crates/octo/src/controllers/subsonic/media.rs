@@ -595,7 +595,9 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
 
     // A mix is the listener's own library, so its cover carries no Octo mark: the logo says
     // where a result came from, and this came from them.
-    if let Some(mix) = state.generated_playlists.find(&cover_user, &id) {
+    // A mix's cover id is its list id, then `_` and a tag naming the picture as drawn.
+    let mix_id = id.split_once('_').map_or(id.as_str(), |(list, _)| list);
+    if let Some(mix) = state.generated_playlists.find(&cover_user, mix_id) {
         let song_count = state
             .generated_playlists
             .drawn(&cover_user, &mix)

@@ -1,6 +1,7 @@
 use axum::Router;
 use axum::http::header::CONTENT_LENGTH;
 use axum::middleware::from_fn_with_state;
+use axum::response::IntoResponse;
 use axum::routing::any;
 use http_body_util::BodyExt;
 use octo_core::settings::AppSettings;
@@ -188,6 +189,102 @@ async fn the_list_of_apps_is_read_on_every_call() {
     state.settings.set(settings);
     let listed = call(&state, Method::GET, "/rest/search3.view?c=Narjo", None).await;
     assert!(listed.text().contains("size=\"1\""));
+}
+
+fn streamed(chunks: &[&'static str]) -> Body {
+    Body::from_stream(stream::iter(
+        chunks
+            .iter()
+            .map(|chunk| Ok::<_, std::io::Error>(Bytes::from_static(chunk.as_bytes())))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[tokio::test]
+async fn an_answer_within_the_limit_is_read_whole() {
+    match read_whole(streamed(&["<a ", "isExternal=\"true\"", "/>"]), 64).await {
+        Read::Whole(bytes) => assert_eq!(bytes.as_ref(), b"<a isExternal=\"true\"/>"),
+        Read::Unread(_) => panic!("read whole"),
+    }
+}
+
+#[tokio::test]
+async fn an_answer_past_the_limit_with_no_length_goes_out_byte_for_byte() {
+    let chunks = [
+        "<subsonic-response>",
+        "<song isExternal=\"true\"/>",
+        "</subsonic-response>",
+    ];
+    let Read::Unread(body) = read_whole(streamed(&chunks), 20).await else {
+        panic!("over the limit");
+    };
+    let sent = body.collect().await.expect("body").to_bytes();
+    assert_eq!(sent.as_ref(), chunks.concat().as_bytes());
+}
+
+#[tokio::test]
+async fn an_answer_that_fails_part_way_still_fails_for_the_app() {
+    let failing = Body::from_stream(stream::iter(vec![
+        Ok(Bytes::from_static(b"<subsonic-response>")),
+        Err(std::io::Error::other("upstream reset")),
+    ]));
+    let Read::Unread(body) = read_whole(failing, 1024).await else {
+        panic!("failed part way");
+    };
+    let mut frames = body.into_data_stream();
+    assert_eq!(
+        frames
+            .next()
+            .await
+            .expect("the bytes read")
+            .expect("data")
+            .as_ref(),
+        b"<subsonic-response>"
+    );
+    assert!(frames.next().await.expect("the failure").is_err());
+}
+
+#[tokio::test]
+async fn a_long_answer_from_a_listed_app_passes_through_untouched() {
+    let state = state();
+    let long = format!(
+        "<subsonic-response xmlns=\"{NS}\"><song id=\"ext-1\" isExternal=\"true\" title=\"{}\" /></subsonic-response>",
+        "x".repeat(MAX_BODY)
+    );
+    let router = Router::new()
+        .route(
+            "/rest/search3.view",
+            any(move || {
+                let long = long.clone();
+                async move {
+                    // Streamed with no Content-Length, as a relay can be.
+                    let body =
+                        Body::from_stream(stream::once(
+                            async move { Ok::<_, std::io::Error>(Bytes::from(long)) },
+                        ));
+                    let mut response = Response::new(body);
+                    response
+                        .headers_mut()
+                        .insert(CONTENT_TYPE, HeaderValue::from_static("application/xml"));
+                    response
+                }
+            }),
+        )
+        .layer(from_fn_with_state(state.clone(), size_flag))
+        .with_state(state.clone());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/rest/search3.view?c=Amperfy")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("infallible");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.expect("body").to_bytes();
+    assert!(body.len() > MAX_BODY);
+    assert!(!String::from_utf8_lossy(&body[..120]).contains("size="));
 }
 
 #[test]

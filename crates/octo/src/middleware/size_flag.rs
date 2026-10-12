@@ -4,18 +4,22 @@
 //! other app's answer passes through untouched, as does anything that is not a Subsonic XML
 //! or JSON answer: audio, covers, a compressed relay, a HEAD.
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
+use bytes::BytesMut;
+use futures::{StreamExt, stream};
+use http_body_util::BodyExt;
 use octo_subsonic::size_flag::{Format, flag_sizes};
 use tracing::warn;
 
 use crate::app::AppState;
 
-/// The largest answer read; a larger one passes through untouched.
+/// The largest answer read; a larger one passes through untouched, whether or not it said its
+/// length up front.
 pub const MAX_BODY: usize = 64 * 1024 * 1024;
 
 pub async fn size_flag(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -55,12 +59,9 @@ async fn flag(response: Response) -> Response {
         return response;
     };
     let (mut parts, body) = response.into_parts();
-    let bytes = match axum::body::to_bytes(body, MAX_BODY).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            warn!("An answer could not be read to give its songs a size: {error}");
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
+    let bytes = match read_whole(body, MAX_BODY).await {
+        Read::Whole(bytes) => bytes,
+        Read::Unread(body) => return Response::from_parts(parts, body),
     };
     let Some(flagged) = flag_sizes(&bytes, format) else {
         return Response::from_parts(parts, Body::from(bytes));
@@ -70,6 +71,47 @@ async fn flag(response: Response) -> Response {
         .insert(CONTENT_LENGTH, HeaderValue::from(flagged.len()));
     parts.headers.remove(ETAG);
     Response::from_parts(parts, Body::from(flagged))
+}
+
+/// An answer's body, read whole, or handed back unchanged.
+enum Read {
+    Whole(Bytes),
+    /// Longer than the limit, or failed part way: the bytes read so far followed by the rest,
+    /// exactly as the app would have had them.
+    Unread(Body),
+}
+
+async fn read_whole(mut body: Body, limit: usize) -> Read {
+    let mut chunks: Vec<Bytes> = Vec::new();
+    let mut length = 0;
+    loop {
+        match body.frame().await {
+            None => break,
+            Some(Ok(frame)) => {
+                let Ok(chunk) = frame.into_data() else {
+                    continue;
+                };
+                length += chunk.len();
+                chunks.push(chunk);
+                if length > limit {
+                    let rest = body.into_data_stream();
+                    return Read::Unread(Body::from_stream(
+                        stream::iter(chunks.into_iter().map(Ok)).chain(rest),
+                    ));
+                }
+            }
+            Some(Err(error)) => {
+                warn!("An answer failed part way while being read for its song sizes: {error}");
+                let read = stream::iter(chunks.into_iter().map(Ok));
+                return Read::Unread(Body::from_stream(read.chain(stream::once(async { Err(error) }))));
+            }
+        }
+    }
+    let mut whole = BytesMut::with_capacity(length);
+    for chunk in chunks {
+        whole.extend_from_slice(&chunk);
+    }
+    Read::Whole(whole.freeze())
 }
 
 /// The answer's shape when it is a plain 200 Subsonic XML or JSON answer small enough to read.

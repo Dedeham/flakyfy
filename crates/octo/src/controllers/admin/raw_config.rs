@@ -305,6 +305,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Imports:SongsPerHour",
     "Imports:RefreshHours",
     "Subsonic:StreamSizeWarmPerMinute",
+    "Subsonic:CoverCacheMb",
     "Subsonic:SearchDurationWaitMs",
     "Subsonic:SearchLastFmWaitMs",
 ];

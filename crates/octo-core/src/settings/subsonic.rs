@@ -243,6 +243,13 @@ pub struct SubsonicSettings {
     /// Environment variable: STREAM_SIZE_WARM_PER_MINUTE
     pub stream_size_warm_per_minute: i32,
 
+    /// How many megabytes of library covers Octo keeps on disk, so each cover is read from
+    /// Navidrome once and every size an app asks for is cut from that copy (default: 1024,
+    /// range 0-102400). The least recently shown covers go first when it is full. 0 turns the
+    /// cover cache off and every cover is asked of Navidrome again.
+    /// Environment variable: COVER_CACHE_MB
+    pub cover_cache_mb: i32,
+
     /// Directory name for storing playlist .m3u files (default: "playlists")
     /// Environment variable: PLAYLISTS_DIRECTORY
     /// Relative to the music library root directory
@@ -374,6 +381,7 @@ impl Default for SubsonicSettings {
             sync_catalog_clients: "Symfonium".to_string(),
             sync_catalog_max_songs: 1000,
             stream_size_warm_per_minute: 5,
+            cover_cache_mb: 1024,
             playlists_directory: "playlists".to_string(),
             download_on_star: true,
             download_album_on_star: true,
@@ -414,6 +422,11 @@ impl SubsonicSettings {
 
     pub fn effective_stream_size_warm_per_minute(&self) -> usize {
         self.stream_size_warm_per_minute.clamp(0, 30) as usize
+    }
+
+    /// The cover cache's size in bytes; 0 when it is off.
+    pub fn effective_cover_cache_bytes(&self) -> u64 {
+        self.cover_cache_mb.clamp(0, 102_400) as u64 * 1024 * 1024
     }
 
     pub fn effective_heart_download_sources(&self) -> Vec<HeartDownloadStep> {
@@ -568,6 +581,25 @@ mod tests {
             assert_eq!(
                 s.effective_stream_size_warm_per_minute(),
                 expected,
+                "{configured}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cover_cache_is_a_gigabyte_by_default_and_zero_turns_it_off() {
+        assert_eq!(
+            SubsonicSettings::default().effective_cover_cache_bytes(),
+            1024 * 1024 * 1024
+        );
+        for (configured, expected) in [(0, 0), (-5, 0), (10, 10), (500_000, 102_400)] {
+            let s = SubsonicSettings {
+                cover_cache_mb: configured,
+                ..Default::default()
+            };
+            assert_eq!(
+                s.effective_cover_cache_bytes(),
+                expected * 1024 * 1024,
                 "{configured}"
             );
         }

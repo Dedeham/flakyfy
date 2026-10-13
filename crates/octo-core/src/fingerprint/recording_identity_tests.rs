@@ -1,0 +1,179 @@
+//! The recording a file is and the kind of take it is, on real answers: "Welcome to the Black
+//! Parade" ties one fingerprint to the studio take (311.106 s), a live take from "The Black
+//! Parade Is Dead!" (305.426 s) and the instrumental from a promo CD of instrumentals
+//! (309.684 s).
+
+use super::*;
+
+fn release(title: Option<&str>, group: &str, secondary: &[&str]) -> AcoustIdRelease {
+    AcoustIdRelease {
+        title: title.map(str::to_string),
+        group_title: Some(group.to_string()),
+        secondary_types: secondary.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+fn recording(id: &str, title: &str, ms: i64, releases: Vec<AcoustIdRelease>) -> AcoustIdRecording {
+    AcoustIdRecording {
+        duration_seconds: Some(((ms as f64) / 1000.0).round() as i32),
+        duration_ms: Some(ms),
+        releases,
+        ..AcoustIdRecording::new(id, title, ["My Chemical Romance"], None, None)
+    }
+}
+
+fn studio() -> AcoustIdRecording {
+    recording(
+        "28982738",
+        "Welcome to the Black Parade",
+        311_106,
+        vec![release(None, "The Black Parade", &[]), release(None, "100 Greatest Rock Anthems", &["Compilation"])],
+    )
+}
+
+fn live() -> AcoustIdRecording {
+    recording(
+        "eca90222",
+        "Welcome to the Black Parade",
+        305_426,
+        vec![release(None, "The Black Parade Is Dead!", &["Live"])],
+    )
+}
+
+fn instrumental() -> AcoustIdRecording {
+    recording(
+        "3efde39a",
+        "Welcome to the Black Parade",
+        309_684,
+        vec![release(Some("The Black Parade (instrumentals)"), "The Black Parade", &[])],
+    )
+}
+
+fn plain() -> BTreeSet<RecordingKind> {
+    BTreeSet::new()
+}
+
+#[test]
+fn kinds_come_from_the_title_the_releases_and_the_database() {
+    assert_eq!(kind_of(&studio(), None), RecordingKind::Studio);
+    assert_eq!(kind_of(&live(), None), RecordingKind::Live);
+    // The promo sits in the normal release group; only its own title says instrumentals.
+    assert_eq!(kind_of(&instrumental(), None), RecordingKind::Instrumental);
+    let titled = recording("59452e6a", "So What (instrumental)", 194_969, vec![]);
+    assert_eq!(kind_of(&titled, None), RecordingKind::Instrumental);
+
+    // AcoustID knows nothing, the database's disambiguation does.
+    let bare = recording("x", "Welcome to the Black Parade", 309_684, vec![]);
+    assert_eq!(kind_of(&bare, None), RecordingKind::Studio);
+    let facts = RecordingFacts {
+        disambiguation: Some("instrumental".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(kind_of(&bare, Some(&facts)), RecordingKind::Instrumental);
+    let live_facts = RecordingFacts {
+        disambiguation: Some("live, 2007-04-08: Palacio de los Deportes, Mexico City".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(kind_of(&bare, Some(&live_facts)), RecordingKind::Live);
+}
+
+#[test]
+fn a_studio_take_on_a_live_album_too_is_still_studio() {
+    let mixed = recording(
+        "s",
+        "Song",
+        200_000,
+        vec![release(None, "Album", &[]), release(None, "Live at Wembley", &["Live"])],
+    );
+    assert_eq!(kind_of(&mixed, None), RecordingKind::Studio);
+}
+
+#[test]
+fn the_exact_length_decides_between_takes() {
+    let (s, l, i) = (studio(), live(), instrumental());
+    let all = [&s, &l, &i];
+    // The copy Octo first kept: 305.43 s is the live take, not the instrumental it was tagged as.
+    assert_eq!(decided_by_length(&all, Some(305_427)).map(|r| r.recording_id.as_str()), Some("eca90222"));
+    // The replacement: 311.11 s is the studio take.
+    assert_eq!(decided_by_length(&all, Some(311_107)).map(|r| r.recording_id.as_str()), Some("28982738"));
+    // 309.7 s is the instrumental: the studio take is 1.4 s further.
+    assert_eq!(decided_by_length(&all, Some(309_700)).map(|r| r.recording_id.as_str()), Some("3efde39a"));
+    // 309.0 s is 0.7 s from the instrumental and 2.1 s from the studio take: too close to call.
+    assert_eq!(decided_by_length(&all, Some(309_000)), None);
+    // Nothing near.
+    assert_eq!(decided_by_length(&all, Some(250_000)), None);
+    assert_eq!(decided_by_length(&all, None), None);
+}
+
+#[test]
+fn one_recording_with_a_length_is_no_choice() {
+    let s = studio();
+    assert_eq!(decided_by_length(&[&s], Some(311_106)), None);
+}
+
+#[test]
+fn the_same_recording_listed_twice_counts_once() {
+    let (a, b, l) = (studio(), studio(), live());
+    assert_eq!(
+        decided_by_length(&[&a, &b, &l], Some(311_100)).map(|r| r.recording_id.as_str()),
+        Some("28982738")
+    );
+}
+
+#[test]
+fn choose_takes_the_length_then_the_kind_asked_for() {
+    let (s, l, i) = (studio(), live(), instrumental());
+    let all = [&i, &l, &s];
+    let kind = |r: &AcoustIdRecording| kind_of(r, None);
+
+    let (chosen, by_length) = choose(&all, Some(305_426), &plain(), kind).unwrap();
+    assert_eq!(chosen.recording_id, "eca90222");
+    assert!(by_length);
+
+    // No decisive length: a plain request takes the studio take, wherever it is listed.
+    let (chosen, by_length) = choose(&all, Some(309_000), &plain(), kind).unwrap();
+    assert_eq!(chosen.recording_id, "28982738");
+    assert!(!by_length);
+
+    // A request for the instrumental takes the instrumental.
+    let wanted = RecordingKind::requested_by("Welcome to the Black Parade (Instrumental)");
+    let (chosen, _) = choose(&all, None, &wanted, kind).unwrap();
+    assert_eq!(chosen.recording_id, "3efde39a");
+}
+
+#[test]
+fn an_album_is_never_a_wish() {
+    assert!(RecordingKind::requested_by("Welcome to the Black Parade").is_empty());
+    assert_eq!(
+        RecordingKind::requested_by("Smile in Your Sleep (Live)"),
+        BTreeSet::from([RecordingKind::Live])
+    );
+    assert_eq!(
+        RecordingKind::requested_by("Bad Things (Karaoke Version)"),
+        BTreeSet::from([RecordingKind::Karaoke])
+    );
+}
+
+#[test]
+fn unwanted_kinds() {
+    assert!(!unwanted(RecordingKind::Studio, &plain()));
+    assert!(unwanted(RecordingKind::Instrumental, &plain()));
+    assert!(unwanted(RecordingKind::Live, &plain()));
+    assert!(!unwanted(RecordingKind::Live, &BTreeSet::from([RecordingKind::Live])));
+}
+
+#[test]
+fn album_names_read_as_kinds() {
+    assert_eq!(
+        RecordingKind::named_in("The Black Parade (instrumentals)"),
+        BTreeSet::from([RecordingKind::Instrumental])
+    );
+    assert_eq!(
+        RecordingKind::named_in("A Muse In Her Feelings (Instrumentals)"),
+        BTreeSet::from([RecordingKind::Instrumental])
+    );
+    assert!(RecordingKind::named_in("Tree City Sessions 2").is_empty());
+    // An album that is only called so is not a demo: the kind comes from the recording.
+    assert!(RecordingKind::named_in("Dark Lane Demo Tapes").is_empty());
+}

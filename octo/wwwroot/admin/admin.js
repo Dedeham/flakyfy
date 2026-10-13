@@ -6367,6 +6367,34 @@ function updateRunActive(info = updateInfo) {
   return !!info && (info.pending || (!!info.run && UPDATE_RUNNING.includes(info.run.state)));
 }
 
+// Update now needs a helper on the host, and not one from 2026.10.05 or earlier.
+function updateHelperReady(info = updateInfo) {
+  return !!info?.helper?.installed && !info.helper.outdated;
+}
+
+// Opens About with the update card in view and the keyboard on it, from any page,
+// About included. The card's edge lights up for a moment so the eye finds it.
+function showUpdateCard() {
+  const card = document.getElementById('update-card');
+  if (!card) return;
+  if (!card.closest('section[data-pane]')?.classList.contains('active')) openTab('about');
+  card.focus({ preventScroll: true });
+  card.classList.remove('is-pointed');
+  void card.offsetWidth;
+  card.classList.add('is-pointed');
+  requestAnimationFrame(() => {
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // On a phone the sidebar is a strip stuck to the top, so the card stops below it.
+    const strip = window.matchMedia('(max-width: 760px)').matches
+      ? document.querySelector('.sidebar')?.offsetHeight || 0 : 0;
+    card.style.scrollMarginTop = strip ? `calc(${strip}px + var(--s-xl))` : '';
+    card.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
+  });
+}
+document.getElementById('update-card')?.addEventListener('animationend', event => {
+  if (event.target === event.currentTarget) event.currentTarget.classList.remove('is-pointed');
+});
+
 function renderUpdate() {
   const info = updateInfo;
   if (!info) return;
@@ -6396,7 +6424,7 @@ function renderUpdate() {
   // A helper from 2026.10.05 or earlier would restart the same Octo and call it an update, so it
   // gets reinstalled first. An update reinstalls it as its last step; this shows when that failed.
   const helperOld = !!helper && !!info.helper?.outdated;
-  byId('update-now').hidden = !(info.updateAvailable && helper && !helperOld && !active);
+  byId('update-now').hidden = !(info.updateAvailable && updateHelperReady(info) && !active);
   const old = byId('update-helper-old');
   old.hidden = !helperOld || active;
   if (!old.hidden) {
@@ -6456,7 +6484,11 @@ function renderUpdate() {
   // The banner on every page, and the dot on About.
   const banner = byId('update-banner');
   banner.hidden = !(info.updateAvailable && !active && updateLater() !== latest?.tag);
-  if (!banner.hidden) byId('update-banner-text').textContent = `Octo ${latest.tag} is out. You run ${info.running}.`;
+  if (!banner.hidden) {
+    byId('update-banner-text').textContent = `Octo ${latest.tag} is out. You run ${info.running}.`;
+    // Without a helper that takes the update, the About page shows a command to run instead.
+    byId('update-banner-go').textContent = updateHelperReady(info) ? 'Update' : 'How to update';
+  }
   const about = document.querySelector('.sidebar-nav-item[data-tab="about"]');
   let flag = about?.querySelector('.nav-flag');
   if (about && info.updateAvailable && !flag) {
@@ -6530,7 +6562,7 @@ document.getElementById('update-check')?.addEventListener('click', async event =
   btn.disabled = updateRunActive();
 });
 
-document.getElementById('update-now')?.addEventListener('click', async () => {
+async function startUpdate() {
   const tag = updateInfo?.latest?.tag;
   if (!tag) return;
   const unsavedCards = document.querySelectorAll('form.unsaved').length;
@@ -6550,6 +6582,13 @@ document.getElementById('update-now')?.addEventListener('click', async () => {
   updateRequestId = body.id;
   updateInfo = { ...updateInfo, pending: true, pendingId: body.id };
   renderUpdate();
+}
+
+document.getElementById('update-now')?.addEventListener('click', startUpdate);
+// The banner's button goes to the update card, and starts Update now when the helper can take it.
+document.getElementById('update-banner-go')?.addEventListener('click', () => {
+  showUpdateCard();
+  if (updateHelperReady() && updateInfo?.updateAvailable && !updateRunActive()) startUpdate();
 });
 
 document.getElementById('update-notes')?.addEventListener('click', showReleaseNotes);

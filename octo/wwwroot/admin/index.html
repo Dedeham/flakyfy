@@ -176,7 +176,7 @@
         <span id="update-banner-text"></span>
         <span class="update-banner-actions">
           <button type="button" class="btn btn-ghost" id="update-banner-notes">What's new</button>
-          <button type="button" class="btn btn-primary" data-open-tab="about">Update</button>
+          <button type="button" class="btn btn-primary" id="update-banner-go">Update</button>
           <button type="button" class="btn btn-ghost" id="update-banner-later">Later</button>
         </span>
       </div>
@@ -2762,7 +2762,7 @@
           <p>Octo sits in front of your Navidrome library and adds discovery and downloads to it. Search shows songs you don't own beside your own. Radio on any song finds more through Last.fm and plays previews from YouTube. Heart a song you don't own and Octo fetches it through Soulseek, YouTube or your own Lidarr.</p>
         </div>
 
-        <div class="info-card" id="update-card">
+        <div class="info-card" id="update-card" tabindex="-1">
           <h3 class="info-card-title">Version</h3>
           <p>This is Octo <code id="meta-version">unknown</code>. Please include it in any bug report. Releases are named by date, so <code>2026.07.29</code> is the release cut that day.</p>
           <p class="update-line" id="update-line" aria-live="polite">Looking for new releases…</p>

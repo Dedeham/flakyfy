@@ -2018,9 +2018,9 @@
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
         "^B:\\ cf67ab9a3dcb1530b097e0b83f4bba1d80b193d8d7e511e907c6a860f2ee39cc\\ \\(209520\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
-        "^B:\\ \\['\"ZoAXkw67g1oPE6KY48tNcxF9KsuMZi8b9A25zzGVYyI=\"'\\]$",
+        "^B:\\ \\['\"8v0mthLLCiYB6pnCV1L1ZVLdlVkl\\+Jt0Ld4GZMTdPMA=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
-        "^B:\\ 668017930ebb835a0f13a298e3cb4d73117d2acb8c662f1bf40db9cf31956322\\ \\(417933\\ bytes,\\ text\\)$",
+        "^B:\\ f2fd26b612cb0a2601ea99c25752f56552dd955925f89b742dde0664c4dd3cc0\\ \\(419350\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
         "^B:\\ \\['\"c6PwSLiP7Lru8YEq5hABwOw0fqT/NmHQzwPvfEgoczw=\"'\\]$",
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
@@ -2028,7 +2028,7 @@
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
         "^B:\\ \\['bytes\\ (0-9|\\*)/209520'\\]$"
       ],
-      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the update banner: its button opens About, scrolls the update card into view and puts the keyboard on it, and reads How to update when no update helper is installed or the one installed is out of date (with a ready helper it asks to update, the same as Update now). On a phone, jumps to a spot on the page (sections, #pane/spot, the update card) stop below the stuck top strip, whose measured height is the page's scroll padding. Pinned to the files as of release 2026.10.13 plus this change. Supersedes dashboard-files-2026-10-11 once reviewed.",
+      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the update banner: its button opens About, scrolls the update card into view and puts the keyboard on it, and reads How to update when no update helper is installed or the one installed is out of date (with a ready helper it asks to update, the same as Update now). On a phone, jumps to a spot on the page (sections, #pane/spot, the update card) stop below the stuck top strip, whose measured height is the page's scroll padding. While an update runs, each check of its progress gives up after 5 seconds, so a connection left pointing at the replaced container cannot hold the page on Restarting, and once Octo answers with the new version the page reloads itself (the card then shows the finished update). Pinned to the files as of release 2026.10.13 plus this change. Supersedes dashboard-files-2026-10-11 once reviewed.",
       "knownDiff": "Dashboard update banner"
     },
     {

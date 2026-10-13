@@ -2,13 +2,14 @@
 //! candidates. The weighing, the draw and the shaping are
 //! `octo_core::last_fm::last_fm_radio_recommendation_service`.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{TimeDelta, Utc};
 use indexmap::IndexMap;
-use octo_core::common::dotnet;
+use octo_core::common::{Clock, dotnet};
 use octo_core::last_fm::SimilarTrack;
 use octo_core::last_fm::last_fm_radio_recommendation_service::{
     ARTIST_RADIO_NEIGHBOURS, Candidate, FRONTIER_ARTIST_CAP, FRONTIER_ARTISTS, FRONTIER_FEWEST_SONGS,
@@ -16,12 +17,16 @@ use octo_core::last_fm::last_fm_radio_recommendation_service::{
     IgnoreCaseKeys, NEIGHBOUR_ARTIST_AFFINITY, Randomizer, SECOND_STEP_SEEDS, SECOND_STEP_WEIGHT,
     SEED_RECENCY_DECAY, SEEDS_AT_ONCE, artist_cap, artist_key, create, default_randomizer,
     definition_version, discount_known, key, known_artists, ranked, score_artists, score_local_tags,
-    seed_score, shape, shape_with_reserve, source_weight, suppress_station_overlap, title, to_candidate,
-    unknown_neighbours_first,
+    seed_score, shape, shape_walk, shape_with_reserve, source_weight, suppress_station_overlap, title,
+    to_candidate, unknown_neighbours_first,
 };
 use octo_core::last_fm::last_fm_radio_seed_normalizer as seed_normalizer;
+use octo_core::last_fm::last_fm_radio_state_store::user_key;
+use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::models::domain::Song;
-use octo_core::models::radio::{LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind};
+use octo_core::models::radio::{
+    LastFmRadioPlay, LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack, LastFmRadioUserState,
+};
 use octo_core::radio::RadioSeed;
 use octo_core::radio::radio_blend;
 use octo_core::radio::radio_provider::LAST_FM;
@@ -41,6 +46,40 @@ const PROVIDER_BUDGET: Duration = Duration::from_secs(25);
 
 /// The similar-artist walk of Discovery Mix has this long of its own, within the build's budget.
 const DISCOVERY_WALK_BUDGET: Duration = Duration::from_secs(8);
+
+/// How many songs each source is asked for when a station goes on past its snapshot.
+const CONTINUATION_CANDIDATES: i32 = 100;
+
+/// How many stations' new songs are kept at once; the one walked on least recently goes first.
+const CONTINUATIONS_KEPT: usize = 64;
+
+/// How many new songs one station keeps; the oldest go first.
+const CONTINUATION_SONGS: usize = 500;
+
+/// How many of the newest songs left out seed a walk on from songs like them.
+const CONTINUATION_SEEDS: usize = 3;
+
+/// How many served songs are remembered across listeners; the oldest go first.
+const SERVED_KEPT: usize = 5000;
+
+/// How long a song a station served stays out of that station's songs.
+pub const STATION_MEMORY: TimeDelta = TimeDelta::hours(24);
+
+/// How many served songs one station remembers; the oldest go first.
+pub const STATION_MEMORY_SONGS: usize = 1000;
+
+/// How many stations' served songs are remembered at once; the one served least recently goes
+/// first.
+const STATIONS_REMEMBERED: usize = 256;
+
+/// A song a station served, and when.
+#[derive(Debug, Clone)]
+struct StationServed {
+    /// The song's key, folded for comparing.
+    key: String,
+    track: LastFmRadioTrack,
+    at: chrono::DateTime<Utc>,
+}
 
 /// The caller's token with a 25 s deadline on top: either ends the build.
 struct Budget<'a> {
@@ -82,6 +121,16 @@ pub struct LastFmRadioRecommendationService {
     randomizer: Mutex<Randomizer>,
     /// Every radio source; None keeps stations on Last.fm alone.
     sources: Option<Arc<RadioSourceSet>>,
+    /// The new songs each station went on with, by listener, station and snapshot, the station
+    /// walked on most recently last.
+    continuations: Mutex<IndexMap<String, Vec<LastFmRadioTrack>>>,
+    /// The songs stations served lately, by listener and song id, the oldest first.
+    served: Mutex<IndexMap<String, LastFmRadioTrack>>,
+    /// What each station served a listener through getStationSongs and its stream, by listener
+    /// and station, the station served least recently first; each list oldest first.
+    station_history: Mutex<IndexMap<String, VecDeque<StationServed>>>,
+    /// The clock the station history is kept by. Tests move it.
+    clock: Mutex<Clock>,
 }
 
 impl LastFmRadioRecommendationService {
@@ -97,12 +146,21 @@ impl LastFmRadioRecommendationService {
             settings,
             randomizer: Mutex::new(default_randomizer()),
             sources,
+            continuations: Mutex::new(IndexMap::new()),
+            served: Mutex::new(IndexMap::new()),
+            station_history: Mutex::new(IndexMap::new()),
+            clock: Mutex::new(Clock::system()),
         }
     }
 
     /// `Randomizer = ...`.
     pub fn set_randomizer(&self, randomizer: Randomizer) {
         *self.randomizer.lock() = randomizer;
+    }
+
+    /// The clock the station history is kept by.
+    pub fn set_clock(&self, clock: Clock) {
+        *self.clock.lock() = clock;
     }
 
     /// The listener's stations, built now. An error is an answer Last.fm's reader refused, or
@@ -139,39 +197,17 @@ impl LastFmRadioRecommendationService {
         }
         let empty = IgnoreCaseKeys::new();
         let previous = |station_key: &str| previous_snapshot(&previous_snapshots, &empty, station_key);
-        let mut plays = user.plays.clone();
-        plays.sort_by_key(|a| std::cmp::Reverse(a.played_at_utc));
-        let unavailable: IgnoreCaseKeys = user
-            .unavailable_tracks
-            .iter()
-            .filter(|track| track.retry_after_utc > Utc::now())
-            .map(|track| track.key.as_str())
-            .collect();
-        let banned: IgnoreCaseKeys = user.radio_bans.iter().map(|ban| ban.key.as_str()).collect();
-        let disliked: IgnoreCaseKeys = user
-            .radio_bans
-            .iter()
-            .map(|ban| artist_key(&ban.artist))
-            .collect();
+        let Signals {
+            plays,
+            unavailable,
+            banned,
+            disliked,
+        } = Signals::of(&user);
         let known = known_artists(&plays);
         let refill_headroom = (unavailable.len() as i32).min(settings.effective_radio_track_count());
         let candidate_target = 100.min(settings.effective_radio_track_count() + refill_headroom + 10);
         let artist_scores = score_artists(&plays, now);
-        // Seeds are the strongest recent signals, not simply the newest plays: a heart outranks
-        // a play, a chosen play outranks one the radio served, and age decays.
-        let mut by_seed_score: Vec<&LastFmRadioPlay> = plays.iter().collect();
-        by_seed_score.sort_by(|a, b| {
-            seed_score(b, now)
-                .partial_cmp(&seed_score(a, now))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut seen_seeds = std::collections::HashSet::new();
-        let track_seeds: Vec<LastFmRadioPlay> = by_seed_score
-            .into_iter()
-            .filter(|play| seen_seeds.insert(seed_normalizer::track_key(&play.artist, &play.title)))
-            .take(8)
-            .cloned()
-            .collect();
+        let track_seeds = track_seeds(&plays, now);
         let mut tags = score_local_tags(&plays);
 
         // Provider expansion has a hard fan-out and deadline. Partial results are useful.
@@ -214,14 +250,7 @@ impl LastFmRadioRecommendationService {
                 let familiar_quota = if mix_candidates.is_empty() {
                     None
                 } else {
-                    let count = settings.effective_radio_track_count();
-                    Some(
-                        count
-                            - dotnet::round(
-                                f64::from(count) * f64::from(settings.effective_discovery_percent()) / 100.0,
-                                0,
-                            ) as i32,
-                    )
+                    Some(familiar_quota(settings))
                 };
                 if mix_candidates.is_empty() {
                     mix_candidates.extend(familiar.iter().cloned());
@@ -461,6 +490,346 @@ impl LastFmRadioRecommendationService {
             .into_iter()
             .filter(|station| !station.tracks.is_empty())
             .collect())
+    }
+
+    /// Up to `count` songs for the listener's station `station_id`, none of them in `exclude`
+    /// (matched by artist and title) and none the station served the listener in the last
+    /// [`STATION_MEMORY`]: first the station's own tracks and then its reserve, in their order,
+    /// then new songs of the station's kind. The new songs are drawn and shaped as a build draws
+    /// the station, with everything the station holds and everything left out counted as
+    /// already in it, and are kept for the station's snapshot, so Last.fm is asked again only
+    /// once those run out. Once nothing new is found, the songs served longest ago come round
+    /// again (never one in `exclude`). Empty while radio is off and for a station the listener
+    /// does not have; Last.fm is waited on no longer than a build waits.
+    pub async fn next_for_station(
+        &self,
+        username: &str,
+        station_id: &str,
+        exclude: &[LastFmRadioTrack],
+        count: usize,
+        cancellation_token: &CancellationToken,
+    ) -> Vec<LastFmRadioTrack> {
+        self.pick_for_station(username, station_id, exclude, count, true, cancellation_token)
+            .await
+    }
+
+    /// [`Self::next_for_station`] without the songs served longest ago coming round again: empty
+    /// once nothing new is found.
+    pub async fn next_new_for_station(
+        &self,
+        username: &str,
+        station_id: &str,
+        exclude: &[LastFmRadioTrack],
+        count: usize,
+        cancellation_token: &CancellationToken,
+    ) -> Vec<LastFmRadioTrack> {
+        self.pick_for_station(username, station_id, exclude, count, false, cancellation_token)
+            .await
+    }
+
+    /// The picks behind [`Self::next_for_station`]; with `fall_back`, the songs served longest ago
+    /// when nothing new is found.
+    async fn pick_for_station(
+        &self,
+        username: &str,
+        station_id: &str,
+        exclude: &[LastFmRadioTrack],
+        count: usize,
+        fall_back: bool,
+        cancellation_token: &CancellationToken,
+    ) -> Vec<LastFmRadioTrack> {
+        if count == 0 || !self.settings.current().last_fm.enable_radio {
+            return Vec::new();
+        }
+        let Some(station) = self.state.find_station(username, station_id) else {
+            return Vec::new();
+        };
+        // What the station served in the last day stays out too, as if the caller had sent it.
+        let remembered = self.station_served(username, station_id);
+        let asked_out: IgnoreCaseKeys = exclude.iter().map(track_key).collect();
+        let left_out: IgnoreCaseKeys = exclude.iter().chain(&remembered).map(track_key).collect();
+        let exclude: Vec<LastFmRadioTrack> = remembered.iter().chain(exclude).cloned().collect();
+        let key = continuation_key(username, &station);
+        let kept = self.continuations.lock().get(&key).cloned().unwrap_or_default();
+        let mut picks = Vec::new();
+        let mut taken = IgnoreCaseKeys::new();
+        pick_fresh(
+            &mut picks,
+            &mut taken,
+            &left_out,
+            station.tracks.iter().chain(&station.reserve).chain(&kept),
+            count,
+        );
+        if picks.len() >= count {
+            return picks;
+        }
+        let walked = self
+            .walk_on(username, &station, &exclude, &kept, cancellation_token)
+            .await;
+        if !walked.is_empty() {
+            self.keep_walked(key, &walked);
+        }
+        pick_fresh(&mut picks, &mut taken, &left_out, &walked, count);
+        if picks.is_empty() && fall_back {
+            // Nothing new anywhere: the songs served longest ago come round again rather than none.
+            pick_fresh(&mut picks, &mut taken, &asked_out, &remembered, count);
+        }
+        picks
+    }
+
+    /// Remembers that the listener's station served these songs now, so for
+    /// [`STATION_MEMORY`] it serves none of them again (at most [`STATION_MEMORY_SONGS`] a
+    /// station, the oldest forgotten first).
+    pub fn record_station_served(
+        &self,
+        username: &str,
+        station_id: &str,
+        tracks: impl IntoIterator<Item = LastFmRadioTrack>,
+    ) {
+        let now = self.clock.lock().now();
+        let key = history_key(username, station_id);
+        let mut history = self.station_history.lock();
+        let mut served = history.shift_remove(&key).unwrap_or_default();
+        for track in tracks {
+            let song = dotnet::ordinal_ignore_case_key(&track_key(&track));
+            served.retain(|earlier| earlier.key != song);
+            served.push_back(StationServed {
+                key: song,
+                track,
+                at: now,
+            });
+        }
+        while served.len() > STATION_MEMORY_SONGS {
+            served.pop_front();
+        }
+        history.insert(key, served);
+        while history.len() > STATIONS_REMEMBERED {
+            history.shift_remove_index(0);
+        }
+    }
+
+    /// The songs the listener's station served in the last [`STATION_MEMORY`], oldest first.
+    pub fn station_served(&self, username: &str, station_id: &str) -> Vec<LastFmRadioTrack> {
+        let since = self.clock.lock().now() - STATION_MEMORY;
+        self.station_history
+            .lock()
+            .get(&history_key(username, station_id))
+            .map(|served| {
+                served
+                    .iter()
+                    .filter(|entry| entry.at > since)
+                    .map(|entry| entry.track.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// New songs of the station's kind, none of them already in the station, in `kept` or in
+    /// `exclude`. The station's own seeds are asked first (its artist, its tags, the listener's
+    /// strongest artists or their recent songs); once those have nothing left, songs like the
+    /// newest ones left out stand in, or like the station's last tracks when nothing was left
+    /// out.
+    async fn walk_on(
+        &self,
+        username: &str,
+        station: &LastFmRadioStation,
+        exclude: &[LastFmRadioTrack],
+        kept: &[LastFmRadioTrack],
+        cancellation_token: &CancellationToken,
+    ) -> Vec<LastFmRadioTrack> {
+        let snapshot = self.settings.current();
+        let settings = &snapshot.last_fm;
+        let user = self.state.get_user(username);
+        let now = Utc::now();
+        let Signals {
+            plays,
+            mut unavailable,
+            banned,
+            disliked,
+        } = Signals::of(&user);
+        for track in station
+            .tracks
+            .iter()
+            .chain(&station.reserve)
+            .chain(kept)
+            .chain(exclude)
+        {
+            unavailable.insert(&track_key(track));
+        }
+        let previous: IgnoreCaseKeys = station.tracks.iter().chain(exclude).map(track_key).collect();
+        let known = known_artists(&plays);
+        let budget = Budget {
+            caller: cancellation_token,
+            deadline: Instant::now() + PROVIDER_BUDGET,
+        };
+        let newest: Vec<&LastFmRadioTrack> = if exclude.is_empty() {
+            station.tracks.iter().rev().take(CONTINUATION_SEEDS).collect()
+        } else {
+            exclude.iter().rev().take(CONTINUATION_SEEDS).collect()
+        };
+        let newest: Vec<LastFmRadioPlay> = newest.into_iter().map(as_seed).collect();
+
+        let kind = station.kind;
+        let mut cap = artist_cap(settings, kind);
+        let mut exclude_recent = false;
+        let mut quota = None;
+        let candidates = match kind {
+            LastFmRadioStationKind::Artist => match station.seeds.first() {
+                Some(artist) => self
+                    .tracks_from_artist(username, artist, CONTINUATION_CANDIDATES, &known, &budget)
+                    .await
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            },
+            LastFmRadioStationKind::Genre => discount_known(
+                self.tracks_from_tags(username, &station.seeds, CONTINUATION_CANDIDATES, &budget)
+                    .await
+                    .unwrap_or_default(),
+                &known,
+            ),
+            LastFmRadioStationKind::Pinned => self
+                .tracks_from_tags(username, &station.seeds, CONTINUATION_CANDIDATES, &budget)
+                .await
+                .unwrap_or_default(),
+            LastFmRadioStationKind::Discovery => {
+                exclude_recent = true;
+                cap = FRONTIER_ARTIST_CAP;
+                let artist_scores = score_artists(&plays, now);
+                let walk_budget = budget.within(DISCOVERY_WALK_BUDGET);
+                let mut found = self
+                    .tracks_from_frontier(&artist_scores, &known, &disliked, &walk_budget)
+                    .await;
+                if found.len() < FRONTIER_FEWEST_SONGS && !station.seeds.is_empty() {
+                    found = self
+                        .tracks_from_tags(username, &station.seeds, CONTINUATION_CANDIDATES, &budget)
+                        .await
+                        .unwrap_or_default();
+                    cap = artist_cap(settings, kind);
+                }
+                found
+            }
+            LastFmRadioStationKind::YourMix | LastFmRadioStationKind::Starter => {
+                // The newest songs left out lead the seeds, so the mix follows where it went.
+                let mut seen = IgnoreCaseKeys::new();
+                let seeds: Vec<LastFmRadioPlay> = newest
+                    .iter()
+                    .cloned()
+                    .chain(track_seeds(&plays, now))
+                    .filter(|seed| seen.insert(&seed_normalizer::track_key(&seed.artist, &seed.title)))
+                    .take(6)
+                    .collect();
+                let mut mix = self.tracks_from_seeds(username, &seeds, 12, &budget).await;
+                let familiar: Vec<Candidate> = plays
+                    .iter()
+                    .enumerate()
+                    .map(|(rank, play)| to_candidate(play, rank))
+                    .collect();
+                if mix.is_empty() {
+                    mix.extend(familiar.iter().cloned());
+                } else {
+                    quota = Some(familiar_quota(settings));
+                }
+                familiar.into_iter().chain(mix).collect()
+            }
+        };
+        let randomizer = self.randomizer.lock().clone();
+        let mut random = randomizer();
+        let mut walked = shape_walk(
+            candidates,
+            &plays,
+            settings,
+            &unavailable,
+            &mut *random,
+            &previous,
+            cap,
+            exclude_recent,
+            quota,
+            Some(&banned),
+            Some(&disliked),
+            1,
+        )
+        .tracks;
+        let seeded_from_newest = matches!(
+            kind,
+            LastFmRadioStationKind::YourMix | LastFmRadioStationKind::Starter
+        );
+        if walked.is_empty() && !seeded_from_newest {
+            let mut like = self.tracks_from_seeds(username, &newest, 12, &budget).await;
+            if matches!(
+                kind,
+                LastFmRadioStationKind::Discovery | LastFmRadioStationKind::Genre
+            ) {
+                like = discount_known(like, &known);
+            }
+            walked = shape_walk(
+                like,
+                &plays,
+                settings,
+                &unavailable,
+                &mut *random,
+                &previous,
+                artist_cap(settings, kind),
+                exclude_recent,
+                None,
+                Some(&banned),
+                Some(&disliked),
+                1,
+            )
+            .tracks;
+        }
+        walked
+    }
+
+    /// Adds `walked` to what the station keeps for its snapshot, and makes it the station walked
+    /// on most recently.
+    fn keep_walked(&self, key: String, walked: &[LastFmRadioTrack]) {
+        let mut continuations = self.continuations.lock();
+        let mut kept = continuations.shift_remove(&key).unwrap_or_default();
+        let mut known: IgnoreCaseKeys = kept.iter().map(track_key).collect();
+        kept.extend(
+            walked
+                .iter()
+                .filter(|track| known.insert(&track_key(track)))
+                .cloned(),
+        );
+        if kept.len() > CONTINUATION_SONGS {
+            kept.drain(..kept.len() - CONTINUATION_SONGS);
+        }
+        continuations.insert(key, kept);
+        let over = continuations.len().saturating_sub(CONTINUATIONS_KEPT);
+        if over > 0 {
+            continuations.drain(..over);
+        }
+    }
+
+    /// Remembers which song each served id stands for, so a later ask that leaves the id out
+    /// leaves the song out.
+    pub fn remember_served<'a>(&self, username: &str, songs: impl IntoIterator<Item = &'a Song>) {
+        let mut served = self.served.lock();
+        for song in songs.into_iter().filter(|song| !song.id.is_empty()) {
+            served.insert(
+                served_key(username, &song.id),
+                LastFmRadioTrack {
+                    artist: song.artist.clone(),
+                    title: song.title.clone(),
+                    album: (!dotnet::is_blank(&song.album)).then(|| song.album.clone()),
+                    genre: song.genre.clone(),
+                    duration: song.duration,
+                    resolved_id: Some(song.id.clone()),
+                    is_local: song.is_local,
+                    ..Default::default()
+                },
+            );
+        }
+        let over = served.len().saturating_sub(SERVED_KEPT);
+        if over > 0 {
+            served.drain(..over);
+        }
+    }
+
+    /// The song a served id stands for, when one was remembered for this listener.
+    pub fn served_track(&self, username: &str, id: &str) -> Option<LastFmRadioTrack> {
+        self.served.lock().get(&served_key(username, id)).cloned()
     }
 
     /// Tracks similar to each seed, the seed's own weight riding along: the newest seed leads,
@@ -746,6 +1115,131 @@ impl LastFmRadioRecommendationService {
         .into_iter()
         .flatten()
         .collect()
+    }
+}
+
+/// What a listener's state says about what may play: their plays newest first, the songs that
+/// would not play lately, the songs they rated one star, and those songs' artists.
+struct Signals {
+    plays: Vec<LastFmRadioPlay>,
+    unavailable: IgnoreCaseKeys,
+    banned: IgnoreCaseKeys,
+    disliked: IgnoreCaseKeys,
+}
+
+impl Signals {
+    fn of(user: &LastFmRadioUserState) -> Self {
+        let mut plays = user.plays.clone();
+        plays.sort_by_key(|a| std::cmp::Reverse(a.played_at_utc));
+        let unavailable: IgnoreCaseKeys = user
+            .unavailable_tracks
+            .iter()
+            .filter(|track| track.retry_after_utc > Utc::now())
+            .map(|track| track.key.as_str())
+            .collect();
+        let banned: IgnoreCaseKeys = user.radio_bans.iter().map(|ban| ban.key.as_str()).collect();
+        let disliked: IgnoreCaseKeys = user
+            .radio_bans
+            .iter()
+            .map(|ban| artist_key(&ban.artist))
+            .collect();
+        Signals {
+            plays,
+            unavailable,
+            banned,
+            disliked,
+        }
+    }
+}
+
+/// The eight strongest recent signals among `plays`, one per song. Seeds are not simply the
+/// newest plays: a heart outranks a play, a chosen play outranks one the radio served, and age
+/// decays.
+fn track_seeds(plays: &[LastFmRadioPlay], now: chrono::DateTime<Utc>) -> Vec<LastFmRadioPlay> {
+    let mut by_seed_score: Vec<&LastFmRadioPlay> = plays.iter().collect();
+    by_seed_score.sort_by(|a, b| {
+        seed_score(b, now)
+            .partial_cmp(&seed_score(a, now))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut seen_seeds = std::collections::HashSet::new();
+    by_seed_score
+        .into_iter()
+        .filter(|play| seen_seeds.insert(seed_normalizer::track_key(&play.artist, &play.title)))
+        .take(8)
+        .cloned()
+        .collect()
+}
+
+/// How many of Your Mix's songs are the listener's own: what the Discovery balance leaves.
+fn familiar_quota(settings: &octo_core::settings::LastFmSettings) -> i32 {
+    let count = settings.effective_radio_track_count();
+    count
+        - dotnet::round(
+            f64::from(count) * f64::from(settings.effective_discovery_percent()) / 100.0,
+            0,
+        ) as i32
+}
+
+/// A track's key, as the walk matches songs.
+fn track_key(track: &LastFmRadioTrack) -> String {
+    seed_normalizer::track_key(&track.artist, &track.title)
+}
+
+/// Adds the `tracks` not left out and not already taken to `picks`, in order, until it holds
+/// `count`.
+fn pick_fresh<'a>(
+    picks: &mut Vec<LastFmRadioTrack>,
+    taken: &mut IgnoreCaseKeys,
+    left_out: &IgnoreCaseKeys,
+    tracks: impl IntoIterator<Item = &'a LastFmRadioTrack>,
+    count: usize,
+) {
+    for track in tracks {
+        if picks.len() >= count {
+            return;
+        }
+        let key = track_key(track);
+        if left_out.contains(&key) || !taken.insert(&key) {
+            continue;
+        }
+        picks.push(track.clone());
+    }
+}
+
+/// Where a station's new songs are kept: its listener, its id and its snapshot, so a rebuilt
+/// station starts afresh.
+fn continuation_key(username: &str, station: &LastFmRadioStation) -> String {
+    format!(
+        "{}|{}|{}",
+        dotnet::ordinal_ignore_case_key(&user_key(username)),
+        station.id,
+        dotnet_ticks(station.changed_utc)
+    )
+}
+
+/// Where a station's served songs are remembered: its listener and its id.
+fn history_key(username: &str, station_id: &str) -> String {
+    format!(
+        "{}|{station_id}",
+        dotnet::ordinal_ignore_case_key(&user_key(username))
+    )
+}
+
+/// Where a served song is remembered: its listener and its id.
+fn served_key(username: &str, id: &str) -> String {
+    format!("{}|{id}", dotnet::ordinal_ignore_case_key(&user_key(username)))
+}
+
+/// A track as a seed for songs like it.
+fn as_seed(track: &LastFmRadioTrack) -> LastFmRadioPlay {
+    LastFmRadioPlay {
+        artist: track.artist.clone(),
+        title: track.title.clone(),
+        album: track.album.clone(),
+        genre: track.genre.clone(),
+        duration: track.duration,
+        ..Default::default()
     }
 }
 

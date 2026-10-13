@@ -358,7 +358,7 @@ pub fn shape_with_reserve(
 
 /// The walk behind [`shape`] and [`shape_with_reserve`]: it takes up to `reach` times the
 /// station's size, and everything past the size is the reserve.
-fn shape_walk(
+pub fn shape_walk(
     candidates: Vec<Candidate>,
     plays: &[LastFmRadioPlay],
     settings: &LastFmSettings,

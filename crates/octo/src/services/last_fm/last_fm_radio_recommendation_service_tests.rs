@@ -1162,3 +1162,216 @@ async fn a_slow_discovery_walk_never_starves_the_artist_and_genre_stations() {
     assert!(discovery_of(&stations).is_some());
     assert_eq!(DISCOVERY_WALK_BUDGET, std::time::Duration::from_secs(8));
 }
+
+fn radio_track(artist: &str, title: &str) -> LastFmRadioTrack {
+    LastFmRadioTrack {
+        artist: artist.into(),
+        title: title.into(),
+        ..Default::default()
+    }
+}
+
+fn titles(tracks: &[LastFmRadioTrack]) -> Vec<&str> {
+    tracks.iter().map(|track| track.title.as_str()).collect()
+}
+
+/// A rock station of two tracks and one in reserve, all from the tag chart the fake answers.
+fn install_rock(state: &LastFmRadioStateStore) -> LastFmRadioStation {
+    let station = LastFmRadioStation {
+        id: octo_core::last_fm::last_fm_radio_state_store::station_id("alice", "genre-rock"),
+        key: "genre-rock".into(),
+        name: "Rock Radio".into(),
+        owner: "alice".into(),
+        kind: LastFmRadioStationKind::Genre,
+        personalized: true,
+        seeds: vec!["rock".into()],
+        tracks: vec![
+            radio_track("rock Artist 0", "rock-0"),
+            radio_track("rock Artist 1", "rock-1"),
+        ],
+        reserve: vec![radio_track("rock Artist 2", "rock-2")],
+        ..Default::default()
+    };
+    state.replace_stations("alice", std::slice::from_ref(&station));
+    station
+}
+
+/// A station is not a fixed list: its own tracks and then its reserve come first, without the
+/// ones left out; after them come new songs of its kind, none of them left out, and the next
+/// page holds none of the page before.
+#[tokio::test]
+async fn a_station_goes_on_past_its_snapshot_with_new_songs_of_its_kind() {
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            radio_track_count: 10,
+            ..Default::default()
+        },
+        RecommendationHandler,
+    )
+    .await;
+    let station = install_rock(&fixture.state);
+    let token = CancellationToken::new();
+    let next = |exclude: Vec<LastFmRadioTrack>, count: usize| {
+        let (service, id, token) = (&fixture.service, station.id.clone(), token.clone());
+        async move {
+            service
+                .next_for_station("alice", &id, &exclude, count, &token)
+                .await
+        }
+    };
+
+    assert_eq!(titles(&next(Vec::new(), 2).await), ["rock-0", "rock-1"]);
+    assert_eq!(
+        titles(&next(vec![radio_track("ROCK ARTIST 0", "Rock-0")], 2).await),
+        ["rock-1", "rock-2"]
+    );
+
+    let mut after: Vec<LastFmRadioTrack> = station.tracks.iter().chain(&station.reserve).cloned().collect();
+    let page = next(after.clone(), 4).await;
+    assert_eq!(page.len(), 4, "{:?}", titles(&page));
+    for track in &page {
+        assert!(track.title.starts_with("rock-"), "{}", track.title);
+        assert!(!["rock-0", "rock-1", "rock-2"].contains(&track.title.as_str()));
+    }
+    after.extend(page.iter().cloned());
+    let second = next(after.clone(), 4).await;
+    assert_eq!(second.len(), 4, "{:?}", titles(&second));
+    for track in &second {
+        assert!(
+            !after.iter().any(|earlier| earlier.title == track.title),
+            "{}",
+            track.title
+        );
+    }
+
+    // Another listener's station, or none at all, gives nothing.
+    assert!(
+        fixture
+            .service
+            .next_for_station("bob", &station.id, &[], 5, &token)
+            .await
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .service
+            .next_for_station("alice", "or-nothing", &[], 5, &token)
+            .await
+            .is_empty()
+    );
+}
+
+/// What a station served is remembered by id for its listener alone.
+#[tokio::test]
+async fn served_songs_are_remembered_by_id_per_listener() {
+    let fixture = fixture(LastFmSettings::default(), Nothing).await;
+    let song = Song {
+        id: "local-1".into(),
+        artist: "Artist".into(),
+        title: "Title".into(),
+        album: "Album".into(),
+        is_local: true,
+        ..Default::default()
+    };
+    fixture.service.remember_served("Alice", [&song]);
+    let track = fixture
+        .service
+        .served_track("alice", "local-1")
+        .expect("remembered");
+    assert_eq!((track.artist.as_str(), track.title.as_str()), ("Artist", "Title"));
+    assert_eq!(track.album.as_deref(), Some("Album"));
+    assert!(fixture.service.served_track("bob", "local-1").is_none());
+}
+
+/// A song the station served is not served again by a later ask that does not leave it out
+/// itself, for a day; then it may come back.
+#[tokio::test]
+async fn a_served_song_stays_out_of_the_station_for_a_day() {
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            radio_track_count: 10,
+            ..Default::default()
+        },
+        RecommendationHandler,
+    )
+    .await;
+    let station = install_rock(&fixture.state);
+    let now = Arc::new(parking_lot::Mutex::new(Utc::now()));
+    let clock_now = Arc::clone(&now);
+    fixture
+        .service
+        .set_clock(octo_core::common::Clock::new(move || *clock_now.lock()));
+    let token = CancellationToken::new();
+
+    fixture
+        .service
+        .record_station_served("alice", &station.id, [radio_track("rock Artist 0", "rock-0")]);
+    let next = fixture
+        .service
+        .next_for_station("alice", &station.id, &[], 2, &token)
+        .await;
+    assert_eq!(titles(&next), ["rock-1", "rock-2"]);
+    // Another listener's station history is their own.
+    assert!(fixture.service.station_served("bob", &station.id).is_empty());
+
+    *now.lock() += STATION_MEMORY + TimeDelta::hours(1);
+    assert!(fixture.service.station_served("alice", &station.id).is_empty());
+    let next = fixture
+        .service
+        .next_for_station("alice", &station.id, &[], 2, &token)
+        .await;
+    assert_eq!(titles(&next), ["rock-0", "rock-1"]);
+}
+
+/// A station remembers at most a thousand served songs: the oldest is forgotten first.
+#[tokio::test]
+async fn a_station_remembers_its_newest_thousand_songs() {
+    let fixture = fixture(LastFmSettings::default(), Nothing).await;
+    let station = install_rock(&fixture.state);
+    fixture.service.record_station_served(
+        "alice",
+        &station.id,
+        (0..=STATION_MEMORY_SONGS)
+            .map(|index| radio_track(&format!("Artist {index}"), &format!("Song {index}"))),
+    );
+    let served = fixture.service.station_served("alice", &station.id);
+    assert_eq!(served.len(), STATION_MEMORY_SONGS);
+    assert_eq!(served[0].title, "Song 1");
+    assert_eq!(
+        served[STATION_MEMORY_SONGS - 1].title,
+        format!("Song {STATION_MEMORY_SONGS}")
+    );
+    // Served again, a song moves to the newest end instead of being kept twice.
+    fixture
+        .service
+        .record_station_served("alice", &station.id, [radio_track("Artist 1", "Song 1")]);
+    let served = fixture.service.station_served("alice", &station.id);
+    assert_eq!(served.len(), STATION_MEMORY_SONGS);
+    assert_eq!(served[0].title, "Song 2");
+    assert_eq!(served[STATION_MEMORY_SONGS - 1].title, "Song 1");
+}
+
+/// With nothing new to be found anywhere, the songs served longest ago come round again rather
+/// than none at all, never one the caller left out.
+#[tokio::test]
+async fn with_nothing_new_the_oldest_served_songs_come_round_again() {
+    let fixture = fixture(LastFmSettings::default(), Nothing).await;
+    let station = install_rock(&fixture.state);
+    let all: Vec<LastFmRadioTrack> = station.tracks.iter().chain(&station.reserve).cloned().collect();
+    fixture
+        .service
+        .record_station_served("alice", &station.id, all.iter().rev().cloned());
+    let next = fixture
+        .service
+        .next_for_station(
+            "alice",
+            &station.id,
+            &[radio_track("rock Artist 1", "rock-1")],
+            5,
+            &CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(titles(&next), ["rock-2", "rock-0"]);
+}

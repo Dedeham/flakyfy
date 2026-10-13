@@ -33,7 +33,10 @@ use crate::services::health::library_health::{
     self as health, DuplicateSet, HealthCheck, HealthTag, SplitAlbum,
 };
 use crate::services::health::library_health_service::Row;
-use crate::services::health::{HealthRun, IHealthFields, LibraryHealthService, ServerSongFields};
+use crate::services::health::{
+    HealthAbilities, HealthRun, IHealthFields, LibraryHealthService, ServerSongFields,
+};
+use crate::services::library::library_identity_sweep::{IdentitySweepStatus, TagFinding};
 use crate::services::library::library_tag_edits::song_tag_fields;
 use crate::services::library::library_write_gate::LibraryWriteGate;
 use crate::services::library::quality_upgrade_worker::compare_ordinal;
@@ -47,6 +50,10 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/health/lookup", post(lookup))
         .route("/api/admin/health/stop", post(stop))
         .route("/api/admin/health/undo", post(undo))
+        .route("/api/admin/health/tags", get(get_tags))
+        .route("/api/admin/health/tags/start", post(start_tags))
+        .route("/api/admin/health/tags/pause", post(pause_tags))
+        .route("/api/admin/health/tags/reset", post(reset_tags))
 }
 
 /// The Navidrome admin asking: signed in on the dashboard, or the app with an admin's sign-in.
@@ -212,14 +219,27 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
         checks.push(Value::Object(item));
     }
 
+    // The server's own check: tags held against each song's audio by the library tag check.
+    let tag_findings = state.library_identity_sweep.findings();
+    if !tag_findings.is_empty() {
+        checks.push(tags_check(&tag_findings));
+        used.extend(tag_findings.iter().map(|finding| finding.id.clone()));
+    }
+
     let mut by_id = Map::new();
     for song in found.songs.iter().filter(|song| used.contains(&song.id)) {
         by_id.insert(song.id.clone(), song_view(song, fields));
     }
+    for finding in &tag_findings {
+        if !by_id.contains_key(&finding.id) {
+            by_id.insert(finding.id.clone(), finding_song_view(finding));
+        }
+    }
     ok(&json!({
         "checked": report.checked,
-        "overview": words::overview(report),
-        "clean": report.clean(),
+        "overview": words::overview_and(report, usize::from(!tag_findings.is_empty())),
+        "clean": report.clean() && tag_findings.is_empty(),
+        "tagCheck": tag_check_view(&state.library_identity_sweep.status()),
         "allClear": words::ALL_CLEAR,
         "readUtc": utc(&found.read_utc),
         "user": user,
@@ -302,6 +322,13 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
     let Some(user) = navidrome_user(&state, &parts) else {
         return not_admin();
     };
+    if request
+        .check
+        .as_deref()
+        .is_some_and(|check| eq_ignore_case(check, TAGS))
+    {
+        return tags_preview(&state, &user, request.keys.as_deref());
+    }
     let Some(check) = parse_check(request.check.as_deref()) else {
         return error(StatusCode::BAD_REQUEST, "Say which finding to fix.");
     };
@@ -633,6 +660,225 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
             "Songs with no track number are looked up, not filled in: use lookup.",
         ),
     }
+}
+
+// ---- tags against the audio ------------------------------------------------------------------
+
+/// The name the page and its fixes give the tag check's finding.
+pub const TAGS: &str = "tags";
+
+/// A finding whose identity is sure and that has something to write: what Fix all sure ones
+/// takes.
+fn sure_fix(finding: &TagFinding) -> bool {
+    finding.sure && !finding.changes.is_empty()
+}
+
+/// The tag check's finding, shaped like the app's checks: its words, count, songs, and per song
+/// what the audio is, what disagrees and what Use the audio's tags writes.
+fn tags_check(findings: &[TagFinding]) -> Value {
+    let sure = findings.iter().filter(|finding| sure_fix(finding)).count();
+    let items: Vec<Value> = findings.iter().map(tag_item).collect();
+    json!({
+        "check": TAGS,
+        "title": words::TAGS_TITLE,
+        "count": findings.len(),
+        "countLabel": words::count_text(findings.len(), "song", "songs"),
+        "meaning": words::TAGS_MEANING,
+        "advice": words::TAGS_ADVICE,
+        "fixMeaning": words::TAGS_FIX_MEANING,
+        "fixAllLabel": (sure > 0).then(|| words::tags_fix_all_label(sure)),
+        "noneSure": (sure == 0).then_some(words::TAGS_NONE_SURE),
+        "useLabel": words::USE_THE_AUDIOS_TAGS,
+        "sure": sure,
+        "songs": findings.iter().map(|finding| finding.id.clone()).collect::<Vec<_>>(),
+        "items": items,
+    })
+}
+
+fn tag_item(finding: &TagFinding) -> Value {
+    let rules: Vec<Value> = finding
+        .findings
+        .iter()
+        .map(|(rule, words)| json!({ "rule": rule.name(), "label": rule.label(), "words": words }))
+        .collect();
+    json!({
+        "id": finding.id,
+        "sure": finding.sure,
+        "heard": finding.heard,
+        "rules": rules,
+        "changes": tag_changes(finding),
+    })
+}
+
+/// What Use the audio's tags writes for one song, each change in words.
+fn tag_changes(finding: &TagFinding) -> Vec<Value> {
+    finding
+        .changes
+        .iter()
+        .map(|(tag, value)| {
+            let now = match tag.as_str() {
+                song_tag_fields::TITLE => Some(finding.title.as_str()),
+                song_tag_fields::ALBUM => Some(finding.album.as_str()),
+                _ => None,
+            };
+            let words = match value {
+                Some(value) => TagChange::new(tag, now, value).words(),
+                None => format!("{}: taken off", fixes::tag_name(tag)),
+            };
+            json!({ "tag": tag, "label": fixes::tag_name(tag), "value": value, "words": words })
+        })
+        .collect()
+}
+
+/// A song the tag check found that the library read does not hold (yet): what its tags said.
+fn finding_song_view(finding: &TagFinding) -> Value {
+    json!({
+        "id": finding.id,
+        "title": finding.title,
+        "artist": finding.artist,
+        "album": finding.album,
+        "albumArtist": Value::Null,
+        "year": Value::Null,
+        "quality": Value::Null,
+        "lossless": false,
+        "path": finding.path,
+    })
+}
+
+fn tag_check_view(status: &IdentitySweepStatus) -> Value {
+    json!({
+        "state": status.state,
+        "reason": status.reason,
+        "paused": status.paused,
+        "checked": status.checked,
+        "total": status.total,
+        "pass": status.pass,
+        "found": status.found,
+        "sure": status.sure,
+        "spacesFixed": status.spaces_fixed,
+        "perHour": status.per_hour,
+        "line": words::tag_check_line(&status.state, status.checked, status.total, status.per_hour),
+        "lastCheckedUtc": utc_opt(&status.last_checked_utc),
+        "passFinishedUtc": utc_opt(&status.pass_finished_utc),
+    })
+}
+
+/// What Use the audio's tags would write: for the songs in `keys`, or with none named, every
+/// finding whose identity is sure. Writes nothing.
+fn tags_preview(state: &AppState, user: &str, keys: Option<&[String]>) -> Response {
+    let can: HealthAbilities = state.library_health.abilities(user);
+    let findings = state.library_identity_sweep.findings();
+    let picked: Vec<&TagFinding> = match keys.filter(|keys| !keys.is_empty()) {
+        Some(keys) => {
+            let named: Vec<&TagFinding> = findings
+                .iter()
+                .filter(|finding| keys.contains(&finding.id))
+                .collect();
+            if named.is_empty() {
+                return gone();
+            }
+            named
+                .into_iter()
+                .filter(|finding| !finding.changes.is_empty())
+                .collect()
+        }
+        None => findings.iter().filter(|finding| sure_fix(finding)).collect(),
+    };
+    if picked.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "The audio does not say what to write here, so this one waits for you.",
+        );
+    }
+    let one = picked.len() == 1;
+    let lines: Vec<Value> = picked
+        .iter()
+        .map(|finding| {
+            let changes: Vec<String> = tag_changes(finding)
+                .iter()
+                .filter_map(|change| change["words"].as_str().map(str::to_string))
+                .collect();
+            json!({ "id": finding.id, "title": finding.title, "words": changes.join("; ") })
+        })
+        .collect();
+    let steps: Vec<Value> = picked
+        .iter()
+        .map(|finding| {
+            let with: IndexMap<String, String> = finding
+                .changes
+                .iter()
+                .map(|(tag, value)| (tag.clone(), value.clone().unwrap_or_default()))
+                .collect();
+            step_view(&FixStep::with(
+                fix_actions::RETAG,
+                &finding.id,
+                &finding.title,
+                with,
+            ))
+        })
+        .collect();
+    ok(&json!({
+        "title": if one { words::USE_THE_AUDIOS_TAGS.to_string() } else { words::tags_fix_all_label(picked.len()) },
+        "meaning": words::TAGS_FIX_MEANING,
+        "go": if one {
+            "Write these tags".to_string()
+        } else {
+            format!("Write tags for {}", words::count_text(picked.len(), "song", "songs"))
+        },
+        "label": "Writing the audio's tags",
+        "canFix": can.edit,
+        "why": if can.edit { None } else { can.why.clone() },
+        "lines": lines,
+        "steps": steps,
+    }))
+}
+
+/// How far the library tag check has got, and how many songs it found.
+async fn get_tags(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    if navidrome_user(&state, &parts).is_none() {
+        return not_admin();
+    }
+    ok(&json!({ "tagCheck": tag_check_view(&state.library_identity_sweep.status()) }))
+}
+
+async fn start_tags(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    if navidrome_user(&state, &parts).is_none() {
+        return not_admin();
+    }
+    let per_hour = state
+        .settings
+        .current()
+        .library_actions
+        .effective_tag_check_per_hour();
+    if per_hour == 0 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Set how many songs an hour to check under Library actions first.",
+        );
+    }
+    state.library_identity_sweep.set_paused(false);
+    accepted(&json!({ "ok": true, "tagCheck": tag_check_view(&state.library_identity_sweep.status()) }))
+}
+
+async fn pause_tags(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    if navidrome_user(&state, &parts).is_none() {
+        return not_admin();
+    }
+    state.library_identity_sweep.set_paused(true);
+    accepted(&json!({ "ok": true, "tagCheck": tag_check_view(&state.library_identity_sweep.status()) }))
+}
+
+/// Check every song again from the start; what was found is forgotten until found again.
+async fn reset_tags(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    if navidrome_user(&state, &parts).is_none() {
+        return not_admin();
+    }
+    state.library_identity_sweep.reset();
+    accepted(&json!({ "ok": true, "tagCheck": tag_check_view(&state.library_identity_sweep.status()) }))
 }
 
 fn gone() -> Response {

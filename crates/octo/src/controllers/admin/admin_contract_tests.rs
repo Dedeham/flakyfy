@@ -750,8 +750,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
     // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
     // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb and
-    // Subsonic:SizeFlagClients and Soulseek:SkipInstrumentals.
-    assert_eq!(rows.len(), 195);
+    // Subsonic:SizeFlagClients, Soulseek:SkipInstrumentals and LibraryActions:TagCheckPerHour.
+    assert_eq!(rows.len(), 196);
+    assert_eq!(row("LibraryActions:TagCheckPerHour")["IsSecret"], false);
     assert_eq!(row("Soulseek:SkipInstrumentals")["IsSecret"], false);
     assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);

@@ -105,6 +105,23 @@ impl MusicBrainzClient {
         &self,
         release_id: &str,
     ) -> Result<Option<Arc<ReleaseDetails>>, MusicBrainzError> {
+        self.lookup_release_on(release_id, false).await
+    }
+
+    /// [`Self::lookup_release`] on the background lane, for the library sweep: it steps back
+    /// whenever a download is asking.
+    pub async fn lookup_release_in_background(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<Arc<ReleaseDetails>>, MusicBrainzError> {
+        self.lookup_release_on(release_id, true).await
+    }
+
+    async fn lookup_release_on(
+        &self,
+        release_id: &str,
+        background: bool,
+    ) -> Result<Option<Arc<ReleaseDetails>>, MusicBrainzError> {
         if dotnet::is_blank(release_id) {
             return Ok(None);
         }
@@ -117,7 +134,12 @@ impl MusicBrainzClient {
             "release/{}?inc=labels+release-groups+artist-credits+recordings+isrcs+genres&fmt=json",
             dotnet::escape_data_string(release_id.trim())
         );
-        let Some(doc) = self.get(&url, "release lookup").await? else {
+        let asked = if background {
+            self.get_background(&url, "release lookup").await?
+        } else {
+            self.get(&url, "release lookup").await?
+        };
+        let Some(doc) = asked else {
             return Ok(None);
         };
         let details = ReleaseDetails::parse(&doc).map(Arc::new);

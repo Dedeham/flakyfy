@@ -2333,7 +2333,7 @@
         <header class="page-header">
           <div>
             <h1>Library health</h1>
-            <p id="health-overview">Second copies, albums split apart and missing tags, found the way the Octo app finds them. Every fix shows what it changes before anything is written.</p>
+            <p id="health-overview">Second copies, albums split apart, missing tags and tags that disagree with the audio. Every fix shows what it changes before anything is written.</p>
           </div>
           <button class="btn btn-ghost btn-icon" type="button" id="health-refresh" aria-label="Check again" title="Check again">
             <svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg>
@@ -2462,6 +2462,24 @@
                 <input class="set-input" name="LibraryActions.NoticeMaxTracks" type="number" min="1" max="500" data-number="true" />
               </div>
             </details>
+          </form>
+        </div>
+
+        <div class="set-section">
+          <div class="set-head">
+            <h3 class="set-title">Tags against the audio</h3>
+            <p class="set-desc">Octo listens to the songs in your library and checks their tags say what the audio is. What disagrees shows in Library health.</p>
+          </div>
+          <form data-section="library-actions-tags" class="set-card">
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Check <span class="set-opt">songs an hour</span></div><div class="set-info-d">0 is off. Only while nothing is downloading.</div><div class="set-info-more"><p>Each song is fingerprinted with AcoustID, and its exact length picks the one recording it is. Then its tags are held against that recording: an album that names another take, a live or instrumental take titled plainly, ids of another recording, a live copy beside the studio copy.</p><p>Stray spaces in titles and albums are taken off by the check itself when library actions may change files. Everything else waits for you in Library health, where every fix can be undone.</p></div></div>
+              <input class="set-input" name="LibraryActions.TagCheckPerHour" type="number" min="0" max="360" data-number="true" />
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Tag check</div><div class="set-info-d" id="tag-check-status">Not loaded yet.</div></div>
+              <button class="btn btn-ghost" type="button" id="tag-check-toggle"><span>Pause</span></button>
+              <button class="btn btn-ghost" type="button" id="tag-check-reset"><svg class="icon" aria-hidden="true"><use href="#i-arrow-counter-clockwise"/></svg><span>Start over</span></button>
+            </div>
           </form>
         </div>
 

@@ -22,6 +22,7 @@ use octo_media::tags::{TagFile, tag_writer_extras};
 use tracing::{debug, info, warn};
 
 use super::acoust_id_client::AcoustIdClient;
+use super::acoust_id_rate_limiter::AcoustIdRateLimiter;
 use super::music_brainz_client::{MusicBrainzClient, MusicBrainzError};
 
 /// The ISRCs MusicBrainz listed per recording id, with ids compared ignoring case.
@@ -409,7 +410,8 @@ impl DownloadVerificationService {
     /// and otherwise, for a download that refuses some takes, the one recording it would keep,
     /// so a take only the database's note calls an instrumental or a live one is seen. Bounded by
     /// one timeout for all of them; a recording that could not be asked is judged by what
-    /// AcoustID said.
+    /// AcoustID said. Work in AcoustID's background lane asks in MusicBrainz's background lane
+    /// too, so a library sweep never holds up a download's lookup.
     async fn recording_facts(
         &self,
         lookup: &AcoustIdLookup,
@@ -459,7 +461,11 @@ impl DownloadVerificationService {
         let budget = Duration::from_secs((timeout_seconds.max(0) as u64) + 2 * wanted.len() as u64);
         let deadline = tokio::time::Instant::now() + budget;
         for id in &wanted {
-            let asked = tokio::time::timeout_at(deadline, music_brainz.recording_facts(id, false)).await;
+            let asked = tokio::time::timeout_at(
+                deadline,
+                music_brainz.recording_facts(id, AcoustIdRateLimiter::in_background_now()),
+            )
+            .await;
             match asked {
                 Ok(Ok(Some(facts))) => {
                     found.insert(dotnet::to_lower_invariant(id), facts);
@@ -855,6 +861,11 @@ fn decide_core(
     // The file's exact length decides between them when it can; otherwise the kind asked for
     // goes first, the studio take for a plain request.
     let chosen = recording_identity::choose(&agreeing, file_ms, &takes.wanted(), |r| kind_with(r, facts));
+    let sole = agreeing.first().is_some_and(|first| {
+        agreeing
+            .iter()
+            .all(|r| dotnet::eq_ignore_case(&first.recording_id, &r.recording_id))
+    });
 
     if let Some((agreed, by_length)) = chosen {
         let kind = kind_with(agreed, facts);
@@ -876,12 +887,14 @@ fn decide_core(
                 },
                 kind: Some(kind),
                 by_length,
+                sole,
                 ..Default::default()
             };
         }
         return VerificationResult {
             kind: Some(kind),
             by_length,
+            sole,
             ..confirm(best, agreed, tags_authoritative)
         };
     }

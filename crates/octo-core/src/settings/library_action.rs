@@ -231,6 +231,14 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS
     pub review_sweep_octo_downloads: bool,
 
+    /// How many library songs an hour have their tags checked against their audio: each is
+    /// fingerprinted in AcoustID's spare lane, and what disagrees shows in Library health under
+    /// "Tags that disagree with the audio". 0 is off. Only while nothing is downloading. Stray
+    /// spaces are taken off by itself when library actions may change files; everything else
+    /// waits for a person.
+    /// Environment variable: LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR
+    pub tag_check_per_hour: i32,
+
     /// A "Duplicates" playlist per allowed user: recordings the library holds more than once,
     /// side by side, the copy worth keeping first. Octo only points them out; nothing is removed
     /// unless you remove it (#53).
@@ -288,6 +296,7 @@ impl Default for LibraryActionSettings {
             review_playlist_name: "Review".to_string(),
             review_sweep_per_hour: 0,
             review_sweep_octo_downloads: false,
+            tag_check_per_hour: 60,
             duplicates_enabled: false,
             duplicates_playlist_name: "Duplicates".to_string(),
             duplicates_scan_hours: 24,
@@ -317,6 +326,11 @@ impl LibraryActionSettings {
         } else {
             self.review_sweep_per_hour.min(360)
         }
+    }
+
+    /// 0 is off; the same ceiling as the Review sweep, one file every ten seconds.
+    pub fn effective_tag_check_per_hour(&self) -> i32 {
+        self.tag_check_per_hour.clamp(0, 360)
     }
 
     pub fn effective_duplicates_scan_interval(&self) -> Duration {

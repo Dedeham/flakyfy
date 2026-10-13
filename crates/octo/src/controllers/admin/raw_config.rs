@@ -189,6 +189,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "LibraryActions:UpgradeSource",
     "LibraryActions:ReviewSweepPerHour",
     "LibraryActions:ReviewSweepOctoDownloads",
+    "LibraryActions:TagCheckPerHour",
     "Soulseek:SubmitConfirmedFingerprints",
     "Soulseek:AcoustIdUserApiKey",
     "Genre:Enabled",

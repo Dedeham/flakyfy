@@ -621,6 +621,10 @@ pub fn tag_name(tag: &str) -> String {
         fields_of::TRACK => "Track number".to_string(),
         fields_of::DISC => "Disc number".to_string(),
         fields_of::ISRC => "ISRC".to_string(),
+        fields_of::RECORDING_ID => "Recording id".to_string(),
+        fields_of::RELEASE_TRACK_ID => "Release track id".to_string(),
+        fields_of::RELEASE_ID => "Release id".to_string(),
+        fields_of::RELEASE_GROUP_ID => "Release group id".to_string(),
         _ => upper_first(tag),
     }
 }

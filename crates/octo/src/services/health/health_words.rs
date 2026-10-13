@@ -272,17 +272,67 @@ fn rate_text(hz: i32) -> String {
 
 /// The line under the page's title.
 pub fn overview<T: Clone>(report: &HealthReport<T>) -> String {
+    overview_and(report, 0)
+}
+
+/// [`overview`] with `more` findings of the server's own besides the app's checks.
+pub fn overview_and<T: Clone>(report: &HealthReport<T>, more: usize) -> String {
     let checked = format!("Checked {}.", count_text(report.checked, "song", "songs"));
-    let findings = report.findings();
-    if findings.is_empty() {
+    let found = report.findings().len() + more;
+    if found == 0 {
         return checked;
     }
-    let kinds = if findings.len() == 1 {
+    let kinds = if found == 1 {
         "One thing".to_string()
     } else {
-        format!("{} things", findings.len())
+        format!("{found} things")
     };
     format!("{checked} {kinds} could be better.")
+}
+
+// ---- tags against the audio (the server's own check) ------------------------------------------
+
+pub const TAGS_TITLE: &str = "Tags that disagree with the audio";
+pub const TAGS_MEANING: &str = "Octo listened to these songs, and their tags say something the audio is not: an album that names another take, a live or instrumental take titled plainly, or ids of another recording.";
+pub const TAGS_ADVICE: &str = "Each song says what its audio is. Change the tags in your tagger, or turn on library actions to fix them here.";
+pub const TAGS_FIX_MEANING: &str = "Use the audio's tags writes only what the audio shows: the plain album, the take in the title, and the ids of the one recording it is. Every change can be undone.";
+pub const TAGS_NONE_SURE: &str = "None of these was decided by the exact length or a single match, so each one waits for you. Listen, then use the audio's tags on the ones that are right.";
+pub const USE_THE_AUDIOS_TAGS: &str = "Use the audio's tags";
+
+/// The button that fixes every sure finding at once.
+pub fn tags_fix_all_label(sure: usize) -> String {
+    if sure == 1 {
+        "Fix the sure one".to_string()
+    } else {
+        format!("Fix all {} sure ones", n0(sure as i64))
+    }
+}
+
+/// How far the tag check has got, in a line.
+pub fn tag_check_line(state: &str, checked: usize, total: i32, per_hour: i32) -> String {
+    let of = if total > 0 {
+        format!(
+            "{} of {} checked",
+            n0(checked.min(total as usize) as i64),
+            count_text(total as usize, "song", "songs")
+        )
+    } else {
+        format!("{} checked", count_text(checked, "song", "songs"))
+    };
+    match state {
+        "Off" => "The tag check is off.".to_string(),
+        "Running" => format!("Checking tags against the audio, about {per_hour} an hour: {of}."),
+        "Done" => format!("Tags checked against the audio: {of}."),
+        _ => format!("Tag check {}: {of}.", to_lower_first(state)),
+    }
+}
+
+fn to_lower_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// What the page says when there is nothing to fix.

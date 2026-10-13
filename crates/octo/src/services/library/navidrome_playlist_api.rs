@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use octo_core::settings::SettingsStore;
+use octo_subsonic::SubsonicCredential;
 use octo_subsonic::subsonic_request_parser::escape_data_string;
 use reqwest::Method;
 use serde_json::Value;
@@ -163,6 +164,40 @@ impl NavidromePlaylistApi {
     pub async fn set_admin_starred(&self, song_id: &str, starred: bool) -> bool {
         let endpoint = if starred { "star" } else { "unstar" };
         self.admin_subsonic(endpoint, &[("id", song_id)]).await
+    }
+
+    /// Sets the rating of whoever `credential` signs in as on one song, 0 to clear it, straight
+    /// to Navidrome. True when Navidrome said ok.
+    pub async fn set_rating_as(&self, credential: &SubsonicCredential, song_id: &str, rating: i32) -> bool {
+        let base = self.base_url();
+        if base.is_empty() {
+            return false;
+        }
+        let rating = rating.clamp(0, 5).to_string();
+        let query = credential.parameters(&[("id", song_id), ("rating", &rating)]);
+        let answer = async {
+            let response = self
+                .http
+                .get(format!("{base}/rest/setRating"))
+                .query(&query)
+                .send()
+                .await
+                .ok()?;
+            let body: Value = response.json().await.ok()?;
+            Some(body.pointer("/subsonic-response/status").and_then(Value::as_str) == Some("ok"))
+        }
+        .await;
+        answer.unwrap_or(false)
+    }
+
+    /// Sets a playlist's description, as the admin (Navidrome lets an admin edit any playlist's
+    /// details). True when Navidrome said ok.
+    pub async fn set_comment(&self, playlist_id: &str, comment: &str) -> bool {
+        self.admin_subsonic(
+            "updatePlaylist",
+            &[("playlistId", playlist_id), ("comment", comment)],
+        )
+        .await
     }
 
     /// One of Navidrome's Subsonic endpoints called as the admin, with the Subsonic sign-in

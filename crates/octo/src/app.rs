@@ -69,6 +69,7 @@ use crate::services::fingerprint::{
     MusicBrainzClient,
 };
 use crate::services::health::keep_marks::{KeepMarks, KeepMarksParts};
+use crate::services::health::library_health_service::HealthDuplicateFixer;
 use crate::services::health::member_marks::NavidromeMemberMarks;
 use crate::services::health::{HealthServices, LibraryHealthService};
 use crate::services::http_client_factory;
@@ -583,7 +584,7 @@ fn library_health(
         members: Some(Arc::new(members)),
         write_gate: Some(stores.library_write_gate.clone()),
     }));
-    Arc::new(LibraryHealthService::new(
+    let health = Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
         Arc::clone(rescan),
         Arc::clone(settings),
@@ -595,7 +596,10 @@ fn library_health(
             scope: Some(scope.clone()),
         },
         Clock::system(),
-    ))
+    ));
+    // Fix duplicates, from a star or its action playlist, runs Library health's duplicate fix.
+    executor.use_duplicate_fixer(Arc::new(HealthDuplicateFixer::new(&health)));
+    health
 }
 
 /// The apps' Library health fixes: the rescan and the edit service, over the resolver, the

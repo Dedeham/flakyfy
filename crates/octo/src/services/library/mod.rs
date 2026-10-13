@@ -4,6 +4,7 @@
 pub mod album_ownership;
 pub mod artist_country;
 pub mod chart_playlist_service;
+pub mod duplicate_fixer;
 pub mod duplicate_scan_worker;
 pub mod explicit_backfill;
 pub mod explicit_backfill_store;

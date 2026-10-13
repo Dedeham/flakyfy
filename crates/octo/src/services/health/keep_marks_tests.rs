@@ -28,6 +28,7 @@ use crate::services::health::library_health::{self as health, HealthCheck};
 use crate::services::health::library_health_service::{HealthRun, LibraryHealthService, Row};
 use crate::services::library::LibrarySongRow;
 use crate::services::library::library_tag_edits as tag_edits;
+use crate::services::library::{LibraryActionRequest, LibraryActionState};
 
 // ---- which copy keeps its id ----------------------------------------------------------------
 
@@ -236,6 +237,7 @@ struct FakePlaylist {
     name: String,
     smart: bool,
     tracks: Vec<String>,
+    comment: String,
 }
 
 #[derive(Default)]
@@ -302,6 +304,18 @@ impl Respond for Answers {
         if let Some(endpoint) = path.strip_prefix("/rest/") {
             // The admin's own stars and ratings, as Navidrome's Subsonic API sets them.
             let first = |name: &str| query.get(name).and_then(|values| values.first().cloned());
+            if endpoint == "updatePlaylist" {
+                let mut playlists = fake.playlists.lock();
+                let Some(playlist) =
+                    first("playlistId").and_then(|id| playlists.iter_mut().find(|p| p.id == id))
+                else {
+                    return json_answer(
+                        &json!({"subsonic-response": {"status": "failed", "error": {"code": 70}}}),
+                    );
+                };
+                playlist.comment = first("comment").unwrap_or_default();
+                return json_answer(&json!({"subsonic-response": {"status": "ok"}}));
+            }
             let mut songs = fake.songs.lock();
             let Some(song) = first("id").and_then(|id| songs.get_mut(&id)) else {
                 return json_answer(
@@ -335,7 +349,7 @@ impl Respond for Answers {
                 .iter()
                 .map(|p| {
                     json!({
-                        "id": p.id, "name": p.name, "ownerName": "bob", "sync": false,
+                        "id": p.id, "name": p.name, "ownerName": "alice", "sync": false,
                         "rules": if p.smart { json!({"all": [{"is": {"loved": true}}]}) } else { Value::Null },
                     })
                 })
@@ -424,6 +438,8 @@ impl Respond for Answers {
 struct Factory {
     state: AppState,
     navidrome: Arc<FakeNavidrome>,
+    /// The library as Library health reads it.
+    rows: Arc<Mutex<Vec<LibrarySongRow>>>,
     root: PathBuf,
     _server: MockServer,
     _dir: tempfile::TempDir,
@@ -465,9 +481,27 @@ impl Factory {
             },
             ..Default::default()
         };
+        let rows: Arc<Mutex<Vec<LibrarySongRow>>> = Arc::default();
+        let read = Arc::clone(&rows);
+        let read_page: crate::services::library::library_snapshot::ReadPage =
+            Arc::new(move |start: i32, count: i32| {
+                let all = read.lock().clone();
+                let page: Vec<LibrarySongRow> = all
+                    .iter()
+                    .skip(start.max(0) as usize)
+                    .take(count.max(0) as usize)
+                    .cloned()
+                    .collect();
+                let total = all.len();
+                async move { Some((page, total)) }.boxed()
+            });
         let state = AppState::for_tests_with(
             settings,
             TestServices {
+                library_snapshot: Some(Arc::new(crate::services::library::LibrarySnapshot::with(
+                    read_page,
+                    octo_core::common::Clock::system(),
+                ))),
                 config_dir: Some(dir.path().join("config")),
                 raw_settings: vec![("Library:DownloadPath".into(), root.to_string_lossy().into_owned())],
                 ..Default::default()
@@ -486,6 +520,7 @@ impl Factory {
         Factory {
             state,
             navidrome,
+            rows,
             root,
             _server: server,
             _dir: dir,
@@ -557,6 +592,7 @@ impl Factory {
             name: name.into(),
             smart,
             tracks: tracks.iter().map(|t| t.to_string()).collect(),
+            comment: String::new(),
         });
     }
 
@@ -1733,4 +1769,197 @@ async fn a_set_where_every_copy_is_rated_has_no_steps() {
     let b = f.copy("B", B_FLAC, &MARKED, 16, 1, false);
     members.set("kim", "B", rated(1));
     assert!(f.rated_steps(&[a, b]).await.is_none());
+}
+
+// ---- Fix duplicates from any app -------------------------------------------------------------
+
+impl Factory {
+    /// Keep every rated copy on, ratings on, and Fix duplicates on (with `star`, if any) beside
+    /// Delete.
+    fn fix_from_apps(&self, star: Option<i32>) {
+        let mut settings = (*self.state.settings.current()).clone();
+        let actions = &mut settings.library_actions;
+        actions.keep_rated_copies = true;
+        actions.ratings_enabled = true;
+        actions.duplicates_enabled = true;
+        actions.actions = vec![
+            LibraryActionDefinition {
+                action: LibraryAction::Delete,
+                enabled: true,
+                ..Default::default()
+            },
+            LibraryActionDefinition {
+                action: LibraryAction::WrongVersion,
+                enabled: false,
+                rating: Some(0),
+                ..Default::default()
+            },
+            LibraryActionDefinition {
+                action: LibraryAction::FixDuplicates,
+                enabled: true,
+                rating: star,
+                ..Default::default()
+            },
+        ];
+        self.state.settings.set(settings);
+    }
+
+    /// The action playlist worker over this state, for one sweep.
+    fn playlist_worker(&self) -> crate::services::library::LibraryActionPlaylistWorker {
+        crate::services::library::LibraryActionPlaylistWorker::new(
+            Arc::clone(&self.state.library_action_executor),
+            Arc::clone(&self.state.library_action_journal),
+            Arc::clone(&self.state.library_action_quarantine),
+            Arc::clone(&self.state.navidrome_song_path_resolver),
+            self.state.navidrome_identity.clone(),
+            Arc::clone(&self.state.navidrome_playlist_api),
+            Arc::clone(&self.state.settings),
+        )
+    }
+
+    /// The library read as Library health sees it: these rows.
+    fn library(&self, rows: &[Row]) {
+        *self.rows.lock() = rows.iter().map(|row| (**row).clone()).collect();
+    }
+}
+
+#[tokio::test]
+async fn adding_a_copy_to_the_fix_duplicates_playlist_fixes_the_song_and_keeps_rated_copies() {
+    let f = Factory::new().await;
+    let members = f.members();
+    f.fix_from_apps(None);
+    let a = f.copy("A", A_BEST, &BEST, 24, 20, false);
+    let b = f.copy("B", B_FLAC, &MARKED, 16, 1, false);
+    let c = f.copy("C", C_FLAC, &MARKED, 16, 5, false);
+    // kim gave B a heart; nobody marked A or C.
+    members.set("kim", "B", starred());
+    f.library(&[a, b, c]);
+    let fix = "\u{1F6E0} Fix duplicates";
+    f.playlist("fix", fix, false, &["C"]);
+
+    f.playlist_worker()
+        .sweep(&tokio_util::sync::CancellationToken::new())
+        .await;
+    let run = f.finished().await;
+
+    let outcome = run.progress().outcome.expect("an outcome");
+    assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+    // B, the hearted copy, stays and takes the best sound; C goes; A's own file goes.
+    assert!(f.root.join(B_FLAC).exists());
+    assert_eq!(tag(&f.root.join(B_FLAC), "genre").as_deref(), Some("best copy"));
+    assert!(!f.root.join(C_FLAC).exists());
+    assert!(!f.root.join(A_BEST).exists());
+    // The song left the action playlist, which says what adding a song to it does.
+    assert!(f.navidrome.tracks("fix").is_empty());
+    let comment = f.navidrome.playlists.lock()[0].comment.clone();
+    assert!(
+        comment.contains("anyone gave a heart or a star rating stays"),
+        "{comment}"
+    );
+}
+
+#[tokio::test]
+async fn the_fix_duplicates_star_takes_its_own_rating_off_so_it_never_keeps_the_copy() {
+    let f = Factory::new().await;
+    let members = f.members();
+    f.fix_from_apps(Some(3));
+    let a = f.copy("A", A_BEST, &BEST, 24, 20, false);
+    let b = f.copy("B", B_FLAC, &MARKED, 16, 1, false);
+    members.set("kim", "A", rated(4));
+    // Three stars on B ask for the fix; they are not a mark that keeps B.
+    f.mark("B", 3, 0);
+    f.library(&[a, b]);
+
+    let sign_in: [(String, String); 3] = [
+        ("u".into(), "alice".into()),
+        ("t".into(), "token".into()),
+        ("s".into(), "salt".into()),
+    ];
+    let request = LibraryActionRequest::new(LibraryAction::FixDuplicates, "B", "alice").with_credential(
+        octo_subsonic::SubsonicCredential::from(sign_in.iter().map(|(k, v)| (k, v))),
+    );
+    let outcome = f
+        .state
+        .library_action_executor
+        .apply(request)
+        .await
+        .expect("an outcome");
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    f.finished().await;
+
+    assert_eq!(f.admin("B").1, 0);
+    assert!(!f.root.join(B_FLAC).exists());
+    assert!(f.root.join(A_BEST).exists());
+}
+
+#[tokio::test]
+async fn fix_duplicates_on_a_song_whose_copies_are_all_rated_keeps_them_and_answers_the_question() {
+    let f = Factory::new().await;
+    let members = f.members();
+    f.fix_from_apps(None);
+    let a = f.copy("A", A_BEST, &BEST, 24, 20, true);
+    let b = f.copy("B", B_FLAC, &MARKED, 16, 1, false);
+    members.set("kim", "B", rated(2));
+    f.library(&[a, b]);
+
+    let outcome = f
+        .state
+        .library_action_executor
+        .apply(LibraryActionRequest::new(
+            LibraryAction::FixDuplicates,
+            "A",
+            "alice",
+        ))
+        .await
+        .expect("an outcome");
+
+    assert_eq!(outcome.state, LibraryActionState::Applied, "{outcome:?}");
+    assert!(
+        outcome
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("Every copy is starred or rated"))
+    );
+    assert!(f.state.library_health.run().is_none(), "nothing ran");
+    assert!(f.root.join(A_BEST).exists() && f.root.join(B_FLAC).exists());
+}
+
+#[tokio::test]
+async fn fix_duplicates_needs_delete_on_and_a_second_copy() {
+    let f = Factory::new().await;
+    f.fix_from_apps(None);
+    let a = f.copy("A", A_BEST, &BEST, 24, 20, false);
+    f.library(&[a]);
+    let ask = || LibraryActionRequest::new(LibraryAction::FixDuplicates, "A", "alice");
+
+    let alone = f
+        .state
+        .library_action_executor
+        .apply(ask())
+        .await
+        .expect("an outcome");
+    assert_eq!(alone.state, LibraryActionState::Skipped);
+    assert_eq!(
+        alone.detail.as_deref(),
+        Some("Octo does not see another copy of this song.")
+    );
+
+    let mut settings = (*f.state.settings.current()).clone();
+    settings
+        .library_actions
+        .actions
+        .retain(|action| action.action != LibraryAction::Delete);
+    f.state.settings.set(settings);
+    let off = f
+        .state
+        .library_action_executor
+        .apply(ask())
+        .await
+        .expect("an outcome");
+    assert_eq!(off.state, LibraryActionState::Skipped);
+    assert!(
+        off.detail
+            .as_deref()
+            .is_some_and(|d| d.contains("turn on the Delete action"))
+    );
 }

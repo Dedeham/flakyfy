@@ -302,6 +302,28 @@ pub fn pick(
     pick_target(&copies, &marks.scores(), &uses.0)
 }
 
+/// The plan for a set of copies from every reader's marks, when they were read: with
+/// `keep_rated`, the one that keeps every rated copy (None when every copy is rated); without,
+/// the one that keeps people's marks, or the copy a person `picked`. With no marks read, the
+/// best copy or the picked one.
+pub fn plan_with_marks(
+    set: &DuplicateSet<Row>,
+    fields: &dyn IHealthFields<Row>,
+    marks: Option<&SetMarks>,
+    uses: &PlaylistUses,
+    keep_rated: bool,
+    picked: Option<&Row>,
+) -> Option<DuplicateFix<Row>> {
+    match (marks, keep_rated) {
+        (Some(marks), true) => plan_keeping_rated(set, fields, marks, uses, picked),
+        (Some(marks), false) => Some(match picked {
+            Some(keep) => fixes::duplicate_fix(set, fields, Some(keep)),
+            None => plan(set, fields, pick(set, marks, uses, false).as_ref()),
+        }),
+        (None, _) => Some(fixes::duplicate_fix(set, fields, picked)),
+    }
+}
+
 /// The plan for a set of copies that keeps every copy someone starred or rated, or None when
 /// nothing would go because every copy is starred or rated. Without a rated copy, the plan that
 /// keeps people's marks. When the best-sounding copy is rated, it is the copy kept first; when it
@@ -625,6 +647,15 @@ impl KeepMarks {
     /// The copy of a set of duplicates whose id keeps the most people's marks.
     pub async fn pick_for(&self, set: &DuplicateSet<Row>, uses: &PlaylistUses) -> Option<TargetPick> {
         pick(set, &self.read_set(set).await, uses, false)
+    }
+
+    /// Takes off the rating whoever `credential` signs in as gave `song_id`.
+    pub async fn clear_rating_as(
+        &self,
+        credential: &octo_subsonic::SubsonicCredential,
+        song_id: &str,
+    ) -> bool {
+        self.api.set_rating_as(credential, song_id, 0).await
     }
 
     // ---- carrying marks over --------------------------------------------------------------

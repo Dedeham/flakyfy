@@ -398,20 +398,14 @@ async fn preview(State(state): State<AppState>, request: Request) -> Response {
                 .zip(marks)
                 .map(|(set, marks)| {
                     let picked = person_pick(set);
-                    let fix = match (&marks, keep_rated) {
-                        (Some(marks), true) => {
-                            keep_marks::plan_keeping_rated(set, fields, marks, &uses, picked.as_ref())
-                        }
-                        (Some(marks), false) => Some(match &picked {
-                            Some(keep) => fixes::duplicate_fix(set, fields, Some(keep)),
-                            None => keep_marks::plan(
-                                set,
-                                fields,
-                                keep_marks::pick(set, marks, &uses, false).as_ref(),
-                            ),
-                        }),
-                        (None, _) => Some(fixes::duplicate_fix(set, fields, picked.as_ref())),
-                    };
+                    let fix = keep_marks::plan_with_marks(
+                        set,
+                        fields,
+                        marks.as_ref(),
+                        &uses,
+                        keep_rated,
+                        picked.as_ref(),
+                    );
                     let changes = fix
                         .as_ref()
                         .map(|fix| picked_changes(fix, &request, one, can.edit))

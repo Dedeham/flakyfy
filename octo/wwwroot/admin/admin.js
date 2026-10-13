@@ -2448,6 +2448,7 @@ const libraryActionLabels = {
   Keep: 'Keep: the track is right, so stop asking. Removes nothing',
   WrongLyrics: 'Wrong lyrics: look for other lyrics, and never show these again',
   WrongCover: 'Wrong cover: look for another cover, and never use this one again',
+  FixDuplicates: 'Fix duplicates: fix every copy of the song, as Library health does. Needs Delete on',
 };
 
 function normalizeLibraryAction(action = {}) {

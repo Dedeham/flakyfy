@@ -310,7 +310,7 @@ Enums:
 
 Enums:
 
-- `LibraryAction { Delete, WrongSong, WrongVersion, BetterQuality, Keep }`. **This order is persisted as numbers** in `library-actions.json`.
+- `LibraryAction { Delete, WrongSong, WrongVersion, BetterQuality, Keep, WrongLyrics, WrongCover, FixDuplicates }`. **This order is persisted as numbers** in `library-actions.json`; new actions are appended. `FixDuplicates` (default name "Fix duplicates", no star, off) fixes every copy of the song it is given as Library health's Fix these copies does, keeping every starred or rated copy while `KeepRatedCopies` is on; it needs Delete on.
 - `LibraryRatingScope { Auto, NoticeOnly, Global }`
 - `UpgradeSourceChoice { Auto, Soulseek, Lidarr }`
 

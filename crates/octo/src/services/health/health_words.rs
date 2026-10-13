@@ -369,7 +369,7 @@ pub const KEEP_RATED_LABEL: &str = "Keep every rated copy";
 pub const KEEP_RATED_MEANING: &str = "When on, a copy anyone starred or rated is never removed: only copies nobody starred or rated go to the trash.";
 
 /// The rest of what the switch does, for those who open it.
-pub const KEEP_RATED_MORE: &str = "Everyone's stars and ratings count, Family members' too. A song where every copy is starred or rated is left as it is. Plays and playlist places do not keep a copy by themselves: playlist places move to the copy that stays, and plays stay with the copy that goes, since Navidrome cannot give plays to another copy.";
+pub const KEEP_RATED_MORE: &str = "Everyone's stars and ratings count, Family members' too. A song where every copy is starred or rated is left as it is. Plays and playlist places do not keep a copy by themselves: playlist places move to the copy that stays, and plays stay with the copy that goes, since Navidrome cannot give plays to another copy. From any other app: give the copies to keep a heart, then add any copy of a song to the Fix duplicates action playlist (switch the action on under Library actions); the switch applies there too.";
 
 /// Why a set is left alone while every rated copy is kept.
 pub const ALL_RATED: &str = "Every copy is starred or rated, so all of them stay and nothing changes.";

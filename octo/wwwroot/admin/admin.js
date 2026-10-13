@@ -969,6 +969,10 @@ document.querySelectorAll('form[data-section]').forEach(form => {
       renderSetupChecklist();
       // The scrobbling card reads the running settings, which catch up with the file a moment later.
       if (form.dataset.section?.startsWith('lastfm')) setTimeout(loadLastFmScrobbling, 700);
+      // The re-check offer on the Verify card follows the saved match score.
+      if (form.dataset.section === 'soulseek-verify' || form.dataset.section?.startsWith('library-actions')) {
+        setTimeout(loadReviewSweep, 700);
+      }
       form.querySelector('.form-actions')?.classList.remove('dirty');
       // A saved admin password is only ever shown as the placeholder; the typed value should
       // not stay in the page after it has been saved.
@@ -2621,7 +2625,7 @@ const noticeKinds = { Review: 'Review', Duplicates: 'Duplicate' };
 // AcoustID's numbers on a question, when it gave any: "64% sure, needs 85%; it matched Artist - Title".
 function noticeScore(entry) {
   const parts = [];
-  if (typeof entry.acoustIdScore === 'number') {
+  if (typeof entry.acoustIdScore === 'number' && !String(entry.reason || '').includes(`${entry.acoustIdScore}% sure`)) {
     parts.push(typeof entry.threshold === 'number'
       ? `${entry.acoustIdScore}% sure, needs ${entry.threshold}%`
       : `${entry.acoustIdScore}% sure`);
@@ -2672,11 +2676,20 @@ async function loadReviewSweep() {
     const s = await response.json();
     const parts = [`${reviewSweepStates[s.state] || s.state}.`];
     if (s.total > 0) parts.push(`Checked ${s.position} of ${s.total} songs (pass ${s.pass}).`);
-    parts.push(`Found ${s.found}, ${s.open} waiting for an answer.`);
+    parts.push(s.replaced > 0
+      ? `Found ${s.found}, ${s.replaced} of them replaced, ${s.open} waiting for an answer.`
+      : `Found ${s.found}, ${s.open} waiting for an answer.`);
     if (s.undecodable > 0) parts.push(`${s.undecodable} could not be decoded.`);
     if (s.keeper) parts.push(`Asking ${s.keeper}.`);
+    if (s.autoReplace) {
+      const day = s.autoReplace;
+      parts.push(day.failedToday >= 3
+        ? `Replaced ${day.replacedToday} today; three replacements failed, so the rest of today is asked about.`
+        : `Replaced ${day.replacedToday} of at most ${day.perDay} today.`);
+    }
     if (s.reason) parts.push(s.reason);
     status.textContent = parts.join(' ');
+    showRecheck(s);
     const toggle = document.getElementById('review-sweep-toggle');
     toggle.dataset.paused = s.paused ? 'true' : 'false';
     toggle.querySelector('span').textContent = s.paused ? 'Start' : 'Pause';
@@ -2684,6 +2697,21 @@ async function loadReviewSweep() {
   } catch (error) {
     status.textContent = `Could not read the library check: ${error.message}`;
   }
+}
+
+// The re-check of Octo's downloads: how far it got, or that it is done, and the Verify card's
+// offer once the match score changed since the last one.
+function showRecheck(s) {
+  const status = document.getElementById('review-sweep-recheck-status');
+  const r = s.recheck;
+  if (status && r) {
+    const found = `${r.found} asked about${r.replaced > 0 ? `, ${r.replaced} replaced` : ''}`;
+    status.textContent = r.running
+      ? `Re-checking Octo's downloads: ${r.position} of ${r.total}, ${found}.`
+      : `Done: re-checked ${r.checked} of Octo's downloads at ${r.threshold}%, ${found}.`;
+  }
+  const offer = document.getElementById('recheck-offer');
+  if (offer) offer.hidden = !s.thresholdChanged || !!r?.running;
 }
 
 async function reviewSweepPost(button, path, message) {
@@ -2706,6 +2734,11 @@ document.getElementById('review-sweep-toggle')?.addEventListener('click', (event
   const start = button.dataset.paused === 'true';
   reviewSweepPost(button, `/api/admin/review-sweep/${start ? 'start' : 'pause'}`, start ? 'Carrying on.' : 'Paused.');
 });
+document.querySelectorAll('[data-recheck-octo]').forEach(button => button.addEventListener('click', async (event) => {
+  const clicked = event.currentTarget;
+  if (!(await askConfirm("Re-check Octo's downloads?", 'Every song Octo downloaded is checked once more, at least 60 an hour. Songs already answered in Review are not asked about again.', 'Re-check'))) return;
+  reviewSweepPost(clicked, '/api/admin/review-sweep/recheck-octo', "Re-checking Octo's downloads.");
+}));
 document.getElementById('review-sweep-reset')?.addEventListener('click', async (event) => {
   // Taken before the question: once it is awaited the event no longer says which button it was.
   const button = event.currentTarget;

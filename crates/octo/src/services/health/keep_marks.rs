@@ -307,7 +307,8 @@ pub fn pick(
 /// keeps people's marks. When the best-sounding copy is rated, it is the copy kept first; when it
 /// is not, the best sound moves into the rated copy with the most marks, as the plan that keeps
 /// people's marks does. `picked` is the copy a person picked to keep first. Every other rated
-/// copy stays as it is, and a copy whose marks could not be read for everyone stays too.
+/// copy stays as it is, and a copy whose marks could not be read for everyone stays too; when
+/// such copies are the only ones kept for that reason, the best sound stays in its own copy.
 pub fn plan_keeping_rated(
     set: &DuplicateSet<Row>,
     fields: &dyn IHealthFields<Row>,
@@ -316,7 +317,7 @@ pub fn plan_keeping_rated(
     picked: Option<&Row>,
 ) -> Option<DuplicateFix<Row>> {
     let rated = |copy: &Row| marks.keeps(&copy.id);
-    let any_rated = set.copies.iter().any(|copy| rated(copy));
+    let any_rated = set.copies.iter().any(&rated);
     let mut fix = match picked {
         Some(keep) => fixes::duplicate_fix(set, fields, Some(keep)),
         None if !any_rated => plan(set, fields, pick(set, marks, uses, false).as_ref()),

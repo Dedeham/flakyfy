@@ -1330,8 +1330,9 @@ fn a_copy_whose_marks_could_not_be_read_stays() {
     ];
     let marks = set_marks(&rows, &[("C", kim(), None)]);
     let (keep, audio, also, remove) = rated_plan(&rows, &marks, None).expect("a plan");
-    assert_eq!((keep.as_str(), audio.as_deref()), ("C", Some("A")));
-    assert!(also.is_empty());
+    // Nothing known marks C, so the best sound is kept in its own copy and C stays beside it.
+    assert_eq!((keep.as_str(), audio), ("A", None));
+    assert_eq!(also, ["C"]);
     assert_eq!(remove, ["B"]);
 }
 
@@ -1387,8 +1388,10 @@ fn the_steps_go_only_while_the_copy_that_goes_is_unrated_and_name_the_copy_that_
             (fix_actions::REMOVE, "C", Some("B"), Some("true")),
         ]
     );
-    // The move's own check lets the flag through.
+    // The move's own check lets the flag through, and a move with no tags to write is valid.
     assert_eq!(LibraryHealthService::invalid(&steps), None);
+    let bare = FixStep::move_sound("B", "Teardrop", "A", &[]);
+    assert_eq!(LibraryHealthService::invalid(&[bare]), None);
 }
 
 #[test]
@@ -1416,10 +1419,16 @@ fn carrying_marks_gives_the_higher_rating_and_any_star_and_never_plays() {
     assert_eq!(ratings, [(Reader::Admin, 3, 5)]);
     assert_eq!(stars, [Reader::Admin]);
     // Nothing is written over marks on the kept copy that could not be read.
-    let unread = [ReaderMarks {
-        reader: Reader::Admin,
-        marks: None,
-    }];
+    let unread = [
+        ReaderMarks {
+            reader: Reader::Admin,
+            marks: None,
+        },
+        ReaderMarks {
+            reader: kim(),
+            marks: None,
+        },
+    ];
     assert_eq!(carry_plan(&from, &unread), (Vec::new(), Vec::new()));
 }
 

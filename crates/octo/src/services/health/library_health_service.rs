@@ -533,7 +533,10 @@ impl LibraryHealthService {
                         song_tag_fields::canonical(key).map(|tag| (tag.to_string(), Some(value.clone())))
                     })
                     .collect();
-                if let Some(bad) = tag_edits::invalid(&changes) {
+                // A move with no tags to write besides is a move all the same.
+                if !changes.is_empty()
+                    && let Some(bad) = tag_edits::invalid(&changes)
+                {
                     return Some(bad);
                 }
             }

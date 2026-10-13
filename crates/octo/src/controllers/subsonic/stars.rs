@@ -1,26 +1,34 @@
-//! `star`, `setRating`, `scrobble` and `reportPlayback`.
+//! `star`, `unstar`, `getStarred`, `getStarred2`, `setRating`, `scrobble` and `reportPlayback`.
 
+use axum::body::Body;
 use axum::extract::{Request, State};
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use chrono::{DateTime, Utc};
+use bytes::Bytes;
+use chrono::{DateTime, SecondsFormat, Utc};
 use octo_core::common::playlist_id_helper;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
+use octo_core::models::domain::Song;
 use octo_core::models::radio::LastFmRadioPlay;
-use octo_core::settings::{LibraryAction, LibraryRatingScope};
-use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
+use octo_core::settings::{HeartDownloadStep, LibraryAction, LibraryRatingScope};
+use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use octo_subsonic::SubsonicCredential;
+use octo_subsonic::xml::XElement;
+use serde_json::Value;
 use tracing::{debug, info};
 
 use super::caller_checks::{
-    SubsonicCall, favorite_credential, file, is_successful_subsonic_response, is_true,
+    MAX_REQUEST_BODY, SubsonicCall, favorite_credential, file, is_successful_subsonic_response, is_true,
     refuse_unless_signed_in, requester_for, signed_in_user,
 };
 use crate::app::AppState;
 use crate::http::error::{AppError, AppResult};
 use crate::http::routes::RouteSet;
-use crate::services::common::AcquisitionTarget;
+use crate::services::common::star_on_arrival::WaitingStar;
+use crate::services::common::{AcquisitionTarget, StarOnArrival};
+use crate::services::family::list_rules::{Edit, edit};
 use crate::services::family::{HeartOutcome, SavedAlbum, SavedSong, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmRadioTrackResolver;
@@ -37,6 +45,8 @@ pub fn routes() -> RouteSet {
     RouteSet::new()
         .subsonic("star", get(star).post(star))
         .subsonic("unstar", get(unstar).post(unstar))
+        .subsonic("getStarred", get(get_starred).post(get_starred))
+        .subsonic("getStarred2", get(get_starred).post(get_starred))
         .subsonic("setRating", get(set_rating).post(set_rating))
         .subsonic("scrobble", get(scrobble).post(scrobble))
         .subsonic("reportPlayback", get(report_playback).post(report_playback))
@@ -51,8 +61,53 @@ fn resolver(state: &AppState, call: &SubsonicCall) -> LastFmRadioTrackResolver {
     )
 }
 
-/// Stars (favorites) an item. For playlists, triggers download. For external songs and
+/// What a favorite of an outside artist answers: Octo can only favorite what is in the library.
+pub const ARTIST_NOT_IN_LIBRARY: &str = "That artist isn't in your library, so it can't be a favorite yet.";
+
+/// Every value of `key` the request sent, repeated keys and comma lists alike, trimmed, empty
+/// ones left out.
+fn sent_ids(call: &SubsonicCall, key: &str) -> Vec<String> {
+    let mut values = call.incoming.parameter_values(key);
+    if values.is_empty()
+        && let Some(single) = call.param_opt(key)
+    {
+        values = vec![single.to_string()];
+    }
+    values
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The routing kind the registry keeps for `id`, when it is one of Octo's short ids.
+fn routing_kind(state: &AppState, id: &str) -> Option<RoutingKind> {
+    state
+        .external_id_registry
+        .lookup(id)
+        .map(|routing| routing.snapshot().kind)
+}
+
+/// Whether `id` is an artist outside the library: a registry artist, or an `ext-` artist id.
+fn is_outside_artist(state: &AppState, id: &str) -> bool {
+    match routing_kind(state, id) {
+        Some(kind) => kind == RoutingKind::Artist,
+        None => matches!(
+            state.local_library.parse_external_id(id),
+            (true, _, Some(kind), _) if kind == "artist"
+        ),
+    }
+}
+
+/// Stars (favorites) items. For playlists, triggers download. For external songs and
 /// albums, triggers a download and, outside Octo's own apps, favorites it once it arrives.
+///
+/// Repeated ids and comma lists are taken one by one: outside songs and albums are queued each
+/// on their own, and the library ids go to Navidrome together in one call. An outside artist
+/// cannot be a favorite until it is in the library, so it is refused with error 70 and nothing
+/// is queued.
 pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     // Who the family gate found behind this request, read before the request is taken apart.
     let caller = family_caller(req.extensions()).cloned();
@@ -63,14 +118,19 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     let format = call.format();
     let builder = &state.subsonic_response_builder;
 
-    let item_id = call.param("id").to_string();
+    let ids = sent_ids(&call, "id");
+    let album_ids = sent_ids(&call, "albumId");
+    let artist_ids = sent_ids(&call, "artistId");
     // What a heart on an outside song or album does for this person: a download into the
     // shared library (everyone outside the family, as always), into a member's own library, or
     // a saved link.
     let heart = state.family_write_gate.heart(caller.as_ref());
 
     // Check if this is a playlist
-    if !item_id.is_empty() && playlist_id_helper::is_external_playlist(Some(&item_id)) {
+    if ids
+        .iter()
+        .any(|id| playlist_id_helper::is_external_playlist(Some(id)))
+    {
         // Starring an outside playlist is not supported.
         return Ok(builder
             .create_error(&format, 0, "Playlist functionality is not enabled")
@@ -82,173 +142,85 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
         .current()
         .subsonic
         .effective_heart_download_sources();
-
-    // Starring a whole album. Subsonic sends the album under albumId, though some
-    // clients reuse id, so accept either.
-    //
-    // Two lookups with different jobs: the REGISTRY decides whether this is an album,
-    // because ParseSongId reports every registry id as a "song" and would otherwise
-    // send an entire album down the single-track download path. ParseSongId still
-    // supplies the provider string.
-    let album_candidate = if !item_id.is_empty() {
-        item_id.clone()
-    } else {
-        call.param("albumId").to_string()
-    };
-    if !album_candidate.is_empty()
-        && state
-            .external_id_registry
-            .lookup(&album_candidate)
-            .is_some_and(|routing| routing.snapshot().kind == RoutingKind::Album)
-    {
-        // Navidrome never sees this id, so nothing else would check who is asking.
-        if let Some(refused) = refuse_unless_signed_in(&state, &call, &format).await? {
-            return Ok(refused);
-        }
-
-        if let HeartOutcome::Save { user, request } = &heart {
-            save_album(&state, user, &album_candidate).await;
-            if let Some(full) = request {
-                ask_for_copy(&state, user, &album_candidate, RequestKind::Album, full).await;
-            }
-            return Ok(builder.create_response(&format, "starred").into_response());
-        }
-
-        if !sources.iter().any(|step| step.album_enabled == Some(true)) {
-            info!("Starred album {album_candidate} but no album-heart source is enabled; ignoring");
-            return Ok(builder.create_response(&format, "starred").into_response());
-        }
-
-        // No storage-mode gate here, unlike the song branch. That gate exists because
-        // Permanent mode already downloads a song when it is played; an album star is
-        // a request for tracks the user has NOT played, so it must work in every mode.
-        let album_provider = state
-            .local_library
-            .parse_song_id(&album_candidate)
-            .1
-            .unwrap_or_else(|| SoulseekMetadataService::PROVIDER_NAME.to_string());
-
-        info!("Starring external album {album_candidate}, triggering full album download");
-
-        let metadata = state.music_metadata.clone();
-        let (provider, album_id) = (album_provider.clone(), album_candidate.clone());
-        tokio::spawn(async move {
-            // Log the size up front: downloads are serialized, so a large album is
-            // a multi-hour job and the user should be able to see what they started.
-            let album = metadata.get_album(&provider, &album_id).await;
-            info!(
-                "Album star: '{}' by {} has {} track(s); downloads run one at a time",
-                album.as_ref().map_or("", |a| a.title.as_str()),
-                album.as_ref().map_or("", |a| a.artist.as_str()),
-                album.as_ref().map_or(0, |a| a.songs.len())
-            );
-        });
-
-        // An empty exclude means "download every track". The engine already skips
-        // tracks that are downloaded or in flight and isolates per-track failures.
-        //
-        // The progress list is claimed first, so the chain's first step already has a row
-        // to move. Its name is the one the request signed in as (for an API key, its owner
-        // as Navidrome names it), not RequesterFor: it decides who may see the row, and it
-        // is never written anywhere.
-        let who = signed_in_user(&state, &call).await?;
-        let target = match &heart {
-            HeartOutcome::Download(target) => target.clone(),
-            HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
-        };
-        // Held before the download is queued, so one that finishes at once still finds it. A
-        // member's album songs are starred for them one by one where they land.
-        if target == AcquisitionTarget::Shared
-            && let Some(credential) = favorite_credential(&call)
-        {
-            state
-                .star_on_arrival
-                .hold_album(&album_provider, &album_candidate, &credential, Some(&who));
-        }
-        state
-            .acquisition_tracker
-            .begin_album(&album_provider, &album_candidate, Some(&who));
-        state.heart_acquisition_coordinator.queue_album_for(
-            &album_provider,
-            &album_candidate,
-            requester_for(&state, Some(&who)).as_deref(),
-            target,
-        );
-
-        // Navidrome has never seen this id, so relaying the star would just error.
-        return Ok(builder.create_response(&format, "starred").into_response());
-    }
-
-    // Check if this is an external song (enables download-on-star)
-    let (is_external, provider, external_id) = state.local_library.parse_song_id(&item_id);
-
     // A saved link needs no download source.
     let saves = matches!(heart, HeartOutcome::Save { .. });
-    if is_external && (saves || sources.iter().any(|step| step.song_enabled == Some(true))) {
-        // Navidrome never sees this id, so nothing else would check who is asking.
+    let song_hearts = saves || sources.iter().any(|step| step.song_enabled == Some(true));
+
+    // The REGISTRY decides whether an id is an album, because ParseSongId reports every
+    // registry id as a "song" and would otherwise send an entire album down the single-track
+    // download path. Subsonic sends an album under albumId, though some clients reuse id, so
+    // either is read.
+    let mut outside_artist = false;
+    let mut albums: Vec<String> = Vec::new();
+    let mut songs: Vec<String> = Vec::new();
+    let mut library: Vec<(&str, String)> = Vec::new();
+    for id in ids {
+        if is_outside_artist(&state, &id) {
+            outside_artist = true;
+        } else if routing_kind(&state, &id) == Some(RoutingKind::Album) {
+            albums.push(id);
+        } else if song_hearts && state.local_library.parse_song_id(&id).0 {
+            songs.push(id);
+        } else {
+            library.push(("id", id));
+        }
+    }
+    for id in album_ids {
+        if routing_kind(&state, &id) == Some(RoutingKind::Album) {
+            albums.push(id);
+        } else {
+            library.push(("albumId", id));
+        }
+    }
+    for id in artist_ids {
+        if is_outside_artist(&state, &id) {
+            outside_artist = true;
+        } else {
+            library.push(("artistId", id));
+        }
+    }
+
+    if outside_artist || !albums.is_empty() || !songs.is_empty() {
+        // Navidrome never sees these ids, so nothing else would check who is asking.
         if let Some(refused) = refuse_unless_signed_in(&state, &call, &format).await? {
             return Ok(refused);
         }
-        let provider = provider.unwrap_or_default();
-        let external_id = external_id.unwrap_or_default();
-
-        if let HeartOutcome::Save { user, request } = &heart {
-            save_song(&state, user, &item_id, &provider, &external_id).await;
-            if let Some(full) = request {
-                ask_for_copy(&state, user, &item_id, RequestKind::Song, full).await;
-            }
-            return Ok(builder.create_response(&format, "starred").into_response());
-        }
-        let target = match heart {
-            HeartOutcome::Download(target) => target,
-            HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
-        };
-
-        // No storage-mode gate any more. It used to exclude Permanent on the grounds
-        // that playing a track there already downloads it, but that was only ever true
-        // through the blocking play path: so in Permanent mode a star fell through to
-        // the relay and errored on an id Navidrome has never seen.
-        //
-        // Stars ride the queue's own channel: explicit user intent is never shed under
-        // load the way a play is, and the request carries the album-walk flag rather
-        // than inheriting whatever a concurrent play happened to ask for.
-        info!("Starring external song {item_id}, queueing permanent download");
-
-        // Keyed by what the pipeline knows, labeled with the id the client starred so the
-        // app can find its row. Named from the routing, which is already in memory.
-        let who = signed_in_user(&state, &call).await?;
-        // Held before the download is queued, so one that finishes at once still finds it.
-        if let Some(credential) = favorite_credential(&call) {
-            state
-                .star_on_arrival
-                .hold_song(&provider, &external_id, &credential, Some(&who));
-        }
-        let routing = state
-            .external_id_registry
-            .lookup(&external_id)
-            .map(|r| r.snapshot());
-        state.acquisition_tracker.begin(
-            &provider,
-            &external_id,
-            Some(&item_id),
-            Some(&who),
-            routing.as_ref().and_then(|r| r.artist.as_deref()),
-            routing.as_ref().and_then(|r| r.title.as_deref()),
-            routing.as_ref().and_then(|r| r.album.as_deref()),
-        );
-        state.heart_acquisition_coordinator.queue_track_for(
-            &provider,
-            &external_id,
-            requester_for(&state, Some(&who)).as_deref(),
-            target,
-        );
-
-        // Return success response immediately
+    }
+    if outside_artist {
+        info!("A favorite of an outside artist was refused: it is not in the library");
+        return Ok(builder
+            .create_error(&format, 70, ARTIST_NOT_IN_LIBRARY)
+            .into_response());
+    }
+    for album in &albums {
+        star_outside_album(&state, &call, &heart, &sources, album).await?;
+    }
+    for song in &songs {
+        star_outside_song(&state, &call, &heart, song).await?;
+    }
+    let split = !albums.is_empty() || !songs.is_empty();
+    if split && library.is_empty() {
+        // Navidrome has never seen these ids, so relaying the star would just error.
         return Ok(builder.create_response(&format, "starred").into_response());
     }
 
-    // For non-external items or when download-on-star is disabled, relay to real Subsonic server
-    match call.proxy.relay("rest/star", &call.parameters).await {
+    // Library items go to Navidrome: the request as sent when nothing was taken out of it,
+    // otherwise everything else it carried with only the library ids.
+    let relayed = if split {
+        let mut pairs: Vec<(String, String)> = call
+            .parameters
+            .iter()
+            .filter(|(key, _)| !matches!(key.as_str(), "id" | "albumId" | "artistId"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        pairs.extend(library.iter().map(|(key, id)| (key.to_string(), id.clone())));
+        call.proxy
+            .relay("rest/star", pairs.iter().map(|(k, v)| (k, v)))
+            .await
+    } else {
+        call.proxy.relay("rest/star", &call.parameters).await
+    };
+    match relayed {
         Ok(result) => {
             let username = if is_successful_subsonic_response(&result.body, &format) {
                 listener(&state, &call).await
@@ -257,16 +229,14 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             };
             if let Some(username) = username.as_deref() {
                 state.generated_playlists.forget_marks(username);
-            }
-            if let Some(username) = username.as_deref()
-                && !item_id.is_empty()
-                && let Some(song) = resolver(&state, &call)
-                    .resolve_scrobble(&item_id, &call.parameters)
-                    .await
-            {
-                state
-                    .last_fm_radio_state
-                    .mark_heart(username, &item_id, &song.artist, &song.title);
+                let resolver = resolver(&state, &call);
+                for (_, song_id) in library.iter().filter(|(key, _)| *key == "id") {
+                    if let Some(song) = resolver.resolve_scrobble(song_id, &call.parameters).await {
+                        state
+                            .last_fm_radio_state
+                            .mark_heart(username, song_id, &song.artist, &song.title);
+                    }
+                }
             }
             let content_type = result
                 .content_type
@@ -282,6 +252,152 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             .into_response()),
         Err(other) => Err(other.into()),
     }
+}
+
+/// A heart on an outside album: a saved link for a member, else the whole album downloaded
+/// and, outside Octo's own apps, favorited once it lands.
+async fn star_outside_album(
+    state: &AppState,
+    call: &SubsonicCall,
+    heart: &HeartOutcome,
+    sources: &[HeartDownloadStep],
+    album_id: &str,
+) -> Result<(), AppError> {
+    if let HeartOutcome::Save { user, request } = heart {
+        save_album(state, user, album_id).await;
+        if let Some(full) = request {
+            ask_for_copy(state, user, album_id, RequestKind::Album, full).await;
+        }
+        return Ok(());
+    }
+
+    if !sources.iter().any(|step| step.album_enabled == Some(true)) {
+        info!("Starred album {album_id} but no album-heart source is enabled; ignoring");
+        return Ok(());
+    }
+
+    // No storage-mode gate here, unlike the song branch. That gate exists because
+    // Permanent mode already downloads a song when it is played; an album star is
+    // a request for tracks the user has NOT played, so it must work in every mode.
+    let album_provider = state
+        .local_library
+        .parse_song_id(album_id)
+        .1
+        .unwrap_or_else(|| SoulseekMetadataService::PROVIDER_NAME.to_string());
+
+    info!("Starring external album {album_id}, triggering full album download");
+
+    let metadata = state.music_metadata.clone();
+    let (provider, album) = (album_provider.clone(), album_id.to_string());
+    tokio::spawn(async move {
+        // Log the size up front: downloads are serialized, so a large album is
+        // a multi-hour job and the user should be able to see what they started.
+        let album = metadata.get_album(&provider, &album).await;
+        info!(
+            "Album star: '{}' by {} has {} track(s); downloads run one at a time",
+            album.as_ref().map_or("", |a| a.title.as_str()),
+            album.as_ref().map_or("", |a| a.artist.as_str()),
+            album.as_ref().map_or(0, |a| a.songs.len())
+        );
+    });
+
+    // An empty exclude means "download every track". The engine already skips
+    // tracks that are downloaded or in flight and isolates per-track failures.
+    //
+    // The progress list is claimed first, so the chain's first step already has a row
+    // to move. Its name is the one the request signed in as (for an API key, its owner
+    // as Navidrome names it), not RequesterFor: it decides who may see the row, and it
+    // is never written anywhere.
+    let who = signed_in_user(state, call).await?;
+    let target = match heart {
+        HeartOutcome::Download(target) => target.clone(),
+        HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
+    };
+    // Held before the download is queued, so one that finishes at once still finds it. A
+    // member's album songs are starred for them one by one where they land.
+    if target == AcquisitionTarget::Shared
+        && let Some(credential) = favorite_credential(call)
+    {
+        state
+            .star_on_arrival
+            .hold_album(&album_provider, album_id, &credential, Some(&who));
+    }
+    state
+        .acquisition_tracker
+        .begin_album(&album_provider, album_id, Some(&who));
+    state.heart_acquisition_coordinator.queue_album_for(
+        &album_provider,
+        album_id,
+        requester_for(state, Some(&who)).as_deref(),
+        target,
+    );
+    Ok(())
+}
+
+/// A heart on an outside song: a saved link for a member, else a permanent download and,
+/// outside Octo's own apps, a favorite once it lands.
+async fn star_outside_song(
+    state: &AppState,
+    call: &SubsonicCall,
+    heart: &HeartOutcome,
+    item_id: &str,
+) -> Result<(), AppError> {
+    let (_, provider, external_id) = state.local_library.parse_song_id(item_id);
+    let provider = provider.unwrap_or_default();
+    let external_id = external_id.unwrap_or_default();
+
+    if let HeartOutcome::Save { user, request } = heart {
+        save_song(state, user, item_id, &provider, &external_id).await;
+        if let Some(full) = request {
+            ask_for_copy(state, user, item_id, RequestKind::Song, full).await;
+        }
+        return Ok(());
+    }
+    let target = match heart {
+        HeartOutcome::Download(target) => target.clone(),
+        HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
+    };
+
+    // No storage-mode gate any more. It used to exclude Permanent on the grounds
+    // that playing a track there already downloads it, but that was only ever true
+    // through the blocking play path: so in Permanent mode a star fell through to
+    // the relay and errored on an id Navidrome has never seen.
+    //
+    // Stars ride the queue's own channel: explicit user intent is never shed under
+    // load the way a play is, and the request carries the album-walk flag rather
+    // than inheriting whatever a concurrent play happened to ask for.
+    info!("Starring external song {item_id}, queueing permanent download");
+
+    // Keyed by what the pipeline knows, labeled with the id the client starred so the
+    // app can find its row. Named from the routing, which is already in memory.
+    let who = signed_in_user(state, call).await?;
+    // Held before the download is queued, so one that finishes at once still finds it. The
+    // starred id is kept with it, so the caller's starred lists show the song meanwhile.
+    if let Some(credential) = favorite_credential(call) {
+        state
+            .star_on_arrival
+            .hold_starred_song(&provider, &external_id, item_id, &credential, Some(&who));
+    }
+    let routing = state
+        .external_id_registry
+        .lookup(&external_id)
+        .map(|r| r.snapshot());
+    state.acquisition_tracker.begin(
+        &provider,
+        &external_id,
+        Some(item_id),
+        Some(&who),
+        routing.as_ref().and_then(|r| r.artist.as_deref()),
+        routing.as_ref().and_then(|r| r.title.as_deref()),
+        routing.as_ref().and_then(|r| r.album.as_deref()),
+    );
+    state.heart_acquisition_coordinator.queue_track_for(
+        &provider,
+        &external_id,
+        requester_for(state, Some(&who)).as_deref(),
+        target,
+    );
+    Ok(())
 }
 
 /// Saves an outside song for a family member as a link (it plays from its source and shows in
@@ -361,52 +477,301 @@ async fn ask_for_copy(state: &AppState, user: &str, id: &str, kind: RequestKind,
     }
 }
 
-/// `unstar`: a family member's saved outside song or album is forgotten. Everything else goes
-/// where it always went.
+/// `unstar`: repeated ids and comma lists are taken one by one. Outside ids are answered by
+/// Octo: a family member's saved song or album is forgotten, and a heart still waiting for its
+/// download is dropped, so the song leaves the caller's starred lists. Library ids go to
+/// Navidrome together. A request with no outside id, or only outside ids Octo holds nothing
+/// for, goes where it always went.
 pub async fn unstar(State(state): State<AppState>, req: Request) -> axum::response::Response {
     let member = family_caller(req.extensions())
         .filter(|caller| caller.managed)
         .map(|caller| caller.user.clone());
-    let Some(user) = member else {
-        return crate::http::catch_all::catch_all(State(state), req).await;
+    let (parts, body) = req.into_parts();
+    let Ok(body) = axum::body::to_bytes(body, MAX_REQUEST_BODY).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
-    let call = match SubsonicCall::read(&state, req).await {
-        Ok(call) => call,
-        Err(response) => return response,
-    };
+    let call = SubsonicCall::from_parts(&state, &parts, body.clone());
     let format = call.format();
-    let ids: Vec<String> = ["id", "albumId"]
-        .iter()
-        .map(|key| call.param(key).trim().to_string())
-        .filter(|id| !id.is_empty())
+    let ids: Vec<(&str, String)> = ["id", "albumId", "artistId"]
+        .into_iter()
+        .flat_map(|key| sent_ids(&call, key).into_iter().map(move |id| (key, id)))
         .collect();
-    let outside: Vec<&String> = ids
+    let is_outside = |id: &str| {
+        member
+            .as_deref()
+            .is_some_and(|user| state.family_saved.is_saved(user, id))
+            || state.local_library.parse_song_id(id).0
+    };
+    let (outside, library): (Vec<(&str, String)>, Vec<(&str, String)>) =
+        ids.into_iter().partition(|(_, id)| is_outside(id));
+    // The waiting hearts among the outside ids, by their pipeline key.
+    let held: Vec<(String, String)> = outside
         .iter()
-        .filter(|id| state.family_saved.is_saved(&user, id) || state.local_library.parse_song_id(id).0)
+        .filter_map(|(_, id)| {
+            let (_, provider, external_id) = state.local_library.parse_song_id(id);
+            Some((provider?, external_id?))
+        })
+        .filter(|(provider, external_id)| state.star_on_arrival.holds_song(provider, external_id))
         .collect();
-    if outside.is_empty() {
-        return match call.proxy.relay("rest/unstar", &call.parameters).await {
-            Ok(result) => {
-                let content_type = result
-                    .content_type
-                    .unwrap_or_else(|| format!("application/{format}"));
-                file(result.body, &content_type)
+
+    if outside.is_empty() || (member.is_none() && library.is_empty() && held.is_empty()) {
+        return match member {
+            None => {
+                crate::http::catch_all::catch_all(State(state), Request::from_parts(parts, Body::from(body)))
+                    .await
             }
-            Err(e) => state
-                .subsonic_response_builder
-                .create_error(&format, 0, &format!("Error connecting to Subsonic server: {e}"))
-                .into_response(),
+            Some(_) => relay_unstar(&state, &call, &format, None).await,
         };
     }
-    for id in outside {
-        if state.family_saved.remove(&user, id) {
-            info!("FAMILY {user} unsaved {id}");
+
+    if !held.is_empty() {
+        // Nothing here reaches Navidrome, so the sign-in is checked before a heart is dropped.
+        if member.is_none() {
+            match refuse_unless_signed_in(&state, &call, &format).await {
+                Ok(None) => {}
+                Ok(Some(refused)) => return refused,
+                Err(error) => return error.into_response(),
+            }
+        }
+        if let (Some(credential), Ok(who)) = (
+            SubsonicCredential::from(&call.parameters),
+            signed_in_user(&state, &call).await,
+        ) {
+            let name = StarOnArrival::holder_name(&credential, Some(&who));
+            for (provider, external_id) in &held {
+                if state.star_on_arrival.release_song(provider, external_id, &name) {
+                    info!("{name} took back the heart on {provider}:{external_id} before it arrived");
+                }
+            }
         }
     }
-    state
-        .subsonic_response_builder
-        .create_response(&format, "unstar")
-        .into_response()
+    if let Some(user) = &member {
+        for (_, id) in &outside {
+            if state.family_saved.remove(user, id) {
+                info!("FAMILY {user} unsaved {id}");
+            }
+        }
+    }
+    if library.is_empty() {
+        return state
+            .subsonic_response_builder
+            .create_response(&format, "unstar")
+            .into_response();
+    }
+    relay_unstar(&state, &call, &format, Some(library.as_slice())).await
+}
+
+/// Relays an unstar to Navidrome: the request as sent, or with only `library` as its ids. Once
+/// Navidrome took it, the listener's lists read their hearts again.
+async fn relay_unstar(
+    state: &AppState,
+    call: &SubsonicCall,
+    format: &str,
+    library: Option<&[(&str, String)]>,
+) -> axum::response::Response {
+    let relayed = match library {
+        None => call.proxy.relay("rest/unstar", &call.parameters).await,
+        Some(library) => {
+            let mut pairs: Vec<(String, String)> = call
+                .parameters
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "id" | "albumId" | "artistId"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            pairs.extend(library.iter().map(|(key, id)| (key.to_string(), id.clone())));
+            call.proxy
+                .relay("rest/unstar", pairs.iter().map(|(k, v)| (k, v)))
+                .await
+        }
+    };
+    match relayed {
+        Ok(result) => {
+            if library.is_some()
+                && is_successful_subsonic_response(&result.body, format)
+                && let Some(username) = listener(state, call).await
+            {
+                state.generated_playlists.forget_marks(&username);
+            }
+            let content_type = result
+                .content_type
+                .unwrap_or_else(|| format!("application/{format}"));
+            file(result.body, &content_type)
+        }
+        Err(e) => state
+            .subsonic_response_builder
+            .create_error(format, 0, &format!("Error connecting to Subsonic server: {e}"))
+            .into_response(),
+    }
+}
+
+/// `getStarred` and `getStarred2`: Navidrome's answer, with the outside songs the caller hearted
+/// that are still waiting for their download, as outside songs are shaped everywhere else. An
+/// app that reads its favorites from here keeps the heart until the file lands and Navidrome's
+/// own favorite takes over. Only the caller's own waiting hearts are added; with none, the answer
+/// is Navidrome's as it came.
+pub async fn get_starred(State(state): State<AppState>, req: Request) -> axum::response::Response {
+    if !state.star_on_arrival.holds_any_song() {
+        return crate::http::catch_all::catch_all(State(state), req).await;
+    }
+    let (parts, body) = req.into_parts();
+    let Ok(body) = axum::body::to_bytes(body, MAX_REQUEST_BODY).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let call = SubsonicCall::from_parts(&state, &parts, body.clone());
+    let container = if parts.uri.path().to_ascii_lowercase().contains("getstarred2") {
+        "starred2"
+    } else {
+        "starred"
+    };
+    let answer =
+        crate::http::catch_all::catch_all(State(state.clone()), Request::from_parts(parts, Body::from(body)))
+            .await;
+    with_waiting_hearts(&state, &call, container, answer).await
+}
+
+/// The answer with the caller's waiting hearts added, when it is a plain 200 Navidrome accepted.
+async fn with_waiting_hearts(
+    state: &AppState,
+    call: &SubsonicCall,
+    container: &str,
+    answer: axum::response::Response,
+) -> axum::response::Response {
+    if answer.status() != StatusCode::OK || answer.headers().contains_key(header::CONTENT_ENCODING) {
+        return answer;
+    }
+    let Some(credential) = SubsonicCredential::from(&call.parameters) else {
+        return answer;
+    };
+    let Ok(who) = signed_in_user(state, call).await else {
+        return answer;
+    };
+    let waiting = state
+        .star_on_arrival
+        .waiting_songs(&StarOnArrival::holder_name(&credential, Some(&who)));
+    if waiting.is_empty() {
+        return answer;
+    }
+    let (mut parts, body) = answer.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, STARRED_ANSWER_LIMIT).await else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+    let songs = waiting_hearts(state, &waiting).await;
+    let builder = &state.subsonic_response_builder;
+    let edited = edit(
+        &bytes,
+        |response| {
+            if response.get("status").and_then(Value::as_str) != Some("ok") {
+                return false;
+            }
+            let holder = response
+                .entry(container)
+                .or_insert_with(|| Value::Object(Default::default()));
+            let Some(holder) = holder.as_object_mut() else {
+                return false;
+            };
+            let list = holder.entry("song").or_insert_with(|| Value::Array(Vec::new()));
+            let Some(list) = list.as_array_mut() else {
+                return false;
+            };
+            let known: Vec<String> = list
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            for (song, starred) in &songs {
+                if known.contains(&song.id) {
+                    continue;
+                }
+                let mut fields = builder.convert_song_to_json(song);
+                fields.insert("starred".into(), starred_time(starred).into());
+                list.push(Value::Object(fields));
+            }
+            true
+        },
+        |root| {
+            if root.attribute("status") != Some("ok") {
+                return false;
+            }
+            let ns = root.namespace.clone();
+            if !root.elements().any(|e| e.name == container) {
+                root.push(XElement::in_namespace(ns.as_deref(), container));
+            }
+            let Some(holder) = root.elements_mut().find(|e| e.name == container) else {
+                return false;
+            };
+            let known: Vec<String> = holder
+                .elements()
+                .filter_map(|e| e.attribute("id").map(str::to_string))
+                .collect();
+            for (song, starred) in &songs {
+                if known.contains(&song.id) {
+                    continue;
+                }
+                let mut element = builder.convert_song_to_xml(song, ns.as_deref());
+                element.set_attr("starred", starred_time(starred));
+                holder.push(element);
+            }
+            true
+        },
+    );
+    let bytes = match edited {
+        Edit::Changed(changed) => Bytes::from(changed),
+        Edit::Unchanged | Edit::Unreadable => bytes,
+    };
+    parts.headers.remove(header::CONTENT_LENGTH);
+    parts.headers.remove(header::TRANSFER_ENCODING);
+    axum::response::Response::from_parts(parts, Body::from(bytes))
+}
+
+/// The largest starred answer read to add the waiting hearts to.
+const STARRED_ANSWER_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Each waiting heart as the outside song it is, with when it was hearted: what the metadata
+/// already knows of it, else what its routing remembers. Nothing new is looked up.
+async fn waiting_hearts(state: &AppState, waiting: &[WaitingStar]) -> Vec<(Song, DateTime<Utc>)> {
+    let mut songs = Vec::new();
+    let mut times = Vec::new();
+    for heart in waiting {
+        let (_, provider, external_id) = state.local_library.parse_song_id(&heart.song_id);
+        let known = state
+            .music_metadata
+            .get_song(
+                provider.as_deref().unwrap_or_default(),
+                external_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        let song = match known {
+            Some(mut song) => {
+                song.id = heart.song_id.clone();
+                song
+            }
+            None => {
+                let routing = state
+                    .external_id_registry
+                    .lookup(&heart.song_id)
+                    .map(|r| r.snapshot());
+                let text = |pick: fn(&SoulseekRouting) -> Option<&String>| {
+                    routing.as_ref().and_then(pick).cloned().unwrap_or_default()
+                };
+                Song {
+                    id: heart.song_id.clone(),
+                    title: text(|r| r.title.as_ref()),
+                    artist: text(|r| r.artist.as_ref()),
+                    album: text(|r| r.album.as_ref()),
+                    duration: routing.as_ref().and_then(|r| r.duration).filter(|d| *d > 0),
+                    is_local: false,
+                    ..Default::default()
+                }
+            }
+        };
+        songs.push(song);
+        times.push(heart.starred_at);
+    }
+    state.music_metadata.refresh_outside_songs(&mut songs);
+    songs.into_iter().zip(times).collect()
+}
+
+fn starred_time(at: &DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// Star ratings.
@@ -923,6 +1288,10 @@ mod tests {
 #[cfg(test)]
 #[path = "stars_family_tests.rs"]
 mod family_tests;
+
+#[cfg(test)]
+#[path = "stars_hearts_tests.rs"]
+mod hearts_tests;
 
 #[cfg(test)]
 #[path = "family_library_tests.rs"]

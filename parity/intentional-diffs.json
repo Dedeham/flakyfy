@@ -3666,8 +3666,7 @@
         "^B:\\ \\['bytes\\ (0-9|\\*)/210267'\\]$"
       ],
       "reason": "A re-pin of the dashboard files: index.html gains the Ratings Octo did not act on card on the Library actions page, and admin.js fills it from /api/admin/library-actions/ignored-ratings (issue #87); admin.css is unchanged. Supersedes dashboard-files-2026-10-11 once reviewed.",
-      "knownDiff": "Dashboard files, ratings not acted on",
-      "reviewed": "pending Brandon"
+      "knownDiff": "Dashboard files, ratings not acted on"
     }
   ]
 }

@@ -334,6 +334,7 @@ Enums:
 | `ReviewPlaylistName` | - | string | `Review` / `Review` / - | Blank → `Review`, otherwise trimmed. | Live | yes |
 | `ReviewSweepPerHour` | `LIBRARY_ACTIONS_REVIEW_SWEEP_PER_HOUR` | int | 0 / `0` / `0` | `v <= 0 → 0`, otherwise `min(v, 360)` | Live | yes |
 | `ReviewSweepOctoDownloads` | `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS` | bool | false / `false` / `false` | - | Live | yes |
+| `TagCheckPerHour` | `LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR` | int | 60 / - / `60` | Clamped to 0..=360; 0 is off. The library tag check against the audio (Rust only). | Live | yes |
 | `DuplicatesEnabled` | `LIBRARY_ACTIONS_DUPLICATES` | bool | false / `false` / `false` | - | Live | yes |
 | `DuplicatesPlaylistName` | - | string | `Duplicates` / same / - | Blank → `Duplicates`, otherwise trimmed. | Live | yes |
 | `DuplicatesScanHours` | `LIBRARY_ACTIONS_DUPLICATES_SCAN_HOURS` | int | 24 / `24` / `24` | `Clamp(1, 168)` hours | Live | yes |

@@ -600,6 +600,18 @@ tags were never confirmed. Octo's own downloads are skipped, since each was chec
 arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS` checks
 them too.
 
+`LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR` (default 60, 0 is off) checks that many library songs an
+hour against their audio, only while nothing is downloading, in AcoustID's spare lane. Each file
+is fingerprinted and its one recording decided by its exact length; then its tags are held
+against it: an album that names another take ("(Instrumentals)" on the vocal song), a live or
+instrumental take whose title does not say so, a recording id or release track id from another
+recording, and a live copy kept beside the studio copy under the same title. What disagrees is
+listed in Library health under "Tags that disagree with the audio", with "Use the audio's tags"
+per song and "Fix all sure ones" for songs whose recording the length or a single match decided.
+Fixes are written in place and can be undone. Stray spaces in titles and albums are taken off by
+the check itself when library actions may change files. Needs the AcoustID key; its place is kept
+in `identity-sweep.json` beside the settings, so a restart carries on where it was.
+
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
 lossy, then the higher bitrate). Two files are copies only when they carry the same

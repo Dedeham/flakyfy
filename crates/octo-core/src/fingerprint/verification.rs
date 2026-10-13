@@ -151,6 +151,10 @@ pub struct VerificationResult {
     /// The take in `kind` is known: the exact length decided it, or every recording that agreed
     /// with the request is that take.
     pub kind_certain: bool,
+
+    /// `recording_id` was the only recording of the fingerprint that agreed with the song, so
+    /// no other take could be the file.
+    pub sole: bool,
 }
 
 impl VerificationResult {

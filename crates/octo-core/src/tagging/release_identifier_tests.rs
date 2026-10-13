@@ -752,6 +752,7 @@ fn parade_song(recording: &str, kind: RecordingKind, by_length: bool) -> Song {
             recording_id: Some(recording.into()),
             kind: Some(kind),
             by_length,
+            kind_certain: by_length,
             lookup: Some(parade_lookup()),
             ..Default::default()
         })),
@@ -823,6 +824,7 @@ fn an_album_naming_the_take_the_audio_is_stays() {
         recording_id: "rec-instrumental".into(),
         kind: RecordingKind::Instrumental,
         by_length: true,
+        kind_certain: true,
     };
     let request = TagRequest {
         title: "Welcome to the Black Parade".into(),

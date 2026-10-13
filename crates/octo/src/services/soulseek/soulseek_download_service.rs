@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
 use octo_core::common::dotnet;
-use octo_core::fingerprint::recording_identity::{RecordingKind, Takes};
+use octo_core::fingerprint::recording_identity::RecordingKind;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
@@ -1916,7 +1916,7 @@ impl SoulseekDownloadService {
         }
         let verdict = self
             .verification
-            .verify(path, Some(artist), Some(title), None, &Takes::Any)
+            .verify_in_background(path, Some(artist), Some(title))
             .await;
         (verdict.verdict == VerificationVerdict::Confirmed)
             .then_some(verdict.kind)

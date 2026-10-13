@@ -9,7 +9,67 @@ fn identity(recording: &str, kind: RecordingKind, by_length: bool) -> Identity {
         recording_id: recording.into(),
         kind,
         by_length,
+        kind_certain: true,
     }
+}
+
+#[test]
+fn a_take_that_is_only_likely_changes_nothing() {
+    let mut song = parade_as_written();
+    let unsure = Identity {
+        kind_certain: false,
+        ..identity("rec-studio", RecordingKind::Studio, false)
+    };
+    guard(&mut song, Some(&unsure), None);
+    assert_eq!(song.album, "The Black Parade (instrumentals)");
+
+    let mut live = Song {
+        title: "Live Forever".into(),
+        album: "Definitely Maybe".into(),
+        ..Default::default()
+    };
+    let unsure_live = Identity {
+        kind_certain: false,
+        ..identity("rec", RecordingKind::Live, false)
+    };
+    guard(&mut live, Some(&unsure_live), None);
+    assert_eq!(live.title, "Live Forever");
+}
+
+#[test]
+fn only_the_bracket_naming_the_take_is_cut() {
+    assert_eq!(
+        plain_album(
+            "(What's the Story) Morning Glory? (Instrumentals)",
+            RecordingKind::Instrumental
+        )
+        .as_deref(),
+        Some("(What's the Story) Morning Glory?")
+    );
+    assert_eq!(
+        plain_album("Songs (For Lovers) [Karaoke]", RecordingKind::Karaoke).as_deref(),
+        Some("Songs (For Lovers)")
+    );
+    assert_eq!(
+        plain_album("The Black Parade - Instrumentals", RecordingKind::Instrumental).as_deref(),
+        Some("The Black Parade")
+    );
+    assert_eq!(plain_album("Instrumentals", RecordingKind::Instrumental), None);
+    assert_eq!(plain_album("Mezzanine", RecordingKind::Instrumental), None);
+}
+
+#[test]
+fn a_remix_titled_as_a_mix_is_not_titled_again() {
+    let mut song = Song {
+        title: "Song (Skrillex Mix)".into(),
+        ..Default::default()
+    };
+    guard(
+        &mut song,
+        Some(&identity("rec", RecordingKind::Remix, true)),
+        None,
+    );
+    assert_eq!(song.title, "Song (Skrillex Mix)");
 }
 
 fn parade_as_written() -> Song {

@@ -1120,23 +1120,39 @@ fn the_exact_length_names_the_live_take_and_a_plain_download_refuses_it() {
 }
 
 #[test]
-fn the_exact_length_names_the_instrumental_and_a_plain_download_refuses_it() {
-    let verdict = parade_verdict(309_690, &plain_download());
+fn an_instrumental_the_fingerprint_names_alone_is_refused() {
+    let mut lookup = parade();
+    lookup.results[0]
+        .recordings
+        .retain(|recording| recording.recording_id == "instrumental");
+    let verdict = DownloadVerificationService::decide_with(
+        &lookup,
+        Some("My Chemical Romance"),
+        Some("Welcome to the Black Parade"),
+        THRESHOLD,
+        true,
+        (310, Some(309_690)),
+        &plain_download(),
+        &FactsById::new(),
+    );
     assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
-    assert_eq!(verdict.recording_id.as_deref(), Some("instrumental"));
     assert_eq!(
         verdict.deny_reason,
         "is an instrumental, from 'The Black Parade (instrumentals)'"
     );
+    assert!(verdict.kind_certain);
 }
 
 #[test]
-fn the_studio_length_confirms_the_studio_take_and_only_it() {
-    let verdict = parade_verdict(311_107, &plain_download());
-    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
-    assert_eq!(verdict.recording_id.as_deref(), Some("studio"));
-    assert_eq!(verdict.kind, Some(RecordingKind::Studio));
-    assert!(verdict.by_length);
+fn takes_a_remaster_apart_are_not_decided_by_length_and_the_studio_take_stands() {
+    // 1.4 s between the studio take and the instrumental is within what a remaster drifts.
+    for file_ms in [311_107, 309_690] {
+        let verdict = parade_verdict(file_ms, &plain_download());
+        assert_eq!(verdict.verdict, VerificationVerdict::Confirmed, "{file_ms}");
+        assert_eq!(verdict.recording_id.as_deref(), Some("studio"));
+        assert_eq!(verdict.kind, Some(RecordingKind::Studio));
+        assert!(!verdict.by_length && !verdict.kind_certain);
+    }
 }
 
 #[test]

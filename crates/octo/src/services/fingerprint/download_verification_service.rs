@@ -151,6 +151,39 @@ impl DownloadVerificationService {
         requested_isrc: Option<&str>,
         takes: &Takes,
     ) -> VerificationResult {
+        self.verify_on(
+            path,
+            requested_artist,
+            requested_title,
+            requested_isrc,
+            takes,
+            false,
+        )
+        .await
+    }
+
+    /// [`Self::verify`] for work nobody waits on (the library sweep, a song's own file heard
+    /// before its search): its MusicBrainz questions go in the background lane, behind every
+    /// download's.
+    pub async fn verify_in_background(
+        &self,
+        path: &str,
+        requested_artist: Option<&str>,
+        requested_title: Option<&str>,
+    ) -> VerificationResult {
+        self.verify_on(path, requested_artist, requested_title, None, &Takes::Any, true)
+            .await
+    }
+
+    async fn verify_on(
+        &self,
+        path: &str,
+        requested_artist: Option<&str>,
+        requested_title: Option<&str>,
+        requested_isrc: Option<&str>,
+        takes: &Takes,
+        background: bool,
+    ) -> VerificationResult {
         if !self.remembers_rejections() {
             return VerificationResult::inconclusive();
         }
@@ -173,6 +206,7 @@ impl DownloadVerificationService {
                 isrc.as_deref(),
                 tagged_match,
                 takes,
+                background,
             )
             .await
         } else {
@@ -238,6 +272,7 @@ impl DownloadVerificationService {
         isrc: Option<&str>,
         tagged_match: bool,
         takes: &Takes,
+        background: bool,
     ) -> VerificationResult {
         let settings = self.settings.current().soulseek.clone();
         let fingerprint = self
@@ -323,7 +358,7 @@ impl DownloadVerificationService {
                 threshold,
                 (seconds, file_ms),
                 takes,
-                settings.effective_acoust_id_timeout_seconds(),
+                (settings.effective_acoust_id_timeout_seconds(), background),
             )
             .await;
         let mut verdict = VerificationResult {
@@ -417,7 +452,7 @@ impl DownloadVerificationService {
         threshold: f64,
         (seconds, file_ms): (i32, Option<i64>),
         takes: &Takes,
-        timeout_seconds: i32,
+        (timeout_seconds, background): (i32, bool),
     ) -> FactsById {
         let mut found = FactsById::new();
         let Some(music_brainz) = &self.music_brainz else {
@@ -446,8 +481,9 @@ impl DownloadVerificationService {
             ids.into_iter().take(Self::MAX_FACT_LOOKUPS).collect()
         } else if matches!(takes, Takes::Only(_)) {
             let kind = |r: &AcoustIdRecording| recording_identity::kind_of(r, None);
-            recording_identity::choose(&agreeing, file_ms, &takes.wanted(), kind)
-                .map(|(chosen, _)| vec![chosen.recording_id.clone()])
+            let asked = RecordingKind::requested_by(requested_title.unwrap_or(""));
+            recording_identity::choose(&agreeing, file_ms, &asked, |k| takes.refuses(k), kind)
+                .map(|chosen| vec![chosen.recording.recording_id.clone()])
                 .unwrap_or_default()
         } else {
             Vec::new()
@@ -456,10 +492,12 @@ impl DownloadVerificationService {
             return found;
         }
 
-        let budget = Duration::from_secs((timeout_seconds.max(0) as u64) + 2 * wanted.len() as u64);
+        // The background lane waits behind every download's questions, so it is given longer.
+        let per_lookup = if background { 30 } else { 2 };
+        let budget = Duration::from_secs((timeout_seconds.max(0) as u64) + per_lookup * wanted.len() as u64);
         let deadline = tokio::time::Instant::now() + budget;
         for id in &wanted {
-            let asked = tokio::time::timeout_at(deadline, music_brainz.recording_facts(id, false)).await;
+            let asked = tokio::time::timeout_at(deadline, music_brainz.recording_facts(id, background)).await;
             match asked {
                 Ok(Ok(Some(facts))) => {
                     found.insert(dotnet::to_lower_invariant(id), facts);
@@ -852,12 +890,24 @@ fn decide_core(
     // ships on an album and a compilation, and demanding the first would reject correct files.
     let agreeing = agreeing_in(best, requested_artist, requested_title, duration_seconds);
     // One fingerprint is often tied to the studio take, a live take and an instrumental alike.
-    // The file's exact length decides between them when it can; otherwise the kind asked for
-    // goes first, the studio take for a plain request.
-    let chosen = recording_identity::choose(&agreeing, file_ms, &takes.wanted(), |r| kind_with(r, facts));
+    // The file's exact length decides between them when it can; otherwise a take the title asks
+    // for goes first, then the studio take.
+    let asked = RecordingKind::requested_by(requested_title);
+    let chosen = recording_identity::choose(
+        &agreeing,
+        file_ms,
+        &asked,
+        |k| takes.refuses(k),
+        |r| kind_with(r, facts),
+    );
 
-    if let Some((agreed, by_length)) = chosen {
-        let kind = kind_with(agreed, facts);
+    if let Some(recording_identity::Chosen {
+        recording: agreed,
+        kind,
+        by_length,
+        kind_certain,
+    }) = chosen
+    {
         // The right song and artist, but a take the request never asked for: the same title and
         // nearly the same length, so only its exact length and what it is on tell it apart.
         if takes.refuses(kind) {
@@ -876,12 +926,14 @@ fn decide_core(
                 },
                 kind: Some(kind),
                 by_length,
+                kind_certain,
                 ..Default::default()
             };
         }
         return VerificationResult {
             kind: Some(kind),
             by_length,
+            kind_certain,
             ..confirm(best, agreed, tags_authoritative)
         };
     }
@@ -1021,6 +1073,6 @@ impl crate::services::library::library_review_sweep_worker::SweepVerification
     }
 
     async fn verify(&self, path: &str, artist: Option<&str>, title: Option<&str>) -> VerificationResult {
-        DownloadVerificationService::verify(self, path, artist, title, None, &Takes::Any).await
+        DownloadVerificationService::verify_in_background(self, path, artist, title).await
     }
 }

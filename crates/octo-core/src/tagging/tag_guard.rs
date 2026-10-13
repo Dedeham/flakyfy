@@ -9,7 +9,6 @@
 use std::collections::BTreeSet;
 
 use crate::common::dotnet::{self, is_blank};
-use crate::common::song_identity::SongIdentity;
 use crate::fingerprint::recording_identity::{Identity, RecordingKind};
 use crate::models::domain::song::Song;
 use crate::tagging::tag_evidence::ReleaseCandidate;
@@ -157,7 +156,7 @@ fn album_agrees(song: &mut Song, identity: &Identity, findings: &mut Vec<GuardFi
     let Some(named) = identity.contradicted_by(&song.album, &asked) else {
         return;
     };
-    let plain = plain_album(&song.album);
+    let plain = plain_album(&song.album, named);
     match plain {
         Some(plain) => {
             findings.push(GuardFinding::fixed(
@@ -171,6 +170,9 @@ fn album_agrees(song: &mut Song, identity: &Identity, findings: &mut Vec<GuardFi
             ));
             song.album = plain;
             song.music_brainz_album_title = None;
+            // The release ids beside the old name are that release's, which the album no longer
+            // is; left on, the library would file the song under the other release.
+            clear_release_ids(song);
         }
         None => findings.push(GuardFinding::found(
             "album agrees",
@@ -184,20 +186,55 @@ fn album_agrees(song: &mut Song, identity: &Identity, findings: &mut Vec<GuardFi
     }
 }
 
-/// The album's name without its bracketed take, or None when nothing would be left.
-fn plain_album(album: &str) -> Option<String> {
-    let core = SongIdentity::parse_title(album, None).core;
-    let core = core.trim();
-    (!core.is_empty() && RecordingKind::named_in(core).is_empty()).then(|| core.to_string())
+/// The album's name without the one bracket, or the " - ..." tail, that names `kind`; every other
+/// bracket stays ("(What's the Story) Morning Glory? (Instrumentals)" is "(What's the Story)
+/// Morning Glory?"). None when no such part is found or nothing plain would be left.
+pub fn plain_album(album: &str, kind: RecordingKind) -> Option<String> {
+    let names_kind = |text: &str| RecordingKind::named_in(text).contains(&kind);
+    let mut kept = String::with_capacity(album.len());
+    let mut removed = false;
+    let mut rest = album;
+    while let Some(open) = rest.find(['(', '[']) {
+        let close_char = if rest[open..].starts_with('(') { ')' } else { ']' };
+        let Some(close) = rest[open + 1..].find(close_char).map(|at| open + 1 + at) else {
+            break;
+        };
+        let inner = &rest[open + 1..close];
+        kept.push_str(&rest[..open]);
+        if !removed && names_kind(inner) {
+            removed = true;
+        } else {
+            kept.push_str(&rest[open..=close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    kept.push_str(rest);
+    if !removed && let Some(dash) = kept.rfind(" - ") {
+        if names_kind(&kept[dash + 3..]) {
+            kept.truncate(dash);
+            removed = true;
+        }
+    }
+    let plain = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+    (removed && !plain.is_empty() && !names_kind(&plain)).then_some(plain)
 }
 
+/// Words a remix's title carries in place of "Remix": "(Skrillex Mix)", "(Club Rework)".
+static MIX_WORD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(?:re-?mix(?:ed)?|mix|rmx|rework(?:ed)?|dub|vip|bootleg|flip|edit)\b")
+        .expect("a fixed pattern compiles")
+});
+
 /// A take that is not the studio one says so in its title: "Welcome to the Black Parade
-/// (Live)". Only when the audio was found to be that take.
+/// (Live)". Only when the audio is known to be that take.
 fn take_in_title(song: &mut Song, identity: &Identity, findings: &mut Vec<GuardFinding>) {
     let Some(word) = identity.kind.title_word() else {
         return;
     };
-    if RecordingKind::named_in(&song.title).contains(&identity.kind) {
+    if !identity.kind_certain || RecordingKind::named_in(&song.title).contains(&identity.kind) {
+        return;
+    }
+    if identity.kind == RecordingKind::Remix && MIX_WORD.is_match(&song.title) {
         return;
     }
     let titled = format!("{} ({word})", song.title.trim());

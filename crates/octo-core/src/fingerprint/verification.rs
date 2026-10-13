@@ -147,6 +147,10 @@ pub struct VerificationResult {
     /// The file's exact length is what chose `recording_id` among takes that share the
     /// fingerprint. The tagger then tags from that recording and no other.
     pub by_length: bool,
+
+    /// The take in `kind` is known: the exact length decided it, or every recording that agreed
+    /// with the request is that take.
+    pub kind_certain: bool,
 }
 
 impl VerificationResult {

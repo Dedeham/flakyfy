@@ -166,7 +166,7 @@ fn kind_from_releases(releases: &[AcoustIdRelease]) -> Option<RecordingKind> {
         .map(|release| {
             let mut kinds = release_secondary_kinds(&release.secondary_types);
             if let Some(title) = release.title.as_deref() {
-                kinds.extend(RecordingKind::named_in(title));
+                kinds.extend(release_title_kinds(title));
             }
             kinds
         })
@@ -182,21 +182,35 @@ fn kind_from_fact_releases(releases: &[FactRelease]) -> Option<RecordingKind> {
         .iter()
         .map(|release| {
             let mut kinds = release_secondary_kinds(&release.group_secondary_types);
-            kinds.extend(RecordingKind::named_in(&release.title));
+            kinds.extend(release_title_kinds(&release.title));
             kinds
         })
         .collect();
     shared_kind(&per_release)
 }
 
+/// What a release's type says its recordings are. Only Live: a remix release or a demo
+/// collection often carries the original mix too, so only a recording's own title or note
+/// makes it a remix or a demo.
 fn release_secondary_kinds(types: &[String]) -> BTreeSet<RecordingKind> {
     types
         .iter()
-        .filter_map(|kind| match kind.to_ascii_lowercase().as_str() {
-            "live" => Some(RecordingKind::Live),
-            "remix" | "dj-mix" => Some(RecordingKind::Remix),
-            "demo" => Some(RecordingKind::Demo),
-            _ => None,
+        .filter(|kind| kind.eq_ignore_ascii_case("live"))
+        .map(|_| RecordingKind::Live)
+        .collect()
+}
+
+/// What a release's own name says its recordings are: only takes with no singing or no band
+/// ("(instrumentals)", "Karaoke Hits", "Acapellas"). A release named for its remixes holds the
+/// original mix as often as not.
+fn release_title_kinds(title: &str) -> BTreeSet<RecordingKind> {
+    RecordingKind::named_in(title)
+        .into_iter()
+        .filter(|kind| {
+            matches!(
+                kind,
+                RecordingKind::Instrumental | RecordingKind::Karaoke | RecordingKind::Acapella
+            )
         })
         .collect()
 }
@@ -217,14 +231,16 @@ fn shared_kind(per_release: &[BTreeSet<RecordingKind>]) -> Option<RecordingKind>
 pub const DECISIVE_WITHIN_MS: i64 = 1_000;
 
 /// How much further off every other take must be for that length to decide: at least this
-/// much, and at least [`DECISIVE_RATIO`] times the best one's distance.
-pub const DECISIVE_MARGIN_MS: i64 = 1_000;
+/// much, and at least [`DECISIVE_RATIO`] times the best one's distance. Masterings of one
+/// recording drift by a second or two, so less would let a remaster pick another take.
+pub const DECISIVE_MARGIN_MS: i64 = 2_500;
 pub const DECISIVE_RATIO: i64 = 4;
 
 /// The one recording among several that agree on title and artist whose length alone says it
 /// is the file: within [`DECISIVE_WITHIN_MS`] of the file, and every other agreeing recording
-/// at least [`DECISIVE_MARGIN_MS`] further off and [`DECISIVE_RATIO`] times as far. None when no length is known or the lengths do
-/// not decide. A recording listed twice (by id) counts once.
+/// at least [`DECISIVE_MARGIN_MS`] further off and [`DECISIVE_RATIO`] times as far. None when
+/// the file's length or any agreeing recording's length is unknown (that one could be the
+/// file), or the lengths do not decide. A recording listed twice (by id) counts once.
 pub fn decided_by_length<'a>(
     agreeing: &[&'a AcoustIdRecording],
     file_ms: Option<i64>,
@@ -232,9 +248,7 @@ pub fn decided_by_length<'a>(
     let file_ms = file_ms.filter(|ms| *ms > 0)?;
     let mut distances: Vec<(i64, &'a AcoustIdRecording)> = Vec::new();
     for recording in agreeing {
-        let Some(length) = recording.duration_ms.filter(|ms| *ms > 0) else {
-            continue;
-        };
+        let length = recording.duration_ms.filter(|ms| *ms > 0)?;
         if distances
             .iter()
             .any(|(_, seen)| dotnet::eq_ignore_case(&seen.recording_id, &recording.recording_id))
@@ -258,31 +272,50 @@ pub fn decided_by_length<'a>(
     decisive.then_some(chosen)
 }
 
+/// The recording [`choose`] took, and how sure it is of the take.
+#[derive(Debug, Clone, Copy)]
+pub struct Chosen<'a> {
+    pub recording: &'a AcoustIdRecording,
+    pub kind: RecordingKind,
+    /// The file's exact length decided it among takes that share the fingerprint.
+    pub by_length: bool,
+    /// The take is known: the length decided it, or every agreeing recording is that take.
+    pub kind_certain: bool,
+}
+
 /// The recording a file is, among the ones that agree with the request on title and artist:
-/// the one its exact length decides, else the first of the kind asked for (the studio take for
-/// a plain request), else the first. `kind` says what each recording is.
+/// the one its exact length decides; else the first of a kind the title asks for ("Song
+/// (Live)"); else the first studio take; else the first that `refuses` lets through; else the
+/// first. A kind the album or a word in the title merely allows ("Live Forever") never wins over
+/// the studio take; it only stops a refusal. `kind` says what each recording is.
 pub fn choose<'a>(
     agreeing: &[&'a AcoustIdRecording],
     file_ms: Option<i64>,
-    wanted: &BTreeSet<RecordingKind>,
+    asked: &BTreeSet<RecordingKind>,
+    refuses: impl Fn(RecordingKind) -> bool,
     kind: impl Fn(&AcoustIdRecording) -> RecordingKind,
-) -> Option<(&'a AcoustIdRecording, bool)> {
-    if let Some(decided) = decided_by_length(agreeing, file_ms) {
-        return Some((decided, true));
-    }
-    let asked = |recording: &&&'a AcoustIdRecording| {
-        let found = kind(recording);
-        if wanted.is_empty() {
-            found == RecordingKind::Studio
-        } else {
-            wanted.contains(&found)
+) -> Option<Chosen<'a>> {
+    let kinds: Vec<RecordingKind> = agreeing.iter().map(|recording| kind(recording)).collect();
+    let pick = |index: usize, by_length: bool| {
+        let chosen_kind = kinds[index];
+        Chosen {
+            recording: agreeing[index],
+            kind: chosen_kind,
+            by_length,
+            kind_certain: by_length || kinds.iter().all(|other| *other == chosen_kind),
         }
     };
-    agreeing
+    if let Some(decided) = decided_by_length(agreeing, file_ms) {
+        let index = agreeing.iter().position(|r| std::ptr::eq(*r, decided))?;
+        return Some(pick(index, true));
+    }
+    let index = kinds
         .iter()
-        .find(asked)
-        .or(agreeing.first())
-        .map(|recording| (*recording, false))
+        .position(|found| asked.contains(found))
+        .or_else(|| kinds.iter().position(|found| *found == RecordingKind::Studio))
+        .or_else(|| kinds.iter().position(|found| !refuses(*found)))
+        .or((!agreeing.is_empty()).then_some(0))?;
+    Some(pick(index, false))
 }
 
 /// Whether a recording's kind was never asked for.
@@ -343,6 +376,9 @@ pub struct Identity {
     /// The file's exact length chose it among takes that share the fingerprint, so no other
     /// recording of the fingerprint may name the file's album.
     pub by_length: bool,
+    /// The take is known: the length decided it, or every recording that agreed with the song
+    /// is that take. Only then may a tag be changed to say so.
+    pub kind_certain: bool,
 }
 
 impl Identity {
@@ -360,19 +396,24 @@ impl Identity {
             recording_id,
             kind: verification.kind.unwrap_or(RecordingKind::Studio),
             by_length: verification.by_length,
+            kind_certain: verification.kind_certain,
         })
     }
 
     /// Whether another recording of the same fingerprint may still name the file's album: never
-    /// when the exact length chose this one, and only one of the same kind otherwise (an album
-    /// and a compilation often list the same audio under two recordings).
+    /// when the exact length chose this one, and every recording of the same kind otherwise (an
+    /// album and a compilation often list the same audio under two recordings).
     pub fn admits(&self, recording_id: &str, kind: RecordingKind) -> bool {
         dotnet::eq_ignore_case(recording_id, &self.recording_id) || (!self.by_length && kind == self.kind)
     }
 
     /// Whether an album or release title names a take this recording is not: "The Black Parade
     /// (instrumentals)" for the studio take. `asked` are the kinds the request's title named.
+    /// None unless the take is certain: a guess never overrules what a tag says.
     pub fn contradicted_by(&self, album: &str, asked: &BTreeSet<RecordingKind>) -> Option<RecordingKind> {
+        if !self.kind_certain {
+            return None;
+        }
         RecordingKind::named_in(album)
             .into_iter()
             .find(|named| *named != self.kind && !asked.contains(named))

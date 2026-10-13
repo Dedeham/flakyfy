@@ -227,8 +227,11 @@ pub fn check(target: &FindTarget, copy: &FoundCopy, cx: CheckContext<'_>) -> Rep
     let own = library_song(target);
     // A library file that is another take, replaced by a copy of the plain song, takes the
     // plain song's title and album: its own describe the take it was, and were they kept, the
-    // new file would carry them. Asked about, since the person's song changes take.
-    if let Some((take, plain)) = other_take(target, copy, cx)
+    // new file would carry them. Asked about, since the person's song changes take. Only once
+    // the file's audio was heard: a name alone ("(Radio Edit)", an album called "Live Through
+    // This") leaves a copy that fits the library song as it was.
+    if target.audio_take.is_some()
+        && let Some((take, plain)) = other_take(target, copy, cx)
         && wrong_song(target, &plain, copy, cx).is_none()
         && copy_is_plain(target, copy)
     {

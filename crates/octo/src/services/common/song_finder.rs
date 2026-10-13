@@ -420,7 +420,7 @@ impl SongFinder {
     const SEARCH_LIMIT: Duration = Duration::from_secs(4 * 60);
 
     /// How long hearing a library song's own file may hold up its search.
-    const TAKE_LIMIT: Duration = Duration::from_secs(45);
+    const TAKE_LIMIT: Duration = Duration::from_secs(20);
 
     pub fn new(services: SongFinderServices) -> Self {
         Self::with_clock(services, Clock::system())

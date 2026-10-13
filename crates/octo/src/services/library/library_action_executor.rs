@@ -14,7 +14,6 @@ use chrono::Utc;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
-use octo_core::fingerprint::recording_identity::RecordingKind;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::lidarr::lidarr_client::LidarrError;
 use octo_core::lyrics::{LyricsQuery, LyricsResult, LyricsTiming};
@@ -351,40 +350,6 @@ fn last_write_ticks(path: &str) -> i64 {
 
 fn file_exists(path: &str) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file())
-}
-
-/// The original's identity without what names a take its title does not: an album such as "The
-/// Black Parade (instrumentals)" on a plainly titled song is cut back to "The Black Parade", and
-/// the ids of that release (its album id and the release track) are not passed on, since they
-/// name the other take's release. A replacement is never given another take's album by being
-/// put in the original's place.
-pub(crate) fn without_another_takes_album(mut kept: KeptIdentity, artist: &str) -> KeptIdentity {
-    let Some(album) = kept.album.clone() else {
-        return kept;
-    };
-    let named = RecordingKind::named_in(&album);
-    if named.is_subset(&RecordingKind::requested_by(&kept.title)) {
-        return kept;
-    }
-    let core = octo_core::common::SongIdentity::parse_title(&album, Some(artist)).core;
-    let plain =
-        Some(core.trim()).filter(|plain| !plain.is_empty() && RecordingKind::named_in(plain).is_empty());
-    info!(
-        "Library action: the original's album '{album}' names {}, which its title does not, so the replacement is not given that release{}",
-        named
-            .iter()
-            .map(|kind| kind.described())
-            .collect::<Vec<_>>()
-            .join(" and "),
-        plain.map_or_else(String::new, |plain| format!("; it keeps the album '{plain}'"))
-    );
-    if let Some(plain) = plain {
-        kept.album = Some(plain.to_string());
-    }
-    kept.album_id = None;
-    kept.release_track_id = None;
-    kept.album_version = None;
-    kept
 }
 
 fn try_delete(path: &str) {
@@ -1055,8 +1020,7 @@ impl LibraryActionExecutor {
         let identity = KeptIdentityTags::read(
             Path::new(&original.absolute_path),
             original.album_artist.as_deref(),
-        )
-        .map(|kept| without_another_takes_album(kept, &original.artist));
+        );
         // What the original looked like when the action started. A download takes minutes, and
         // whatever is at that path by the end may no longer be the file this action was about.
         let admission = Arc::new(Admission {
@@ -1109,12 +1073,7 @@ impl LibraryActionExecutor {
                     kind: RoutingKind::Song,
                     artist: Some(original.artist.clone()),
                     title: Some(original.title.clone()),
-                    // The library's album may itself be a wrong tag; one that names a take the
-                    // title does not ("(Instrumentals)") is never passed on as a wish for it.
-                    album: Some(original.album.clone()).filter(|album| {
-                        RecordingKind::named_in(album)
-                            .is_subset(&RecordingKind::requested_by(&original.title))
-                    }),
+                    album: Some(original.album.clone()),
                     duration: original.duration_seconds,
                     ..Default::default()
                 },

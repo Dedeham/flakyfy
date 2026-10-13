@@ -473,12 +473,6 @@ impl BaseDownloadService {
         }
     }
 
-    /// Write the Song's tags and the chosen cover onto the file. Returns the cover it settled
-    /// on, embedded or already there, so the same picture can go beside the file as cover.jpg;
-    /// `None` when there was none or the write failed.
-    ///
-    /// What the genre and cover lookups need is read first, and the file opened again to write,
-    /// so no file is held across a wait.
     /// The last check before the tags are written: each one agrees with the recording the audio
     /// was found to be (see `tag_guard`). What it changed or found goes in the song's plan
     /// notes, its download log and the server log.
@@ -518,6 +512,12 @@ impl BaseDownloadService {
         }
     }
 
+    /// Write the Song's tags and the chosen cover onto the file. Returns the cover it settled
+    /// on, embedded or already there, so the same picture can go beside the file as cover.jpg;
+    /// `None` when there was none or the write failed.
+    ///
+    /// What the genre and cover lookups need is read first, and the file opened again to write,
+    /// so no file is held across a wait.
     pub async fn write_metadata(&self, file_path: &str, song: &mut Song) -> Option<Vec<u8>> {
         self.write_metadata_replacing(file_path, song, None).await
     }

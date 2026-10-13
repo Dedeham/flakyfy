@@ -423,7 +423,11 @@ fn parade_on_instrumentals() -> FindTarget {
 fn a_plain_copy_in_place_of_a_song_filed_under_instrumentals_takes_the_plain_album() {
     // The replace of 2026-10-11: the copy fitted the library song, so it was held to the
     // instrumentals album and kept it. Now it is held to the plain song.
-    let target = parade_on_instrumentals();
+    // Its audio was heard and is the studio take, which the album contradicts.
+    let target = FindTarget {
+        audio_take: Some(RecordingKind::Studio),
+        ..parade_on_instrumentals()
+    };
     let picked = copy(
         "maximumpeaches",
         r"music\My Chemical Romance\The Black Parade (2006)\My Chemical Romance - The Black Parade - 05 - Welcome to the Black Parade.flac",

@@ -698,34 +698,3 @@ async fn the_worker_hands_the_replacement_handoff_to_the_download() {
 
     assert_eq!(path.expect("the download's path"), "/music/a.flac");
 }
-
-// ---- a replacement is never given another take's album ------------------------------------------
-
-#[test]
-fn the_originals_instrumentals_album_is_cut_to_the_plain_album_and_its_ids_dropped() {
-    let kept = KeptIdentity {
-        title: "Welcome to the Black Parade".into(),
-        album: Some("The Black Parade (instrumentals)".into()),
-        album_id: Some("89e29cc2-0b99-42b0-8c8b-bb209642dd99".into()),
-        release_track_id: Some("e6e8ef30-7e13-43cd-9f2a-854d70cd2e30".into()),
-        track: 5,
-        ..Default::default()
-    };
-    let plain = without_another_takes_album(kept, "My Chemical Romance");
-    assert_eq!(plain.album.as_deref(), Some("The Black Parade"));
-    assert_eq!(plain.album_id, None);
-    assert_eq!(plain.release_track_id, None);
-    assert_eq!(plain.track, 5);
-}
-
-#[test]
-fn an_album_whose_take_the_title_names_is_kept_whole() {
-    let kept = KeptIdentity {
-        title: "So What (Instrumental)".into(),
-        album: Some("A Muse In Her Feelings (Instrumentals)".into()),
-        album_id: Some("id".into()),
-        ..Default::default()
-    };
-    let same = without_another_takes_album(kept.clone(), "dvsn");
-    assert_eq!(same, kept);
-}

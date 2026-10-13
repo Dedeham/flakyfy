@@ -136,6 +136,7 @@ fn line(at: chrono::DateTime<Utc>, kind: &str, text: &str, copies: usize) -> Acq
                 })
                 .collect()
         }),
+        heard: None,
     }
 }
 

@@ -874,8 +874,9 @@ Octo hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | `getImports`, `getImport`, `importAction` | the `octoImports` extension: the caller's Spotify sign-in, imported lists with what the library has of each, and the trickle |
 | `getTopSongs` | the standard top songs of an artist (by name, or by id as Navidrome's `topSongsByArtistId`), for every app: ranked as `getArtistTopSongs` ranks them, songs you have as your library's own and the rest as outside songs (only yours while search discovery is off); Navidrome's answer when Octo has none |
 | `getArtistTopSongs`, `getTopChart` | the `octoTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it |
+| `getPlace` | the `octoPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing; a full UK, Canadian or Dutch code finds the part GeoNames keeps), a city (`name`, optional `state` by name or code, and `country`; without a state, the city with the most postal codes) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Octo does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |
 | `/api/artist/{id}`, `/api/album?artist_id=` | Navidrome's own API, for clients that use it (Feishin): an outside artist's page and its albums |
-| `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`) and `songLyrics` 1 and 2 |
+| `getOpenSubsonicExtensions` | Navidrome's list plus `octoAcquisitions` 1 and 2, `octoLyrics` (while lyrics lookups are on), `octoLibraryActions` (while library actions are on), `octoTopSongs` (while search discovery is on), `octoImports`, `octoRadioSources` (while radio can answer: radio songs carry `octoSuggestedBy`), `octoPlaces` (always) and `songLyrics` 1 and 2 |
 
 ### Soulseek download details
 
@@ -961,6 +962,13 @@ cargo fmt --all
 
 A debug build serves the dashboard and images from the C# folder they still live in: set `OCTO_WWWROOT=octo/wwwroot` and `OCTO_ASSETS=octo/Assets` when you run it from the repository.
 
+`getPlace` reads `data/places.bin` beside the binary (in the image, `/app/data/places.bin`), else `places.bin` in the config folder; `OCTO_PLACES_FILE` names another file. Without one, every place answers error 70 and the log says so once. The image build makes it from GeoNames' postal codes; to make one by hand:
+
+```bash
+curl -O https://download.geonames.org/export/zip/allCountries.zip && unzip allCountries.zip allCountries.txt
+cargo run --release --bin octo-places -- allCountries.txt places.bin
+```
+
 The C# Octo (2026.10.05 and earlier) is still in `octo/` and `octo.Tests/`, with `Dockerfile.csharp`, until it is removed after the Rust release; nothing ships it. The Rust server reads the files the two share from there: the dashboard (`octo/wwwroot`), images (`octo/Assets`), the list cover design and `appsettings.json`.
 
 To run your changes in the stack, build Octo from the folder; `docker-compose.yml` otherwise pulls the published image:
@@ -1008,6 +1016,7 @@ Project layout:
 
 - [**Navidrome**](https://www.navidrome.org/): the music server Octo proxies.
 - [**slskd**](https://github.com/slskd/slskd): Soulseek with a REST API.
+- [**GeoNames**](https://www.geonames.org/): the postal code data behind `getPlace`, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the image carries its readme as `licenses/GeoNames-postal-codes.txt`.
 - [**Lidarr**](https://github.com/Lidarr/Lidarr): optional album acquisition and import manager.
 - [**yt-dlp**](https://github.com/yt-dlp/yt-dlp): makes YouTube preview feasible.
 - [**Last.fm**](https://www.last.fm/api): similar-tracks API.

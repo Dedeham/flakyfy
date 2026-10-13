@@ -166,6 +166,10 @@ jobs:
           context: ${{ matrix.image.context }}
           platforms: linux/${{ matrix.platform.arch }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The octo image's place data: fresh for each release, and never left out.
+          build-args: |
+            PLACES_REFRESH=${{ github.ref_name }}
+            PLACES_REQUIRED=1
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.image.suffix }},push-by-digest=true,name-canonical=true,push=true
           # A scope per image and platform, so the builds running side by side never fight
           # over the same cache entries.

@@ -3618,6 +3618,206 @@
       "reason": "A library cover asked for with a size is fetched from Navidrome once at 1200 px, kept in <config>/cover-cache/ and every size is cut from that copy in Octo (Catmull-Rom, JPEG q85), so the bytes of a small size differ from Navidrome's own resize. Pinned to the exact picture.",
       "knownDiff": "Library covers kept and cut in Octo",
       "reviewed": "Brandon 2026-10-13 (release go)"
+    },
+    {
+      "id": "places-octo-places-11",
+      "backlog": "places",
+      "requests": [
+        "16-lists/extensions-discovery-off-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 2 != 3$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 2 children != 3$",
+        "^@@ -\\d+,3 \\+\\d+,4 @@$",
+        "^     <versions>2</versions>$",
+        "^\\+    <versions>3</versions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 11 != 12$"
+      ],
+      "reason": "octoPlaces version 1 tells an app that getPlace is there: a postal code, a city or a coordinate as a place with its coordinates, from the GeoNames postal codes built into the image, for the apps' Live radio near you (the desktop app has no location service, and the apps no longer ask Google or Apple). It is listed always, last, so every extension list in the corpus has one more entry; nothing else on these answers changes. The other lines are the earlier entries' (octoTopSongs, octoImports and octoAcquisitions versions), which this entry repeats because one entry has to cover every line of an answer. Pinned per extension count, so a list that grows or shrinks by anything else still shows.",
+      "knownDiff": "`octoPlaces`"
+    },
+    {
+      "id": "places-octo-places-12",
+      "backlog": "places",
+      "requests": [
+        "16-lists/extensions-json",
+        "16-lists/extensions-xml",
+        "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-final-json",
+        "01-system/extensions-json",
+        "01-system/extensions-xml",
+        "01-system/extensions-json-noauth",
+        "01-system/extensions-xml-badpass",
+        "13-downloads/extensions-json",
+        "13-downloads/extensions-xml",
+        "15-radio/extensions-radio-off-json",
+        "20-library-edits/extensions-off-again"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 2 != 3$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 2 children != 3$",
+        "^@@ -\\d+,3 \\+\\d+,4 @@$",
+        "^     <versions>2</versions>$",
+        "^\\+    <versions>3</versions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 12 != 13$",
+        "^/subsonic-response: 12 children != 13$",
+        "^@@\\ \\-39,2\\ \\+42,5\\ @@$",
+        "^\\+  <openSubsonicExtensions name=\"octoPlaces\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoPlaces version 1 tells an app that getPlace is there: a postal code, a city or a coordinate as a place with its coordinates, from the GeoNames postal codes built into the image, for the apps' Live radio near you (the desktop app has no location service, and the apps no longer ask Google or Apple). It is listed always, last, so every extension list in the corpus has one more entry; nothing else on these answers changes. The other lines are the earlier entries' (octoTopSongs, octoImports and octoAcquisitions versions), which this entry repeats because one entry has to cover every line of an answer. Pinned per extension count, so a list that grows or shrinks by anything else still shows.",
+      "knownDiff": "`octoPlaces`"
+    },
+    {
+      "id": "places-octo-places-13-radio",
+      "backlog": "places",
+      "requests": [
+        "15-radio/extensions-radio-on-json",
+        "15-radio/extensions-radio-on-xml"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 2 != 3$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 2 children != 3$",
+        "^@@ -\\d+,3 \\+\\d+,4 @@$",
+        "^     <versions>2</versions>$",
+        "^\\+    <versions>3</versions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 13 != 14$",
+        "^/subsonic-response: 13 children != 14$",
+        "^@@\\ \\-42,2\\ \\+45,5\\ @@$",
+        "^\\+  <openSubsonicExtensions name=\"octoPlaces\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoPlaces version 1 tells an app that getPlace is there: a postal code, a city or a coordinate as a place with its coordinates, from the GeoNames postal codes built into the image, for the apps' Live radio near you (the desktop app has no location service, and the apps no longer ask Google or Apple). It is listed always, last, so every extension list in the corpus has one more entry; nothing else on these answers changes. The other lines are the earlier entries' (octoTopSongs, octoImports and octoAcquisitions versions), which this entry repeats because one entry has to cover every line of an answer. Pinned per extension count, so a list that grows or shrinks by anything else still shows.",
+      "knownDiff": "`octoPlaces`"
+    },
+    {
+      "id": "places-octo-places-13-library",
+      "backlog": "places",
+      "requests": [
+        "20-library-edits/extensions-on-json",
+        "20-library-edits/extensions-on-xml"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 1 != 2$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 1 children != 2$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,3 @@$",
+        "^     <versions>1</versions>$",
+        "^\\+    <versions>2</versions>$",
+        "^   </openSubsonicExtensions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions\\[\\d+\\]\\.versions: array length 2 != 3$",
+        "^/subsonic-response\\[\\d+\\]/openSubsonicExtensions: 2 children != 3$",
+        "^@@ -\\d+,3 \\+\\d+,4 @@$",
+        "^     <versions>2</versions>$",
+        "^\\+    <versions>3</versions>$",
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 13 != 14$",
+        "^/subsonic-response: 13 children != 14$",
+        "^@@\\ \\-44,2\\ \\+47,5\\ @@$",
+        "^\\+  <openSubsonicExtensions name=\"octoPlaces\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoPlaces version 1 tells an app that getPlace is there: a postal code, a city or a coordinate as a place with its coordinates, from the GeoNames postal codes built into the image, for the apps' Live radio near you (the desktop app has no location service, and the apps no longer ask Google or Apple). It is listed always, last, so every extension list in the corpus has one more entry; nothing else on these answers changes. The other lines are the earlier entries' (octoTopSongs, octoImports and octoAcquisitions versions), which this entry repeats because one entry has to cover every line of an answer. Pinned per extension count, so a list that grows or shrinks by anything else still shows.",
+      "knownDiff": "`octoPlaces`"
+    },
+    {
+      "id": "dashboard-files-2026-10-13-places",
+      "backlog": "places",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"waX/id4\\+AJzbVNlp1yiCUjP1CdcXwUfQrGXxhOyVgXY=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ c1a5ff89de3e009cdb54d969d728825233f509d717c147d0ac65f184ec958176\\ \\(209886\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"U61pLi7E5kxQgID8F45CQgHARxu7OrT0rmUorsGfGFw=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 53ad692e2ec4e64c508080fc178e424201c0471bbb3ab4f4ae6528aec19f185c\\ \\(415574\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/209886'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files: index.html gains the About page's Credits card, \"Place data from GeoNames (CC BY 4.0)\", for the place data getPlace answers from. admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
+      "knownDiff": "Dashboard files, 2026-10-13 (place data credit)"
     }
   ]
 }

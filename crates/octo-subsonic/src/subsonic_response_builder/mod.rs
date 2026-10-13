@@ -11,6 +11,7 @@
 
 mod library_actions;
 mod lyrics;
+mod places;
 mod reply;
 mod top_songs;
 mod transition_profile;
@@ -42,6 +43,7 @@ pub use library_actions::{
     RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
 };
 pub use lyrics::{CueLineOut, CueWord, LYRICS_EXTENSION, LYRICS_EXTENSION_VERSION};
+pub use places::{PLACES_EXTENSION, PLACES_EXTENSION_VERSION};
 pub use reply::{ReplyKind, SubsonicReply};
 pub use top_songs::{
     ChartChoiceRow, POPULAR_COMMENT, RankedRow, TopSongRow, TopSongsHeader, chart_playlist_comment,
@@ -84,6 +86,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
+    (PLACES_EXTENSION, &[PLACES_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,

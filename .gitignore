@@ -55,6 +55,8 @@ nunit-*.xml
 
 # Fichiers et dossiers à ignorer pour un projet .NET
 bin/
+# Cargo binaries (crates/*/src/bin) are source, not .NET output.
+!crates/*/src/bin/
 obj/
 *.user
 *.suo

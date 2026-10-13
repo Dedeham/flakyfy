@@ -8,11 +8,13 @@
 # It reads what the C# app already holds: the dashboard (octo/wwwroot), the logo and social
 # images (octo/Assets), the list cover design (octo/Services/CoverArt/Design, built into the
 # binary) and appsettings.json (built in). The release number is the VERSION file (else
-# octo/octo.csproj, octo-core's build.rs).
+# octo/octo.csproj, octo-core's build.rs). The place data getPlace reads (GeoNames' postal
+# codes) is downloaded and converted here, at build time, never by the running server.
 #
 #   docker build -t octo:dev .
 #   docker build --build-arg OCTO_VERSION=2026.11.01.1 -t octo:dev .
 #   docker build --build-arg CARGO_BUILD_JOBS=2 -t octo:dev .   # small machine
+#   docker build --build-arg PLACES_REFRESH=2026-11 -t octo:dev .   # fresh place data
 
 ARG RUST_VERSION=1.99
 ARG CHEF_VERSION=0.1.78
@@ -54,8 +56,50 @@ COPY VERSION ./
 COPY octo/Services/CoverArt/Design octo/Services/CoverArt/Design
 COPY octo/appsettings.json octo/appsettings.Development.json octo/octo.csproj octo/
 ARG OCTO_VERSION
-RUN cargo build --release --locked --package octo --bin octo \
-    && install -D -m 0755 target/release/octo /out/octo
+# octo-places is the converter the place data stage below runs; it is not in the image.
+RUN cargo build --release --locked --package octo --bin octo --bin octo-places \
+    && install -D -m 0755 target/release/octo /out/octo \
+    && install -D -m 0755 target/release/octo-places /out/octo-places
+
+# ---- Place data: the download ----
+# GeoNames' postal codes (https://download.geonames.org/export/zip/, CC BY 4.0) and its readme,
+# which carries the license. Cached like any layer: PLACES_REFRESH changes the cache key, and
+# docker.yml passes the release tag, so each release takes the data as GeoNames has it then.
+# When GeoNames cannot be reached, the image is built without place data and getPlace answers
+# error 70 for every place; PLACES_REQUIRED=1 (docker.yml) fails the build instead.
+FROM debian:bookworm-slim AS geonames
+ARG PLACES_URL=https://download.geonames.org/export/zip
+ARG PLACES_REQUIRED=0
+ARG PLACES_REFRESH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /geonames
+RUN echo "Place data for ${PLACES_REFRESH:-this build}" \
+    && if curl -fsSL --retry 3 -o allCountries.zip "$PLACES_URL/allCountries.zip" \
+          && curl -fsSL --retry 3 -o readme.txt "$PLACES_URL/readme.txt"; then \
+         ls -l allCountries.zip readme.txt; \
+       elif [ "$PLACES_REQUIRED" = 1 ]; then \
+         echo "GeoNames could not be reached" >&2; exit 1; \
+       else \
+         echo "GeoNames could not be reached: this image has no place data" >&2; \
+         rm -f allCountries.zip readme.txt; \
+       fi
+
+# ---- Place data: the conversion ----
+# Into /out/data/places.bin, deflated blocks of sorted lines that getPlace reads a block at a
+# time (octo_core::places), with the readme beside the other licenses.
+FROM debian:bookworm-slim AS places
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/octo-places /usr/local/bin/octo-places
+COPY --from=geonames /geonames /geonames
+RUN mkdir -p /out/data /out/licenses \
+    && if [ -f /geonames/allCountries.zip ]; then \
+         unzip -q -d /tmp /geonames/allCountries.zip allCountries.txt \
+         && octo-places /tmp/allCountries.txt /out/data/places.bin \
+         && cp /geonames/readme.txt /out/licenses/GeoNames-postal-codes.txt \
+         && rm /tmp/allCountries.txt; \
+       fi
 
 # ---- Runtime ----
 FROM debian:bookworm-slim
@@ -82,6 +126,8 @@ COPY octo/wwwroot /app/wwwroot
 COPY octo/Assets /app/Assets
 # Inter is compiled into the binary; its license ships beside it.
 COPY octo/Services/CoverArt/Design/Fonts/OFL.txt /app/licenses/Inter-OFL.txt
+# The place data getPlace reads (data/places.bin beside the binary) and its license.
+COPY --from=places /out/ /app/
 
 # No version label here: the published image gets org.opencontainers.image.version (and the
 # rest) from docker.yml's metadata step, and the release itself is in the binary.

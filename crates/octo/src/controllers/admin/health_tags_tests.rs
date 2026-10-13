@@ -39,7 +39,7 @@ fn setup(actions: LibraryActionSettings) -> Setup {
     std::fs::write(&parade, mp3()).expect("written");
     std::fs::write(&guess, mp3()).expect("written");
 
-    let rows = vec![
+    let rows = [
         LibrarySongRow {
             id: "song-parade".into(),
             path: "parade.mp3".into(),

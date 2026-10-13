@@ -209,11 +209,12 @@ pub fn plain_album(album: &str, kind: RecordingKind) -> Option<String> {
         rest = &rest[close + 1..];
     }
     kept.push_str(rest);
-    if !removed && let Some(dash) = kept.rfind(" - ") {
-        if names_kind(&kept[dash + 3..]) {
-            kept.truncate(dash);
-            removed = true;
-        }
+    if !removed
+        && let Some(dash) = kept.rfind(" - ")
+        && names_kind(&kept[dash + 3..])
+    {
+        kept.truncate(dash);
+        removed = true;
     }
     let plain = kept.split_whitespace().collect::<Vec<_>>().join(" ");
     (removed && !plain.is_empty() && !names_kind(&plain)).then_some(plain)

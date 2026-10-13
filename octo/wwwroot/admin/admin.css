@@ -2209,7 +2209,9 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
   .sidebar-nav-item { width: auto; flex: 0 0 auto; white-space: nowrap; margin-top: 0; height: 40px; padding: 0 12px; }
   .content { padding: var(--s-page) var(--s-xl) 64px; }
   :root { --t-title: 28px; }
-  .set-section { scroll-margin-top: 136px; }
+  /* The sidebar strip stays stuck to the top, so every jump to a spot on the page stops below it.
+   * --strip-h is the strip's measured height, set by admin.js; it grows when its rows wrap. */
+  html { scroll-padding-top: var(--strip-h, 120px); }
   .page-toc { margin-top: calc(-1 * var(--s-l)); }
   .page-header { flex-wrap: wrap; gap: var(--s-l); }
   .page-header > div { flex-basis: calc(100% - 60px); }

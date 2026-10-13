@@ -120,6 +120,15 @@ function icon(name, extraClass = '') {
 const navItems = document.querySelectorAll('.sidebar-nav-item');
 const panes    = document.querySelectorAll('section[data-pane]');
 
+// On a phone the sidebar is a strip stuck to the top, and its height changes as its rows wrap
+// (the signed-in line, Restart). --strip-h keeps jumps to a spot on the page below it.
+const sidebarStrip = document.querySelector('.sidebar');
+if (sidebarStrip && 'ResizeObserver' in window) {
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty('--strip-h', `${sidebarStrip.offsetHeight}px`);
+  }).observe(sidebarStrip);
+}
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -128,9 +137,14 @@ function activateTab(name, { focus = false } = {}) {
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
-    // On a phone the nav is a sideways strip; keep the current pill in view.
+    // On a phone the nav is a sideways strip; keep the current pill in view. Only the strip
+    // scrolls: the page's scroll padding covers the strip itself, so scrollIntoView would move
+    // the page as well.
     if (on && window.matchMedia('(max-width: 760px)').matches) {
-      b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      const nav = b.closest('.sidebar-nav');
+      const pill = b.getBoundingClientRect();
+      const box = nav?.getBoundingClientRect();
+      if (box) nav.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
     }
   });
   panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
@@ -6384,10 +6398,6 @@ function showUpdateCard() {
   card.classList.add('is-pointed');
   requestAnimationFrame(() => {
     const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // On a phone the sidebar is a strip stuck to the top, so the card stops below it.
-    const strip = window.matchMedia('(max-width: 760px)').matches
-      ? document.querySelector('.sidebar')?.offsetHeight || 0 : 0;
-    card.style.scrollMarginTop = strip ? `calc(${strip}px + var(--s-xl))` : '';
     card.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
   });
 }

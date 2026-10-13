@@ -3,12 +3,18 @@
 //! and the trickle that fetches the rest. Lists belong to the Navidrome user signed in on the
 //! page, the same person an Octo app signed in as sees them, so it needs the dashboard's sign-in.
 //!
+//! Every endpoint also takes `for=<Navidrome username>` in the query: the import, its lists,
+//! playlists, downloads and status are then that person's, exactly as if they had imported it
+//! themselves. Spotify's sign-in stays each person's own, so its endpoints act only for the
+//! signed-in person.
+//!
 //! Also the page Spotify sends the browser back to when the redirect URI is Octo's own address.
 
 use axum::extract::{DefaultBodyLimit, FromRequest, Path, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use octo_core::common::dotnet::{eq_ignore_case, to_lower_invariant};
 use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
@@ -27,6 +33,7 @@ use crate::services::imports::import_service::CALLBACK_PATH;
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/imports", get(overview))
+        .route("/api/admin/imports/people", get(people))
         .route("/api/admin/imports/lists/{id}", get(list).delete(remove))
         .route("/api/admin/imports/spotify/connect", post(connect))
         .route("/api/admin/imports/spotify/finish", post(finish))
@@ -65,6 +72,63 @@ fn sign_in() -> Response {
         StatusCode::UNAUTHORIZED,
         "Sign in with your Navidrome account first.",
     )
+}
+
+/// The person a request acts for: the Navidrome user its `for` names, spelled the way Navidrome
+/// spells them, or the signed-in person when `for` is absent or names them. A name Navidrome
+/// has no user for is answered 400.
+#[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
+async fn acting_for(state: &AppState, uri: &Uri, signed_in: String) -> Result<String, Response> {
+    let Some(wanted) = query(uri, "for")
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(signed_in);
+    };
+    if eq_ignore_case(&wanted, &signed_in) {
+        return Ok(signed_in);
+    }
+    let users = state.navidrome_admin.list_users().await.map_err(|e| {
+        error_json(
+            StatusCode::BAD_GATEWAY,
+            &format!("Octo could not read the users on this server: {e}"),
+        )
+    })?;
+    users
+        .iter()
+        .map(|user| user.user_name())
+        .find(|name| eq_ignore_case(name, &wanted))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            error_json(
+                StatusCode::BAD_REQUEST,
+                &format!("There is no user named {wanted} on this server."),
+            )
+        })
+}
+
+/// The signed-in person and the person the request acts for, or the answer that refuses it.
+#[allow(clippy::result_large_err)] // the error is the answer itself, sent at once
+async fn whose(state: &AppState, headers: &HeaderMap, uri: &Uri) -> Result<(String, String), Response> {
+    let admin = signed_in(state, headers).ok_or_else(sign_in)?;
+    let user = acting_for(state, uri, admin.clone()).await?;
+    Ok((admin, user))
+}
+
+/// Spotify's sign-in is each person's own: for anyone else, the refusal that says so.
+fn spotify_refusal(admin: &str, user: &str) -> Option<Response> {
+    (!eq_ignore_case(admin, user)).then(|| {
+        answer(&ImportActionResult::failed(format!(
+            "{user} connects Spotify from their own sign-in."
+        )))
+    })
+}
+
+/// Logs a new import the signed-in person started for someone else.
+fn note_import_for(admin: &str, user: &str) {
+    if !eq_ignore_case(admin, user) {
+        info!("Import for {user} started by {admin}");
+    }
 }
 
 /// `result.Ok ? Ok(result) : BadRequest(result)`.
@@ -212,17 +276,68 @@ async fn split(request: Request) -> (axum::http::request::Parts, axum::body::Byt
 
 // ---- The endpoints ----------------------------------------------------------------------------
 
-async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn overview(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    let (_, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     let overview = state.imports.overview(&user);
     ok(&json!({ "user": user, "overview": overview }))
 }
 
-async fn list(State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
+/// Who the page can import for: the signed-in person first, then every other Navidrome user by
+/// name, each marked when they are a Family member (their songs go to their own library).
+async fn people(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(admin) = signed_in(&state, &headers) else {
         return sign_in();
+    };
+    let family_on = state.settings.current().family.enabled;
+    let member = |name: &str| family_on && state.family_store.member(name).is_some();
+    let (mut users, problem) = match state.navidrome_admin.list_users().await {
+        Ok(users) => (users, None),
+        Err(e) => (
+            Vec::new(),
+            Some(format!("Octo could not read the users on this server: {e}")),
+        ),
+    };
+    users.retain(|user| !user.user_name().trim().is_empty());
+    users.sort_by_key(|user| to_lower_invariant(user.user_name()));
+    let own_name = users
+        .iter()
+        .find(|user| eq_ignore_case(user.user_name(), &admin))
+        .map(|user| user.name().to_string())
+        .unwrap_or_default();
+    let mut rows = vec![json!({
+        "username": admin,
+        "name": own_name,
+        "member": member(&admin),
+        "you": true,
+    })];
+    rows.extend(
+        users
+            .iter()
+            .filter(|user| !eq_ignore_case(user.user_name(), &admin))
+            .map(|user| {
+                json!({
+                    "username": user.user_name(),
+                    "name": user.name(),
+                    "member": member(user.user_name()),
+                    "you": false,
+                })
+            }),
+    );
+    ok(&json!({ "signedIn": admin, "users": rows, "problem": problem }))
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let (_, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     match state.imports.detail(&user, &id) {
         Some(detail) => ok(&detail),
@@ -230,10 +345,14 @@ async fn list(State(state): State<AppState>, Path(id): Path<String>, headers: He
     }
 }
 
-async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn connect(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    let (admin, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
+    if let Some(refused) = spotify_refusal(&admin, &user) {
+        return refused;
+    }
     answer(&state.imports.begin_spotify(&user, None))
 }
 
@@ -243,9 +362,13 @@ async fn finish(State(state): State<AppState>, request: Request) -> AppResult {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return Ok(sign_in());
+    let (admin, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
+    if let Some(refused) = spotify_refusal(&admin, &user) {
+        return Ok(refused);
+    }
     let result = state
         .imports
         .finish_spotify(
@@ -259,17 +382,25 @@ async fn finish(State(state): State<AppState>, request: Request) -> AppResult {
     Ok(answer(&result))
 }
 
-async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn disconnect(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    let (admin, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
+    if let Some(refused) = spotify_refusal(&admin, &user) {
+        return refused;
+    }
     answer(&state.imports.disconnect_spotify(&user))
 }
 
-async fn read(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn read(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    let (admin, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
+    if let Some(refused) = spotify_refusal(&admin, &user) {
+        return refused;
+    }
     ok(&ImportActionResult::ok(if state.imports.start_reading(&user) {
         "Reading your Spotify lists again."
     } else {
@@ -283,9 +414,11 @@ async fn link(State(state): State<AppState>, request: Request) -> AppResult {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return Ok(sign_in());
+    let (admin, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
+    note_import_for(&admin, &user);
     // Not tied to the request: a closed tab must not leave a list half read.
     let imports = state.imports.clone();
     let url = request.url.unwrap_or_default();
@@ -309,8 +442,9 @@ async fn file(State(state): State<AppState>, request: Request) -> AppResult {
     {
         return Ok(problem(StatusCode::NOT_FOUND));
     }
-    let Some(user) = signed_in(&state, request.headers()) else {
-        return Ok(sign_in());
+    let (admin, user) = match whose(&state, request.headers(), request.uri()).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
     let choose = || answer(&ImportActionResult::failed("Choose a file first."));
     if content_type.is_none() {
@@ -343,6 +477,7 @@ async fn file(State(state): State<AppState>, request: Request) -> AppResult {
     let Some((name, bytes)) = found.filter(|(_, bytes)| !bytes.is_empty()) else {
         return Ok(choose());
     };
+    note_import_for(&admin, &user);
     let imports = state.imports.clone();
     let result = tokio::spawn(async move { imports.add_file(&user, &name, &bytes).await })
         .await
@@ -357,13 +492,15 @@ async fn text(State(state): State<AppState>, request: Request) -> AppResult {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return Ok(sign_in());
+    let (admin, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
     let text = request.text.unwrap_or_default();
     if text.trim().is_empty() {
         return Ok(answer(&ImportActionResult::failed("Paste a list first.")));
     }
+    note_import_for(&admin, &user);
     let imports = state.imports.clone();
     let name = request.name;
     let result = tokio::spawn(async move { imports.add_text(&user, name.as_deref(), &text).await })
@@ -373,9 +510,9 @@ async fn text(State(state): State<AppState>, request: Request) -> AppResult {
 }
 
 /// Where people can bring their music from, for the dashboard's guide.
-async fn services(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if signed_in(&state, &headers).is_none() {
-        return sign_in();
+async fn services(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    if let Err(refused) = whose(&state, &headers, &uri).await {
+        return refused;
     }
     ok(&state.imports.services())
 }
@@ -386,8 +523,9 @@ async fn playlist(State(state): State<AppState>, Path(id): Path<String>, request
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return Ok(sign_in());
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
     let imports = state.imports.clone();
     let result = tokio::spawn(async move { imports.set_playlist(&user, &id, request.on).await })
@@ -402,8 +540,9 @@ async fn fetch(State(state): State<AppState>, Path(id): Path<String>, request: R
         Ok(request) => request,
         Err(refused) => return refused,
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return sign_in();
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.set_get_missing(&user, &id, request.on))
 }
@@ -414,8 +553,9 @@ async fn songs(State(state): State<AppState>, Path(id): Path<String>, request: R
         Ok(request) => request,
         Err(refused) => return refused,
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return sign_in();
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(
         &state
@@ -424,9 +564,15 @@ async fn songs(State(state): State<AppState>, Path(id): Path<String>, request: R
     )
 }
 
-async fn refresh(State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> AppResult {
-    let Some(user) = signed_in(&state, &headers) else {
-        return Ok(sign_in());
+async fn refresh(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
+    let (_, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return Ok(refused),
     };
     let imports = state.imports.clone();
     let result = tokio::spawn(async move { imports.refresh(&user, &id).await })
@@ -436,9 +582,15 @@ async fn refresh(State(state): State<AppState>, Path(id): Path<String>, headers:
     Ok(answer(&result))
 }
 
-async fn remove(State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let (_, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.remove(&user, &id))
 }
@@ -449,8 +601,9 @@ async fn pause(State(state): State<AppState>, request: Request) -> Response {
         Ok(request) => request,
         Err(refused) => return refused,
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return sign_in();
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.pause(&user, request.paused))
 }
@@ -461,8 +614,9 @@ async fn retry(State(state): State<AppState>, request: Request) -> Response {
         Ok(request) => request,
         Err(refused) => return refused,
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return sign_in();
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.retry(&user, request.keys().as_deref()))
 }
@@ -473,15 +627,17 @@ async fn skip(State(state): State<AppState>, request: Request) -> Response {
         Ok(request) => request,
         Err(refused) => return refused,
     };
-    let Some(user) = signed_in(&state, &parts.headers) else {
-        return sign_in();
+    let (_, user) = match whose(&state, &parts.headers, &parts.uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.skip(&user, &request.keys().unwrap_or_default()))
 }
 
-async fn clear(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Some(user) = signed_in(&state, &headers) else {
-        return sign_in();
+async fn clear(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    let (_, user) = match whose(&state, &headers, &uri).await {
+        Ok(people) => people,
+        Err(refused) => return refused,
     };
     answer(&state.imports.clear_finished(&user))
 }

@@ -252,6 +252,7 @@ async fn fixture(loudness_target: i32) -> Fixture {
         last_fm: None,
         listen_brainz: None,
         last_fm_scrobbles: None,
+        recommendations: None,
     });
     state.replace_stations(
         "alice",
@@ -502,6 +503,7 @@ fn clone_shared(shared: &Shared_) -> Shared_ {
         last_fm: shared.last_fm.clone(),
         listen_brainz: shared.listen_brainz.clone(),
         last_fm_scrobbles: shared.last_fm_scrobbles.clone(),
+        recommendations: shared.recommendations.clone(),
         family: shared.family.clone(),
     }
 }
@@ -568,4 +570,113 @@ async fn the_warmup_readies_persisted_stations_at_startup() {
     run.await.unwrap().unwrap();
     // The warm never records a play.
     assert!(fixture.state.get_user("alice").plays.is_empty());
+}
+
+/// Past the snapshot's last song the stream goes on with new songs of the station's kind, asked
+/// of the stations' picker, instead of starting again from the first song.
+#[tokio::test]
+async fn the_stream_goes_on_past_the_snapshot_with_new_songs() {
+    let fixture = fixture(0).await;
+    let last_fm_server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(|request: &wiremock::Request| {
+            let method = request
+                .url
+                .query_pairs()
+                .find(|(key, _)| key == "method")
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or_default();
+            let body = if method == "tag.gettoptracks" {
+                let tracks: Vec<serde_json::Value> = (0..20)
+                    .map(|index| {
+                        serde_json::json!({
+                            "name": format!("Tag{index}"), "duration": 180000,
+                            "artist": {"name": format!("Tag Artist {index}")}
+                        })
+                    })
+                    .collect();
+                serde_json::json!({"tracks": {"track": tracks}})
+            } else {
+                serde_json::json!({})
+            };
+            ResponseTemplate::new(200).set_body_string(body.to_string())
+        })
+        .mount(&last_fm_server)
+        .await;
+    let settings = fixture.service.shared.settings.clone();
+    let mut keyed = settings.current().as_ref().clone();
+    keyed.last_fm.api_key = "key".into();
+    settings.set(keyed);
+    let metadata = Arc::new(FakeMetadata::default());
+    for (index, title) in TITLES.iter().enumerate() {
+        metadata.hits.lock().insert(
+            (format!("Artist {index}"), title.to_string()),
+            Song {
+                id: format!("ext-soulseek-song-{title}"),
+                artist: format!("Artist {index}"),
+                title: title.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+    for index in 0..20 {
+        metadata.hits.lock().insert(
+            (format!("Tag Artist {index}"), format!("Tag{index}")),
+            Song {
+                id: format!("ext-soulseek-song-Tag{index}"),
+                artist: format!("Tag Artist {index}"),
+                title: format!("Tag{index}"),
+                ..Default::default()
+            },
+        );
+    }
+    let mut station = fixture.state.get_user("alice").stations[0].clone();
+    station.kind = octo_core::models::radio::LastFmRadioStationKind::Genre;
+    station.seeds = vec!["rock".into()];
+    fixture.state.replace_stations("alice", &[station]);
+    let last_fm = Arc::new(LastFmService::with_base_url(
+        settings.clone(),
+        &format!("{}/", last_fm_server.uri()),
+    ));
+    let recommendations = Arc::new(LastFmRadioRecommendationService::new(
+        last_fm,
+        fixture.state.clone(),
+        settings.clone(),
+        None,
+    ));
+    let shared = Shared_ {
+        metadata: metadata.clone(),
+        recommendations: Some(recommendations),
+        ..clone_shared(&fixture.service.shared)
+    };
+    let service = LastFmRadioStreamService {
+        resolver: LastFmRadioTrackResolver::new(
+            fixture.service.proxy.clone(),
+            metadata,
+            shared.registry.clone(),
+        ),
+        shared: Arc::new(shared),
+        ..fixture.service.clone()
+    };
+
+    let session = session(&fixture);
+    let snapshot: String = TITLES.iter().map(|title| format!("MP3:<{title}>")).collect();
+    let hang_up = CancellationToken::new();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let mut client = Client {
+        received: received.clone(),
+        limit: snapshot.len() + "MP3:<Tag".len(),
+        hang_up: hang_up.clone(),
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        service.stream(&session, &mut client, &hang_up, false),
+    )
+    .await
+    .expect("the stream ended")
+    .expect("the stream ends when the client hangs up");
+
+    let text = String::from_utf8(received.lock().clone()).unwrap();
+    assert!(text.starts_with(&snapshot), "{text}");
+    assert!(text[snapshot.len()..].starts_with("MP3:<Tag"), "{text}");
 }

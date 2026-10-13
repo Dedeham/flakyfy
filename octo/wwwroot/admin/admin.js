@@ -2633,6 +2633,15 @@ document.getElementById('notices-refresh')?.addEventListener('click', () =>
         + (scan.complete ? '.' : ', but the walk did not finish, so nothing was settled.');
     }));
 
+// A star rating that asked for an action and got none says why, with the setting to change.
+document.getElementById('ignored-ratings-refresh')?.addEventListener('click', () =>
+  showSessionTable(document.getElementById('ignored-ratings-list'), '/api/admin/library-actions/ignored-ratings',
+    ['When', 'Track', 'Who', 'Why'], entry => `
+            <span class="value">${esc(new Date(entry.atUtc).toLocaleString())}</span>
+            <span class="key">${entry.title ? `${entry.artist ? `${esc(entry.artist)} - ` : ''}${esc(entry.title)}` : esc(entry.songId)}</span>
+            <span class="value">${esc(entry.username || 'Unknown')}</span>
+            <span class="value">${esc(String(entry.rating))} star${entry.rating === 1 ? '' : 's'} for ${esc(entry.action)}: ${esc(entry.reason)}</span>`));
+
 document.getElementById('duplicates-scan')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
   button.disabled = true;

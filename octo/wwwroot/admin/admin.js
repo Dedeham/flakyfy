@@ -6732,7 +6732,7 @@ document.getElementById('share-rescan')?.addEventListener('click', async event =
 // from there, what the library has of each list, playlists kept in Navidrome, and the trickle
 // that fetches the rest
 // ────────────────────────────────────────────────────────────────
-const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, waitingForPaste: false, services: null, choice: null, busy: false };
+const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, waitingForPaste: false, services: null, choice: null, busy: false, people: null, forUser: null };
 const impEl = id => document.getElementById(id);
 const impStateWords = {
   have: 'In your library', missing: 'Missing', queued: 'Queued', downloading: 'Fetching',
@@ -6748,17 +6748,86 @@ const IMP_OTHER = [
   { id: 'paste', name: 'Paste a list', glyph: 'i-clipboard-text' },
 ];
 const IMP_CHOICE_KEY = 'octo.import.choice';
+// Whom the page imports for, kept for this tab only.
+const IMP_FOR_KEY = 'octo.import.for';
 // The server takes a file up to this size (ImportFileReader::MAX_BYTES).
 const IMP_MAX_BYTES = 64 * 1024 * 1024;
 
-// The page acts for the Navidrome account signed in on it, like Better quality.
-async function impFetch(path, options = {}) {
-  let response = await api(path, { credentials: 'same-origin', ...options });
+// The address with the person picked under Import for, when it is someone else.
+function impFor(path, forUser = imp.forUser) {
+  if (!forUser) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}for=${encodeURIComponent(forUser)}`;
+}
+
+// The page acts for the Navidrome account signed in on it, like Better quality, or for the person
+// picked under Import for.
+async function impFetch(path, options = {}, forUser = imp.forUser) {
+  const address = impFor(path, forUser);
+  let response = await api(address, { credentials: 'same-origin', ...options });
   if (response.status === 401 && await browseAuthenticate(impEl('imp-lists'))) {
-    response = await api(path, { credentials: 'same-origin', ...options });
+    response = await api(address, { credentials: 'same-origin', ...options });
   }
   return response;
 }
+
+// The name the page uses for the person picked under Import for.
+function impForName() {
+  const person = imp.people?.find(p => p.username === imp.forUser);
+  return person?.name || imp.forUser || '';
+}
+
+// Who the page can import for: yourself first, then every Navidrome user, Family members marked.
+async function loadImportPeople() {
+  const response = await impFetch('/api/admin/imports/people', {}, null).catch(() => null);
+  const body = await response?.json().catch(() => null);
+  const people = response?.ok && Array.isArray(body?.users) ? body.users : [];
+  // Asked again on the next load when this one found nobody (a sign-in that was not made).
+  imp.people = people.length ? people : null;
+  let kept = null;
+  try { kept = sessionStorage.getItem(IMP_FOR_KEY); } catch { /* a blocked store remembers nothing */ }
+  const keptPerson = kept ? people.find(p => !p.you && p.username.toLowerCase() === kept.toLowerCase()) : null;
+  imp.forUser = keptPerson?.username ?? null;
+  const select = impEl('imp-for');
+  select.innerHTML = people.map(person => {
+    const label = person.you ? 'Yourself'
+      : person.name && person.name !== person.username ? `${person.name} (${person.username})` : person.username;
+    return `<option value="${person.you ? '' : esc(person.username)}">${esc(label)}${person.member ? ' · Family member' : ''}</option>`;
+  }).join('');
+  select.value = imp.forUser ?? '';
+  // One account on the server leaves nobody else to import for.
+  impEl('imp-for-section').hidden = people.length < 2;
+  renderImportFor();
+}
+
+function renderImportFor() {
+  const person = imp.people?.find(p => p.username === imp.forUser);
+  const name = impForName();
+  impEl('imp-for-line').textContent = !person
+    ? 'Lists, playlists and fetched songs go to the person you pick.'
+    : person.member
+      ? `Lists and playlists below are ${name}'s, as if ${name} imported them. ${name} is a Family member, so fetched songs go to their own library.`
+      : `Lists and playlists below are ${name}'s, as if ${name} imported them.`;
+  impEl('imp-lists-title').textContent = person ? `${name}'s lists` : 'Your lists';
+}
+
+impEl('imp-for')?.addEventListener('change', event => {
+  imp.forUser = event.target.value || null;
+  try {
+    if (imp.forUser) sessionStorage.setItem(IMP_FOR_KEY, imp.forUser); else sessionStorage.removeItem(IMP_FOR_KEY);
+  } catch { /* not remembered */ }
+  // Another person's page starts empty: none of the last person's lists, songs or result.
+  imp.view = null;
+  imp.open = null;
+  imp.detail = null;
+  imp.picked.clear();
+  imp.waitingForPaste = false;
+  impEl('imp-detail').hidden = true;
+  if (!imp.busy) impEl('imp-result').hidden = true;
+  if (imp.forUser && imp.choice === 'spotify') imp.choice = null;
+  renderImportFor();
+  renderImportServices();
+  loadImports();
+});
 
 async function impPost(path, body, anchor) {
   const response = await impFetch(path, {
@@ -6808,6 +6877,8 @@ async function loadImportServices() {
   if (!imp.choice) {
     let kept = null;
     try { kept = localStorage.getItem(IMP_CHOICE_KEY); } catch { /* a blocked store remembers nothing */ }
+    // Spotify connects only for the person signed in, so it is not picked for someone else.
+    if (kept === 'spotify' && imp.forUser) kept = null;
     if (kept && (imp.services.some(s => s.id === kept) || IMP_OTHER.some(o => o.id === kept))) imp.choice = kept;
   }
   renderImportServices();
@@ -6817,12 +6888,18 @@ function renderImportServices() {
   const grid = impEl('imp-services');
   if (!grid || !imp.services) return;
   const tiles = [...imp.services.map(s => ({ id: s.id, name: s.name })), ...IMP_OTHER];
+  // Spotify's sign-in is each person's own: for someone else only files and pasted lists work.
+  const spotifyOff = !!imp.forUser;
   grid.innerHTML = tiles.map(tile => {
     const on = imp.choice === tile.id;
-    return `<button type="button" class="imp-svc${on ? ' selected' : ''}" data-imp-choice="${esc(tile.id)}" aria-pressed="${on}">
+    const off = spotifyOff && tile.id === 'spotify';
+    return `<button type="button" class="imp-svc${on ? ' selected' : ''}" data-imp-choice="${esc(tile.id)}" aria-pressed="${on}"${off ? ' disabled aria-describedby="imp-svc-note"' : ''}>
       ${impLogo(tile.id)}<span class="imp-svc-name">${esc(tile.name)}</span>
       <span class="imp-svc-check" aria-hidden="true">${icon('i-check')}</span></button>`;
   }).join('');
+  const note = impEl('imp-svc-note');
+  note.hidden = !spotifyOff;
+  note.textContent = spotifyOff ? `${impForName()} connects Spotify from their own sign-in.` : '';
   renderImportPanel();
 }
 
@@ -6869,7 +6946,7 @@ function renderImportPanel() {
 
 impEl('imp-services')?.addEventListener('click', event => {
   const tile = event.target.closest('[data-imp-choice]');
-  if (!tile) return;
+  if (!tile || tile.disabled) return;
   if (imp.choice !== tile.dataset.impChoice && !imp.busy) impEl('imp-result').hidden = true;
   imp.choice = tile.dataset.impChoice;
   try { localStorage.setItem(IMP_CHOICE_KEY, imp.choice); } catch { /* not remembered */ }
@@ -6921,7 +6998,7 @@ function impSendFile(file, onProgress, onSent) {
     const form = new FormData();
     form.append('file', file, file.name);
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/admin/imports/file');
+    xhr.open('POST', impFor('/api/admin/imports/file'));
     xhr.withCredentials = true;
     xhr.setRequestHeader('X-Octo-Admin', '1');
     xhr.upload.addEventListener('progress', e => { if (e.lengthComputable) onProgress(e.loaded, e.total); });
@@ -6944,6 +7021,8 @@ async function impUpload(file) {
     return;
   }
   imp.busy = true;
+  // The file goes to the person picked when it was dropped, so the pick holds until it is in.
+  impEl('imp-for').disabled = true;
   impShowRun(file);
   try {
     let answer = null;
@@ -6965,6 +7044,7 @@ async function impUpload(file) {
     }
   } finally {
     imp.busy = false;
+    impEl('imp-for').disabled = false;
   }
 }
 
@@ -7021,7 +7101,7 @@ function impShowResult({ error = null, list = null, message = '', from = '' }) {
     <div class="imp-result-head">${icon('i-check-circle-fill')}<div><strong>Added ${esc(list.name)}</strong>
       <p>${esc(impCount(total, 'song'))}${from ? ` from ${esc(from)}` : ''}</p></div></div>
     <div class="imp-result-stats">
-      <div class="imp-stat"><span class="imp-stat-n">${list.have.toLocaleString()}</span><span class="imp-stat-l">already in your library</span></div>
+      <div class="imp-stat"><span class="imp-stat-n">${list.have.toLocaleString()}</span><span class="imp-stat-l">${imp.forUser ? 'already in their library' : 'already in your library'}</span></div>
       <div class="imp-stat"><span class="imp-stat-n">${missing.toLocaleString()}</span><span class="imp-stat-l">${missing ? 'missing' : 'missing, so nothing to fetch'}</span></div>
     </div>
     <span class="lossy-meter imp-result-meter" aria-hidden="true"><span style="width:${pct}%"></span></span>
@@ -7067,11 +7147,15 @@ impEl('imp-result')?.addEventListener('click', async event => {
 
 async function loadImports() {
   clearTimeout(imp.timer);
+  if (!imp.people) await loadImportPeople();
   loadImportServices();
-  if (!imp.view) impEl('imp-lists').innerHTML = stateBlock('loading', 'Reading your lists…');
+  if (!imp.view) impEl('imp-lists').innerHTML = stateBlock('loading', imp.forUser ? `Reading ${impForName()}'s lists…` : 'Reading your lists…');
+  const forUser = imp.forUser;
   try {
     const response = await impFetch('/api/admin/imports');
     const body = await response.json().catch(() => ({}));
+    // A pick changed while this was read: the newer read shows its own person.
+    if (imp.forUser !== forUser) return;
     if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
     imp.view = body.overview;
     imp.user = body.user;
@@ -7138,9 +7222,11 @@ function renderImportLists() {
   const lists = imp.view.lists || [];
   const holder = impEl('imp-lists');
   if (!lists.length) {
-    holder.innerHTML = stateBlock('empty', imp.view.spotify.connected
-      ? 'No lists yet. Read again to look at your Spotify once more.'
-      : 'No lists yet. Pick where your music is now, above, to bring your first one.');
+    holder.innerHTML = stateBlock('empty', imp.forUser
+      ? `No lists for ${impForName()} yet. Pick where their music is now, above, to bring the first one.`
+      : imp.view.spotify.connected
+        ? 'No lists yet. Read again to look at your Spotify once more.'
+        : 'No lists yet. Pick where your music is now, above, to bring your first one.');
     return;
   }
   holder.innerHTML = `

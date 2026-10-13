@@ -2116,6 +2116,15 @@
 
         <div class="notice notice-warn" id="imp-library-problem" hidden></div>
 
+        <div class="set-section" id="imp-for-section" hidden>
+          <div class="set-card">
+            <div class="set-row imp-for-row">
+              <label class="set-info" for="imp-for"><span class="set-info-t">Import for</span><span class="set-info-d" id="imp-for-line">Lists, playlists and fetched songs go to the person you pick.</span></label>
+              <div class="set-ctrl"><select class="set-input" id="imp-for"></select></div>
+            </div>
+          </div>
+        </div>
+
         <div class="set-section">
           <div class="set-head">
             <h3 class="set-title">Where is your music now?</h3>
@@ -2123,6 +2132,7 @@
           </div>
           <div class="set-card imp-card">
             <div class="imp-svc-grid" id="imp-services" role="group" aria-label="Where your music is now"></div>
+            <p class="set-info-d imp-svc-note" id="imp-svc-note" hidden></p>
 
             <div class="imp-panel" id="imp-panel" hidden>
               <div class="imp-panel-head">
@@ -2206,7 +2216,7 @@
 
         <div class="set-section">
           <div class="set-head">
-            <h3 class="set-title">Your lists</h3>
+            <h3 class="set-title" id="imp-lists-title">Your lists</h3>
             <p class="set-desc">Open a list to see its songs. <strong>Keep as playlist</strong> makes a Navidrome playlist of it in its own order. <strong>Get missing songs</strong> fetches the songs you do not have yet, and any added to it later.</p>
           </div>
           <div class="set-card imp-card imp-lists-card">

@@ -1294,6 +1294,18 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-svc.selected,
 .imp-svc.selected:hover { background: var(--accent-fill); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 18px rgba(0, 0, 0, 0.30); color: var(--accent-ink); font-weight: 650; }
 .imp-svc.selected .imp-svc-check { display: inline-flex; }
+/* A way in the person picked under Import for cannot use from here. */
+.imp-svc:disabled,
+.imp-svc:disabled:hover { background: var(--nest); color: var(--ink-3); cursor: not-allowed; opacity: 0.5; transform: none; }
+.imp-svc:disabled .imp-logo { filter: grayscale(1); transform: none; }
+.imp-svc-note { margin: 0; }
+
+/* Import for: whose lists, playlists and fetched songs the page works on. */
+.imp-for-row .set-ctrl select { min-width: 220px; }
+@media (max-width: 760px) {
+  .imp-for-row { flex-direction: column; align-items: stretch; }
+  .imp-for-row .set-ctrl, .imp-for-row .set-ctrl select { width: 100%; min-width: 0; min-height: 44px; }
+}
 
 /* A badge stands on its own color; the two ways in that are not a service get a glass one. */
 .imp-logo { display: inline-flex; flex: none; width: 32px; height: 32px; border-radius: 24%; }

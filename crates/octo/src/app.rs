@@ -105,8 +105,8 @@ use crate::services::library::{
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
     LibraryActionPlaylistWorker, LibraryActionQuarantine, LibraryActionRatingWorker, LibraryOwnership,
-    NavidromePlaylistApi, NavidromeSongPathResolver, NoticeQueue, OwnershipNavidrome, RejectionStore,
-    SongAnswers, UpgradeQueue, UpgradeSources,
+    MissingRows, NavidromePlaylistApi, NavidromeSongPathResolver, NoticeQueue, OwnershipNavidrome,
+    RejectionStore, SongAnswers, UpgradeQueue, UpgradeSources,
 };
 use crate::services::lidarr::{
     ILidarrHeartAcquisitionService, ILidarrTrackFetcher, LidarrAlbumClaims, LidarrClient,
@@ -2068,15 +2068,18 @@ impl LibraryActions {
             navidrome.subsonic_proxy.clone(),
             settings.clone(),
         ));
-        let playlist_worker = Arc::new(LibraryActionPlaylistWorker::new(
-            executor.clone(),
-            stores.library_action_journal.clone(),
-            quarantine.clone(),
-            navidrome.navidrome_song_path_resolver.clone(),
-            navidrome.navidrome_identity.clone(),
-            navidrome.navidrome_playlist_api.clone(),
-            settings.clone(),
-        ));
+        let playlist_worker = Arc::new(
+            LibraryActionPlaylistWorker::new(
+                executor.clone(),
+                stores.library_action_journal.clone(),
+                quarantine.clone(),
+                navidrome.navidrome_song_path_resolver.clone(),
+                navidrome.navidrome_identity.clone(),
+                navidrome.navidrome_playlist_api.clone(),
+                settings.clone(),
+            )
+            .with_missing_rows(Arc::new(MissingRows::new(navidrome.navidrome_admin.clone()))),
+        );
         LibraryActions {
             notice_queue,
             quarantine,

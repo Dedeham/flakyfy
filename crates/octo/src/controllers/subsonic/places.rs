@@ -9,6 +9,7 @@ use std::sync::Arc;
 use axum::extract::{Request, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
+use tracing::error;
 
 use super::caller_checks::{SubsonicCall, refuse_unless_signed_in};
 use crate::app::AppState;
@@ -112,8 +113,10 @@ pub async fn get_place(State(state): State<AppState>, req: Request) -> AppResult
         Ask::Near { latitude, longitude } => places.nearest(latitude, longitude),
     })
     .await
-    .ok()
-    .flatten();
+    .unwrap_or_else(|e| {
+        error!("getPlace: the place lookup did not finish ({e}), so it answers error 70");
+        None
+    });
     Ok(match found {
         Some(place) => builder.create_place_response(&format, &place).into_response(),
         None => builder.create_error(&format, 70, UNKNOWN_PLACE).into_response(),

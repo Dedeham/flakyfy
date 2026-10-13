@@ -592,7 +592,7 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// octoTopSongs, octoRadioSources and octoTransitions are left out;
+    /// octoTopSongs, octoRadioSources, octoTransitions and octoPlaces are left out;
     /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
@@ -611,13 +611,15 @@ impl SubsonicResponseBuilder {
             false,
             false,
             false,
+            false,
         )
     }
 
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
-    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`), and
-    /// octoTransitions while octo-sonic makes profiles (`transitions`).
+    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`),
+    /// octoTransitions while octo-sonic makes profiles (`transitions`), and octoPlaces while the
+    /// place data can be read (`places`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -628,12 +630,13 @@ impl SubsonicResponseBuilder {
         top_songs: bool,
         radio_sources: bool,
         transitions: bool,
+        places: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
         // "choose lyrics" that can only answer that lookups are off. octoLibraryActions is only
-        // listed while library actions are on, and octoRadioSources while radio can answer, for the
-        // same reason.
+        // listed while library actions are on, octoRadioSources while radio can answer, and
+        // octoPlaces while there is place data to answer from, for the same reason.
         let own: Vec<(&str, &[i32])> = OWN_EXTENSIONS
             .iter()
             .copied()
@@ -642,6 +645,7 @@ impl SubsonicResponseBuilder {
             .filter(|(name, _)| top_songs || *name != TOP_SONGS_EXTENSION)
             .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .filter(|(name, _)| transitions || *name != TRANSITIONS_EXTENSION)
+            .filter(|(name, _)| places || *name != PLACES_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {

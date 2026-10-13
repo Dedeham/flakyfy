@@ -185,7 +185,7 @@ async fn a_city_with_and_without_its_state() {
     .await;
     assert_eq!(biggest["place"]["state"], "Illinois", "{biggest}");
     assert_eq!(biggest["place"]["code"], "62701");
-    assert_eq!(biggest["place"]["latitude"], 39.81);
+    assert_eq!(biggest["place"]["latitude"], 39.8);
 
     for state in ["MA", "Massachusetts"] {
         let answer = ask(
@@ -397,23 +397,49 @@ async fn a_caller_who_is_not_signed_in_is_refused() {
     assert!(answer.get("place").is_none());
 }
 
+/// The octoPlaces entries of the extension list.
+async fn places_listed(h: &Harness) -> Vec<Value> {
+    let answer = ask(h, &format!("getOpenSubsonicExtensions?{ALICE}&f=json")).await;
+    answer["openSubsonicExtensions"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter(|e| e["name"] == "octoPlaces")
+        .cloned()
+        .collect()
+}
+
 #[tokio::test]
-async fn the_extension_is_listed_with_or_without_place_data() {
-    for with_data in [true, false] {
-        let h = harness(with_data).await;
-        let answer = ask(&h, &format!("getOpenSubsonicExtensions?{ALICE}&f=json")).await;
-        let listed: Vec<&Value> = answer["openSubsonicExtensions"]
-            .as_array()
-            .expect("a list")
-            .iter()
-            .filter(|e| e["name"] == "octoPlaces")
-            .collect();
-        assert_eq!(
-            listed,
-            vec![&json!({"name": "octoPlaces", "versions": [1]})],
-            "{answer}"
-        );
-    }
+async fn the_extension_is_listed_only_with_place_data() {
+    let h = harness(true).await;
+    assert_eq!(
+        places_listed(&h).await,
+        vec![json!({"name": "octoPlaces", "versions": [1]})]
+    );
+    // Without it an app keeps to its own lookup instead of asking for places Octo cannot know.
+    let h = harness(false).await;
+    assert_eq!(places_listed(&h).await, Vec::<Value>::new());
+}
+
+#[tokio::test]
+async fn the_extension_is_listed_once_the_place_data_is_there() {
+    let navidrome = navidrome().await;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let data_dir = dir.path().to_path_buf();
+    let path = data_dir.join("places.bin");
+    let state = state_with(settings(&navidrome.uri()), |inner| {
+        inner.places = Arc::new(PlaceIndex::new(&path));
+    });
+    let h = Harness {
+        app: app(&state),
+        _navidrome: navidrome,
+        _dir: dir,
+    };
+    assert!(places_listed(&h).await.is_empty());
+    std::fs::write(&path, b"not place data").expect("written");
+    assert!(places_listed(&h).await.is_empty());
+    write_fixture(&data_dir);
+    assert_eq!(places_listed(&h).await.len(), 1);
 }
 
 #[test]

@@ -90,9 +90,9 @@ pub async fn get_acquisitions(State(state): State<AppState>, req: Request) -> Ap
 }
 
 /// Navidrome's extension list with octoAcquisitions added, so a client can tell this server
-/// answers getAcquisitions before it asks, octoLibraryActions while library actions are on, and
-/// octoTransitions while octo-sonic makes transition profiles. Relayed, then merged; no
-/// credentials are needed, as the OpenSubsonic spec has it.
+/// answers getAcquisitions before it asks, octoLibraryActions while library actions are on,
+/// octoTransitions while octo-sonic makes transition profiles, and octoPlaces while the place data
+/// can be read. Relayed, then merged; no credentials are needed, as the OpenSubsonic spec has it.
 ///
 /// A caller whose audio has a ceiling (a family limit, or their own quality for where they
 /// are) is not offered `transcoding`: its decisions would let a client play a file as it is.
@@ -119,6 +119,7 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
             settings.subsonic.enable_search_discovery,
             state.song_radio.enabled(),
             super::transitions::offered(&state),
+            places_available(&state).await,
         );
     if capped && let Some(body) = audio_gate::without_extension(&reply.body, format == "json", "transcoding")
     {
@@ -129,6 +130,14 @@ pub async fn get_open_subsonic_extensions(State(state): State<AppState>, req: Re
         return super::family::with_family_extension(reply, &format).into_response();
     }
     reply.into_response()
+}
+
+/// Whether the place data can be read, so getPlace can find anything.
+async fn places_available(state: &AppState) -> bool {
+    let places = std::sync::Arc::clone(&state.places);
+    tokio::task::spawn_blocking(move || places.available())
+        .await
+        .unwrap_or(false)
 }
 
 /// Whether a source Better quality searches (Soulseek, Lidarr) is set up here at all.

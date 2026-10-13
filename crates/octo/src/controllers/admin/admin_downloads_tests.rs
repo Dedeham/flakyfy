@@ -652,12 +652,14 @@ async fn a_review_question_shows_acoust_id_numbers_and_the_page_reads_them() {
         .expect("the scored question");
     assert_eq!(scored["acoustIdScore"], 64);
     assert_eq!(scored["threshold"], 85);
-    assert_eq!(scored["matched"], "Massive Attack - Angel");
+    // Below the threshold nothing matched: the best recording heard is only the closest.
+    assert!(scored.get("matched").is_none(), "{scored}");
+    assert_eq!(scored["closest"], "Massive Attack - Angel");
     let unscored = entries
         .iter()
         .find(|e| e["reason"] == "AcoustID has never heard this recording")
         .expect("the question without a score");
-    for key in ["acoustIdScore", "threshold", "matched"] {
+    for key in ["acoustIdScore", "threshold", "matched", "closest"] {
         assert!(unscored.get(key).is_none(), "{key} left out");
     }
 
@@ -666,6 +668,8 @@ async fn a_review_question_shows_acoust_id_numbers_and_the_page_reads_them() {
         "entry.acoustIdScore",
         "entry.threshold",
         "entry.matched",
+        "entry.closest",
+        "closest: ",
         "% sure, needs ",
     ] {
         assert!(js.contains(read), "admin.js reads {read}");

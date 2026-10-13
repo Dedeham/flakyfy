@@ -543,9 +543,10 @@ fn a_queue_file_with_the_numbers_still_loads_in_the_entry_before_them() {
     assert!(text.contains(r#""AcoustIdScore":64"#), "{text}");
     assert!(text.contains(r#""Threshold":85"#), "{text}");
     assert!(
-        text.contains(r#""Matched":"Massive Attack - Teardrop""#),
+        text.contains(r#""Closest":"Massive Attack - Teardrop""#),
         "{text}"
     );
+    assert!(!text.contains(r#""Matched""#), "{text}");
 
     let before: Option<Vec<EntryBefore>> = serde_json::from_str(&text).expect("the older entry reads it");
     let mut before = before.expect("entries");

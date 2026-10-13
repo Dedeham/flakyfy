@@ -95,5 +95,8 @@ __pycache__/
 # Rust build output. Each worktree keeps its own target/; never share one CARGO_TARGET_DIR.
 /target/
 
+# GeoNames' files for the image build, when downloaded beforehand (docker.yml does).
+/places-data/
+
 # Parity harness runs: the writable library copies and the box reports.
 parity/.run/

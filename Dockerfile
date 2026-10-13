@@ -14,7 +14,8 @@
 #   docker build -t octo:dev .
 #   docker build --build-arg OCTO_VERSION=2026.11.01.1 -t octo:dev .
 #   docker build --build-arg CARGO_BUILD_JOBS=2 -t octo:dev .   # small machine
-#   docker build --build-arg PLACES_REFRESH=2026-11 -t octo:dev .   # fresh place data
+#   docker build --build-arg PLACES_REFRESH=2026-11-02 -t octo:dev .   # fresh place data
+#   docker build --build-arg PLACES_DOWNLOAD=0 -t octo:dev .   # no place data
 
 ARG RUST_VERSION=1.99
 ARG CHEF_VERSION=0.1.78
@@ -45,6 +46,9 @@ ARG CARGO_PROFILE_RELEASE_LTO
 COPY --from=planner /src/recipe.json recipe.json
 # Every third-party crate, compiled once and cached in this layer.
 RUN cargo chef cook --release --locked --package octo --recipe-path recipe.json
+# The third-party crates of octo-places, the place data converter, once more without LTO (see
+# its build below).
+RUN CARGO_PROFILE_RELEASE_LTO=off cargo chef cook --release --locked --package octo-core --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
@@ -56,49 +60,75 @@ COPY VERSION ./
 COPY octo/Services/CoverArt/Design octo/Services/CoverArt/Design
 COPY octo/appsettings.json octo/appsettings.Development.json octo/octo.csproj octo/
 ARG OCTO_VERSION
-# octo-places is the converter the place data stage below runs; it is not in the image.
-RUN cargo build --release --locked --package octo --bin octo --bin octo-places \
-    && install -D -m 0755 target/release/octo /out/octo \
-    && install -D -m 0755 target/release/octo-places /out/octo-places
+# octo-places, the converter the place data stage below runs (it is not in the image): built
+# from octo-core alone and without LTO, so it needs no large link, and its own RUN, so the
+# conversion below runs again only when the converter's bytes change.
+RUN CARGO_PROFILE_RELEASE_LTO=off cargo build --release --locked --package octo-core --bin octo-places \
+    && install -D -m 0755 target/release/octo-places /out/places/octo-places
+RUN cargo build --release --locked --package octo --bin octo \
+    && install -D -m 0755 target/release/octo /out/octo
 
 # ---- Place data: the download ----
 # GeoNames' postal codes (https://download.geonames.org/export/zip/, CC BY 4.0) and its readme,
-# which carries the license. Cached like any layer: PLACES_REFRESH changes the cache key, and
-# docker.yml passes the release tag, so each release takes the data as GeoNames has it then.
-# When GeoNames cannot be reached, the image is built without place data and getPlace answers
-# error 70 for every place; PLACES_REQUIRED=1 (docker.yml) fails the build instead.
+# which carries the license. The download is cached like any layer, keyed by the release
+# (VERSION), PLACES_REFRESH (docker-compose.yml passes it through, and the update helper sets
+# it) and the files in places-data/ when the build context has them: docker.yml downloads them
+# once per run, for both platforms, so both have the same data. Those are used as they are.
+# Without place data (GeoNames cannot be reached, or PLACES_DOWNLOAD=0) the image is built
+# anyway and the build log says so in a warning; getPlace then answers error 70 for every place
+# and octoPlaces is not listed. PLACES_REQUIRED=1 (docker.yml) fails the build instead.
 FROM debian:bookworm-slim AS geonames
 ARG PLACES_URL=https://download.geonames.org/export/zip
 ARG PLACES_REQUIRED=0
+ARG PLACES_DOWNLOAD=1
 ARG PLACES_REFRESH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /geonames
-RUN echo "Place data for ${PLACES_REFRESH:-this build}" \
-    && if curl -fsSL --retry 3 -o allCountries.zip "$PLACES_URL/allCountries.zip" \
-          && curl -fsSL --retry 3 -o readme.txt "$PLACES_URL/readme.txt"; then \
-         ls -l allCountries.zip readme.txt; \
-       elif [ "$PLACES_REQUIRED" = 1 ]; then \
-         echo "GeoNames could not be reached" >&2; exit 1; \
+# The folder's name as a pattern, so a context without places-data/ copies VERSION alone.
+COPY VERSION places-dat[a] /geonames/
+RUN release="$(tr -d ' \r\n' < VERSION)" && rm VERSION \
+    && echo "Place data for Octo $release${PLACES_REFRESH:+ ($PLACES_REFRESH)}" \
+    && if [ -f allCountries.zip ] && [ -f readme.txt ]; then \
+         echo "Place data from the build context's places-data/"; \
+       elif [ "$PLACES_DOWNLOAD" = 0 ]; then \
+         echo "PLACES_DOWNLOAD=0: no place data is downloaded"; \
+       elif curl -fsSL --retry 3 -o allCountries.zip "$PLACES_URL/allCountries.zip" \
+            && curl -fsSL --retry 3 -o readme.txt "$PLACES_URL/readme.txt"; then \
+         echo "Place data downloaded from $PLACES_URL"; \
        else \
-         echo "GeoNames could not be reached: this image has no place data" >&2; \
+         echo "GeoNames could not be reached at $PLACES_URL" >&2; \
+       fi \
+    && if [ ! -f allCountries.zip ] || [ ! -f readme.txt ]; then \
          rm -f allCountries.zip readme.txt; \
-       fi
+         if [ "$PLACES_REQUIRED" = 1 ]; then \
+           echo "PLACES_REQUIRED=1 and there is no place data" >&2; exit 1; \
+         fi; \
+         printf '%s\n' "" \
+           "WARNING: THIS IMAGE HAS NO PLACE DATA." \
+           "getPlace will answer error 70 for every place, and octoPlaces will not be listed." \
+           "Build again with --build-arg PLACES_REFRESH=<anything new> to try the download again." \
+           "" >&2; \
+       fi \
+    && ls -l
 
 # ---- Place data: the conversion ----
 # Into /out/data/places.bin, deflated blocks of sorted lines that getPlace reads a block at a
-# time (octo_core::places), with the readme beside the other licenses.
+# time (octo_core::places), with the readme beside the other licenses. Runs again only when the
+# download above or the converter's bytes change.
 FROM debian:bookworm-slim AS places
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/octo-places /usr/local/bin/octo-places
 COPY --from=geonames /geonames /geonames
+COPY --from=build /out/places/octo-places /usr/local/bin/octo-places
 RUN mkdir -p /out/data /out/licenses \
     && if [ -f /geonames/allCountries.zip ]; then \
          unzip -q -d /tmp /geonames/allCountries.zip allCountries.txt \
          && octo-places /tmp/allCountries.txt /out/data/places.bin \
          && cp /geonames/readme.txt /out/licenses/GeoNames-postal-codes.txt \
          && rm /tmp/allCountries.txt; \
+       else \
+         printf '%s\n' "" "WARNING: THIS IMAGE HAS NO PLACE DATA (see the download step)." "" >&2; \
        fi
 
 # ---- Runtime ----

@@ -2618,7 +2618,8 @@ const noticeStates = {
 
 const noticeKinds = { Review: 'Review', Duplicates: 'Duplicate' };
 
-// AcoustID's numbers on a question, when it gave any: "64% sure, needs 85%; it matched Artist - Title".
+// AcoustID's numbers on a question, when it gave any: "64% sure, needs 85%; closest: Artist - Title",
+// or "it matched Artist - Title" when AcoustID named the recording.
 function noticeScore(entry) {
   const parts = [];
   if (typeof entry.acoustIdScore === 'number') {
@@ -2626,7 +2627,9 @@ function noticeScore(entry) {
       ? `${entry.acoustIdScore}% sure, needs ${entry.threshold}%`
       : `${entry.acoustIdScore}% sure`);
   }
-  if (entry.matched && !String(entry.reason || '').includes(entry.matched)) parts.push(`it matched ${entry.matched}`);
+  const reason = String(entry.reason || '');
+  if (entry.matched && !reason.includes(entry.matched)) parts.push(`it matched ${entry.matched}`);
+  else if (!entry.matched && entry.closest && !reason.includes(entry.closest)) parts.push(`closest: ${entry.closest}`);
   return parts.length ? ` (${parts.join('; ')})` : '';
 }
 

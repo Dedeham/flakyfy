@@ -1107,8 +1107,10 @@ fn a_match_below_the_threshold_names_the_best_score_and_keeps_what_it_heard() {
         ]
     );
     assert_eq!(verdict.shown_score(), Some(0.61));
+    // Nothing counted as a match, so it names no match, only what came closest.
+    assert_eq!(verdict.matched_text(), None);
     assert_eq!(
-        verdict.matched_text().as_deref(),
+        verdict.closest_text().as_deref(),
         Some("Massive Attack - Teardrop")
     );
 }

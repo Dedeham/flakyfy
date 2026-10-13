@@ -187,15 +187,24 @@ impl VerificationResult {
         }
     }
 
-    /// What AcoustID matched, "Artist - Title": the recording the verdict names, else the
-    /// first recording it heard. None when it named none.
+    /// What AcoustID matched, "Artist - Title": the recording the verdict names. None when it
+    /// named none, even when it heard something below the threshold.
     pub fn matched_text(&self) -> Option<String> {
-        if self.names_recording() {
-            return Some(format!(
+        self.names_recording().then(|| {
+            format!(
                 "{} - {}",
                 self.matched_artist.as_deref().unwrap_or(""),
                 self.matched_title.as_deref().unwrap_or("")
-            ));
+            )
+        })
+    }
+
+    /// The best recording AcoustID heard, "Artist - Title", when the verdict names none: what
+    /// came closest without counting as a match. None when the verdict names a recording or
+    /// AcoustID heard nothing.
+    pub fn closest_text(&self) -> Option<String> {
+        if self.names_recording() {
+            return None;
         }
         self.ranked_heard(|_| false)
             .into_iter()

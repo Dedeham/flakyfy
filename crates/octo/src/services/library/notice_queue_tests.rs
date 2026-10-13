@@ -419,7 +419,9 @@ fn a_question_keeps_how_sure_acoust_id_was_and_what_it_matched() {
     let entry = only(&queue, "alice");
     assert_eq!(entry.acoust_id_score, Some(64));
     assert_eq!(entry.threshold, Some(85));
-    assert_eq!(entry.matched.as_deref(), Some("Massive Attack - Teardrop"));
+    // Below the threshold nothing matched: the best recording heard is only the closest.
+    assert_eq!(entry.matched, None);
+    assert_eq!(entry.closest.as_deref(), Some("Massive Attack - Teardrop"));
 
     let queue = NoticeQueue::new();
     let disagreed = VerificationResult {
@@ -437,6 +439,7 @@ fn a_question_keeps_how_sure_acoust_id_was_and_what_it_matched() {
         entry.matched.as_deref(),
         Some("Elizabeth Fraser - Song to the Siren")
     );
+    assert_eq!(entry.closest, None);
 }
 
 #[test]
@@ -456,9 +459,10 @@ fn a_question_without_a_score_keeps_no_numbers() {
     assert_eq!(entry.acoust_id_score, None);
     assert_eq!(entry.threshold, None);
     assert_eq!(entry.matched, None);
+    assert_eq!(entry.closest, None);
     // Nothing new is written for it, so its line in the file reads as before.
     let text = serde_json::to_string(&entry).expect("writes");
-    for key in ["AcoustIdScore", "Threshold", "Matched"] {
+    for key in ["AcoustIdScore", "Threshold", "Matched", "Closest"] {
         assert!(!text.contains(key), "{key} in {text}");
     }
 }

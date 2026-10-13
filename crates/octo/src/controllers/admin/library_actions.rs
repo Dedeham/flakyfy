@@ -173,7 +173,7 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
                 "createdUtc": utc(&entry.created_utc),
                 "resolvedUtc": utc_opt(&entry.resolved_utc),
             });
-            // AcoustID's numbers and what it matched, only when they are known.
+            // AcoustID's numbers and what it matched or came closest to, only when they are known.
             if let Some(fields) = json.as_object_mut() {
                 if let Some(score) = entry.acoust_id_score {
                     fields.insert("acoustIdScore".into(), json!(score));
@@ -183,6 +183,9 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
                 }
                 if let Some(matched) = entry.matched.as_deref().filter(|m| !m.is_empty()) {
                     fields.insert("matched".into(), json!(matched));
+                }
+                if let Some(closest) = entry.closest.as_deref().filter(|c| !c.is_empty()) {
+                    fields.insert("closest".into(), json!(closest));
                 }
             }
             json

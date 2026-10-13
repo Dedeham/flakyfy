@@ -487,12 +487,11 @@ impl ChartPlaylistService {
         let mut any = false;
         for (chart, name) in self.charts_on().await {
             let list = self.inner.top_songs.chart(&chart).await;
-            let rows: Vec<TopSong> = list
-                .songs
-                .iter()
-                .take(chart_settings::max_songs(&chart))
-                .cloned()
-                .collect();
+            let count = chart_settings::max_songs(&chart);
+            // A row more for each outside take Skip covers, karaoke and instrumentals leaves out,
+            // so the next rows take their places, as on getTopSongs.
+            let rows: Vec<TopSong> =
+                TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals);
             if rows.is_empty() {
                 trouble = true;
                 info!("{name} for {username}: the chart did not answer, the last list stays");
@@ -557,6 +556,7 @@ impl ChartPlaylistService {
                 subsonic.enable_search_discovery,
                 explicit_filter,
                 skip_covers_and_instrumentals,
+                count,
                 |song| Value::Object(self.inner.responses.convert_song_to_json(song)),
             );
             let hash = entries_hash(&entries);
@@ -610,18 +610,23 @@ impl ChartPlaylistService {
 /// The list in chart order: the library's song where the row has one, else the outside song when
 /// outside songs may be shown, the explicit filter lets it through, and it is no cover, instrumental or
 /// karaoke take Skip covers and instrumentals leaves out. The filter is the one stations follow: a list Octo
-/// picks follows it, a search does not.
+/// picks follows it, a search does not. At most `count` songs: `rows` may run past that, so a row
+/// left out is made up by the next one.
 pub fn assemble(
     rows: &[TopSong],
     library: &[Option<Value>],
     outside_shown: bool,
     filter: ExplicitFilter,
     skip_covers_and_instrumentals: bool,
+    count: usize,
     as_json: impl Fn(&Song) -> Value,
 ) -> (Vec<Value>, Vec<Song>) {
     let mut entries = Vec::new();
     let mut outside = Vec::new();
     for (i, row) in rows.iter().enumerate() {
+        if entries.len() >= count {
+            break;
+        }
         if let Some(owned) = library.get(i).and_then(Option::as_ref) {
             entries.push(owned.clone());
         } else if outside_shown

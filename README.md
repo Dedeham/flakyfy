@@ -700,7 +700,8 @@ never written to Navidrome, so a rescan cannot empty one and nobody edits one by
 `MIXES_GENRES` and `MIXES_DECADES` choose the kinds. A genre or decade gets a mix once it has
 `MIX_CREATE_AT` tracks (default 20) and loses it only below `MIX_REMOVE_BELOW` (default 10),
 so one at the edge does not come and go, and `MIX_MAX_PLAYLISTS` (default 20) shows the
-largest first. Years and anything on the genre blocklist never get a mix of their own.
+largest first. Genre tags that are years, and anything on the genre blocklist, never get a
+genre mix of their own.
 
 Each mix holds `MIX_TRACK_COUNT` tracks (default 100) with at most `MIX_MAX_PER_ARTIST` (3)
 by one artist; the cap is never relaxed, so a mix that cannot be filled without breaking it
@@ -709,6 +710,20 @@ client shows the same tracks, and is then drawn again. `MIX_NEW_SHARE` keeps tha
 of each mix, and of the Discovery Mix station, for tracks new to the listener: never played,
 or added in the last `MIX_NEW_DAYS`. It is 0 by default, which changes nothing.
 `MIX_NAME_FORMAT` names them, `{0}` being the genre or decade ("{0} Mix" when empty).
+
+`MIXES_YEARS` (off by default) adds a mix per year ("1994 Mix"), counted from the same read
+of each listener's library as Made for you (up to 40,000 songs), with the same thresholds and
+at most `MIX_MAX_YEAR_PLAYLISTS` (10) on top of `MIX_MAX_PLAYLISTS`, the years with the most
+songs first. `MIXES_ARTISTS` (off by default) adds a mix for each of the listener's
+`MIX_ARTIST_COUNT` (5) most played artists ("Radiohead Mix"): half the artist's own songs,
+half songs in the library by the artists Last.fm calls similar (all the artist's own without
+a Last.fm key), drawn again every `MIX_REFRESH_HOURS`. The artist cap holds for the similar
+artists, never for the artist themself. An artist keeps their mix while they rank within
+three places past the count, and one that falls further keeps it until it is a week old.
+
+Every Octo list row in getPlaylists and getPlaylist carries `octoGroup` (octoLists version 2),
+so an app can group Octo's lists: `genre`, `decade`, `year`, `country`, `artist`, `chart`,
+`forYou`, `liked` or `station`.
 
 Mix and station covers are drawn by Octo in the same design as the Octo apps' playlist
 covers: the list's name in white over one of 48 painted backgrounds, picked to match the

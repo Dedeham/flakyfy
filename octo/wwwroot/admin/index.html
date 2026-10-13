@@ -1504,7 +1504,7 @@
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Enabled" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">A mix per genre</div><div class="set-info-d">From the genres your files carry. Years and blocklisted genres never get one.</div></div>
+              <div class="set-info"><div class="set-info-t">A mix per genre</div><div class="set-info-d">From the genres your files carry. Genres that are years, and blocklisted genres, never get one.</div></div>
               <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Genres" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
@@ -1519,8 +1519,20 @@
               <div class="set-info"><div class="set-info-t">Countries <span class="set-opt">two-letter codes</span></div><div class="set-info-d">Only these countries get a mix, such as ES, JP. Empty means any country with enough songs.</div></div>
               <input class="set-input" name="GeneratedPlaylists.Countries" type="text" maxlength="200" placeholder="Any country" />
             </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Year mixes</div><div class="set-info-d">A mix per year, such as 1994 Mix, the years with the most songs first.</div><div class="set-info-more">Counted from each listener's library, up to 40,000 songs.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Years" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Artist mixes</div><div class="set-info-d">A mix for each listener's most played artists, such as Radiohead Mix: half the artist's songs, half songs by artists like them from your library.</div><div class="set-info-more">Last.fm names the artists like them. Without a Last.fm key, an artist mix is that artist's songs only. An artist keeps their mix while they stay near the top, so the mixes do not change with every week's plays.</div></div>
+              <label class="switch"><input type="checkbox" name="GeneratedPlaylists.Artists" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Artist mixes for the top <span class="set-opt">artists</span></div><div class="set-info-d">How many of each listener's most played artists get a mix.</div></div>
+              <input class="set-input" name="GeneratedPlaylists.ArtistCount" type="number" min="1" max="20" data-number="true" />
+            </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre, decade or country</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
+              <div class="set-info"><div class="set-info-t">Name <span class="set-opt">{0} is the genre, decade, year or country</span></div><div class="set-info-d">A picture named after a mix in the <code>covers</code> folder beside <code>settings.json</code> replaces its cover.</div></div>
               <input class="set-input" name="GeneratedPlaylists.NameFormat" maxlength="60" placeholder="{0} Mix" />
             </div>
             <details class="set-more">
@@ -1539,6 +1551,10 @@
               <div class="set-row">
                 <div class="set-info"><div class="set-info-t">At most <span class="set-opt">country mixes</span></div><div class="set-info-d">The largest first, on top of the genre and decade mixes, so a country never takes a genre's place.</div></div>
                 <input class="set-input" name="GeneratedPlaylists.MaxCountryPlaylists" type="number" min="1" max="100" data-number="true" />
+              </div>
+              <div class="set-row">
+                <div class="set-info"><div class="set-info-t">At most <span class="set-opt">year mixes</span></div><div class="set-info-d">The years with the most songs first, on top of the genre and decade mixes, so a year never takes a genre's place.</div></div>
+                <input class="set-input" name="GeneratedPlaylists.MaxYearPlaylists" type="number" min="1" max="30" data-number="true" />
               </div>
             </details>
           </form>

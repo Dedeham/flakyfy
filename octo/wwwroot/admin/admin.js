@@ -2618,11 +2618,23 @@ const noticeStates = {
 
 const noticeKinds = { Review: 'Review', Duplicates: 'Duplicate' };
 
+// AcoustID's numbers on a question, when it gave any: "64% sure, needs 85%; it matched Artist - Title".
+function noticeScore(entry) {
+  const parts = [];
+  if (typeof entry.acoustIdScore === 'number') {
+    parts.push(typeof entry.threshold === 'number'
+      ? `${entry.acoustIdScore}% sure, needs ${entry.threshold}%`
+      : `${entry.acoustIdScore}% sure`);
+  }
+  if (entry.matched && !String(entry.reason || '').includes(entry.matched)) parts.push(`it matched ${entry.matched}`);
+  return parts.length ? ` (${parts.join('; ')})` : '';
+}
+
 document.getElementById('notices-refresh')?.addEventListener('click', () =>
   showSessionTable(document.getElementById('notices-list'), '/api/admin/notices',
     ['Track', 'Why', 'Who', 'Answer'], entry => `
             <span class="key">${esc(entry.artist)} - ${esc(entry.title)}</span>
-            <span class="value">${esc(noticeKinds[entry.kind] || entry.kind)}: ${esc(entry.reason)}${entry.origin === 'LibrarySweep' ? ' (from the library)' : ''}</span>
+            <span class="value">${esc(noticeKinds[entry.kind] || entry.kind)}: ${esc(entry.reason)}${esc(noticeScore(entry))}${entry.origin === 'LibrarySweep' ? ' (from the library)' : ''}</span>
             <span class="value">${esc(entry.username)}</span>
             <span class="value">${esc(noticeStates[entry.state] || entry.state)}${entry.submitted ? ', sent to AcoustID' : ''}</span>`,
     body => {
@@ -4323,6 +4335,7 @@ function renderDlog(events) {
   return `<ol class="dlog">${events.map(line => {
     const kind = DLOG_GLYPH[line.kind] ? line.kind : 'note';
     const copies = Array.isArray(line.candidate) ? line.candidate : [];
+    const heard = Array.isArray(line.heard) ? line.heard : [];
     const many = copies.length > 3;
     const list = copies.length
       ? (many
@@ -4334,6 +4347,7 @@ function renderDlog(events) {
       <div class="dlog-body">
         <div class="dlog-head"><span class="dlog-text">${escapeHtml(line.text)}</span><time class="dlog-time" datetime="${escapeHtml(line.at)}">${escapeHtml(dlogClock(line.at))}</time></div>
         ${line.detail ? `<div class="dlog-detail">${escapeHtml(line.detail)}</div>` : ''}
+        ${heard.length ? `<div class="dlog-detail">Also heard: ${escapeHtml(heard.map(h => `${h.artist} - ${h.title}, ${h.score}% sure`).join('; '))}</div>` : ''}
         ${list}
       </div>
     </li>`;

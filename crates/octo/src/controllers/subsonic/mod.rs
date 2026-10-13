@@ -9,6 +9,7 @@ pub mod ping;
 pub mod playlists;
 pub mod search;
 pub mod similar_songs;
+pub mod stations;
 pub mod top_songs;
 pub mod transitions;
 
@@ -155,4 +156,5 @@ pub fn routes() -> RouteSet {
         .merge(imports::routes())
         .merge(family::routes())
         .merge(transitions::routes())
+        .merge(stations::routes())
 }

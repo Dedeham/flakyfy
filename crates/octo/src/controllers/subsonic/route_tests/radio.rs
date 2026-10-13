@@ -1514,3 +1514,260 @@ async fn discovery_mix_fills_from_library_songs_when_the_reserve_runs_out() {
     assert_eq!(titles[6], "Tune E", "{titles:?}");
     assert_eq!(titles[8], "Song Four", "{titles:?}");
 }
+
+// ---------------------------------------------------------------------------------------
+// getStationSongs (octoStations)
+// ---------------------------------------------------------------------------------------
+
+/// Your Mix of four with two songs in reserve, and `played` songs alice played before, which the
+/// mix goes on with once its own songs are queued. Every song not in the library is found
+/// outside; no radio source but Last.fm (without a key) is on.
+async fn station_songs_fixture(played: i64) -> RadioFixture {
+    let fixture = RadioFixture::with_metadata(Options::default(), outside_copies()).await;
+    let mut settings = fixture.state.settings.current().as_ref().clone();
+    settings.radio_sources.you_tube_music = false;
+    settings.radio_sources.listen_brainz = false;
+    settings.radio_sources.sounds_alike = false;
+    fixture.state.settings.set(settings);
+    fixture.install_station("");
+    let mut station = fixture
+        .state
+        .last_fm_radio_state
+        .find_station("alice", &fixture.station_id())
+        .expect("installed");
+    station.reserve = ["A", "B"]
+        .iter()
+        .map(|letter| LastFmRadioTrack {
+            artist: format!("Reserve Artist {letter}"),
+            title: format!("Reserve Song {letter}"),
+            duration: Some(200),
+            ..Default::default()
+        })
+        .collect();
+    fixture
+        .state
+        .last_fm_radio_state
+        .replace_stations("alice", &[station]);
+    for index in 0..played {
+        fixture.state.last_fm_radio_state.record_play(
+            "alice",
+            octo_core::models::radio::LastFmRadioPlay {
+                artist: format!("Played Artist {index}"),
+                title: format!("Played Song {index}"),
+                duration: Some(200),
+                played_at_utc: Utc::now() - TimeDelta::hours(index + 1),
+                ..Default::default()
+            },
+        );
+    }
+    fixture
+}
+
+/// getStationSongs for alice's Your Mix, as JSON, with `query` after the sign-in.
+async fn station_songs(fixture: &RadioFixture, query: &str) -> serde_json::Value {
+    let body = get_string(
+        &fixture.app,
+        &format!(
+            "/rest/getStationSongs?id={}&u=alice&t=token&s=salt&f=json{query}",
+            fixture.station_id()
+        ),
+    )
+    .await;
+    serde_json::from_str(&body).unwrap_or_else(|e| panic!("not JSON ({e}): {body}"))
+}
+
+fn entry_ids(answer: &serde_json::Value) -> Vec<String> {
+    answer["subsonic-response"]["stationSongs"]["entry"]
+        .as_array()
+        .unwrap_or_else(|| panic!("entries: {answer}"))
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("an id").to_string())
+        .collect()
+}
+
+/// The ids as repeated `after` parameters.
+fn after(ids: &[String]) -> String {
+    ids.iter()
+        .map(|id| format!("&after={}", id.replace(' ', "%20")))
+        .collect()
+}
+
+const STORED: [&str; 4] = ["local-one", "local-two", "local-three", "local-four"];
+
+#[tokio::test]
+async fn station_songs_start_with_the_stored_tracks_in_order() {
+    let fixture = station_songs_fixture(10).await;
+
+    let four = station_songs(&fixture, "&count=4").await;
+    assert_eq!(four["subsonic-response"]["status"], "ok", "{four}");
+    let station = &four["subsonic-response"]["stationSongs"];
+    assert_eq!(station["id"], fixture.station_id().as_str());
+    assert_eq!(station["name"], "Your Mix");
+    assert_eq!(entry_ids(&four), STORED);
+
+    // Asked for more, the station goes on after them: its reserve, then songs alike.
+    let fresh = station_songs_fixture(10).await;
+    let all = entry_ids(&station_songs(&fresh, "").await);
+    assert_eq!(all[..4], STORED);
+    assert_eq!(all.len(), 4 + 2 + 10, "{all:?}");
+}
+
+#[tokio::test]
+async fn a_station_song_served_once_is_not_served_again_without_being_listed() {
+    let fixture = station_songs_fixture(10).await;
+    let first = entry_ids(&station_songs(&fixture, "&count=4").await);
+    assert_eq!(first, STORED);
+
+    // The next call lists nothing in `after`; the station remembers what it served.
+    let second = entry_ids(&station_songs(&fixture, "&count=50").await);
+    assert_eq!(second.len(), 2 + 10, "{second:?}");
+    for id in &second {
+        assert!(!first.contains(id), "{id} was served already: {second:?}");
+    }
+}
+
+#[tokio::test]
+async fn after_every_stored_and_reserve_song_come_new_songs_never_one_already_queued() {
+    let fixture = station_songs_fixture(10).await;
+    let stored = entry_ids(&station_songs(&fixture, "&count=6").await);
+    assert_eq!(stored[..4], STORED);
+    assert!(stored[4].contains("Reserve Song A"), "{stored:?}");
+    assert!(stored[5].contains("Reserve Song B"), "{stored:?}");
+
+    let new = entry_ids(&station_songs(&fixture, &format!("&count=50{}", after(&stored))).await);
+    assert_eq!(new.len(), 10, "{new:?}");
+    for id in &new {
+        assert!(id.contains("Played Song"), "{id} in {new:?}");
+        assert!(!stored.contains(id), "{id} was queued already");
+    }
+}
+
+#[tokio::test]
+async fn station_song_pages_follow_one_another_without_repeats() {
+    let fixture = station_songs_fixture(10).await;
+    let stored = entry_ids(&station_songs(&fixture, "&count=6").await);
+
+    let first = entry_ids(&station_songs(&fixture, &format!("&count=3{}", after(&stored))).await);
+    let queued: Vec<String> = stored.iter().chain(&first).cloned().collect();
+    let second = entry_ids(&station_songs(&fixture, &format!("&count=3{}", after(&queued))).await);
+
+    assert_eq!(first.len(), 3, "{first:?}");
+    assert_eq!(second.len(), 3, "{second:?}");
+    for id in &second {
+        assert!(!queued.contains(id), "{id} came back: {first:?} then {second:?}");
+    }
+}
+
+#[tokio::test]
+async fn station_songs_count_is_held_between_one_and_a_hundred() {
+    let fixture = station_songs_fixture(120).await;
+    assert_eq!(entry_ids(&station_songs(&fixture, "&count=0").await), STORED[..1]);
+    let most = entry_ids(&station_songs(&fixture, "&count=500").await);
+    assert_eq!(most.len(), 100, "{most:?}");
+    let mut distinct = most.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 100);
+}
+
+#[tokio::test]
+async fn station_songs_of_a_station_that_is_not_the_callers_say_it_is_gone() {
+    let fixture = station_songs_fixture(0).await;
+    for (who, id) in [
+        ("alice", "or00000000000000000000".to_string()),
+        ("bob", fixture.station_id()),
+    ] {
+        let body = get_string(
+            &fixture.app,
+            &format!("/rest/getStationSongs?id={id}&u={who}&t=token&s=salt&f=json"),
+        )
+        .await;
+        let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(answer["subsonic-response"]["status"], "failed", "{body}");
+        assert_eq!(answer["subsonic-response"]["error"]["code"], 70, "{body}");
+        assert_eq!(
+            answer["subsonic-response"]["error"]["message"], "That station isn't on this server any more.",
+            "{body}"
+        );
+    }
+    // Stations not served as playlists are not there either.
+    let mut off = fixture.state.settings.current().as_ref().clone();
+    off.last_fm.expose_radio_as_playlists = false;
+    fixture.state.settings.set(off);
+    let body = get_string(
+        &fixture.app,
+        &format!(
+            "/rest/getStationSongs?id={}&u=alice&t=token&s=salt&f=json",
+            fixture.station_id()
+        ),
+    )
+    .await;
+    assert!(body.contains("\"code\":70"), "{body}");
+    // A failed sign-in is told so before anything about the station.
+    let refused = fixture
+        .get(&format!(
+            "/rest/getStationSongs?id={}&u=bad&f=json",
+            fixture.station_id()
+        ))
+        .await
+        .body;
+    assert!(refused.contains("\"code\":40"), "{refused}");
+}
+
+#[tokio::test]
+async fn station_songs_answer_in_xml_and_by_post_too() {
+    let fixture = station_songs_fixture(0).await;
+    let body = fixture
+        .get(&format!(
+            "/rest/getStationSongs.view?id={}&u=alice&t=token&s=salt&f=xml&count=2",
+            fixture.station_id()
+        ))
+        .await
+        .body;
+    assert!(body.contains("status=\"ok\""), "{body}");
+    assert!(
+        body.contains(&format!(
+            "<stationSongs id=\"{}\" name=\"Your Mix\">",
+            fixture.station_id()
+        )),
+        "{body}"
+    );
+    assert_eq!(body.matches("<entry ").count(), 2, "{body}");
+    assert!(body.contains("id=\"local-one\""), "{body}");
+    assert!(!body.contains("<song "), "{body}");
+
+    let posted = send(
+        &fixture.app,
+        Method::POST,
+        "/rest/getStationSongs",
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        Body::from(format!(
+            "id={}&u=alice&t=token&s=salt&f=json&count=1",
+            fixture.station_id()
+        )),
+    )
+    .await;
+    assert!(posted.body.contains("\"stationSongs\""), "{}", posted.body);
+    // The two songs served above are not served again.
+    assert!(posted.body.contains("local-three"), "{}", posted.body);
+}
+
+#[tokio::test]
+async fn the_stations_extension_is_listed_while_stations_are_served_as_playlists() {
+    for (radio, playlists, listed) in [(true, true, true), (true, false, false), (false, true, false)] {
+        let fixture = RadioFixture::new(Options {
+            expose_playlists: playlists,
+            ..Default::default()
+        })
+        .await;
+        let mut settings = fixture.state.settings.current().as_ref().clone();
+        settings.last_fm.enable_radio = radio;
+        fixture.state.settings.set(settings);
+        let body = get_string(&fixture.app, "/rest/getOpenSubsonicExtensions?f=json").await;
+        assert_eq!(
+            body.contains("octoStations"),
+            listed,
+            "radio {radio}, playlists {playlists}: {body}"
+        );
+    }
+}

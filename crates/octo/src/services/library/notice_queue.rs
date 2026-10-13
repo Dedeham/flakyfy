@@ -215,6 +215,10 @@ pub struct NoticeEntry {
     /// What AcoustID matched, "Artist - Title", when it named a recording.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched: Option<String>,
+    /// The best recording AcoustID heard, "Artist - Title", when it named none: what came
+    /// closest without counting as a match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closest: Option<String>,
 }
 
 impl Default for NoticeEntry {
@@ -247,6 +251,7 @@ impl Default for NoticeEntry {
             acoust_id_score: None,
             threshold: None,
             matched: None,
+            closest: None,
         }
     }
 }
@@ -452,6 +457,7 @@ impl NoticeQueue {
                         .filter(|threshold| *threshold > 0.0)
                         .map(threshold_percent),
                     matched: verdict.matched_text(),
+                    closest: verdict.closest_text(),
                     ..Default::default()
                 },
             );

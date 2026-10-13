@@ -553,10 +553,23 @@ impl GeneratedPlaylistService {
 
         let explicit_filter = self.explicit_filter_now(username);
         let before = self.state.lock().users.get(&user_key(username)).cloned();
+        // The artist mixes read the walk once into an index, off the async threads, and draw every
+        // artist's mix from it.
+        let (library, artist_index) = match library {
+            Some(songs) if artists_on => {
+                let (songs, index) = tokio::task::spawn_blocking(move || {
+                    let index = for_you_lists::ArtistIndex::new(&songs);
+                    (songs, index)
+                })
+                .await?;
+                (Some(songs), Some(index))
+            }
+            library => (library, None),
+        };
         let artist_mixes = if artists_on {
             self.build_artist_mixes(
                 username,
-                library.as_deref(),
+                library.as_deref().zip(artist_index.as_ref()),
                 &settings,
                 before.as_ref(),
                 cancellation_token,
@@ -627,14 +640,14 @@ impl GeneratedPlaylistService {
             .unwrap_or_default()
     }
 
-    /// The listener's artist mixes for this period, from their walk (None when it failed, which
-    /// keeps the artist mixes they had): their most played artists by
-    /// [`kept_artist_mixes`], each drawn again from their own songs and the songs of the
-    /// artists Last.fm calls like them.
+    /// The listener's artist mixes for this period, from their walk and its
+    /// [`for_you_lists::ArtistIndex`] (None when the walk failed, which keeps the artist mixes
+    /// they had): their most played artists by [`kept_artist_mixes`], each drawn again from
+    /// their own songs and the songs of the artists Last.fm calls like them.
     async fn build_artist_mixes(
         &self,
         username: &str,
-        library: Option<&[Node]>,
+        walk: Option<(&[Node], &for_you_lists::ArtistIndex)>,
         settings: &GeneratedPlaylistSettings,
         before: Option<&UserMixes>,
         cancellation_token: &CancellationToken,
@@ -642,7 +655,7 @@ impl GeneratedPlaylistService {
         let previous = before
             .map(|before| before.artist_mixes.clone())
             .unwrap_or_default();
-        let Some(library) = library else {
+        let Some((library, index)) = walk else {
             return Ok(previous);
         };
         let count = usize::try_from(settings.effective_artist_count()).unwrap_or(1);
@@ -670,8 +683,9 @@ impl GeneratedPlaylistService {
                 continue;
             }
             let similar = self.similar_artists(&name).await;
-            let songs = for_you_lists::artist_mix(
+            let songs = for_you_lists::artist_mix_in(
                 library,
+                index,
                 artist,
                 &similar,
                 usize::try_from(settings.effective_track_count()).unwrap_or(0),

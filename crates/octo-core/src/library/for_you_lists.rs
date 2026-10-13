@@ -137,21 +137,32 @@ pub fn top_artists(songs: &[Node], count: usize) -> Vec<TopArtist> {
     ranked
 }
 
-/// The library songs by any of `names`, matched by [`SongIdentity::loose_key`] on each artist
-/// value a song carries: its `artist`, the first artist that credit names, and every name in
-/// its `artists`. In library order.
-pub fn songs_by_artists<'a>(songs: &'a [Node], names: &[String]) -> Vec<&'a Node> {
-    let wanted: HashSet<String> = names
-        .iter()
-        .map(|name| SongIdentity::loose_key(name))
-        .filter(|key| !key.is_empty())
-        .collect();
-    if wanted.is_empty() {
-        return Vec::new();
-    }
-    songs
-        .iter()
-        .filter(|song| {
+/// The songs of one walk by artist, worked out once so that the songs of many artists are found
+/// without reading every song again. Positions are into the walk it was built from, which every
+/// call that takes it must be given.
+#[derive(Debug, Clone, Default)]
+pub struct ArtistIndex {
+    /// Each song's [`artist_key`], by position.
+    keys: Vec<String>,
+    /// The positions of each [`artist_key`]'s songs, in library order.
+    by_key: HashMap<String, Vec<usize>>,
+    /// The positions of the songs carrying each loose artist value, in library order, each once.
+    by_value: HashMap<String, Vec<usize>>,
+}
+
+impl ArtistIndex {
+    /// Every song of `songs` by its artist key and by the loose key of each artist value it
+    /// carries: its `artist`, the first artist that credit names, and every name in its
+    /// `artists`.
+    pub fn new(songs: &[Node]) -> Self {
+        let mut index = Self {
+            keys: Vec::with_capacity(songs.len()),
+            ..Self::default()
+        };
+        for (at, song) in songs.iter().enumerate() {
+            let key = artist_key(song);
+            index.by_key.entry(key.clone()).or_default().push(at);
+            index.keys.push(key);
             let mut values: Vec<String> = Vec::new();
             if let Some(artist) = str_of(song, "artist").filter(|artist| !artist.is_empty()) {
                 values.push(artist.to_string());
@@ -165,10 +176,62 @@ pub fn songs_by_artists<'a>(songs: &'a [Node], names: &[String]) -> Vec<&'a Node
                         .map(str::to_string),
                 );
             }
-            values
-                .iter()
-                .any(|value| wanted.contains(&SongIdentity::loose_key(value)))
-        })
+            for value in values {
+                let loose = SongIdentity::loose_key(&value);
+                if loose.is_empty() {
+                    continue;
+                }
+                let positions = index.by_value.entry(loose).or_default();
+                if positions.last() != Some(&at) {
+                    positions.push(at);
+                }
+            }
+        }
+        index
+    }
+
+    /// How many songs the walk it was built from has.
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// The positions of the songs by any of `names`, matched loosely, in library order.
+    fn positions_by_artists(&self, names: &[String]) -> Vec<usize> {
+        let wanted: HashSet<String> = names
+            .iter()
+            .map(|name| SongIdentity::loose_key(name))
+            .filter(|key| !key.is_empty())
+            .collect();
+        let mut positions: Vec<usize> = wanted
+            .iter()
+            .filter_map(|key| self.by_value.get(key))
+            .flatten()
+            .copied()
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+}
+
+/// The library songs by any of `names`, matched by [`SongIdentity::loose_key`] on each artist
+/// value a song carries: its `artist`, the first artist that credit names, and every name in
+/// its `artists`. In library order.
+pub fn songs_by_artists<'a>(songs: &'a [Node], names: &[String]) -> Vec<&'a Node> {
+    songs_by_artists_in(songs, &ArtistIndex::new(songs), names)
+}
+
+/// [`songs_by_artists`] read from `index`, built from `songs`.
+pub fn songs_by_artists_in<'a>(songs: &'a [Node], index: &ArtistIndex, names: &[String]) -> Vec<&'a Node> {
+    debug_assert_eq!(index.len(), songs.len());
+    index
+        .positions_by_artists(names)
+        .into_iter()
+        .filter_map(|at| songs.get(at))
         .collect()
 }
 
@@ -185,10 +248,40 @@ pub fn artist_mix(
     max_per_artist: i32,
     seed: i32,
 ) -> Vec<Node> {
-    let own: Vec<&Node> = songs.iter().filter(|song| artist_key(song) == artist).collect();
-    let others: Vec<&Node> = songs_by_artists(songs, similar)
+    artist_mix_in(
+        songs,
+        &ArtistIndex::new(songs),
+        artist,
+        similar,
+        count,
+        max_per_artist,
+        seed,
+    )
+}
+
+/// [`artist_mix`] read from `index`, built from `songs`.
+pub fn artist_mix_in(
+    songs: &[Node],
+    index: &ArtistIndex,
+    artist: &str,
+    similar: &[String],
+    count: usize,
+    max_per_artist: i32,
+    seed: i32,
+) -> Vec<Node> {
+    debug_assert_eq!(index.len(), songs.len());
+    let own: Vec<&Node> = index
+        .by_key
+        .get(artist)
         .into_iter()
-        .filter(|song| artist_key(song) != artist)
+        .flatten()
+        .filter_map(|at| songs.get(*at))
+        .collect();
+    let others: Vec<&Node> = index
+        .positions_by_artists(similar)
+        .into_iter()
+        .filter(|at| index.keys.get(*at).is_some_and(|key| key != artist))
+        .filter_map(|at| songs.get(at))
         .collect();
     let own_drawn = draw(&own, own.len(), i32::MAX, seed);
     let others_drawn = draw(&others, count, max_per_artist, seed.wrapping_add(1));

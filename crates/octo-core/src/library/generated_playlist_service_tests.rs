@@ -334,38 +334,52 @@ fn kinds_and_staleness_follow_the_settings() {
         ..Default::default()
     };
     let all = ExplicitFilter::All;
-    assert_eq!(kinds_of(&settings, all), "genre,,");
+    assert_eq!(kinds_of(&settings, all, false), "genre,,");
     let state = UserMixes {
         counts_utc: now(),
         kinds: "genre,,".into(),
         ..Default::default()
     };
-    assert!(!is_stale(&state, &settings, all, now()));
+    assert!(!is_stale(&state, &settings, all, false, now()));
     assert!(is_stale(
         &state,
         &settings,
         all,
+        false,
         now() + TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
     ));
-    assert!(is_stale(&UserMixes::default(), &settings, all, now()));
+    assert!(is_stale(&UserMixes::default(), &settings, all, false, now()));
     // Made for you: on by default whatever the mixes switch says, and what decides each list is
     // part of the kinds, the explicit filter too.
     let defaults = GeneratedPlaylistSettings::default();
     assert_eq!(
-        kinds_of(&defaults, all),
+        kinds_of(&defaults, all, false),
         ",,newReleases+rediscover+deepCuts,w8a50x0,m6"
     );
     assert_eq!(
-        kinds_of(&defaults, ExplicitFilter::CleanOnly),
+        kinds_of(&defaults, ExplicitFilter::CleanOnly, false),
         ",,newReleases+rediscover+deepCuts,w8a50x2,m6"
     );
+    // Skip covers and instrumentals is part of New Releases' kinds only while it is on.
+    assert_eq!(
+        kinds_of(&defaults, all, true),
+        ",,newReleases+rediscover+deepCuts,w8a50x0s,m6"
+    );
+    let saved = UserMixes {
+        counts_utc: now(),
+        kinds: kinds_of(&defaults, all, false),
+        ..Default::default()
+    };
+    assert!(!is_stale(&saved, &defaults, all, false, now()));
+    assert!(is_stale(&saved, &defaults, all, true, now()));
     assert_eq!(
         kinds_of(
             &GeneratedPlaylistSettings {
                 new_releases: false,
                 ..defaults.clone()
             },
-            all
+            all,
+            false
         ),
         ",,rediscover+deepCuts,m6"
     );
@@ -399,17 +413,17 @@ fn country_mixes_are_part_of_the_kinds_only_when_on() {
         deep_cuts: false,
         ..Default::default()
     };
-    assert_eq!(kinds_of(&mixes, all), "genre,decade,");
+    assert_eq!(kinds_of(&mixes, all, false), "genre,decade,");
     let countries = GeneratedPlaylistSettings {
         country_mixes: true,
         ..mixes.clone()
     };
-    assert_eq!(kinds_of(&countries, all), "genre,decade,,country:");
+    assert_eq!(kinds_of(&countries, all, false), "genre,decade,,country:");
     let some = GeneratedPlaylistSettings {
         countries: "es,jp".into(),
         ..countries.clone()
     };
-    assert_eq!(kinds_of(&some, all), "genre,decade,,country:ES+JP");
+    assert_eq!(kinds_of(&some, all, false), "genre,decade,,country:ES+JP");
     // Only countries is still mixes; the country switch without the mixes switch is nothing.
     let only = GeneratedPlaylistSettings {
         genres: false,
@@ -422,7 +436,7 @@ fn country_mixes_are_part_of_the_kinds_only_when_on() {
         ..countries
     };
     assert!(!mixes_on(&off) && !country_mixes_on(&off));
-    assert_eq!(kinds_of(&off, all), ",,");
+    assert_eq!(kinds_of(&off, all, false), ",,");
 }
 
 #[test]

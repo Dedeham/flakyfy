@@ -1173,7 +1173,7 @@ fn with_no_decisive_length_a_plain_download_is_the_studio_take() {
 }
 
 #[test]
-fn a_request_for_the_instrumental_takes_it_unless_instrumentals_are_skipped() {
+fn a_request_for_the_instrumental_takes_it_unless_covers_and_instrumentals_are_skipped() {
     let asked = Takes::for_request(
         Some("Welcome to the Black Parade (Instrumental)"),
         None,
@@ -1200,9 +1200,84 @@ fn a_request_for_the_instrumental_takes_it_unless_instrumentals_are_skipped() {
     let skipped = Takes::for_request(
         Some("Welcome to the Black Parade (Instrumental)"),
         None,
-        &std::collections::BTreeSet::from([RecordingKind::Instrumental, RecordingKind::Karaoke]),
+        &std::collections::BTreeSet::from(octo_core::common::skipped_takes::SKIPPED),
     );
     assert!(skipped.refuses(RecordingKind::Instrumental));
+}
+
+/// Skip covers and instrumentals, on by default, refuses a cover, a karaoke take and an
+/// instrumental even when the title asks for one. Off, only a title that asks gets one.
+#[test]
+fn takes_follow_skip_covers_and_instrumentals() {
+    use octo_core::settings::{AppSettings, SoulseekSettings};
+
+    use crate::services::fingerprint::{AcoustIdRateLimitHandler, AcoustIdRateLimiter};
+
+    let settings = Arc::new(SettingsStore::for_tests(AppSettings::default()));
+    let client = Arc::new(AcoustIdClient::new(Arc::new(AcoustIdRateLimitHandler::new(
+        Arc::new(AcoustIdRateLimiter::new()),
+    ))));
+    let service = DownloadVerificationService::new(
+        Arc::new(AudioFingerprinter::new()),
+        client,
+        Arc::clone(&settings),
+        None,
+        None,
+    );
+    let skipped = [
+        RecordingKind::Cover,
+        RecordingKind::Karaoke,
+        RecordingKind::Instrumental,
+    ];
+
+    assert!(
+        settings.current().soulseek.skip_covers_and_instrumentals,
+        "on by default"
+    );
+    for title in [
+        "Hello (Acoustic Cover)",
+        "Hello (Karaoke Version)",
+        "Hello (Instrumental)",
+        "Hello",
+    ] {
+        let takes = service.takes_for(Some(title), None);
+        for kind in skipped {
+            assert!(takes.refuses(kind), "{title}: {kind:?}");
+        }
+        assert!(!takes.refuses(RecordingKind::Studio), "{title}");
+    }
+
+    settings.set(AppSettings {
+        soulseek: SoulseekSettings {
+            skip_covers_and_instrumentals: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let plain = service.takes_for(Some("Hello"), None);
+    for kind in skipped {
+        assert!(plain.refuses(kind), "a plain request never gets {kind:?}");
+    }
+    assert!(
+        !service
+            .takes_for(Some("Hello (Acoustic Cover)"), None)
+            .refuses(RecordingKind::Cover)
+    );
+    assert!(
+        !service
+            .takes_for(Some("Hello (Karaoke Version)"), None)
+            .refuses(RecordingKind::Karaoke)
+    );
+    assert!(
+        !service
+            .takes_for(Some("Hello (Instrumental)"), None)
+            .refuses(RecordingKind::Instrumental)
+    );
+    assert!(
+        service
+            .takes_for(Some("Hello (Acoustic Cover)"), None)
+            .refuses(RecordingKind::Instrumental)
+    );
 }
 
 #[test]

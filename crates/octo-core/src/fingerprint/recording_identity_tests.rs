@@ -254,3 +254,52 @@ fn album_names_read_as_kinds() {
     // An album that is only called so is not a demo: the kind comes from the recording.
     assert!(RecordingKind::named_in("Dark Lane Demo Tapes").is_empty());
 }
+
+#[test]
+fn covers_are_a_take_of_their_own() {
+    assert_eq!(RecordingKind::of_marker("cover"), Some(RecordingKind::Cover));
+    assert_eq!(RecordingKind::Cover.title_word(), Some("Cover"));
+    assert_eq!(RecordingKind::Cover.described(), "a cover");
+    for title in [
+        "Song (Cover)",
+        "Song (Acoustic Cover)",
+        "Song - Cover Version",
+        "Song (Tribute to Adele)",
+    ] {
+        assert_eq!(
+            RecordingKind::requested_by(title),
+            BTreeSet::from([RecordingKind::Cover]),
+            "{title}"
+        );
+    }
+    for title in [
+        "Cover Me",
+        "Covered in Blood",
+        "Under Cover of Darkness",
+        "Undercover",
+    ] {
+        assert!(RecordingKind::named_in(title).is_empty(), "{title}");
+    }
+    assert_eq!(
+        RecordingKind::named_in("Under the Covers"),
+        BTreeSet::from([RecordingKind::Cover])
+    );
+
+    let titled = recording(
+        "c",
+        "Welcome to the Black Parade (Acoustic Cover)",
+        300_000,
+        vec![],
+    );
+    assert_eq!(kind_of(&titled, None), RecordingKind::Cover);
+    let bare = recording("x", "Welcome to the Black Parade", 300_000, vec![]);
+    let facts = RecordingFacts {
+        disambiguation: Some("Adele cover".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(kind_of(&bare, Some(&facts)), RecordingKind::Cover);
+    // A karaoke take is a backing track first, whatever else it is.
+    let both = recording("k", "Hello (Karaoke Cover Version)", 300_000, vec![]);
+    assert_eq!(kind_of(&both, None), RecordingKind::Karaoke);
+    assert!(unwanted(RecordingKind::Cover, &plain()));
+}

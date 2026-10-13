@@ -467,11 +467,11 @@ fn assemble_keeps_chart_order_the_librarys_copy_first() {
     let library = vec![None, Some(json!({"id": "nd-two"})), None, None];
     let as_json = |s: &Song| json!({"id": s.id});
 
-    let (all, _) = assemble(&rows, &library, true, ExplicitFilter::All, as_json);
+    let (all, _) = assemble(&rows, &library, true, ExplicitFilter::All, false, as_json);
     let ids: Vec<&str> = all.iter().filter_map(|e| e["id"].as_str()).collect();
     assert_eq!(ids, vec!["out-One", "nd-two", "out-Three", "out-Four"]);
 
-    let (clean, outside) = assemble(&rows, &library, true, ExplicitFilter::CleanOnly, as_json);
+    let (clean, outside) = assemble(&rows, &library, true, ExplicitFilter::CleanOnly, false, as_json);
     let ids: Vec<&str> = clean.iter().filter_map(|e| e["id"].as_str()).collect();
     assert_eq!(
         ids,
@@ -480,8 +480,45 @@ fn assemble_keeps_chart_order_the_librarys_copy_first() {
     );
     assert_eq!(outside.len(), 1);
 
-    let (none_outside, _) = assemble(&rows, &library, false, ExplicitFilter::All, as_json);
+    let (none_outside, _) = assemble(&rows, &library, false, ExplicitFilter::All, false, as_json);
     assert_eq!(none_outside.len(), 1);
+}
+
+#[test]
+fn assemble_leaves_out_outside_instrumentals_while_skip_covers_and_instrumentals_is_on() {
+    let row = |title: &str, album: &str| TopSong {
+        rank: 1,
+        song: Song {
+            id: format!("out-{title}"),
+            title: title.into(),
+            artist: "A".into(),
+            album: album.into(),
+            ..Default::default()
+        },
+        plays: None,
+        listeners: None,
+    };
+    let rows = vec![
+        row("One", "Album"),
+        row("Two (Instrumental)", "Album"),
+        row("Three (Karaoke Version)", "Album"),
+        row("Four", "Album (Instrumentals)"),
+        row("Karaoke Queen", "Album"),
+    ];
+    let library = vec![None, None, Some(json!({"id": "nd-three"})), None, None];
+    let as_json = |s: &Song| json!({"id": s.id});
+
+    let (skipped, outside) = assemble(&rows, &library, true, ExplicitFilter::All, true, as_json);
+    let ids: Vec<&str> = skipped.iter().filter_map(|e| e["id"].as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["out-One", "nd-three", "out-Karaoke Queen"],
+        "the library's own copy stays; a name is not a take"
+    );
+    assert_eq!(outside.len(), 2);
+
+    let (all, _) = assemble(&rows, &library, true, ExplicitFilter::All, false, as_json);
+    assert_eq!(all.len(), 5);
 }
 
 #[tokio::test]

@@ -9,6 +9,9 @@
 //! it is on).
 
 use std::collections::BTreeSet;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use super::acoust_id_client::{AcoustIdRecording, AcoustIdRelease};
 use crate::common::song_identity::SongIdentity;
@@ -23,6 +26,7 @@ pub enum RecordingKind {
     Live,
     Instrumental,
     Karaoke,
+    Cover,
     Acapella,
     Remix,
     Demo,
@@ -37,6 +41,7 @@ impl RecordingKind {
             RecordingKind::Live => Some("Live"),
             RecordingKind::Instrumental => Some("Instrumental"),
             RecordingKind::Karaoke => Some("Karaoke"),
+            RecordingKind::Cover => Some("Cover"),
             RecordingKind::Acapella => Some("Acapella"),
             RecordingKind::Remix => Some("Remix"),
             RecordingKind::Demo => Some("Demo"),
@@ -50,6 +55,7 @@ impl RecordingKind {
             RecordingKind::Live => "a live recording",
             RecordingKind::Instrumental => "an instrumental",
             RecordingKind::Karaoke => "a karaoke backing track",
+            RecordingKind::Cover => "a cover",
             RecordingKind::Acapella => "an acapella",
             RecordingKind::Remix => "a remix",
             RecordingKind::Demo => "a demo",
@@ -62,6 +68,7 @@ impl RecordingKind {
             "live" | "unplugged" => RecordingKind::Live,
             "instrumental" => RecordingKind::Instrumental,
             "karaoke" => RecordingKind::Karaoke,
+            "cover" => RecordingKind::Cover,
             "acapella" => RecordingKind::Acapella,
             "remix" | "dj mix" | "vip" | "rework" | "dub" => RecordingKind::Remix,
             "demo" => RecordingKind::Demo,
@@ -69,8 +76,10 @@ impl RecordingKind {
         })
     }
 
-    /// The kinds a text's version markers name, title words and loose words both read.
-    pub fn named_in(text: &str) -> BTreeSet<RecordingKind> {
+    /// The kinds a text's version markers name: "(Instrumental)", "- Karaoke Version", "(Acoustic
+    /// Cover)", "(Tribute to Adele)". Words that are only part of a name ("Cover Me", "Karaoke
+    /// Queen") are not markers.
+    pub fn marked_in(text: &str) -> BTreeSet<RecordingKind> {
         if dotnet::is_blank(text) {
             return BTreeSet::new();
         }
@@ -79,11 +88,26 @@ impl RecordingKind {
             .iter()
             .filter_map(|marker| RecordingKind::of_marker(marker))
             .collect();
+        if MARKED_TRIBUTE.is_match(text) {
+            found.insert(RecordingKind::Cover);
+        }
+        found
+    }
+
+    /// The kinds a text's version markers name, title words and loose words both read.
+    pub fn named_in(text: &str) -> BTreeSet<RecordingKind> {
+        if dotnet::is_blank(text) {
+            return BTreeSet::new();
+        }
+        let mut found = RecordingKind::marked_in(text);
         found.extend(
             version_variant::requested(None, Some(text))
                 .iter()
                 .filter_map(|marker| RecordingKind::of_marker(marker)),
         );
+        if LOOSE_COVERS.is_match(text) {
+            found.insert(RecordingKind::Cover);
+        }
         found
     }
 
@@ -93,6 +117,19 @@ impl RecordingKind {
         RecordingKind::named_in(title)
     }
 }
+
+/// A "tribute to" opening a bracket or a dash tail, which names a cover: "Hello (Tribute to
+/// Adele)", "Hello - A Tribute to Adele".
+static MARKED_TRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:[\(\[\{]|\s[-\x{2013}]\s)\s*(?:a\s+)?tribute\s+to\b")
+        .expect("a fixed pattern compiles")
+});
+
+/// What an album or a release of covers is called anywhere in its name: "A Tribute to Adele",
+/// "Covers", "Cover Versions".
+static LOOSE_COVERS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\btribute\s+to\b|\bcovers\b|\bcover\s+versions\b").expect("a fixed pattern compiles")
+});
 
 /// What the music database adds about one recording beyond what AcoustID sends: its
 /// disambiguation, and every release it is on with that release's status and its group's
@@ -116,7 +153,7 @@ pub struct FactRelease {
 
 /// The kind of take a recording is: its title's markers first, then the database's
 /// disambiguation, then the releases it is on (every one of them live, or every one of them
-/// named as instrumentals, karaoke, remixes or demos).
+/// named as instrumentals, karaoke, covers, remixes or demos).
 pub fn kind_of(recording: &AcoustIdRecording, facts: Option<&RecordingFacts>) -> RecordingKind {
     if let Some(kind) = first_kind(&RecordingKind::named_in(&recording.title)) {
         return kind;
@@ -132,20 +169,28 @@ pub fn kind_of(recording: &AcoustIdRecording, facts: Option<&RecordingFacts>) ->
     kind_from_releases(&recording.releases).unwrap_or(RecordingKind::Studio)
 }
 
-/// The kind a database note names: "instrumental", "karaoke", or a live take's
+/// The kind a database note names: "instrumental", "karaoke", "cover", or a live take's
 /// "live, 2007-04-08: Palacio de los Deportes".
 fn note_kind(note: &str) -> Option<RecordingKind> {
     let mut kinds = RecordingKind::named_in(note);
     if live_version::mentions(Some(note)) {
         kinds.insert(RecordingKind::Live);
     }
+    if NOTE_COVER.is_match(note) {
+        kinds.insert(RecordingKind::Cover);
+    }
     first_kind(&kinds)
 }
+
+/// A database note that calls the recording a cover: "cover", "Adele cover".
+static NOTE_COVER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bcover(?:\s+version)?\b").expect("a fixed pattern compiles"));
 
 /// The most telling kind of several: one that changes what is heard most comes first.
 fn first_kind(kinds: &BTreeSet<RecordingKind>) -> Option<RecordingKind> {
     [
         RecordingKind::Karaoke,
+        RecordingKind::Cover,
         RecordingKind::Instrumental,
         RecordingKind::Acapella,
         RecordingKind::Live,

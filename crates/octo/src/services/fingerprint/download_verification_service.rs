@@ -108,10 +108,10 @@ impl DownloadVerificationService {
     }
 
     /// The takes a download asking for this title and album may be: the ones they name, never
-    /// an instrumental or a karaoke backing while Skip instrumentals is on.
+    /// a cover, a karaoke backing or an instrumental while Skip covers and instrumentals is on.
     pub fn takes_for(&self, title: Option<&str>, album: Option<&str>) -> Takes {
-        let never = if self.settings.current().soulseek.skip_instrumentals {
-            std::collections::BTreeSet::from([RecordingKind::Instrumental, RecordingKind::Karaoke])
+        let never = if self.settings.current().soulseek.skip_covers_and_instrumentals {
+            std::collections::BTreeSet::from(octo_core::common::skipped_takes::SKIPPED)
         } else {
             std::collections::BTreeSet::new()
         };

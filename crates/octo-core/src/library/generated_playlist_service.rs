@@ -126,7 +126,9 @@ pub fn kinds_of(
             ExplicitFilter::ExplicitOnly => 1,
             ExplicitFilter::CleanOnly => 2,
         };
-        // Skip covers and instrumentals only when on, so kinds saved before it existed still compare equal.
+        // Skip covers, karaoke and instrumentals adds a mark only when on. It is on unless turned
+        // off, so New Releases saved before the setting existed are made again once, and lists
+        // made with it off still compare equal.
         kinds.push_str(&format!(
             ",w{}a{}x{filter}{}",
             settings.effective_new_release_weeks(),

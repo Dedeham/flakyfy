@@ -102,8 +102,8 @@ impl ExternalSearchService {
     }
 
     /// Up to [`BUILD_SIZE`] enriched external songs for this query. Callers take
-    /// the prefix they need; the list is shared and must not be mutated. While Skip
-    /// instrumentals is on, cover, karaoke and instrumental takes are left out; the build itself
+    /// the prefix they need; the list is shared and must not be mutated. While Skip covers,
+    /// karaoke and instrumentals is on, cover, karaoke and instrumental takes are left out; the build itself
     /// keeps them, so switching the setting changes the next answer at once.
     pub async fn get(&self, query: &str) -> Arc<Vec<Song>> {
         let key = recent_key(query);

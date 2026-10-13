@@ -311,9 +311,9 @@ fn synced_song(state: &AppState, username: &str, song: &Song) -> Song {
         .unwrap_or_else(|| song.clone())
 }
 
-/// The first `count` rows, each matched against the caller's own library. While Skip
-/// instrumentals is on, an outside cover, karaoke or instrumental take is left out and the next row
-/// takes its place.
+/// The first `count` rows, each matched against the caller's own library. While Skip covers,
+/// karaoke and instrumentals is on, an outside cover, karaoke or instrumental take is left out and
+/// the next row takes its place.
 async fn answer(state: &AppState, call: &SubsonicCall, list: &TopList, count: usize) -> Response {
     let skip_covers_and_instrumentals = state.settings.current().soulseek.skip_covers_and_instrumentals;
     let candidates = TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals);

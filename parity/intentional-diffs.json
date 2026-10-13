@@ -3738,8 +3738,7 @@
         "^/subsonic\\-response\\[0\\]/playlist@octoGroup:\\ \\(absent\\)\\ !=\\ (liked|forYou|chart|genre|decade|year|country|artist|station)$"
       ],
       "reason": "Every Octo list row in getPlaylists and getPlaylist carries octoGroup, the group it belongs to, so apps can group Octo's lists, whose ids are all og or or and a hash: genre, decade, year, country or artist for a mix, chart, forYou (New Releases, Rediscover, Deep Cuts), liked and station. octoList is unchanged (installed apps read it as a Made for you row), and octoLists is listed as versions [1, 2]; the extensions answers' new versions line is the one the earlier extension entries already pin. The octoGroup lines are pinned to the field and its nine values; every other line on these answers is made-list-cover-ids', because one answer is explained by one entry. It supersedes made-list-cover-ids.",
-      "knownDiff": "Octo list groups (octoGroup)",
-      "reviewed": "pending Brandon"
+      "knownDiff": "Octo list groups (octoGroup)"
     },
     {
       "id": "settings-keys-list-groups",
@@ -4201,8 +4200,7 @@
         "^\\$\\.persisted\\.GeneratedPlaylists\\.ArtistCount:\\ only\\ in\\ B\\ \\(5\\)$"
       ],
       "reason": "settings-keys-2026-10-13 plus the year and artist mixes (both off by default): every settings answer carries GeneratedPlaylists Years (false), MaxYearPlaylists (10), Artists (false) and ArtistCount (5); config-sources lists them last, so they shift no row, and lists 198 rows; the saved settings.json grows by their 92 bytes, 7932 to 8024. With the switches off nothing else answers differently. One answer can be explained by one entry only, so this entry pins the combined diff line by line; it supersedes settings-keys-2026-10-13.",
-      "knownDiff": "Settings answers with the year and artist mixes",
-      "reviewed": "pending Brandon"
+      "knownDiff": "Settings answers with the year and artist mixes"
     },
     {
       "id": "dashboard-files-list-groups",
@@ -4251,8 +4249,7 @@
         "^B:\\ \\['bytes\\ (0-9|\\*)/211610'\\]$"
       ],
       "reason": "A re-pin of the dashboard files: index.html's Which mixes card gains the Year mixes switch, the Artist mixes switch with how many artists get one, and At most year mixes (GeneratedPlaylists Years, Artists, ArtistCount and MaxYearPlaylists), and the mix Name hint says {0} can be the artist; admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
-      "knownDiff": "Dashboard files, list groups",
-      "reviewed": "pending Brandon"
+      "knownDiff": "Dashboard files, list groups"
     }
   ]
 }

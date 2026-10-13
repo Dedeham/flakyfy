@@ -97,6 +97,18 @@ pub struct AuditFinding {
     pub words: String,
 }
 
+/// What is known of a recording a file's tags name, other than the one the audio was found to
+/// be.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NamedRecording {
+    /// The fingerprint names it among the recordings of the audio.
+    pub listed: bool,
+    /// The kind of take it is, when the fingerprint or the music database says.
+    pub kind: Option<RecordingKind>,
+    /// How long it runs, in milliseconds, when known.
+    pub length_ms: Option<i64>,
+}
+
 /// What the fingerprint said about a file's audio, beyond the one recording it decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeardAs {
@@ -105,13 +117,93 @@ pub struct HeardAs {
     /// recording that agreed with the song. Only a sure identity writes ids, and only sure
     /// findings are fixed all at once.
     pub sure: bool,
-    /// The kind of take the file's own recording id is, when the fingerprint named it too.
-    pub written_kind: Option<RecordingKind>,
-    /// The recording the file's release track id belongs to, and its kind, when known.
-    pub track_owner: Option<(String, RecordingKind)>,
+    /// How long the file runs, in milliseconds, when known.
+    pub file_ms: Option<i64>,
+    /// What is known of the file's own recording id. None when nothing is: a recording the
+    /// fingerprint does not name and the music database was not asked about.
+    pub written: Option<NamedRecording>,
+    /// The recording the file's release track id belongs to, and what is known of it.
+    pub track_owner: Option<(String, NamedRecording)>,
     /// Whether the file's release lists the audio's recording: `Some(Some(track))` with the
     /// track it is there, `Some(None)` when it does not list it, None when that is unknown.
     pub on_release: Option<Option<String>>,
+}
+
+/// How far a recording's length may be from the file's and still be the same audio: at least
+/// this many milliseconds, and at least [`LENGTH_SLACK`] of the file's length. Masterings and
+/// releases of one recording list lengths a few seconds apart.
+pub const MIN_LENGTH_SLACK_MS: i64 = 10_000;
+pub const LENGTH_SLACK: f64 = 0.07;
+
+/// Whether a recording that runs `recording_ms` cannot be a file that runs `file_ms`.
+pub fn length_contradicts(recording_ms: i64, file_ms: i64) -> bool {
+    if recording_ms <= 0 || file_ms <= 0 {
+        return false;
+    }
+    let slack = MIN_LENGTH_SLACK_MS.max((file_ms as f64 * LENGTH_SLACK).round() as i64);
+    (recording_ms - file_ms).abs() > slack
+}
+
+/// Why a recording a file's tags name is not the audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Elsewhere {
+    /// It is another kind of take than the audio, which is known to be its own kind.
+    Take(RecordingKind),
+    /// The file's exact length chose another recording of the same take.
+    Length,
+    /// It runs this many milliseconds, too far from the file's length.
+    Runs(i64),
+}
+
+/// Why the recording `id` cannot be the audio, or None when it is the audio, may be, or nothing
+/// says. A recording the fingerprint does not name is not wrong for that alone: an album and a
+/// remaster list the same audio under recordings AcoustID often does not tie to the print. It is
+/// only wrong when the music database says its take or its length is not the audio's.
+fn elsewhere(heard: &HeardAs, id: &str, named: Option<&NamedRecording>) -> Option<Elsewhere> {
+    let identity = &heard.identity;
+    if dotnet::eq_ignore_case(id, &identity.recording_id) {
+        return None;
+    }
+    let named = named?;
+    if named.listed {
+        // Among the takes the print is tied to, only a known take rules one out: when the take
+        // was only the likeliest pick, the file's own may be as right.
+        let kind = named.kind.unwrap_or(identity.kind);
+        if !identity.kind_certain || identity.admits(id, kind) {
+            return None;
+        }
+        return Some(if kind == identity.kind {
+            Elsewhere::Length
+        } else {
+            Elsewhere::Take(kind)
+        });
+    }
+    if identity.kind_certain
+        && let Some(kind) = named.kind
+        && kind != identity.kind
+    {
+        return Some(Elsewhere::Take(kind));
+    }
+    match (named.length_ms, heard.file_ms) {
+        (Some(length), Some(file)) if length_contradicts(length, file) => Some(Elsewhere::Runs(length)),
+        _ => None,
+    }
+}
+
+/// A length in words: "5:11".
+fn minutes(ms: i64) -> String {
+    let seconds = (ms + 500) / 1000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// What the audio is, in words: its take when that is known, else only which recording.
+fn audio_words(heard: &HeardAs) -> String {
+    let identity = &heard.identity;
+    if identity.kind_certain {
+        format!("{} ({})", identity.kind.described(), identity.recording_id)
+    } else {
+        format!("the recording {}", identity.recording_id)
+    }
 }
 
 /// What an audit found, and the tags that would put it right: a value to write, or None to
@@ -152,13 +244,17 @@ impl TagAudit {
 /// Holds a file's tags against its audio. Without `heard` only the spaces are checked: with no
 /// recording found for the audio there is nothing to hold the rest against.
 pub fn audit(tags: &FileTags, heard: Option<&HeardAs>) -> TagAudit {
+    // The song the guard sees carries the file's release ids, so an album it cuts back to its
+    // plain name takes them off with it. No recording id: a library file's recording id is
+    // judged below, against the release it came from, which the guard of a download never has.
     let mut song = Song {
         title: tags.title.clone(),
         album: tags.album.clone(),
+        music_brainz_release_track_id: tags.release_track_id.clone(),
+        music_brainz_release_id: tags.release_id.clone(),
+        music_brainz_release_group_id: tags.release_group_id.clone(),
         ..Default::default()
     };
-    // No ids on the song the guard sees: a library file's ids are judged below, against the
-    // release they came from, which the guard of a download never has.
     let guarded = tag_guard::guard(&mut song, heard.map(|h| &h.identity), None);
     let mut found = TagAudit {
         sure: heard.is_some_and(|h| h.sure),
@@ -219,96 +315,119 @@ pub fn audit(tags: &FileTags, heard: Option<&HeardAs>) -> TagAudit {
             .changes
             .insert(fields::ALBUM.to_string(), Some(song.album.clone()));
     }
+    // An album renamed is no longer the release its ids name: left on, the library would keep
+    // the song on that release's album, beside the one it is renamed to.
+    let mut release_cleared = false;
+    for (field, before, after) in [
+        (
+            fields::RELEASE_TRACK_ID,
+            &tags.release_track_id,
+            &song.music_brainz_release_track_id,
+        ),
+        (
+            fields::RELEASE_ID,
+            &tags.release_id,
+            &song.music_brainz_release_id,
+        ),
+        (
+            fields::RELEASE_GROUP_ID,
+            &tags.release_group_id,
+            &song.music_brainz_release_group_id,
+        ),
+    ] {
+        if before.as_deref().is_some_and(|id| !is_blank(id)) && after.as_deref().is_none_or(is_blank) {
+            found.changes.insert(field.to_string(), None);
+            release_cleared = true;
+        }
+    }
     if let Some(heard) = heard {
-        ids(tags, heard, &mut found);
+        ids(tags, heard, release_cleared, &mut found);
     }
     found
 }
 
-/// The recording id and the release ids beside it all belong to the recording the audio is.
-fn ids(tags: &FileTags, heard: &HeardAs, found: &mut TagAudit) {
+/// The recording id and the release track id beside it belong to the recording the audio is.
+/// `release_cleared` says the album rule already took the release ids off.
+fn ids(tags: &FileTags, heard: &HeardAs, release_cleared: bool, found: &mut TagAudit) {
     let identity = &heard.identity;
     let written = tags.recording_id.as_deref().filter(|id| !is_blank(id));
-    let mut wrong_ids = false;
     let mut wrong_recording = false;
     if let Some(written) = written
-        && !dotnet::eq_ignore_case(written, &identity.recording_id)
-        && !identity.admits(written, heard.written_kind.unwrap_or(identity.kind))
+        && let Some(why) = elsewhere(heard, written, heard.written.as_ref())
     {
+        found.findings.push(AuditFinding {
+            rule: AuditRule::Ids,
+            words: ids_words(&format!("The recording id {written} is"), "", why, heard),
+        });
         wrong_recording = true;
-        let what = heard
-            .written_kind
-            .map_or("another recording", RecordingKind::described);
-        found.findings.push(AuditFinding {
-            rule: AuditRule::Ids,
-            words: format!(
-                "The recording id {written} is {what}, but the audio is {} ({}).",
-                identity.kind.described(),
-                identity.recording_id
-            ),
-        });
-        wrong_ids = true;
     }
-    if let (Some(track), Some((owner, owner_kind))) = (
-        tags.release_track_id.as_deref().filter(|id| !is_blank(id)),
-        heard.track_owner.as_ref(),
-    ) && !identity.admits(owner, *owner_kind)
+    let track = tags.release_track_id.as_deref().filter(|id| !is_blank(id));
+    let mut wrong_track = false;
+    if let (Some(track), Some((owner, named))) = (track, heard.track_owner.as_ref())
+        && let Some(why) = elsewhere(heard, owner, Some(named))
     {
         found.findings.push(AuditFinding {
             rule: AuditRule::Ids,
-            words: format!(
-                "The release track id {track} is a track of {} ({owner}), but the audio is {}.",
-                owner_kind.described(),
-                identity.kind.described()
+            words: ids_words(
+                &format!("The release track id {track} is a track of"),
+                &format!(" ({owner})"),
+                why,
+                heard,
             ),
         });
-        wrong_ids = true;
+        wrong_track = true;
     }
     if !heard.sure {
         return;
     }
     // A file with no recording id gets the audio's; one with another recording's id gets it in
-    // its place. One that names another recording of the same take keeps what it has.
+    // its place. One whose recording nothing rules out keeps what it has.
     if written.is_none() || wrong_recording {
         found.changes.insert(
             fields::RECORDING_ID.to_string(),
             Some(identity.recording_id.clone()),
         );
     }
-    if !wrong_ids {
+    if release_cleared || !(wrong_recording || wrong_track) {
         return;
     }
+    // The release and its group stay: they name the album the song is filed on, and taking them
+    // off would split it from the rest of that album. Only the track can be put right.
     match &heard.on_release {
         // The file's release has the audio's recording: its track there is the one to name.
         Some(Some(own)) => {
-            if tags
-                .release_track_id
-                .as_deref()
-                .is_none_or(|track| !dotnet::eq_ignore_case(track, own))
-            {
+            if track.is_none_or(|track| !dotnet::eq_ignore_case(track, own)) {
                 found
                     .changes
                     .insert(fields::RELEASE_TRACK_ID.to_string(), Some(own.clone()));
             }
         }
-        // A release the audio is not on: none of its ids describe this file.
-        Some(None) => {
-            for (field, value) in [
-                (fields::RELEASE_TRACK_ID, &tags.release_track_id),
-                (fields::RELEASE_ID, &tags.release_id),
-                (fields::RELEASE_GROUP_ID, &tags.release_group_id),
-            ] {
-                if value.as_deref().is_some_and(|id| !is_blank(id)) {
-                    found.changes.insert(field.to_string(), None);
-                }
-            }
+        // A track known to be another recording's comes off.
+        _ if wrong_track => {
+            found.changes.insert(fields::RELEASE_TRACK_ID.to_string(), None);
         }
-        // Whether the release has it is unknown: only the track known to be wrong comes off.
-        None => {
-            if tags.release_track_id.as_deref().is_some_and(|id| !is_blank(id)) {
-                found.changes.insert(fields::RELEASE_TRACK_ID.to_string(), None);
-            }
-        }
+        _ => {}
+    }
+}
+
+/// An Ids finding in words: `subject` names the tag ("The recording id X is"), `owner` the
+/// recording it belongs to when that is not the tag itself.
+fn ids_words(subject: &str, owner: &str, why: Elsewhere, heard: &HeardAs) -> String {
+    match why {
+        Elsewhere::Take(kind) => format!(
+            "{subject} {}{owner}, but the audio is {}.",
+            kind.described(),
+            audio_words(heard)
+        ),
+        Elsewhere::Length => format!(
+            "{subject} another recording{owner}, but the audio's exact length is that of {}.",
+            heard.identity.recording_id
+        ),
+        Elsewhere::Runs(length) => format!(
+            "{subject} a recording of {}{owner}, but the audio runs {}.",
+            minutes(length),
+            heard.file_ms.map_or_else(String::new, minutes)
+        ),
     }
 }
 

@@ -102,6 +102,7 @@ fn setup(actions: LibraryActionSettings) -> Setup {
             CheckedSong {
                 recording_id: Some(STUDIO.into()),
                 kind: Some("Studio".into()),
+                kind_certain: true,
                 sure: true,
                 findings: vec![KeptFinding {
                     rule: "album".into(),
@@ -229,9 +230,14 @@ async fn fix_all_sure_ones_previews_only_the_sure_songs_and_its_steps_are_accept
     let step = &preview["steps"][0];
     assert_eq!(step["action"], "retag");
     assert_eq!(step["id"], "song-parade");
+    // The file the tags were worked out from goes with them, so a file replaced since is left.
+    let stamp = setup
+        .state
+        .identity_sweep_store
+        .read(|s| s.songs["song-parade"].stamp.clone());
     assert_eq!(
         step["with"],
-        json!({ "album": "The Black Parade", "recordingId": STUDIO, "releaseTrackId": "" })
+        json!({ "album": "The Black Parade", "recordingId": STUDIO, "releaseTrackId": "", "fileStamp": stamp })
     );
 
     // The steps go through the same apply as every fix, which checks each tag it writes.
@@ -252,6 +258,31 @@ async fn fix_all_sure_ones_previews_only_the_sure_songs_and_its_steps_are_accept
         bad.status == StatusCode::BAD_REQUEST || bad.status == StatusCode::CONFLICT,
         "{}",
         bad.text()
+    );
+}
+
+#[test]
+fn a_file_stamp_is_no_tag_and_alone_is_nothing_to_write() {
+    use crate::services::health::LibraryHealthService;
+    use crate::services::health::health_fixes::{FixStep, fix_actions};
+
+    let step = |with: &[(&str, &str)]| {
+        FixStep::with(
+            fix_actions::RETAG,
+            "song-parade",
+            "Welcome to the Black Parade",
+            with.iter()
+                .map(|(tag, value)| (tag.to_string(), value.to_string()))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        LibraryHealthService::invalid(&[step(&[("album", "The Black Parade"), ("fileStamp", "1234:5678")])]),
+        None
+    );
+    assert!(
+        LibraryHealthService::invalid(&[step(&[("fileStamp", "1234:5678")])])
+            .is_some_and(|why| why.starts_with("No tags to write"))
     );
 }
 

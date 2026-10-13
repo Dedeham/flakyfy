@@ -3,6 +3,7 @@
 //! download's way, and carries on after a restart.
 
 use std::sync::atomic::AtomicBool;
+use std::time::SystemTime;
 
 use octo_core::fingerprint::acoust_id_client::{AcoustIdLookup, AcoustIdRelease, AcoustIdResult};
 use octo_core::settings::{AppSettings, LibraryActionSettings, SubsonicSettings};
@@ -90,6 +91,8 @@ struct FakeVerifier {
     asked: Mutex<Vec<String>>,
     answers: Mutex<Answers>,
     failures_left: AtomicI32,
+    /// Files replaced while their fingerprint is looked up, by name.
+    replaced_meanwhile: Mutex<Vec<String>>,
 }
 
 impl FakeVerifier {
@@ -116,6 +119,9 @@ impl IReviewSweepVerifier for FakeVerifier {
     async fn verify(&self, path: &str, _: Option<&str>, _: Option<&str>) -> VerificationResult {
         let name = path.rsplit('/').next().unwrap_or(path).to_string();
         self.asked.lock().push(name.clone());
+        if self.replaced_meanwhile.lock().contains(&name) {
+            replace(Path::new(path));
+        }
         if self.failures_left.load(Ordering::SeqCst) > 0 {
             self.failures_left.fetch_sub(1, Ordering::SeqCst);
             return VerificationResult {
@@ -142,10 +148,11 @@ impl IAcquisitionActivity for FakeActivity {
     }
 }
 
-/// Songs whose ids are their file names, in a temp folder.
+/// Songs whose ids are their file names, in a temp folder, unless moved.
 struct FakeLibrary {
     dir: PathBuf,
     songs: Mutex<Vec<SweepSong>>,
+    moved: Mutex<HashMap<String, PathBuf>>,
 }
 
 #[async_trait]
@@ -155,9 +162,24 @@ impl IdentitySweepLibrary for FakeLibrary {
     }
 
     fn locate(&self, song: &SweepSong) -> Option<String> {
-        let path = self.dir.join(&song.id);
+        let path = self
+            .moved
+            .lock()
+            .get(&song.id)
+            .cloned()
+            .unwrap_or_else(|| self.dir.join(&song.id));
         path.is_file().then(|| path.to_string_lossy().into_owned())
     }
+}
+
+/// The same tags in a newer file, as a replace leaves it.
+fn replace(path: &Path) {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("opens")
+        .set_modified(SystemTime::now() + Duration::from_secs(300))
+        .expect("the time set");
 }
 
 /// Writes through the same tag writer the edit service uses, and keeps who asked for what.
@@ -177,11 +199,16 @@ impl IdentitySweepEdits for FakeEdits {
         id: &str,
         user: &str,
         changes: IndexMap<String, Option<String>>,
+        expected_stamp: Option<String>,
     ) -> LibraryEditOutcome {
         self.asked
             .lock()
             .push((id.to_string(), user.to_string(), changes.clone()));
-        let written = library_tag_edits::write(&self.dir.join(id), &changes);
+        let path = self.dir.join(id);
+        if expected_stamp.is_some() && stamp_of(&path.to_string_lossy()) != expected_stamp {
+            return LibraryEditOutcome::new("skipped", "changed since");
+        }
+        let written = library_tag_edits::write(&path, &changes);
         LibraryEditOutcome::new(if written.changed { "applied" } else { "skipped" }, "")
     }
 }
@@ -200,6 +227,7 @@ impl Setup {
             library: Arc::new(FakeLibrary {
                 dir: dir.path().to_path_buf(),
                 songs: Mutex::new(Vec::new()),
+                moved: Mutex::new(HashMap::new()),
             }),
             edits: Arc::new(FakeEdits {
                 dir: dir.path().to_path_buf(),
@@ -258,6 +286,7 @@ impl Setup {
                 library: self.library.clone(),
                 edits: Some(self.edits.clone()),
                 releases: None,
+                recordings: None,
                 settings,
             },
             Clock::system(),
@@ -320,10 +349,10 @@ async fn a_pass_gives_every_song_an_identity_and_keeps_what_disagrees() {
         parade.changes.get("album"),
         Some(&Some("The Black Parade".to_string()))
     );
-    // The promo's track was the instrumental's. Whether the promo lists the studio take is not
-    // known without asking MusicBrainz, so only the wrong track comes off.
+    // The album is renamed, so the promo's ids come off with it: left on, they would keep the
+    // song on the promo's album.
     assert_eq!(parade.changes.get("releaseTrackId"), Some(&None));
-    assert_eq!(parade.changes.get("releaseId"), None);
+    assert_eq!(parade.changes.get("releaseId"), Some(&None));
     let so_what = found.iter().find(|f| f.id == "c-so-what.mp3").expect("so what");
     assert_eq!(rules(so_what), [AuditRule::Album]);
     assert_eq!(
@@ -521,9 +550,241 @@ async fn a_lookup_that_fails_is_tried_again_then_left_for_the_next_pass() {
     sweep.tick().await;
     sweep.tick().await;
     assert_eq!(verifier.asked(), ["a.mp3", "a.mp3", "a.mp3", "b.mp3"]);
-    // The song AcoustID never answered for is not kept, so the next pass asks again.
-    assert!(sweep.store().read(|s| !s.songs.contains_key("a.mp3")));
-    assert!(sweep.store().read(|s| s.songs.contains_key("b.mp3")));
+    // The song AcoustID never answered for is kept to be tried again, and not counted as checked.
+    let kept = sweep
+        .store()
+        .read(|s| s.songs.get("a.mp3").cloned())
+        .expect("kept");
+    assert!(kept.retry);
+    assert_eq!(kept.recording_id, None);
+    assert!(sweep.store().read(|s| !s.songs["b.mp3"].retry));
+    assert_eq!(sweep.status().checked, 1);
+
+    // The next pass asks again for it alone.
+    sweep.tick().await;
+    sweep.store().update(|s| s.next_pass_utc = datetime::min_value());
+    ticks(&sweep, 2).await;
+    assert_eq!(verifier.asked(), ["a.mp3", "a.mp3", "a.mp3", "b.mp3", "a.mp3"]);
+    assert!(sweep.store().read(|s| !s.songs["a.mp3"].retry));
+    assert_eq!(sweep.status().checked, 2);
+}
+
+#[tokio::test]
+async fn a_changed_song_whose_lookup_keeps_failing_does_not_hold_up_the_pass() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "So What", "A Muse In Her Feelings (Instrumentals)", &[]);
+    setup.song("b.mp3", "Teenagers", "The Black Parade", &[]);
+    setup.song("c.mp3", "Teenagers", "The Black Parade", &[]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    sweep.tick().await;
+    assert_eq!(sweep.findings().len(), 1);
+
+    // The file changes, and AcoustID stops answering for good.
+    replace(&setup.dir.path().join("a.mp3"));
+    verifier.failures_left.store(i32::MAX, Ordering::SeqCst);
+    ticks(&sweep, 3).await;
+    assert_eq!(verifier.asked(), ["a.mp3", "a.mp3", "a.mp3", "a.mp3"]);
+
+    // Its new file is kept, to be tried again next pass, and the pass moves on.
+    assert!(sweep.store().read(|s| s.songs["a.mp3"].retry));
+    verifier.failures_left.store(0, Ordering::SeqCst);
+    ticks(&sweep, 2).await;
+    assert_eq!(
+        verifier.asked(),
+        ["a.mp3", "a.mp3", "a.mp3", "a.mp3", "b.mp3", "c.mp3"]
+    );
+}
+
+#[tokio::test]
+async fn a_song_with_stray_spaces_whose_lookup_failed_is_heard_again_next_pass() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "Teenagers ", "The Black Parade", &[]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    verifier.failures_left.store(3, Ordering::SeqCst);
+    let sweep = setup.sweep(
+        verifier.clone(),
+        LibraryActionSettings {
+            dry_run: true,
+            ..actions(360)
+        },
+    );
+    ticks(&sweep, 4).await;
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(rules(&found[0]), [AuditRule::Spaces]);
+    assert!(sweep.store().read(|s| s.songs["a.mp3"].retry));
+
+    sweep.store().update(|s| s.next_pass_utc = datetime::min_value());
+    ticks(&sweep, 2).await;
+    assert_eq!(verifier.asked(), ["a.mp3", "a.mp3", "a.mp3", "a.mp3"]);
+    let kept = sweep
+        .store()
+        .read(|s| s.songs.get("a.mp3").cloned())
+        .expect("kept");
+    assert!(!kept.retry);
+    assert_eq!(kept.recording_id.as_deref(), Some(SO_WHAT));
+}
+
+#[tokio::test]
+async fn stray_spaces_are_not_written_over_a_file_replaced_while_it_was_checked() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "Teenagers ", "The Black Parade", &[]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    verifier.replaced_meanwhile.lock().push("a.mp3".into());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    sweep.tick().await;
+
+    assert_eq!(setup.edits.asked.lock().len(), 1);
+    let file = TagFile::open(setup.dir.path().join("a.mp3")).expect("opens");
+    assert_eq!(file.title().as_deref(), Some("Teenagers "));
+    assert_eq!(sweep.status().spaces_fixed, 0);
+    // What was found is about the file before the replace: not listed, and checked again first.
+    assert!(sweep.findings().is_empty());
+    verifier.replaced_meanwhile.lock().clear();
+    sweep.tick().await;
+    assert_eq!(verifier.asked(), ["a.mp3", "a.mp3"]);
+    let file = TagFile::open(setup.dir.path().join("a.mp3")).expect("opens");
+    assert_eq!(file.title().as_deref(), Some("Teenagers"));
+    assert_eq!(sweep.status().spaces_fixed, 1);
+}
+
+#[tokio::test]
+async fn a_moved_file_keeps_its_answer_at_its_new_place() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "So What", "A Muse In Her Feelings (Instrumentals)", &[]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    ticks(&sweep, 2).await;
+    assert_eq!(sweep.findings().len(), 1);
+
+    // Moved: same size and last write, another folder.
+    let folder = setup.dir.path().join("moved");
+    std::fs::create_dir_all(&folder).expect("a folder");
+    let moved = folder.join("a.mp3");
+    std::fs::rename(setup.dir.path().join("a.mp3"), &moved).expect("moved");
+    setup.library.moved.lock().insert("a.mp3".into(), moved.clone());
+    assert!(sweep.findings().is_empty());
+
+    sweep.store().update(|s| s.next_pass_utc = datetime::min_value());
+    ticks(&sweep, 2).await;
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, moved.to_string_lossy());
+    // Its answer still holds: the file was not looked up again.
+    assert_eq!(verifier.asked(), ["a.mp3"]);
+}
+
+#[tokio::test]
+async fn a_take_that_was_only_the_likelier_pick_is_kept_but_never_said() {
+    let setup = Setup::new();
+    setup.song(
+        "live.mp3",
+        "Welcome to the Black Parade",
+        "The Black Parade Is Dead!",
+        &[],
+    );
+    setup.song(
+        "studio.mp3",
+        "Welcome to the Black Parade",
+        "The Black Parade",
+        &[],
+    );
+    let mut guess = confirmed(LIVE, RecordingKind::Live, false, false, Vec::new());
+    guess.kind_certain = false;
+    let verifier = FakeVerifier::answering(vec![
+        ("live.mp3", guess),
+        (
+            "studio.mp3",
+            confirmed(STUDIO, RecordingKind::Studio, true, false, Vec::new()),
+        ),
+    ]);
+    let sweep = setup.sweep(verifier, actions(360));
+    ticks(&sweep, 3).await;
+
+    let kept = sweep
+        .store()
+        .read(|s| s.songs.get("live.mp3").cloned())
+        .expect("kept");
+    assert_eq!(kept.kind.as_deref(), Some("Live"));
+    assert!(!kept.kind_certain);
+    // Neither the title nor the copy beside it is held against a take that was only likely.
+    assert!(sweep.findings().is_empty(), "{:?}", sweep.findings());
+}
+
+/// What MusicBrainz says of the album's own recording of the studio take.
+struct AlbumRecording {
+    kind_note: Option<&'static str>,
+}
+
+#[async_trait]
+impl RecordingFactsLookup for AlbumRecording {
+    async fn facts(&self, recording_id: &str) -> Option<RecordingFacts> {
+        (recording_id == ALBUM_RECORDING).then(|| RecordingFacts {
+            recording_id: recording_id.to_string(),
+            title: "Welcome to the Black Parade".into(),
+            disambiguation: self.kind_note.map(str::to_string),
+            length_ms: Some(311_000),
+            releases: Vec::new(),
+        })
+    }
+}
+
+const ALBUM_RECORDING: &str = "a1a1a1a1-0000-4000-8000-000000000007";
+
+#[tokio::test]
+async fn a_recording_id_acoustid_does_not_list_is_left_alone_unless_musicbrainz_rules_it_out() {
+    for (note, wrong) in [(None, false), (Some("live, 2006-10-22"), true)] {
+        let setup = Setup::new();
+        setup.song(
+            "a-parade.mp3",
+            "Welcome to the Black Parade",
+            "The Black Parade",
+            &[
+                ("recording", ALBUM_RECORDING),
+                ("release", "r-parade"),
+                ("track", "t-parade"),
+            ],
+        );
+        let mut sweep = setup.sweep(
+            FakeVerifier::answering(vec![("a-parade.mp3", parade_heard())]),
+            actions(360),
+        );
+        sweep.recordings = Some(Arc::new(AlbumRecording { kind_note: note }));
+        ticks(&sweep, 2).await;
+        let found = sweep.findings();
+        if !wrong {
+            assert!(found.is_empty(), "{found:?}");
+            continue;
+        }
+        assert_eq!(found.len(), 1);
+        assert_eq!(rules(&found[0]), [AuditRule::Ids]);
+        assert!(found[0].findings[0].1.contains("a live recording"));
+        assert_eq!(
+            found[0].changes.get("recordingId"),
+            Some(&Some(STUDIO.to_string()))
+        );
+        // The song stays on its album: its release ids are not touched.
+        assert_eq!(found[0].changes.get("releaseId"), None);
+        assert_eq!(found[0].changes.get("releaseTrackId"), None);
+    }
+}
+
+#[tokio::test]
+async fn the_findings_are_worked_out_again_only_when_the_state_changes() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "So What", "A Muse In Her Feelings (Instrumentals)", &[]);
+    let sweep = setup.sweep(FakeVerifier::answering(Vec::new()), actions(360));
+    ticks(&sweep, 2).await;
+    let first = sweep.listed();
+    assert!(Arc::ptr_eq(&first, &sweep.listed()));
+    let (findings, status) = sweep.findings_and_status();
+    assert_eq!((findings.len(), status.found), (1, 1));
+    assert!(Arc::ptr_eq(&first, &sweep.listed()));
+
+    sweep.reset();
+    assert!(!Arc::ptr_eq(&first, &sweep.listed()));
+    assert!(sweep.findings().is_empty());
 }
 
 #[tokio::test]

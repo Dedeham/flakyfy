@@ -220,7 +220,7 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
     }
 
     // The server's own check: tags held against each song's audio by the library tag check.
-    let tag_findings = state.library_identity_sweep.findings();
+    let (tag_findings, tag_status) = state.library_identity_sweep.findings_and_status();
     if !tag_findings.is_empty() {
         checks.push(tags_check(&tag_findings));
         used.extend(tag_findings.iter().map(|finding| finding.id.clone()));
@@ -239,7 +239,7 @@ async fn get_report(State(state): State<AppState>, request: Request) -> Response
         "checked": report.checked,
         "overview": words::overview_and(report, usize::from(!tag_findings.is_empty())),
         "clean": report.clean() && tag_findings.is_empty(),
-        "tagCheck": tag_check_view(&state.library_identity_sweep.status()),
+        "tagCheck": tag_check_view(&tag_status),
         "allClear": words::ALL_CLEAR,
         "readUtc": utc(&found.read_utc),
         "user": user,
@@ -804,11 +804,13 @@ fn tags_preview(state: &AppState, user: &str, keys: Option<&[String]>) -> Respon
     let steps: Vec<Value> = picked
         .iter()
         .map(|finding| {
-            let with: IndexMap<String, String> = finding
+            let mut with: IndexMap<String, String> = finding
                 .changes
                 .iter()
                 .map(|(tag, value)| (tag.clone(), value.clone().unwrap_or_default()))
                 .collect();
+            // The file the tags were worked out from: once it is replaced, they are not written.
+            with.insert(fix_actions::FILE_STAMP.to_string(), finding.stamp.clone());
             step_view(&FixStep::with(
                 fix_actions::RETAG,
                 &finding.id,

@@ -17,12 +17,12 @@ use indexmap::IndexMap;
 use octo_core::common::Clock;
 use octo_core::common::dotnet::{self, is_blank};
 use octo_core::fingerprint::acoust_id_client::AcoustIdRecording;
-use octo_core::fingerprint::recording_identity::{self, Identity, RecordingKind};
+use octo_core::fingerprint::recording_identity::{self, Identity, RecordingFacts, RecordingKind};
 use octo_core::fingerprint::verification::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::settings::SettingsStore;
-use octo_core::tagging::tag_audit::{self, AuditRule, FileTags, HeardAs, TagAudit, TakeCopy};
+use octo_core::tagging::tag_audit::{self, AuditRule, FileTags, HeardAs, NamedRecording, TagAudit, TakeCopy};
 use octo_media::tags::TagFile;
 use octo_media::tags::tag_writer_extras::{self as extras, TagFields};
 use parking_lot::Mutex;
@@ -73,11 +73,14 @@ pub trait IdentitySweepLibrary: Send + Sync {
 pub trait IdentitySweepEdits: Send + Sync {
     /// Why files may not be changed for this user now, or None when they may.
     fn refusal(&self, user: &str) -> Option<String>;
+    /// Writes the changes, unless the file's stamp is no longer `expected_stamp`: a file
+    /// replaced since its tags were read keeps the new tags.
     async fn retag(
         &self,
         id: &str,
         user: &str,
         changes: IndexMap<String, Option<String>>,
+        expected_stamp: Option<String>,
     ) -> LibraryEditOutcome;
 }
 
@@ -85,6 +88,13 @@ pub trait IdentitySweepEdits: Send + Sync {
 #[async_trait]
 pub trait ReleaseTracks: Send + Sync {
     async fn tracks(&self, release_id: &str) -> Option<Vec<(String, String)>>;
+}
+
+/// What the music database says one recording is, asked only for a recording a file's tags
+/// name that the fingerprint does not.
+#[async_trait]
+pub trait RecordingFactsLookup: Send + Sync {
+    async fn facts(&self, recording_id: &str) -> Option<RecordingFacts>;
 }
 
 /// Navidrome's song list from the library snapshot, each file proved the way a library action
@@ -163,8 +173,11 @@ impl IdentitySweepEdits for EditServiceSweepEdits {
         id: &str,
         user: &str,
         changes: IndexMap<String, Option<String>>,
+        expected_stamp: Option<String>,
     ) -> LibraryEditOutcome {
-        self.0.retag(id, user, changes).await
+        self.0
+            .retag_unchanged(id, user, changes, expected_stamp.as_deref())
+            .await
     }
 }
 
@@ -187,6 +200,16 @@ impl ReleaseTracks for MusicBrainzReleaseTracks {
                 })
                 .collect(),
         )
+    }
+}
+
+/// A recording's facts from MusicBrainz, on its background lane.
+pub struct MusicBrainzRecordingFacts(pub Arc<MusicBrainzClient>);
+
+#[async_trait]
+impl RecordingFactsLookup for MusicBrainzRecordingFacts {
+    async fn facts(&self, recording_id: &str) -> Option<RecordingFacts> {
+        self.0.recording_facts(recording_id, true).await.ok()?
     }
 }
 
@@ -213,8 +236,14 @@ pub struct CheckedSong {
     /// The recording the audio was found to be, and its kind; None when nothing was decided.
     pub recording_id: Option<String>,
     pub kind: Option<String>,
+    /// The kind is known, not only the likeliest pick among takes that share the fingerprint.
+    /// Only a known kind is said in words or held against another copy.
+    pub kind_certain: bool,
     /// The exact length or a single match decided it.
     pub sure: bool,
+    /// AcoustID never answered for it: what else was found is kept, and the song is checked
+    /// again next pass.
+    pub retry: bool,
     pub findings: Vec<KeptFinding>,
     /// The tags that would put the findings right: a value, or None to take a tag off.
     pub changes: IndexMap<String, Option<String>>,
@@ -271,6 +300,8 @@ impl Default for IdentitySweepState {
 struct StoreInner {
     state: IdentitySweepState,
     dirty: bool,
+    /// One more on every change, so what is worked out from the state knows when it is stale.
+    version: u64,
 }
 
 /// identity-sweep.json, written at most every [`IdentitySweepStore::FLUSH_INTERVAL`]: it holds
@@ -312,7 +343,11 @@ impl IdentitySweepStore {
         IdentitySweepStore {
             path,
             clock,
-            inner: Mutex::new(StoreInner { state, dirty: false }),
+            inner: Mutex::new(StoreInner {
+                state,
+                dirty: false,
+                version: 0,
+            }),
             flush_lock: Mutex::new(()),
             last_write: Mutex::new(None),
         }
@@ -331,6 +366,12 @@ impl IdentitySweepStore {
         read(&self.inner.lock().state)
     }
 
+    /// Reads the state with its version, which moves on with every change.
+    pub fn read_versioned<T>(&self, read: impl FnOnce(&IdentitySweepState) -> T) -> (u64, T) {
+        let inner = self.inner.lock();
+        (inner.version, read(&inner.state))
+    }
+
     /// Changes the state in memory; it reaches the disk now when nothing was written in the
     /// last few seconds, otherwise on the next flush.
     pub fn update(&self, change: impl FnOnce(&mut IdentitySweepState)) {
@@ -338,6 +379,7 @@ impl IdentitySweepStore {
             let mut inner = self.inner.lock();
             change(&mut inner.state);
             inner.dirty = true;
+            inner.version += 1;
         }
         if self.path.is_none() {
             return;
@@ -406,6 +448,8 @@ pub struct TagFinding {
     pub title: String,
     pub album: String,
     pub path: String,
+    /// The file's size and last write when checked; a fix is refused once it differs.
+    pub stamp: String,
     pub findings: Vec<(AuditRule, String)>,
     /// The tags "Use the audio's tags" writes; empty when nothing can be written for it.
     pub changes: IndexMap<String, Option<String>>,
@@ -441,6 +485,8 @@ pub struct LibraryIdentitySweepParts {
     pub edits: Option<Arc<dyn IdentitySweepEdits>>,
     /// A release's tracks, asked only for a file whose ids may be another recording's.
     pub releases: Option<Arc<dyn ReleaseTracks>>,
+    /// What a recording is, asked only for one a file's ids name that the fingerprint does not.
+    pub recordings: Option<Arc<dyn RecordingFactsLookup>>,
     /// The library action and Subsonic settings, read at use.
     pub settings: Arc<SettingsStore>,
 }
@@ -455,6 +501,7 @@ pub struct LibraryIdentitySweep {
     library: Arc<dyn IdentitySweepLibrary>,
     edits: Option<Arc<dyn IdentitySweepEdits>>,
     releases: Option<Arc<dyn ReleaseTracks>>,
+    recordings: Option<Arc<dyn RecordingFactsLookup>>,
     settings: Arc<SettingsStore>,
     clock: Clock,
 
@@ -462,6 +509,9 @@ pub struct LibraryIdentitySweep {
     generation: AtomicI32,
     lookup_failures: AtomicI32,
     hold: Mutex<(String, Option<String>)>,
+    /// Every song with something found, as last worked out from the state, and the state's
+    /// version it was worked out from.
+    listed: Mutex<Option<(u64, Arc<Vec<TagFinding>>)>>,
 }
 
 /// How one song's check came out.
@@ -490,12 +540,14 @@ impl LibraryIdentitySweep {
             library: parts.library,
             edits: parts.edits,
             releases: parts.releases,
+            recordings: parts.recordings,
             settings: parts.settings,
             clock,
             songs: Mutex::new(None),
             generation: AtomicI32::new(0),
             lookup_failures: AtomicI32::new(0),
             hold: Mutex::new(("Off".to_string(), None)),
+            listed: Mutex::new(None),
         }
     }
 
@@ -612,10 +664,27 @@ impl LibraryIdentitySweep {
                 continue;
             };
             let stamp = stamp_of(&path);
-            let seen = self
-                .store
-                .read(|s| s.songs.get(&song.id).map(|kept| kept.stamp.clone()));
-            if stamp.is_none() || seen == stamp {
+            let seen = self.store.read(|s| {
+                s.songs
+                    .get(&song.id)
+                    .map(|kept| (kept.stamp.clone(), kept.path.clone(), kept.retry))
+            });
+            let unchanged = matches!((&stamp, &seen), (Some(stamp), Some((seen, _, false))) if stamp == seen);
+            if stamp.is_none() || unchanged {
+                // The same file somewhere else (a move or a rename keeps its size and last
+                // write): its answer holds, at the place it is now.
+                if let Some((_, kept_path, _)) = &seen
+                    && unchanged
+                    && *kept_path != path
+                {
+                    let id = song.id.clone();
+                    let moved = path.clone();
+                    self.record(generation, |s| {
+                        if let Some(kept) = s.songs.get_mut(&id) {
+                            kept.path = moved;
+                        }
+                    });
+                }
                 passed = song.id.clone();
                 continue;
             }
@@ -679,6 +748,8 @@ impl LibraryIdentitySweep {
     /// Checks one song whose file is at `song.path`. `in_order` moves the pass's place to it.
     async fn check(&self, generation: i32, id: &str, song: &SweepSong, in_order: bool) -> Checked {
         let path = song.path.clone();
+        // The file as its tags are read: a write later is refused once the file is not this one.
+        let read_stamp = stamp_of(&path);
         let read = {
             let path = path.clone();
             tokio::task::spawn_blocking(move || read_tags(&path))
@@ -733,22 +804,30 @@ impl LibraryIdentitySweep {
         let mut tags = tags;
         let mut spaces_fixed = false;
         if found.findings.iter().any(|f| f.rule == AuditRule::Spaces)
-            && let Some(written) = self.take_spaces_off(id, &tags, &found).await
+            && let Some(written) = self.take_spaces_off(id, &tags, &found, read_stamp.clone()).await
         {
             tags = written;
             found = tag_audit::audit(&tags, heard.as_ref());
             spaces_fixed = true;
         }
         let kept = CheckedSong {
-            // Read after any write, so the next pass sees the file as checked.
-            stamp: stamp_of(&path).unwrap_or_default(),
+            // The file whose tags were read; after the check's own write, the file as written, so
+            // the next pass sees it as checked. A file replaced meanwhile is not the one these
+            // answers are about, so it is checked again.
+            stamp: if spaces_fixed {
+                stamp_of(&path).unwrap_or_default()
+            } else {
+                read_stamp.unwrap_or_default()
+            },
             path,
             artist,
             title: tags.title.clone(),
             album: tags.album.clone(),
             recording_id: heard.as_ref().map(|h| h.identity.recording_id.clone()),
             kind: heard.as_ref().map(|h| kind_name(h.identity.kind).to_string()),
+            kind_certain: heard.as_ref().is_some_and(|h| h.identity.kind_certain),
             sure: found.sure,
+            retry: lookup_failed && heard.is_none(),
             findings: found
                 .findings
                 .iter()
@@ -777,13 +856,9 @@ impl LibraryIdentitySweep {
                     .join(" ")
             );
         }
-        // A lookup that failed every time is not an answer: the song is tried again next pass.
-        if lookup_failed && heard.is_none() && !found.found() {
-            if in_order {
-                self.record(generation, |s| s.cursor = id.to_string());
-            }
-            return Checked::Done;
-        }
+        // A lookup that failed every time is not an answer. The song is kept as it is now, marked
+        // to be tried again next pass: kept, so a file changed since it was last checked is not
+        // picked first again and again; marked, so the next pass does not take it as done.
         self.finish(generation, id, kept, in_order, spaces_fixed);
         Checked::Done
     }
@@ -818,16 +893,18 @@ impl LibraryIdentitySweep {
                 .find(|recording| dotnet::eq_ignore_case(&recording.recording_id, id))
                 .copied()
         };
-        let written_kind = tags
+        let written = match tags
             .recording_id
             .as_deref()
-            .filter(|id| !is_blank(id))
-            .and_then(named)
-            .map(|recording| recording_identity::kind_of(recording, None));
+            .filter(|id| !is_blank(id) && !dotnet::eq_ignore_case(id, &identity.recording_id))
+        {
+            Some(id) => self.named_recording(id, named(id)).await,
+            None => None,
+        };
 
         let track = tags.release_track_id.as_deref().filter(|id| !is_blank(id));
         let release = tags.release_id.as_deref().filter(|id| !is_blank(id));
-        let mut track_owner: Option<(String, RecordingKind)> = track.and_then(|track| {
+        let mut track_owner: Option<(String, NamedRecording)> = track.and_then(|track| {
             recordings.iter().find_map(|recording| {
                 recording
                     .releases
@@ -837,12 +914,7 @@ impl LibraryIdentitySweep {
                             .as_deref()
                             .is_some_and(|t| dotnet::eq_ignore_case(t, track))
                     })
-                    .then(|| {
-                        (
-                            recording.recording_id.clone(),
-                            recording_identity::kind_of(recording, None),
-                        )
-                    })
+                    .then(|| (recording.recording_id.clone(), listed_recording(recording)))
             })
         });
         let own = named(&identity.recording_id);
@@ -866,6 +938,7 @@ impl LibraryIdentitySweep {
                 .recording_id
                 .as_deref()
                 .is_some_and(|id| !dotnet::eq_ignore_case(id, &identity.recording_id));
+        let mut owner_to_ask: Option<String> = None;
         if let (Some(release), Some(releases), true) = (release, &self.releases, ids_in_doubt)
             && (on_release.is_none() || (track.is_some() && track_owner.is_none()))
             && let Some(listed) = releases.tracks(release).await
@@ -882,23 +955,52 @@ impl LibraryIdentitySweep {
                 && let Some(track) = track
                 && let Some((_, owner)) = listed.iter().find(|(id, _)| dotnet::eq_ignore_case(id, track))
             {
-                let kind = named(owner).map_or(identity.kind, |r| recording_identity::kind_of(r, None));
-                track_owner = Some((owner.clone(), kind));
+                owner_to_ask = Some(owner.clone());
             }
+        }
+        // The track's recording, when only the release named it: what the fingerprint or the
+        // music database knows of it, and nothing assumed when neither knows.
+        if let Some(owner) = owner_to_ask
+            && !dotnet::eq_ignore_case(&owner, &identity.recording_id)
+            && let Some(known) = self.named_recording(&owner, named(&owner)).await
+        {
+            track_owner = Some((owner, known));
         }
         Some(HeardAs {
             sure: verdict.by_length || verdict.sole,
+            file_ms: (verdict.duration_seconds > 0).then(|| i64::from(verdict.duration_seconds) * 1000),
             identity,
-            written_kind,
+            written,
             track_owner,
             on_release,
+        })
+    }
+
+    /// What is known of a recording a file's tags name: the fingerprint's word when it names
+    /// it, else the music database's. None when neither can say.
+    async fn named_recording(&self, id: &str, listed: Option<&AcoustIdRecording>) -> Option<NamedRecording> {
+        if let Some(recording) = listed {
+            return Some(listed_recording(recording));
+        }
+        let facts = self.recordings.as_ref()?.facts(id).await?;
+        let bare = AcoustIdRecording::new(id, facts.title.clone(), Vec::<String>::new(), None, None);
+        Some(NamedRecording {
+            listed: false,
+            kind: Some(recording_identity::kind_of(&bare, Some(&facts))),
+            length_ms: facts.length_ms.filter(|ms| *ms > 0),
         })
     }
 
     /// Takes stray spaces off through the journaled edit path, when library actions may change
     /// files for the library keeper. The file's tags afterwards, or None when nothing was
     /// written.
-    async fn take_spaces_off(&self, id: &str, tags: &FileTags, found: &TagAudit) -> Option<FileTags> {
+    async fn take_spaces_off(
+        &self,
+        id: &str,
+        tags: &FileTags,
+        found: &TagAudit,
+        read_stamp: Option<String>,
+    ) -> Option<FileTags> {
         let edits = self.edits.as_ref()?;
         let settings = self.settings.current();
         if settings.library_actions.dry_run {
@@ -915,7 +1017,7 @@ impl LibraryIdentitySweep {
         if changes.is_empty() {
             return None;
         }
-        let outcome = edits.retag(id, &user, changes.clone()).await;
+        let outcome = edits.retag(id, &user, changes.clone(), read_stamp).await;
         if outcome.state != "applied" {
             info!(
                 "Library tag check could not take the stray spaces off {}: {}",
@@ -975,71 +1077,46 @@ impl LibraryIdentitySweep {
     /// The songs whose tags disagree with their audio, as the check last found them. A song
     /// whose file changed since is left out until it is checked again.
     pub fn findings(&self) -> Vec<TagFinding> {
-        let songs: Vec<(String, CheckedSong)> = self.store.read(|s| {
-            s.songs
-                .iter()
-                .map(|(id, kept)| (id.clone(), kept.clone()))
-                .collect()
-        });
-        let copies: Vec<TakeCopy> = songs
+        self.listed()
             .iter()
-            .filter_map(|(id, kept)| {
-                Some(TakeCopy {
-                    id: id.clone(),
-                    artist: kept.artist.clone(),
-                    title: kept.title.clone(),
-                    album: kept.album.clone(),
-                    kind: kind_parse(kept.kind.as_deref()?)?,
-                })
-            })
-            .collect();
-        let beside: HashMap<String, String> = tag_audit::takes_beside(&copies).into_iter().collect();
-        let mut found: Vec<TagFinding> = Vec::new();
-        for (id, kept) in songs {
-            let mut findings: Vec<(AuditRule, String)> = kept
-                .findings
-                .iter()
-                .filter_map(|f| Some((AuditRule::parse(&f.rule)?, f.words.clone())))
-                .collect();
-            if let Some(words) = beside.get(&id) {
-                findings.push((AuditRule::Takes, words.clone()));
-            }
-            if findings.is_empty() || stamp_of(&kept.path).is_none_or(|stamp| stamp != kept.stamp) {
-                continue;
-            }
-            found.push(TagFinding {
-                heard: kept
-                    .kind
-                    .as_deref()
-                    .and_then(kind_parse)
-                    .map(|k| k.described().to_string()),
-                id,
-                artist: kept.artist,
-                title: kept.title,
-                album: kept.album,
-                path: kept.path,
-                findings,
-                changes: kept.changes,
-                sure: kept.sure,
-            });
+            .filter(|finding| stamp_of(&finding.path).is_some_and(|stamp| stamp == finding.stamp))
+            .cloned()
+            .collect()
+    }
+
+    /// Every song with something found, whatever its file is now. Worked out again only when
+    /// the state changed: it reads every kept song and every copy beside it.
+    fn listed(&self) -> Arc<Vec<TagFinding>> {
+        let version = self.store.read_versioned(|_| ()).0;
+        if let Some((at, listed)) = self.listed.lock().as_ref()
+            && *at == version
+        {
+            return Arc::clone(listed);
         }
-        found.sort_by(|a, b| {
-            compare_ordinal(&sort_key(&a.artist), &sort_key(&b.artist))
-                .then_with(|| compare_ordinal(&sort_key(&a.title), &sort_key(&b.title)))
-                .then_with(|| compare_ordinal(&a.id, &b.id))
-        });
-        found
+        let (version, listed) = self.store.read_versioned(|s| Arc::new(list_findings(&s.songs)));
+        *self.listed.lock() = Some((version, Arc::clone(&listed)));
+        listed
     }
 
     pub fn status(&self) -> IdentitySweepStatus {
+        self.status_of(&self.findings())
+    }
+
+    /// The findings and the status, with every file looked at once.
+    pub fn findings_and_status(&self) -> (Vec<TagFinding>, IdentitySweepStatus) {
+        let findings = self.findings();
+        let status = self.status_of(&findings);
+        (findings, status)
+    }
+
+    fn status_of(&self, findings: &[TagFinding]) -> IdentitySweepStatus {
         let settings = self.settings.current();
         let (state, reason) = self.hold.lock().clone();
-        let findings = self.findings();
         self.store.read(|s| IdentitySweepStatus {
             state,
             reason,
             paused: s.paused,
-            checked: s.songs.len(),
+            checked: s.songs.values().filter(|kept| !kept.retry).count(),
             total: s.total,
             pass: s.pass,
             found: findings.len(),
@@ -1052,6 +1129,77 @@ impl LibraryIdentitySweep {
             last_checked_utc: s.last_checked_utc,
             pass_finished_utc: s.pass_finished_utc,
         })
+    }
+}
+
+/// Every kept song with something found, the takes beside each other among them, by artist and
+/// title.
+fn list_findings(songs: &BTreeMap<String, CheckedSong>) -> Vec<TagFinding> {
+    // Only a take that is known is held against another copy.
+    let copies: Vec<TakeCopy> = songs
+        .iter()
+        .filter(|(_, kept)| kept.kind_certain)
+        .filter_map(|(id, kept)| {
+            Some(TakeCopy {
+                id: id.clone(),
+                artist: kept.artist.clone(),
+                title: kept.title.clone(),
+                album: kept.album.clone(),
+                kind: kind_parse(kept.kind.as_deref()?)?,
+            })
+        })
+        .collect();
+    let beside: HashMap<String, String> = tag_audit::takes_beside(&copies).into_iter().collect();
+    let mut found: Vec<TagFinding> = Vec::new();
+    for (id, kept) in songs {
+        let mut findings: Vec<(AuditRule, String)> = kept
+            .findings
+            .iter()
+            .filter_map(|f| Some((AuditRule::parse(&f.rule)?, f.words.clone())))
+            .collect();
+        if let Some(words) = beside.get(id) {
+            findings.push((AuditRule::Takes, words.clone()));
+        }
+        if findings.is_empty() {
+            continue;
+        }
+        found.push(TagFinding {
+            heard: kept
+                .kind
+                .as_deref()
+                .filter(|_| kept.kind_certain)
+                .and_then(kind_parse)
+                .map(|k| k.described().to_string()),
+            id: id.clone(),
+            artist: kept.artist.clone(),
+            title: kept.title.clone(),
+            album: kept.album.clone(),
+            path: kept.path.clone(),
+            stamp: kept.stamp.clone(),
+            findings,
+            changes: kept.changes.clone(),
+            sure: kept.sure,
+        });
+    }
+    found.sort_by(|a, b| {
+        compare_ordinal(&sort_key(&a.artist), &sort_key(&b.artist))
+            .then_with(|| compare_ordinal(&sort_key(&a.title), &sort_key(&b.title)))
+            .then_with(|| compare_ordinal(&a.id, &b.id))
+    });
+    found
+}
+
+/// A recording the fingerprint names, as the audit holds it.
+fn listed_recording(recording: &AcoustIdRecording) -> NamedRecording {
+    NamedRecording {
+        listed: true,
+        kind: Some(recording_identity::kind_of(recording, None)),
+        length_ms: recording.duration_ms.filter(|ms| *ms > 0).or_else(|| {
+            recording
+                .duration_seconds
+                .filter(|s| *s > 0)
+                .map(|s| i64::from(s) * 1000)
+        }),
     }
 }
 

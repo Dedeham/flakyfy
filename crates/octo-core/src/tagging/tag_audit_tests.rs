@@ -20,9 +20,28 @@ fn heard(recording: &str, kind: RecordingKind, by_length: bool, sure: bool) -> H
             ..identity(recording, kind, by_length)
         },
         sure,
-        written_kind: None,
+        file_ms: Some(311_106),
+        written: None,
         track_owner: None,
         on_release: None,
+    }
+}
+
+/// A recording the fingerprint names, of this take.
+fn listed(kind: RecordingKind) -> NamedRecording {
+    NamedRecording {
+        listed: true,
+        kind: Some(kind),
+        length_ms: None,
+    }
+}
+
+/// A recording only the music database knows, of this take and length.
+fn unlisted(kind: RecordingKind, length_ms: i64) -> NamedRecording {
+    NamedRecording {
+        listed: false,
+        kind: Some(kind),
+        length_ms: Some(length_ms),
     }
 }
 
@@ -48,7 +67,7 @@ fn parade() -> FileTags {
 #[test]
 fn a_studio_file_on_a_promo_of_instrumentals_gets_the_plain_album_and_loses_the_promos_ids() {
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
-    studio.track_owner = Some(("rec-instrumental".into(), RecordingKind::Instrumental));
+    studio.track_owner = Some(("rec-instrumental".into(), listed(RecordingKind::Instrumental)));
     studio.on_release = Some(None);
     let found = audit(&parade(), Some(&studio));
 
@@ -68,12 +87,21 @@ fn a_studio_file_on_a_promo_of_instrumentals_gets_the_plain_album_and_loses_the_
     );
 }
 
+/// The Black Parade with its plain album, still carrying the promo's release track.
+fn parade_on_its_album() -> FileTags {
+    FileTags {
+        album: "The Black Parade".into(),
+        release_id: Some("r-parade".into()),
+        ..parade()
+    }
+}
+
 #[test]
 fn a_release_that_lists_the_audios_recording_keeps_its_ids_and_names_the_right_track() {
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
-    studio.track_owner = Some(("rec-instrumental".into(), RecordingKind::Instrumental));
+    studio.track_owner = Some(("rec-instrumental".into(), listed(RecordingKind::Instrumental)));
     studio.on_release = Some(Some("track-studio".into()));
-    let found = audit(&parade(), Some(&studio));
+    let found = audit(&parade_on_its_album(), Some(&studio));
     assert_eq!(change(&found, "releaseTrackId"), Some(Some("track-studio")));
     assert_eq!(change(&found, "releaseId"), None);
     assert_eq!(change(&found, "releaseGroupId"), None);
@@ -82,10 +110,19 @@ fn a_release_that_lists_the_audios_recording_keeps_its_ids_and_names_the_right_t
 #[test]
 fn when_the_release_is_not_known_only_the_wrong_track_comes_off() {
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
-    studio.track_owner = Some(("rec-instrumental".into(), RecordingKind::Instrumental));
-    let found = audit(&parade(), Some(&studio));
+    studio.track_owner = Some(("rec-instrumental".into(), listed(RecordingKind::Instrumental)));
+    let found = audit(&parade_on_its_album(), Some(&studio));
     assert_eq!(change(&found, "releaseTrackId"), Some(None));
     assert_eq!(change(&found, "releaseId"), None);
+    assert_eq!(change(&found, "releaseGroupId"), None);
+
+    // A release the audio is not on keeps its release and group too: they file the song on its
+    // album. Only the track that is another recording's comes off.
+    studio.on_release = Some(None);
+    let found = audit(&parade_on_its_album(), Some(&studio));
+    assert_eq!(change(&found, "releaseTrackId"), Some(None));
+    assert_eq!(change(&found, "releaseId"), None);
+    assert_eq!(change(&found, "releaseGroupId"), None);
 }
 
 #[test]
@@ -129,17 +166,39 @@ fn a_live_take_titled_plainly_says_so_in_its_title() {
 }
 
 #[test]
-fn an_identity_that_is_not_sure_writes_no_ids_but_still_says_what_it_found() {
+fn an_identity_that_is_not_sure_neither_writes_nor_rules_out_the_files_own_take() {
     let mut guess = heard("rec-studio", RecordingKind::Studio, false, false);
-    guess.track_owner = Some(("rec-live".into(), RecordingKind::Live));
-    let found = audit(&parade(), Some(&guess));
+    guess.track_owner = Some(("rec-live".into(), listed(RecordingKind::Live)));
+    guess.written = Some(listed(RecordingKind::Live));
+    let tags = FileTags {
+        recording_id: Some("rec-live".into()),
+        ..parade()
+    };
+    let found = audit(&tags, Some(&guess));
     assert!(!found.sure);
-    // A take that is only likely never rewrites what a tag says: the album stays as it is.
+    // The studio take was only the likelier pick among the takes the print is tied to, so the
+    // live ids the file carries may be as right: nothing is found and the album stays.
+    assert!(!found.found(), "{:?}", found.findings);
+    assert!(found.changes.is_empty(), "{:?}", found.changes);
+}
+
+#[test]
+fn an_identity_that_is_not_sure_never_names_the_audios_take() {
+    let mut guess = heard("rec-studio", RecordingKind::Studio, false, false);
+    // A recording a minute longer than the file is not the audio, whatever take it is.
+    guess.written = Some(unlisted(RecordingKind::Studio, 371_000));
+    let tags = FileTags {
+        recording_id: Some("rec-extended".into()),
+        ..parade_on_its_album()
+    };
+    let found = audit(&tags, Some(&guess));
     assert_eq!(rules(&found), [AuditRule::Ids]);
-    assert_eq!(change(&found, "album"), None);
-    for field in ["recordingId", "releaseTrackId", "releaseId", "releaseGroupId"] {
-        assert_eq!(change(&found, field), None, "{field}");
-    }
+    assert_eq!(
+        found.findings[0].words,
+        "The recording id rec-extended is a recording of 6:11, but the audio runs 5:11."
+    );
+    assert!(!found.findings[0].words.contains("studio"));
+    assert!(found.changes.is_empty());
 }
 
 #[test]
@@ -151,7 +210,7 @@ fn another_takes_recording_id_is_replaced_when_the_length_chose_the_audio() {
         ..Default::default()
     };
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
-    studio.written_kind = Some(RecordingKind::Instrumental);
+    studio.written = Some(listed(RecordingKind::Instrumental));
     let found = audit(&tags, Some(&studio));
     assert_eq!(rules(&found), [AuditRule::Ids]);
     assert!(found.findings[0].words.contains("is an instrumental"));
@@ -168,10 +227,109 @@ fn another_recording_of_the_same_take_is_left_as_it_is() {
         ..Default::default()
     };
     let mut studio = heard("rec-album", RecordingKind::Studio, false, true);
-    studio.written_kind = Some(RecordingKind::Studio);
+    studio.written = Some(listed(RecordingKind::Studio));
     let found = audit(&tags, Some(&studio));
     assert!(!found.found());
     assert!(found.changes.is_empty());
+}
+
+#[test]
+fn a_recording_id_the_fingerprint_does_not_name_is_unknown_not_wrong() {
+    // Studio audio whose exact length chose the AcoustID recording, in a file tagged with the
+    // album's own recording of the same audio, which AcoustID does not tie to the print.
+    let tags = FileTags {
+        title: "Welcome to the Black Parade".into(),
+        album: "The Black Parade".into(),
+        recording_id: Some("rec-album".into()),
+        release_track_id: Some("track-album".into()),
+        release_id: Some("r-parade".into()),
+        release_group_id: Some("g-parade".into()),
+    };
+    let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
+    studio.on_release = Some(None);
+    let found = audit(&tags, Some(&studio));
+    assert!(!found.found(), "{:?}", found.findings);
+    assert!(found.changes.is_empty(), "{:?}", found.changes);
+
+    // The music database says it is the same take, at the same length: still nothing.
+    studio.written = Some(unlisted(RecordingKind::Studio, 311_000));
+    let found = audit(&tags, Some(&studio));
+    assert!(!found.found(), "{:?}", found.findings);
+    assert!(found.changes.is_empty(), "{:?}", found.changes);
+}
+
+#[test]
+fn a_recording_id_the_music_database_says_is_another_take_is_replaced_and_the_album_stays_whole() {
+    let tags = FileTags {
+        title: "Welcome to the Black Parade".into(),
+        album: "The Black Parade".into(),
+        recording_id: Some("rec-live-elsewhere".into()),
+        release_track_id: Some("track-album".into()),
+        release_id: Some("r-parade".into()),
+        release_group_id: Some("g-parade".into()),
+    };
+    let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
+    studio.written = Some(unlisted(RecordingKind::Live, 305_000));
+    studio.on_release = Some(None);
+    let found = audit(&tags, Some(&studio));
+    assert_eq!(rules(&found), [AuditRule::Ids]);
+    assert_eq!(
+        found.findings[0].words,
+        "The recording id rec-live-elsewhere is a live recording, but the audio is the studio recording (rec-studio)."
+    );
+    assert_eq!(change(&found, "recordingId"), Some(Some("rec-studio")));
+    // Nothing proves whose the track is, and the release and its group file the song on its
+    // album: none of them is touched.
+    for field in ["releaseTrackId", "releaseId", "releaseGroupId"] {
+        assert_eq!(change(&found, field), None, "{field}");
+    }
+}
+
+#[test]
+fn a_renamed_album_takes_the_other_releases_ids_off() {
+    // dvsn "So What", vocal studio audio, filed under the instrumentals release by its ids.
+    let tags = FileTags {
+        title: "So What".into(),
+        album: "A Muse In Her Feelings (Instrumentals)".into(),
+        recording_id: None,
+        release_track_id: Some("track-on-instrumentals".into()),
+        release_id: Some("r-instrumentals".into()),
+        release_group_id: Some("g-instrumentals".into()),
+    };
+    let found = audit(
+        &tags,
+        Some(&heard("rec-so-what", RecordingKind::Studio, false, true)),
+    );
+    assert_eq!(rules(&found), [AuditRule::Album]);
+    assert_eq!(change(&found, "album"), Some(Some("A Muse In Her Feelings")));
+    assert_eq!(change(&found, "releaseId"), Some(None));
+    assert_eq!(change(&found, "releaseGroupId"), Some(None));
+    assert_eq!(change(&found, "releaseTrackId"), Some(None));
+    assert_eq!(change(&found, "recordingId"), Some(Some("rec-so-what")));
+
+    // An album left as it is keeps its ids.
+    let fine = FileTags {
+        album: "A Muse In Her Feelings".into(),
+        ..tags
+    };
+    let found = audit(
+        &fine,
+        Some(&heard("rec-so-what", RecordingKind::Studio, false, true)),
+    );
+    assert_eq!(change(&found, "releaseId"), None);
+    assert_eq!(change(&found, "releaseGroupId"), None);
+    assert_eq!(change(&found, "releaseTrackId"), None);
+}
+
+#[test]
+fn a_length_far_from_the_files_is_another_recording_and_a_near_one_is_not() {
+    assert!(!length_contradicts(311_000, 311_106));
+    assert!(!length_contradicts(305_426, 311_106));
+    assert!(length_contradicts(371_000, 311_106));
+    // Seven per cent of a long song is more than ten seconds.
+    assert!(!length_contradicts(640_000, 600_000));
+    assert!(length_contradicts(650_000, 600_000));
+    assert!(!length_contradicts(0, 311_106));
 }
 
 #[test]

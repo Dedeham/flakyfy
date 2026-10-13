@@ -131,6 +131,10 @@ pub mod fix_actions {
     pub const ALL: [&str; 8] = [
         REMOVE, RETAG, JOIN_ALBUM, COVER, RESTORE, UNDO, MOVE_SOUND, MOVE_BACK,
     ];
+
+    /// A retag's parameter that is not a tag: the file's size and last write the tags were
+    /// worked out from. The retag is refused once the file is no longer that one.
+    pub const FILE_STAMP: &str = "fileStamp";
 }
 
 use fix_actions as actions;

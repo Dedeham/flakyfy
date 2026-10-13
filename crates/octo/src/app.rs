@@ -101,8 +101,8 @@ use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, Library
 use crate::services::library::{
     DuplicateScanWorker, EditServiceSweepEdits, FingerprintSweepVerifier, IdentitySweepStore,
     LibraryIdentitySweep, LibraryIdentitySweepParts, LibraryReviewSweepParts, LibraryReviewSweepWorker,
-    MusicBrainzReleaseTracks, NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker,
-    ReviewSweepStore, SnapshotSweepLibrary, UpgradeWorker, UpgradeWorkerParts,
+    MusicBrainzRecordingFacts, MusicBrainzReleaseTracks, NoticePlaylistWorker, QualityUpgradeStore,
+    QualityUpgradeWorker, ReviewSweepStore, SnapshotSweepLibrary, UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -596,7 +596,8 @@ fn library_health(
 }
 
 /// The library tag check: Navidrome's song list from the snapshot, the sweep's fingerprint
-/// check, the edit path stray spaces go through, and MusicBrainz for a release's tracks.
+/// check, the edit path stray spaces go through, and MusicBrainz for a release's tracks and what a
+/// recording is.
 #[allow(clippy::too_many_arguments)]
 fn library_identity_sweep(
     settings: &Arc<SettingsStore>,
@@ -621,6 +622,7 @@ fn library_identity_sweep(
             }),
             edits: Some(Arc::new(EditServiceSweepEdits(Arc::clone(edits)))),
             releases: Some(Arc::new(MusicBrainzReleaseTracks(Arc::clone(music_brainz)))),
+            recordings: Some(Arc::new(MusicBrainzRecordingFacts(Arc::clone(music_brainz)))),
             settings: Arc::clone(settings),
         },
         Clock::system(),

@@ -62,7 +62,8 @@ pub use library_edit_service::{
 };
 pub use library_identity_sweep::{
     EditServiceSweepEdits, IdentitySweepStatus, IdentitySweepStore, LibraryIdentitySweep,
-    LibraryIdentitySweepParts, MusicBrainzReleaseTracks, SnapshotSweepLibrary, TagFinding,
+    LibraryIdentitySweepParts, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks, SnapshotSweepLibrary,
+    TagFinding,
 };
 pub use library_ownership::{LibraryOwnership, OwnedCopy, OwnedDecision, OwnershipNavidrome};
 pub use library_review_sweep_worker::{

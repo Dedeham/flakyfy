@@ -496,8 +496,11 @@ impl SyncCatalogService {
             return futures::future::ready(SyncCatalog::empty()).boxed();
         }
         let settings = self.settings.current();
-        let fingerprint =
-            Self::fingerprint(stations, &settings.subsonic, settings.soulseek.skip_instrumentals);
+        let fingerprint = Self::fingerprint(
+            stations,
+            &settings.subsonic,
+            settings.soulseek.skip_covers_and_instrumentals,
+        );
         let key = ordinal_ignore_case_key(username);
         let cached = self.catalogs.lock().get(&key).cloned();
         if let Some(cached) = cached
@@ -582,11 +585,11 @@ impl SyncCatalogService {
     }
 
     /// What decides whether a built catalog still holds: each station's last change, the cap, the
-    /// explicit filter, and Skip instrumentals (named only while it is on).
+    /// explicit filter, and Skip covers and instrumentals (named only while it is on).
     pub(crate) fn fingerprint(
         stations: &[LastFmRadioStation],
         settings: &SubsonicSettings,
-        skip_instrumentals: bool,
+        skip_covers_and_instrumentals: bool,
     ) -> String {
         let stations = stations
             .iter()
@@ -597,8 +600,8 @@ impl SyncCatalogService {
             "{stations}#{}#{}{}",
             settings.effective_sync_catalog_max_songs(),
             explicit_filter_name(settings.explicit_filter),
-            if skip_instrumentals {
-                "#SkipInstrumentals"
+            if skip_covers_and_instrumentals {
+                "#SkipCoversAndInstrumentals"
             } else {
                 ""
             }
@@ -644,7 +647,7 @@ impl SyncCatalogService {
     ) -> SyncCatalog {
         let current = self.settings.current();
         let settings = current.subsonic.clone();
-        let skip_instrumentals = current.soulseek.skip_instrumentals;
+        let skip_covers_and_instrumentals = current.soulseek.skip_covers_and_instrumentals;
         let tracks = Self::interleave(stations, settings.effective_sync_catalog_max_songs());
         if tracks.is_empty() {
             return SyncCatalog::new(
@@ -719,7 +722,7 @@ impl SyncCatalogService {
             {
                 continue;
             }
-            if skipped_takes::hides_song(&hit, skip_instrumentals) {
+            if skipped_takes::hides_song(&hit, skip_covers_and_instrumentals) {
                 continue;
             }
 

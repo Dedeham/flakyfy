@@ -360,7 +360,7 @@ fn kinds_and_staleness_follow_the_settings() {
         kinds_of(&defaults, ExplicitFilter::CleanOnly, false),
         ",,newReleases+rediscover+deepCuts,w8a50x2,m6"
     );
-    // Skip instrumentals is part of New Releases' kinds only while it is on.
+    // Skip covers and instrumentals is part of New Releases' kinds only while it is on.
     assert_eq!(
         kinds_of(&defaults, all, true),
         ",,newReleases+rediscover+deepCuts,w8a50x0s,m6"

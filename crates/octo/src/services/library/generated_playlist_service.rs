@@ -207,7 +207,7 @@ impl GeneratedPlaylistService {
                 == kinds_of(
                     &settings,
                     self.explicit_filter_now(user),
-                    self.skips_instrumentals(),
+                    self.skips_covers_and_instrumentals(),
                 )
         }) {
             let Some(ids) = listeners.get(user) else {
@@ -291,10 +291,10 @@ impl GeneratedPlaylistService {
         kid_filter::explicit_filter_for(&self.settings.current(), self.family.as_deref(), Some(username))
     }
 
-    /// Skip instrumentals, which New Releases' outside songs obey as search and radio's do. Also
+    /// Skip covers and instrumentals, which New Releases' outside songs obey as search and radio's do. Also
     /// part of what decides the lists.
-    fn skips_instrumentals(&self) -> bool {
-        self.settings.current().soulseek.skip_instrumentals
+    fn skips_covers_and_instrumentals(&self) -> bool {
+        self.settings.current().soulseek.skip_covers_and_instrumentals
     }
 
     /// The listener's mixes, refreshing the counts behind them when they are stale. The first
@@ -314,17 +314,23 @@ impl GeneratedPlaylistService {
         let user = user_key(username);
         let now = Utc::now();
         let explicit_filter = self.explicit_filter_now(username);
-        let skip_instrumentals = self.skips_instrumentals();
+        let skip_covers_and_instrumentals = self.skips_covers_and_instrumentals();
         let (known, due) = {
             let mut state = self.state.lock();
             let current = state.users.get(&user);
             let known = current.is_some();
-            let due = current
-                .is_none_or(|current| is_stale(current, &settings, explicit_filter, skip_instrumentals, now))
-                && state
-                    .last_attempt
-                    .get(&user)
-                    .is_none_or(|attempted| now - *attempted >= RETRY_AFTER_FAILURE);
+            let due = current.is_none_or(|current| {
+                is_stale(
+                    current,
+                    &settings,
+                    explicit_filter,
+                    skip_covers_and_instrumentals,
+                    now,
+                )
+            }) && state
+                .last_attempt
+                .get(&user)
+                .is_none_or(|attempted| now - *attempted >= RETRY_AFTER_FAILURE);
             if due {
                 state.last_attempt.insert(user.clone(), now);
             }
@@ -526,7 +532,7 @@ impl GeneratedPlaylistService {
         }
 
         let explicit_filter = self.explicit_filter_now(username);
-        let skip_instrumentals = self.skips_instrumentals();
+        let skip_covers_and_instrumentals = self.skips_covers_and_instrumentals();
         let before = self.state.lock().users.get(&user_key(username)).cloned();
         let (for_you, covers) = if settings.any_for_you() {
             self.build_for_you(
@@ -534,7 +540,7 @@ impl GeneratedPlaylistService {
                 library,
                 &settings,
                 explicit_filter,
-                skip_instrumentals,
+                skip_covers_and_instrumentals,
                 before.as_ref(),
                 cancellation_token,
             )
@@ -558,7 +564,7 @@ impl GeneratedPlaylistService {
                     active,
                     counts: counts.clone(),
                     counts_utc: Utc::now(),
-                    kinds: kinds_of(&settings, explicit_filter, skip_instrumentals),
+                    kinds: kinds_of(&settings, explicit_filter, skip_covers_and_instrumentals),
                     for_you,
                     for_you_covers: covers,
                 },
@@ -582,7 +588,7 @@ impl GeneratedPlaylistService {
         library: Option<Vec<Node>>,
         settings: &GeneratedPlaylistSettings,
         explicit_filter: ExplicitFilter,
-        skip_instrumentals: bool,
+        skip_covers_and_instrumentals: bool,
         before: Option<&UserMixes>,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<(IndexMap<String, Vec<String>>, Vec<String>)> {
@@ -668,7 +674,7 @@ impl GeneratedPlaylistService {
                             settings.effective_new_release_weeks(),
                             cancellation_token,
                             explicit_filter,
-                            skip_instrumentals,
+                            skip_covers_and_instrumentals,
                         )
                         .await?;
                     if built.entries.is_empty() && !built.whole {

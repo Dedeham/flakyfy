@@ -456,7 +456,7 @@ async fn match_library_finds_the_same_recording_only_and_gives_a_library_song_to
 }
 
 #[test]
-fn skip_instrumentals_leaves_outside_takes_off_a_list_and_the_next_rows_fill_it() {
+fn skip_covers_and_instrumentals_leaves_outside_takes_off_a_list_and_the_next_rows_fill_it() {
     let rows = vec![
         top(1, "Adele", "Hello"),
         top(2, "Adele", "Rolling in the Deep (Instrumental)"),

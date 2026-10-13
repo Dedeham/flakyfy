@@ -673,7 +673,7 @@ pub async fn bootstrap_radio_profile(
 }
 
 /// A station's tracks as songs this listener can play: each resolved (the library's copy
-/// first), the explicit filter and Skip instrumentals applied, Discovery Mix held to the Discovery balance's share of
+/// first), the explicit filter and Skip covers and instrumentals applied, Discovery Mix held to the Discovery balance's share of
 /// library songs, and back-to-back repeats of an artist or an album dropped.
 pub async fn materialize_station(
     state: &AppState,
@@ -693,13 +693,13 @@ pub async fn materialize_station(
         Some(&state.family_store),
         Some(&station.owner),
     );
-    let skip_instrumentals = snapshot.soulseek.skip_instrumentals;
+    let skip_covers_and_instrumentals = snapshot.soulseek.skip_covers_and_instrumentals;
     let mut resolved = resolve_station_tracks(
         &resolver,
         &station.tracks,
         parameters,
         explicit_filter,
-        skip_instrumentals,
+        skip_covers_and_instrumentals,
     )
     .await;
     if station.kind == LastFmRadioStationKind::Discovery {
@@ -714,8 +714,14 @@ pub async fn materialize_station(
             |tracks: Vec<LastFmRadioTrack>| {
                 let resolver = &resolver;
                 async move {
-                    resolve_station_tracks(resolver, &tracks, parameters, explicit_filter, skip_instrumentals)
-                        .await
+                    resolve_station_tracks(
+                        resolver,
+                        &tracks,
+                        parameters,
+                        explicit_filter,
+                        skip_covers_and_instrumentals,
+                    )
+                    .await
                 }
             },
         )
@@ -785,14 +791,14 @@ where
 
 /// Each track resolved, as a station plays it: the library's copy first, else the outside one;
 /// a sounds-alike song only from the library; the explicit filter applied, and outside
-/// instrumental and karaoke takes left out while Skip instrumentals is on. Tracks that resolve
+/// cover, karaoke and instrumental takes left out while Skip covers and instrumentals is on. Tracks that resolve
 /// to nothing are left out.
 async fn resolve_station_tracks(
     resolver: &LastFmRadioTrackResolver,
     tracks: &[LastFmRadioTrack],
     parameters: &Parameters,
     explicit_filter: ExplicitFilter,
-    skip_instrumentals: bool,
+    skip_covers_and_instrumentals: bool,
 ) -> Vec<Song> {
     let gate = Semaphore::new(4);
     let tasks = tracks.iter().map(|track| {
@@ -842,7 +848,7 @@ async fn resolve_station_tracks(
             ExplicitFilter::ExplicitOnly => song.explicit_content_lyrics != Some(3),
             ExplicitFilter::All => true,
         })
-        .filter(|song| !skipped_takes::hides_song(song, skip_instrumentals))
+        .filter(|song| !skipped_takes::hides_song(song, skip_covers_and_instrumentals))
         .collect()
 }
 

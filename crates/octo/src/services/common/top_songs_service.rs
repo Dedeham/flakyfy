@@ -664,7 +664,7 @@ impl TopSongsService {
         found
     }
 
-    /// The rows to match against the library for a list of `count` while Skip instrumentals is
+    /// The rows to match against the library for a list of `count` while Skip covers and instrumentals is
     /// `skip`: every row up to the `count`th one it lets through. The rows it would hide are
     /// matched too, since a song the library has is listed whatever it is.
     pub fn rows_to_match(rows: &[TopSong], count: usize, skip: bool) -> Vec<TopSong> {
@@ -683,7 +683,7 @@ impl TopSongsService {
     }
 
     /// The rows a list shows, each with its library match, at most `count`: an outside
-    /// instrumental or karaoke take is left out while Skip instrumentals is `skip`, unless the
+    /// cover, karaoke or instrumental take is left out while Skip covers and instrumentals is `skip`, unless the
     /// library has it. Rows keep their chart rank.
     pub fn shown_rows(
         rows: Vec<TopSong>,

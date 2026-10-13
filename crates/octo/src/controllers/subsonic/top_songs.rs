@@ -199,13 +199,13 @@ pub async fn get_top_songs(State(state): State<AppState>, req: Request) -> AppRe
         .await;
     let settings = state.settings.current();
     let outside = settings.subsonic.enable_search_discovery;
-    let skip_instrumentals = settings.soulseek.skip_instrumentals;
+    let skip_covers_and_instrumentals = settings.soulseek.skip_covers_and_instrumentals;
 
     // With outside songs shown, only the rows asked for are looked up in the library, and the
-    // rows Skip instrumentals would leave out beside them. Without outside songs every row is,
+    // rows Skip covers and instrumentals would leave out beside them. Without outside songs every row is,
     // because the library's rows are all that is left to list.
     let candidates: Vec<_> = if outside {
-        TopSongsService::rows_to_match(&list.songs, count, skip_instrumentals)
+        TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals)
     } else {
         list.songs.clone()
     };
@@ -226,7 +226,7 @@ pub async fn get_top_songs(State(state): State<AppState>, req: Request) -> AppRe
         }
         match library.get(i).cloned().flatten() {
             Some(owned) => rows.push(TopSongRow::Library(owned)),
-            None if outside && !skipped_takes::hides_song(&top.song, skip_instrumentals) => {
+            None if outside && !skipped_takes::hides_song(&top.song, skip_covers_and_instrumentals) => {
                 rows.push(TopSongRow::Outside(synced_song(&state, &username, &top.song)));
             }
             None => {}
@@ -312,16 +312,17 @@ fn synced_song(state: &AppState, username: &str, song: &Song) -> Song {
 }
 
 /// The first `count` rows, each matched against the caller's own library. While Skip
-/// instrumentals is on, an outside instrumental or karaoke take is left out and the next row
+/// instrumentals is on, an outside cover, karaoke or instrumental take is left out and the next row
 /// takes its place.
 async fn answer(state: &AppState, call: &SubsonicCall, list: &TopList, count: usize) -> Response {
-    let skip_instrumentals = state.settings.current().soulseek.skip_instrumentals;
-    let candidates = TopSongsService::rows_to_match(&list.songs, count, skip_instrumentals);
+    let skip_covers_and_instrumentals = state.settings.current().soulseek.skip_covers_and_instrumentals;
+    let candidates = TopSongsService::rows_to_match(&list.songs, count, skip_covers_and_instrumentals);
     let library = TopSongsService::match_library(&candidates, |query| {
         library_songs_matching(&call.proxy, &call.parameters, query)
     })
     .await;
-    let (shown, library) = TopSongsService::shown_rows(candidates, library, count, skip_instrumentals);
+    let (shown, library) =
+        TopSongsService::shown_rows(candidates, library, count, skip_covers_and_instrumentals);
     let rows: Vec<RankedRow<'_>> = shown
         .iter()
         .enumerate()

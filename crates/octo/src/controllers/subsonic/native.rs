@@ -614,7 +614,7 @@ async fn try_inject_native_album_search(state: &AppState, request: &NativeReques
 
     let external_albums = skipped_takes::listed_albums(
         state.metadata_service.search_albums(&term, target as i32).await,
-        state.settings.current().soulseek.skip_instrumentals,
+        state.settings.current().soulseek.skip_covers_and_instrumentals,
     );
     if external_albums.is_empty() {
         return None;

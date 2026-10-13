@@ -270,8 +270,8 @@ impl LastFmRadioStreamService {
         self.shared.family.get().map_or(8, |gate| gate.radio_cap())
     }
 
-    /// Whether this track is kept out of the stream: an outside instrumental or karaoke take while
-    /// Skip instrumentals is on, or a song the listener's clean-only profile keeps out.
+    /// Whether this track is kept out of the stream: an outside cover, karaoke or instrumental take while
+    /// Skip covers and instrumentals is on, or a song the listener's clean-only profile keeps out.
     async fn keeps_out(&self, session: &LastFmRadioStreamSession, track: &LastFmRadioTrack) -> bool {
         if self.skips_take(track) {
             return true;
@@ -290,10 +290,16 @@ impl LastFmRadioStreamService {
         .await
     }
 
-    /// An outside instrumental or karaoke take, by its title or album, while Skip instrumentals is
+    /// An outside cover, karaoke or instrumental take, by its title or album, while Skip covers and instrumentals is
     /// on. A library song always plays.
     fn skips_take(&self, track: &LastFmRadioTrack) -> bool {
-        if !self.shared.settings.current().soulseek.skip_instrumentals {
+        if !self
+            .shared
+            .settings
+            .current()
+            .soulseek
+            .skip_covers_and_instrumentals
+        {
             return false;
         }
         let outside = track
@@ -416,7 +422,7 @@ impl LastFmRadioStreamService {
             self.shared
                 .sessions
                 .consume_ready_track(&session.token, &prepared.cache_key);
-            // A clean-only profile skips explicit songs and Skip instrumentals outside instrumentals;
+            // A clean-only profile skips explicit songs and Skip covers and instrumentals outside covers and instrumentals;
             // a station of nothing else ends.
             if self.keeps_out(session, &prepared.track).await {
                 kept_out += 1;

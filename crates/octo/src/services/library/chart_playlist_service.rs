@@ -2,7 +2,7 @@
 //! each a read-only playlist for every listener, so every Subsonic app gets them beside the radio
 //! stations and mixes. A song the listener's library has is their own copy, as Navidrome
 //! describes it to them; the rest are outside songs that play right away and are added with a
-//! heart, while search discovery is on and the explicit filter and Skip instrumentals let them.
+//! heart, while search discovery is on and the explicit filter and Skip covers and instrumentals let them.
 //!
 //! Per listener because the library match is theirs, and made with their own sign-in inside
 //! their own request, as the mixes are: Octo keeps no one's Navidrome password. A list holds
@@ -394,12 +394,12 @@ impl ChartPlaylistService {
     }
 
     /// What decides whether a made list still holds: outside songs shown or not, which of them
-    /// the listener's explicit filter and Skip instrumentals let through, and whose charts they
+    /// the listener's explicit filter and Skip covers and instrumentals let through, and whose charts they
     /// are.
     async fn rule(&self, username: &str) -> String {
         let settings = self.inner.settings.current();
         let subsonic = settings.subsonic.clone();
-        let skip_instrumentals = settings.soulseek.skip_instrumentals;
+        let skip_covers_and_instrumentals = settings.soulseek.skip_covers_and_instrumentals;
         let country = self
             .inner
             .top_songs
@@ -410,8 +410,8 @@ impl ChartPlaylistService {
             "{}|{:?}|{country}{}",
             subsonic.enable_search_discovery,
             self.explicit_filter_for(username),
-            if skip_instrumentals {
-                "|skip-instrumentals"
+            if skip_covers_and_instrumentals {
+                "|skip-covers-and-instrumentals"
             } else {
                 ""
             }
@@ -480,7 +480,7 @@ impl ChartPlaylistService {
         let user = user_key(username);
         let settings = self.inner.settings.current();
         let subsonic = settings.subsonic.clone();
-        let skip_instrumentals = settings.soulseek.skip_instrumentals;
+        let skip_covers_and_instrumentals = settings.soulseek.skip_covers_and_instrumentals;
         let explicit_filter = self.explicit_filter_for(username);
         let mut searched: HashMap<String, Option<Vec<Value>>> = HashMap::new();
         let mut trouble = false;
@@ -556,7 +556,7 @@ impl ChartPlaylistService {
                 &library,
                 subsonic.enable_search_discovery,
                 explicit_filter,
-                skip_instrumentals,
+                skip_covers_and_instrumentals,
                 |song| Value::Object(self.inner.responses.convert_song_to_json(song)),
             );
             let hash = entries_hash(&entries);
@@ -608,15 +608,15 @@ impl ChartPlaylistService {
 }
 
 /// The list in chart order: the library's song where the row has one, else the outside song when
-/// outside songs may be shown, the explicit filter lets it through, and it is no instrumental or
-/// karaoke take Skip instrumentals leaves out. The filter is the one stations follow: a list Octo
+/// outside songs may be shown, the explicit filter lets it through, and it is no cover, instrumental or
+/// karaoke take Skip covers and instrumentals leaves out. The filter is the one stations follow: a list Octo
 /// picks follows it, a search does not.
 pub fn assemble(
     rows: &[TopSong],
     library: &[Option<Value>],
     outside_shown: bool,
     filter: ExplicitFilter,
-    skip_instrumentals: bool,
+    skip_covers_and_instrumentals: bool,
     as_json: impl Fn(&Song) -> Value,
 ) -> (Vec<Value>, Vec<Song>) {
     let mut entries = Vec::new();
@@ -626,7 +626,7 @@ pub fn assemble(
             entries.push(owned.clone());
         } else if outside_shown
             && passes(&row.song, filter)
-            && !skipped_takes::hides_song(&row.song, skip_instrumentals)
+            && !skipped_takes::hides_song(&row.song, skip_covers_and_instrumentals)
         {
             entries.push(as_json(&row.song));
             outside.push(row.song.clone());

@@ -184,7 +184,7 @@ impl NewReleasesBuilder {
         weeks: i32,
         cancellation_token: &CancellationToken,
         explicit_filter: ExplicitFilter,
-        skip_instrumentals: bool,
+        skip_covers_and_instrumentals: bool,
     ) -> anyhow::Result<BuildResult> {
         let _turn = tokio::select! {
             turn = self.one_at_a_time.lock() => turn,
@@ -196,7 +196,7 @@ impl NewReleasesBuilder {
             today,
             weeks,
             explicit_filter,
-            skip_instrumentals,
+            skip_covers_and_instrumentals,
             cancellation_token,
         )
         .await
@@ -209,7 +209,7 @@ impl NewReleasesBuilder {
         today: NaiveDate,
         weeks: i32,
         explicit_filter: ExplicitFilter,
-        skip_instrumentals: bool,
+        skip_covers_and_instrumentals: bool,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<BuildResult> {
         let mut owned: HashMap<String, &Node> = HashMap::new();
@@ -303,10 +303,10 @@ impl NewReleasesBuilder {
                 }
                 let mine = owned.get(&key).or_else(|| owned.get(&by_their_artist)).copied();
                 // The listener's own copy is theirs whatever the filter; an outside song obeys it, and
-                // Skip instrumentals too.
+                // Skip covers and instrumentals too.
                 if mine.is_none()
                     && (!for_you_lists::explicit_allowed(track.explicit_content, explicit_filter)
-                        || (skip_instrumentals
+                        || (skip_covers_and_instrumentals
                             && skipped_takes::song_names_skipped(&track.title, &release.title)))
                 {
                     continue;

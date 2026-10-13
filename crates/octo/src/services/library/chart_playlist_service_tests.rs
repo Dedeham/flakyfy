@@ -485,7 +485,7 @@ fn assemble_keeps_chart_order_the_librarys_copy_first() {
 }
 
 #[test]
-fn assemble_leaves_out_outside_instrumentals_while_skip_instrumentals_is_on() {
+fn assemble_leaves_out_outside_instrumentals_while_skip_covers_and_instrumentals_is_on() {
     let row = |title: &str, album: &str| TopSong {
         rank: 1,
         song: Song {

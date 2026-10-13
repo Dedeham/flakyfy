@@ -226,7 +226,7 @@ Enums:
 | `PreferredExtension` | `SLSKD_PREFERRED_EXTENSION` | string | `flac` / `flac` / `flac` | Normalized with `Trim().TrimStart('.').ToLowerInvariant()`; uppercased for display. | Restart, RT | yes |
 | `DownloadTimeoutSeconds` | `SLSKD_DOWNLOAD_TIMEOUT_SECONDS` | int | 180 / `180` / `180` | No clamp. A no-progress timeout per attempt. | Restart, RT | yes |
 | `VerifyDownloads` | `SLSKD_VERIFY_DOWNLOADS` | bool | false / `false` / `false` | Turns on AcoustID verification and the rejected-peer memory. | Live | yes |
-| `SkipInstrumentals` | `SKIP_INSTRUMENTALS` | bool | false / `false` / `false` | Never downloads an instrumental or karaoke take, even when asked; leaves such outside songs out of search, radio and charts. | Live | yes |
+| `SkipCoversAndInstrumentals` | `SKIP_COVERS_AND_INSTRUMENTALS` | bool | true / `true` / `true` | Never downloads a cover, karaoke or instrumental take, even when asked; leaves such outside songs out of search, radio, mixes and charts. On by default; off, a title that asks for one gets it and they are listed again. | Live | yes |
 | `AcoustIdApiKey` | `ACOUSTID_API_KEY` | string | `""` / `""` / `""` | **Secret, in clear** in GET; masked in config-sources (ends in `ApiKey`). | Live | yes |
 | `TagFromMusicBrainz` | `SLSKD_TAG_FROM_MUSICBRAINZ` | bool | false / `false` / `false` | Implied true when `NameFromMatch` is on. | Live | yes |
 | `NameFromMatch` | `NAME_FROM_MATCH` | bool | false / `false` / `false` | - | Live | yes |

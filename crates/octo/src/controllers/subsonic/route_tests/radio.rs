@@ -764,11 +764,12 @@ async fn playlist_materialization_applies_configured_explicit_filter() {
 }
 
 #[tokio::test]
-async fn playlist_materialization_follows_skip_instrumentals_as_it_is_set_now() {
+async fn playlist_materialization_follows_skip_covers_and_instrumentals_as_it_is_set_now() {
     let metadata = TestMetadata::answering(|artist, title, duration| {
         let title = match title {
             "Song One" => "Song One (Instrumental)",
             "Song Two" => "Song Two (Karaoke Version)",
+            "Song Four" => "Song Four (Cover)",
             other => other,
         };
         vec![Song {
@@ -802,30 +803,26 @@ async fn playlist_materialization_follows_skip_instrumentals_as_it_is_set_now() 
             .map(|song| song["id"].as_str().unwrap().to_string())
             .collect::<Vec<_>>()
     };
+    let takes = [
+        "ext-Song One (Instrumental)".to_string(),
+        "ext-Song Two (Karaoke Version)".to_string(),
+        "ext-Song Four (Cover)".to_string(),
+    ];
 
-    let off = entries().await;
-    assert!(
-        off.contains(&"ext-Song One (Instrumental)".to_string()),
-        "{off:?}"
-    );
-    assert!(
-        off.contains(&"ext-Song Two (Karaoke Version)".to_string()),
-        "{off:?}"
-    );
-
-    let mut on = fixture.state.settings.current().as_ref().clone();
-    on.soulseek.skip_instrumentals = true;
-    fixture.state.settings.set(on);
+    // On by default.
     let skipped = entries().await;
-    assert!(
-        !skipped.contains(&"ext-Song One (Instrumental)".to_string()),
-        "{skipped:?}"
-    );
-    assert!(
-        !skipped.contains(&"ext-Song Two (Karaoke Version)".to_string()),
-        "{skipped:?}"
-    );
+    for take in &takes {
+        assert!(!skipped.contains(take), "{take} in {skipped:?}");
+    }
     assert!(skipped.contains(&"ext-Song Three".to_string()), "{skipped:?}");
+
+    let mut off = fixture.state.settings.current().as_ref().clone();
+    off.soulseek.skip_covers_and_instrumentals = false;
+    fixture.state.settings.set(off);
+    let listed = entries().await;
+    for take in &takes {
+        assert!(listed.contains(take), "{take} in {listed:?}");
+    }
 }
 
 #[tokio::test]

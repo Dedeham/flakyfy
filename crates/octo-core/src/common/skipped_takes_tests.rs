@@ -37,8 +37,31 @@ fn titles_naming_a_take_are_read() {
 }
 
 #[test]
+fn titles_naming_a_cover_are_read() {
+    for title in [
+        "Hello (Cover)",
+        "Hello (Acoustic Cover)",
+        "Hello - Cover Version",
+        "Hello [Cover]",
+        "Hello (Tribute to Adele)",
+        "Hello - A Tribute to Adele",
+    ] {
+        assert!(title_names_skipped(title), "{title}");
+        assert!(
+            RecordingKind::marked_in(title).contains(&RecordingKind::Cover),
+            "{title}"
+        );
+    }
+}
+
+#[test]
 fn a_word_in_a_name_is_not_a_take() {
     for title in [
+        "Cover Me",
+        "Covered in Blood",
+        "Under Cover of Darkness",
+        "Undercover",
+        "Tribute",
         "Karaoke Queen",
         "Karaoke",
         "Instrumental",
@@ -58,6 +81,12 @@ fn albums_naming_a_take_are_read() {
     assert!(album_names_skipped("A Muse In Her Feelings (Instrumentals)"));
     assert!(album_names_skipped("Instrumentals"));
     assert!(album_names_skipped("Karaoke Hits, Vol. 3"));
+    assert!(album_names_skipped("A Tribute to Adele"));
+    assert!(album_names_skipped("25 (Covers)"));
+    assert!(album_names_skipped("Cover Versions of Adele"));
+    assert!(album_names_skipped("Under the Covers, Vol. 1"));
+    assert!(!album_names_skipped("Cover Me"));
+    assert!(!album_names_skipped("Under Cover of Darkness"));
     assert!(!album_names_skipped("The Black Parade"));
     assert!(!album_names_skipped("Tree City Sessions 2"));
     assert!(!album_names_skipped(""));
@@ -90,6 +119,9 @@ fn only_outside_songs_are_hidden_and_only_while_on() {
     let take = outside("Hello (Karaoke Version)", "Hello");
     assert!(hides_song(&take, true));
     assert!(!hides_song(&take, false));
+    assert!(hides_song(&outside("Hello (Acoustic Cover)", "Hello"), true));
+    assert!(!hides_song(&library("Hello (Acoustic Cover)", "Hello"), true));
+    assert!(!hides_song(&outside("Cover Me", "Born in the U.S.A."), true));
     assert!(!hides_song(&library("Hello (Karaoke Version)", "Hello"), true));
     assert!(!hides_song(&outside("Hello", "25"), true));
 }

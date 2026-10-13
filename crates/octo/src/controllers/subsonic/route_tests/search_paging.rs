@@ -79,8 +79,8 @@ struct Upstream {
     song_pages: Arc<Mutex<Vec<(String, i32, i32)>>>,
     reshuffle: Arc<AtomicBool>,
     fail_later_song_pages: Arc<AtomicBool>,
-    /// Last.fm names the first outside song as an instrumental, the second as a karaoke take and
-    /// the fourth as a song called "Karaoke Queen".
+    /// Last.fm names the first outside song as an instrumental, the second as a karaoke take, the
+    /// fourth as a song called "Karaoke Queen" and the sixth as a cover.
     takes: Arc<AtomicBool>,
 }
 
@@ -112,6 +112,7 @@ impl Respond for Upstream {
                 titles[0] = "Outside Song 0 (Instrumental)".into();
                 titles[1] = "Outside Song 1 (Karaoke Version)".into();
                 titles[3] = "Karaoke Queen".into();
+                titles[5] = "Outside Song 5 (Acoustic Cover)".into();
             }
             if self.reshuffle.load(Ordering::SeqCst) {
                 titles.reverse();
@@ -528,29 +529,26 @@ async fn page_one_lists_the_library_first_and_an_owned_song_only_once() {
     }
 }
 
-/// Skip instrumentals leaves outside instrumental and karaoke takes out of search, from the next
-/// search on, and leaves a song merely named after the word in. Off, they are listed.
+/// Skip covers and instrumentals, on by default, leaves outside cover, karaoke and instrumental
+/// takes out of search and leaves a song merely named after the word in. Off, from the next
+/// search on, they are listed.
 #[tokio::test]
-async fn skip_instrumentals_leaves_instrumental_and_karaoke_takes_out_of_search() {
+async fn skip_covers_and_instrumentals_leaves_those_takes_out_of_search() {
     let fixture = fixture(true).await;
     fixture.upstream.takes.store(true, Ordering::SeqCst);
     let app = &fixture.app;
-    let instrumental = "ph-Outside Song 0 (Instrumental)".to_string();
-    let karaoke = "ph-Outside Song 1 (Karaoke Version)".to_string();
+    let takes = [
+        "ph-Outside Song 0 (Instrumental)".to_string(),
+        "ph-Outside Song 1 (Karaoke Version)".to_string(),
+        "ph-Outside Song 5 (Acoustic Cover)".to_string(),
+    ];
     let named = "ph-Karaoke Queen".to_string();
 
-    let off = page(app, 0, 40, "search3", "json", "alice", "Octo").await;
-    assert!(off.contains(&instrumental), "{off:?}");
-    assert!(off.contains(&karaoke), "{off:?}");
-    assert!(off.contains(&named), "{off:?}");
-
-    let mut on = fixture.state.settings.current().as_ref().clone();
-    on.soulseek.skip_instrumentals = true;
-    fixture.state.settings.set(on);
     for format in ["json", "xml"] {
         let skipped = page(app, 0, 40, "search3", format, "alice", "Octo").await;
-        assert!(!skipped.contains(&instrumental), "{format}: {skipped:?}");
-        assert!(!skipped.contains(&karaoke), "{format}: {skipped:?}");
+        for take in &takes {
+            assert!(!skipped.contains(take), "{format}: {take} in {skipped:?}");
+        }
         assert!(skipped.contains(&named), "{format}: {skipped:?}");
         assert!(
             skipped.iter().filter(|id| id.starts_with("lib-")).count() >= 12,
@@ -559,10 +557,16 @@ async fn skip_instrumentals_leaves_instrumental_and_karaoke_takes_out_of_search(
     }
     // A later page carries on from the same, skipped, outside songs.
     let later = page(app, 20, 20, "search3", "json", "alice", "Octo").await;
-    assert!(
-        !later.contains(&instrumental) && !later.contains(&karaoke),
-        "{later:?}"
-    );
+    assert!(takes.iter().all(|take| !later.contains(take)), "{later:?}");
+
+    let mut off = fixture.state.settings.current().as_ref().clone();
+    off.soulseek.skip_covers_and_instrumentals = false;
+    fixture.state.settings.set(off);
+    let listed = page(app, 0, 40, "search3", "json", "alice", "Octo").await;
+    for take in &takes {
+        assert!(listed.contains(take), "{take} in {listed:?}");
+    }
+    assert!(listed.contains(&named), "{listed:?}");
 }
 
 /// Octo's apps split library and outside songs into sections of their own, so page one keeps

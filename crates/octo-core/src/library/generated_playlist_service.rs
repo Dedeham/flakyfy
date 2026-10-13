@@ -100,12 +100,12 @@ pub fn dotnet_ticks(value: DateTime<Utc>) -> i64 {
 /// Which kinds the counts and lists were made for: "genre,decade" for the mixes (each only when
 /// the mixes are on), then the Made for you lists that are on
 /// ("newReleases+rediscover+deepCuts"), and what decides their contents: New Releases' weeks,
-/// artists, the server's explicit filter and Skip instrumentals, Rediscover's months. A change to
+/// artists, the server's explicit filter and Skip covers and instrumentals, Rediscover's months. A change to
 /// any of them makes the lists again.
 pub fn kinds_of(
     settings: &GeneratedPlaylistSettings,
     explicit_filter: ExplicitFilter,
-    skip_instrumentals: bool,
+    skip_covers_and_instrumentals: bool,
 ) -> String {
     let mixes = mixes_on(settings);
     let for_you: Vec<&str> = crate::library::for_you_lists::KINDS
@@ -126,12 +126,12 @@ pub fn kinds_of(
             ExplicitFilter::ExplicitOnly => 1,
             ExplicitFilter::CleanOnly => 2,
         };
-        // Skip instrumentals only when on, so kinds saved before it existed still compare equal.
+        // Skip covers and instrumentals only when on, so kinds saved before it existed still compare equal.
         kinds.push_str(&format!(
             ",w{}a{}x{filter}{}",
             settings.effective_new_release_weeks(),
             settings.effective_new_release_artists(),
-            if skip_instrumentals { "s" } else { "" }
+            if skip_covers_and_instrumentals { "s" } else { "" }
         ));
     }
     if settings.rediscover {
@@ -177,11 +177,11 @@ pub fn is_stale(
     state: &UserMixes,
     settings: &GeneratedPlaylistSettings,
     explicit_filter: ExplicitFilter,
-    skip_instrumentals: bool,
+    skip_covers_and_instrumentals: bool,
     now_utc: DateTime<Utc>,
 ) -> bool {
     now_utc - state.counts_utc >= TimeDelta::hours(i64::from(settings.effective_refresh_hours()))
-        || state.kinds != kinds_of(settings, explicit_filter, skip_instrumentals)
+        || state.kinds != kinds_of(settings, explicit_filter, skip_covers_and_instrumentals)
 }
 
 /// ("decade", "1990s") for "decade:1990", ("genre", "Rock") for "genre:Rock", ("country",

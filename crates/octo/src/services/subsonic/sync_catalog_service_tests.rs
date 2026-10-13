@@ -661,6 +661,6 @@ fn the_fingerprint_names_each_station_change_the_cap_and_the_filter() {
     );
     assert_eq!(
         SyncCatalogService::fingerprint(&stations, &settings, true),
-        "or-your-mix:639238248000000000#50#CleanOnly#SkipInstrumentals"
+        "or-your-mix:639238248000000000#50#CleanOnly#SkipCoversAndInstrumentals"
     );
 }

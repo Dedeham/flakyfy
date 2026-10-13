@@ -1,4 +1,4 @@
-//! `stream`, `getCoverArt` and `getTranscodeDecision`.
+//! `stream`, `download`, `getCoverArt` and `getTranscodeDecision`.
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -25,11 +25,13 @@ use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use super::action_helpers::MAX_REQUEST_BODY;
 use super::caller_checks::{
     SubsonicCall, file, is_first_byte_request, is_successful_subsonic_response, refuse_unless_signed_in,
     requester_for, signed_in_user,
 };
 use crate::app::AppState;
+use crate::http::catch_all;
 use crate::http::error::{AppError, AppResult, json_status, problem};
 use crate::http::routes::RouteSet;
 use crate::http::static_files::{RangeOutcome, parse_range};
@@ -44,6 +46,7 @@ use crate::services::subsonic::{CredentialVerdict, SubsonicProxyService};
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .subsonic("stream", get(stream).post(stream))
+        .subsonic("download", get(download).post(download))
         .subsonic("getCoverArt", get(get_cover_art).post(get_cover_art))
         .subsonic(
             "getTranscodeDecision",
@@ -142,6 +145,28 @@ pub async fn stream(State(state): State<AppState>, req: Request) -> AppResult {
                 &json!({ "error": format!("Failed to stream: {error}") }),
             ))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// download
+// ---------------------------------------------------------------------------------------
+
+/// An outside song downloads exactly as it streams: the bytes Octo relays, or the copy it
+/// waits for, are the only file it has. A library song goes to Navidrome's own `download`
+/// through the faithful relay.
+pub async fn download(State(state): State<AppState>, req: Request) -> AppResult {
+    let (parts, body) = req.into_parts();
+    let Ok(body) = axum::body::to_bytes(body, MAX_REQUEST_BODY).await else {
+        return Ok(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+    };
+    let call = SubsonicCall::from_parts(&state, &parts, body.clone());
+    let outside = state.local_library.parse_song_id(call.param("id")).0;
+    let req = Request::from_parts(parts, Body::from(body));
+    if outside {
+        stream(State(state), req).await
+    } else {
+        Ok(catch_all::catch_all(State(state), req).await)
     }
 }
 

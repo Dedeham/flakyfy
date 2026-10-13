@@ -150,6 +150,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 n_num(subsonic.stream_size_warm_per_minute),
             ),
             ("CoverCacheMb", n_num(subsonic.cover_cache_mb)),
+            ("SizeFlagClients", n_str(&subsonic.size_flag_clients)),
             ("StorageMode", name(subsonic.storage_mode)),
             ("DownloadMode", name(subsonic.download_mode)),
             ("DownloadOnStar", Node::Bool(subsonic.download_on_star)),

@@ -146,6 +146,13 @@ choose between them based on whether *you* browse by tags or by folders, not on 
 version, so a folder-browsing user talks `search2`. Both formats are supported too: some
 clients speak JSON, some (DSub) only XML.
 
+**Amperfy** hides any song that has no file size. A song you don't own has none until Octo
+learns the size of its stream, in the background or on the first play, so Amperfy is sent
+a stand-in size of 1 until then and every song shows at once. Other apps get no size until
+the real one is known. The list of apps treated this way is under **Playing songs you
+don't own → Apps that hide songs without a size** in the admin dashboard
+(`SIZE_FLAG_CLIENTS`, `Amperfy` by default).
+
 </details>
 
 ## Updating

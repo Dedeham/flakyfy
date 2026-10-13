@@ -364,3 +364,116 @@ fn names_filter_and_played() {
     );
     assert_eq!(at("not a date"), None);
 }
+
+// ---- artist mixes -----------------------------------------------------------------------
+
+fn named(id: &str, artist: &str, artists: &[&str]) -> Node {
+    let value = json!({
+        "id": id,
+        "artist": artist,
+        "artists": artists.iter().map(|name| json!({"id": format!("ar-{name}"), "name": name})).collect::<Vec<_>>(),
+        "playCount": 0,
+    });
+    Node::parse(&value.to_string()).expect("JSON")
+}
+
+#[test]
+fn songs_by_artists_match_each_artist_value_loosely() {
+    let library = [
+        named("a", "Suicideboys", &[]),
+        named("b", "Drake feat. Rihanna", &[]),
+        named("c", "Someone Else", &["Someone Else", "Rihanna"]),
+        named("d", "Nobody", &[]),
+    ];
+    let found = |names: &[&str]| -> Vec<String> {
+        let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+        songs_by_artists(&library, &names)
+            .into_iter()
+            .map(|song| str_of(song, "id").unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(found(&["$uicideboy$"]), ["a"]);
+    assert_eq!(found(&["drake"]), ["b"]);
+    assert_eq!(found(&["Rihanna"]), ["c"]);
+    assert_eq!(found(&["Drake", "Nobody"]), ["b", "d"]);
+    assert!(found(&[]).is_empty());
+    assert!(found(&["", "  "]).is_empty());
+}
+
+fn by(artist: &str, count: usize) -> Vec<Node> {
+    (0..count)
+        .map(|i| song(&format!("{artist}-{i}"), artist, plays(1)))
+        .collect()
+}
+
+fn artists_of(songs: &[Node]) -> Vec<String> {
+    songs
+        .iter()
+        .map(|song| str_of(song, "artist").unwrap_or_default().to_string())
+        .collect()
+}
+
+#[test]
+fn an_artist_mix_is_half_the_artist_and_half_the_similar_artists_in_the_library() {
+    let library: Vec<Node> = [
+        by("Radiohead", 30),
+        by("Portishead", 10),
+        by("Massive Attack", 10),
+        by("Other", 10),
+    ]
+    .concat();
+    let similar = vec![
+        "Portishead".to_string(),
+        "Massive Attack".to_string(),
+        "Not Here".to_string(),
+    ];
+
+    let mix = artist_mix(&library, "ar-Radiohead", &similar, 10, 3, 42);
+
+    let artists = artists_of(&mix);
+    assert_eq!(mix.len(), 10);
+    assert_eq!(artists.iter().filter(|a| *a == "Radiohead").count(), 5);
+    assert!(artists.iter().filter(|a| *a == "Portishead").count() <= 3);
+    assert!(artists.iter().filter(|a| *a == "Massive Attack").count() <= 3);
+    assert!(!artists.iter().any(|a| a == "Other"));
+    // The halves alternate, the artist first.
+    assert!(artists.iter().step_by(2).all(|a| a == "Radiohead"), "{artists:?}");
+    // Every song once, and the same draw for the same seed.
+    assert_eq!(ids(&mix).len(), 10);
+    assert_eq!(mix, artist_mix(&library, "ar-Radiohead", &similar, 10, 3, 42));
+    assert_ne!(
+        ids(&mix),
+        ids(&artist_mix(&library, "ar-Radiohead", &similar, 10, 3, 7))
+    );
+}
+
+#[test]
+fn a_short_half_is_filled_by_the_other_and_the_cap_never_holds_the_artist_back() {
+    let library: Vec<Node> = [by("Radiohead", 30), by("Portishead", 10)].concat();
+    let similar = vec!["Portishead".to_string()];
+
+    // Portishead gives at most 3, so Radiohead fills the other 7.
+    let mix = artist_mix(&library, "ar-Radiohead", &similar, 10, 3, 1);
+    let artists = artists_of(&mix);
+    assert_eq!(artists.iter().filter(|a| *a == "Radiohead").count(), 7);
+    assert_eq!(artists.iter().filter(|a| *a == "Portishead").count(), 3);
+
+    // An artist with two songs keeps both, and the similar artists fill the rest.
+    let few: Vec<Node> = [by("Radiohead", 2), by("Portishead", 20)].concat();
+    let mix = artist_mix(&few, "ar-Radiohead", &similar, 10, 50, 1);
+    let artists = artists_of(&mix);
+    assert_eq!(mix.len(), 10);
+    assert_eq!(artists.iter().filter(|a| *a == "Radiohead").count(), 2);
+}
+
+#[test]
+fn with_no_similar_artist_in_the_library_an_artist_mix_is_their_own_songs() {
+    let library: Vec<Node> = [by("Radiohead", 30), by("Other", 10)].concat();
+    for similar in [Vec::new(), vec!["Not Here".to_string()]] {
+        let mix = artist_mix(&library, "ar-Radiohead", &similar, 10, 3, 9);
+        assert_eq!(artists_of(&mix), vec!["Radiohead"; 10], "{similar:?}");
+    }
+    // A short artist is all of their songs.
+    let mix = artist_mix(&by("Radiohead", 4), "ar-Radiohead", &[], 10, 3, 9);
+    assert_eq!(mix.len(), 4);
+}

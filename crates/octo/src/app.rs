@@ -1984,7 +1984,8 @@ impl Radio {
                 responses: stores.subsonic_response_builder.clone(),
             })
             .with_countries(country_library)
-            .with_family(stores.family_store.clone()),
+            .with_family(stores.family_store.clone())
+            .with_last_fm(integrations.last_fm.clone()),
         );
         Radio {
             state,

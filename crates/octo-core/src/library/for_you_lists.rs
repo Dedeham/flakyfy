@@ -137,6 +137,86 @@ pub fn top_artists(songs: &[Node], count: usize) -> Vec<TopArtist> {
     ranked
 }
 
+/// The library songs by any of `names`, matched by [`SongIdentity::loose_key`] on each artist
+/// value a song carries: its `artist`, the first artist that credit names, and every name in
+/// its `artists`. In library order.
+pub fn songs_by_artists<'a>(songs: &'a [Node], names: &[String]) -> Vec<&'a Node> {
+    let wanted: HashSet<String> = names
+        .iter()
+        .map(|name| SongIdentity::loose_key(name))
+        .filter(|key| !key.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    songs
+        .iter()
+        .filter(|song| {
+            let mut values: Vec<String> = Vec::new();
+            if let Some(artist) = str_of(song, "artist").filter(|artist| !artist.is_empty()) {
+                values.push(artist.to_string());
+                values.push(SongIdentity::primary_artist(artist));
+            }
+            if let Some(Node::Array(artists)) = song.get("artists") {
+                values.extend(
+                    artists
+                        .iter()
+                        .filter_map(|artist| str_of(artist, "name"))
+                        .map(str::to_string),
+                );
+            }
+            values
+                .iter()
+                .any(|value| wanted.contains(&SongIdentity::loose_key(value)))
+        })
+        .collect()
+}
+
+/// An artist mix's songs: a seeded draw of `count`, half the artist's own songs and half songs
+/// by `similar` artists in the library, at most `max_per_artist` by any one of those. When one
+/// half cannot fill its share the other fills the rest; with no similar artist's song in the
+/// library the mix is the artist's own songs alone. The cap never applies to the artist
+/// themself. `artist` is the artist's key in the walk ([`artist_key`]).
+pub fn artist_mix(
+    songs: &[Node],
+    artist: &str,
+    similar: &[String],
+    count: usize,
+    max_per_artist: i32,
+    seed: i32,
+) -> Vec<Node> {
+    let own: Vec<&Node> = songs.iter().filter(|song| artist_key(song) == artist).collect();
+    let others: Vec<&Node> = songs_by_artists(songs, similar)
+        .into_iter()
+        .filter(|song| artist_key(song) != artist)
+        .collect();
+    let own_drawn = draw(&own, own.len(), i32::MAX, seed);
+    let others_drawn = draw(&others, count, max_per_artist, seed.wrapping_add(1));
+    let own_share = if others_drawn.is_empty() {
+        count
+    } else {
+        count.div_ceil(2)
+    };
+    let mut own_taken = own_drawn.len().min(own_share);
+    let others_taken = others_drawn.len().min(count - own_taken);
+    own_taken = own_drawn.len().min(count - others_taken);
+
+    // Alternated, so neither half sits in one block.
+    let mut mix: Vec<Node> = Vec::with_capacity(own_taken + others_taken);
+    let mut own_iter = own_drawn.into_iter().take(own_taken);
+    let mut others_iter = others_drawn.into_iter().take(others_taken);
+    loop {
+        let a = own_iter.next();
+        let b = others_iter.next();
+        if a.is_none() && b.is_none() {
+            break;
+        }
+        mix.extend(a);
+        mix.extend(b);
+    }
+    mix
+}
+
 /// Played often, hearted, or rated 4 or more.
 pub fn loved(song: &Node) -> bool {
     int_of(song, "playCount") >= LOVED_PLAYS || is_starred(song) || int_of(song, "userRating") >= LOVED_RATING

@@ -44,6 +44,8 @@ mod fresh_marks_tests;
 #[cfg(test)]
 mod library_edit_tests;
 #[cfg(test)]
+mod list_groups_tests;
+#[cfg(test)]
 mod lyrics_endpoint_tests;
 #[cfg(test)]
 mod marked_lists_tests;

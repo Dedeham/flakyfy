@@ -572,11 +572,16 @@ async fn the_warmup_readies_persisted_stations_at_startup() {
     assert!(fixture.state.get_user("alice").plays.is_empty());
 }
 
-/// Past the snapshot's last song the stream goes on with new songs of the station's kind, asked
-/// of the stations' picker, instead of starting again from the first song.
-#[tokio::test]
-async fn the_stream_goes_on_past_the_snapshot_with_new_songs() {
-    let fixture = fixture(0).await;
+/// The fixture's stream service with the stations' picker over a Last.fm fake whose rock chart
+/// is twenty "Tag" songs, each found outside, and the station made a rock station. The fake
+/// server rides along so it lives as long as the service.
+async fn with_picker(
+    fixture: &Fixture,
+) -> (
+    LastFmRadioStreamService,
+    Arc<LastFmRadioRecommendationService>,
+    MockServer,
+) {
     let last_fm_server = MockServer::start().await;
     Mock::given(any())
         .respond_with(|request: &wiremock::Request| {
@@ -646,7 +651,7 @@ async fn the_stream_goes_on_past_the_snapshot_with_new_songs() {
     ));
     let shared = Shared_ {
         metadata: metadata.clone(),
-        recommendations: Some(recommendations),
+        recommendations: Some(recommendations.clone()),
         ..clone_shared(&fixture.service.shared)
     };
     let service = LastFmRadioStreamService {
@@ -658,25 +663,91 @@ async fn the_stream_goes_on_past_the_snapshot_with_new_songs() {
         shared: Arc::new(shared),
         ..fixture.service.clone()
     };
+    (service, recommendations, last_fm_server)
+}
 
-    let session = session(&fixture);
-    let snapshot: String = TITLES.iter().map(|title| format!("MP3:<{title}>")).collect();
+/// What a client hears from the stream until it has `limit` bytes.
+async fn listen(
+    service: &LastFmRadioStreamService,
+    session: &LastFmRadioStreamSession,
+    limit: usize,
+) -> String {
     let hang_up = CancellationToken::new();
     let received = Arc::new(Mutex::new(Vec::new()));
     let mut client = Client {
         received: received.clone(),
-        limit: snapshot.len() + "MP3:<Tag".len(),
+        limit,
         hang_up: hang_up.clone(),
     };
     tokio::time::timeout(
         std::time::Duration::from_secs(20),
-        service.stream(&session, &mut client, &hang_up, false),
+        service.stream(session, &mut client, &hang_up, false),
     )
     .await
     .expect("the stream ended")
     .expect("the stream ends when the client hangs up");
+    String::from_utf8(received.lock().clone()).unwrap()
+}
 
-    let text = String::from_utf8(received.lock().clone()).unwrap();
+/// Past the snapshot's last song the stream goes on with new songs of the station's kind, asked
+/// of the stations' picker, instead of starting again from the first song.
+#[tokio::test]
+async fn the_stream_goes_on_past_the_snapshot_with_new_songs() {
+    let fixture = fixture(0).await;
+    let (service, _, _last_fm) = with_picker(&fixture).await;
+
+    let session = session(&fixture);
+    let snapshot: String = TITLES.iter().map(|title| format!("MP3:<{title}>")).collect();
+    let text = listen(&service, &session, snapshot.len() + "MP3:<Tag".len()).await;
+
     assert!(text.starts_with(&snapshot), "{text}");
     assert!(text[snapshot.len()..].starts_with("MP3:<Tag"), "{text}");
+}
+
+/// After a getStationSongs page served the whole snapshot, a new stream plays its first ready
+/// song at once and goes straight on with new songs: the songs served lately are passed over
+/// before they are prepared, never prepared and then dropped.
+#[tokio::test]
+async fn a_stream_after_a_served_page_plays_at_once_and_prepares_no_served_song() {
+    let fixture = fixture(0).await;
+    let (service, recommendations, _last_fm) = with_picker(&fixture).await;
+    let station = fixture.state.get_user("alice").stations[0].clone();
+    recommendations.record_station_served("alice", &station.id, station.tracks.iter().cloned());
+
+    let session = session(&fixture);
+    let text = listen(&service, &session, "MP3:<One>".len() + "MP3:<Tag".len()).await;
+
+    assert!(text.starts_with("MP3:<One>MP3:<Tag"), "{text}");
+    let asked: Vec<String> = fixture
+        .downloads
+        .asked
+        .lock()
+        .iter()
+        .map(|(_, id)| id.clone())
+        .collect();
+    for title in &TITLES[1..] {
+        assert!(
+            !asked.iter().any(|id| id == title),
+            "{title} was prepared: {asked:?}"
+        );
+    }
+}
+
+/// A song the stream could not send whole is not remembered as served by the station.
+#[tokio::test]
+async fn a_song_cut_off_is_not_remembered_as_served() {
+    let fixture = fixture(0).await;
+    let (service, recommendations, _last_fm) = with_picker(&fixture).await;
+    let station = fixture.state.get_user("alice").stations[0].clone();
+
+    let session = session(&fixture);
+    let text = listen(&service, &session, "MP3:<One>MP3:<Tw".len()).await;
+    assert!(text.starts_with("MP3:<One>MP3:<Tw"), "{text}");
+
+    let served: Vec<String> = recommendations
+        .station_served("alice", &station.id)
+        .into_iter()
+        .map(|track| track.title)
+        .collect();
+    assert_eq!(served, ["One"]);
 }

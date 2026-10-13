@@ -31,6 +31,7 @@ use crate::app::{AppState, TestServices};
 use crate::http::pipeline::App;
 use crate::services::i_download_service::{AudioStream, DirectStreamInfo, IDownloadService};
 use crate::services::last_fm::icy_metadata_stream::DEFAULT_INTERVAL;
+use crate::services::last_fm::last_fm_radio_recommendation_service::STATION_MEMORY;
 use crate::services::last_fm::{ILastFmRadioAudioTranscoder, IRadioTuneInSelector};
 use crate::services::library::ReplacementHandoff;
 use octo_core::models::download::DownloadInfo;
@@ -297,6 +298,11 @@ impl Respond for RadioUpstream {
                 }
                 let search = query_value(request, "query").unwrap_or_default();
                 let lower = search.to_lowercase();
+                if lower.contains("halo") {
+                    return json(&ok_json(
+                        r#""searchResult3":{"song":[{"id":"local-halo","artist":"Beyoncé","title":"Halo","album":"I Am... Sasha Fierce","duration":180}]}"#,
+                    ));
+                }
                 let ordinal = if lower.contains("four") {
                     "four"
                 } else if lower.contains("three") {
@@ -1594,6 +1600,18 @@ fn after(ids: &[String]) -> String {
 
 const STORED: [&str; 4] = ["local-one", "local-two", "local-three", "local-four"];
 
+/// A clock for the station memory, and what moves it a day on: after that only `after` keeps
+/// the songs served so far out.
+fn movable_memory(fixture: &RadioFixture) -> impl Fn() {
+    let now = Arc::new(Mutex::new(Utc::now()));
+    let clock_now = Arc::clone(&now);
+    fixture
+        .state
+        .last_fm_radio_recommendations
+        .set_clock(octo_core::common::Clock::new(move || *clock_now.lock()));
+    move || *now.lock() += STATION_MEMORY + TimeDelta::hours(1)
+}
+
 #[tokio::test]
 async fn station_songs_start_with_the_stored_tracks_in_order() {
     let fixture = station_songs_fixture(10).await;
@@ -1605,11 +1623,21 @@ async fn station_songs_start_with_the_stored_tracks_in_order() {
     assert_eq!(station["name"], "Your Radio");
     assert_eq!(entry_ids(&four), STORED);
 
-    // Asked for more, the station goes on after them: its reserve, then songs alike.
+    // Asked for more, a first page answers with what the station holds: its songs, then its
+    // reserve, then whatever songs alike the station has found by then, never waiting for more.
+    // The rest are found in the background for the page after it.
     let fresh = station_songs_fixture(10).await;
-    let all = entry_ids(&station_songs(&fresh, "").await);
-    assert_eq!(all[..4], STORED);
-    assert_eq!(all.len(), 4 + 2 + 10, "{all:?}");
+    let first = entry_ids(&station_songs(&fresh, "").await);
+    assert_eq!(first[..4], STORED);
+    assert!(first[4].contains("Reserve Song A"), "{first:?}");
+    assert!(first[5].contains("Reserve Song B"), "{first:?}");
+    fresh.state.last_fm_radio_recommendations.settled().await;
+    let next = entry_ids(&station_songs(&fresh, &after(&first)).await);
+    assert_eq!(first.len() + next.len(), 4 + 2 + 10, "{first:?} then {next:?}");
+    for id in &next {
+        assert!(id.contains("Played Song"), "{id} in {next:?}");
+        assert!(!first.contains(id), "{id} came back");
+    }
 }
 
 #[tokio::test]
@@ -1617,6 +1645,7 @@ async fn a_station_song_served_once_is_not_served_again_without_being_listed() {
     let fixture = station_songs_fixture(10).await;
     let first = entry_ids(&station_songs(&fixture, "&count=4").await);
     assert_eq!(first, STORED);
+    fixture.state.last_fm_radio_recommendations.settled().await;
 
     // The next call lists nothing in `after`; the station remembers what it served.
     let second = entry_ids(&station_songs(&fixture, "&count=50").await);
@@ -1629,11 +1658,14 @@ async fn a_station_song_served_once_is_not_served_again_without_being_listed() {
 #[tokio::test]
 async fn after_every_stored_and_reserve_song_come_new_songs_never_one_already_queued() {
     let fixture = station_songs_fixture(10).await;
+    let forget = movable_memory(&fixture);
     let stored = entry_ids(&station_songs(&fixture, "&count=6").await);
     assert_eq!(stored[..4], STORED);
     assert!(stored[4].contains("Reserve Song A"), "{stored:?}");
     assert!(stored[5].contains("Reserve Song B"), "{stored:?}");
 
+    // Only `after` keeps them out now.
+    forget();
     let new = entry_ids(&station_songs(&fixture, &format!("&count=50{}", after(&stored))).await);
     assert_eq!(new.len(), 10, "{new:?}");
     for id in &new {
@@ -1645,14 +1677,20 @@ async fn after_every_stored_and_reserve_song_come_new_songs_never_one_already_qu
 #[tokio::test]
 async fn station_song_pages_follow_one_another_without_repeats() {
     let fixture = station_songs_fixture(10).await;
+    let forget = movable_memory(&fixture);
     let stored = entry_ids(&station_songs(&fixture, "&count=6").await);
 
+    forget();
     let first = entry_ids(&station_songs(&fixture, &format!("&count=3{}", after(&stored))).await);
     let queued: Vec<String> = stored.iter().chain(&first).cloned().collect();
+    forget();
     let second = entry_ids(&station_songs(&fixture, &format!("&count=3{}", after(&queued))).await);
 
     assert_eq!(first.len(), 3, "{first:?}");
     assert_eq!(second.len(), 3, "{second:?}");
+    for id in &first {
+        assert!(!stored.contains(id), "{id} came back: {stored:?} then {first:?}");
+    }
     for id in &second {
         assert!(!queued.contains(id), "{id} came back: {first:?} then {second:?}");
     }
@@ -1662,12 +1700,51 @@ async fn station_song_pages_follow_one_another_without_repeats() {
 async fn station_songs_count_is_held_between_one_and_a_hundred() {
     let fixture = station_songs_fixture(120).await;
     assert_eq!(entry_ids(&station_songs(&fixture, "&count=0").await), STORED[..1]);
-    let most = entry_ids(&station_songs(&fixture, "&count=500").await);
+    let most = entry_ids(&station_songs(&fixture, "&count=500&after=local-one").await);
     assert_eq!(most.len(), 100, "{most:?}");
     let mut distinct = most.clone();
     distinct.sort();
     distinct.dedup();
     assert_eq!(distinct.len(), 100);
+}
+
+/// A station song the library spells otherwise ("Beyonce" in the station, "Beyoncé" in the
+/// library) is remembered by the station's own spelling, so it is not served again.
+#[tokio::test]
+async fn a_station_song_the_library_spells_otherwise_is_not_served_again() {
+    let fixture = station_songs_fixture(10).await;
+    let mut station = fixture
+        .state
+        .last_fm_radio_state
+        .find_station("alice", &fixture.station_id())
+        .expect("installed");
+    station.tracks.insert(
+        0,
+        LastFmRadioTrack {
+            artist: "Beyonce".into(),
+            title: "Halo".into(),
+            duration: Some(180),
+            ..Default::default()
+        },
+    );
+    fixture
+        .state
+        .last_fm_radio_state
+        .replace_stations("alice", std::slice::from_ref(&station));
+
+    let first = station_songs(&fixture, "&count=1").await;
+    let entry = &first["subsonic-response"]["stationSongs"]["entry"][0];
+    assert_eq!(entry["id"], "local-halo", "{first}");
+    assert_eq!(entry["artist"], "Beyoncé", "{first}");
+    let served = fixture
+        .state
+        .last_fm_radio_recommendations
+        .station_served("alice", &fixture.station_id());
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0].artist, "Beyonce");
+
+    let second = entry_ids(&station_songs(&fixture, "&count=4").await);
+    assert_eq!(second, STORED, "{second:?}");
 }
 
 #[tokio::test]
@@ -1736,19 +1813,22 @@ async fn station_songs_answer_in_xml_and_by_post_too() {
     assert!(body.contains("id=\"local-one\""), "{body}");
     assert!(!body.contains("<song "), "{body}");
 
+    // Only `after` keeps the two served above out now.
+    let forget = movable_memory(&fixture);
+    forget();
     let posted = send(
         &fixture.app,
         Method::POST,
         "/rest/getStationSongs",
         &[("Content-Type", "application/x-www-form-urlencoded")],
         Body::from(format!(
-            "id={}&u=alice&t=token&s=salt&f=json&count=1",
+            "id={}&u=alice&t=token&s=salt&f=json&count=1&after=local-one&after=local-two",
             fixture.station_id()
         )),
     )
     .await;
     assert!(posted.body.contains("\"stationSongs\""), "{}", posted.body);
-    // The two songs served above are not served again.
+    // The two songs listed in `after` are not served again.
     assert!(posted.body.contains("local-three"), "{}", posted.body);
 }
 

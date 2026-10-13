@@ -2,22 +2,27 @@
 //! songs come first; after them the station goes on with new songs of its kind for as long as a
 //! client keeps asking, never one the client already queued.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use octo_core::common::dotnet;
 use octo_core::models::domain::Song;
 use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind, LastFmRadioTrack};
 use octo_core::soulseek::RoutingKind;
+use octo_subsonic::Parameters;
+use tokio::time::Instant;
 
 use super::action_helpers::{
-    RequestAborted, SubsonicCall, int_param, materialize_tracks, playlist_stations, queue_refresh_if_stale,
+    RequestAborted, SubsonicCall, int_param, materialize_picks, playlist_stations, queue_refresh_if_stale,
     serve_station_songs, suggested_sources,
 };
 use super::playlists::signed_in;
 use crate::app::AppState;
 use crate::http::routes::RouteSet;
+use crate::services::last_fm::last_fm_radio_recommendation_service::served_song_track;
 
 /// Songs answered when the call does not say how many.
 const DEFAULT_COUNT: i32 = 50;
@@ -31,6 +36,13 @@ const AFTER_READ: usize = 200;
 /// How many times the station is asked within one call when what it gave resolves to too few
 /// songs (outside songs not found, explicit songs filtered, back-to-back artists dropped).
 const ROUNDS: usize = 3;
+
+/// How long a later page waits, over all its rounds, for the station to find new songs. The
+/// station goes on looking after the page is answered.
+const PAGE_WALK_WAIT: Duration = Duration::from_secs(4);
+
+/// The parameters that sign a call in.
+const SIGN_IN_KEYS: [&str; 8] = ["u", "p", "t", "s", "apiKey", "jwt", "v", "c"];
 
 /// The answer for a station that is not the caller's, not there, or not served.
 const GONE: &str = "That station isn't on this server any more.";
@@ -106,7 +118,9 @@ fn queued_ids(after: Option<&str>) -> Vec<String> {
 }
 
 /// The station's next `count` songs after `after`, resolved as getPlaylist resolves a station
-/// and served the same way.
+/// and served the same way. A first page (no `after`) answers with what the station holds now;
+/// a later one waits at most [`PAGE_WALK_WAIT`] for the station to find new songs. Either way
+/// the station goes on finding them in the background for the next page.
 async fn next_songs(
     state: &AppState,
     call: &SubsonicCall,
@@ -116,6 +130,14 @@ async fn next_songs(
     count: usize,
     aborted: &RequestAborted,
 ) -> Vec<Song> {
+    let auth = sign_in(&call.parameters);
+    let first_page = after.is_empty();
+    let wait_until = Instant::now()
+        + if first_page {
+            Duration::ZERO
+        } else {
+            PAGE_WALK_WAIT
+        };
     let mut skip: HashSet<String> = after.iter().cloned().collect();
     let mut left_out: Vec<LastFmRadioTrack> = after
         .iter()
@@ -125,9 +147,9 @@ async fn next_songs(
         .last()
         .and_then(|id| queued_track(state, username, station, id))
         .map(|track| (track.artist, track.album.unwrap_or_default()));
-    let mut songs: Vec<Song> = Vec::new();
+    let mut picked: Vec<(Song, Option<LastFmRadioTrack>)> = Vec::new();
     for _ in 0..ROUNDS {
-        let wanted = count - songs.len();
+        let wanted = count - picked.len();
         // Discovery Radio asks for half again as many, to stand in for library songs past its
         // share.
         let asked = if station.kind == LastFmRadioStationKind::Discovery {
@@ -136,27 +158,29 @@ async fn next_songs(
             wanted
         };
         // Songs served before come round again only when this call has found none at all.
-        let recommendations = &state.last_fm_radio_recommendations;
-        let picks = if songs.is_empty() {
-            recommendations
-                .next_for_station(username, &station.id, &left_out, asked, &aborted.token)
-                .await
-        } else {
-            recommendations
-                .next_new_for_station(username, &station.id, &left_out, asked, &aborted.token)
-                .await
-        };
+        let picks = state
+            .last_fm_radio_recommendations
+            .next_for_station_within(
+                username,
+                &station.id,
+                &left_out,
+                asked,
+                picked.is_empty(),
+                wait_until.saturating_duration_since(Instant::now()),
+                &aborted.token,
+            )
+            .await;
         if picks.is_empty() {
             break;
         }
         let (tracks, reserve) = picks.split_at(wanted.min(picks.len()));
-        let resolved = materialize_tracks(
+        let resolved = materialize_picks(
             state,
             &call.proxy,
             station,
             tracks,
             reserve,
-            &call.parameters,
+            &auth,
             &skip,
             previous
                 .as_ref()
@@ -164,42 +188,117 @@ async fn next_songs(
         )
         .await;
         left_out.extend(picks.iter().cloned());
-        for song in resolved {
-            if songs.len() >= count {
+        for (song, track) in resolved {
+            if picked.len() >= count {
                 break;
             }
             if skip.insert(song.id.clone()) {
-                songs.push(song);
+                picked.push((song, Some(track)));
             }
         }
-        if let Some(last) = songs.last() {
+        if let Some((last, _)) = picked.last() {
             previous = Some((last.artist.clone(), last.album.clone()));
         }
-        if songs.len() >= count {
+        if picked.len() >= count {
             break;
         }
     }
+    if first_page && station.kind == LastFmRadioStationKind::Discovery {
+        picked = blend_snapshot(state, username, station, picked, &auth, count).await;
+    }
+    let songs: Vec<Song> = picked.iter().map(|(song, _)| song.clone()).collect();
     let suggested = suggested_sources(&songs);
     let songs = serve_station_songs(state, username, songs, &suggested);
-    state.last_fm_radio_recommendations.record_station_served(
+    // A song is remembered as the station track it was picked as, so it stays out by the
+    // station's own spelling even when the library's copy is spelled otherwise.
+    let tracks: HashMap<String, LastFmRadioTrack> = picked
+        .into_iter()
+        .filter_map(|(song, track)| Some((song.id, track?)))
+        .collect();
+    let served: Vec<(Song, Option<LastFmRadioTrack>)> = songs
+        .iter()
+        .map(|song| (song.clone(), tracks.get(&song.id).cloned()))
+        .collect();
+    let recommendations = &state.last_fm_radio_recommendations;
+    recommendations.record_station_served_as(
         username,
         &station.id,
-        songs.iter().map(served_track),
+        served.iter().map(|(song, track)| match track {
+            Some(track) => (track.clone(), Some(song.id.clone())),
+            None => (served_song_track(song), None),
+        }),
+    );
+    recommendations.remember_served_tracks(
+        username,
+        served
+            .iter()
+            .filter_map(|(song, track)| Some((song.id.clone(), track.clone()?))),
     );
     songs
 }
 
-/// A served song as the station history keeps it.
-fn served_track(song: &Song) -> LastFmRadioTrack {
-    LastFmRadioTrack {
-        artist: song.artist.clone(),
-        title: song.title.clone(),
-        album: (!song.album.trim().is_empty()).then(|| song.album.clone()),
-        duration: song.duration,
-        resolved_id: Some(song.id.clone()),
-        is_local: song.is_local,
-        ..Default::default()
+/// The page's songs with the station's own (the leading ones, up to the last of the station's
+/// tracks) blended as getPlaylist blends Discovery Radio, the rest after them, at most `count`.
+async fn blend_snapshot(
+    state: &AppState,
+    username: &str,
+    station: &LastFmRadioStation,
+    picked: Vec<(Song, Option<LastFmRadioTrack>)>,
+    auth: &Parameters,
+    count: usize,
+) -> Vec<(Song, Option<LastFmRadioTrack>)> {
+    let own: HashSet<String> = station
+        .tracks
+        .iter()
+        .map(|track| dotnet::ordinal_ignore_case_key(&track_key(track)))
+        .collect();
+    let Some(last_own) = picked.iter().rposition(|(_, track)| {
+        track
+            .as_ref()
+            .is_some_and(|track| own.contains(&dotnet::ordinal_ignore_case_key(&track_key(track))))
+    }) else {
+        return picked;
+    };
+    let mut picked = picked;
+    let rest = picked.split_off(last_own + 1);
+    let mut tracks: HashMap<String, LastFmRadioTrack> = HashMap::new();
+    let mut snapshot = Vec::with_capacity(picked.len());
+    for (song, track) in picked {
+        if let Some(track) = track {
+            tracks.insert(song.id.clone(), track);
+        }
+        snapshot.push(song);
     }
+    let blended = state
+        .generated_playlists
+        .blend_into_discovery(username, station, snapshot, auth)
+        .await;
+    let mut seen = HashSet::new();
+    blended
+        .into_iter()
+        .map(|song| {
+            let track = tracks.remove(&song.id);
+            (song, track)
+        })
+        .chain(rest)
+        .filter(|(song, _)| seen.insert(song.id.clone()))
+        .take(count)
+        .collect()
+}
+
+/// The sign-in among a call's parameters, the only ones that go on to Navidrome with the songs
+/// looked up for it.
+fn sign_in(parameters: &Parameters) -> Parameters {
+    parameters
+        .iter()
+        .filter(|(key, _)| SIGN_IN_KEYS.iter().any(|name| name.eq_ignore_ascii_case(key)))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+/// A track's key, as the stations match songs.
+fn track_key(track: &LastFmRadioTrack) -> String {
+    octo_core::last_fm::last_fm_radio_seed_normalizer::track_key(&track.artist, &track.title)
 }
 
 /// What a queued id stands for: a song a station served this listener, one of this station's

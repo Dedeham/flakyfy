@@ -1409,3 +1409,167 @@ async fn your_radio_and_discovery_radio_keep_their_ids() {
         octo_core::last_fm::last_fm_radio_state_store::station_id("alice", "discovery")
     );
 }
+
+/// [`RecommendationHandler`] answering only after `delay`, counting what it is asked.
+#[derive(Clone)]
+struct SlowCounted {
+    delay: std::time::Duration,
+    asked: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Respond for SlowCounted {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        RecommendationHandler.respond(request).set_delay(self.delay)
+    }
+}
+
+/// The rock station with everything it holds left out, so an ask needs a walk on, over a
+/// Last.fm that answers after `delay`; and the count of Last.fm asks.
+async fn slow_rock(
+    delay: std::time::Duration,
+) -> (
+    Fixture,
+    LastFmRadioStation,
+    Vec<LastFmRadioTrack>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let fixture = fixture(
+        LastFmSettings {
+            api_key: "key".into(),
+            radio_track_count: 10,
+            ..Default::default()
+        },
+        SlowCounted {
+            delay,
+            asked: Arc::clone(&asked),
+        },
+    )
+    .await;
+    let station = install_rock(&fixture.state);
+    let held: Vec<LastFmRadioTrack> = station.tracks.iter().chain(&station.reserve).cloned().collect();
+    (fixture, station, held, asked)
+}
+
+/// A slow Last.fm never holds an ask past its wait: the walk goes on in the background and its
+/// songs are there for the next ask at once. Two asks at the same time walk once.
+#[tokio::test]
+async fn a_slow_walk_never_holds_an_ask_past_its_wait_and_two_asks_walk_once() {
+    let delay = std::time::Duration::from_secs(2);
+    let wait = std::time::Duration::from_millis(300);
+    let (fixture, station, held, asked) = slow_rock(delay).await;
+    let token = CancellationToken::new();
+    let ask = |wait| {
+        fixture
+            .service
+            .next_for_station_within("alice", &station.id, &held, 4, false, wait, &token)
+    };
+
+    let started = std::time::Instant::now();
+    let (first, second) = tokio::join!(ask(wait), ask(wait));
+    assert!(started.elapsed() < delay, "{:?}", started.elapsed());
+    assert!(first.is_empty() && second.is_empty(), "{first:?} {second:?}");
+    fixture.service.settled().await;
+    let two_asks = asked.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(two_asks > 0);
+
+    let started = std::time::Instant::now();
+    let next = ask(std::time::Duration::ZERO).await;
+    assert!(started.elapsed() < delay, "{:?}", started.elapsed());
+    assert_eq!(next.len(), 4, "{:?}", titles(&next));
+    for track in &next {
+        assert!(!["rock-0", "rock-1", "rock-2"].contains(&track.title.as_str()));
+    }
+
+    // One ask alone asks Last.fm just as often.
+    let (alone, station, held, asked) = slow_rock(delay).await;
+    let _ = alone
+        .service
+        .next_for_station_within("alice", &station.id, &held, 4, false, wait, &token)
+        .await;
+    alone.service.settled().await;
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), two_asks);
+}
+
+/// A zero wait never waits at all: it answers with what the station holds and starts the walk.
+#[tokio::test]
+async fn a_zero_wait_answers_with_what_the_station_holds() {
+    let delay = std::time::Duration::from_secs(2);
+    let (fixture, station, _, asked) = slow_rock(delay).await;
+    let started = std::time::Instant::now();
+    let picks = fixture
+        .service
+        .next_for_station_within(
+            "alice",
+            &station.id,
+            &[],
+            10,
+            true,
+            std::time::Duration::ZERO,
+            &CancellationToken::new(),
+        )
+        .await;
+    assert!(started.elapsed() < delay, "{:?}", started.elapsed());
+    assert_eq!(titles(&picks), ["rock-0", "rock-1", "rock-2"]);
+    fixture.service.settled().await;
+    assert!(asked.load(std::sync::atomic::Ordering::SeqCst) > 0);
+}
+
+/// A station track that went out as a song of another id stays out by that id as well as by its
+/// own artist and title.
+#[tokio::test]
+async fn a_song_served_as_another_id_stays_out_by_that_id() {
+    let fixture = fixture(LastFmSettings::default(), Nothing).await;
+    let station = install_rock(&fixture.state);
+    let id = fixture
+        .state
+        .find_station("alice", &station.id)
+        .and_then(|station| station.tracks[0].resolved_id.clone())
+        .expect("the station's first track has an id");
+    // Spelled otherwise, served as the station track's own id.
+    fixture.service.record_station_served_as(
+        "alice",
+        &station.id,
+        [(radio_track("Rock Artist Zero", "Rock Zero"), Some(id))],
+    );
+    let next = fixture
+        .service
+        .next_for_station("alice", &station.id, &[], 2, &CancellationToken::new())
+        .await;
+    assert_eq!(titles(&next), ["rock-1", "rock-2"]);
+}
+
+/// Served again, an id counts as served now, and each listener keeps their own newest ids: one
+/// listener's many songs never push out another's.
+#[tokio::test]
+async fn served_ids_renew_when_served_again_and_are_kept_per_listener() {
+    let fixture = fixture(LastFmSettings::default(), Nothing).await;
+    let song = |id: String| Song {
+        id: id.clone(),
+        artist: format!("Artist {id}"),
+        title: format!("Title {id}"),
+        ..Default::default()
+    };
+    fixture.service.remember_served("bob", [&song("bob-1".into())]);
+    let first = song("id-0".into());
+    fixture.service.remember_served("alice", [&first]);
+    let many: Vec<Song> = (1..SERVED_KEPT)
+        .map(|index| song(format!("id-{index}")))
+        .collect();
+    fixture.service.remember_served("alice", &many);
+    fixture.service.remember_served("alice", [&first]);
+    fixture
+        .service
+        .remember_served("alice", [&song(format!("id-{SERVED_KEPT}"))]);
+
+    assert!(fixture.service.served_track("alice", "id-0").is_some());
+    assert!(fixture.service.served_track("alice", "id-1").is_none());
+    assert!(
+        fixture
+            .service
+            .served_track("alice", &format!("id-{SERVED_KEPT}"))
+            .is_some()
+    );
+    assert!(fixture.service.served_track("bob", "bob-1").is_some());
+}

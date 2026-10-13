@@ -1626,7 +1626,7 @@ fn the_stations_extension_is_listed_last_and_only_when_asked() {
 fn station_songs_carry_the_station_and_its_entries_in_both_formats() {
     let station = LastFmRadioStation {
         id: "or12345678901234567890".into(),
-        name: "Your Mix".into(),
+        name: "Your Radio".into(),
         tracks: vec![LastFmRadioTrack::default()],
         ..Default::default()
     };
@@ -1648,7 +1648,7 @@ fn station_songs_carry_the_station_and_its_entries_in_both_formats() {
     let answer = &json["subsonic-response"];
     assert_eq!(answer["status"], "ok");
     assert_eq!(answer["stationSongs"]["id"], "or12345678901234567890");
-    assert_eq!(answer["stationSongs"]["name"], "Your Mix");
+    assert_eq!(answer["stationSongs"]["name"], "Your Radio");
     // Shaped as any song row; `created` is the clock's now, so it is left out of the comparison.
     let mut entry = answer["stationSongs"]["entry"][0].clone();
     let mut row = Value::Object(builder().convert_song_to_json(&songs[0]));
@@ -1674,7 +1674,7 @@ fn station_songs_carry_the_station_and_its_entries_in_both_formats() {
         .find(|e| e.name == "stationSongs")
         .expect("stationSongs");
     assert_eq!(element.attribute("id"), Some("or12345678901234567890"));
-    assert_eq!(element.attribute("name"), Some("Your Mix"));
+    assert_eq!(element.attribute("name"), Some("Your Radio"));
     let entries: Vec<&XElement> = element.elements().collect();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "entry");

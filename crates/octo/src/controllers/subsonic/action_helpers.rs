@@ -674,7 +674,7 @@ pub async fn bootstrap_radio_profile(
 }
 
 /// A station's tracks as songs this listener can play: each resolved (the library's copy
-/// first), the explicit filter applied, Discovery Mix held to the Discovery balance's share of
+/// first), the explicit filter applied, Discovery Radio held to the Discovery balance's share of
 /// library songs, and back-to-back repeats of an artist or an album dropped.
 pub async fn materialize_station(
     state: &AppState,
@@ -696,7 +696,7 @@ pub async fn materialize_station(
 }
 
 /// [`materialize_station`] for any of a station's songs: `tracks` resolved, `reserve` standing
-/// in for the library songs past Discovery Mix's share, every song whose id is in `skip` left
+/// in for the library songs past Discovery Radio's share, every song whose id is in `skip` left
 /// out, and the spacing carried on from `previous` (the artist and album of the song played
 /// before these).
 pub async fn materialize_tracks(

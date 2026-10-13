@@ -128,7 +128,7 @@ async fn next_songs(
     let mut songs: Vec<Song> = Vec::new();
     for _ in 0..ROUNDS {
         let wanted = count - songs.len();
-        // Discovery Mix asks for half again as many, to stand in for library songs past its
+        // Discovery Radio asks for half again as many, to stand in for library songs past its
         // share.
         let asked = if station.kind == LastFmRadioStationKind::Discovery {
             wanted + wanted.div_ceil(2)

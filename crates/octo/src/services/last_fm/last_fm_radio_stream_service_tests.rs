@@ -258,7 +258,7 @@ async fn fixture(loudness_target: i32) -> Fixture {
         "alice",
         &[LastFmRadioStation {
             id: "or-station".into(),
-            name: "Your Mix".into(),
+            name: "Your Radio".into(),
             owner: "alice".into(),
             personalized: true,
             tracks: TITLES

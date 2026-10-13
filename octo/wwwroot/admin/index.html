@@ -859,15 +859,15 @@
           </div>
           <form data-section="lastfm-personalized" class="set-card">
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Enable dynamic stations</div><div class="set-info-d">Starts with Starter Radio, then grows into Your Mix, discovery, artist, and genre stations.</div></div>
+              <div class="set-info"><div class="set-info-t">Enable dynamic stations</div><div class="set-info-d">Starts with Starter Radio, then grows into Your Radio, discovery, artist, and genre stations.</div></div>
               <label class="switch"><input type="checkbox" name="LastFm.EnablePersonalizedStations" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Your Mix</div><div class="set-info-d">The listener's own mix, drawn from what they actually play. Before Octo has learned enough this is Starter Radio, which is the only station a brand-new listener gets.</div></div>
+              <div class="set-info"><div class="set-info-t">Your Radio</div><div class="set-info-d">The listener's own station, drawn from what they actually play. Before Octo has learned enough this is Starter Radio, which is the only station a brand-new listener gets.</div></div>
               <label class="switch"><input type="checkbox" name="LastFm.EnableYourMix" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Discovery Mix</div><div class="set-info-d">One station of less-familiar music, seeded from the listener's most-played tags.</div></div>
+              <div class="set-info"><div class="set-info-t">Discovery Radio</div><div class="set-info-d">One station of less-familiar music, seeded from the listener's most-played tags.</div></div>
               <label class="switch"><input type="checkbox" name="LastFm.EnableDiscoveryMix" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row stack">
@@ -879,12 +879,12 @@
               <input class="set-input" name="LastFm.GenreStationCount" type="number" min="0" max="5" />
             </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Discovery balance</div><div class="set-info-d">Percentage of Your Mix reserved for less-familiar recommendations. Discovery Mix keeps the same share of songs from your library.</div></div>
+              <div class="set-info"><div class="set-info-t">Discovery balance</div><div class="set-info-d">Percentage of Your Radio reserved for less-familiar recommendations. Discovery Radio keeps the same share of songs from your library.</div></div>
               <input class="set-input" name="LastFm.DiscoveryPercent" type="number" min="0" max="100" />
             </div>
             <details class="radio-advanced">
               <summary>Personalization threshold and history</summary>
-              <div class="set-row stack"><div class="set-info"><div class="set-info-t">Completed plays before Your Mix</div><div class="set-info-d">Before this many completed plays, Octo offers Starter Radio. Afterward it can build Your Mix plus discovery, artist, and genre stations. Default: 10 plays.</div></div><input class="set-input" name="LastFm.MinimumPlays" type="number" min="3" max="100" /></div>
+              <div class="set-row stack"><div class="set-info"><div class="set-info-t">Completed plays before Your Radio</div><div class="set-info-d">Before this many completed plays, Octo offers Starter Radio. Afterward it can build Your Radio plus discovery, artist, and genre stations. Default: 10 plays.</div></div><input class="set-input" name="LastFm.MinimumPlays" type="number" min="3" max="100" /></div>
               <div class="set-row stack"><div class="set-info"><div class="set-info-t">Keep completed plays for (days)</div><div class="set-info-d">Older plays stop influencing dynamic stations and are removed from Octo's local listening history. Downloaded music is unaffected. Default: 90 days.</div></div><input class="set-input" name="LastFm.HistoryRetentionDays" type="number" min="7" max="365" /></div>
             </details>
           </form>
@@ -1562,7 +1562,7 @@
               <input class="set-input" name="GeneratedPlaylists.RefreshHours" type="number" min="1" max="336" data-number="true" />
             </div>
             <div class="set-row stack">
-              <div class="set-info"><div class="set-info-t">Kept for new songs <span class="set-opt">percent</span> / new for <span class="set-opt">days</span></div><div class="set-info-d">The share of each mix, and of Discovery Mix, kept for songs new to the listener. <strong>0 changes nothing</strong>, and is the default.</div><div class="set-info-more">New means never played, or added within the days given.</div></div>
+              <div class="set-info"><div class="set-info-t">Kept for new songs <span class="set-opt">percent</span> / new for <span class="set-opt">days</span></div><div class="set-info-d">The share of each mix, and of Discovery Radio, kept for songs new to the listener. <strong>0 changes nothing</strong>, and is the default.</div><div class="set-info-more">New means never played, or added within the days given.</div></div>
               <div class="set-grid2">
                 <input class="set-input" name="GeneratedPlaylists.NewShare" type="number" min="0" max="100" data-number="true" aria-label="Percent kept for new tracks" />
                 <input class="set-input" name="GeneratedPlaylists.NewDays" type="number" min="1" max="3650" data-number="true" aria-label="A track counts as new for this many days" />

@@ -744,7 +744,7 @@ async fn one_star_pulls_the_song_from_the_stations_it_is_on_now() {
         &[LastFmRadioStation {
             id: "s1".into(),
             key: "your-mix".into(),
-            name: "Your Mix".into(),
+            name: "Your Radio".into(),
             owner: "alice".into(),
             tracks: vec![track("A", "Keep"), track("B", "Gone")],
             ..Default::default()
@@ -923,7 +923,7 @@ async fn your_mix_draws_on_every_source_and_remembers_which_suggested_each_song(
     let mix = stations
         .iter()
         .find(|station| station.kind == LastFmRadioStationKind::YourMix)
-        .expect("Your Mix");
+        .expect("Your Radio");
     // This fake's Last.fm answers every seed with the same 15 songs, so whether one of them is
     // drawn is chance; the sources that answer each seed differently always are.
     let sources: std::collections::HashSet<&str> =
@@ -1032,7 +1032,7 @@ fn discovery_of(stations: &[LastFmRadioStation]) -> Option<&LastFmRadioStation> 
         .find(|s| s.kind == LastFmRadioStationKind::Discovery)
 }
 
-/// Discovery Mix comes from the similar-artist walk: only artists the listener has never
+/// Discovery Radio comes from the similar-artist walk: only artists the listener has never
 /// played, the one two favorites point to among them, the step past them too, and no more than
 /// two songs of any one artist.
 #[tokio::test]
@@ -1048,7 +1048,7 @@ async fn discovery_mix_draws_artists_the_listener_does_not_know_from_the_similar
     record_twelve(&fixture.state);
 
     let stations = build(&fixture.service).await;
-    let discovery = discovery_of(&stations).expect("a Discovery Mix");
+    let discovery = discovery_of(&stations).expect("a Discovery Radio");
     let artists: Vec<&str> = discovery
         .tracks
         .iter()
@@ -1068,7 +1068,7 @@ async fn discovery_mix_draws_artists_the_listener_does_not_know_from_the_similar
     }
 }
 
-/// When the walk finds fewer than five songs, the listener's tag charts make Discovery Mix as
+/// When the walk finds fewer than five songs, the listener's tag charts make Discovery Radio as
 /// before.
 #[tokio::test]
 async fn discovery_mix_falls_back_to_the_tag_charts_when_the_walk_finds_too_little() {
@@ -1083,7 +1083,7 @@ async fn discovery_mix_falls_back_to_the_tag_charts_when_the_walk_finds_too_litt
     record_twelve(&fixture.state);
 
     let stations = build(&fixture.service).await;
-    let discovery = discovery_of(&stations).expect("a Discovery Mix");
+    let discovery = discovery_of(&stations).expect("a Discovery Radio");
     assert!(
         discovery.tracks.iter().all(|t| t.title.starts_with("rock-")),
         "{:?}",
@@ -1134,7 +1134,7 @@ impl Respond for StuckWalk {
     }
 }
 
-/// A slow similar-artist walk costs Discovery Mix its own few seconds, never the artist and
+/// A slow similar-artist walk costs Discovery Radio its own few seconds, never the artist and
 /// genre stations, which are built first.
 #[tokio::test]
 async fn a_slow_discovery_walk_never_starves_the_artist_and_genre_stations() {
@@ -1374,4 +1374,38 @@ async fn with_nothing_new_the_oldest_served_songs_come_round_again() {
         )
         .await;
     assert_eq!(titles(&next), ["rock-2", "rock-0"]);
+}
+
+/// The listener's own station and the discovery one are named Radio, and keep the ids they had
+/// when they were named Mix: an id comes from the station's key, never its name.
+#[tokio::test]
+async fn your_radio_and_discovery_radio_keep_their_ids() {
+    let fixture = fixture(
+        LastFmSettings {
+            radio_track_count: 10,
+            ..learned()
+        },
+        FrontierHandler { walk: true },
+    )
+    .await;
+    record_twelve(&fixture.state);
+
+    let stations = build(&fixture.service).await;
+    let mine = stations
+        .iter()
+        .find(|s| s.kind == LastFmRadioStationKind::YourMix)
+        .expect("the listener's own station");
+    assert_eq!(mine.name, "Your Radio");
+    assert_eq!(mine.key, "your-mix");
+    assert_eq!(
+        mine.id,
+        octo_core::last_fm::last_fm_radio_state_store::station_id("alice", "your-mix")
+    );
+    let discovery = discovery_of(&stations).expect("a Discovery Radio");
+    assert_eq!(discovery.name, "Discovery Radio");
+    assert_eq!(discovery.key, "discovery");
+    assert_eq!(
+        discovery.id,
+        octo_core::last_fm::last_fm_radio_state_store::station_id("alice", "discovery")
+    );
 }

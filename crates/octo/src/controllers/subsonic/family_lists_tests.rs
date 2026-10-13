@@ -1114,7 +1114,7 @@ async fn a_member_gets_songs_of_their_own_stations_only() {
             &[LastFmRadioStation {
                 id: station_id(owner, "your-mix"),
                 key: "your-mix".into(),
-                name: "Your Mix".into(),
+                name: "Your Radio".into(),
                 owner: owner.into(),
                 kind: LastFmRadioStationKind::YourMix,
                 personalized: true,

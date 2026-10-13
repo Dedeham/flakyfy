@@ -881,7 +881,7 @@ impl GeneratedPlaylistService {
             .map(|cached| cached.as_ref().clone())
     }
 
-    /// Keep MIX_NEW_SHARE percent of Discovery Mix for library songs new to the listener.
+    /// Keep MIX_NEW_SHARE percent of Discovery Radio for library songs new to the listener.
     /// Discovery is otherwise all outside the library, so what someone added and never played was
     /// the one thing it could not surface. The station's songs come back as they were when there
     /// is nothing to put in.

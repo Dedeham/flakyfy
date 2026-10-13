@@ -3211,7 +3211,7 @@ async function loadRadioStatus() {
     const stateMessage = !data.enabled ? 'Radio is disabled. Existing history and snapshots are preserved.'
       : !data.hasApiKey ? 'Last.fm key missing. Starter/local fallback remains available; recommendation refresh is degraded.'
       : !learning ? 'Waiting for the first authenticated completed scrobble.'
-      : learning.needed > 0 ? `${learning.plays} completed plays learned · ${learning.needed} more before Your Mix.`
+      : learning.needed > 0 ? `${learning.plays} completed plays learned · ${learning.needed} more before Your Radio.`
       : learning.refreshing ? 'Refreshing now. The last good snapshots remain playable.'
       : learning.lastRefreshError ? `Last refresh failed: ${learning.lastRefreshError}` : `${learning.plays} completed plays learned.`;
     output.innerHTML = `<p class="radio-state-copy">${escapeHtml(stateMessage)}</p>` + ((data.stations || []).length

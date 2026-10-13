@@ -27,7 +27,7 @@ It runs on [Navidrome](https://www.navidrome.org/), the open-source music server
 ## What you get
 
 - **Search everything.** Your own music comes first, then the songs and albums you don't have yet. Any of it plays straight away, previewed from YouTube.
-- **Radio that learns.** Your Mix, discovery, artist and genre stations grow from what you play, plus optional genre and decade mixes from your own library.
+- **Radio that learns.** Your Radio, discovery, artist and genre stations grow from what you play, plus optional genre and decade mixes from your own library.
 - **Keep what you love.** Press **+** or heart a song and Octo downloads the best copy it can find from Soulseek or your own Lidarr, FLAC first, catches a "lossless" file that was made from an MP3, tags it, adds the cover and lyrics, and files it in your library. Whole albums work too.
 - **Bring your Spotify.** Import your liked songs and playlists, see what you already have, and let Octo fetch the rest a few songs an hour. See [Spotify import](#spotify-import).
 - **Apps for every device.** [Octo's own apps](#octos-own-apps) for Windows, Linux and Android, and [any Subsonic app](#compatible-apps) on iPhone, Mac and everywhere else.
@@ -653,7 +653,7 @@ track AcoustID named as something else, for a fingerprint other than the standar
 (`SLSKD_FINGERPRINT_SECONDS`), or when no single MusicBrainz recording fits the track's title,
 artist and length.
 
-Each kind of dynamic station is configured on its own, so a listener can keep Your Mix
+Each kind of dynamic station is configured on its own, so a listener can keep Your Radio
 without collecting an artist radio per favorite band. `LASTFM_ENABLE_YOUR_MIX` and
 `LASTFM_ENABLE_DISCOVERY_MIX` (both default true) switch those two stations,
 `LASTFM_ARTIST_STATION_COUNT` (default 2) and `LASTFM_GENRE_STATION_COUNT` (default 3)
@@ -706,7 +706,7 @@ Each mix holds `MIX_TRACK_COUNT` tracks (default 100) with at most `MIX_MAX_PER_
 by one artist; the cap is never relaxed, so a mix that cannot be filled without breaking it
 is shorter. A mix is a seeded draw that holds still for `MIX_REFRESH_HOURS` (24), so every
 client shows the same tracks, and is then drawn again. `MIX_NEW_SHARE` keeps that percentage
-of each mix, and of the Discovery Mix station, for tracks new to the listener: never played,
+of each mix, and of the Discovery Radio station, for tracks new to the listener: never played,
 or added in the last `MIX_NEW_DAYS`. It is 0 by default, which changes nothing.
 `MIX_NAME_FORMAT` names them, `{0}` being the genre or decade ("{0} Mix" when empty).
 

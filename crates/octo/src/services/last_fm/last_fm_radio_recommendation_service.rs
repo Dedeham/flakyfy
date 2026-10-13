@@ -44,7 +44,7 @@ use crate::services::radio::RadioSourceSet;
 /// Provider expansion has a hard fan-out and deadline. Partial results are useful.
 const PROVIDER_BUDGET: Duration = Duration::from_secs(25);
 
-/// The similar-artist walk of Discovery Mix has this long of its own, within the build's budget.
+/// The similar-artist walk of Discovery Radio has this long of its own, within the build's budget.
 const DISCOVERY_WALK_BUDGET: Duration = Duration::from_secs(8);
 
 /// How many songs each source is asked for when a station goes on past its snapshot.
@@ -272,7 +272,7 @@ impl LastFmRadioRecommendationService {
                 stations.push(create(
                     username,
                     mix_key,
-                    if learned { "Your Mix" } else { "Starter Radio" },
+                    if learned { "Your Radio" } else { "Starter Radio" },
                     if learned {
                         LastFmRadioStationKind::YourMix
                     } else {
@@ -289,7 +289,7 @@ impl LastFmRadioRecommendationService {
             if learned {
                 let top_tags = tags.top_by_score_then_name(3);
                 // The artist and genre stations' candidates are asked for first, so a slow walk
-                // for Discovery Mix never spends their time; the stations are still drawn and
+                // for Discovery Radio never spends their time; the stations are still drawn and
                 // listed in the same order as before.
                 let mut artist_candidates: Vec<(String, Vec<Candidate>)> = Vec::new();
                 for (artist, _) in artist_scores
@@ -351,7 +351,7 @@ impl LastFmRadioRecommendationService {
                         let mut station = create(
                             username,
                             "discovery",
-                            "Discovery Mix",
+                            "Discovery Radio",
                             LastFmRadioStationKind::Discovery,
                             true,
                             &top_tags,
@@ -1171,7 +1171,7 @@ fn track_seeds(plays: &[LastFmRadioPlay], now: chrono::DateTime<Utc>) -> Vec<Las
         .collect()
 }
 
-/// How many of Your Mix's songs are the listener's own: what the Discovery balance leaves.
+/// How many of Your Radio's songs are the listener's own: what the Discovery balance leaves.
 fn familiar_quota(settings: &octo_core::settings::LastFmSettings) -> i32 {
     let count = settings.effective_radio_track_count();
     count

@@ -258,7 +258,7 @@ impl Respond for Navidrome {
     }
 }
 
-/// A Your Mix station: twelve "Stranger" songs, an owned hit, a missing one on an owned album,
+/// A Your Radio station: twelve "Stranger" songs, an owned hit, a missing one on an owned album,
 /// and a single with no album.
 fn your_mix(changed_hour: u32) -> LastFmRadioStation {
     let track = |artist: &str, title: &str, album: Option<&str>, duration: i32| LastFmRadioTrack {

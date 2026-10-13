@@ -4,12 +4,13 @@ use axum::extract::{Request, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use chrono::{DateTime, Utc};
+use octo_core::common::dotnet::is_blank;
 use octo_core::common::playlist_id_helper;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
 use octo_core::models::radio::LastFmRadioPlay;
 use octo_core::settings::LibraryRatingScope;
-use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
+use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use tracing::{debug, info};
 
 use super::caller_checks::{
@@ -239,8 +240,35 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             &provider,
             &external_id,
             requester_for(&state, Some(&who)).as_deref(),
-            target,
+            target.clone(),
         );
+
+        // DownloadAlbumOnSongStar: the song's album follows it, as an album heart would. The
+        // album walk skips the song itself, which is already in flight.
+        if state.settings.current().subsonic.download_album_on_song_star {
+            match album_of_song(&state, &external_id) {
+                Some(album_id) if sources.iter().any(|step| step.album_enabled == Some(true)) => {
+                    info!(
+                        "Starred song {item_id} with DownloadAlbumOnSongStar on; queueing album {album_id}"
+                    );
+                    state
+                        .acquisition_tracker
+                        .begin_album(&provider, &album_id, Some(&who));
+                    state.heart_acquisition_coordinator.queue_album_for(
+                        &provider,
+                        &album_id,
+                        requester_for(&state, Some(&who)).as_deref(),
+                        target,
+                    );
+                }
+                Some(_) => info!(
+                    "Starred song {item_id} with DownloadAlbumOnSongStar on, but no album-heart source is enabled; only the song is fetched"
+                ),
+                None => info!(
+                    "Starred song {item_id} with DownloadAlbumOnSongStar on, but Octo knows no album for it; only the song is fetched"
+                ),
+            }
+        }
 
         // Return success response immediately
         return Ok(builder.create_response(&format, "starred").into_response());
@@ -281,6 +309,25 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             .into_response()),
         Err(other) => Err(other.into()),
     }
+}
+
+/// The album id a client sees beside an outside song, minted the same way the song row mints
+/// it: the song's album, or its title when it has none (a single, which the album lookup then
+/// resolves to the real release). `None` for an id the registry does not know.
+fn album_of_song(state: &AppState, external_id: &str) -> Option<String> {
+    let routing = state.external_id_registry.lookup(external_id)?.snapshot();
+    let artist = routing.artist.filter(|a| !is_blank(a))?;
+    let album = routing
+        .album
+        .filter(|a| !is_blank(a))
+        .or(routing.title)
+        .filter(|a| !is_blank(a))?;
+    Some(state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Album,
+        artist: Some(artist),
+        album: Some(album),
+        ..Default::default()
+    }))
 }
 
 /// Saves an outside song for a family member as a link (it plays from its source and shows in
@@ -884,3 +931,7 @@ mod family_tests;
 #[cfg(test)]
 #[path = "family_library_tests.rs"]
 mod family_library_tests;
+
+#[cfg(test)]
+#[path = "stars_album_tests.rs"]
+mod album_tests;

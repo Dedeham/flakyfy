@@ -46,6 +46,7 @@ services:
       Subsonic__DownloadMode: ${DOWNLOAD_MODE:-Track}
       Subsonic__DownloadOnStar: ${DOWNLOAD_ON_STAR:-true}
       Subsonic__DownloadAlbumOnStar: ${DOWNLOAD_ALBUM_ON_STAR:-true}
+      Subsonic__DownloadAlbumOnSongStar: ${DOWNLOAD_ALBUM_ON_SONG_STAR:-false}
       # Name the user who starred a track on its history entry and notification.
       Subsonic__RecordRequestedBy: ${RECORD_REQUESTED_BY:-true}
       # Also favorite a hearted song in Navidrome once it downloads, for whoever hearted it.

@@ -351,6 +351,8 @@ You can use YouTube or an existing Lidarr server, or disable automatic acquisiti
 
 Use **Streams & hearts → Heart download priority** in the admin UI to order Soulseek, YouTube, and Lidarr and independently choose whether each handles song hearts, album hearts, or both. Octo tries eligible sources from top to bottom and stops at the first success. `DOWNLOAD_SOURCE`, `DOWNLOAD_ON_STAR`, and `DOWNLOAD_ALBUM_ON_STAR` remain migration defaults for existing and env-only installations.
 
+**Heart a song, get its album** (`DOWNLOAD_ALBUM_ON_SONG_STAR`, off by default) makes a heart on an outside song also fetch the rest of its album, through the album-heart sources, as a heart on the album would. The song itself comes first. Songs you already have are skipped.
+
 Lidarr works at album level, so enabling it for song hearts still fetches the song's full album. It is last and disabled by default; configure its URL, API key, root folder, and profiles on the Lidarr page, then enable the heart types you want in the priority list.
 
 To stop downloading altogether, turn off both heart types for every source. On an env-only installation, set `Subsonic__DownloadOnStar=false` and `Subsonic__DownloadAlbumOnStar=false`. A heart on a song Octo found for you then downloads nothing and is not kept, because Navidrome has no such song to favorite.

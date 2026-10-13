@@ -53,6 +53,7 @@ fn library_song(id: &str) -> Option<Value> {
             "Hip-Hop",
         ),
         "wide" => song("wide", "Wide", "Wide Artist", "Wides", "al-wides", "Trip-Hop"),
+        "hello" => song("hello", "Hello", "Adele", "25", "al-25", "Pop"),
         "blend" => song(
             "blend",
             "Blend",
@@ -177,6 +178,14 @@ fn last_fm(query: &HashMap<String, String>) -> Value {
             ("Wide Artist", "Wide") => json!({"similartracks": {"track": (1..=WIDE_SONGS).map(|i| {
                 json!({"name": format!("Far {i}"), "artist": {"name": format!("Crowd {i}")}, "match": 0.99 - i as f64 / 200.0})
             }).collect::<Vec<_>>()}}),
+            // Takes Skip instrumentals leaves out, beside a song only named after the word.
+            ("Adele", "Hello") => json!({"similartracks": {"track": [
+                {"name": "Someone Like You", "artist": {"name": "Adele"}, "match": 0.9},
+                {"name": "Rolling in the Deep (Instrumental)", "artist": {"name": "Adele"}, "match": 0.85},
+                {"name": "Skyfall (Karaoke Version)", "artist": {"name": "Adele"}, "match": 0.8},
+                {"name": "Karaoke Queen", "artist": {"name": "Catfish and the Bottlemen"}, "match": 0.75},
+                {"name": "Set Fire to the Rain", "artist": {"name": "Adele"}, "match": 0.7}
+            ]}}),
             ("Alan Walker", "Faded") => json!({"similartracks": {"track": [
                 {"name": "Wake Me Up", "artist": {"name": "Avicii"}, "match": 0.9}
             ]}}),
@@ -479,6 +488,31 @@ async fn unknown_upload_leads_with_its_playlist_and_genre_and_leaves_out_the_upl
         f.calls()
             .iter()
             .any(|call| call.contains("tag.gettoptracks") && call.contains("tag=Phonk"))
+    );
+}
+
+#[tokio::test]
+async fn skip_instrumentals_keeps_outside_instrumental_and_karaoke_takes_off_radio() {
+    let f = fixture(|_| {}).await;
+    let ids = |songs: Vec<(String, Option<String>)>| songs.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    let instrumental = "ext-Adele-Rolling in the Deep (Instrumental)".to_string();
+    let karaoke = "ext-Adele-Skyfall (Karaoke Version)".to_string();
+    let named = "ext-Catfish and the Bottlemen-Karaoke Queen".to_string();
+
+    let off = ids(radio(&f, "alice", "hello", 5).await);
+    assert!(off.contains(&instrumental), "{off:?}");
+    assert!(off.contains(&karaoke), "{off:?}");
+
+    let mut on = f.state.settings.current().as_ref().clone();
+    on.soulseek.skip_instrumentals = true;
+    f.state.settings.set(on);
+    let skipped = ids(radio(&f, "alice", "hello", 5).await);
+    assert!(!skipped.contains(&instrumental), "{skipped:?}");
+    assert!(!skipped.contains(&karaoke), "{skipped:?}");
+    assert!(skipped.contains(&named), "a name is not a take: {skipped:?}");
+    assert!(
+        skipped.contains(&"ext-Adele-Someone Like You".to_string()),
+        "{skipped:?}"
     );
 }
 

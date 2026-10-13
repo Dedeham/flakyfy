@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use chrono::{TimeDelta, Utc};
 use indexmap::IndexMap;
-use octo_core::common::dotnet;
+use octo_core::common::{dotnet, skipped_takes};
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::models::domain::Song;
 use octo_core::models::radio::{
@@ -673,7 +673,7 @@ pub async fn bootstrap_radio_profile(
 }
 
 /// A station's tracks as songs this listener can play: each resolved (the library's copy
-/// first), the explicit filter applied, Discovery Mix held to the Discovery balance's share of
+/// first), the explicit filter and Skip instrumentals applied, Discovery Mix held to the Discovery balance's share of
 /// library songs, and back-to-back repeats of an artist or an album dropped.
 pub async fn materialize_station(
     state: &AppState,
@@ -693,7 +693,15 @@ pub async fn materialize_station(
         Some(&state.family_store),
         Some(&station.owner),
     );
-    let mut resolved = resolve_station_tracks(&resolver, &station.tracks, parameters, explicit_filter).await;
+    let skip_instrumentals = snapshot.soulseek.skip_instrumentals;
+    let mut resolved = resolve_station_tracks(
+        &resolver,
+        &station.tracks,
+        parameters,
+        explicit_filter,
+        skip_instrumentals,
+    )
+    .await;
     if station.kind == LastFmRadioStationKind::Discovery {
         let cap = dotnet::round(
             resolved.len() as f64 * f64::from(snapshot.last_fm.effective_discovery_percent()) / 100.0,
@@ -705,7 +713,10 @@ pub async fn materialize_station(
             &station.reserve,
             |tracks: Vec<LastFmRadioTrack>| {
                 let resolver = &resolver;
-                async move { resolve_station_tracks(resolver, &tracks, parameters, explicit_filter).await }
+                async move {
+                    resolve_station_tracks(resolver, &tracks, parameters, explicit_filter, skip_instrumentals)
+                        .await
+                }
             },
         )
         .await;
@@ -773,13 +784,15 @@ where
 }
 
 /// Each track resolved, as a station plays it: the library's copy first, else the outside one;
-/// a sounds-alike song only from the library; the explicit filter applied. Tracks that resolve
+/// a sounds-alike song only from the library; the explicit filter applied, and outside
+/// instrumental and karaoke takes left out while Skip instrumentals is on. Tracks that resolve
 /// to nothing are left out.
 async fn resolve_station_tracks(
     resolver: &LastFmRadioTrackResolver,
     tracks: &[LastFmRadioTrack],
     parameters: &Parameters,
     explicit_filter: ExplicitFilter,
+    skip_instrumentals: bool,
 ) -> Vec<Song> {
     let gate = Semaphore::new(4);
     let tasks = tracks.iter().map(|track| {
@@ -829,6 +842,7 @@ async fn resolve_station_tracks(
             ExplicitFilter::ExplicitOnly => song.explicit_content_lyrics != Some(3),
             ExplicitFilter::All => true,
         })
+        .filter(|song| !skipped_takes::hides_song(song, skip_instrumentals))
         .collect()
 }
 

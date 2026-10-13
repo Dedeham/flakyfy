@@ -9,7 +9,7 @@ use chrono::{TimeDelta, Utc};
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use indexmap::IndexMap;
-use octo_core::common::dotnet;
+use octo_core::common::{dotnet, skipped_takes};
 use octo_core::last_fm::LastFmTrack;
 use octo_core::last_fm::RadioAudioProfile;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
@@ -270,8 +270,12 @@ impl LastFmRadioStreamService {
         self.shared.family.get().map_or(8, |gate| gate.radio_cap())
     }
 
-    /// Whether the listener's clean-only profile keeps this track out.
+    /// Whether this track is kept out of the stream: an outside instrumental or karaoke take while
+    /// Skip instrumentals is on, or a song the listener's clean-only profile keeps out.
     async fn keeps_out(&self, session: &LastFmRadioStreamSession, track: &LastFmRadioTrack) -> bool {
+        if self.skips_take(track) {
+            return true;
+        }
         let (Some(gate), Some(id)) = (self.shared.family.get(), track.resolved_id.as_deref()) else {
             return false;
         };
@@ -284,6 +288,19 @@ impl LastFmRadioStreamService {
             self.shared.library.as_ref(),
         )
         .await
+    }
+
+    /// An outside instrumental or karaoke take, by its title or album, while Skip instrumentals is
+    /// on. A library song always plays.
+    fn skips_take(&self, track: &LastFmRadioTrack) -> bool {
+        if !self.shared.settings.current().soulseek.skip_instrumentals {
+            return false;
+        }
+        let outside = track
+            .resolved_id
+            .as_deref()
+            .is_some_and(|id| self.shared.library.parse_song_id(id).0);
+        outside && skipped_takes::song_names_skipped(&track.title, track.album.as_deref().unwrap_or(""))
     }
 
     /// The session's station while radio streams are on and its kind is switched on, if it still
@@ -399,7 +416,8 @@ impl LastFmRadioStreamService {
             self.shared
                 .sessions
                 .consume_ready_track(&session.token, &prepared.cache_key);
-            // A clean-only profile skips explicit songs; a station of nothing else ends.
+            // A clean-only profile skips explicit songs and Skip instrumentals outside instrumentals;
+            // a station of nothing else ends.
             if self.keeps_out(session, &prepared.track).await {
                 kept_out += 1;
                 if kept_out >= tracks.len() {

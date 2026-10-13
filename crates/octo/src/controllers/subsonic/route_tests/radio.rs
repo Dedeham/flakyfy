@@ -764,6 +764,71 @@ async fn playlist_materialization_applies_configured_explicit_filter() {
 }
 
 #[tokio::test]
+async fn playlist_materialization_follows_skip_instrumentals_as_it_is_set_now() {
+    let metadata = TestMetadata::answering(|artist, title, duration| {
+        let title = match title {
+            "Song One" => "Song One (Instrumental)",
+            "Song Two" => "Song Two (Karaoke Version)",
+            other => other,
+        };
+        vec![Song {
+            id: format!("ext-{title}"),
+            artist: artist.into(),
+            title: title.into(),
+            album: "Album".into(),
+            duration,
+            is_local: false,
+            ..Default::default()
+        }]
+    });
+    let fixture = RadioFixture::with_metadata(Options::default(), metadata).await;
+    fixture
+        .upstream
+        .return_no_local_matches
+        .store(true, Ordering::SeqCst);
+    fixture.install_station("");
+    let entries = || async {
+        let body = fixture
+            .get(&format!(
+                "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+                fixture.station_id()
+            ))
+            .await
+            .json();
+        body["subsonic-response"]["playlist"]["entry"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|song| song["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    let off = entries().await;
+    assert!(
+        off.contains(&"ext-Song One (Instrumental)".to_string()),
+        "{off:?}"
+    );
+    assert!(
+        off.contains(&"ext-Song Two (Karaoke Version)".to_string()),
+        "{off:?}"
+    );
+
+    let mut on = fixture.state.settings.current().as_ref().clone();
+    on.soulseek.skip_instrumentals = true;
+    fixture.state.settings.set(on);
+    let skipped = entries().await;
+    assert!(
+        !skipped.contains(&"ext-Song One (Instrumental)".to_string()),
+        "{skipped:?}"
+    );
+    assert!(
+        !skipped.contains(&"ext-Song Two (Karaoke Version)".to_string()),
+        "{skipped:?}"
+    );
+    assert!(skipped.contains(&"ext-Song Three".to_string()), "{skipped:?}");
+}
+
+#[tokio::test]
 async fn kid_station_is_clean() {
     let metadata = TestMetadata::answering(|artist, title, duration| {
         vec![Song {

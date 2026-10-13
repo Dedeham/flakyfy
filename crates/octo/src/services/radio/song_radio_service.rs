@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use octo_core::common::skipped_takes;
 use octo_core::last_fm::last_fm_radio_placement::{self, Spacing};
 use octo_core::last_fm::last_fm_radio_recommendation_service::{
     IgnoreCaseKeys, Randomizer, default_randomizer,
@@ -200,8 +201,10 @@ impl SongRadioService {
         }
         // The admin's explicit filter, as stations apply it: with outside songs from every
         // source, radio is where most unknown lyrics now come from. A kid profile's is clean.
-        let filter =
-            kid_filter::explicit_filter_for(&self.settings.current(), self.family.as_deref(), listener);
+        // Skip instrumentals leaves outside instrumental and karaoke takes out the same way.
+        let settings = self.settings.current();
+        let filter = kid_filter::explicit_filter_for(&settings, self.family.as_deref(), listener);
+        let skip_instrumentals = settings.soulseek.skip_instrumentals;
         let songs: Vec<Song> = scored
             .into_iter()
             .map(|(song, _)| song)
@@ -210,6 +213,7 @@ impl SongRadioService {
                 ExplicitFilter::ExplicitOnly => song.explicit_content_lyrics != Some(3),
                 ExplicitFilter::All => true,
             })
+            .filter(|song| !skipped_takes::hides_song(song, skip_instrumentals))
             .take(count.max(0) as usize)
             .collect();
         if let Some(outcomes) = &self.outcomes {

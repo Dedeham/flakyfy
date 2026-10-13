@@ -79,6 +79,9 @@ struct Upstream {
     song_pages: Arc<Mutex<Vec<(String, i32, i32)>>>,
     reshuffle: Arc<AtomicBool>,
     fail_later_song_pages: Arc<AtomicBool>,
+    /// Last.fm names the first outside song as an instrumental, the second as a karaoke take and
+    /// the fourth as a song called "Karaoke Queen".
+    takes: Arc<AtomicBool>,
 }
 
 impl Upstream {
@@ -105,6 +108,11 @@ impl Respond for Upstream {
                 return ok(r#"{"toptracks":{"track":[]}}"#.into(), "application/json");
             }
             let mut titles = outside();
+            if self.takes.load(Ordering::SeqCst) {
+                titles[0] = "Outside Song 0 (Instrumental)".into();
+                titles[1] = "Outside Song 1 (Karaoke Version)".into();
+                titles[3] = "Karaoke Queen".into();
+            }
             if self.reshuffle.load(Ordering::SeqCst) {
                 titles.reverse();
             }
@@ -518,6 +526,43 @@ async fn page_one_lists_the_library_first_and_an_owned_song_only_once() {
         let distinct: std::collections::HashSet<_> = first.iter().collect();
         assert_eq!(distinct.len(), first.len(), "songCount={count}");
     }
+}
+
+/// Skip instrumentals leaves outside instrumental and karaoke takes out of search, from the next
+/// search on, and leaves a song merely named after the word in. Off, they are listed.
+#[tokio::test]
+async fn skip_instrumentals_leaves_instrumental_and_karaoke_takes_out_of_search() {
+    let fixture = fixture(true).await;
+    fixture.upstream.takes.store(true, Ordering::SeqCst);
+    let app = &fixture.app;
+    let instrumental = "ph-Outside Song 0 (Instrumental)".to_string();
+    let karaoke = "ph-Outside Song 1 (Karaoke Version)".to_string();
+    let named = "ph-Karaoke Queen".to_string();
+
+    let off = page(app, 0, 40, "search3", "json", "alice", "Octo").await;
+    assert!(off.contains(&instrumental), "{off:?}");
+    assert!(off.contains(&karaoke), "{off:?}");
+    assert!(off.contains(&named), "{off:?}");
+
+    let mut on = fixture.state.settings.current().as_ref().clone();
+    on.soulseek.skip_instrumentals = true;
+    fixture.state.settings.set(on);
+    for format in ["json", "xml"] {
+        let skipped = page(app, 0, 40, "search3", format, "alice", "Octo").await;
+        assert!(!skipped.contains(&instrumental), "{format}: {skipped:?}");
+        assert!(!skipped.contains(&karaoke), "{format}: {skipped:?}");
+        assert!(skipped.contains(&named), "{format}: {skipped:?}");
+        assert!(
+            skipped.iter().filter(|id| id.starts_with("lib-")).count() >= 12,
+            "the library is never left out: {skipped:?}"
+        );
+    }
+    // A later page carries on from the same, skipped, outside songs.
+    let later = page(app, 20, 20, "search3", "json", "alice", "Octo").await;
+    assert!(
+        !later.contains(&instrumental) && !later.contains(&karaoke),
+        "{later:?}"
+    );
 }
 
 /// Octo's apps split library and outside songs into sections of their own, so page one keeps

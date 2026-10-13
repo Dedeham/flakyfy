@@ -202,11 +202,14 @@ impl GeneratedPlaylistService {
         let listeners = self.listener_songs.lock().clone();
         let codes = settings.country_codes();
         let mut state = self.state.lock();
-        for (user, mixes) in state
-            .users
-            .iter_mut()
-            .filter(|(user, mixes)| mixes.kinds == kinds_of(&settings, self.explicit_filter_now(user)))
-        {
+        for (user, mixes) in state.users.iter_mut().filter(|(user, mixes)| {
+            mixes.kinds
+                == kinds_of(
+                    &settings,
+                    self.explicit_filter_now(user),
+                    self.skips_instrumentals(),
+                )
+        }) {
             let Some(ids) = listeners.get(user) else {
                 continue;
             };
@@ -288,6 +291,12 @@ impl GeneratedPlaylistService {
         kid_filter::explicit_filter_for(&self.settings.current(), self.family.as_deref(), Some(username))
     }
 
+    /// Skip instrumentals, which New Releases' outside songs obey as search and radio's do. Also
+    /// part of what decides the lists.
+    fn skips_instrumentals(&self) -> bool {
+        self.settings.current().soulseek.skip_instrumentals
+    }
+
     /// The listener's mixes, refreshing the counts behind them when they are stale. The first
     /// list ever waits a moment for them, so mixes show on a listener's first look rather than
     /// their second; later refreshes run behind the answer.
@@ -305,11 +314,13 @@ impl GeneratedPlaylistService {
         let user = user_key(username);
         let now = Utc::now();
         let explicit_filter = self.explicit_filter_now(username);
+        let skip_instrumentals = self.skips_instrumentals();
         let (known, due) = {
             let mut state = self.state.lock();
             let current = state.users.get(&user);
             let known = current.is_some();
-            let due = current.is_none_or(|current| is_stale(current, &settings, explicit_filter, now))
+            let due = current
+                .is_none_or(|current| is_stale(current, &settings, explicit_filter, skip_instrumentals, now))
                 && state
                     .last_attempt
                     .get(&user)
@@ -515,6 +526,7 @@ impl GeneratedPlaylistService {
         }
 
         let explicit_filter = self.explicit_filter_now(username);
+        let skip_instrumentals = self.skips_instrumentals();
         let before = self.state.lock().users.get(&user_key(username)).cloned();
         let (for_you, covers) = if settings.any_for_you() {
             self.build_for_you(
@@ -522,6 +534,7 @@ impl GeneratedPlaylistService {
                 library,
                 &settings,
                 explicit_filter,
+                skip_instrumentals,
                 before.as_ref(),
                 cancellation_token,
             )
@@ -545,7 +558,7 @@ impl GeneratedPlaylistService {
                     active,
                     counts: counts.clone(),
                     counts_utc: Utc::now(),
-                    kinds: kinds_of(&settings, explicit_filter),
+                    kinds: kinds_of(&settings, explicit_filter, skip_instrumentals),
                     for_you,
                     for_you_covers: covers,
                 },
@@ -569,6 +582,7 @@ impl GeneratedPlaylistService {
         library: Option<Vec<Node>>,
         settings: &GeneratedPlaylistSettings,
         explicit_filter: ExplicitFilter,
+        skip_instrumentals: bool,
         before: Option<&UserMixes>,
         cancellation_token: &CancellationToken,
     ) -> anyhow::Result<(IndexMap<String, Vec<String>>, Vec<String>)> {
@@ -654,6 +668,7 @@ impl GeneratedPlaylistService {
                             settings.effective_new_release_weeks(),
                             cancellation_token,
                             explicit_filter,
+                            skip_instrumentals,
                         )
                         .await?;
                     if built.entries.is_empty() && !built.whole {

@@ -17,6 +17,8 @@ use octo_core::models::radio::{LastFmRadioStation, LastFmRadioStationKind};
 use octo_core::settings::NoticeKind;
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use octo_media::cover::{CoverGlyph, CoverSeed, ListCover, list_kinds};
+use octo_subsonic::SubsonicCredential;
+use octo_subsonic::subsonic_request_parser::Parameters;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
@@ -32,10 +34,12 @@ use crate::http::error::{AppError, AppResult, json_status, problem};
 use crate::http::routes::RouteSet;
 use crate::http::static_files::{RangeOutcome, parse_range};
 use crate::services::common::track_acquisition_queue::Completion;
+use crate::services::cover_art::local_cover_cache::{CoverPicture, Fetched, NotKept};
 use crate::services::family::{FamilyCaller, LibraryScope, audio_gate, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::library::{GeneratedPlaylist, navidrome_song_list};
 use crate::services::subsonic::subsonic_proxy_service::content_type_of;
+use crate::services::subsonic::{CredentialVerdict, SubsonicProxyService};
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
@@ -771,7 +775,13 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(missing_cover(&state, plain).await);
     }
 
-    // Local library: proxy to Navidrome unchanged.
+    // Local library: from the cover cache when it can answer, else proxied to Navidrome
+    // unchanged.
+    match cached_library_cover(&state, &call, &id).await {
+        Ok(picture) => return Ok(file(picture.bytes.as_ref().clone(), picture.content_type)),
+        Err(NotKept::Unreachable) => return Ok(serve_placeholder(&state, false).await),
+        Err(NotKept::Ask) => {}
+    }
     match call.proxy.relay("rest/getCoverArt", &call.parameters).await {
         Ok(result) => Ok(file(
             result.body,
@@ -785,6 +795,55 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
             // by missing art: all the more reason not to brand it.
             debug!("cover art relay failed for local id {id}: {e}");
             Ok(serve_placeholder(&state, false).await)
+        }
+    }
+}
+
+/// A library cover from the cover cache, for a request with a size and no `square`, from a
+/// caller Navidrome accepts. The sign-in is checked here because a kept cover never reaches
+/// Navidrome, which would otherwise be the one to check it. Anything else, a refused or
+/// unchecked sign-in included, is `NotKept::Ask`: Navidrome answers it as before.
+async fn cached_library_cover(
+    state: &AppState,
+    call: &SubsonicCall,
+    id: &str,
+) -> Result<CoverPicture, NotKept> {
+    let cache = &state.local_cover_cache;
+    let Some(size) = requested_cover_size(call).and_then(|size| u32::try_from(size).ok()) else {
+        return Err(NotKept::Ask);
+    };
+    if !cache.is_on() || super::caller_checks::is_true(call.param("square")) {
+        return Err(NotKept::Ask);
+    }
+    let credential = SubsonicCredential::from(&call.parameters);
+    match state
+        .credential_check
+        .check(credential.as_ref(), &call.proxy)
+        .await
+    {
+        Ok(CredentialVerdict::Accepted) => {}
+        _ => return Err(NotKept::Ask),
+    }
+    let proxy = call.proxy.clone();
+    let parameters = call.parameters.clone();
+    cache
+        .cover(id, size, move |side| fetch_library_cover(proxy, parameters, side))
+        .await
+}
+
+/// A library cover from Navidrome at `side`, as the cover cache keeps it.
+pub(crate) async fn fetch_library_cover(
+    proxy: SubsonicProxyService,
+    mut parameters: Parameters,
+    side: u32,
+) -> Fetched {
+    parameters.insert("size".into(), side.to_string());
+    match proxy.relay_dated_image("rest/getCoverArt", &parameters).await {
+        Ok(Some(bytes)) => Fetched::Picture(bytes.to_vec()),
+        Ok(None) => Fetched::Other,
+        Err(e) => {
+            debug!("cover fetch for the cover cache failed: {e}");
+            Fetched::Unreachable
         }
     }
 }

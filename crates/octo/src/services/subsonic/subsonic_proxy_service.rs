@@ -376,6 +376,42 @@ impl SubsonicProxyService {
         self.relay(endpoint, parameters).await.ok()
     }
 
+    /// A picture from the Subsonic server that is worth keeping: `Some` only for a 200 answer
+    /// with an `image/` type and a `Last-Modified` header. Navidrome sends its stand-in for
+    /// missing art without that header, and answers an unknown id with an XML error, so neither
+    /// comes back as a picture. A failure to reach the server is the error.
+    pub async fn relay_dated_image<I, K, V>(
+        &self,
+        endpoint: &str,
+        parameters: I,
+    ) -> Result<Option<Bytes>, RelayError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let base = self.configured_url()?;
+        let query = self.build_query(parameters, false);
+        let url = format!("{}/{endpoint}?{query}", base.trim_end_matches('/'));
+        let target = request_url(&url)?;
+
+        let response = self
+            .shared
+            .client
+            .get(target)
+            .send()
+            .await
+            .map_err(RelayError::from_reqwest)?;
+        let is_image = content_type_of(response.headers())
+            .is_some_and(|kind| kind.trim_start().to_ascii_lowercase().starts_with("image/"));
+        let dated = response.headers().contains_key(reqwest::header::LAST_MODIFIED);
+        if response.status() != reqwest::StatusCode::OK || !is_image || !dated {
+            return Ok(None);
+        }
+        let body = response.bytes().await.map_err(RelayError::from_reqwest)?;
+        Ok((!body.is_empty()).then_some(body))
+    }
+
     /// Faithful relay: forwards the caller's HTTP method + body + content-type and returns the
     /// upstream status verbatim (a failure status is not an error). This is what makes non-GET
     /// / body-carrying endpoints work through Octo: e.g. Navidrome's native POST /auth/login

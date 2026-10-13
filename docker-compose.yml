@@ -70,6 +70,7 @@ services:
       Subsonic__SearchDurationWaitMs: ${SEARCH_DURATION_WAIT_MS:-1000}
       Subsonic__SearchLastFmWaitMs: ${SEARCH_LASTFM_WAIT_MS:-1000}
       Subsonic__StreamSizeWarmPerMinute: ${STREAM_SIZE_WARM_PER_MINUTE:-5}
+      Subsonic__CoverCacheMb: ${COVER_CACHE_MB:-1024}
       # Clients that sync the library and search offline (Symfonium) get your radio
       # stations' tracks appended to the sync, so discovery reaches them too.
       Subsonic__EnableSyncCatalog: ${ENABLE_SYNC_CATALOG:-true}

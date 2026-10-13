@@ -47,7 +47,7 @@ use crate::services::common::{
 use crate::services::cover_art::{
     AlbumCoverFinder, CoverArtAggregator, CoverArtArchiveLookup, CoverUpgradeJournal, CoverUpgradeServices,
     CoverUpgradeStore, CoverUpgradeWorker, DeezerCoverArtLookup, DownloadCoverResolver, IAlbumCoverFinder,
-    ICoverArtSource, ITunesCoverArtLookup, LastFmCoverArtLookup,
+    ICoverArtSource, ITunesCoverArtLookup, LastFmCoverArtLookup, LocalCoverCache,
 };
 use octo_media::cover::CoverArtService;
 
@@ -296,6 +296,9 @@ pub struct AppInner {
     pub external_id_registry: Arc<ExternalIdRegistry>,
     /// `StreamSizeWarmer`: learns the true size of outside songs listed without one; a worker.
     pub stream_size_warmer: Arc<StreamSizeWarmer>,
+    /// `LocalCoverCache`: library covers kept on disk in `<config>/cover-cache/`, each size cut
+    /// from one copy.
+    pub local_cover_cache: Arc<LocalCoverCache>,
     /// `RadioQueueStore`: recent search and radio queues for prewarming, in memory.
     pub radio_queues: Arc<RadioQueueStore>,
     /// `DirectoryBrowser`: the dashboard's folder picker.
@@ -1156,6 +1159,7 @@ struct Stores {
     soulseek_holds: Arc<SoulseekHoldStore>,
     you_tube_resolver: Arc<YouTubeResolver>,
     stream_size_warmer: Arc<StreamSizeWarmer>,
+    local_cover_cache: Arc<LocalCoverCache>,
     external_id_registry: Arc<ExternalIdRegistry>,
     radio_queues: Arc<RadioQueueStore>,
     directory_browser: Arc<DirectoryBrowser>,
@@ -1209,6 +1213,11 @@ impl Stores {
                 }),
             ),
         );
+        let cover_settings = settings.clone();
+        let local_cover_cache = Arc::new(LocalCoverCache::new(
+            config_dir.join("cover-cache"),
+            Arc::new(move || cover_settings.current().subsonic.effective_cover_cache_bytes()),
+        ));
         Stores {
             download_history: Arc::new(DownloadHistoryService::new(
                 config_dir.join("downloads-history.json"),
@@ -1225,6 +1234,7 @@ impl Stores {
                 &settings.current().subsonic,
             )),
             stream_size_warmer,
+            local_cover_cache,
             external_id_registry,
             radio_queues: Arc::new(RadioQueueStore::new()),
             directory_browser: Arc::new(DirectoryBrowser::new()),
@@ -2822,6 +2832,7 @@ impl AppState {
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
             stream_size_warmer: stores.stream_size_warmer,
+            local_cover_cache: stores.local_cover_cache,
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,
@@ -3210,6 +3221,7 @@ impl AppState {
             you_tube_resolver: stores.you_tube_resolver,
             external_id_registry: stores.external_id_registry,
             stream_size_warmer: stores.stream_size_warmer,
+            local_cover_cache: stores.local_cover_cache,
             radio_queues: stores.radio_queues,
             directory_browser: stores.directory_browser,
             browse_sessions: stores.browse_sessions,

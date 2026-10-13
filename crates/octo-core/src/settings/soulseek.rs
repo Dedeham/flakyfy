@@ -103,6 +103,12 @@ pub struct SoulseekSettings {
     /// Environment variable: SLSKD_VERIFY_DOWNLOADS
     pub verify_downloads: bool,
 
+    /// Never download an instrumental or a karaoke backing track, even for a song whose title
+    /// asks for one, and leave such outside songs out of search, radio and charts. Off, a
+    /// download is an instrumental only when its title says so; a plain song never is.
+    /// Environment variable: SKIP_INSTRUMENTALS
+    pub skip_instrumentals: bool,
+
     /// AcoustID application key, free from https://acoustid.org/new-application. Blank
     /// disables the lookup half of VerifyDownloads; the duration check and its rejection
     /// memory keep working without it. Named ...ApiKey so the Config-sources tab masks it.
@@ -223,6 +229,7 @@ impl Default for SoulseekSettings {
             preferred_extension: "flac".to_string(),
             download_timeout_seconds: 180,
             verify_downloads: false,
+            skip_instrumentals: false,
             acoust_id_api_key: String::new(),
             tag_from_music_brainz: false,
             name_from_match: false,

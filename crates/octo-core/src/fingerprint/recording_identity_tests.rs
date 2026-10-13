@@ -28,7 +28,10 @@ fn studio() -> AcoustIdRecording {
         "28982738",
         "Welcome to the Black Parade",
         311_106,
-        vec![release(None, "The Black Parade", &[]), release(None, "100 Greatest Rock Anthems", &["Compilation"])],
+        vec![
+            release(None, "The Black Parade", &[]),
+            release(None, "100 Greatest Rock Anthems", &["Compilation"]),
+        ],
     )
 }
 
@@ -46,7 +49,11 @@ fn instrumental() -> AcoustIdRecording {
         "3efde39a",
         "Welcome to the Black Parade",
         309_684,
-        vec![release(Some("The Black Parade (instrumentals)"), "The Black Parade", &[])],
+        vec![release(
+            Some("The Black Parade (instrumentals)"),
+            "The Black Parade",
+            &[],
+        )],
     )
 }
 
@@ -84,7 +91,10 @@ fn a_studio_take_on_a_live_album_too_is_still_studio() {
         "s",
         "Song",
         200_000,
-        vec![release(None, "Album", &[]), release(None, "Live at Wembley", &["Live"])],
+        vec![
+            release(None, "Album", &[]),
+            release(None, "Live at Wembley", &["Live"]),
+        ],
     );
     assert_eq!(kind_of(&mixed, None), RecordingKind::Studio);
 }
@@ -94,11 +104,20 @@ fn the_exact_length_decides_between_takes() {
     let (s, l, i) = (studio(), live(), instrumental());
     let all = [&s, &l, &i];
     // The copy Octo first kept: 305.43 s is the live take, not the instrumental it was tagged as.
-    assert_eq!(decided_by_length(&all, Some(305_427)).map(|r| r.recording_id.as_str()), Some("eca90222"));
+    assert_eq!(
+        decided_by_length(&all, Some(305_427)).map(|r| r.recording_id.as_str()),
+        Some("eca90222")
+    );
     // The replacement: 311.11 s is the studio take.
-    assert_eq!(decided_by_length(&all, Some(311_107)).map(|r| r.recording_id.as_str()), Some("28982738"));
+    assert_eq!(
+        decided_by_length(&all, Some(311_107)).map(|r| r.recording_id.as_str()),
+        Some("28982738")
+    );
     // 309.7 s is the instrumental: the studio take is 1.4 s further.
-    assert_eq!(decided_by_length(&all, Some(309_700)).map(|r| r.recording_id.as_str()), Some("3efde39a"));
+    assert_eq!(
+        decided_by_length(&all, Some(309_700)).map(|r| r.recording_id.as_str()),
+        Some("3efde39a")
+    );
     // 309.0 s is 0.7 s from the instrumental and 2.1 s from the studio take: too close to call.
     assert_eq!(decided_by_length(&all, Some(309_000)), None);
     // Nothing near.
@@ -160,7 +179,10 @@ fn unwanted_kinds() {
     assert!(!unwanted(RecordingKind::Studio, &plain()));
     assert!(unwanted(RecordingKind::Instrumental, &plain()));
     assert!(unwanted(RecordingKind::Live, &plain()));
-    assert!(!unwanted(RecordingKind::Live, &BTreeSet::from([RecordingKind::Live])));
+    assert!(!unwanted(
+        RecordingKind::Live,
+        &BTreeSet::from([RecordingKind::Live])
+    ));
 }
 
 #[test]

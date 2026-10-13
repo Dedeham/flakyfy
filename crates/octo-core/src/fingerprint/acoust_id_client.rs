@@ -393,7 +393,9 @@ fn parse_recordings(result: &Value) -> ElementResult<Vec<AcoustIdRecording>> {
             _ => None,
         };
         let duration = exact.map(|seconds| dotnet::round(seconds, 0) as i32);
-        let duration_ms = exact.filter(|seconds| *seconds > 0.0).map(|seconds| (seconds * 1000.0).round() as i64);
+        let duration_ms = exact
+            .filter(|seconds| *seconds > 0.0)
+            .map(|seconds| (seconds * 1000.0).round() as i64);
 
         let (album, year, detail) = pick_release(rec)?;
         recordings.push(AcoustIdRecording {

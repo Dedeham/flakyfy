@@ -11,9 +11,9 @@
 use std::collections::BTreeSet;
 
 use super::acoust_id_client::{AcoustIdRecording, AcoustIdRelease};
-use crate::common::{dotnet, live_version};
 use crate::common::song_identity::SongIdentity;
 use crate::common::version_variant;
+use crate::common::{dotnet, live_version};
 
 /// What kind of take a recording is. Everything that is not one of the others is `Studio`,
 /// including a remaster or an edit, which are the same performance.
@@ -288,6 +288,51 @@ pub fn choose<'a>(
 /// Whether a recording's kind was never asked for.
 pub fn unwanted(kind: RecordingKind, wanted: &BTreeSet<RecordingKind>) -> bool {
     kind != RecordingKind::Studio && !wanted.contains(&kind)
+}
+
+/// Which takes of a song a file may be.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Takes {
+    /// Any take: a song already in the library, which may be live or an instrumental on
+    /// purpose.
+    #[default]
+    Any,
+    /// The studio take and these kinds, nothing else.
+    Only(BTreeSet<RecordingKind>),
+}
+
+impl Takes {
+    /// The takes a download asked for by its title and its album: a live album lets a live
+    /// take through ("Decade (live at the El Mocambo)"), and so does a title such as "Live
+    /// Forever", generous on purpose. Kinds in `never` are refused even when asked for.
+    pub fn for_request(title: Option<&str>, album: Option<&str>, never: &BTreeSet<RecordingKind>) -> Takes {
+        let mut wanted: BTreeSet<RecordingKind> = BTreeSet::new();
+        for text in [title, album].into_iter().flatten() {
+            wanted.extend(RecordingKind::named_in(text));
+        }
+        if live_version::requested(title, album) {
+            wanted.insert(RecordingKind::Live);
+        }
+        wanted.retain(|kind| !never.contains(kind));
+        Takes::Only(wanted)
+    }
+
+    /// The kinds this allows besides the studio take; empty for [`Takes::Any`], whose choice
+    /// still prefers the studio take.
+    pub fn wanted(&self) -> BTreeSet<RecordingKind> {
+        match self {
+            Takes::Any => BTreeSet::new(),
+            Takes::Only(kinds) => kinds.clone(),
+        }
+    }
+
+    /// Whether a recording of this kind is refused.
+    pub fn refuses(&self, kind: RecordingKind) -> bool {
+        match self {
+            Takes::Any => false,
+            Takes::Only(kinds) => unwanted(kind, kinds),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -140,6 +140,13 @@ pub struct VerificationResult {
     /// in words for the log: an ISRC in the file's tags, or one on the MusicBrainz recording the
     /// fingerprint named. None otherwise.
     pub evidence: Option<String>,
+
+    /// The kind of take the recording named in `recording_id` is, when one was named.
+    pub kind: Option<crate::fingerprint::recording_identity::RecordingKind>,
+
+    /// The file's exact length is what chose `recording_id` among takes that share the
+    /// fingerprint. The tagger then tags from that recording and no other.
+    pub by_length: bool,
 }
 
 impl VerificationResult {

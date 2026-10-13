@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
-use octo_core::common::{dotnet, live_version};
+use octo_core::common::dotnet;
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
@@ -308,7 +308,9 @@ impl SoulseekDownloadService {
                 routing.artist.as_deref(),
                 routing.title.as_deref(),
                 song.isrc.as_deref().or(routing.isrc.as_deref()),
-                !live_version::requested(routing.title.as_deref(), routing.album.as_deref()),
+                &self
+                    .verification
+                    .takes_for(routing.title.as_deref(), routing.album.as_deref()),
             )
             .await;
         if verdict.verdict == VerificationVerdict::Mismatch {
@@ -526,7 +528,9 @@ impl SoulseekDownloadService {
                 r.artist.as_deref(),
                 r.title.as_deref(),
                 song.isrc.as_deref().or(r.isrc.as_deref()),
-                false,
+                &self
+                    .verification
+                    .takes_for(r.title.as_deref(), r.album.as_deref()),
             )
             .await;
         if verdict.verdict == VerificationVerdict::Mismatch {
@@ -1166,7 +1170,9 @@ impl SoulseekDownloadService {
         let mut reserve: Option<TranscodedReserve> = None;
 
         let isrc = download.song.isrc.clone().or(routing.isrc.clone());
-        let refuse_live = !live_version::requested(routing.title.as_deref(), routing.album.as_deref());
+        let takes = self
+            .verification
+            .takes_for(routing.title.as_deref(), routing.album.as_deref());
 
         // Every peer tried, across the album folder's copy and the search after it.
         let mut tried = 0;
@@ -1474,7 +1480,7 @@ impl SoulseekDownloadService {
                             routing.artist.as_deref(),
                             routing.title.as_deref(),
                             isrc.as_deref(),
-                            refuse_live,
+                            &takes,
                         )
                         .await;
                     // fpcalc reports a file that is not there as undecodable audio, which is a Mismatch.
@@ -1492,7 +1498,7 @@ impl SoulseekDownloadService {
                                 routing.artist.as_deref(),
                                 routing.title.as_deref(),
                                 isrc.as_deref(),
-                                refuse_live,
+                                &takes,
                             )
                             .await;
                     }

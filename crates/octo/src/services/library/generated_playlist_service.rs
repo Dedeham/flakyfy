@@ -1,7 +1,7 @@
 //! The generated playlists and their state file, `generated-playlists.json`.
 //!
 //! Genre, decade, year, country and artist mixes built from the listener's own library and
-//! served like radio stations (#54): per listener, read-only, under ids that start "og" so they
+//! served like radio stations: per listener, read-only, under ids that start "og" so they
 //! can never be mistaken for a Navidrome playlist. Nothing is written to Navidrome.
 //!
 //! Year mixes are counted from the same walk of the library as Made for you. Artist mixes are

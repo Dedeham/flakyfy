@@ -601,9 +601,16 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
         return Ok(file(bytes, "image/jpeg"));
     }
 
+    // A made list's cover id (Liked Songs, a mix or a chart list) is its list id, then `_` and
+    // a tag naming the picture as drawn.
+    let list_id = match id.split_once('_') {
+        Some((list, _)) if list.starts_with("og") => list,
+        _ => id.as_str(),
+    };
+
     // Liked Songs: Octo's painted cover with a heart, picked by its name.
     let cover_user = call.param("u").to_string();
-    if !cover_user.is_empty() && id == state.generated_playlists.liked_id(&cover_user) {
+    if !cover_user.is_empty() && list_id == state.generated_playlists.liked_id(&cover_user) {
         let name = state
             .settings
             .current()
@@ -624,9 +631,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
 
     // A mix is the listener's own library, so its cover carries no Octo mark: the logo says
     // where a result came from, and this came from them.
-    // A mix's cover id is its list id, then `_` and a tag naming the picture as drawn.
-    let mix_id = id.split_once('_').map_or(id.as_str(), |(list, _)| list);
-    if let Some(mix) = state.generated_playlists.find(&cover_user, mix_id) {
+    if let Some(mix) = state.generated_playlists.find(&cover_user, list_id) {
         let song_count = state
             .generated_playlists
             .drawn(&cover_user, &mix)
@@ -660,7 +665,7 @@ pub async fn get_cover_art(State(state): State<AppState>, req: Request) -> AppRe
 
     // A chart list's cover, drawn like a mix's from its first songs' covers. It is only ever
     // drawn from a list already made: drawing it never makes one.
-    if let Some(chart) = state.chart_playlists.cover(call.param("u"), &id) {
+    if let Some(chart) = state.chart_playlists.cover(call.param("u"), list_id) {
         let song_count = Some(i32::try_from(chart.entries.len()).unwrap_or(i32::MAX));
         let kind = match octo_core::charts::chart_settings::kind(&chart.chart) {
             Some(octo_core::charts::chart_settings::ChartKind::NewSongs) => list_kinds::NEW_SONGS,

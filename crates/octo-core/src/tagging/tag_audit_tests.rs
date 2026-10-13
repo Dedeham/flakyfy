@@ -134,8 +134,9 @@ fn an_identity_that_is_not_sure_writes_no_ids_but_still_says_what_it_found() {
     guess.track_owner = Some(("rec-live".into(), RecordingKind::Live));
     let found = audit(&parade(), Some(&guess));
     assert!(!found.sure);
-    assert_eq!(rules(&found), [AuditRule::Album, AuditRule::Ids]);
-    assert_eq!(change(&found, "album"), Some(Some("The Black Parade")));
+    // A take that is only likely never rewrites what a tag says: the album stays as it is.
+    assert_eq!(rules(&found), [AuditRule::Ids]);
+    assert_eq!(change(&found, "album"), None);
     for field in ["recordingId", "releaseTrackId", "releaseId", "releaseGroupId"] {
         assert_eq!(change(&found, field), None, "{field}");
     }

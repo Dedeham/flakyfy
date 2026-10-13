@@ -4,15 +4,16 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::SystemTime;
 
 use flate2::read::DeflateDecoder;
 use parking_lot::Mutex;
 use tracing::warn;
 
 use super::{
-    CITY_SECTION, GRID_SECTION, MAGIC, NEAREST_KM, POSTAL_SECTION, Place, cells_near, coarser_codes,
-    code_key, country_key, distance_km, name_key, round2,
+    CITY_SECTION, GRID_SECTION, MAGIC, NEAREST_KM, POSTAL_SECTION, Place, RANGE_SECTION, cell_key,
+    cells_near, coarser_codes, code_key, country_key, distance_km, name_key, round2,
 };
 
 /// The trailer: the block list's offset and length, then the magic.
@@ -32,33 +33,61 @@ struct Block {
     length: u64,
 }
 
-/// The block list of every section, read once.
+/// The block list of every section, and the grid rows that hold points (`None` for a file
+/// that does not say).
 #[derive(Debug, Default)]
 struct Blocks {
     postal: Vec<Block>,
     cities: Vec<Block>,
     grid: Vec<Block>,
+    rows: Option<(i64, i64)>,
 }
 
-/// The places file and its block list, read the first time a lookup needs it. A file that is
-/// not there (a dev run, a test) or cannot be read finds nothing, and says so in the log once.
+/// A block list, with the length and modification time of the file it was read from.
+struct Loaded {
+    length: u64,
+    modified: Option<SystemTime>,
+    blocks: Arc<Blocks>,
+}
+
+/// The places file and its block list, read the first time a lookup needs it and again when the
+/// file's length or modification time changes. A file that is not there (a dev run, a test) or
+/// cannot be read finds nothing, and says so in the log once.
 pub struct PlaceIndex {
     path: PathBuf,
-    blocks: Mutex<Option<Arc<Blocks>>>,
+    loaded: Mutex<Option<Loaded>>,
     warned: AtomicBool,
+    /// Blocks unpacked by every lookup so far, and how many of those a lookup had unpacked
+    /// already.
+    blocks_read: AtomicU64,
+    blocks_reread: AtomicU64,
 }
 
 impl PlaceIndex {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         PlaceIndex {
             path: path.into(),
-            blocks: Mutex::new(None),
+            loaded: Mutex::new(None),
             warned: AtomicBool::new(false),
+            blocks_read: AtomicU64::new(0),
+            blocks_reread: AtomicU64::new(0),
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether the file is there and its block list can be read: whether lookups can find
+    /// anything at all.
+    pub fn available(&self) -> bool {
+        match self.open() {
+            Ok(_) => true,
+            Err(e) => {
+                self.warn_once(&e, "octoPlaces is not listed and place lookups find nothing");
+                false
+            }
+        }
     }
 
     /// The place with this postal code in `country` (ISO 3166-1 alpha-2, any case). The code
@@ -89,8 +118,8 @@ impl PlaceIndex {
     }
 
     /// The city called `name` in `country`. With `state` (its name or its code, as the data
-    /// writes them), only a city in that state; without, the one with the most postal codes,
-    /// which is the largest of the cities with that name.
+    /// writes them), only a city in that state; of the cities that match, the one with the most
+    /// postal codes, which is the largest of them.
     pub fn by_name(&self, country: &str, name: &str, state: Option<&str>) -> Option<Place> {
         let country = country_key(country)?;
         let city = name_key(name);
@@ -102,9 +131,10 @@ impl PlaceIndex {
         self.read(|reader, blocks| {
             let mut best: Option<(u32, Place)> = None;
             scan(reader, &blocks.cities, &prefix, |line_key, line| {
-                let Some(state_key) = line_key.strip_prefix(prefix.as_str()) else {
+                let Some(rest) = line_key.strip_prefix(prefix.as_str()) else {
                     return false;
                 };
+                let state_key = rest.split('|').next().unwrap_or_default();
                 if let Some((count, place, state_code)) = city_place(&country, line) {
                     let wanted = state
                         .as_deref()
@@ -120,15 +150,27 @@ impl PlaceIndex {
     }
 
     /// The place nearest a coordinate (decimal degrees), at most [`NEAREST_KM`] away, or `None`.
-    /// Only the grid cells that can hold such a place are read (see [`cells_near`]).
+    /// Only the grid cells that can hold such a place are read (see [`cells_near`]), none outside
+    /// the rows that hold points, in key order, so each block is unpacked once.
     pub fn nearest(&self, latitude: f64, longitude: f64) -> Option<Place> {
         let valid = (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude);
         if !valid {
             return None;
         }
         self.read(|reader, blocks| {
+            let mut cells: Vec<String> = cells_near(latitude, longitude)
+                .into_iter()
+                .filter(|(row, _)| {
+                    blocks
+                        .rows
+                        .is_none_or(|(south, north)| (south..=north).contains(row))
+                })
+                .map(|(row, column)| cell_key(row, column))
+                .collect();
+            cells.sort_unstable();
+            cells.dedup();
             let mut best: Option<(f64, Place)> = None;
-            for cell in cells_near(latitude, longitude) {
+            for cell in cells {
                 scan(reader, &blocks.grid, &cell, |line_key, line| {
                     if line_key != cell {
                         return false;
@@ -146,34 +188,67 @@ impl PlaceIndex {
         })
     }
 
+    /// How many blocks the lookups so far have unpacked.
+    #[cfg(test)]
+    pub(super) fn blocks_read(&self) -> u64 {
+        self.blocks_read.load(Ordering::Relaxed)
+    }
+
+    /// How many of those a lookup had unpacked before.
+    #[cfg(test)]
+    pub(super) fn blocks_reread(&self) -> u64 {
+        self.blocks_reread.load(Ordering::Relaxed)
+    }
+
     /// Runs `lookup` over the open file and its block list; `None` (logged once) when the file
     /// is missing or unreadable.
     fn read(&self, lookup: impl FnOnce(&mut Reader, &Blocks) -> io::Result<Option<Place>>) -> Option<Place> {
-        let outcome = File::open(&self.path).and_then(|mut file| {
-            let blocks = self.blocks(&mut file)?;
-            lookup(&mut Reader::new(&mut file), &blocks)
+        let outcome = self.open().and_then(|(mut file, blocks)| {
+            let mut reader = Reader::new(&mut file);
+            let found = lookup(&mut reader, &blocks);
+            self.blocks_read
+                .fetch_add(reader.read.len() as u64, Ordering::Relaxed);
+            self.blocks_reread.fetch_add(reader.reread, Ordering::Relaxed);
+            found
         });
         match outcome {
             Ok(place) => place,
             Err(e) => {
-                if !self.warned.swap(true, Ordering::Relaxed) {
-                    warn!(
-                        "Place lookups find nothing: the place data at {} cannot be read ({e})",
-                        self.path.display()
-                    );
-                }
+                self.warn_once(&e, "place lookups find nothing");
                 None
             }
         }
     }
 
-    fn blocks(&self, file: &mut File) -> io::Result<Arc<Blocks>> {
-        if let Some(blocks) = self.blocks.lock().as_ref() {
-            return Ok(Arc::clone(blocks));
+    /// Logs, the first time only, that the place data cannot be read and what that means.
+    fn warn_once(&self, e: &io::Error, meaning: &str) {
+        if !self.warned.swap(true, Ordering::Relaxed) {
+            warn!(
+                "The place data at {} cannot be read ({e}), so {meaning}",
+                self.path.display()
+            );
         }
-        let blocks = Arc::new(read_blocks(file)?);
-        *self.blocks.lock() = Some(Arc::clone(&blocks));
-        Ok(blocks)
+    }
+
+    /// The open file and its block list: the one read before while the file's length and
+    /// modification time are the same, else read again.
+    fn open(&self) -> io::Result<(File, Arc<Blocks>)> {
+        let mut file = File::open(&self.path)?;
+        let meta = file.metadata()?;
+        let (length, modified) = (meta.len(), meta.modified().ok());
+        if let Some(loaded) = self.loaded.lock().as_ref()
+            && loaded.length == length
+            && loaded.modified == modified
+        {
+            return Ok((file, Arc::clone(&loaded.blocks)));
+        }
+        let blocks = Arc::new(read_blocks(&mut file)?);
+        *self.loaded.lock() = Some(Loaded {
+            length,
+            modified,
+            blocks: Arc::clone(&blocks),
+        });
+        Ok((file, blocks))
     }
 }
 
@@ -202,7 +277,10 @@ fn read_blocks(file: &mut File) -> io::Result<Blocks> {
         u64::from_le_bytes(bytes)
     };
     let (list_at, list_len) = (word(0), word(8));
-    if list_len > MAX_LIST_BYTES || list_at.saturating_add(list_len) > size - TRAILER_BYTES {
+    if list_len > MAX_LIST_BYTES
+        || list_at < MAGIC.len() as u64
+        || list_at.saturating_add(list_len) > size - TRAILER_BYTES
+    {
         return Err(bad("the block list is out of the file"));
     }
     let mut list = String::new();
@@ -212,6 +290,17 @@ fn read_blocks(file: &mut File) -> io::Result<Blocks> {
     let mut blocks = Blocks::default();
     for line in list.lines() {
         let mut fields = line.split('\t');
+        if fields.next() == Some(RANGE_SECTION) {
+            let (Some(Ok(south)), Some(Ok(north))) = (
+                fields.next().map(str::parse::<i64>),
+                fields.next().map(str::parse::<i64>),
+            ) else {
+                return Err(bad("the block list's grid rows are not numbers"));
+            };
+            blocks.rows = Some((south, north));
+            continue;
+        }
+        let mut fields = line.split('\t');
         let (Some(section), Some(first_key), Some(offset), Some(length)) =
             (fields.next(), fields.next(), fields.next(), fields.next())
         else {
@@ -220,7 +309,8 @@ fn read_blocks(file: &mut File) -> io::Result<Blocks> {
         let (Ok(offset), Ok(length)) = (offset.parse::<u64>(), length.parse::<u64>()) else {
             return Err(bad("a block list line has no offset"));
         };
-        if length > MAX_BLOCK_BYTES || offset.saturating_add(length) > list_at {
+        if length > MAX_BLOCK_BYTES || offset < MAGIC.len() as u64 || offset.saturating_add(length) > list_at
+        {
             return Err(bad("a block is out of the file"));
         }
         let block = Block {
@@ -246,18 +336,27 @@ pub(super) fn read_blocks_for_tests(file: &mut File) -> io::Result<(usize, usize
 }
 
 /// The open places file, with the last block it unpacked, so the cells of one nearest lookup
-/// that share a block unpack it once.
+/// that share a block unpack it once; the offsets of the blocks it unpacked, and how many times
+/// it unpacked one of them again.
 struct Reader<'a> {
     file: &'a mut File,
     last: Option<(u64, String)>,
+    read: Vec<u64>,
+    reread: u64,
 }
 
 impl<'a> Reader<'a> {
     fn new(file: &'a mut File) -> Self {
-        Reader { file, last: None }
+        Reader {
+            file,
+            last: None,
+            read: Vec::new(),
+            reread: 0,
+        }
     }
 
-    /// The lines of `block`, unpacked.
+    /// The lines of `block`, unpacked. A block cut short, larger than [`MAX_BLOCK_BYTES`]
+    /// unpacked or not UTF-8 is an error, never part of a block.
     fn text(&mut self, block: &Block) -> io::Result<&str> {
         if self
             .last
@@ -267,10 +366,21 @@ impl<'a> Reader<'a> {
             let mut packed = Vec::new();
             self.file.seek(SeekFrom::Start(block.offset))?;
             self.file.by_ref().take(block.length).read_to_end(&mut packed)?;
-            let mut text = String::new();
+            if packed.len() as u64 != block.length {
+                return Err(bad("a block is cut off"));
+            }
+            let mut unpacked = Vec::new();
             DeflateDecoder::new(packed.as_slice())
-                .take(MAX_BLOCK_BYTES)
-                .read_to_string(&mut text)?;
+                .take(MAX_BLOCK_BYTES + 1)
+                .read_to_end(&mut unpacked)?;
+            if unpacked.len() as u64 > MAX_BLOCK_BYTES {
+                return Err(bad("a block is larger than 1 MB unpacked"));
+            }
+            let text = String::from_utf8(unpacked).map_err(|_| bad("a block is not UTF-8"))?;
+            if self.read.contains(&block.offset) {
+                self.reread += 1;
+            }
+            self.read.push(block.offset);
             self.last = Some((block.offset, text));
         }
         Ok(self.last.as_ref().map_or("", |(_, text)| text.as_str()))

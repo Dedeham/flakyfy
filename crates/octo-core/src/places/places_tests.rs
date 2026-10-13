@@ -83,6 +83,21 @@ fn countries_are_two_letters() {
 }
 
 #[test]
+fn uk_is_gb() {
+    assert_eq!(country_key("UK"), Some("GB".into()));
+    assert_eq!(country_key(" uk"), Some("GB".into()));
+    let (_dir, index) = index();
+    assert_eq!(
+        index.by_code("UK", "SW1A 1AA").map(|p| (p.code, p.country)),
+        Some(("SW1A".into(), "GB".into()))
+    );
+    assert_eq!(
+        index.by_name("uk", "London", None).map(|p| p.country),
+        Some("GB".into())
+    );
+}
+
+#[test]
 fn coarser_codes_are_the_parts_the_data_keeps() {
     assert_eq!(coarser_codes("GB", "SW1A1AA"), vec!["SW1A"]);
     assert_eq!(coarser_codes("GB", "M11AE"), vec!["M1"]);
@@ -94,6 +109,23 @@ fn coarser_codes_are_the_parts_the_data_keeps() {
     assert!(coarser_codes("BR", "01310000").is_empty());
     assert!(coarser_codes("US", "90210").is_empty());
     assert!(coarser_codes("GB", "SW1A").is_empty());
+    assert_eq!(coarser_codes("US", "902101234"), vec!["90210"]);
+    assert_eq!(coarser_codes("PR", "009011234"), vec!["00901"]);
+    assert!(coarser_codes("US", "9021012").is_empty());
+    assert!(coarser_codes("DE", "902101234").is_empty());
+}
+
+#[test]
+fn a_zip_plus_4_is_found_by_its_five_digits() {
+    let (_dir, index) = index();
+    for asked in ["90210-1234", "902101234", "90210 1234"] {
+        assert_eq!(
+            index.by_code("US", asked).map(|p| p.code),
+            Some("90210".into()),
+            "{asked}"
+        );
+    }
+    assert_eq!(index.by_code("US", "99999-1234"), None);
 }
 
 #[test]
@@ -186,8 +218,8 @@ fn a_city_without_a_state_is_the_one_with_the_most_postal_codes() {
     let found = index.by_name("US", "springfield", None).expect("a city");
     assert_eq!(found.state, "Illinois");
     assert_eq!(found.code, "62701");
-    // The mean of its three codes.
-    assert_eq!((found.latitude, found.longitude), (39.79, -89.64));
+    // 62701, the code nearest the other two (their medoid).
+    assert_eq!((found.latitude, found.longitude), (39.8, -89.64));
 }
 
 #[test]
@@ -219,6 +251,54 @@ fn a_city_name_is_matched_whole() {
     assert_eq!(index.by_name("US", "Spring", None), None);
     assert_eq!(index.by_name("US", "Springfield Gardens", None), None);
     assert_eq!(index.by_name("US", "  ", None), None);
+}
+
+/// Towns that share a name and a state but not a county, and a town across the antimeridian.
+const SAME_NAMES: &[&str] = &[
+    "GB\tPO30\tNewport\tEngland\tENG\tIsle of Wight\tE06000046\t\t\t50.7\t-1.29\t",
+    "GB\tPO30 5\tNewport\tEngland\tENG\tIsle of Wight\tE06000046\t\t\t50.69\t-1.3\t",
+    "GB\tPO30 2\tNewport\tEngland\tENG\tIsle of Wight\tE06000046\t\t\t50.71\t-1.28\t",
+    "GB\tTF10\tNewport\tEngland\tENG\tShropshire\tE06000051\t\t\t52.77\t-2.38\t",
+    "GB\tTF10 7\tNewport\tEngland\tENG\tShropshire\tE06000051\t\t\t52.76\t-2.37\t",
+    "US\t37064\tFranklin\tTennessee\tTN\tWilliamson\t187\t\t\t35.93\t-86.87\t4",
+    "US\t37067\tFranklin\tTennessee\tTN\tWilliamson\t187\t\t\t35.91\t-86.82\t4",
+    "US\t37069\tFranklin\tTennessee\tTN\tWilliamson\t187\t\t\t35.98\t-86.91\t4",
+    "US\t37306\tFranklin\tTennessee\tTN\tFranklin\t051\t\t\t35.15\t-86.1\t4",
+    "FJ\t0001\tRabi\tNorthern\tN\t\t\t\t\t-16.5\t179.98\t",
+    "FJ\t0002\tRabi\tNorthern\tN\t\t\t\t\t-16.51\t-179.99\t",
+    "FJ\t0003\tRabi\tNorthern\tN\t\t\t\t\t-16.49\t179.97\t",
+];
+
+fn same_names() -> (tempfile::TempDir, PlaceIndex, ConvertSummary) {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("places.bin");
+    let summary = write_places(&path, SAME_NAMES);
+    (dir, PlaceIndex::new(path), summary)
+}
+
+#[test]
+fn towns_with_one_name_in_one_state_stay_apart_by_county() {
+    let (_dir, index, summary) = same_names();
+    // Two Newports, two Franklins and Rabi.
+    assert_eq!(summary.cities, 5);
+    // The Isle of Wight's Newport has more postal codes; its place is among them, never the
+    // field halfway to Shropshire (about 51.53 north) that their mean would be.
+    for state in [None, Some("England"), Some("ENG")] {
+        let found = index.by_name("GB", "Newport", state).expect("Newport");
+        assert_eq!((found.latitude, found.longitude), (50.7, -1.29), "{state:?}");
+        assert_eq!(found.code, "PO30");
+    }
+    let franklin = index.by_name("US", "Franklin", Some("TN")).expect("Franklin");
+    assert_eq!(franklin.code, "37064");
+    assert_eq!((franklin.latitude, franklin.longitude), (35.93, -86.87));
+}
+
+#[test]
+fn a_town_across_the_antimeridian_stays_there() {
+    let (_dir, index, _) = same_names();
+    let rabi = index.by_name("FJ", "Rabi", None).expect("Rabi");
+    // The mean of its longitudes would be about 60 east.
+    assert_eq!((rabi.latitude, rabi.longitude), (-16.5, 179.98));
 }
 
 // ---- Coordinates -------------------------------------------------------------------------
@@ -309,7 +389,7 @@ fn the_cells_searched_cover_30_km_at_every_latitude() {
                 "{lat},{lon} {bearing}"
             );
             assert!(
-                cells.contains(&grid_key(plat, plon)),
+                cells.contains(&grid_cell(plat, plon)),
                 "{lat},{lon} bearing {bearing}"
             );
         }
@@ -410,7 +490,7 @@ fn the_converter_cuts_many_rows_into_blocks_that_are_all_found() {
 }
 
 #[test]
-fn a_lookup_is_quick() {
+fn a_lookup_unpacks_one_or_two_blocks() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let rows: Vec<String> = (0..50_000)
         .map(|n| format!("FR\t{n:05}\tVille {n}\tRégion\t11\t\t\t\t\t48.85\t2.35\t"))
@@ -419,18 +499,301 @@ fn a_lookup_is_quick() {
     let path = dir.path().join("places.bin");
     write_places(&path, &rows);
     let index = PlaceIndex::new(&path);
-    index.by_code("FR", "00001").expect("warm");
-    let started = std::time::Instant::now();
     for n in (0..50_000).step_by(997) {
+        let before = index.blocks_read();
         index.by_code("FR", &format!("{n:05}")).expect("found");
+        let read = index.blocks_read() - before;
+        // The block that holds it, and the one before when it is a block's first line.
+        assert!((1..=2).contains(&read), "{n}: {read} blocks");
     }
-    let each = started.elapsed() / 51;
-    assert!(each < std::time::Duration::from_millis(50), "{each:?} a lookup");
-    let started = std::time::Instant::now();
+    let before = index.blocks_read();
     index.nearest(48.85, 2.35).expect("found");
-    assert!(
-        started.elapsed() < std::time::Duration::from_millis(50),
-        "{:?}",
-        started.elapsed()
+    assert!(index.blocks_read() - before <= 2);
+}
+
+/// A grid of points 0.05 degrees of latitude and 0.07 of longitude apart, from 44 north and 5
+/// east: 61 rows by 58, over many grid cells.
+fn spread_rows() -> Vec<String> {
+    (0..61)
+        .flat_map(|i| {
+            (0..58).map(move |j| {
+                let latitude = 44.0 + f64::from(i) * 0.05;
+                let longitude = 5.0 + f64::from(j) * 0.07;
+                format!("FR\t{i:02}{j:02}0\tLieu {i} {j}\tRégion\t11\t\t\t\t\t{latitude}\t{longitude}\t")
+            })
+        })
+        .collect()
+}
+
+/// Coordinates spread over and around an area, the same every run.
+fn coordinates(count: usize, south: f64, north: f64, west: f64, east: f64) -> Vec<(f64, f64)> {
+    let mut state: u64 = 0x5eed;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    (0..count)
+        .map(|_| (south + next() * (north - south), west + next() * (east - west)))
+        .collect()
+}
+
+#[test]
+fn the_nearest_point_over_many_cells_is_the_nearest_of_all() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let rows = spread_rows();
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let path = dir.path().join("places.bin");
+    write_places(&path, &rows);
+    let grid_blocks = std::fs::File::open(&path)
+        .and_then(|mut file| index::read_blocks_for_tests(&mut file))
+        .expect("a block list")
+        .2;
+    assert!(grid_blocks > 3, "{grid_blocks} grid blocks");
+    let points: Vec<(f64, f64)> = (0..61)
+        .flat_map(|i| {
+            (0..58).map(move |j| {
+                (
+                    round2(44.0 + f64::from(i) * 0.05),
+                    round2(5.0 + f64::from(j) * 0.07),
+                )
+            })
+        })
+        .collect();
+    let index = PlaceIndex::new(&path);
+    let mut found_some = 0;
+    for (latitude, longitude) in coordinates(300, 43.5, 47.5, 4.4, 9.6) {
+        let nearest = points
+            .iter()
+            .map(|&point| distance_km((latitude, longitude), point))
+            .fold(f64::INFINITY, f64::min);
+        let before = index.blocks_read();
+        let found = index.nearest(latitude, longitude);
+        let read = index.blocks_read() - before;
+        assert!(
+            read <= grid_blocks as u64,
+            "{latitude},{longitude}: {read} blocks"
+        );
+        match found {
+            Some(place) => {
+                found_some += 1;
+                let km = distance_km((latitude, longitude), (place.latitude, place.longitude));
+                assert!(
+                    (km - nearest).abs() < 1e-9,
+                    "{latitude},{longitude}: {km} km, not {nearest}"
+                );
+            }
+            None => assert!(nearest > NEAREST_KM, "{latitude},{longitude}: {nearest} km"),
+        }
+    }
+    assert!(found_some > 150, "{found_some}");
+    // No lookup unpacked a block twice.
+    assert_eq!(index.blocks_reread(), 0);
+}
+
+#[test]
+fn far_north_each_block_is_unpacked_once_and_past_the_data_none_is() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    // Points all around the globe at 82 north, where a grid column is about 8 km wide.
+    let rows: Vec<String> = (0..2_000)
+        .map(|n| {
+            let longitude = -180.0 + f64::from(n) * 0.18;
+            format!("GL\t{n:04}\tPunkt {n}\t\t\t\t\t\t\t82.1\t{longitude}\t")
+        })
+        .collect();
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let path = dir.path().join("places.bin");
+    write_places(&path, &rows);
+    let grid_blocks = std::fs::File::open(&path)
+        .and_then(|mut file| index::read_blocks_for_tests(&mut file))
+        .expect("a block list")
+        .2;
+    assert!(grid_blocks > 1, "{grid_blocks} grid blocks");
+    let index = PlaceIndex::new(&path);
+    for longitude in [-179.9, -90.0, 0.05, 45.3, 179.9] {
+        assert!(cells_near(82.2, longitude).len() > 20);
+        let before = index.blocks_read();
+        assert!(index.nearest(82.2, longitude).is_some(), "{longitude}");
+        let read = index.blocks_read() - before;
+        assert!(
+            read <= grid_blocks as u64,
+            "{longitude}: {read} blocks of {grid_blocks}"
+        );
+    }
+    assert_eq!(index.blocks_reread(), 0);
+    // At the poles every column of a row is a cell, and no point is in any of them.
+    for (latitude, longitude) in [(89.99, 0.0), (90.0, 120.0), (-89.99, 0.0), (0.0, 0.0)] {
+        let before = index.blocks_read();
+        assert_eq!(index.nearest(latitude, longitude), None);
+        assert_eq!(index.blocks_read(), before, "{latitude},{longitude}");
+    }
+}
+
+// ---- Damaged files ---------------------------------------------------------------------------
+
+fn deflated(text: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(text).expect("deflated");
+    encoder.finish().expect("deflated")
+}
+
+/// A places file written by hand: the magic, the packed postal code blocks `(first key, packed)`,
+/// the block list (as `list` rewrites it) and the trailer, which names `list_at` as the block
+/// list's offset when given.
+fn hand_made(path: &Path, blocks: &[(&str, Vec<u8>)], list: impl Fn(String) -> String, list_at: Option<u64>) {
+    let mut bytes = MAGIC.to_vec();
+    let mut lines = String::new();
+    for (first_key, packed) in blocks {
+        lines.push_str(&format!("p\t{first_key}\t{}\t{}\n", bytes.len(), packed.len()));
+        bytes.extend_from_slice(packed);
+    }
+    let lines = list(lines);
+    let at = bytes.len() as u64;
+    bytes.extend_from_slice(lines.as_bytes());
+    bytes.extend_from_slice(&list_at.unwrap_or(at).to_le_bytes());
+    bytes.extend_from_slice(&(lines.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(MAGIC);
+    std::fs::write(path, bytes).expect("written");
+}
+
+const BEVERLY_HILLS: &[u8] = b"US|90210\t\tBeverly Hills\tCalifornia\t34.09\t-118.41\n";
+
+#[test]
+fn a_hand_made_file_is_read_like_a_converted_one() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("places.bin");
+    hand_made(&path, &[("US|90210", deflated(BEVERLY_HILLS))], |list| list, None);
+    let index = PlaceIndex::new(&path);
+    assert!(index.available());
+    assert_eq!(
+        index.by_code("US", "90210").map(|p| p.name),
+        Some("Beverly Hills".into())
     );
+}
+
+#[test]
+fn offsets_out_of_the_file_find_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("places.bin");
+    let block = || vec![("US|90210", deflated(BEVERLY_HILLS))];
+    // The block list's offset past the end, and inside the magic.
+    for list_at in [1_000_000, u64::MAX - 4, 3] {
+        hand_made(&path, &block(), |list| list, Some(list_at));
+        let index = PlaceIndex::new(&path);
+        assert!(!index.available(), "{list_at}");
+        assert_eq!(index.by_code("US", "90210"), None, "{list_at}");
+    }
+    // A block past the block list, one inside the magic, a length that overflows, and an
+    // offset that is not a number.
+    for line in [
+        "p\tUS|90210\t5000\t10\n",
+        "p\tUS|90210\t0\t10\n",
+        "p\tUS|90210\t8\t18446744073709551615\n",
+        "p\tUS|90210\teight\t10\n",
+        "p\tUS|90210\n",
+        "r\tsouth\t300\n",
+    ] {
+        hand_made(&path, &block(), |_| line.to_string(), None);
+        let index = PlaceIndex::new(&path);
+        assert!(!index.available(), "{line}");
+        assert_eq!(index.by_code("US", "90210"), None, "{line}");
+    }
+}
+
+#[test]
+fn a_block_larger_than_1_mb_unpacked_is_an_error_not_cut() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("places.bin");
+    let line = b"US|00000\t\tSomewhere\t\t1\t1\n";
+    let lines = |count: usize| {
+        let mut text = Vec::new();
+        for _ in 0..count {
+            text.extend_from_slice(line);
+        }
+        text
+    };
+    let just_under = (1024 * 1024) / line.len();
+    hand_made(
+        &path,
+        &[("US|00000", deflated(&lines(just_under)))],
+        |list| list,
+        None,
+    );
+    assert_eq!(
+        PlaceIndex::new(&path).by_code("US", "00000").map(|p| p.name),
+        Some("Somewhere".into())
+    );
+    let packed = deflated(&lines(just_under + 1));
+    assert!(packed.len() < 1024 * 1024, "{} bytes packed", packed.len());
+    hand_made(&path, &[("US|00000", packed)], |list| list, None);
+    let index = PlaceIndex::new(&path);
+    assert!(index.available());
+    assert_eq!(index.by_code("US", "00000"), None);
+}
+
+#[test]
+fn a_block_that_is_not_utf_8_finds_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("places.bin");
+    hand_made(
+        &path,
+        &[(
+            "US|90210",
+            deflated(b"US|90210\t\tBeverly \xff Hills\tCalifornia\t34.09\t-118.41\n"),
+        )],
+        |list| list,
+        None,
+    );
+    assert_eq!(PlaceIndex::new(&path).by_code("US", "90210"), None);
+    // Not a deflate stream at all.
+    hand_made(&path, &[("US|90210", BEVERLY_HILLS.to_vec())], |list| list, None);
+    assert_eq!(PlaceIndex::new(&path).by_code("US", "90210"), None);
+}
+
+#[test]
+fn a_file_cut_off_finds_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = fixture_file(dir.path());
+    let bytes = std::fs::read(&path).expect("read");
+    for keep in [bytes.len() - 1, bytes.len() - 30, bytes.len() / 2, 20] {
+        std::fs::write(&path, &bytes[..keep]).expect("written");
+        let index = PlaceIndex::new(&path);
+        assert!(!index.available(), "{keep}");
+        assert_eq!(index.by_code("US", "90210"), None, "{keep}");
+        assert_eq!(index.nearest(34.1, -118.4), None, "{keep}");
+    }
+}
+
+#[test]
+fn a_file_replaced_is_read_again() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = fixture_file(dir.path());
+    let index = PlaceIndex::new(&path);
+    assert!(index.by_code("US", "90210").is_some());
+    write_places(&path, &["DE\t10115\tBerlin\tBerlin\tBE\t\t\t\t\t52.53\t13.38\t"]);
+    assert_eq!(index.by_code("US", "90210"), None);
+    assert_eq!(
+        index.by_code("DE", "10115").map(|p| p.name),
+        Some("Berlin".into())
+    );
+    std::fs::remove_file(&path).expect("removed");
+    assert!(!index.available());
+    assert_eq!(index.by_code("DE", "10115"), None);
+}
+
+#[test]
+fn the_data_is_available_only_when_it_can_be_read() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let index = PlaceIndex::new(dir.path().join("places.bin"));
+    assert!(!index.available());
+    fixture_file(dir.path());
+    assert!(index.available());
+    std::fs::write(
+        dir.path().join("places.bin"),
+        b"not a places file at all, just text",
+    )
+    .expect("written");
+    assert!(!index.available());
 }

@@ -10,12 +10,13 @@
 //! - 8 bytes: the magic `OCTOPLC1`;
 //! - the blocks, each a raw deflate stream of whole lines, sorted by key across the section;
 //! - the block list, plain text, one line per block: `section \t first key \t offset \t length`,
-//!   where the section is `p` (postal codes), `c` (cities) or `g` (the grid);
+//!   where the section is `p` (postal codes), `c` (cities) or `g` (the grid), and one line
+//!   `r \t south row \t north row`, the grid rows that hold points;
 //! - 24 bytes: the block list's offset and length (little-endian u64 each), then the magic again.
 //!
 //! A postal code line is `COUNTRY|CODE \t code as written (empty when the same) \t place \t
-//! state \t latitude \t longitude`; a city line is `COUNTRY|city|state \t a postal code \t
-//! city \t state \t state code \t latitude \t longitude \t postal codes`; a grid line is
+//! state \t latitude \t longitude`; a city line is `COUNTRY|city|state|county \t a postal code
+//! \t city \t state \t state code \t latitude \t longitude \t postal codes`; a grid line is
 //! `cell \t country \t code as written \t place \t state \t latitude \t longitude`, one per
 //! rounded coordinate, keyed by its [`GRID_DEGREES`] cell ([`grid_key`]). Keys are normalized by
 //! [`code_key`] and [`name_key`], coordinates rounded to 2 decimals.
@@ -41,6 +42,8 @@ const POSTAL_SECTION: &str = "p";
 const CITY_SECTION: &str = "c";
 /// The section of grid cells in the block list.
 const GRID_SECTION: &str = "g";
+/// The block list's line of the grid rows that hold points.
+const RANGE_SECTION: &str = "r";
 
 /// The size of a grid cell, in degrees of latitude and of longitude.
 pub const GRID_DEGREES: f64 = 0.5;
@@ -86,22 +89,29 @@ pub fn name_key(name: &str) -> String {
     romanized_words(name)
 }
 
-/// A country code as a key: two ASCII letters, uppercase, or `None`.
+/// A country code as a key: two ASCII letters, uppercase, or `None`. `UK` is `GB`, its ISO
+/// code.
 pub fn country_key(country: &str) -> Option<String> {
     let country = country.trim();
-    (country.len() == 2 && country.chars().all(|ch| ch.is_ascii_alphabetic()))
-        .then(|| country.to_ascii_uppercase())
+    (country.len() == 2 && country.chars().all(|ch| ch.is_ascii_alphabetic())).then(|| {
+        match country.to_ascii_uppercase().as_str() {
+            "UK" => "GB".to_string(),
+            other => other.to_string(),
+        }
+    })
 }
 
 /// The coarser codes to try, in order, when a country's data holds only part of its postal
-/// codes: the outward code of a UK, Channel Islands or Isle of Man postcode, the forward
-/// sortation area of a Canadian one, the four digits of a Dutch one, the routing key of an
-/// Eircode, the letters of a Maltese one, the four digits of an Argentine CPA, and the
-/// zero-filled codes GeoNames keeps for Brazil, Chile and China.
+/// codes, or a code is written longer than the data keeps it: the five digits of a ZIP+4 (the
+/// US and the territories that use its ZIP codes), the outward code of a UK, Channel Islands or
+/// Isle of Man postcode, the forward sortation area of a Canadian one, the four digits of a
+/// Dutch one, the routing key of an Eircode, the letters of a Maltese one, the four digits of an
+/// Argentine CPA, and the zero-filled codes GeoNames keeps for Brazil, Chile and China.
 pub fn coarser_codes(country: &str, key: &str) -> Vec<String> {
     let len = key.len();
     let all_digits = key.chars().all(|ch| ch.is_ascii_digit());
     let coarser = match country {
+        "US" | "PR" | "VI" | "GU" | "AS" | "MP" if len == 9 && all_digits => Some(key[..5].to_string()),
         "GB" | "JE" | "GG" | "IM" if len >= 5 => Some(key[..len - 3].to_string()),
         "CA" if len == 6 => Some(key[..3].to_string()),
         "NL" if len == 6 => Some(key[..4].to_string()),
@@ -139,14 +149,14 @@ fn cell_key(row: i64, column: i64) -> String {
     format!("{row}|{column}")
 }
 
-/// The cells that hold every point within [`NEAREST_KM`] of a coordinate: its own and its
-/// neighbors, as many columns either side as that distance spans at each row's latitude
+/// The cells (row, column) that hold every point within [`NEAREST_KM`] of a coordinate: its own
+/// and its neighbors, as many columns either side as that distance spans at each row's latitude
 /// (more near the poles, the whole row at a pole), each cell once.
-pub fn cells_near(latitude: f64, longitude: f64) -> Vec<String> {
+pub fn cells_near(latitude: f64, longitude: f64) -> Vec<(i64, i64)> {
     let (row, column) = grid_cell(latitude, longitude);
     let km_per_degree = EARTH_KM.to_radians();
     let rows_either_side = (NEAREST_KM / (km_per_degree * GRID_DEGREES)).ceil() as i64;
-    let mut keys = Vec::new();
+    let mut cells = Vec::new();
     for r in (row - rows_either_side).max(0)..=(row + rows_either_side).min(GRID_ROWS - 1) {
         // The row's edge nearest a pole, where a degree of longitude is shortest.
         let south = r as f64 * GRID_DEGREES - 90.0;
@@ -158,15 +168,14 @@ pub fn cells_near(latitude: f64, longitude: f64) -> Vec<String> {
             GRID_COLUMNS
         };
         if either_side * 2 + 1 >= GRID_COLUMNS {
-            keys.extend((0..GRID_COLUMNS).map(|c| cell_key(r, c)));
+            cells.extend((0..GRID_COLUMNS).map(|c| (r, c)));
         } else {
-            keys.extend(
-                (column - either_side..=column + either_side)
-                    .map(|c| cell_key(r, c.rem_euclid(GRID_COLUMNS))),
+            cells.extend(
+                (column - either_side..=column + either_side).map(|c| (r, c.rem_euclid(GRID_COLUMNS))),
             );
         }
     }
-    keys
+    cells
 }
 
 /// The great circle distance between two coordinates (latitude, longitude), in kilometers.

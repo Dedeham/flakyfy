@@ -7,7 +7,8 @@ use flate2::Compression;
 use flate2::write::DeflateEncoder;
 
 use super::{
-    CITY_SECTION, GRID_SECTION, MAGIC, POSTAL_SECTION, code_key, country_key, grid_key, name_key, round2,
+    CITY_SECTION, GRID_SECTION, MAGIC, POSTAL_SECTION, RANGE_SECTION, code_key, country_key, distance_km,
+    grid_cell, grid_key, name_key, round2,
 };
 
 /// About how many bytes of lines go in one block before it is deflated.
@@ -15,6 +16,10 @@ const BLOCK_BYTES: usize = 16 * 1024;
 
 /// The longest field kept, in characters; longer ones are cut.
 const FIELD_CHARS: usize = 120;
+
+/// The most points a city's medoid is measured against: a city with more is measured against an
+/// even spread of this many of them.
+const MEDOID_SAMPLE: usize = 512;
 
 /// What a conversion read and wrote.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -25,7 +30,7 @@ pub struct ConvertSummary {
     pub skipped: usize,
     /// Postal codes written (one per country and code).
     pub codes: usize,
-    /// Cities written (one per country, city and state).
+    /// Cities written (one per country, city, state and county).
     pub cities: usize,
     /// Points written to the grid (one per coordinate, rounded to 2 decimals).
     pub points: usize,
@@ -33,28 +38,28 @@ pub struct ConvertSummary {
     pub bytes: u64,
 }
 
-/// One city: every postal code row with its country, name and state, averaged.
+/// One city: every postal code row with its country, name, state and county (admin code 2, else
+/// admin name 2), and the coordinates of each.
 struct City {
     code: String,
     name: String,
     state: String,
     state_code: String,
-    latitude: f64,
-    longitude: f64,
-    count: u32,
+    points: Vec<(f64, f64)>,
 }
 
 /// Reads the GeoNames rows (country, postal code, place, admin name 1, admin code 1, admin
 /// name 2, admin code 2, admin name 3, admin code 3, latitude, longitude, accuracy) and writes
 /// the places file. A postal code listed more than once keeps its first row; a city's
-/// coordinates are the mean of its postal codes'; of the postal codes at one rounded coordinate,
-/// the first is the grid's point there.
+/// coordinates are its postal codes' medoid (see [`medoid`]); of the postal codes at one rounded
+/// coordinate, the first is the grid's point there.
 pub fn convert(input: impl BufRead, output: impl Write) -> io::Result<ConvertSummary> {
     let mut summary = ConvertSummary::default();
     let mut codes: Vec<(String, String)> = Vec::new();
     let mut cities: HashMap<String, City> = HashMap::new();
     let mut points: Vec<(String, String)> = Vec::new();
     let mut pointed: HashSet<(i64, i64)> = HashSet::new();
+    let mut rows: Option<(i64, i64)> = None;
 
     for line in input.lines() {
         let line = line?;
@@ -91,6 +96,8 @@ pub fn convert(input: impl BufRead, output: impl Write) -> io::Result<ConvertSum
         ));
         // Hundredths of a degree, as whole numbers, so equal rounded coordinates are equal.
         if pointed.insert(((lat * 100.0).round() as i64, (lon * 100.0).round() as i64)) {
+            let (row, _) = grid_cell(lat, lon);
+            rows = Some(rows.map_or((row, row), |(south, north)| (south.min(row), north.max(row))));
             points.push((
                 grid_key(lat, lon),
                 format!("\t{country}\t{code}\t{name}\t{state}\t{lat}\t{lon}"),
@@ -102,20 +109,23 @@ pub fn convert(input: impl BufRead, output: impl Write) -> io::Result<ConvertSum
             continue;
         }
         let state_name = name_key(if state.is_empty() { &state_code } else { &state });
-        let city = cities
-            .entry(format!("{country}|{city_name}|{state_name}"))
+        let county_code = code_key(fields[6]);
+        let county = if county_code.is_empty() {
+            name_key(fields[5])
+        } else {
+            county_code
+        };
+        cities
+            .entry(format!("{country}|{city_name}|{state_name}|{county}"))
             .or_insert_with(|| City {
                 code: code.clone(),
                 name: name.clone(),
                 state: state.clone(),
                 state_code: state_code.clone(),
-                latitude: 0.0,
-                longitude: 0.0,
-                count: 0,
-            });
-        city.latitude += latitude;
-        city.longitude += longitude;
-        city.count += 1;
+                points: Vec::new(),
+            })
+            .points
+            .push((latitude, longitude));
     }
 
     // Stable, so the first row of a code listed twice is the one kept.
@@ -126,16 +136,16 @@ pub fn convert(input: impl BufRead, output: impl Write) -> io::Result<ConvertSum
     let mut city_lines: Vec<(String, String)> = cities
         .into_iter()
         .map(|(key, city)| {
-            let count = f64::from(city.count);
+            let (latitude, longitude) = medoid(&city.points);
             let line = format!(
                 "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 city.code,
                 city.name,
                 city.state,
                 city.state_code,
-                round2(city.latitude / count),
-                round2(city.longitude / count),
-                city.count
+                round2(latitude),
+                round2(longitude),
+                city.points.len()
             );
             (key, line)
         })
@@ -152,8 +162,31 @@ pub fn convert(input: impl BufRead, output: impl Write) -> io::Result<ConvertSum
     writer.section(POSTAL_SECTION, &codes)?;
     writer.section(CITY_SECTION, &city_lines)?;
     writer.section(GRID_SECTION, &points)?;
+    if let Some((south, north)) = rows {
+        writer.rows(south, north);
+    }
     summary.bytes = writer.finish()?;
     Ok(summary)
+}
+
+/// The point with the least total distance to the others, the first such point on a tie; with
+/// more than [`MEDOID_SAMPLE`] points, the others measured are an even spread of that many.
+/// Always one of the points, so two clusters of postal codes far apart never meet in a field
+/// between them, and a city across the antimeridian stays there.
+fn medoid(points: &[(f64, f64)]) -> (f64, f64) {
+    let step = points.len().div_ceil(MEDOID_SAMPLE).max(1);
+    let mut best: Option<(f64, (f64, f64))> = None;
+    for &point in points {
+        let total: f64 = points
+            .iter()
+            .step_by(step)
+            .map(|&other| distance_km(point, other))
+            .sum();
+        if best.is_none_or(|(least, _)| total < least) {
+            best = Some((total, point));
+        }
+    }
+    best.map_or((0.0, 0.0), |(_, point)| point)
 }
 
 /// A field with no tabs or line breaks, trimmed and cut to [`FIELD_CHARS`].
@@ -222,6 +255,12 @@ impl<W: Write> BlockWriter<W> {
             packed.len()
         ));
         self.raw(&packed)
+    }
+
+    /// The grid's southernmost and northernmost rows, as a line of the block list.
+    fn rows(&mut self, south: i64, north: i64) {
+        self.list
+            .push_str(&format!("{RANGE_SECTION}\t{south}\t{north}\n"));
     }
 
     /// The block list and the trailer; the bytes written in all.

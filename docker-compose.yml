@@ -112,6 +112,9 @@ services:
       # library. A peer that sends a different recording gets that file remembered
       # and never tried again. Needs the free AcoustID key; inert without one.
       Soulseek__VerifyDownloads: ${SLSKD_VERIFY_DOWNLOADS:-false}
+      # Never download an instrumental or a karaoke backing track, even when a
+      # title asks for one, and leave such outside songs out of search and radio.
+      Soulseek__SkipInstrumentals: ${SKIP_INSTRUMENTALS:-false}
       Soulseek__AcoustIdApiKey: ${ACOUSTID_API_KEY:-}
       Soulseek__MinMatchScore: ${SLSKD_MIN_MATCH_SCORE:-85}
       Soulseek__TagFromMusicBrainz: ${SLSKD_TAG_FROM_MUSICBRAINZ:-false}

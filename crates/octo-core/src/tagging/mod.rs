@@ -15,6 +15,7 @@ pub mod release_distance;
 pub mod release_fact_tags;
 pub mod release_identifier;
 pub mod tag_evidence;
+pub mod tag_guard;
 pub mod tag_plan;
 pub mod tag_preview;
 

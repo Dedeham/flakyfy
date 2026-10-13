@@ -7,11 +7,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use octo_core::common::{SongIdentity, dotnet};
+use octo_core::fingerprint::recording_identity::Identity;
 use octo_core::last_fm::last_fm_radio_recommendation_service::canonical_tag;
 use octo_core::metadata::deezer_metadata_service::FullTrackMeta;
 use octo_core::metadata::genre_normalizer::{GenreNormalizer, GenreTagAction};
 use octo_core::models::domain::Song;
 use octo_core::settings::{FolderStructure, GenreFallbackSource, GenreSettings, MetadataSettings};
+use octo_core::tagging::tag_guard;
 use octo_core::tagging::{
     AlbumGrouping, AlbumTagContext, CatalogBlankFiller, FileFacts, MeasuredLoudness, PreviewLoudnessMeter,
     ReleaseIdentifier, ReplayGainText, explicit_advisory,
@@ -477,6 +479,45 @@ impl BaseDownloadService {
     ///
     /// What the genre and cover lookups need is read first, and the file opened again to write,
     /// so no file is held across a wait.
+    /// The last check before the tags are written: each one agrees with the recording the audio
+    /// was found to be (see `tag_guard`). What it changed or found goes in the song's plan
+    /// notes, its download log and the server log.
+    fn guard_tags(&self, song: &mut Song) {
+        let identity = Identity::of(song.verification.as_deref());
+        let chosen = song
+            .tag_plan
+            .as_deref()
+            .and_then(|plan| plan.chosen.as_ref())
+            .map(|chosen| chosen.candidate.clone());
+        let findings = tag_guard::guard(song, identity.as_ref(), chosen.as_ref());
+        for finding in findings {
+            if finding.fixed {
+                info!(
+                    "Tag check ({}) for '{} - {}': {}",
+                    finding.rule, song.artist, song.title, finding.detail
+                );
+            } else {
+                warn!(
+                    "Tag check ({}) for '{} - {}': {}",
+                    finding.rule, song.artist, song.title, finding.detail
+                );
+            }
+            if let Some(plan) = song.tag_plan.as_deref_mut() {
+                plan.notes.push(finding.detail.clone());
+            }
+            self.log_song_step(
+                song,
+                acquisition_event_kinds::TAGS,
+                if finding.fixed {
+                    "Fixed a tag that disagreed with the audio"
+                } else {
+                    "A tag may disagree with the audio"
+                },
+                Some(&finding.detail),
+            );
+        }
+    }
+
     pub async fn write_metadata(&self, file_path: &str, song: &mut Song) -> Option<Vec<u8>> {
         self.write_metadata_replacing(file_path, song, None).await
     }
@@ -491,6 +532,7 @@ impl BaseDownloadService {
         replacing_path: Option<&str>,
     ) -> Option<Vec<u8>> {
         info!("Writing metadata to: {file_path}");
+        self.guard_tags(song);
         // A peer tags a file for the release it ripped. What it wrote about that release goes
         // before Octo writes its own, so the file never names two albums at once (a barcode, a
         // release id or a track number of the album it was filed away from). Worked out on this

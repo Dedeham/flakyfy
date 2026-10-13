@@ -199,6 +199,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Genre:Mappings",
     "Genre:Blocklist",
     "Soulseek:VerifyDownloads",
+    "Soulseek:SkipInstrumentals",
     "Soulseek:AcoustIdApiKey",
     "Soulseek:MinMatchScore",
     "Soulseek:TagFromMusicBrainz",

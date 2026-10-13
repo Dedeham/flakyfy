@@ -253,6 +253,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("PreferredExtension", n_str(&soulseek.preferred_extension)),
             ("DownloadTimeoutSeconds", n_num(soulseek.download_timeout_seconds)),
             ("VerifyDownloads", Node::Bool(soulseek.verify_downloads)),
+            ("SkipInstrumentals", Node::Bool(soulseek.skip_instrumentals)),
             (
                 "AcoustIdApiKey",
                 n_str(&mask_secret(Some(&soulseek.acoust_id_api_key))),

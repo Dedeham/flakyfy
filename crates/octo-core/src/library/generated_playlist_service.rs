@@ -142,6 +142,23 @@ pub fn mixes_on(settings: &GeneratedPlaylistSettings) -> bool {
     settings.enabled && (settings.genres || settings.decades || settings.country_mixes)
 }
 
+/// What `octoGroup` says a station row is.
+pub const STATION_GROUP: &str = "station";
+
+/// What `octoGroup` says a Made for you list is.
+pub const FOR_YOU_GROUP: &str = "forYou";
+
+/// The group an Octo list row belongs to, as `octoGroup` names it, from the list's kind: the
+/// kind itself ("genre", "decade", "year", "country", "artist", "chart", "liked"), and
+/// "forYou" for the three Made for you lists.
+pub fn list_group(kind: &str) -> &str {
+    if crate::library::for_you_lists::is_for_you(kind) {
+        FOR_YOU_GROUP
+    } else {
+        kind
+    }
+}
+
 /// The country mixes are on: the mixes switch and the country switch.
 pub fn country_mixes_on(settings: &GeneratedPlaylistSettings) -> bool {
     settings.enabled && settings.country_mixes

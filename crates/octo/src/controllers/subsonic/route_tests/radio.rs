@@ -657,6 +657,15 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
             body.find("Native Playlist").unwrap() < body.find("Your Mix").unwrap(),
             "{format}"
         );
+        // The station's row says it is a station; Navidrome's own playlist says nothing.
+        let station = &body[body.find("Your Mix").unwrap()..];
+        let native = &body[body.find("Native Playlist").unwrap()..body.find("Your Mix").unwrap()];
+        if format == "json" {
+            assert!(station.contains(r#""octoGroup":"station""#), "{body}");
+        } else {
+            assert!(station.contains(r#"octoGroup="station""#), "{body}");
+        }
+        assert!(!native.contains("octoGroup"), "{body}");
     }
 }
 
@@ -677,6 +686,10 @@ async fn subsonic_playlist_detail_is_owned_read_only_stable_and_prewarmed() {
         assert!(body.contains("local-one"), "{format}: {body}");
         assert!(body.contains("readonly"), "{format}");
         assert!(body.contains("validUntil"), "{format}");
+        assert!(
+            body.contains(r#""octoGroup":"station""#) || body.contains(r#"octoGroup="station""#),
+            "{format}: {body}"
+        );
         let metadata = fixture.metadata.clone();
         until("the prewarm", || !metadata.prewarms.lock().is_empty()).await;
         assert_eq!(*fixture.metadata.prewarms.lock(), [8], "{format}");

@@ -55,6 +55,8 @@ pub const APP_CALL_ENDPOINTS: &[(Method, &str, bool)] = &[
     (Method::POST, "/api/admin/lastfm/radio/refresh", false),
     (Method::GET, "/api/admin/library-status", true),
     (Method::GET, "/api/admin/status", true),
+    (Method::GET, "/api/admin/update", true),
+    (Method::POST, "/api/admin/update", true),
 ];
 
 /// The words a Family page sign-in is refused with on every dashboard route.

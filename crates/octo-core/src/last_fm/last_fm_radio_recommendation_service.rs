@@ -1152,9 +1152,9 @@ mod tests {
         }
     }
 
-    /// Decision D10 (radio placement, 2026-10-08): Your Radio places its familiar tracks and its
-    /// discoveries at random at the discovery share, so the familiar ones no longer gather at
-    /// the front, and the order is not the apps' old every-third-song schedule either.
+    /// Your Radio places its familiar tracks and its discoveries at random at the discovery
+    /// share, so the familiar ones do not gather at the front, and the order is not a fixed
+    /// every-third-song schedule either.
     #[test]
     fn your_mix_mixes_familiar_and_discovery_throughout() {
         let settings = LastFmSettings {
@@ -1211,10 +1211,10 @@ mod tests {
         );
     }
 
-    /// The Check Mode finding M1 (2026-10-08): a walk that falls short of its quota, 5 familiar
-    /// tracks and 18 discoveries where Your Radio wants 32 and 18 of 50, was placed at the quota's
-    /// 36% and ended on 16 discoveries in a row. Paced to what the walk took, it ends on 6 at
-    /// most over 200 seeds, and no more than 2 familiar tracks come in a row.
+    /// A walk that falls short of its quota, 5 familiar tracks and 18 discoveries where Your
+    /// Radio wants 32 and 18 of 50, is paced to what the walk took rather than at the quota's
+    /// 36%: it ends on 6 discoveries in a row at most over 200 seeds, and no more than 2
+    /// familiar tracks come in a row.
     #[test]
     fn a_short_your_mix_walk_ends_on_no_long_run_of_discoveries() {
         let settings = LastFmSettings {

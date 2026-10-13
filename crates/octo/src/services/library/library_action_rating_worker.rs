@@ -211,6 +211,25 @@ impl LibraryActionRatingWorker {
         }
     }
 
+    /// Fills in the artist and title of a kept rating once they are known. A rating already
+    /// dropped from the list, or one named already, is left as it is.
+    pub fn name_ignored(
+        &self,
+        username: &str,
+        song_id: &str,
+        at_utc: DateTime<Utc>,
+        artist: &str,
+        title: &str,
+    ) {
+        let mut ignored = self.ignored.lock();
+        if let Some(rating) = ignored.iter_mut().rev().find(|r| {
+            r.at_utc == at_utc && r.song_id == song_id && r.username == username && r.title.is_none()
+        }) {
+            rating.artist = Some(artist.to_string()).filter(|a| !a.is_empty());
+            rating.title = Some(title.to_string()).filter(|t| !t.is_empty());
+        }
+    }
+
     /// The ratings not acted on, newest first.
     pub fn ignored(&self) -> Vec<IgnoredRating> {
         self.ignored.lock().iter().rev().cloned().collect()

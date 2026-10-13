@@ -22,8 +22,12 @@ const STARRED2_XML: &str = r#"<subsonic-response xmlns="http://subsonic.org/rest
 const STARRED_EMPTY_JSON: &str =
     r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","starred":{}}}"#;
 
+/// A library id Navidrome does not have: a star naming it is refused.
+const MISSING: &str = "nd-missing";
+
 /// Navidrome for these tests: it accepts the token "good", the password "secret" and the API key
-/// "bob-key" (whose owner is bob), and answers the starred lists, stars and unstars.
+/// "bob-key" (whose owner is bob), and answers the starred lists, stars and unstars. A star of
+/// [`MISSING`] is refused with error 70.
 struct HeartNavidrome;
 
 impl Respond for HeartNavidrome {
@@ -50,6 +54,13 @@ impl Respond for HeartNavidrome {
         }
         if path.ends_with("/rest/getStarred") || path.ends_with("/rest/getStarred.view") {
             return navidrome_json(STARRED_EMPTY_JSON);
+        }
+        if (path.ends_with("/rest/star") || path.ends_with("/rest/star.view"))
+            && request.url.query_pairs().any(|(k, v)| k == "id" && v == MISSING)
+        {
+            return navidrome_json(
+                r#"{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"data not found"}}}"#,
+            );
         }
         navidrome_json(NAVIDROME_OK)
     }
@@ -349,4 +360,55 @@ async fn an_unstar_with_a_wrong_sign_in_keeps_the_heart() {
 
     assert_eq!(reply.envelope()["error"]["code"], 40);
     assert_eq!(t.state.star_on_arrival.held(), 1);
+}
+
+/// Another listener, signed in properly, cannot take back someone else's waiting heart: theirs
+/// is the only one an unstar can drop.
+#[tokio::test]
+async fn another_signed_in_listener_cannot_unstar_someone_elses_heart() {
+    let t = HeartApp::new().await;
+    let teardrop = t.register(RoutingKind::Song, "Teardrop");
+    let star = get(
+        &t.app,
+        &format!("/rest/star.view?{}&f=json&id={teardrop}", alice()),
+    )
+    .await;
+    assert_eq!(star.envelope()["status"], "ok", "{}", star.text());
+
+    for other in [
+        auth("carol", "good", "Symfonium"),
+        "apiKey=bob-key&v=1.16.1&c=Symfonium".to_string(),
+    ] {
+        let reply = get(&t.app, &format!("/rest/unstar.view?{other}&f=json&id={teardrop}")).await;
+        assert_eq!(reply.envelope()["status"], "ok", "{other}: {}", reply.text());
+        assert_eq!(t.state.star_on_arrival.held(), 1, "{other}");
+    }
+    assert_eq!(t.starred2_song_ids(&alice()).await, ["nd-7", teardrop.as_str()]);
+}
+
+/// A star Navidrome refuses queues none of the outside songs or albums it carried and holds no
+/// heart for them: the error is the whole answer.
+#[tokio::test]
+async fn a_star_navidrome_refuses_queues_nothing_from_outside() {
+    let t = HeartApp::new().await;
+    let teardrop = t.register(RoutingKind::Song, "Teardrop");
+    let mezzanine = t.register(RoutingKind::Album, "Mezzanine");
+
+    let reply = get(
+        &t.app,
+        &format!(
+            "/rest/star.view?{}&f=json&id={MISSING}&id={teardrop}&albumId={mezzanine}",
+            alice()
+        ),
+    )
+    .await;
+
+    let envelope = reply.envelope();
+    assert_eq!(envelope["status"], "failed", "{}", reply.text());
+    assert_eq!(envelope["error"]["code"], 70);
+    assert_eq!(t.ids_sent_to("star").await, [vec![MISSING]]);
+    assert!(t.state.acquisition_tracker.all().is_empty());
+    assert!(t.state.track_acquisition_queue.is_idle());
+    assert_eq!(t.state.star_on_arrival.held(), 0);
+    assert_eq!(t.starred2_song_ids(&alice()).await, ["nd-7"]);
 }

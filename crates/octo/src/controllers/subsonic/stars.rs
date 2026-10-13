@@ -192,15 +192,24 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             .create_error(&format, 70, ARTIST_NOT_IN_LIBRARY)
             .into_response());
     }
-    for album in &albums {
-        star_outside_album(&state, &call, &heart, &sources, album).await?;
-    }
-    for song in &songs {
-        star_outside_song(&state, &call, &heart, song).await?;
-    }
     let split = !albums.is_empty() || !songs.is_empty();
+    // Who the outside hearts are for, named once before anything is queued, so a name that
+    // cannot be read leaves nothing half queued under the error.
+    let who = if split && !saves {
+        Some(signed_in_user(&state, &call).await?)
+    } else {
+        None
+    };
+    let outside = OutsideHearts {
+        heart: &heart,
+        sources: &sources,
+        who: who.as_deref(),
+        albums: &albums,
+        songs: &songs,
+    };
     if split && library.is_empty() {
         // Navidrome has never seen these ids, so relaying the star would just error.
+        outside.queue(&state, &call).await;
         return Ok(builder.create_response(&format, "starred").into_response());
     }
 
@@ -222,7 +231,13 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     };
     match relayed {
         Ok(result) => {
-            let username = if is_successful_subsonic_response(&result.body, &format) {
+            let accepted = is_successful_subsonic_response(&result.body, &format);
+            // The outside ids are queued only once Navidrome took the library ones, so a star
+            // it refused leaves nothing queued or held.
+            if accepted {
+                outside.queue(&state, &call).await;
+            }
+            let username = if accepted {
                 listener(&state, &call).await
             } else {
                 None
@@ -254,6 +269,28 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
     }
 }
 
+/// The outside songs and albums one star carried, with what a heart does for this person and
+/// who it is for (None only when every heart is a saved link).
+struct OutsideHearts<'a> {
+    heart: &'a HeartOutcome,
+    sources: &'a [HeartDownloadStep],
+    who: Option<&'a str>,
+    albums: &'a [String],
+    songs: &'a [String],
+}
+
+impl OutsideHearts<'_> {
+    /// Saves or queues each outside album and song.
+    async fn queue(&self, state: &AppState, call: &SubsonicCall) {
+        for album in self.albums {
+            star_outside_album(state, call, self.heart, self.sources, self.who, album).await;
+        }
+        for song in self.songs {
+            star_outside_song(state, call, self.heart, self.who, song).await;
+        }
+    }
+}
+
 /// A heart on an outside album: a saved link for a member, else the whole album downloaded
 /// and, outside Octo's own apps, favorited once it lands.
 async fn star_outside_album(
@@ -261,20 +298,25 @@ async fn star_outside_album(
     call: &SubsonicCall,
     heart: &HeartOutcome,
     sources: &[HeartDownloadStep],
+    who: Option<&str>,
     album_id: &str,
-) -> Result<(), AppError> {
+) {
     if let HeartOutcome::Save { user, request } = heart {
         save_album(state, user, album_id).await;
         if let Some(full) = request {
             ask_for_copy(state, user, album_id, RequestKind::Album, full).await;
         }
-        return Ok(());
+        return;
     }
 
     if !sources.iter().any(|step| step.album_enabled == Some(true)) {
         info!("Starred album {album_id} but no album-heart source is enabled; ignoring");
-        return Ok(());
+        return;
     }
+    let Some(who) = who else {
+        info!("Starred album {album_id} but nobody was named to download it for; ignoring");
+        return;
+    };
 
     // No storage-mode gate here, unlike the song branch. That gate exists because
     // Permanent mode already downloads a song when it is played; an album star is
@@ -308,7 +350,6 @@ async fn star_outside_album(
     // to move. Its name is the one the request signed in as (for an API key, its owner
     // as Navidrome names it), not RequesterFor: it decides who may see the row, and it
     // is never written anywhere.
-    let who = signed_in_user(state, call).await?;
     let target = match heart {
         HeartOutcome::Download(target) => target.clone(),
         HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
@@ -320,18 +361,17 @@ async fn star_outside_album(
     {
         state
             .star_on_arrival
-            .hold_album(&album_provider, album_id, &credential, Some(&who));
+            .hold_album(&album_provider, album_id, &credential, Some(who));
     }
     state
         .acquisition_tracker
-        .begin_album(&album_provider, album_id, Some(&who));
+        .begin_album(&album_provider, album_id, Some(who));
     state.heart_acquisition_coordinator.queue_album_for(
         &album_provider,
         album_id,
-        requester_for(state, Some(&who)).as_deref(),
+        requester_for(state, Some(who)).as_deref(),
         target,
     );
-    Ok(())
 }
 
 /// A heart on an outside song: a saved link for a member, else a permanent download and,
@@ -340,8 +380,9 @@ async fn star_outside_song(
     state: &AppState,
     call: &SubsonicCall,
     heart: &HeartOutcome,
+    who: Option<&str>,
     item_id: &str,
-) -> Result<(), AppError> {
+) {
     let (_, provider, external_id) = state.local_library.parse_song_id(item_id);
     let provider = provider.unwrap_or_default();
     let external_id = external_id.unwrap_or_default();
@@ -351,8 +392,12 @@ async fn star_outside_song(
         if let Some(full) = request {
             ask_for_copy(state, user, item_id, RequestKind::Song, full).await;
         }
-        return Ok(());
+        return;
     }
+    let Some(who) = who else {
+        info!("Starred song {item_id} but nobody was named to download it for; ignoring");
+        return;
+    };
     let target = match heart {
         HeartOutcome::Download(target) => target.clone(),
         HeartOutcome::Save { .. } => AcquisitionTarget::Shared,
@@ -368,16 +413,15 @@ async fn star_outside_song(
     // than inheriting whatever a concurrent play happened to ask for.
     info!("Starring external song {item_id}, queueing permanent download");
 
-    // Keyed by what the pipeline knows, labeled with the id the client starred so the
-    // app can find its row. Named from the routing, which is already in memory.
-    let who = signed_in_user(state, call).await?;
     // Held before the download is queued, so one that finishes at once still finds it. The
     // starred id is kept with it, so the caller's starred lists show the song meanwhile.
     if let Some(credential) = favorite_credential(call) {
         state
             .star_on_arrival
-            .hold_starred_song(&provider, &external_id, item_id, &credential, Some(&who));
+            .hold_starred_song(&provider, &external_id, item_id, &credential, Some(who));
     }
+    // Keyed by what the pipeline knows, labeled with the id the client starred so the
+    // app can find its row. Named from the routing, which is already in memory.
     let routing = state
         .external_id_registry
         .lookup(&external_id)
@@ -386,7 +430,7 @@ async fn star_outside_song(
         &provider,
         &external_id,
         Some(item_id),
-        Some(&who),
+        Some(who),
         routing.as_ref().and_then(|r| r.artist.as_deref()),
         routing.as_ref().and_then(|r| r.title.as_deref()),
         routing.as_ref().and_then(|r| r.album.as_deref()),
@@ -394,10 +438,9 @@ async fn star_outside_song(
     state.heart_acquisition_coordinator.queue_track_for(
         &provider,
         &external_id,
-        requester_for(state, Some(&who)).as_deref(),
+        requester_for(state, Some(who)).as_deref(),
         target,
     );
-    Ok(())
 }
 
 /// Saves an outside song for a family member as a link (it plays from its source and shows in
@@ -895,6 +938,9 @@ async fn act_on_rating(
         })
     });
     let ignored = match queued {
+        // A Keep rating is most often a plain "I love this song", so one that does nothing is
+        // never kept or logged: it would crowd out the ratings that asked for a change.
+        Err(_) if action == LibraryAction::Keep => return,
         Err(reason) => reason,
         // Keep touches no file, so a rehearsal changes nothing about it.
         Ok(()) if action != LibraryAction::Keep && state.settings.current().library_actions.dry_run => {
@@ -902,19 +948,27 @@ async fn act_on_rating(
         }
         Ok(()) => return,
     };
-    let song = resolver(state, call)
-        .resolve_scrobble(item_id, &call.parameters)
-        .await;
     let username = rater.unwrap_or_default().to_string();
+    let at_utc = Utc::now();
     worker.note_ignored(IgnoredRating {
-        at_utc: Utc::now(),
+        at_utc,
         reason: ignored.reason(&username),
-        username,
+        username: username.clone(),
         song_id: item_id.to_string(),
-        artist: song.as_ref().map(|s| s.artist.clone()).filter(|a| !a.is_empty()),
-        title: song.map(|s| s.title).filter(|t| !t.is_empty()),
+        artist: None,
+        title: None,
         rating,
         action,
+    });
+    // The song's name is looked up after the reply, so the rating never waits on it.
+    let worker = worker.clone();
+    let resolver = resolver(state, call);
+    let parameters = call.parameters.clone();
+    let song_id = item_id.to_string();
+    tokio::spawn(async move {
+        if let Some(song) = resolver.resolve_scrobble(&song_id, &parameters).await {
+            worker.name_ignored(&username, &song_id, at_utc, &song.artist, &song.title);
+        }
     });
 }
 

@@ -125,6 +125,8 @@ fn playlist_names_reads_xml_as_well_as_json() {
 #[derive(Clone, Default)]
 struct SignInNavidrome {
     cleared: std::sync::Arc<parking_lot::Mutex<Vec<Vec<(String, String)>>>>,
+    /// How long getSong takes to answer.
+    song_delay: std::time::Duration,
 }
 
 impl wiremock::Respond for SignInNavidrome {
@@ -166,15 +168,19 @@ impl wiremock::Respond for SignInNavidrome {
         if path.ends_with("/rest/getSong") {
             return navidrome_json(
                 r#"{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"nd-1","title":"Teardrop","artist":"Massive Attack","album":"Mezzanine"}}}"#,
-            );
+            )
+            .set_delay(self.song_delay);
         }
         navidrome_json(r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#)
     }
 }
 
 async fn sign_in_navidrome() -> (MockServer, SignInNavidrome) {
+    sign_in_navidrome_with(SignInNavidrome::default()).await
+}
+
+async fn sign_in_navidrome_with(responder: SignInNavidrome) -> (MockServer, SignInNavidrome) {
     let server = MockServer::builder().start().await;
-    let responder = SignInNavidrome::default();
     Mock::given(any())
         .respond_with(responder.clone())
         .mount(&server)
@@ -320,6 +326,15 @@ async fn each_reason_a_rating_was_not_acted_on_is_kept_with_its_words() {
         assert_eq!(state.library_action_rating_worker.pending(), 0, "{words}");
         if sign_in == token {
             assert_eq!(kept.username, "alice");
+            let named = || {
+                state
+                    .library_action_rating_worker
+                    .ignored()
+                    .first()
+                    .is_some_and(|r| r.title.is_some())
+            };
+            crate::services::common::test_fakes::until(named).await;
+            let kept = state.library_action_rating_worker.ignored()[0].clone();
             assert_eq!(kept.title.as_deref(), Some("Teardrop"));
             assert_eq!(kept.artist.as_deref(), Some("Massive Attack"));
         }
@@ -365,4 +380,65 @@ async fn ratings_that_act_or_ask_for_nothing_are_not_kept() {
         get(&app, &format!("/rest/setRating.view?{query}&v=1.16.1&c=test")).await;
     }
     assert!(state.library_action_rating_worker.ignored().is_empty());
+}
+
+/// A five star rating Keep did nothing with is most often a plain "I love this song": it is
+/// neither kept for the dashboard nor counted, wherever the song is and whoever rated it.
+#[tokio::test]
+async fn a_keep_rating_that_does_nothing_is_never_kept() {
+    let (navidrome, _) = sign_in_navidrome().await;
+    let review_only = rating_settings(&navidrome.uri(), LibraryRatingScope::NoticeOnly);
+    let mut not_allowed = rating_settings(&navidrome.uri(), LibraryRatingScope::Global);
+    not_allowed.library_actions.allowed_users = vec!["bob".into()];
+    assert_eq!(
+        review_only.library_actions.action_for_rating(5).map(|a| a.action),
+        Some(LibraryAction::Keep)
+    );
+
+    for settings in [review_only, not_allowed] {
+        let state = state_with(settings, |inner| {
+            inner.notice_queue = asked_about("alice", "nd-asked");
+        });
+        let app = app(&state);
+        for _ in 0..3 {
+            let reply = get(
+                &app,
+                "/rest/setRating.view?u=alice&t=token&s=salt&v=1.16.1&c=test&f=json&id=nd-1&rating=5",
+            )
+            .await;
+            assert_eq!(reply.envelope()["status"], "ok", "{}", reply.text());
+        }
+        assert!(state.library_action_rating_worker.ignored().is_empty());
+        assert_eq!(state.library_action_rating_worker.pending(), 0);
+    }
+}
+
+/// A rating that is not acted on is kept the moment it is answered and named once the song's
+/// artist and title come back: the reply never waits on that lookup.
+#[tokio::test]
+async fn a_kept_rating_is_named_after_the_reply() {
+    let (navidrome, _) = sign_in_navidrome_with(SignInNavidrome {
+        song_delay: std::time::Duration::from_millis(500),
+        ..Default::default()
+    })
+    .await;
+    let settings = rating_settings(&navidrome.uri(), LibraryRatingScope::NoticeOnly);
+
+    let (state, kept) = ignored_after(settings, "u=alice&t=token&s=salt").await;
+
+    let kept = kept.expect("kept at once");
+    assert_eq!(kept.username, "alice");
+    assert_eq!(kept.title, None, "named before the lookup could answer");
+    let named = || {
+        state
+            .library_action_rating_worker
+            .ignored()
+            .first()
+            .is_some_and(|r| r.title.is_some())
+    };
+    crate::services::common::test_fakes::until(named).await;
+    let kept = state.library_action_rating_worker.ignored()[0].clone();
+    assert_eq!(kept.title.as_deref(), Some("Teardrop"));
+    assert_eq!(kept.artist.as_deref(), Some("Massive Attack"));
+    assert_eq!(state.library_action_rating_worker.ignored().len(), 1);
 }

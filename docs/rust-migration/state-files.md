@@ -300,7 +300,7 @@ The library review sweep's cursor and checked-file stamps.
 
 - **Writer:** `ReviewSweepStore.Flush` (`Services/Library/LibraryReviewSweepWorker.cs:108-136`). `Update` flushes right away if 5 s have passed since the last write; otherwise a 5 s timer flushes. There are also explicit `Flush()` calls (:207, :214, :402, :414).
 - **Readers:** the constructor :72-88. Consumer: `LibraryReviewSweepWorker`.
-- **Schema:** `ReviewSweepState` :35: `Paused`, `Cursor` (library-relative path, `""` at the start of a pass), `Checked` object (library-relative path → `"{length}:{LastWriteTimeUtc.Ticks}"`), `Pass` int (default 1), `Total`, `Found`, `Fine`, `Undecodable`, `LastCheckedUtc`|null, `PassFinishedUtc`|null, `NextPassUtc`.
+- **Schema:** `ReviewSweepState` :35: `Paused`, `Cursor` (library-relative path, `""` at the start of a pass), `Checked` object (library-relative path → `"{length}:{LastWriteTimeUtc.Ticks}"`), `Pass` int (default 1), `Total`, `Found`, `Fine`, `Undecodable`, `LastCheckedUtc`|null, `PassFinishedUtc`|null, `NextPassUtc`. Rust only, each left out until used so an untouched file is unchanged: `Replaced` (files the pass replaced through Wrong song), `Recheck` (`Running`, `Cursor`, `Total`, `Checked`, `Found`, `Replaced`, `Threshold`, `StartedUtc`, `FinishedUtc`: the last re-check of Octo's downloads) and `ReplacedToday` (`DayUtc` midnight, `Replaced`, `Failed`: the daily cap and the three-failure breaker). Older readers ignore them.
 - **Corrupt:** renamed to `.corrupt-<UtcTicks>`, then the sweep starts over.
 - **Fixture:** [`review-sweep.json`](fixtures/state/review-sweep.json)
 

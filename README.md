@@ -600,6 +600,19 @@ tags were never confirmed. Octo's own downloads are skipped, since each was chec
 arrived if verification was on at the time; `LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS` checks
 them too.
 
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE` (off by default) lets the check replace a song that
+clearly is another one instead of asking: AcoustID names a different song, by another title, at
+least as sure as `SLSKD_MIN_MATCH_SCORE`. It goes through Wrong song as the library keeper, so
+Wrong song must be on, dry run must be off and the keeper must be on the allowlist, and Review
+keeps a note of what Octo heard ("Octo replaced this: AcoustID heard Artist - Title, 97% sure
+(needs 85%)"). Another take or a remaster of the same song, a song of the wrong length and
+anything AcoustID is not sure of are still asked about. At most
+`LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` (10) a day are replaced; past that, or after
+three replacements fail in a day, the rest of the day's are asked about. "Re-check Octo's
+downloads" on the dashboard checks every song Octo downloaded once more, at least 60 an hour
+even with the hourly rate at 0, and then stops: the way to go over earlier downloads after
+changing the match score.
+
 `LIBRARY_ACTIONS_DUPLICATES` adds a Duplicates playlist per allowed user: recordings the
 library holds more than once, side by side, the copy worth keeping first (lossless before
 lossy, then the higher bitrate). Two files are copies only when they carry the same

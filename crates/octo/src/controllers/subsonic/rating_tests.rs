@@ -11,6 +11,8 @@ use wiremock::{Mock, MockServer};
 
 use super::playlist_names::playlist_names;
 use super::test_app::*;
+use crate::app::AppState;
+use crate::services::library::IgnoredRating;
 use crate::services::library::library_action_test_support::asked_about;
 
 /// Navidrome answering ok to everything.
@@ -111,4 +113,256 @@ fn playlist_names_reads_xml_as_well_as_json() {
         )
         .is_empty()
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Every sign-in, and the ratings Octo did not act on
+// ---------------------------------------------------------------------------------------
+
+/// Navidrome for the sign-in tests: it accepts the token "token", the password "secret", and
+/// the API key "alice-key" (whose owner is alice), names nobody for any other key, describes
+/// nd-1 as Teardrop, and records every rating put back to 0 with the sign-in it carried.
+#[derive(Clone, Default)]
+struct SignInNavidrome {
+    cleared: std::sync::Arc<parking_lot::Mutex<Vec<Vec<(String, String)>>>>,
+}
+
+impl wiremock::Respond for SignInNavidrome {
+    fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let path = request.url.path();
+        let pairs: Vec<(String, String)> = request.url.query_pairs().into_owned().collect();
+        let value = |key: &str| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+        if path.ends_with("/rest/tokenInfo") {
+            return if value("apiKey") == Some("alice-key") {
+                navidrome_json(
+                    r#"{"subsonic-response":{"status":"ok","version":"1.16.1","tokenInfo":{"username":"alice"}}}"#,
+                )
+            } else {
+                navidrome_json(NAVIDROME_WRONG_PASSWORD)
+            };
+        }
+        let signed_in = value("t") == Some("token")
+            || value("p") == Some("secret")
+            || value("p") == Some("enc:736563726574")
+            || value("apiKey").is_some_and(|key| key.ends_with("-key"))
+            || value("t").is_some_and(|t| {
+                value("s").is_some_and(|s| {
+                    use md5::{Digest, Md5};
+                    hex::encode(Md5::digest(format!("secret{s}").as_bytes())) == t
+                })
+            });
+        if !signed_in {
+            return navidrome_json(NAVIDROME_WRONG_PASSWORD);
+        }
+        if path.ends_with("/rest/setRating") && value("rating") == Some("0") {
+            self.cleared.lock().push(
+                pairs
+                    .iter()
+                    .filter(|(k, _)| matches!(k.as_str(), "u" | "t" | "s" | "p" | "apiKey"))
+                    .cloned()
+                    .collect(),
+            );
+        }
+        if path.ends_with("/rest/getSong") {
+            return navidrome_json(
+                r#"{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"nd-1","title":"Teardrop","artist":"Massive Attack","album":"Mezzanine"}}}"#,
+            );
+        }
+        navidrome_json(r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#)
+    }
+}
+
+async fn sign_in_navidrome() -> (MockServer, SignInNavidrome) {
+    let server = MockServer::builder().start().await;
+    let responder = SignInNavidrome::default();
+    Mock::given(any())
+        .respond_with(responder.clone())
+        .mount(&server)
+        .await;
+    (server, responder)
+}
+
+fn value<'a>(sign_in: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    sign_in.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+/// A rating queues its action whichever way the app signs in, and the rating is put back to 0
+/// signed in the same way: u with t and s as sent, a password turned into a token made from it,
+/// or the API key.
+#[tokio::test]
+async fn every_sign_in_queues_the_action_and_clears_with_its_own_sign_in() {
+    let forms = [
+        "u=alice&t=token&s=salt",
+        "u=alice&p=secret",
+        "u=alice&p=enc:736563726574",
+        "apiKey=alice-key",
+    ];
+    for form in forms {
+        let (navidrome, responder) = sign_in_navidrome().await;
+        let state = state_with(
+            rating_settings(&navidrome.uri(), LibraryRatingScope::Global),
+            |_| {},
+        );
+        let app = app(&state);
+
+        let reply = get(
+            &app,
+            &format!("/rest/setRating.view?{form}&v=1.16.1&c=test&f=json&id=nd-1&rating=1"),
+        )
+        .await;
+        assert_eq!(reply.envelope()["status"], "ok", "{form}: {}", reply.text());
+        assert_eq!(state.library_action_rating_worker.pending(), 1, "{form}");
+
+        // Delete switched off before the worker runs: the action is Skipped, which consumes the
+        // rating, so it is put back to 0.
+        let mut off = (*state.settings.current()).clone();
+        off.library_actions.actions[0].enabled = false;
+        state.settings.set(off);
+        let stopping = tokio_util::sync::CancellationToken::new();
+        let running = tokio::spawn(state.library_action_rating_worker.clone().run(stopping.clone()));
+        crate::services::common::test_fakes::until(|| !responder.cleared.lock().is_empty()).await;
+        stopping.cancel();
+        let _ = running.await;
+
+        let cleared = responder.cleared.lock()[0].clone();
+        assert_eq!(
+            value(&cleared, "p"),
+            None,
+            "{form}: a password is never sent again"
+        );
+        if form.starts_with("apiKey") {
+            assert_eq!(value(&cleared, "apiKey"), Some("alice-key"), "{form}");
+            assert_eq!(value(&cleared, "u"), None, "{form}");
+        } else {
+            assert_eq!(value(&cleared, "u"), Some("alice"), "{form}");
+        }
+        if form.contains("t=token") {
+            assert_eq!(
+                (value(&cleared, "t"), value(&cleared, "s")),
+                (Some("token"), Some("salt"))
+            );
+        }
+        if form.contains("p=") {
+            let salt = value(&cleared, "s").expect("a salt");
+            use md5::{Digest, Md5};
+            let token = hex::encode(Md5::digest(format!("secret{salt}").as_bytes()));
+            assert_eq!(value(&cleared, "t"), Some(token.as_str()), "{form}");
+        }
+    }
+}
+
+/// Rates nd-1 with one star as `sign_in` and answers what Octo kept about it, if anything.
+async fn ignored_after(settings: AppSettings, sign_in: &str) -> (AppState, Option<IgnoredRating>) {
+    let state = state_with(settings, |inner| {
+        inner.notice_queue = asked_about("alice", "nd-asked");
+    });
+    let app = app(&state);
+    let reply = get(
+        &app,
+        &format!("/rest/setRating.view?{sign_in}&v=1.16.1&c=test&f=json&id=nd-1&rating=1"),
+    )
+    .await;
+    assert_eq!(reply.envelope()["status"], "ok", "{}", reply.text());
+    let kept = state.library_action_rating_worker.ignored().first().cloned();
+    (state, kept)
+}
+
+/// Each reason a rating that asks for an action gets none is kept with its words, the song and
+/// who rated it.
+#[tokio::test]
+async fn each_reason_a_rating_was_not_acted_on_is_kept_with_its_words() {
+    let (navidrome, _) = sign_in_navidrome().await;
+    let base = || rating_settings(&navidrome.uri(), LibraryRatingScope::Global);
+    let token = "u=alice&t=token&s=salt";
+    let mut cases: Vec<(AppSettings, &str, &str)> = Vec::new();
+
+    let mut off = base();
+    off.library_actions.enabled = false;
+    cases.push((
+        off,
+        token,
+        "Library actions are off. Turn on Enable library actions under Library actions.",
+    ));
+    let mut ratings_off = base();
+    ratings_off.library_actions.ratings_enabled = false;
+    cases.push((
+        ratings_off,
+        token,
+        "Star ratings are off. Turn on Star ratings as commands under Library actions.",
+    ));
+    let mut someone_else = base();
+    someone_else.library_actions.allowed_users = vec!["bob".into()];
+    cases.push((
+        someone_else,
+        token,
+        "alice is not on the allowed list. Add them to Who may trigger actions under Library actions.",
+    ));
+    let mut review_only = base();
+    review_only.library_actions.ratings_scope = LibraryRatingScope::NoticeOnly;
+    cases.push((
+        review_only,
+        token,
+        "The song is not in Review or Duplicates, and only answers there count. Set Where a star counts to Any song to count a star on every song.",
+    ));
+    cases.push((
+        base(),
+        "apiKey=nobody-key",
+        "Octo could not tell who rated the song, so it did nothing.",
+    ));
+
+    for (settings, sign_in, words) in cases {
+        let (state, kept) = ignored_after(settings, sign_in).await;
+        let kept = kept.unwrap_or_else(|| panic!("nothing kept for: {words}"));
+        assert_eq!(kept.reason, words);
+        assert_eq!(kept.song_id, "nd-1");
+        assert_eq!(kept.rating, 1);
+        assert_eq!(kept.action, LibraryAction::Delete);
+        assert_eq!(state.library_action_rating_worker.pending(), 0, "{words}");
+        if sign_in == token {
+            assert_eq!(kept.username, "alice");
+            assert_eq!(kept.title.as_deref(), Some("Teardrop"));
+            assert_eq!(kept.artist.as_deref(), Some("Massive Attack"));
+        }
+    }
+}
+
+/// In rehearsal mode the action is still queued, so the rehearsal is written down, and the
+/// rating is kept as one that changed nothing.
+#[tokio::test]
+async fn a_rehearsed_rating_is_queued_and_kept_as_changing_nothing() {
+    let (navidrome, _) = sign_in_navidrome().await;
+    let mut settings = rating_settings(&navidrome.uri(), LibraryRatingScope::Global);
+    settings.library_actions.dry_run = true;
+
+    let (state, kept) = ignored_after(settings, "u=alice&t=token&s=salt").await;
+
+    assert_eq!(state.library_action_rating_worker.pending(), 1);
+    assert_eq!(
+        kept.expect("kept").reason,
+        "Rehearsal mode is on, so nothing was changed. Turn off Rehearsal mode under Library actions."
+    );
+}
+
+/// A rating that acts, a rating no action is mapped to, and a rating Navidrome refused are not
+/// kept.
+#[tokio::test]
+async fn ratings_that_act_or_ask_for_nothing_are_not_kept() {
+    let (navidrome, _) = sign_in_navidrome().await;
+    let mut acting = rating_settings(&navidrome.uri(), LibraryRatingScope::Global);
+    acting.library_actions.dry_run = false;
+    let (state, kept) = ignored_after(acting, "u=alice&t=token&s=salt").await;
+    assert_eq!(state.library_action_rating_worker.pending(), 1);
+    assert_eq!(kept, None);
+
+    let mut off = rating_settings(&navidrome.uri(), LibraryRatingScope::Global);
+    off.library_actions.ratings_enabled = false;
+    let state = state_with(off, |_| {});
+    let app = app(&state);
+    for query in [
+        "u=alice&t=token&s=salt&f=json&id=nd-1&rating=3",
+        "u=alice&t=bad&s=salt&f=json&id=nd-1&rating=1",
+    ] {
+        get(&app, &format!("/rest/setRating.view?{query}&v=1.16.1&c=test")).await;
+    }
+    assert!(state.library_action_rating_worker.ignored().is_empty());
 }

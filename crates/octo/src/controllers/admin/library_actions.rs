@@ -1,5 +1,5 @@
 //! The library actions, questions and checks: the action history and its Allow downloading again,
-//! the notices, the duplicate scan, the library Review sweep, the weekly upgrade's status and the
+//! the ratings not acted on, the notices, the duplicate scan, the library Review sweep, the weekly upgrade's status and the
 //! song path resolver.
 //!
 //! Session-gated, because these list filenames and usernames. Every /api/admin endpoint sits
@@ -32,6 +32,10 @@ pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/library-actions", get(get_library_actions))
         .route("/api/admin/library-actions/allow-download", post(allow_download))
+        .route(
+            "/api/admin/library-actions/ignored-ratings",
+            get(get_ignored_ratings),
+        )
         .route("/api/admin/notices", get(get_notices))
         .route("/api/admin/duplicates/scan", post(scan_duplicates))
         .route("/api/admin/review-sweep", get(get_review_sweep))
@@ -110,6 +114,34 @@ async fn get_library_actions(State(state): State<AppState>, request: Request) ->
         ),
         "entries": entries,
     })))
+}
+
+/// The last star ratings that asked for an action and got none, or only a rehearsal, newest
+/// first, each with the reason. Gated like the action history: it names songs and people.
+async fn get_ignored_ratings(State(state): State<AppState>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    let browse = browse_user(&state, &parts);
+    if !browse.signed_in() {
+        return browse.finish(sign_in());
+    }
+    let entries: Vec<Value> = state
+        .library_action_rating_worker
+        .ignored()
+        .iter()
+        .map(|rating| {
+            json!({
+                "atUtc": utc(&rating.at_utc),
+                "username": rating.username,
+                "songId": rating.song_id,
+                "artist": rating.artist,
+                "title": rating.title,
+                "rating": rating.rating,
+                "action": action_name(rating.action),
+                "reason": rating.reason,
+            })
+        })
+        .collect();
+    browse.finish(ok(&json!({ "entries": entries })))
 }
 
 /// The allow-download body: an optional `key`.

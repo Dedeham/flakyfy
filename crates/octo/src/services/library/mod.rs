@@ -55,7 +55,9 @@ pub use library_action_journal::{LibraryActionEntry, LibraryActionJournal, Libra
 pub use library_action_playlist_provisioner::LibraryActionPlaylistProvisioner;
 pub use library_action_playlist_worker::LibraryActionPlaylistWorker;
 pub use library_action_quarantine::{LibraryActionQuarantine, QuarantineManifest, QuarantineResult, Swept};
-pub use library_action_rating_worker::{LibraryActionRatingWorker, RatingActionRequest};
+pub use library_action_rating_worker::{
+    IgnoredRating, LibraryActionRatingWorker, RatingActionRequest, RatingIgnored,
+};
 pub use library_edit_service::{
     LibraryEditOutcome, LibraryEditService, LibraryRescan, SongLookup, TrashedSong,
 };

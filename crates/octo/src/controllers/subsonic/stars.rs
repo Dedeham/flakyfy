@@ -8,8 +8,9 @@ use octo_core::common::playlist_id_helper;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
 use octo_core::models::radio::LastFmRadioPlay;
-use octo_core::settings::LibraryRatingScope;
+use octo_core::settings::{LibraryAction, LibraryRatingScope};
 use octo_core::soulseek::soulseek_metadata_service::RoutingKind;
+use octo_subsonic::SubsonicCredential;
 use tracing::{debug, info};
 
 use super::caller_checks::{
@@ -23,7 +24,7 @@ use crate::services::common::AcquisitionTarget;
 use crate::services::family::{HeartOutcome, SavedAlbum, SavedSong, family_caller};
 use crate::services::i_music_metadata_service::IMusicMetadataService;
 use crate::services::last_fm::LastFmRadioTrackResolver;
-use crate::services::library::RatingActionRequest;
+use crate::services::library::{IgnoredRating, RatingActionRequest, RatingIgnored};
 use crate::services::soulseek::SoulseekMetadataService;
 use crate::services::subsonic::RelayError;
 use octo_core::family::abilities::RequestQuality;
@@ -468,46 +469,88 @@ pub async fn set_rating(State(state): State<AppState>, req: Request) -> AppResul
         Err(other) => return Err(other.into()),
     };
 
-    if is_successful_subsonic_response(&result.body, &format)
-        && let Some(stars) = try_parse_int(&rating_text)
-        && !item_id.is_empty()
-        && let Some(rater) = listener(&state, &call).await
-    {
-        state
-            .generated_playlists
-            .rated(&rater, &item_id, i64::from(stars));
-        record_radio_ban(&state, &call, &rater, &item_id, stars).await;
+    let accepted = is_successful_subsonic_response(&result.body, &format);
+    let stars = try_parse_int(&rating_text).filter(|_| accepted && !item_id.is_empty());
+    let rater = match stars {
+        Some(_) => listener(&state, &call).await,
+        None => None,
+    };
+    if let (Some(stars), Some(rater)) = (stars, rater.as_deref()) {
+        state.generated_playlists.rated(rater, &item_id, i64::from(stars));
+        record_radio_ban(&state, &call, rater, &item_id, stars).await;
     }
 
     let settings = state.settings.current().library_actions.clone();
-    if is_successful_subsonic_response(&result.body, &format)
-        && let Some(rating) = try_parse_int(&rating_text)
-        && !item_id.is_empty()
-        && let Some(username) = call.param_opt("u").filter(|v| !v.is_empty())
-        && let Some(token) = call.param_opt("t").filter(|v| !v.is_empty())
-        && let Some(salt) = call.param_opt("s").filter(|v| !v.is_empty())
+    if let Some(rating) = stars
         && let Some(definition) = settings.action_for_rating(rating)
-        && rating_in_scope(&state, username, &item_id)
     {
-        // Navidrome answered ok to a call carrying this u/t/s, which IS the auth check.
-        // Octo does not validate the password itself; it trusts it exactly as far as
-        // Navidrome just did, the same idiom getPlaylist and star already use.
-        state
-            .library_action_rating_worker
-            .try_enqueue(RatingActionRequest {
-                action: definition.action,
-                navidrome_id: item_id.clone(),
-                username: username.to_string(),
-                auth_user: username.to_string(),
-                auth_token: token.to_string(),
-                auth_salt: salt.to_string(),
-            });
+        act_on_rating(
+            &state,
+            &call,
+            &item_id,
+            rating,
+            definition.action,
+            rater.as_deref(),
+        )
+        .await;
     }
 
     let content_type = result
         .content_type
         .unwrap_or_else(|| format!("application/{format}"));
     Ok(file(result.body, &content_type))
+}
+
+/// Queues the action a rating asks for, signed in the way the rating came: u with t and s, a
+/// password turned into a token first, or an API key. Navidrome accepting the rating with that
+/// sign-in IS the auth check; Octo trusts it exactly as far as Navidrome just did. A rating that
+/// gets no action, or only a rehearsal, is kept for the dashboard with the reason.
+async fn act_on_rating(
+    state: &AppState,
+    call: &SubsonicCall,
+    item_id: &str,
+    rating: i32,
+    action: LibraryAction,
+    rater: Option<&str>,
+) {
+    let worker = &state.library_action_rating_worker;
+    let credential = SubsonicCredential::from(&call.parameters).map(|c| c.without_password());
+    let queued = worker.check(rater).and_then(|()| {
+        let (Some(username), Some(credential)) = (rater, credential) else {
+            return Err(RatingIgnored::UnknownUser);
+        };
+        if !rating_in_scope(state, username, item_id) {
+            return Err(RatingIgnored::OutsideNotices);
+        }
+        worker.try_enqueue(RatingActionRequest {
+            action,
+            navidrome_id: item_id.to_string(),
+            username: username.to_string(),
+            credential,
+        })
+    });
+    let ignored = match queued {
+        Err(reason) => reason,
+        // Keep touches no file, so a rehearsal changes nothing about it.
+        Ok(()) if action != LibraryAction::Keep && state.settings.current().library_actions.dry_run => {
+            RatingIgnored::DryRun
+        }
+        Ok(()) => return,
+    };
+    let song = resolver(state, call)
+        .resolve_scrobble(item_id, &call.parameters)
+        .await;
+    let username = rater.unwrap_or_default().to_string();
+    worker.note_ignored(IgnoredRating {
+        at_utc: Utc::now(),
+        reason: ignored.reason(&username),
+        username,
+        song_id: item_id.to_string(),
+        artist: song.as_ref().map(|s| s.artist.clone()).filter(|a| !a.is_empty()),
+        title: song.map(|s| s.title).filter(|t| !t.is_empty()),
+        rating,
+        action,
+    });
 }
 
 /// The listener a request Navidrome accepted speaks for, named the way every request's identity

@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::TryStreamExt;
 use octo_core::common::dotnet;
+use octo_core::fingerprint::recording_identity::{RecordingKind, Takes};
 use octo_core::fingerprint::{InconclusiveReason, VerificationResult, VerificationVerdict};
 use octo_core::models::domain::{Album, Song};
 use octo_core::notifications::{NotificationEvent, NotificationEventType};
@@ -1161,6 +1162,9 @@ impl SoulseekDownloadService {
         let excluded = self.excluded_folders().await;
 
         let mut last_error: Option<String> = None;
+        // The last file AcoustID refused, as the error it left and the reason in words ("is a
+        // live recording, from 'X'"), so a failure that ends on it leads with why.
+        let mut last_refusal: Option<(String, String)> = None;
         let mut start_announced = false;
 
         // A file that claims to be lossless and whose spectrum says it was made from a lossy
@@ -1531,9 +1535,19 @@ impl SoulseekDownloadService {
                             &track_key,
                             acquisition_event_kinds::CHECK,
                             &format!("AcoustID says this is {}", verdict.describe()),
-                            Some("Not the song asked for; thrown away"),
+                            Some(
+                                if verdict.kind.is_some_and(|kind| kind != RecordingKind::Studio) {
+                                    "Not the take asked for; thrown away"
+                                } else {
+                                    "Not the song asked for; thrown away"
+                                },
+                            ),
                         );
-                        last_error = Some(format!("AcoustID identified the file as {}", verdict.describe()));
+                        let identified = format!("AcoustID identified the file as {}", verdict.describe());
+                        if !verdict.deny_reason.is_empty() {
+                            last_refusal = Some((identified.clone(), verdict.deny_reason.clone()));
+                        }
+                        last_error = Some(identified);
                         continue;
                     }
 
@@ -1776,8 +1790,20 @@ impl SoulseekDownloadService {
             last_error = Some("the copy held back is no longer on disk".into());
         }
 
+        // The first sentence is what a person is shown, so a failure that ended on a refused file
+        // leads with why it was refused.
+        let refused = last_refusal
+            .filter(|(error, _)| last_error.as_deref() == Some(error.as_str()))
+            .map(|(_, reason)| reason);
+        let lead = match (refused, tried) {
+            (Some(reason), 1) => format!("The Soulseek copy of '{artist} - {title}' {reason}"),
+            (Some(reason), _) => {
+                format!("All {tried} Soulseek copies of '{artist} - {title}' failed; the last one {reason}")
+            }
+            (None, _) => format!("All {tried} Soulseek peer attempts failed for '{artist} - {title}'"),
+        };
         anyhow::bail!(
-            "All {tried} Soulseek peer attempts failed for '{artist} - {title}'. Last error: {}. \
+            "{lead}. Last error: {}. \
              If slskd shows these transfers as Completed, slskd's downloads directory is not the directory Octo watches ({}); \
              set SLSKD_DOWNLOADS_DIR=/music on the slskd container (see issue #17).",
             last_error.unwrap_or_default(),
@@ -1880,6 +1906,21 @@ impl SoulseekDownloadService {
             ranked,
             queries: asked,
         })
+    }
+
+    /// What take a file already in the library is, by its audio: the studio take, a live take,
+    /// an instrumental. None when fingerprinting is off or nothing was decided.
+    pub async fn take_of_file(&self, path: &str, artist: &str, title: &str) -> Option<RecordingKind> {
+        if !self.verification.is_fingerprinting_enabled() {
+            return None;
+        }
+        let verdict = self
+            .verification
+            .verify(path, Some(artist), Some(title), None, &Takes::Any)
+            .await;
+        (verdict.verdict == VerificationVerdict::Confirmed)
+            .then_some(verdict.kind)
+            .flatten()
     }
 
     /// The rejected-peer list Find songs judges copies against.

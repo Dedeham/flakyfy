@@ -184,10 +184,13 @@ impl VerificationResult {
     pub fn describe(&self) -> String {
         let artist = self.matched_artist.as_deref().unwrap_or("");
         let title = self.matched_title.as_deref().unwrap_or("");
-        if artist.is_empty() && title.is_empty() {
-            "a different recording".to_string()
-        } else {
-            format!("'{artist} - {title}'")
+        let take = self
+            .kind
+            .filter(|kind| *kind != crate::fingerprint::recording_identity::RecordingKind::Studio);
+        match take {
+            _ if artist.is_empty() && title.is_empty() => "a different recording".to_string(),
+            Some(kind) => format!("{} of '{artist} - {title}'", kind.described()),
+            None => format!("'{artist} - {title}'"),
         }
     }
 

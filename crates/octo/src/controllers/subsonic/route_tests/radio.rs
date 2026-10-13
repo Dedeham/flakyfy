@@ -658,14 +658,38 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
             "{format}"
         );
         // The station's row says it is a station; Navidrome's own playlist says nothing.
-        let station = &body[body.find("Your Mix").unwrap()..];
-        let native = &body[body.find("Native Playlist").unwrap()..body.find("Your Mix").unwrap()];
+        // Rows are found by the station's id and the playlist's name.
+        let station_id = fixture.station_id();
         if format == "json" {
-            assert!(station.contains(r#""octoGroup":"station""#), "{body}");
+            let document = response.json();
+            let rows = document["subsonic-response"]["playlists"]["playlist"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a playlist list: {body}"));
+            let station = rows
+                .iter()
+                .find(|row| row["id"] == station_id.as_str())
+                .unwrap_or_else(|| panic!("the station's row: {body}"));
+            let native = rows
+                .iter()
+                .find(|row| row["name"] == "Native Playlist")
+                .unwrap_or_else(|| panic!("the playlist's row: {body}"));
+            assert_eq!(station["octoGroup"], "station", "{body}");
+            assert!(native.get("octoGroup").is_none(), "{body}");
         } else {
-            assert!(station.contains(r#"octoGroup="station""#), "{body}");
+            // A row's attributes, up to the end of its opening tag.
+            let row = |marker: &str| -> &str {
+                body.split("<playlist ")
+                    .skip(1)
+                    .map(|row| row.split('>').next().unwrap_or(row))
+                    .find(|row| row.contains(marker))
+                    .unwrap_or_else(|| panic!("a row with {marker}: {body}"))
+            };
+            assert!(
+                row(&format!(r#"id="{station_id}""#)).contains(r#"octoGroup="station""#),
+                "{body}"
+            );
+            assert!(!row(r#"name="Native Playlist""#).contains("octoGroup"), "{body}");
         }
-        assert!(!native.contains("octoGroup"), "{body}");
     }
 }
 

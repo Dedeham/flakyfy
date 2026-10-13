@@ -310,7 +310,7 @@ pub fn fix_all_label(check: HealthCheck, count: usize) -> String {
 pub fn fix_meaning(check: HealthCheck) -> &'static str {
     match check {
         HealthCheck::Duplicates => {
-            "Keeps the best sound of each song in the copy people starred, rated, played or put in playlists, fills in the tags it lacks from the others, and moves the others to the server's trash, where they can be put back."
+            "Keeps the best sound of each song in the copy people starred, rated, played or put in playlists, fills in the tags it lacks from the others, and moves the others to the server's trash, where they can be put back. Their stars, ratings and playlist places move to the copy that stays."
         }
         HealthCheck::SplitAlbums => {
             "Gives the songs of the other parts the album tags of the largest part, album artist and all, so each album shows as one. When one part's album artist already names every part's artist, that part leads instead."
@@ -358,3 +358,79 @@ pub fn kept_marks_as_is(quality: &str, reason: TargetReason) -> String {
 
 /// Said on a set in the list, where the plan shown is the best-sound one.
 pub const MARKS_PICKED_IN_PREVIEW: &str = "Fix these copies first checks which copy people starred, rated, played or put in playlists, and keeps the best sound in that one.";
+
+/// Said on a set in the list while every rated copy is kept.
+pub const RATED_KEPT_IN_PREVIEW: &str = "Fix these copies first checks who starred or rated each copy: every copy someone starred or rated stays, and only the others go.";
+
+/// The switch beside Fix on the duplicates page.
+pub const KEEP_RATED_LABEL: &str = "Keep every rated copy";
+
+/// What the switch does, in one sentence.
+pub const KEEP_RATED_MEANING: &str = "When on, a copy anyone starred or rated is never removed: only copies nobody starred or rated go to the trash.";
+
+/// The rest of what the switch does, for those who open it.
+pub const KEEP_RATED_MORE: &str = "Everyone's stars and ratings count, Family members' too. A song where every copy is starred or rated is left as it is. Plays and playlist places do not keep a copy by themselves: playlist places move to the copy that stays, and plays stay with the copy that goes, since Navidrome cannot give plays to another copy.";
+
+/// Why a set is left alone while every rated copy is kept.
+pub const ALL_RATED: &str = "Every copy is starred or rated, so all of them stay and nothing changes.";
+
+/// The rated copies a plan keeps besides the one it keeps first.
+pub fn also_keeps_rated(count: usize) -> String {
+    format!(
+        "Also keeps {} someone starred or rated, as {}.",
+        count_text(count, "other copy", "other copies"),
+        if count == 1 { "it is" } else { "they are" }
+    )
+}
+
+/// The sets a preview leaves alone because every copy is starred or rated.
+pub fn skipped_rated(count: usize) -> String {
+    format!(
+        "Leaves {} as {}: every copy is starred or rated.",
+        count_text(count, "song", "songs"),
+        if count == 1 { "it is" } else { "they are" }
+    )
+}
+
+/// The marks on one copy for the preview: "Starred, rated 4 stars", "Rated 5 stars by 2
+/// people", or None when nobody starred or rated it. `unread` says some marks could not be read.
+pub fn marks_words(
+    starred: usize,
+    best_rating: i32,
+    rated: usize,
+    people: usize,
+    unread: bool,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if starred > 0 {
+        parts.push("starred".to_string());
+    }
+    if rated > 0 {
+        parts.push(format!(
+            "rated {}",
+            count_text(best_rating.max(0) as usize, "star", "stars")
+        ));
+    }
+    let said = if parts.is_empty() {
+        None
+    } else {
+        let mut text = parts.join(", ");
+        if people > 1 {
+            text.push_str(&format!(" by {}", count_text(people, "person", "people")));
+        }
+        Some(upper_first(&text))
+    };
+    match (said, unread) {
+        (said, false) => said,
+        (Some(said), true) => Some(format!("{said}; some marks could not be read")),
+        (None, true) => Some("Some marks could not be read, so it stays".to_string()),
+    }
+}
+
+fn upper_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}

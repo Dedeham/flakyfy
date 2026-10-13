@@ -306,7 +306,7 @@ Enums:
 | `BackfillMaxConsecutiveFailures` | `GENRE_BACKFILL_MAX_FAILURES` | int | 25 / `25` / `25` | `v <= 0 → 0` (never give up), else `Clamp(1, 10000)` | Live | no |
 | `BackfillExtensions` | - | `List<string>` | `[]` / `[]` / - | Each entry is trimmed and lowercased, kept at 1–10 characters, and given a leading `.` if missing. An empty result falls back to `.flac .mp3 .m4a .ogg .opus .wav .aiff .aif .wma`. The set is case-insensitive. | Live | no |
 
-### 3.10 `LibraryActions` → `LibraryActionSettings` (24)
+### 3.10 `LibraryActions` → `LibraryActionSettings` (25)
 
 Enums:
 
@@ -340,6 +340,7 @@ Enums:
 | `RatingsScope` | `LIBRARY_ACTIONS_RATINGS_SCOPE` | enum | Auto / `Auto` / `Auto` | Auto → NoticeOnly when Review or Duplicates is on, otherwise Global. | Live | yes |
 | `UpgradePerWeek` | `LIBRARY_ACTIONS_UPGRADE_PER_WEEK` | int | 0 / `0` / `0` | `Clamp(0, 500)` | Live | yes |
 | `UpgradeSource` | `LIBRARY_ACTIONS_UPGRADE_SOURCE` | enum | Auto / `Auto` / `Auto` | - | Live | yes |
+| `KeepRatedCopies` | - | bool | false / - / - | Library health only: when on, a duplicate fix keeps every copy anyone (the admin or a Family member) starred or rated, removes only copies nobody starred or rated, and skips a set where every copy is starred or rated. The preview request field `keepRated` overrides it for one preview. Set from the switch on the Library health page. | Live | no (Library health page) |
 
 ### 3.11 `Metadata` → `MetadataSettings` (18)
 

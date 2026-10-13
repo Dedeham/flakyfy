@@ -425,6 +425,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("UpgradeSource", name(actions.upgrade_source)),
             ("NoticeMaxTracks", n_num(actions.notice_max_tracks)),
             ("RatingsScope", name(actions.ratings_scope)),
+            ("KeepRatedCopies", Node::Bool(actions.keep_rated_copies)),
             ("AllowedUsers", n_str_array(&actions.allowed_users)),
             // Effective rather than raw, because the editor needs every action present even
             // when the config names only some of them. Projected so the enum lands as its NAME:

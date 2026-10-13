@@ -266,6 +266,11 @@ pub struct LibraryActionSettings {
     /// uses only that one.
     /// Environment variable: LIBRARY_ACTIONS_UPGRADE_SOURCE
     pub upgrade_source: UpgradeSourceChoice,
+
+    /// When Library health fixes duplicates, every copy anyone starred or rated stays, and only
+    /// copies nobody starred or rated go to the trash. Off by default: the fix keeps one copy of
+    /// each song. Set from the switch on the dashboard's Library health page.
+    pub keep_rated_copies: bool,
 }
 
 impl Default for LibraryActionSettings {
@@ -295,6 +300,7 @@ impl Default for LibraryActionSettings {
             ratings_scope: LibraryRatingScope::Auto,
             upgrade_per_week: 0,
             upgrade_source: UpgradeSourceChoice::Auto,
+            keep_rated_copies: false,
         }
     }
 }

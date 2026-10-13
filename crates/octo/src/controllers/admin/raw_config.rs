@@ -309,6 +309,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Subsonic:SearchDurationWaitMs",
     "Subsonic:SearchLastFmWaitMs",
     "Subsonic:SizeFlagClients",
+    "LibraryActions:KeepRatedCopies",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

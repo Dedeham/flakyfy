@@ -696,6 +696,10 @@ impl LibraryHealthService {
         let mut failed: Vec<(FixStep, String)> = Vec::new();
         let mut rehearsed = false;
         let mut stopped = false;
+        let mut kept_rated = 0;
+        if let Some(keep) = &self.services.keep_marks {
+            keep.begin_run();
+        }
         {
             let _hold = self.rescan.hold();
             for step in steps {
@@ -708,9 +712,17 @@ impl LibraryHealthService {
                     Ok(answer) => answer,
                     Err(e) => FixAnswer::new("failed", Some(&e.to_string())),
                 };
+                let kept = matches!(
+                    answer.detail.as_deref(),
+                    Some(keep_marks::RATED_SINCE | keep_marks::MARKS_UNREAD)
+                );
                 match answer.state.as_str() {
                     "applied" => done.push(step),
                     "rehearsed" => rehearsed = true,
+                    "skipped" if kept => {
+                        kept_rated += 1;
+                        unchanged.push(step);
+                    }
                     "skipped" if fixes::is_nothing_to_do(answer.detail.as_deref()) => unchanged.push(step),
                     state => {
                         let why = answer
@@ -724,7 +736,16 @@ impl LibraryHealthService {
                 run.one_done();
             }
         }
-        let notes = self.finish_moves(&run, &mut done, &mut failed).await;
+        let mut notes = self.finish_moves(&run, &mut done, &mut failed).await;
+        if kept_rated > 0 {
+            notes.insert(
+                0,
+                format!(
+                    "Kept {} someone starred or rated since the preview, or whose marks could not be read.",
+                    words::count_text(kept_rated, "copy", "copies")
+                ),
+            );
+        }
         let any_done = !done.is_empty();
         let outcome = FixOutcome {
             done,
@@ -791,9 +812,10 @@ impl LibraryHealthService {
         }
     }
 
-    /// The end of a run that moved sound between copies: each move is checked until Navidrome
-    /// keeps the song as the same one, and one it does not keep was put back, so it counts as
-    /// failed. Songs put back get their playlist places back. Answers what is worth saying.
+    /// The end of a run: each move of sound between copies is checked until Navidrome keeps the
+    /// song as the same one, and one it does not keep was put back, so it counts as failed. Songs
+    /// put back get their playlist places back. Answers what is worth saying, the marks carried
+    /// over included.
     async fn finish_moves(
         &self,
         run: &HealthRun,
@@ -810,10 +832,10 @@ impl LibraryHealthService {
                 .collect()
         };
         let (moved, back) = (ids(actions::MOVE_SOUND), ids(actions::MOVE_BACK));
-        if moved.is_empty() && back.is_empty() {
-            return Vec::new();
+        if !moved.is_empty() || !back.is_empty() {
+            run.step(Some(keep_marks::CHECKING.to_string()));
         }
-        run.step(Some(keep_marks::CHECKING.to_string()));
+        // Also puts back the playlist places of copies put back, and says what the carries left.
         let (put_back, notes) = keep.finish_run(&moved, &back).await;
         for (id, why) in put_back {
             if let Some(at) = done
@@ -908,12 +930,29 @@ impl LibraryHealthService {
                 return Ok(FixAnswer::new("skipped", Some("Library actions are off.")));
             };
             let copy = matches!(step.param("copy"), Some("true" | "1"));
+            // A copy removed for another names the copy that stays, which takes its marks.
+            let into = step
+                .param(keep_marks::INTO)
+                .map(str::trim)
+                .filter(|into| !into.is_empty() && *into != step.id);
+            let only_unrated = keep_marks::flag(step.param(keep_marks::UNRATED_ONLY));
+            let keep = self.services.keep_marks.as_ref();
+            let marks = match keep {
+                Some(keep) if into.is_some() || only_unrated => Some(keep.marks(&step.id).await),
+                _ => None,
+            };
+            if only_unrated && let Some(why) = marks.as_deref().and_then(keep_marks::kept_because) {
+                return Ok(FixAnswer::new("skipped", Some(why)));
+            }
             let mut request = LibraryActionRequest::new(LibraryAction::Delete, step.id.clone(), user);
             request.only_a_copy = copy;
             let outcome = executor.apply(request).await?;
             // The executor never asks for a scan itself; the run's one scan covers it.
             if outcome.state == LibraryActionState::Applied {
                 self.rescan.soon();
+                if let (Some(keep), Some(into), Some(marks)) = (keep, into, marks.as_deref()) {
+                    keep.carry(&step.id, &step.title, into, marks).await;
+                }
             }
             let state = match outcome.state {
                 LibraryActionState::Applied => "applied",
@@ -952,7 +991,16 @@ impl LibraryHealthService {
             }
             actions::COVER => edits.add_cover(&step.id, user, false).await,
             actions::UNDO => edits.undo(&step.id, user).await,
-            actions::RESTORE => edits.restore(&step.id, user).await,
+            actions::RESTORE => {
+                let restored = edits.restore(&step.id, user).await;
+                // A copy back again takes off the copy that stayed what its removal put there.
+                if restored.state == "applied"
+                    && let Some(keep) = &self.services.keep_marks
+                {
+                    keep.uncarry(&step.id, &step.title).await;
+                }
+                restored
+            }
             other => LibraryEditOutcome::new("failed", format!("Unknown change \"{other}\".")),
         };
         Ok(FixAnswer {

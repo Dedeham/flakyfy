@@ -61,8 +61,9 @@ pub use library_edit_service::{
 };
 pub use library_ownership::{LibraryOwnership, OwnedCopy, OwnedDecision, OwnershipNavidrome};
 pub use library_review_sweep_worker::{
-    FingerprintSweepVerifier, IReviewSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
-    ReviewSweepState, ReviewSweepStatus, ReviewSweepStore, SweepVerification,
+    AutoReplace, ExecutorSweepReplacer, FingerprintSweepVerifier, IReviewSweepVerifier,
+    LibraryReviewSweepParts, LibraryReviewSweepWorker, RecheckState, RecheckStatus, ReviewSweepState,
+    ReviewSweepStatus, ReviewSweepStore, SweepReplacer, SweepVerification, Today,
 };
 pub use library_snapshot::LibrarySnapshot;
 pub use missing_rows::{Forgotten, MissingRows};

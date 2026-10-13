@@ -379,6 +379,10 @@ Enums:
 | `RefreshHours` | `MIX_REFRESH_HOURS` | int | 24 / `24` / `24` | `Clamp(1, 336)` | Live | yes |
 | `NewShare` | `MIX_NEW_SHARE` | int (percent) | 0 / `0` / `0` | `Clamp(0, 100)` | Live | yes |
 | `NewDays` | `MIX_NEW_DAYS` | int | 30 / `30` / `30` | `Clamp(1, 3650)` | Live | yes |
+| `Years` | `MIXES_YEARS` | bool | false / - / `false` | A mix per year (`year:1994`, "1994 Mix"), counted from the listener's library walk (up to 40,000 songs), drawn with `getRandomSongs` `fromYear`=`toYear`. Needs `Enabled`. Rust only (list groups). | Live | yes |
+| `MaxYearPlaylists` | `MIX_MAX_YEAR_PLAYLISTS` | int | 10 / - / `10` | `Clamp(1, 30)`. Year mixes have their own cap on top of `MaxPlaylists`, the most songs first and the newest year first on ties, with the `CreateAt`/`RemoveBelow` thresholds. Rust only. | Live | yes |
+| `Artists` | `MIXES_ARTISTS` | bool | false / - / `false` | A mix per most played artist (`artist:<Navidrome artist id>`, "<Artist> Mix"): half the artist's own songs, half library songs by the artists Last.fm calls similar (artist.getsimilar, 15), all their own without a Last.fm key; drawn again every `RefreshHours`. Needs `Enabled`. Rust only. | Live | yes |
+| `ArtistCount` | `MIX_ARTIST_COUNT` | int | 5 / - / `5` | `Clamp(1, 20)`. An artist joins at rank `ArtistCount` or better and leaves only below rank `ArtistCount + 3` once their mix is 7 days old. Rust only. | Live | yes |
 | `NewReleases` | `FOR_YOU_NEW_RELEASES` | bool | true / - / `true` | Made for you's New Releases. `AnyForYou` = any of the three. | Live | yes |
 | `Rediscover` | `FOR_YOU_REDISCOVER` | bool | true / - / `true` | Made for you's Rediscover. | Live | yes |
 | `DeepCuts` | `FOR_YOU_DEEP_CUTS` | bool | true / - / `true` | Made for you's Deep Cuts. | Live | yes |

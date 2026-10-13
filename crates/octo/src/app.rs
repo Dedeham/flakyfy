@@ -2290,9 +2290,12 @@ impl LibraryJobs {
                 Clock::system(),
             )
             .with_library_scope(navidrome.library_scope.clone())
+            // Marks are read as the admin sees them; no other listener's are read.
             .with_replacer(Arc::new(ExecutorSweepReplacer::new(
                 navidrome.navidrome_song_path_resolver.clone(),
                 executor.clone(),
+                navidrome.navidrome_playlist_api.clone(),
+                None,
             ))),
         );
         LibraryJobs {

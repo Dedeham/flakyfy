@@ -311,7 +311,7 @@ async fn reset_review_sweep(State(state): State<AppState>) -> Response {
     accepted(&json!({ "ok": true }))
 }
 
-/// "Re-check Octo's downloads" (#87): forgets when Octo's own downloads were checked and checks
+/// "Re-check Octo's downloads": forgets when Octo's own downloads were checked and checks
 /// each once more, then stops, even with the sweep's own rate at 0. Songs already asked about
 /// stay answered.
 async fn recheck_octo_downloads(State(state): State<AppState>) -> Response {

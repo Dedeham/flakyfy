@@ -1,6 +1,6 @@
 //! The Review sweep asks about the library and never acts unless told to replace a file that
-//! clearly is another song, and it gets out of a download's way (#72, #87). And AcoustID's
-//! background lane, which the sweep's lookups use.
+//! clearly is another song, and it gets out of a download's way. And AcoustID's background
+//! lane, which the sweep's lookups use.
 
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicUsize};
@@ -25,6 +25,9 @@ struct FakeVerifier {
     ready: std::sync::atomic::AtomicBool,
     asked: Mutex<Vec<String>>,
     answer: Mutex<Answer>,
+    /// What an ISRC check answers, and the codes it was asked about.
+    isrc_answer: Mutex<Option<bool>>,
+    isrcs_asked: Mutex<Vec<String>>,
 }
 
 impl FakeVerifier {
@@ -33,7 +36,19 @@ impl FakeVerifier {
             ready: std::sync::atomic::AtomicBool::new(true),
             asked: Mutex::new(Vec::new()),
             answer: Mutex::new(Box::new(answer)),
+            isrc_answer: Mutex::new(None),
+            isrcs_asked: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The same, with the ISRC check answering `isrc`.
+    fn answering_isrc(
+        answer: impl Fn() -> VerificationResult + Send + Sync + 'static,
+        isrc: Option<bool>,
+    ) -> Arc<Self> {
+        let verifier = Self::answering(answer);
+        *verifier.isrc_answer.lock() = isrc;
+        verifier
     }
 
     fn confirming() -> Arc<Self> {
@@ -56,6 +71,11 @@ impl IReviewSweepVerifier for FakeVerifier {
             .lock()
             .push(path.rsplit('/').next().unwrap_or(path).to_string());
         (self.answer.lock())()
+    }
+
+    async fn isrc_agrees(&self, _: &VerificationResult, isrc: &str) -> Option<bool> {
+        self.isrcs_asked.lock().push(isrc.to_string());
+        *self.isrc_answer.lock()
     }
 }
 
@@ -213,6 +233,25 @@ impl Sweep {
         let path = self.root.path().join(name);
         std::fs::write(&path, "x").expect("written");
         path.to_string_lossy().into_owned()
+    }
+
+    /// A FLAC tagged with `artist` and `title`, and `isrc` when given.
+    fn tagged(&self, name: &str, artist: &str, title: &str, isrc: Option<&str>) -> String {
+        let path = self.root.path().join(name);
+        std::fs::write(&path, crate::services::test_support::flac()).expect("written");
+        let mut file = TagFile::open(&path).expect("opens");
+        file.set_performers(&[artist.to_string()]);
+        file.set_title(Some(title));
+        if let Some(isrc) = isrc {
+            tag_writer_extras::set_text(&mut file, TagFields::ISRC, Some(isrc));
+        }
+        file.save().expect("saved");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Massive Attack's Teardrop, tagged, which the tests hear as Portishead.
+    fn teardrop(&self, name: &str) -> String {
+        self.tagged(name, "Massive Attack", "Teardrop", None)
     }
 
     fn worker(&self, verifier: Arc<FakeVerifier>, options: Options) -> Arc<LibraryReviewSweepWorker> {
@@ -874,12 +913,13 @@ fn the_sweep_never_asks_about_a_family_members_own_songs() {
     ));
 }
 
-// ---- Replacing a file that clearly is another song (#87) ---------------------------------
+// ---- Replacing a file that clearly is another song ---------------------------------------
 
-/// A stand-in for Wrong song: every file has a Navidrome id unless `shown` is off, and every
-/// request ends in `state`.
+/// A stand-in for Wrong song: every file has a Navidrome id unless `shown` is off, its marks
+/// read as `marked`, and every request ends in `state`.
 struct FakeReplacer {
     shown: bool,
+    marked: Option<bool>,
     state: Mutex<LibraryActionState>,
     requests: Mutex<Vec<(LibraryAction, String, String)>>,
 }
@@ -888,7 +928,18 @@ impl FakeReplacer {
     fn ending(state: LibraryActionState) -> Arc<Self> {
         Arc::new(FakeReplacer {
             shown: true,
+            marked: Some(false),
             state: Mutex::new(state),
+            requests: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Wrong song that would apply, on a song whose marks read as `marked`.
+    fn marked(marked: Option<bool>) -> Arc<Self> {
+        Arc::new(FakeReplacer {
+            shown: true,
+            marked,
+            state: Mutex::new(LibraryActionState::Applied),
             requests: Mutex::new(Vec::new()),
         })
     }
@@ -903,6 +954,10 @@ impl SweepReplacer for FakeReplacer {
     async fn song_id(&self, _: &str, _: &str, path: &str) -> Option<String> {
         self.shown
             .then(|| format!("nd-{}", path.rsplit('/').next().unwrap_or(path)))
+    }
+
+    async fn marked(&self, _: &str) -> Option<bool> {
+        self.marked
     }
 
     async fn replace(&self, request: LibraryActionRequest) -> anyhow::Result<LibraryActionOutcome> {
@@ -957,6 +1012,15 @@ fn song_titled(title: &str) -> Song {
     }
 }
 
+/// Massive Attack's `title`, read from real tags.
+fn file_titled(title: &str) -> SweptFile {
+    SweptFile {
+        song: song_titled(title),
+        tagged: true,
+        isrc: None,
+    }
+}
+
 /// Classify, then decide: only a confident other song by another title is replaced.
 #[test]
 fn classify_then_decide_replaces_only_a_confident_other_song() {
@@ -964,7 +1028,7 @@ fn classify_then_decide_replaces_only_a_confident_other_song() {
     let decide = |verdict: VerificationResult, title: &str| {
         let (outcome, question) = LibraryReviewSweepWorker::classify(verdict);
         assert_eq!(outcome, Outcome::Ask);
-        LibraryReviewSweepWorker::decide(&question, &song_titled(title), &settings, "bob", Today::default())
+        LibraryReviewSweepWorker::decide(&question, &file_titled(title), &settings, "bob", Today::default())
     };
     assert_eq!(decide(heard_as("Roads", 0.97), "Teardrop"), AutoReplace::Replace);
     // Another take, a remaster or a guest credit of the same song stays a question.
@@ -1000,9 +1064,9 @@ fn classify_then_decide_replaces_only_a_confident_other_song() {
 #[test]
 fn decide_keeps_to_the_switch_dry_run_allowlist_and_the_day() {
     let (_, question) = LibraryReviewSweepWorker::classify(heard_as("Roads", 0.97));
-    let song = song_titled("Teardrop");
+    let file = file_titled("Teardrop");
     let decide = |actions: LibraryActionSettings, keeper: &str, today: Today| {
-        LibraryReviewSweepWorker::decide(&question, &song, &app_settings(actions), keeper, today)
+        LibraryReviewSweepWorker::decide(&question, &file, &app_settings(actions), keeper, today)
     };
     assert_eq!(
         decide(replacing(60), "bob", Today::default()),
@@ -1052,7 +1116,7 @@ fn the_note_says_what_octo_heard_and_how_sure() {
 #[tokio::test]
 async fn a_confident_other_song_is_replaced_and_leaves_a_note() {
     let sweep = Sweep::new();
-    let path = sweep.song("a.flac");
+    let path = sweep.teardrop("a.flac");
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
     let worker = sweep.worker(
@@ -1099,7 +1163,7 @@ async fn a_confident_other_song_is_replaced_and_leaves_a_note() {
 #[tokio::test]
 async fn another_take_of_the_same_song_is_asked_about() {
     let sweep = Sweep::new();
-    sweep.song("Roads.flac");
+    sweep.tagged("Roads.flac", "Massive Attack", "Roads", None);
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
     sweep
@@ -1124,7 +1188,7 @@ async fn another_take_of_the_same_song_is_asked_about() {
 async fn below_the_threshold_or_a_wrong_length_is_asked_about() {
     for verdict in [heard_as("Roads", 0.80), confirmed(120, Some(300))] {
         let sweep = Sweep::new();
-        sweep.song("a.flac");
+        sweep.teardrop("a.flac");
         let queue = Arc::new(NoticeQueue::new());
         let replacer = FakeReplacer::ending(LibraryActionState::Applied);
         sweep
@@ -1148,7 +1212,7 @@ async fn below_the_threshold_or_a_wrong_length_is_asked_about() {
 #[tokio::test]
 async fn a_dry_run_queues_nothing() {
     let sweep = Sweep::new();
-    sweep.song("a.flac");
+    sweep.teardrop("a.flac");
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
     sweep
@@ -1173,12 +1237,52 @@ async fn a_dry_run_queues_nothing() {
     );
 }
 
-/// The request goes as the keeper, who is on the allowlist; the executor's own refusal leaves
-/// the file a question and is no failure.
+/// A keeper who is not on the allowlist never has a file replaced: the file is asked about and
+/// nothing is queued.
 #[tokio::test]
 async fn the_allowlist_is_respected() {
     let sweep = Sweep::new();
-    sweep.song("a.flac");
+    sweep.teardrop("a.flac");
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let worker = sweep.worker(
+        FakeVerifier::answering(|| heard_as("Roads", 0.97)),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing(60)),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    let root = sweep.root();
+    let step = Step {
+        lane: Lane::Library,
+        generation: 0,
+        keeper: "mallory",
+        interval: Duration::from_secs(60),
+        root: &root,
+        now: Utc::now(),
+    };
+    let pick = Pick {
+        target: Some("a.flac".into()),
+        stamp: None,
+        passed: String::new(),
+        cursor: String::new(),
+    };
+    worker.check(&step, "a.flac", pick).await;
+
+    assert!(replacer.requests().is_empty());
+    assert_eq!(queue.for_user("mallory", NoticeKind::Review).len(), 1);
+    assert_eq!(queue.open_count(NoticeOrigin::LibrarySweep), 1);
+    assert_eq!(worker.status().today, Today::default());
+}
+
+/// The request goes as the keeper; the executor's own refusal leaves the file a question and is
+/// no failure.
+#[tokio::test]
+async fn an_executor_refusal_leaves_a_question_and_no_failure() {
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Skipped);
     let worker = sweep.worker(
@@ -1196,13 +1300,176 @@ async fn the_allowlist_is_respected() {
     assert_eq!(worker.status().today, Today::default());
 }
 
+/// Runs one tick over `file` with replacing on, AcoustID answering `verdict` and the ISRC check
+/// `isrc`, Wrong song applying on a song whose marks read `marked`, and answers whether Wrong
+/// song was queued, whether a question was left, and the ISRCs checked.
+async fn one_check(
+    sweep: &Sweep,
+    verdict: VerificationResult,
+    isrc: Option<bool>,
+    marked: Option<bool>,
+) -> (bool, bool, Vec<String>) {
+    let queue = Arc::new(NoticeQueue::new());
+    let replacer = FakeReplacer::marked(marked);
+    let verifier = FakeVerifier::answering_isrc(move || verdict.clone(), isrc);
+    let worker = sweep.worker(
+        verifier.clone(),
+        Options {
+            queue: Some(queue.clone()),
+            settings: Some(replacing(60)),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    worker.tick().await;
+    let asked = queue
+        .for_user("bob", NoticeKind::Review)
+        .iter()
+        .any(|entry| entry.state == NoticeState::Waiting);
+    let checked = verifier.isrcs_asked.lock().clone();
+    (!replacer.requests().is_empty(), asked, checked)
+}
+
+/// AcoustID heard the file's own artist under a title in another script: the same song,
+/// written another way, so it is asked about.
+#[tokio::test]
+async fn the_same_artist_under_a_title_in_another_script_is_asked_about() {
+    let sweep = Sweep::new();
+    sweep.tagged("a.flac", "Hitsujibungaku", "Tsuyogari", None);
+    let heard = VerificationResult {
+        matched_artist: Some("Hitsujibungaku".into()),
+        matched_title: Some("\u{5f37}\u{304c}\u{308a}".into()),
+        ..heard_as("", 0.97)
+    };
+    let (replaced, asked, _) = one_check(&sweep, heard, None, Some(false)).await;
+    assert!(!replaced);
+    assert!(asked);
+}
+
+/// One recording of the heard result by the file's own artist is enough to ask, whatever the
+/// recording AcoustID named.
+#[tokio::test]
+async fn any_recording_by_the_files_artist_in_the_heard_result_is_asked_about() {
+    use octo_core::fingerprint::{AcoustIdLookup, AcoustIdResult};
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let named = AcoustIdRecording::new("rec-roads", "Roads", vec!["Portishead".to_string()], None, None);
+    let own = AcoustIdRecording::new(
+        "rec-teardrop-jp",
+        "\u{30c6}\u{30a3}\u{30a2}\u{30c9}\u{30ed}\u{30c3}\u{30d7}",
+        vec!["massive attack".to_string()],
+        None,
+        None,
+    );
+    let heard = VerificationResult {
+        lookup: Some(AcoustIdLookup::new(
+            true,
+            None,
+            vec![AcoustIdResult::new(0.97, vec![named, own])],
+        )),
+        ..heard_as("Roads", 0.97)
+    };
+    let (replaced, asked, _) = one_check(&sweep, heard, None, Some(false)).await;
+    assert!(!replaced);
+    assert!(asked);
+    assert!(LibraryReviewSweepWorker::shares_artist(
+        &heard_as("Roads", 0.97),
+        "Portishead; Beth Gibbons"
+    ));
+    assert!(!LibraryReviewSweepWorker::shares_artist(
+        &heard_as("Roads", 0.97),
+        "Massive Attack"
+    ));
+}
+
+/// A file with no tags is named by its file name, which is no evidence of what it should be:
+/// it is asked about, never replaced.
+#[tokio::test]
+async fn an_untagged_file_is_asked_about() {
+    let sweep = Sweep::new();
+    sweep.song("AUDIO_0042.flac");
+    let (replaced, asked, _) = one_check(&sweep, heard_as("Roads", 0.97), None, Some(false)).await;
+    assert!(!replaced);
+    assert!(asked);
+
+    // A title tag with no artist tag is not enough either.
+    let sweep = Sweep::new();
+    sweep.tagged("a.flac", "", "Teardrop", None);
+    let (replaced, asked, _) = one_check(&sweep, heard_as("Roads", 0.97), None, Some(false)).await;
+    assert!(!replaced);
+    assert!(asked);
+}
+
+/// A file tagged with an ISRC is checked against the heard recording: replaced only when the
+/// recording lists other codes, asked about when it lists the file's own or cannot be checked.
+#[tokio::test]
+async fn an_isrc_tag_is_checked_before_replacing() {
+    for (answer, replaces) in [(Some(true), false), (None, false), (Some(false), true)] {
+        let sweep = Sweep::new();
+        sweep.tagged("a.flac", "Massive Attack", "Teardrop", Some("GBAAA9800001"));
+        let (replaced, asked, checked) =
+            one_check(&sweep, heard_as("Roads", 0.97), answer, Some(false)).await;
+        assert_eq!(replaced, replaces, "{answer:?}");
+        assert_eq!(asked, !replaces, "{answer:?}");
+        assert_eq!(checked, ["GBAAA9800001"], "{answer:?}");
+    }
+}
+
+/// A song anyone starred or rated is asked about, and so is one whose marks cannot be read.
+#[tokio::test]
+async fn a_starred_or_rated_song_is_asked_about() {
+    for marked in [Some(true), None] {
+        let sweep = Sweep::new();
+        sweep.teardrop("a.flac");
+        let (replaced, asked, _) = one_check(&sweep, heard_as("Roads", 0.97), None, marked).await;
+        assert!(!replaced, "{marked:?}");
+        assert!(asked, "{marked:?}");
+    }
+}
+
+/// Real tags, another artist, another title, no ISRC and no marks: the one case replaced.
+#[tokio::test]
+async fn another_artists_other_song_on_a_tagged_file_is_replaced() {
+    let sweep = Sweep::new();
+    sweep.teardrop("a.flac");
+    let (replaced, asked, checked) = one_check(&sweep, heard_as("Roads", 0.97), None, Some(false)).await;
+    assert!(replaced);
+    assert!(!asked);
+    assert!(checked.is_empty(), "no ISRC tag, nothing to check");
+}
+
+/// A replacement is counted on disk at once, so a crash right after it keeps the day's count.
+#[tokio::test]
+async fn a_replacement_is_counted_on_disk_at_once() {
+    let sweep = Sweep::new();
+    for name in ["a.flac", "b.flac"] {
+        sweep.teardrop(name);
+    }
+    let replacer = FakeReplacer::ending(LibraryActionState::Applied);
+    let worker = sweep.worker(
+        FakeVerifier::answering(|| heard_as("Roads", 0.97)),
+        Options {
+            settings: Some(replacing(60)),
+            replacer: Some(replacer.clone()),
+            ..Default::default()
+        },
+    );
+    worker.tick().await;
+    worker.tick().await;
+    assert_eq!(replacer.requests().len(), 2);
+    // Read from the file, with no flush since: both replacements are there.
+    let text = std::fs::read_to_string(sweep.state_path()).expect("the state file");
+    let on_disk: ReviewSweepState = serde_json::from_str(&text).expect("state");
+    assert_eq!(on_disk.today(Utc::now()).replaced, 2);
+}
+
 /// At most the day's cap is replaced; the rest of the day's matches are asked about, and the
 /// next UTC day replaces again.
 #[tokio::test]
 async fn the_daily_cap_turns_the_rest_of_the_day_into_questions() {
     let sweep = Sweep::new();
     for name in ["a.flac", "b.flac", "c.flac", "d.flac"] {
-        sweep.song(name);
+        sweep.teardrop(name);
     }
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
@@ -1240,7 +1507,7 @@ async fn the_daily_cap_turns_the_rest_of_the_day_into_questions() {
 async fn three_failures_in_a_day_stop_replacing_for_the_day() {
     let sweep = Sweep::new();
     for name in ["a.flac", "b.flac", "c.flac", "d.flac"] {
-        sweep.song(name);
+        sweep.teardrop(name);
     }
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Failed);
@@ -1268,10 +1535,11 @@ async fn three_failures_in_a_day_stop_replacing_for_the_day() {
 #[tokio::test]
 async fn a_file_navidrome_does_not_show_is_asked_about() {
     let sweep = Sweep::new();
-    sweep.song("a.flac");
+    sweep.teardrop("a.flac");
     let queue = Arc::new(NoticeQueue::new());
     let replacer = Arc::new(FakeReplacer {
         shown: false,
+        marked: Some(false),
         state: Mutex::new(LibraryActionState::Applied),
         requests: Mutex::new(Vec::new()),
     });
@@ -1383,7 +1651,7 @@ async fn the_recheck_never_slows_a_faster_sweep() {
 #[tokio::test]
 async fn the_recheck_replaces_and_asks_like_the_sweep() {
     let sweep = Sweep::new();
-    let mine = sweep.song("a.flac");
+    let mine = sweep.teardrop("a.flac");
     let queue = Arc::new(NoticeQueue::new());
     let replacer = FakeReplacer::ending(LibraryActionState::Applied);
     let worker = sweep.worker(

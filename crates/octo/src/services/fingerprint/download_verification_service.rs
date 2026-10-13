@@ -854,4 +854,47 @@ impl crate::services::library::library_review_sweep_worker::SweepVerification
     async fn verify(&self, path: &str, artist: Option<&str>, title: Option<&str>) -> VerificationResult {
         DownloadVerificationService::verify(self, path, artist, title, None, false).await
     }
+
+    /// The codes AcoustID's own answer carried for the recordings of its best result, else the
+    /// ones MusicBrainz lists for them, the lookup a download with an ISRC is settled by.
+    async fn isrc_agrees(&self, question: &VerificationResult, isrc: &str) -> Option<bool> {
+        let isrc = SongIdentity::normalize_isrc(isrc)?;
+        let lookup = question.lookup.as_ref()?;
+        let settings = self.settings.current().soulseek.clone();
+        let threshold = if question.threshold > 0.0 {
+            question.threshold
+        } else {
+            settings.effective_min_score_fraction()
+        };
+        let best = best_qualifying(lookup, threshold)?;
+        let mut listed = RecordingIsrcs::new();
+        for recording in best.recordings.iter().filter(|r| !r.recording_id.is_empty()) {
+            if !recording.isrcs.is_empty() {
+                insert_ignore_case(&mut listed, &recording.recording_id, recording.isrcs.clone());
+            }
+        }
+        if listed.is_empty() {
+            let music_brainz = self.music_brainz.as_ref()?;
+            listed = Self::recording_isrcs(
+                music_brainz,
+                lookup,
+                threshold,
+                settings.effective_acoust_id_timeout_seconds(),
+            )
+            .await;
+        }
+        let settled = Self::settle_by_isrc(question.clone(), lookup, threshold, false, &isrc, &listed, true);
+        if settled.verdict == VerificationVerdict::Confirmed {
+            return Some(true);
+        }
+        if listed.values().all(Vec::is_empty) {
+            return None;
+        }
+        Some(
+            listed
+                .values()
+                .flatten()
+                .any(|code| SongIdentity::normalize_isrc(code).as_deref() == Some(isrc.as_str())),
+        )
+    }
 }

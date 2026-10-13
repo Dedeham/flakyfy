@@ -1,6 +1,6 @@
 //! The library Review sweep (#72), its state (`<config>/review-sweep.json`) and the fingerprint
 //! check it asks. With the switch on, a file AcoustID clearly hears as another song is replaced
-//! through Wrong song (#87), and Octo's own downloads can be checked again in one pass.
+//! through Wrong song, and Octo's own downloads can be checked again in one pass.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::FutureExt;
 use octo_core::common::dotnet;
+use octo_core::common::song_identity::ArtistAgreement;
 use octo_core::common::{Clock, SongIdentity};
 use octo_core::fingerprint::verification::{
     InconclusiveReason, VerificationResult, VerificationVerdict, whole_percent,
@@ -23,6 +24,7 @@ use octo_core::settings::{
     AppSettings, LibraryAction, LibraryActionSettings, SettingsStore, SoulseekSettings,
 };
 use octo_media::tags::TagFile;
+use octo_media::tags::tag_writer_extras::{self, TagFields};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -31,6 +33,7 @@ use tracing::{error, info, warn};
 use super::NavidromeSongPathResolver;
 use super::library_action_executor::{LibraryActionExecutor, LibraryActionOutcome, LibraryActionRequest};
 use super::library_action_journal::LibraryActionState;
+use super::navidrome_playlist_api::NavidromePlaylistApi;
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, set_aside};
 use super::quality_upgrade_worker::compare_ordinal;
@@ -38,6 +41,7 @@ use crate::services::common::IAcquisitionActivity;
 use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
+use crate::services::health::keep_marks::MemberMarks;
 use crate::services::library::library_walk;
 use crate::services::local::ILocalLibraryService;
 use crate::services::soulseek::soulseek_download_service::excluded_folder_names;
@@ -48,6 +52,11 @@ use crate::services::state_file;
 pub trait IReviewSweepVerifier: Send + Sync {
     fn is_ready(&self) -> bool;
     async fn verify(&self, path: &str, artist: Option<&str>, title: Option<&str>) -> VerificationResult;
+
+    /// Whether the music database lists `isrc` on the recording AcoustID heard in `question`:
+    /// Some(true) when it does, Some(false) when it lists codes for those recordings and none is
+    /// this one, None when that cannot be told.
+    async fn isrc_agrees(&self, question: &VerificationResult, isrc: &str) -> Option<bool>;
 }
 
 /// What the sweep needs of `DownloadVerificationService`: whether a lookup can happen
@@ -60,6 +69,9 @@ pub trait IReviewSweepVerifier: Send + Sync {
 pub trait SweepVerification: Send + Sync {
     fn is_fingerprinting_enabled(&self) -> bool;
     async fn verify(&self, path: &str, artist: Option<&str>, title: Option<&str>) -> VerificationResult;
+
+    /// See [`IReviewSweepVerifier::isrc_agrees`].
+    async fn isrc_agrees(&self, question: &VerificationResult, isrc: &str) -> Option<bool>;
 }
 
 /// The real check, in AcoustID's background lane. Resolved late, because the workers are built
@@ -95,6 +107,10 @@ impl IReviewSweepVerifier for FingerprintSweepVerifier {
             None => VerificationResult::inconclusive(),
         }
     }
+
+    async fn isrc_agrees(&self, question: &VerificationResult, isrc: &str) -> Option<bool> {
+        self.service.get()?.isrc_agrees(question, isrc).await
+    }
 }
 
 /// How the sweep replaces a file that clearly is another song: the file's Navidrome id, and Wrong
@@ -104,19 +120,38 @@ pub trait SweepReplacer: Send + Sync {
     /// The Navidrome id of the library file at `path`, or None when Navidrome does not show it.
     async fn song_id(&self, artist: &str, title: &str, path: &str) -> Option<String>;
 
+    /// Whether anyone starred or rated the song `song_id`: Some(false) only when every mark that
+    /// can be read was read and none is there, None when they could not be read.
+    async fn marked(&self, song_id: &str) -> Option<bool>;
+
     /// Runs the request to its end.
     async fn replace(&self, request: LibraryActionRequest) -> anyhow::Result<LibraryActionOutcome>;
 }
 
-/// The real replacement: the resolver finds the song's id, the executor runs Wrong song.
+/// The real replacement: the resolver finds the song's id, Navidrome's song page says whether it
+/// is starred or rated, and the executor runs Wrong song.
 pub struct ExecutorSweepReplacer {
     resolver: Arc<NavidromeSongPathResolver>,
     executor: Arc<LibraryActionExecutor>,
+    /// The admin's view of a song's marks.
+    marks: Arc<NavidromePlaylistApi>,
+    /// The marks other listeners left, each read with their own sign-in, when they can be read.
+    members: Option<Arc<dyn MemberMarks>>,
 }
 
 impl ExecutorSweepReplacer {
-    pub fn new(resolver: Arc<NavidromeSongPathResolver>, executor: Arc<LibraryActionExecutor>) -> Self {
-        ExecutorSweepReplacer { resolver, executor }
+    pub fn new(
+        resolver: Arc<NavidromeSongPathResolver>,
+        executor: Arc<LibraryActionExecutor>,
+        marks: Arc<NavidromePlaylistApi>,
+        members: Option<Arc<dyn MemberMarks>>,
+    ) -> Self {
+        ExecutorSweepReplacer {
+            resolver,
+            executor,
+            marks,
+            members,
+        }
     }
 }
 
@@ -124,6 +159,18 @@ impl ExecutorSweepReplacer {
 impl SweepReplacer for ExecutorSweepReplacer {
     async fn song_id(&self, artist: &str, title: &str, path: &str) -> Option<String> {
         self.resolver.find_id_by_path(artist, title, path).await
+    }
+
+    async fn marked(&self, song_id: &str) -> Option<bool> {
+        let admin = self.marks.song_marks(song_id).await?;
+        if admin.starred || admin.rating > 0 {
+            return Some(true);
+        }
+        let members = match &self.members {
+            Some(members) => members.marks_of(song_id).await,
+            None => Vec::new(),
+        };
+        Some(members.iter().any(|marks| marks.starred || marks.rating > 0))
     }
 
     // Spawned, so a host stopping while the sweep waits never cuts the action short.
@@ -197,6 +244,16 @@ impl ReplacedDay {
 pub struct Today {
     pub replaced: i32,
     pub failed: i32,
+}
+
+/// What the sweep read of a file: the song its tags name, whether its artist and title both came
+/// from real tags (a title taken from the file name never counts), and the ISRC it is tagged
+/// with.
+#[derive(Debug, Clone, Default)]
+pub struct SweptFile {
+    pub song: Song,
+    pub tagged: bool,
+    pub isrc: Option<String>,
 }
 
 /// Whether a file the sweep would ask about is replaced instead.
@@ -944,7 +1001,8 @@ impl LibraryReviewSweepWorker {
             Lane::Recheck => Some(Self::RECHECKING),
         };
         let path = full_path(step.root, target);
-        let song = Self::read_tags(&path);
+        let file = Self::read_tags(&path);
+        let song = &file.song;
         let verdict = self
             .verifier
             .verify(&path, Some(&song.artist), Some(&song.title))
@@ -997,17 +1055,17 @@ impl LibraryReviewSweepWorker {
         let replaced = outcome == Outcome::Ask
             && Self::decide(
                 &question,
-                &song,
+                &file,
                 &self.settings.current(),
                 step.keeper,
                 self.store.read(|s| s.today(self.clock.now())),
             ) == AutoReplace::Replace
-            && self.replace(step.keeper, &path, &song, &question).await;
+            && self.replace(step.keeper, &path, &file, &question).await;
         let asked = !replaced
             && outcome == Outcome::Ask
             && self
                 .notices
-                .add_review_from(step.keeper, &path, &song, &question, NoticeOrigin::LibrarySweep);
+                .add_review_from(step.keeper, &path, song, &question, NoticeOrigin::LibrarySweep);
         if asked {
             info!(
                 "Asking {} about '{} - {}' from the library: {}",
@@ -1047,12 +1105,35 @@ impl LibraryReviewSweepWorker {
     }
 
     /// Wrong song on the file at `path`, as the keeper. True once the replacement went in, which
-    /// leaves the keeper a note in Review; false leaves the file a question. A replacement that
-    /// failed counts toward the day's breaker.
-    async fn replace(&self, keeper: &str, path: &str, song: &Song, question: &VerificationResult) -> bool {
+    /// leaves the keeper a note in Review; false leaves the file a question. A file whose ISRC
+    /// tag the heard recording also carries, or one that cannot be checked, is asked about, and
+    /// so is a song anyone starred or rated, or one whose marks cannot be read. A replacement
+    /// that failed counts toward the day's breaker.
+    async fn replace(
+        &self,
+        keeper: &str,
+        path: &str,
+        file: &SweptFile,
+        question: &VerificationResult,
+    ) -> bool {
         let Some(replacer) = self.replacer.clone() else {
             return false;
         };
+        let song = &file.song;
+        if let Some(isrc) = file.isrc.as_deref() {
+            let why = match self.verifier.isrc_agrees(question, isrc).await {
+                Some(false) => None,
+                Some(true) => Some("the heard recording carries its ISRC too"),
+                None => Some("its ISRC could not be checked against the heard recording"),
+            };
+            if let Some(why) = why {
+                info!(
+                    "Library review sweep: '{} - {}' is tagged {isrc} and {why}, so it is asked about instead of replaced",
+                    song.artist, song.title
+                );
+                return false;
+            }
+        }
         let Some(id) = replacer.song_id(&song.artist, &song.title, path).await else {
             info!(
                 "Library review sweep: Navidrome does not show '{} - {}' yet, so it is asked about instead of replaced",
@@ -1060,6 +1141,23 @@ impl LibraryReviewSweepWorker {
             );
             return false;
         };
+        match replacer.marked(&id).await {
+            Some(false) => {}
+            Some(true) => {
+                info!(
+                    "Library review sweep: '{} - {}' is starred or rated, so it is asked about instead of replaced",
+                    song.artist, song.title
+                );
+                return false;
+            }
+            None => {
+                info!(
+                    "Library review sweep: the stars and ratings on '{} - {}' could not be read, so it is asked about instead of replaced",
+                    song.artist, song.title
+                );
+                return false;
+            }
+        }
         let heard = question
             .matched_text()
             .unwrap_or_else(|| "another song".to_string());
@@ -1078,7 +1176,7 @@ impl LibraryReviewSweepWorker {
         let now = self.clock.now();
         match outcome {
             Ok(outcome) if outcome.state == LibraryActionState::Applied => {
-                self.store.update(|s| s.count_today(now, true));
+                self.count_today(now, true);
                 let needs = self.settings.current().soulseek.effective_min_match_score();
                 let note = Self::replaced_note(question, needs);
                 self.notices
@@ -1091,7 +1189,7 @@ impl LibraryReviewSweepWorker {
             }
             Ok(outcome) => {
                 if outcome.state == LibraryActionState::Failed {
-                    self.store.update(|s| s.count_today(now, false));
+                    self.count_today(now, false);
                 }
                 info!(
                     "Library review sweep did not replace '{} - {}' ({}), so it is asked about",
@@ -1102,7 +1200,7 @@ impl LibraryReviewSweepWorker {
                 false
             }
             Err(e) => {
-                self.store.update(|s| s.count_today(now, false));
+                self.count_today(now, false);
                 warn!(
                     "Library review sweep could not replace '{} - {}' ({e}), so it is asked about",
                     song.artist, song.title
@@ -1112,12 +1210,19 @@ impl LibraryReviewSweepWorker {
         }
     }
 
+    /// Counts one replacement, or one that failed, and writes it at once: the day's cap and
+    /// breaker must hold across a restart right after.
+    fn count_today(&self, now: DateTime<Utc>, replaced: bool) {
+        self.store.update(|s| s.count_today(now, replaced));
+        self.store.flush();
+    }
+
     /// Whether a file the sweep would ask about is replaced through Wrong song instead: with
     /// `ReviewSweepAutoReplace` on, no dry run, the keeper on the allowlist, Wrong song on, the
     /// day's cap and breaker not reached, and AcoustID clearly hearing another song.
     pub fn decide(
         question: &VerificationResult,
-        song: &Song,
+        file: &SweptFile,
         settings: &AppSettings,
         keeper: &str,
         today: Today,
@@ -1133,29 +1238,91 @@ impl LibraryReviewSweepWorker {
             && wrong_song_on
             && today.replaced < actions.effective_review_sweep_auto_replace_per_day()
             && today.failed < Self::MAX_FAILED_REPLACEMENTS_PER_DAY;
-        if may && Self::clearly_another_song(question, song, &settings.soulseek) {
+        if may && Self::clearly_another_song(question, file, &settings.soulseek) {
             AutoReplace::Replace
         } else {
             AutoReplace::Ask
         }
     }
 
-    /// A `Mismatch` naming a recording, at or above `MinMatchScore`, whose title is not the
-    /// file's own. Another take or a remaster of the same song, a wrong length and anything
-    /// AcoustID was unsure of are not.
+    /// A `Mismatch` naming a recording, at or above `MinMatchScore`, on a file whose artist and
+    /// title come from its tags, by another artist and with another title. Another take or a
+    /// remaster of the same song, the same artist's song under a title in another script or
+    /// translated, an untagged file, a wrong length and anything AcoustID was unsure of are not.
     pub fn clearly_another_song(
         question: &VerificationResult,
-        song: &Song,
+        file: &SweptFile,
         soulseek: &SoulseekSettings,
     ) -> bool {
-        question.verdict == VerificationVerdict::Mismatch
+        file.tagged
+            && question.verdict == VerificationVerdict::Mismatch
             && question.reason == InconclusiveReason::SoundsLikeAnother
             && question.recording_id.as_deref().is_some_and(|id| !id.is_empty())
             && whole_percent(question.score) >= soulseek.effective_min_match_score()
             && question
                 .matched_title
                 .as_deref()
-                .is_some_and(|heard| !Self::same_title(heard, &song.title))
+                .is_some_and(|heard| !Self::same_title(heard, &file.song.title))
+            && !Self::shares_artist(question, &file.song.artist)
+    }
+
+    /// Whether what AcoustID heard may be by the file's own artist: its named artist, or any
+    /// recording in the result holding the one it named (its best result when none holds it),
+    /// shares an artist with the file's by loose key. Nobody named on either side counts as
+    /// shared, so it stays a question.
+    pub fn shares_artist(question: &VerificationResult, artist: &str) -> bool {
+        let mut heard: Vec<(String, Vec<String>)> = Vec::new();
+        if let Some(named) = question.matched_artist.as_deref() {
+            heard.push((named.to_string(), Vec::new()));
+        }
+        if let Some(lookup) = &question.lookup {
+            let named_id = question.recording_id.as_deref().filter(|id| !id.is_empty());
+            let holds_named = |result: &&octo_core::fingerprint::AcoustIdResult| {
+                named_id.is_some_and(|id| {
+                    result
+                        .recordings
+                        .iter()
+                        .any(|r| dotnet::eq_ignore_case(&r.recording_id, id))
+                })
+            };
+            let best = lookup
+                .results
+                .iter()
+                .filter(holds_named)
+                .max_by(|a, b| a.score.total_cmp(&b.score))
+                .or_else(|| lookup.results.iter().max_by(|a, b| a.score.total_cmp(&b.score)));
+            if let Some(best) = best {
+                heard.extend(
+                    best.recordings
+                        .iter()
+                        .map(|r| (r.artist_credit(), r.artists.clone())),
+                );
+            }
+        }
+        let own: Vec<String> = artist
+            .split(';')
+            .chain(std::iter::once(artist))
+            .map(SongIdentity::loose_key)
+            .filter(|key| !key.is_empty())
+            .collect();
+        if own.is_empty() || heard.is_empty() {
+            return true;
+        }
+        heard.iter().any(|(credit, names)| {
+            let keys: Vec<String> = names
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(credit.as_str()))
+                .map(SongIdentity::loose_key)
+                .filter(|key| !key.is_empty())
+                .collect();
+            keys.is_empty()
+                || keys.iter().any(|key| own.contains(key))
+                || !matches!(
+                    SongIdentity::compare_artists_with_credits(artist, credit, names.as_slice()),
+                    ArtistAgreement::None
+                )
+        })
     }
 
     /// The same song by title: the loose keys once guest credits are taken off, or the cores
@@ -1295,25 +1462,45 @@ impl LibraryReviewSweepWorker {
             .map(str::to_string)
     }
 
-    /// Header only: the fingerprint reads the audio anyway, and a mount is slow.
-    pub fn read_tags(path: &str) -> Song {
+    /// Header only: the fingerprint reads the audio anyway, and a mount is slow. A file with no
+    /// title tag is named by its file name, and is never taken as tagged.
+    pub fn read_tags(path: &str) -> SweptFile {
         let fallback = file_name_without_extension(path);
         match TagFile::open(path) {
             Ok(file) => {
                 let performers = file.performers();
                 let title = file.title().filter(|title| !dotnet::is_blank(title));
-                Song {
-                    artist: performers.join("; "),
-                    title: title.map_or(fallback, |title| title.trim().to_string()),
-                    album: file.album().unwrap_or_default(),
-                    ..Default::default()
+                let tagged = title.is_some() && performers.iter().any(|p| !dotnet::is_blank(p));
+                let isrc = [file.isrc(), tag_writer_extras::read_text(&file, TagFields::ISRC)]
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|value| {
+                        value
+                            .split([';', ',', '/', '\0'])
+                            .filter_map(SongIdentity::normalize_isrc)
+                            .collect::<Vec<_>>()
+                    })
+                    .next();
+                SweptFile {
+                    song: Song {
+                        artist: performers.join("; "),
+                        title: title.map_or(fallback, |title| title.trim().to_string()),
+                        album: file.album().unwrap_or_default(),
+                        ..Default::default()
+                    },
+                    tagged,
+                    isrc,
                 }
             }
-            Err(_) => Song {
-                artist: String::new(),
-                title: fallback,
-                album: String::new(),
-                ..Default::default()
+            Err(_) => SweptFile {
+                song: Song {
+                    artist: String::new(),
+                    title: fallback,
+                    album: String::new(),
+                    ..Default::default()
+                },
+                tagged: false,
+                isrc: None,
             },
         }
     }

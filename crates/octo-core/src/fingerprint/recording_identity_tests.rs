@@ -303,3 +303,20 @@ fn covers_are_a_take_of_their_own() {
     assert_eq!(kind_of(&both, None), RecordingKind::Karaoke);
     assert!(unwanted(RecordingKind::Cover, &plain()));
 }
+
+#[test]
+fn a_song_called_karaoke_or_instrumental_is_still_a_studio_take() {
+    // Catfish and the Bottlemen "Karaoke Queen", Drake "Karaoke": a word in the name is not a
+    // take, so a download of them is never refused for being one.
+    for title in ["Karaoke Queen", "Karaoke", "Instrumental", "Cover Me"] {
+        let song = recording("r", title, 200_000, vec![]);
+        assert_eq!(kind_of(&song, None), RecordingKind::Studio, "{title}");
+        let never = BTreeSet::from([
+            RecordingKind::Instrumental,
+            RecordingKind::Karaoke,
+            RecordingKind::Cover,
+        ]);
+        assert!(!Takes::for_request(Some(title), None, &never).refuses(RecordingKind::Studio));
+        assert!(RecordingKind::requested_by(title).is_empty(), "{title}");
+    }
+}

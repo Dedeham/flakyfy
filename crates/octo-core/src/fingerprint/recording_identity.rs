@@ -15,7 +15,6 @@ use regex::Regex;
 
 use super::acoust_id_client::{AcoustIdRecording, AcoustIdRelease};
 use crate::common::song_identity::SongIdentity;
-use crate::common::version_variant;
 use crate::common::{dotnet, live_version};
 
 /// What kind of take a recording is. Everything that is not one of the others is `Studio`,
@@ -88,33 +87,52 @@ impl RecordingKind {
             .iter()
             .filter_map(|marker| RecordingKind::of_marker(marker))
             .collect();
+        // "cover" inside a longer bracket ("(Live at the Cover Club)") names a place, not a take:
+        // a cover's bracket or dash tail ends with the word.
+        if !COVER_MARK.is_match(text) {
+            found.remove(&RecordingKind::Cover);
+        }
         if MARKED_TRIBUTE.is_match(text) {
             found.insert(RecordingKind::Cover);
         }
         found
     }
 
-    /// The kinds a text's version markers name, title words and loose words both read.
+    /// The kinds an album's or a release's name gives: its markers, a bracket or dash tail that
+    /// is the take itself ("(Instrumentals)", "[Karaoke Version]", "- Acoustic Covers"), a whole
+    /// name that is ("Instrumentals"), and "karaoke", "covers" or "cover versions" anywhere. A
+    /// bracket that only mentions instrumentals ("[Instrumentals Bonus]") or a name that only
+    /// contains a word ("Dark Lane Demo Tapes", "A Tribute to Jack Johnson") gives none.
     pub fn named_in(text: &str) -> BTreeSet<RecordingKind> {
         if dotnet::is_blank(text) {
             return BTreeSet::new();
         }
         let mut found = RecordingKind::marked_in(text);
-        found.extend(
-            version_variant::requested(None, Some(text))
-                .iter()
-                .filter_map(|marker| RecordingKind::of_marker(marker)),
-        );
-        if LOOSE_COVERS.is_match(text) {
+        let whole = text.trim();
+        if let Some(kind) = WHOLE_TAKE.captures(whole).and_then(|c| take_word(&c[1])) {
+            found.insert(kind);
+        }
+        for part in take_parts(text) {
+            if let Some(kind) = PART_TAKE.captures(part.trim()).and_then(|c| take_word(&c[1])) {
+                found.insert(kind);
+            }
+        }
+        // Words no album of songs is called by unless it holds those takes: "Karaoke Hits, Vol.
+        // 3", "Under the Covers", "Cover Versions of Adele".
+        if ALBUM_KARAOKE.is_match(text) {
+            found.insert(RecordingKind::Karaoke);
+        }
+        if ALBUM_COVERS.is_match(text) {
             found.insert(RecordingKind::Cover);
         }
         found
     }
 
-    /// The kinds a request asks for, read from its title alone. An album is never a wish: a
-    /// library copy's album may itself be the wrong tag that is being replaced.
+    /// The kinds a request asks for, read from its title's markers alone: "Song (Live)" asks for
+    /// a live take, "Karaoke Queen" asks for nothing. An album is never a wish: a library copy's
+    /// album may itself be the wrong tag that is being replaced.
     pub fn requested_by(title: &str) -> BTreeSet<RecordingKind> {
-        RecordingKind::named_in(title)
+        RecordingKind::marked_in(title)
     }
 }
 
@@ -125,11 +143,84 @@ static MARKED_TRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("a fixed pattern compiles")
 });
 
-/// What an album or a release of covers is called anywhere in its name: "A Tribute to Adele",
-/// "Covers", "Cover Versions".
-static LOOSE_COVERS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\btribute\s+to\b|\bcovers\b|\bcover\s+versions\b").expect("a fixed pattern compiles")
+/// A bracket or dash tail that ends with "cover" or "cover version": "(Cover)", "(Acoustic
+/// Cover)", "- Cover Version".
+static COVER_MARK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)[\(\[\{][^\)\]\}]*\bcover(?:\s+version)?\s*[\)\]\}]|\s[-\x{2013}]\s[^\(\[\{]*\bcover(?:\s+version)?\s*$",
+    )
+    .expect("a fixed pattern compiles")
 });
+
+/// "Karaoke" anywhere in an album's name.
+static ALBUM_KARAOKE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bkaraoke\b").expect("a fixed pattern compiles"));
+
+/// "Covers" or "cover versions" anywhere in an album's name. A lone "cover" is not one ("Cover
+/// Me", "Under Cover of Darkness"), and neither is "tribute to" outside a bracket ("A Tribute to
+/// Jack Johnson" is Miles Davis's own album).
+static ALBUM_COVERS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bcovers\b|\bcover\s+versions\b").expect("a fixed pattern compiles"));
+
+/// The words that name a take in an album's name.
+const TAKE_WORDS: &str = r"(instrumentals?|karaoke|a\s*cappellas?|acapellas?|covers?|cover\s+versions?)";
+
+/// An album named only for its take: "Instrumentals", "Karaoke", "Cover Versions".
+static WHOLE_TAKE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?i)^(?:the\s+)?{TAKE_WORDS}(?:\s+(?:versions?|editions?))?$"
+    ))
+    .expect("a fixed pattern compiles")
+});
+
+/// A bracket or dash tail that is the take, with up to three words before it: "(Instrumentals)",
+/// "(The Instrumentals)", "[Acoustic Covers]", "- Karaoke Version".
+static PART_TAKE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?i)^(?:(?:the|a|an)\s+)?(?:[\p{{L}}\p{{N}}'&]+\s+){{0,3}}?{TAKE_WORDS}(?:\s+(?:versions?|editions?|mix(?:es)?|only))?$"
+    ))
+    .expect("a fixed pattern compiles")
+});
+
+/// The kind a take word names.
+fn take_word(word: &str) -> Option<RecordingKind> {
+    let word = word.to_ascii_lowercase();
+    if word.starts_with("instrumental") {
+        Some(RecordingKind::Instrumental)
+    } else if word.starts_with("karaoke") {
+        Some(RecordingKind::Karaoke)
+    } else if word.starts_with("cover") {
+        Some(RecordingKind::Cover)
+    } else if word.contains("cappella") || word.starts_with("acapella") {
+        Some(RecordingKind::Acapella)
+    } else {
+        None
+    }
+}
+
+/// The bracketed parts of a name and its tail after the last " - ".
+fn take_parts(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find(['(', '[', '{']) {
+        let close_char = match &rest[open..open + 1] {
+            "(" => ')',
+            "[" => ']',
+            _ => '}',
+        };
+        let Some(close) = rest[open + 1..].find(close_char).map(|at| open + 1 + at) else {
+            break;
+        };
+        parts.push(&rest[open + 1..close]);
+        rest = &rest[close + 1..];
+    }
+    for dash in [" - ", " \u{2013} "] {
+        if let Some(at) = text.rfind(dash) {
+            parts.push(&text[at + dash.len()..]);
+        }
+    }
+    parts
+}
 
 /// What the music database adds about one recording beyond what AcoustID sends: its
 /// disambiguation, and every release it is on with that release's status and its group's
@@ -155,7 +246,7 @@ pub struct FactRelease {
 /// disambiguation, then the releases it is on (every one of them live, or every one of them
 /// named as instrumentals, karaoke, covers, remixes or demos).
 pub fn kind_of(recording: &AcoustIdRecording, facts: Option<&RecordingFacts>) -> RecordingKind {
-    if let Some(kind) = first_kind(&RecordingKind::named_in(&recording.title)) {
+    if let Some(kind) = first_kind(&RecordingKind::marked_in(&recording.title)) {
         return kind;
     }
     if let Some(facts) = facts {
@@ -173,6 +264,9 @@ pub fn kind_of(recording: &AcoustIdRecording, facts: Option<&RecordingFacts>) ->
 /// "live, 2007-04-08: Palacio de los Deportes".
 fn note_kind(note: &str) -> Option<RecordingKind> {
     let mut kinds = RecordingKind::named_in(note);
+    if let Some(kind) = PART_TAKE.captures(note.trim()).and_then(|c| take_word(&c[1])) {
+        kinds.insert(kind);
+    }
     if live_version::mentions(Some(note)) {
         kinds.insert(RecordingKind::Live);
     }
@@ -384,10 +478,8 @@ impl Takes {
     /// take through ("Decade (live at the El Mocambo)"), and so does a title such as "Live
     /// Forever", generous on purpose. Kinds in `never` are refused even when asked for.
     pub fn for_request(title: Option<&str>, album: Option<&str>, never: &BTreeSet<RecordingKind>) -> Takes {
-        let mut wanted: BTreeSet<RecordingKind> = BTreeSet::new();
-        for text in [title, album].into_iter().flatten() {
-            wanted.extend(RecordingKind::named_in(text));
-        }
+        let mut wanted: BTreeSet<RecordingKind> = title.map(RecordingKind::marked_in).unwrap_or_default();
+        wanted.extend(album.map(RecordingKind::named_in).unwrap_or_default());
         if live_version::requested(title, album) {
             wanted.insert(RecordingKind::Live);
         }

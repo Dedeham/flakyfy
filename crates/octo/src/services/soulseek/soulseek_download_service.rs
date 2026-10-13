@@ -309,9 +309,7 @@ impl SoulseekDownloadService {
                 routing.artist.as_deref(),
                 routing.title.as_deref(),
                 song.isrc.as_deref().or(routing.isrc.as_deref()),
-                &self
-                    .verification
-                    .takes_for(routing.title.as_deref(), routing.album.as_deref()),
+                &self.verification.takes_for_routing(routing),
             )
             .await;
         if verdict.verdict == VerificationVerdict::Mismatch {
@@ -529,9 +527,7 @@ impl SoulseekDownloadService {
                 r.artist.as_deref(),
                 r.title.as_deref(),
                 song.isrc.as_deref().or(r.isrc.as_deref()),
-                &self
-                    .verification
-                    .takes_for(r.title.as_deref(), r.album.as_deref()),
+                &self.verification.takes_for_routing(&r),
             )
             .await;
         if verdict.verdict == VerificationVerdict::Mismatch {
@@ -1174,9 +1170,7 @@ impl SoulseekDownloadService {
         let mut reserve: Option<TranscodedReserve> = None;
 
         let isrc = download.song.isrc.clone().or(routing.isrc.clone());
-        let takes = self
-            .verification
-            .takes_for(routing.title.as_deref(), routing.album.as_deref());
+        let takes = self.verification.takes_for_routing(routing);
 
         // Every peer tried, across the album folder's copy and the search after it.
         let mut tried = 0;

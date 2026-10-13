@@ -343,7 +343,8 @@ pub fn takes_beside(copies: &[TakeCopy]) -> Vec<(String, String)> {
             continue;
         }
         for copy in group {
-            if copy.kind == RecordingKind::Studio || RecordingKind::named_in(&copy.title).contains(&copy.kind)
+            if copy.kind == RecordingKind::Studio
+                || RecordingKind::marked_in(&copy.title).contains(&copy.kind)
             {
                 continue;
             }

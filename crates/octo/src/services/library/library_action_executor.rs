@@ -1066,6 +1066,7 @@ impl LibraryActionExecutor {
                         title: Some(song.title.clone()),
                         album: song.album.clone(),
                         duration: song.length,
+                        replaces_library_file: true,
                         ..Default::default()
                     }
                 }
@@ -1075,6 +1076,7 @@ impl LibraryActionExecutor {
                     title: Some(original.title.clone()),
                     album: Some(original.album.clone()),
                     duration: original.duration_seconds,
+                    replaces_library_file: true,
                     ..Default::default()
                 },
             };

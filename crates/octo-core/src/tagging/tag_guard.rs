@@ -232,7 +232,7 @@ fn take_in_title(song: &mut Song, identity: &Identity, findings: &mut Vec<GuardF
     let Some(word) = identity.kind.title_word() else {
         return;
     };
-    if !identity.kind_certain || RecordingKind::named_in(&song.title).contains(&identity.kind) {
+    if !identity.kind_certain || RecordingKind::marked_in(&song.title).contains(&identity.kind) {
         return;
     }
     if identity.kind == RecordingKind::Remix && MIX_WORD.is_match(&song.title) {
@@ -252,7 +252,7 @@ fn unconfirmed_album(song: &Song, findings: &mut Vec<GuardFinding>) {
     if is_blank(&song.album) {
         return;
     }
-    let in_title: BTreeSet<RecordingKind> = RecordingKind::named_in(&song.title);
+    let in_title: BTreeSet<RecordingKind> = RecordingKind::marked_in(&song.title);
     if let Some(named) = RecordingKind::named_in(&song.album)
         .into_iter()
         .find(|kind| !in_title.contains(kind))

@@ -119,6 +119,18 @@ impl DownloadVerificationService {
         Takes::for_request(title, album, &never)
     }
 
+    /// [`Self::takes_for`] a download request: one replacing a library file keeps the take its
+    /// title names, since that file is the person's own (Skip covers, karaoke and instrumentals
+    /// is for songs Octo brings in).
+    pub fn takes_for_routing(&self, routing: &octo_core::soulseek::SoulseekRouting) -> Takes {
+        let (title, album) = (routing.title.as_deref(), routing.album.as_deref());
+        if routing.replaces_library_file {
+            Takes::for_request(title, album, &std::collections::BTreeSet::new())
+        } else {
+            self.takes_for(title, album)
+        }
+    }
+
     /// AcoustID can answer at all.
     pub fn has_api_key(&self) -> bool {
         !dotnet::is_blank(&self.settings.current().soulseek.acoust_id_api_key)

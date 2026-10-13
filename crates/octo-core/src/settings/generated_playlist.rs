@@ -50,7 +50,7 @@ pub struct GeneratedPlaylistSettings {
     /// How recently added a track still counts as new. Environment variable: MIX_NEW_DAYS
     pub new_days: i32,
 
-    /// How a mix is named; "{0}" is the genre, decade, year or country. Empty means "{0} Mix".
+    /// How a mix is named; "{0}" is the genre, decade, year, country or artist. Empty means "{0} Mix".
     /// Environment variable: MIX_NAME_FORMAT
     pub name_format: String,
 

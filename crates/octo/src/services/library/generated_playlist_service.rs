@@ -413,7 +413,7 @@ impl GeneratedPlaylistService {
             });
         let mixes_shown = mixes_on(settings);
         let list: Vec<GeneratedPlaylist> = for_you.collect();
-        // Artist mixes last, in rank order, each named after its artist.
+        // Artist mixes last, in rank order, each named after its artist by the name format.
         let artists = mixes
             .artist_mixes
             .iter()
@@ -424,7 +424,7 @@ impl GeneratedPlaylistService {
                 key: key.clone(),
                 kind: "artist".to_string(),
                 label: mix.name.clone(),
-                name: format!("{} Mix", mix.name),
+                name: settings.name(&mix.name),
                 owner: username.trim().to_string(),
                 pool_size: i32::try_from(mix.songs.len()).unwrap_or(i32::MAX),
                 period_start_utc: start,

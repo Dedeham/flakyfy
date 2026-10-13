@@ -709,7 +709,8 @@ is shorter. A mix is a seeded draw that holds still for `MIX_REFRESH_HOURS` (24)
 client shows the same tracks, and is then drawn again. `MIX_NEW_SHARE` keeps that percentage
 of each mix, and of the Discovery Mix station, for tracks new to the listener: never played,
 or added in the last `MIX_NEW_DAYS`. It is 0 by default, which changes nothing.
-`MIX_NAME_FORMAT` names them, `{0}` being the genre or decade ("{0} Mix" when empty).
+`MIX_NAME_FORMAT` names every mix, `{0}` being the genre, decade, year, country or artist
+("{0} Mix" when empty).
 
 `MIXES_YEARS` (off by default) adds a mix per year ("1994 Mix"), counted from the same read
 of each listener's library as Made for you (up to 40,000 songs), with the same thresholds and

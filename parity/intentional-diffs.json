@@ -4236,9 +4236,9 @@
       ],
       "lines": [
         "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
-        "^B:\\ \\['\"p\\+9HOt8fVA6oHG4sEzkxD2G0fFXUl\\+nEq4LOFJx3rK8=\"'\\]$",
+        "^B:\\ \\['\"hKg5wsn1JBiK/T62gVLaPfoDsDqSqZNm6JRD4/0fvtg=\"'\\]$",
         "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
-        "^B:\\ a7ef473adf1f540ea81c6e2c1339310f61b47c55d497e9c4ab82ce149c77acaf\\ \\(211602\\ bytes,\\ text\\)$",
+        "^B:\\ 84a839c2c9f524188afd3eb68152da3dfa03b03a92a99366e89443e3fd1fbed8\\ \\(211610\\ bytes,\\ text\\)$",
         "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
         "^B:\\ \\['\"U61pLi7E5kxQgID8F45CQgHARxu7OrT0rmUorsGfGFw=\"'\\]$",
         "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
@@ -4248,9 +4248,9 @@
         "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
         "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
         "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
-        "^B:\\ \\['bytes\\ (0-9|\\*)/211602'\\]$"
+        "^B:\\ \\['bytes\\ (0-9|\\*)/211610'\\]$"
       ],
-      "reason": "A re-pin of the dashboard files: index.html's Which mixes card gains the Year mixes switch, the Artist mixes switch with how many artists get one, and At most year mixes (GeneratedPlaylists Years, Artists, ArtistCount and MaxYearPlaylists); admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
+      "reason": "A re-pin of the dashboard files: index.html's Which mixes card gains the Year mixes switch, the Artist mixes switch with how many artists get one, and At most year mixes (GeneratedPlaylists Years, Artists, ArtistCount and MaxYearPlaylists), and the mix Name hint says {0} can be the artist; admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
       "knownDiff": "Dashboard files, list groups",
       "reviewed": "pending Brandon"
     }

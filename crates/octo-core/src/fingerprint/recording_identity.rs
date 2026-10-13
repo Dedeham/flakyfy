@@ -335,6 +335,50 @@ impl Takes {
     }
 }
 
+/// The one recording a file's audio was found to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub recording_id: String,
+    pub kind: RecordingKind,
+    /// The file's exact length chose it among takes that share the fingerprint, so no other
+    /// recording of the fingerprint may name the file's album.
+    pub by_length: bool,
+}
+
+impl Identity {
+    /// The identity a confirmed verification decided, None otherwise.
+    pub fn of(verification: Option<&super::verification::VerificationResult>) -> Option<Identity> {
+        let verification = verification?;
+        if verification.verdict != super::verification::VerificationVerdict::Confirmed {
+            return None;
+        }
+        let recording_id = verification
+            .recording_id
+            .clone()
+            .filter(|id| !dotnet::is_blank(id))?;
+        Some(Identity {
+            recording_id,
+            kind: verification.kind.unwrap_or(RecordingKind::Studio),
+            by_length: verification.by_length,
+        })
+    }
+
+    /// Whether another recording of the same fingerprint may still name the file's album: never
+    /// when the exact length chose this one, and only one of the same kind otherwise (an album
+    /// and a compilation often list the same audio under two recordings).
+    pub fn admits(&self, recording_id: &str, kind: RecordingKind) -> bool {
+        dotnet::eq_ignore_case(recording_id, &self.recording_id) || (!self.by_length && kind == self.kind)
+    }
+
+    /// Whether an album or release title names a take this recording is not: "The Black Parade
+    /// (instrumentals)" for the studio take. `asked` are the kinds the request's title named.
+    pub fn contradicted_by(&self, album: &str, asked: &BTreeSet<RecordingKind>) -> Option<RecordingKind> {
+        RecordingKind::named_in(album)
+            .into_iter()
+            .find(|named| *named != self.kind && !asked.contains(named))
+    }
+}
+
 #[cfg(test)]
 #[path = "recording_identity_tests.rs"]
 mod tests;

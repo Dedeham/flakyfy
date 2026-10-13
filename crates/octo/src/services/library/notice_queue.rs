@@ -461,6 +461,70 @@ impl NoticeQueue {
         true
     }
 
+    /// What a replaced file's note says: "Octo replaced this: AcoustID heard Artist - Title, 97%
+    /// sure (needs 85%)".
+    pub fn replaced_reason(verdict: &VerificationResult, needs: i32) -> String {
+        format!(
+            "Octo replaced this: AcoustID heard {}, {}% sure (needs {needs}%)",
+            verdict
+                .matched_text()
+                .unwrap_or_else(|| "another song".to_string()),
+            whole_percent(verdict.score)
+        )
+    }
+
+    /// Leave `username` a note that the library sweep replaced the file at `local_path` through
+    /// Wrong song: a Review entry already Acted on, so it is never put in a playlist or asked
+    /// again, with the cause and AcoustID's numbers a question would carry. False when a Review
+    /// entry for this person and file is there already.
+    pub fn add_replaced(
+        &self,
+        username: &str,
+        local_path: &str,
+        song: &Song,
+        verdict: &VerificationResult,
+        navidrome_id: &str,
+        needs: i32,
+    ) -> bool {
+        let key = Self::review_key(username, local_path);
+        {
+            let mut entries = self.entries.lock();
+            if entries.contains_key(&key) {
+                return false;
+            }
+            let now = Utc::now();
+            entries.set(
+                key.clone(),
+                NoticeEntry {
+                    key,
+                    kind: NoticeKind::Review,
+                    username: username.trim().to_string(),
+                    local_path: local_path.to_string(),
+                    artist: song.artist.clone(),
+                    title: song.title.clone(),
+                    album: Some(song.album.clone()),
+                    navidrome_id: Some(navidrome_id.to_string()),
+                    state: NoticeState::Acted,
+                    reason: Self::replaced_reason(verdict, needs),
+                    cause: verdict.reason,
+                    origin: NoticeOrigin::LibrarySweep,
+                    duration_seconds: verdict.duration_seconds,
+                    file_format: Some(dotnet::to_lower_invariant(&extension(local_path))),
+                    next_lookup_utc: now,
+                    created_utc: now,
+                    resolved_utc: Some(now),
+                    acoust_id_score: Some(whole_percent(verdict.score)),
+                    threshold: Some(needs),
+                    matched: verdict.matched_text(),
+                    ..Default::default()
+                },
+            );
+            Self::trim(&mut entries);
+        }
+        self.mark_dirty();
+        true
+    }
+
     /// Every file a Review question was ever about, open or answered, for anyone.
     pub fn reviewed_paths(&self) -> HashSet<String> {
         self.entries

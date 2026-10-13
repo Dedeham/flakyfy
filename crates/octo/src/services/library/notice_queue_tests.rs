@@ -556,3 +556,80 @@ fn a_queue_file_with_the_numbers_still_loads_in_the_entry_before_them() {
     let again = NoticeQueue::with_path(Some(path));
     assert_eq!(only(&again, "alice").acoust_id_score, Some(64));
 }
+
+fn heard_roads() -> VerificationResult {
+    VerificationResult {
+        verdict: octo_core::fingerprint::verification::VerificationVerdict::Mismatch,
+        reason: InconclusiveReason::SoundsLikeAnother,
+        score: 0.97,
+        matched_artist: Some("Portishead".into()),
+        matched_title: Some("Roads".into()),
+        recording_id: Some("rec-roads".into()),
+        duration_seconds: 305,
+        threshold: 0.85,
+        ..Default::default()
+    }
+}
+
+/// A file the library sweep replaced leaves its keeper a settled note in Review: never asked
+/// about again, never put in a playlist, and saying what AcoustID heard.
+#[test]
+fn a_replaced_file_leaves_a_settled_note() {
+    let queue = NoticeQueue::new();
+    assert!(queue.add_replaced("bob ", "/music/a.flac", &song(), &heard_roads(), "nd-1", 85));
+    let note = only(&queue, "bob");
+    assert_eq!(note.username, "bob");
+    assert_eq!(note.state, NoticeState::Acted);
+    assert_eq!(note.cause, InconclusiveReason::SoundsLikeAnother);
+    assert_eq!(note.origin, NoticeOrigin::LibrarySweep);
+    assert_eq!(note.navidrome_id.as_deref(), Some("nd-1"));
+    assert!(note.resolved_utc.is_some() && note.fingerprint.is_none());
+    assert_eq!(
+        note.reason,
+        "Octo replaced this: AcoustID heard Portishead - Roads, 97% sure (needs 85%)"
+    );
+    assert_eq!(queue.open_count(NoticeOrigin::LibrarySweep), 0);
+    assert!(queue.reviewed_paths().contains("/music/a.flac"));
+    // One entry per person and file, as for a question.
+    assert!(!queue.add_replaced("bob", "/music/a.flac", &song(), &heard_roads(), "nd-1", 85));
+    assert!(!queue.add_review_from(
+        "bob",
+        "/music/a.flac",
+        &song(),
+        &heard_roads(),
+        NoticeOrigin::LibrarySweep
+    ));
+}
+
+/// A queue file holding a replaced note loads in the 2026.10.13 entry: its kind, state, cause
+/// and origin are members that release knows, so it never sets the file aside.
+#[test]
+fn a_queue_file_with_a_replaced_note_loads_in_the_2026_10_13_entry() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("notice-queue.json");
+    {
+        let queue = NoticeQueue::with_path(Some(path.clone()));
+        queue.add_replaced("bob", "/music/a.flac", &song(), &heard_roads(), "nd-1", 85);
+        queue.add_review("alice", "/music/b.flac", &song(), &heard_below(0.64));
+        assert!(queue.flush());
+    }
+    let text = std::fs::read_to_string(&path).expect("written");
+    assert!(text.contains(r#""State":"Acted""#), "{text}");
+    assert!(text.contains(r#""Cause":"SoundsLikeAnother""#), "{text}");
+    assert!(text.contains(r#""Origin":"LibrarySweep""#), "{text}");
+
+    let before: Option<Vec<EntryBefore>> =
+        serde_json::from_str(&text).expect("the 2026.10.13 entry reads it");
+    let mut before = before.expect("entries");
+    before.sort_by(|a, b| a.username.cmp(&b.username));
+    assert_eq!(before.len(), 2);
+    assert_eq!(before[1].username, "bob");
+    assert_eq!(before[1].state, NoticeState::Acted);
+    assert_eq!(before[1].cause, InconclusiveReason::SoundsLikeAnother);
+    assert_eq!(before[1].origin, NoticeOrigin::LibrarySweep);
+    assert!(before[1].reason.starts_with("Octo replaced this: AcoustID heard"));
+
+    let again = NoticeQueue::with_path(Some(path.clone()));
+    assert_eq!(only(&again, "bob").state, NoticeState::Acted);
+    assert!(path.exists());
+}

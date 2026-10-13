@@ -160,7 +160,7 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
         .recent(200)
         .iter()
         .map(|entry| {
-            json!({
+            let mut json = json!({
                 "kind": entry.kind.name(),
                 "username": entry.username,
                 "artist": entry.artist,
@@ -172,7 +172,20 @@ async fn get_notices(State(state): State<AppState>, request: Request) -> Respons
                 "submitted": entry.submitted,
                 "createdUtc": utc(&entry.created_utc),
                 "resolvedUtc": utc_opt(&entry.resolved_utc),
-            })
+            });
+            // AcoustID's numbers and what it matched, only when they are known.
+            if let Some(fields) = json.as_object_mut() {
+                if let Some(score) = entry.acoust_id_score {
+                    fields.insert("acoustIdScore".into(), json!(score));
+                }
+                if let Some(threshold) = entry.threshold {
+                    fields.insert("threshold".into(), json!(threshold));
+                }
+                if let Some(matched) = entry.matched.as_deref().filter(|m| !m.is_empty()) {
+                    fields.insert("matched".into(), json!(matched));
+                }
+            }
+            json
         })
         .collect();
     let duplicate_scan = state.duplicate_scan_worker.last_result().map(|r| {

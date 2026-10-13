@@ -4253,6 +4253,75 @@
       "reason": "A re-pin of the dashboard files: index.html's Which mixes card gains the Year mixes switch, the Artist mixes switch with how many artists get one, and At most year mixes (GeneratedPlaylists Years, Artists, ArtistCount and MaxYearPlaylists); admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
       "knownDiff": "Dashboard files, list groups",
       "reviewed": "pending Brandon"
+    },
+    {
+      "id": "acoustid-numbers-in-the-log",
+      "backlog": "base",
+      "requests": [
+        "95-acquisition/heart-neon-*",
+        "95-acquisition/pick-lima-*",
+        "95-acquisition/clear-all-*"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^.*[Dd]etail:\\ the\\ right\\ length;\\ AcoustID:\\ the\\ same\\ recording(;\\ .*)?\\ !=\\ the\\ right\\ length;\\ AcoustID:\\ the\\ same\\ recording,\\ 97%\\ sure\\ \\(needs\\ 85%\\)(;\\ .*)?$",
+        "^.*[Dd]etail:\\ the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ .*\\ !=\\ the\\ right\\ length;\\ AcoustID\\ (has\\ no\\ entry\\ for\\ this\\ sound|was\\ not\\ asked:\\ the\\ file\\ could\\ not\\ be\\ fingerprinted|did\\ not\\ answer),\\ .*$"
+      ],
+      "reason": "A download log's check step says what AcoustID answered, with its numbers and the threshold in effect: \"AcoustID: the same recording, 97% sure (needs 85%)\" instead of \"AcoustID: the same recording\", and \"AcoustID has no entry for this sound\" (or \"did not answer\", \"was not asked: the file could not be fingerprinted\", \"no match above 85% (best 61%)\") instead of \"AcoustID could not say\". A check line can also carry Heard (the other recordings AcoustID heard, up to 3, with their scores), an optional field left out when empty; the corpus stubs answer one recording or none, so no corpus line carries it. Asked for in issue #87 to follow the matching. Lines pinned from the stub answers (97% for Neon Tide, an empty lookup for lima's copy) without a parity run; to be confirmed on the first run over this branch.",
+      "knownDiff": "AcoustID numbers in the download log",
+      "reviewed": "pending Brandon"
+    },
+    {
+      "id": "dashboard-files-match-scores",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"GQ0WiPI3WySTw2RQyOKO9RhuTk9CAnX8B\\+IiBqoe1B0=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 190d1688f2375b2493c36450c8e28ef5186e4e4f420275fc07e22206aa1ed41d\\ \\(209506\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"pUV10CojjcCscfTNXpmjnVTbzRR51zTjy7GsVKuyhNA=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ a54575d02a238dc0ac71f4cd5e99a39d54dbcd1479d734e3cbb1ac54abb284d0\\ \\(416369\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/209506'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files: admin.js shows AcoustID's numbers, the download log's check step lists the other recordings AcoustID heard (\"Also heard: Artist - Title, 64% sure\"), and the Review questions table adds how sure AcoustID was, the score it needed and what it matched (\"64% sure, needs 85%; it matched Artist - Title\"). index.html and admin.css are unchanged. Supersedes dashboard-files-2026-10-11 once reviewed.",
+      "knownDiff": "Dashboard files, AcoustID numbers",
+      "reviewed": "pending Brandon"
     }
   ]
 }

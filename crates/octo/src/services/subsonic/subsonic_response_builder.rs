@@ -463,6 +463,18 @@ pub fn event_json(line: &AcquisitionEvent) -> Fields {
             None => Value::Null,
         },
     );
+    // The other recordings AcoustID heard, only on a check line that has them.
+    if let Some(heard) = line.heard.as_ref().filter(|heard| !heard.is_empty()) {
+        fields.insert(
+            "heard".into(),
+            Value::Array(
+                heard
+                    .iter()
+                    .map(|h| json!({ "title": h.title, "artist": h.artist, "score": h.score }))
+                    .collect(),
+            ),
+        );
+    }
     fields
 }
 

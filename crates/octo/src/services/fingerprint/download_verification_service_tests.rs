@@ -1037,3 +1037,260 @@ fn the_isrc_of_a_stray_link_does_not_confirm_it() {
 
     assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
 }
+
+// ---- the numbers in the log -----------------------------------------------------------------
+
+#[test]
+fn every_decision_carries_the_threshold_it_was_held_to() {
+    let lookup = ok(vec![result(
+        0.61,
+        vec![recording("Teardrop", "Massive Attack", None, None)],
+    )]);
+    let verdict = DownloadVerificationService::decide(
+        &lookup,
+        Some("Massive Attack"),
+        Some("Teardrop"),
+        0.7,
+        false,
+        0,
+        false,
+    );
+    assert_eq!(verdict.threshold, 0.7);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID: no match above 70% (best 61%)")
+    );
+}
+
+#[test]
+fn a_confirmed_match_says_how_sure_acoust_id_was_and_what_it_needed() {
+    let verdict = decide(
+        &ok(vec![result(
+            0.92,
+            vec![recording("Teardrop", "Massive Attack", None, None)],
+        )]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    assert_eq!(verdict.verdict, VerificationVerdict::Confirmed);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID: the same recording, 92% sure (needs 85%)")
+    );
+    // The recording named is not heard again.
+    assert!(verdict.heard().is_empty());
+}
+
+#[test]
+fn a_match_below_the_threshold_names_the_best_score_and_keeps_what_it_heard() {
+    let verdict = decide(
+        &ok(vec![
+            result(0.40, vec![recording("Angel", "Massive Attack", None, None)]),
+            result(0.61, vec![recording("Teardrop", "Massive Attack", None, None)]),
+        ]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    assert_eq!(verdict.reason, InconclusiveReason::BelowThreshold);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID: no match above 85% (best 61%)")
+    );
+    let heard: Vec<String> = verdict.heard().iter().map(|h| h.describe()).collect();
+    assert_eq!(
+        heard,
+        [
+            "Massive Attack - Teardrop, 61% sure",
+            "Massive Attack - Angel, 40% sure"
+        ]
+    );
+    assert_eq!(verdict.shown_score(), Some(0.61));
+    assert_eq!(
+        verdict.matched_text().as_deref(),
+        Some("Massive Attack - Teardrop")
+    );
+}
+
+#[test]
+fn a_mismatch_names_the_recording_and_how_sure_acoust_id_was() {
+    let verdict = decide(
+        &ok(vec![
+            result(0.97, vec![recording("Angel", "Massive Attack", None, None)]),
+            result(
+                0.30,
+                vec![recording("Unfinished Sympathy", "Massive Attack", None, None)],
+            ),
+        ]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID says this is 'Massive Attack - Angel', 97% sure (needs 85%)")
+    );
+    let heard: Vec<String> = verdict.heard().iter().map(|h| h.describe()).collect();
+    assert_eq!(heard, ["Massive Attack - Unfinished Sympathy, 30% sure"]);
+}
+
+#[test]
+fn a_live_take_says_it_is_one() {
+    let mut live = recording("Teardrop", "Massive Attack", Some("Live at the BBC"), None);
+    live.releases = vec![AcoustIdRelease {
+        title: Some("Live at the BBC".into()),
+        secondary_types: vec!["Live".into()],
+        ..Default::default()
+    }];
+    let verdict = DownloadVerificationService::decide(
+        &ok(vec![result(0.95, vec![live])]),
+        Some("Massive Attack"),
+        Some("Teardrop"),
+        THRESHOLD,
+        false,
+        0,
+        true,
+    );
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID says this is a live recording of 'Massive Attack - Teardrop', 95% sure (needs 85%)")
+    );
+}
+
+#[test]
+fn no_entry_says_acoust_id_has_never_heard_the_sound() {
+    let verdict = VerificationResult {
+        reason: InconclusiveReason::NoEntry,
+        lookup: Some(ok(Vec::new())),
+        threshold: THRESHOLD,
+        ..Default::default()
+    };
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID has no entry for this sound")
+    );
+    assert_eq!(verdict.shown_score(), None);
+    assert!(verdict.heard().is_empty());
+
+    // A sound AcoustID knows that no recording is linked to.
+    let known = decide(
+        &ok(vec![result(0.9, Vec::new())]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    assert_eq!(known.reason, InconclusiveReason::NoEntry);
+    assert_eq!(
+        known.acoust_id_text().as_deref(),
+        Some("AcoustID knows this sound, 90% sure, but no recording is linked to it")
+    );
+}
+
+#[test]
+fn a_length_off_match_says_how_long_the_recording_runs() {
+    let mut long = recording("Teardrop", "Massive Attack", None, None);
+    long.duration_seconds = Some(400);
+    let verdict = DownloadVerificationService::decide(
+        &ok(vec![result(0.93, vec![long])]),
+        Some("Massive Attack"),
+        Some("Teardrop"),
+        THRESHOLD,
+        false,
+        330,
+        false,
+    );
+    assert_eq!(verdict.reason, InconclusiveReason::LengthOff);
+    assert_eq!(
+        verdict.acoust_id_text().as_deref(),
+        Some("AcoustID: the same song, 93% sure (needs 85%), but that recording runs 6:40")
+    );
+}
+
+#[test]
+fn a_file_kept_on_its_isrc_says_what_acoust_id_said_first() {
+    let below = decide(
+        &ok(vec![result(
+            0.61,
+            vec![recording("Teardrop", "Massive Attack", None, None)],
+        )]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    let kept = DownloadVerificationService::with_tagged_isrc(below, Some("GBAAA9800001"), true);
+    assert_eq!(kept.verdict, VerificationVerdict::Confirmed);
+    assert_eq!(
+        kept.acoust_id_text().as_deref(),
+        Some(
+            "AcoustID: no match above 85% (best 61%), but the file's own tags carry the requested ISRC GBAAA9800001"
+        )
+    );
+
+    // Without a lookup at all the ISRC alone speaks.
+    let alone = DownloadVerificationService::with_tagged_isrc(
+        VerificationResult::default(),
+        Some("GBAAA9800001"),
+        true,
+    );
+    assert_eq!(
+        alone.acoust_id_text().as_deref(),
+        Some("the file's own tags carry the requested ISRC GBAAA9800001")
+    );
+}
+
+#[test]
+fn nothing_is_said_when_acoust_id_was_not_asked() {
+    assert_eq!(VerificationResult::inconclusive().acoust_id_text(), None);
+    assert_eq!(
+        reason(InconclusiveReason::LookupFailed)
+            .acoust_id_text()
+            .as_deref(),
+        Some("AcoustID did not answer")
+    );
+    // A file with no audio is said elsewhere.
+    let undecodable = VerificationResult {
+        verdict: VerificationVerdict::Mismatch,
+        deny_reason: "delivered a file with no decodable audio".into(),
+        ..Default::default()
+    };
+    assert_eq!(undecodable.acoust_id_text(), None);
+}
+
+#[test]
+fn heard_keeps_three_best_first_and_each_song_once() {
+    let mut popular = recording("Angel", "Massive Attack", None, None);
+    popular.sources = 9;
+    let mut stray = recording("Teardrop", "Massive Attack", None, None);
+    stray.sources = 1;
+    let verdict = decide(
+        &ok(vec![
+            result(0.70, vec![stray, popular]),
+            result(0.65, vec![recording("Angel", "massive attack", None, None)]),
+            result(
+                0.50,
+                vec![recording("Safe from Harm", "Massive Attack", None, None)],
+            ),
+            result(0.45, Vec::new()),
+            result(
+                0.40,
+                vec![recording("Inertia Creeps", "Massive Attack", None, None)],
+            ),
+            result(0.20, vec![recording("Karmacoma", "Massive Attack", None, None)]),
+        ]),
+        "Massive Attack",
+        "Teardrop",
+        false,
+    );
+    let heard: Vec<String> = verdict.heard().iter().map(|h| h.describe()).collect();
+    assert_eq!(
+        heard,
+        [
+            "Massive Attack - Angel, 70% sure",
+            "Massive Attack - Safe from Harm, 50% sure",
+            "Massive Attack - Inertia Creeps, 40% sure"
+        ]
+    );
+}

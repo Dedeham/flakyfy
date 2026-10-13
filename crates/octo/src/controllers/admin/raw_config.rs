@@ -313,6 +313,8 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "GeneratedPlaylists:MaxYearPlaylists",
     "GeneratedPlaylists:Artists",
     "GeneratedPlaylists:ArtistCount",
+    "LibraryActions:ReviewSweepAutoReplace",
+    "LibraryActions:ReviewSweepAutoReplacePerDay",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

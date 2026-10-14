@@ -1143,3 +1143,83 @@ async fn a_genre_apply_waits_for_another_library_job() {
     assert_eq!(preview.status, StatusCode::ACCEPTED, "{}", preview.body);
     drop(tidy);
 }
+
+/// The ratings not acted on, newest first, with the reason in plain words, behind the browse
+/// session like the action history.
+#[tokio::test]
+async fn ignored_ratings_list_the_reason_behind_the_session() {
+    use crate::services::library::{IgnoredRating, RatingIgnored};
+    use octo_core::settings::LibraryAction;
+
+    let state = AppState::for_tests(AppSettings::default());
+    let app = app(&state);
+    let at = chrono::DateTime::parse_from_rfc3339("2026-10-13T08:00:00Z")
+        .expect("a time")
+        .with_timezone(&chrono::Utc);
+    for (song, reason) in [
+        ("nd-1", RatingIgnored::RatingsOff),
+        ("nd-2", RatingIgnored::NotAllowed),
+    ] {
+        state.library_action_rating_worker.note_ignored(IgnoredRating {
+            at_utc: at,
+            username: "alice".into(),
+            song_id: song.into(),
+            artist: Some("Massive Attack".into()),
+            title: (song == "nd-2").then(|| "Teardrop".to_string()),
+            rating: 1,
+            action: LibraryAction::Delete,
+            reason: reason.reason("alice"),
+        });
+    }
+
+    let signed_out = send(
+        &app,
+        request(
+            Method::GET,
+            "/api/admin/library-actions/ignored-ratings",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(signed_out.status, StatusCode::UNAUTHORIZED);
+
+    let token = state.browse_sessions.create("admin");
+    let reply = send(
+        &app,
+        request(
+            Method::GET,
+            "/api/admin/library-actions/ignored-ratings",
+            Some(&token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let body: Value = serde_json::from_str(&reply.body).expect("JSON");
+    assert_eq!(
+        body,
+        json!({"entries": [
+            {
+                "atUtc": "2026-10-13T08:00:00Z",
+                "username": "alice",
+                "songId": "nd-2",
+                "artist": "Massive Attack",
+                "title": "Teardrop",
+                "rating": 1,
+                "action": "Delete",
+                "reason": "alice is not on the allowed list. Add them to Who may trigger actions under Library actions.",
+            },
+            {
+                "atUtc": "2026-10-13T08:00:00Z",
+                "username": "alice",
+                "songId": "nd-1",
+                "artist": "Massive Attack",
+                "title": null,
+                "rating": 1,
+                "action": "Delete",
+                "reason": "Star ratings are off. Turn on Star ratings as commands under Library actions.",
+            },
+        ]})
+    );
+}

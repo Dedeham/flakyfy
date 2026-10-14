@@ -4408,6 +4408,55 @@
       ],
       "reason": "A re-pin of the dashboard files: admin.js shows AcoustID's numbers, the download log's check step lists the other recordings AcoustID heard (\"Also heard: Artist - Title, 64% sure\"), and the Review questions table adds how sure AcoustID was, the score it needed and what it matched (\"97% sure, needs 85%; it matched Artist - Title\"), or, when it named no recording, what came closest (\"64% sure, needs 85%; closest: Artist - Title\"). index.html and admin.css are unchanged. Supersedes dashboard-files-2026-10-11 once reviewed.",
       "knownDiff": "Dashboard files, AcoustID numbers"
+    },
+    {
+      "id": "dashboard-files-ignored-ratings",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"\\+B4uF2nk4Tw4LkVdjGgcjfpxDJLO2eKnuPVLLEr9dxM=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ f81e2e1769e4e13c382e455d8c681c8dfa710c92ced9e2a7b8f54b2c4afd7713\\ \\(210267\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"GyazOUt4hoaqIyVqaMLdCVjQK3ErvDSp7Gu91esUt0E=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 1b26b3394b788686aa23256a68c2dd0958d02b712bbc34a9ec6bbdd5eb14b741\\ \\(416375\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/210267'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files: index.html gains the Ratings Octo did not act on card on the Library actions page, and admin.js fills it from /api/admin/library-actions/ignored-ratings (issue #87); admin.css is unchanged. Supersedes dashboard-files-2026-10-11 once reviewed.",
+      "knownDiff": "Dashboard files, ratings not acted on"
     }
   ]
 }

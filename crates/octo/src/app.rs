@@ -104,9 +104,9 @@ use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, Library
 use crate::services::library::{
     DuplicateScanWorker, EditServiceSweepEdits, ExecutorSweepReplacer, FingerprintSweepVerifier,
     IdentitySweepStore, LibraryIdentitySweep, LibraryIdentitySweepParts, LibraryReviewSweepParts,
-    LibraryReviewSweepWorker, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks,
-    NavidromeOtherListeners, NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker,
-    ReviewSweepStore, SnapshotSweepLibrary, UpgradeWorker, UpgradeWorkerParts,
+    LibraryReviewSweepWorker, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks, NavidromeOtherListeners,
+    NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker, ReviewSweepStore, SnapshotSweepLibrary,
+    UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -2356,13 +2356,23 @@ impl LibraryJobs {
                 Clock::system(),
             )
             .with_library_scope(navidrome.library_scope.clone())
-            // Marks are read as the admin sees them. No other listener's marks are read, so while
-            // anyone else uses the server the sweep asks instead of replacing.
+            // The admin's marks are read with Octo's admin sign-in and each Family member's with
+            // their own. Anyone else on the server, or a member whose marks cannot be read, keeps
+            // the song a question.
             .with_replacer(Arc::new(ExecutorSweepReplacer::new(
                 navidrome.navidrome_song_path_resolver.clone(),
                 executor.clone(),
                 navidrome.navidrome_playlist_api.clone(),
-                None,
+                Some(Arc::new(NavidromeMemberMarks::new(
+                    Arc::clone(settings),
+                    navidrome.http.clone(),
+                    Arc::clone(&stores.family_store),
+                    Arc::new(MemberCredentials::new(
+                        Arc::clone(&stores.family_store),
+                        Arc::clone(&stores.family_vault),
+                        Arc::clone(settings),
+                    )),
+                ))),
                 Arc::new(NavidromeOtherListeners::new(
                     navidrome.navidrome_admin.clone(),
                     stores.family_store.clone(),

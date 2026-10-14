@@ -2,7 +2,7 @@
 //! check it asks. With the switch on, a file AcoustID clearly hears as another song is replaced
 //! through Wrong song, and Octo's own downloads can be checked again in one pass.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -133,8 +133,8 @@ pub trait SweepReplacer: Send + Sync {
 /// does not see.
 #[async_trait]
 pub trait OtherListeners: Send + Sync {
-    /// How many there are, or None when they cannot be counted.
-    async fn count(&self) -> Option<usize>;
+    /// Their names, in lower case and each once, or None when they cannot be listed.
+    async fn names(&self) -> Option<Vec<String>>;
 }
 
 /// Counts the other listeners as Navidrome's users other than Octo's admin identity, together
@@ -149,23 +149,24 @@ impl NavidromeOtherListeners {
         NavidromeOtherListeners { admin, family }
     }
 
-    /// How many distinct names among `users` and `members` are not `admin`, ignoring case and
-    /// blank names.
-    pub fn others_besides(admin: &str, users: &[String], members: &[String]) -> usize {
+    /// The distinct names among `users` and `members` that are not `admin`, ignoring case and
+    /// blank names, in lower case and sorted.
+    pub fn others_besides(admin: &str, users: &[String], members: &[String]) -> Vec<String> {
         let admin = admin.trim().to_lowercase();
         users
             .iter()
             .chain(members)
             .map(|name| name.trim().to_lowercase())
             .filter(|name| !name.is_empty() && *name != admin)
-            .collect::<HashSet<_>>()
-            .len()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 }
 
 #[async_trait]
 impl OtherListeners for NavidromeOtherListeners {
-    async fn count(&self) -> Option<usize> {
+    async fn names(&self) -> Option<Vec<String>> {
         let users = match self.admin.list_users().await {
             Ok(users) => users,
             Err(e) => {
@@ -186,24 +187,26 @@ impl OtherListeners for NavidromeOtherListeners {
 }
 
 /// Whether a song is starred or rated, from the admin's marks (None when they could not be
-/// read), how many other listeners there are (None when they could not be counted) and the
-/// marks read for them, one per listener read. Any mark found is Some(true); Some(false) needs
-/// the admin's marks and one read for every other listener, all without a star or a rating;
-/// anything left unread is None.
+/// read), the other listeners' names (None when they could not be listed) and the marks read
+/// with each member's own sign-in, by name (None for a member whose marks could not be read).
+/// Any mark found is Some(true); Some(false) needs the admin's marks and a read for every other
+/// listener by name, all without a star or a rating; anything left unread is None.
 pub fn marked_verdict(
     admin: Option<&SongMarks>,
-    others: Option<usize>,
-    members: &[SongMarks],
+    others: Option<&[String]>,
+    reads: &[(String, Option<SongMarks>)],
 ) -> Option<bool> {
     let marked = |marks: &SongMarks| marks.starred || marks.rating > 0;
-    if admin.is_some_and(marked) || members.iter().any(marked) {
+    if admin.is_some_and(marked) || reads.iter().any(|(_, marks)| marks.as_ref().is_some_and(marked)) {
         return Some(true);
     }
     admin?;
-    if members.len() < others? {
-        return None;
-    }
-    Some(false)
+    let read = |name: &str| {
+        reads.iter().any(|(member, marks)| {
+            marks.is_some() && member.trim().to_lowercase() == name.trim().to_lowercase()
+        })
+    };
+    others?.iter().all(|name| read(name)).then_some(false)
 }
 
 /// The real replacement: the resolver finds the song's id, Navidrome's song page says whether it
@@ -249,19 +252,14 @@ impl SweepReplacer for ExecutorSweepReplacer {
             .as_ref()
             .is_none_or(|marks| marks.starred || marks.rating > 0)
         {
-            return marked_verdict(admin.as_ref(), Some(0), &[]);
+            return marked_verdict(admin.as_ref(), Some(&[]), &[]);
         }
-        let others = self.others.count().await;
-        let members = match (&self.members, others) {
-            (Some(members), Some(count)) if count > 0 => members
-                .marks_of(song_id)
-                .await
-                .into_iter()
-                .filter_map(|(_, marks)| marks)
-                .collect(),
+        let others = self.others.names().await;
+        let reads = match (&self.members, &others) {
+            (Some(members), Some(names)) if !names.is_empty() => members.marks_of(song_id).await,
             _ => Vec::new(),
         };
-        marked_verdict(admin.as_ref(), others, &members)
+        marked_verdict(admin.as_ref(), others.as_deref(), &reads)
     }
 
     // Spawned, so a host stopping while the sweep waits never cuts the action short.

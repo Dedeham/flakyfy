@@ -605,13 +605,15 @@ clearly is another one instead of asking: AcoustID names a different song, by an
 least as sure as `SLSKD_MIN_MATCH_SCORE`. It goes through Wrong song as the library keeper, so
 Wrong song must be on, dry run must be off and the keeper must be on the allowlist, and Review
 keeps a note of what Octo heard ("Octo replaced this: AcoustID heard Artist - Title, 97% sure
-(needs 85%)"). Another take or a remaster of the same song, a song of the wrong length and
-anything AcoustID is not sure of are still asked about. At most
+(needs 85%)"). Another take or a remaster of the same song, a song of the wrong length and anything
+AcoustID is not sure of are still asked about. So is a song anyone starred or rated: the admin's
+marks and each Family member's are read with their own sign-in, and while another Navidrome user is
+on the server, or a member's marks cannot be read, the song is asked about too. At most
 `LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY` (10) a day are replaced; past that, or after
 three replacements fail in a day, the rest of the day's are asked about. "Re-check Octo's
-downloads" on the dashboard checks every song Octo downloaded once more, at least 60 an hour
-even with the hourly rate at 0, and then stops: the way to go over earlier downloads after
-changing the match score.
+downloads" on the dashboard checks every song Octo downloaded once more, at least 60 an hour even
+with the hourly rate at 0, and then stops: the way to go over earlier downloads after changing the
+match score.
 
 `LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR` (default 60, 0 is off) checks that many library songs an
 hour against their audio, only while nothing is downloading, in AcoustID's spare lane. Each file

@@ -1746,13 +1746,15 @@ fn the_new_state_fields_are_left_out_until_used_and_read_on_the_old_shape() {
 
 mod other_listeners {
     use octo_core::family::abilities::Preset;
-    use octo_core::settings::{AppSettings, SubsonicSettings};
+    use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
     use serde_json::{Value, json};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
     use crate::services::family::family_store::{FamilyStore, Member, SharedLibraries};
+    use crate::services::family::{FamilyVault, MemberCredentials};
+    use crate::services::health::member_marks::NavidromeMemberMarks;
     use crate::services::library::library_action_test_support::{Extras, executor, store};
     use crate::services::subsonic::navidrome_identity_service::NavidromeIdentityService;
 
@@ -1764,63 +1766,128 @@ mod other_listeners {
         }
     }
 
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn read(name: &str, marks: Option<SongMarks>) -> (String, Option<SongMarks>) {
+        (name.to_string(), marks)
+    }
+
     #[test]
     fn a_song_counts_as_unmarked_only_when_everyone_s_marks_were_read() {
         let plain = marks(false, 0);
+        let none: &[String] = &[];
+        let two = names(&["kid", "teen"]);
         // Nobody else: the admin's own marks decide.
-        assert_eq!(marked_verdict(Some(&plain), Some(0), &[]), Some(false));
-        assert_eq!(marked_verdict(Some(&marks(true, 0)), Some(0), &[]), Some(true));
-        assert_eq!(marked_verdict(Some(&marks(false, 3)), Some(0), &[]), Some(true));
-        // The admin's marks unread.
-        assert_eq!(marked_verdict(None, Some(0), &[]), None);
-        // Other listeners whose marks nobody read.
-        assert_eq!(marked_verdict(Some(&plain), Some(2), &[]), None);
-        assert_eq!(marked_verdict(Some(&plain), Some(2), &[plain]), None);
-        // Other listeners who cannot be counted.
-        assert_eq!(marked_verdict(Some(&plain), None, &[]), None);
-        // Every other listener read, none marked it.
+        assert_eq!(marked_verdict(Some(&plain), Some(none), &[]), Some(false));
+        assert_eq!(marked_verdict(Some(&marks(true, 0)), Some(none), &[]), Some(true));
         assert_eq!(
-            marked_verdict(Some(&plain), Some(2), &[plain, plain]),
+            marked_verdict(Some(&marks(false, 3)), Some(none), &[]),
+            Some(true)
+        );
+        // The admin's marks unread.
+        assert_eq!(marked_verdict(None, Some(none), &[]), None);
+        // Other listeners whose marks nobody read.
+        assert_eq!(marked_verdict(Some(&plain), Some(&two), &[]), None);
+        assert_eq!(
+            marked_verdict(Some(&plain), Some(&two), &[read("kid", Some(plain))]),
+            None
+        );
+        // Other listeners who cannot be listed.
+        assert_eq!(marked_verdict(Some(&plain), None, &[]), None);
+        // Every other listener read, none marked it; names match whatever their case.
+        assert_eq!(
+            marked_verdict(
+                Some(&plain),
+                Some(&two),
+                &[read("Kid", Some(plain)), read("teen", Some(plain))]
+            ),
             Some(false)
+        );
+        // A read that failed is no read.
+        assert_eq!(
+            marked_verdict(
+                Some(&plain),
+                Some(&two),
+                &[read("kid", Some(plain)), read("teen", None)]
+            ),
+            None
         );
         // A mark anyone left is enough, whatever else is unread.
         assert_eq!(
-            marked_verdict(Some(&plain), Some(3), &[marks(false, 1)]),
+            marked_verdict(
+                Some(&plain),
+                Some(&names(&["a", "b", "c"])),
+                &[read("a", Some(marks(false, 1)))]
+            ),
             Some(true)
         );
-        assert_eq!(marked_verdict(Some(&plain), None, &[marks(true, 0)]), Some(true));
+        assert_eq!(
+            marked_verdict(Some(&plain), None, &[read("kid", Some(marks(true, 0)))]),
+            Some(true)
+        );
         assert_eq!(marked_verdict(Some(&marks(true, 0)), None, &[]), Some(true));
     }
 
     #[test]
-    fn other_listeners_are_every_other_name_once() {
-        let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    fn a_read_of_someone_else_never_stands_in_for_a_listener_nobody_read() {
+        let plain = marks(false, 0);
+        // The admin is also a Family member and a plain Navidrome user is on the server: the
+        // admin's own read does not cover that user.
         assert_eq!(
-            NavidromeOtherListeners::others_besides("admin", &names(&["admin"]), &[]),
-            0
+            marked_verdict(
+                Some(&plain),
+                Some(&names(&["kid"])),
+                &[read("admin", Some(plain))]
+            ),
+            None
         );
+        // Two reads of the same member do not cover a second listener.
+        assert_eq!(
+            marked_verdict(
+                Some(&plain),
+                Some(&names(&["kid", "teen"])),
+                &[read("kid", Some(plain)), read("kid", Some(plain))]
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn other_listeners_are_every_other_name_once() {
+        assert!(NavidromeOtherListeners::others_besides("admin", &names(&["admin"]), &[]).is_empty());
         assert_eq!(
             NavidromeOtherListeners::others_besides(
                 "Admin",
                 &names(&["admin", "kid", " "]),
                 &names(&["KID", "teen"])
             ),
-            2
+            names(&["kid", "teen"])
         );
         assert_eq!(
             NavidromeOtherListeners::others_besides("admin", &[], &names(&["kid"])),
-            1
+            names(&["kid"])
         );
     }
 
     struct Navidrome {
-        _server: MockServer,
+        server: MockServer,
         replacer: ExecutorSweepReplacer,
     }
 
+    /// How a member's own getSong for nd-1 answers.
+    enum MemberSong {
+        Plain,
+        Starred,
+        Rated,
+        Refused,
+    }
+
     /// A Navidrome whose admin left no mark on song nd-1 and whose user list answers `users`
-    /// (None: the list fails), with `members` in Family.
-    async fn navidrome(users: Option<Value>, members: &[&str]) -> Navidrome {
+    /// (None: the list fails), with `members` in Family. With `family_on`, each member signs in
+    /// with their own hidden password and their marks are read through Navidrome's getSong.
+    async fn navidrome(users: Option<Value>, members: &[&str], family_on: bool) -> Navidrome {
         let server = MockServer::builder().start().await;
         let answer = |body: Value| ResponseTemplate::new(200).set_body_json(body);
         Mock::given(path("/auth/login"))
@@ -1853,19 +1920,24 @@ mod other_listeners {
                 auto_detect_download_path: false,
                 ..Default::default()
             },
+            family: FamilySettings {
+                enabled: family_on,
+                ..Default::default()
+            },
             ..Default::default()
         });
         let http = crate::services::http_client_factory::default_client();
         let identity = NavidromeIdentityService::new(settings.clone(), http.clone());
         let family = Arc::new(FamilyStore::in_memory());
+        let vault = Arc::new(FamilyVault::in_memory());
         for name in members {
             family.upsert_member(Member {
                 username: name.to_string(),
                 display_name: String::new(),
                 preset: Preset::Listener,
                 edits: Default::default(),
-                navidrome_user_id: String::new(),
-                navidrome_password: String::new(),
+                navidrome_user_id: format!("u-{name}"),
+                navidrome_password: vault.seal("hidden").expect("sealed"),
                 personal_library_id: None,
                 shared_libraries: SharedLibraries::All,
                 account_password: String::new(),
@@ -1874,6 +1946,12 @@ mod other_listeners {
                 ntfy_topic: String::new(),
             });
         }
+        let member_marks = NavidromeMemberMarks::new(
+            settings.clone(),
+            http.clone(),
+            family.clone(),
+            Arc::new(MemberCredentials::new(family.clone(), vault, settings.clone())),
+        );
         let replacer = ExecutorSweepReplacer::new(
             Arc::new(NavidromeSongPathResolver::new(
                 identity.clone(),
@@ -1887,47 +1965,114 @@ mod other_listeners {
                 identity.clone(),
                 settings.clone(),
             )),
-            None,
+            Some(Arc::new(member_marks)),
             Arc::new(NavidromeOtherListeners::new(
                 Arc::new(NavidromeAdmin::new(identity, http, settings)),
                 family,
             )),
         );
-        Navidrome {
-            _server: server,
-            replacer,
-        }
+        Navidrome { server, replacer }
+    }
+
+    /// `member`'s own getSong for nd-1 answers as `song`.
+    async fn member_song(n: &Navidrome, member: &str, song: MemberSong) {
+        let ok = |song: Value| json!({"subsonic-response": {"status": "ok", "song": song}});
+        let body = match song {
+            MemberSong::Plain => ok(json!({"id": "nd-1", "playCount": 2})),
+            MemberSong::Starred => ok(json!({"id": "nd-1", "starred": "2026-10-01T10:00:00Z"})),
+            MemberSong::Rated => ok(json!({"id": "nd-1", "userRating": 3})),
+            MemberSong::Refused => json!({"subsonic-response": {
+                "status": "failed", "error": {"code": 40, "message": "Wrong username or password"},
+            }}),
+        };
+        Mock::given(method("GET"))
+            .and(path("/rest/getSong"))
+            .and(query_param("u", member))
+            .and(query_param("id", "nd-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&n.server)
+            .await;
+    }
+
+    /// Navidrome's user list: the admin, then `others`.
+    fn admin_and(others: &[&str]) -> Value {
+        let mut users = vec![json!({"id": "u1", "userName": "admin"})];
+        users.extend(
+            others
+                .iter()
+                .map(|name| json!({"id": format!("u-{name}"), "userName": name})),
+        );
+        Value::Array(users)
     }
 
     /// With nobody else on the server, an unmarked song can be replaced.
     #[tokio::test]
     async fn an_unmarked_song_on_a_server_of_one_can_be_replaced() {
-        let n = navidrome(Some(json!([{"id": "u1", "userName": "admin"}])), &[]).await;
+        let n = navidrome(Some(admin_and(&[])), &[], true).await;
         assert_eq!(n.replacer.marked("nd-1").await, Some(false));
     }
 
-    /// Another listener's stars and ratings are not read, so their song is asked about.
+    /// Another listener's stars and ratings cannot be read without their sign-in, so their
+    /// song is asked about.
     #[tokio::test]
     async fn another_listener_s_unread_marks_keep_the_song_a_question() {
-        let n = navidrome(
-            Some(json!([{"id": "u1", "userName": "admin"}, {"id": "u2", "userName": "kid"}])),
-            &[],
-        )
-        .await;
+        let n = navidrome(Some(admin_and(&["kid"])), &[], true).await;
         assert_eq!(n.replacer.marked("nd-1").await, None);
     }
 
-    /// A Family member counts even before Navidrome lists them.
+    /// With Family off no member's marks are read, so a member keeps the song a question.
     #[tokio::test]
     async fn a_family_member_s_unread_marks_keep_the_song_a_question() {
-        let n = navidrome(Some(json!([{"id": "u1", "userName": "admin"}])), &["teen"]).await;
+        let n = navidrome(Some(admin_and(&[])), &["teen"], false).await;
+        member_song(&n, "teen", MemberSong::Plain).await;
         assert_eq!(n.replacer.marked("nd-1").await, None);
     }
 
     /// When the users cannot be listed, nobody can say no one else marked it.
     #[tokio::test]
     async fn users_that_cannot_be_listed_keep_the_song_a_question() {
-        let n = navidrome(None, &[]).await;
+        let n = navidrome(None, &[], true).await;
+        assert_eq!(n.replacer.marked("nd-1").await, None);
+    }
+
+    /// Every member read with their own sign-in and none starred or rated it: it can be
+    /// replaced.
+    #[tokio::test]
+    async fn members_read_with_their_own_sign_in_and_unmarked_let_the_song_be_replaced() {
+        let n = navidrome(Some(admin_and(&["teen", "kid"])), &["teen", "kid"], true).await;
+        member_song(&n, "teen", MemberSong::Plain).await;
+        member_song(&n, "kid", MemberSong::Plain).await;
+        assert_eq!(n.replacer.marked("nd-1").await, Some(false));
+    }
+
+    /// A member's star or rating keeps the song from being replaced.
+    #[tokio::test]
+    async fn a_member_s_star_or_rating_marks_the_song() {
+        let n = navidrome(Some(admin_and(&["teen", "kid"])), &["teen", "kid"], true).await;
+        member_song(&n, "teen", MemberSong::Plain).await;
+        member_song(&n, "kid", MemberSong::Starred).await;
+        assert_eq!(n.replacer.marked("nd-1").await, Some(true));
+
+        let n = navidrome(Some(admin_and(&["teen"])), &["teen"], true).await;
+        member_song(&n, "teen", MemberSong::Rated).await;
+        assert_eq!(n.replacer.marked("nd-1").await, Some(true));
+    }
+
+    /// A member whose marks cannot be read keeps the song a question.
+    #[tokio::test]
+    async fn a_member_whose_marks_cannot_be_read_keeps_the_song_a_question() {
+        let n = navidrome(Some(admin_and(&["teen", "kid"])), &["teen", "kid"], true).await;
+        member_song(&n, "teen", MemberSong::Plain).await;
+        member_song(&n, "kid", MemberSong::Refused).await;
+        assert_eq!(n.replacer.marked("nd-1").await, None);
+    }
+
+    /// A Navidrome user outside Family has no sign-in Octo can use, so even with every member
+    /// read the song stays a question.
+    #[tokio::test]
+    async fn a_navidrome_user_outside_family_keeps_the_song_a_question() {
+        let n = navidrome(Some(admin_and(&["teen", "guest"])), &["teen"], true).await;
+        member_song(&n, "teen", MemberSong::Plain).await;
         assert_eq!(n.replacer.marked("nd-1").await, None);
     }
 }

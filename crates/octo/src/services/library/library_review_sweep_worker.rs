@@ -33,12 +33,13 @@ use tracing::{error, info, warn};
 use super::NavidromeSongPathResolver;
 use super::library_action_executor::{LibraryActionExecutor, LibraryActionOutcome, LibraryActionRequest};
 use super::library_action_journal::LibraryActionState;
-use super::navidrome_playlist_api::NavidromePlaylistApi;
+use super::navidrome_playlist_api::{NavidromePlaylistApi, SongMarks};
 use super::navidrome_song_path_resolver::get_full_path;
 use super::notice_queue::{NoticeOrigin, NoticeQueue, set_aside};
 use super::quality_upgrade_worker::compare_ordinal;
 use crate::services::common::IAcquisitionActivity;
-use crate::services::family::{LibraryScope, ScopeResolver, ScopeView};
+use crate::services::family::family_store::FamilyStore;
+use crate::services::family::{LibraryScope, NavidromeAdmin, ScopeResolver, ScopeView};
 use crate::services::fingerprint::AcoustIdRateLimiter;
 use crate::services::framework::DotnetDictionary;
 use crate::services::health::keep_marks::MemberMarks;
@@ -120,12 +121,89 @@ pub trait SweepReplacer: Send + Sync {
     /// The Navidrome id of the library file at `path`, or None when Navidrome does not show it.
     async fn song_id(&self, artist: &str, title: &str, path: &str) -> Option<String>;
 
-    /// Whether anyone starred or rated the song `song_id`: Some(false) only when every mark that
-    /// can be read was read and none is there, None when they could not be read.
+    /// Whether anyone starred or rated the song `song_id`: Some(false) only when everyone's marks
+    /// were read and none is there, None when anyone's could not be read.
     async fn marked(&self, song_id: &str) -> Option<bool>;
 
     /// Runs the request to its end.
     async fn replace(&self, request: LibraryActionRequest) -> anyhow::Result<LibraryActionOutcome>;
+}
+
+/// The people besides the admin who can star or rate songs, whose marks the admin's own sign-in
+/// does not see.
+#[async_trait]
+pub trait OtherListeners: Send + Sync {
+    /// How many there are, or None when they cannot be counted.
+    async fn count(&self) -> Option<usize>;
+}
+
+/// Counts the other listeners as Navidrome's users other than Octo's admin identity, together
+/// with every Family member, each name once.
+pub struct NavidromeOtherListeners {
+    admin: Arc<NavidromeAdmin>,
+    family: Arc<FamilyStore>,
+}
+
+impl NavidromeOtherListeners {
+    pub fn new(admin: Arc<NavidromeAdmin>, family: Arc<FamilyStore>) -> Self {
+        NavidromeOtherListeners { admin, family }
+    }
+
+    /// How many distinct names among `users` and `members` are not `admin`, ignoring case and
+    /// blank names.
+    pub fn others_besides(admin: &str, users: &[String], members: &[String]) -> usize {
+        let admin = admin.trim().to_lowercase();
+        users
+            .iter()
+            .chain(members)
+            .map(|name| name.trim().to_lowercase())
+            .filter(|name| !name.is_empty() && *name != admin)
+            .collect::<HashSet<_>>()
+            .len()
+    }
+}
+
+#[async_trait]
+impl OtherListeners for NavidromeOtherListeners {
+    async fn count(&self) -> Option<usize> {
+        let users = match self.admin.list_users().await {
+            Ok(users) => users,
+            Err(e) => {
+                warn!("Library review sweep could not list Navidrome's users: {e}");
+                return None;
+            }
+        };
+        let admin = self.admin.admin_user_name()?;
+        let users: Vec<String> = users.iter().map(|user| user.user_name().to_string()).collect();
+        let members: Vec<String> = self
+            .family
+            .members()
+            .into_iter()
+            .map(|member| member.username)
+            .collect();
+        Some(Self::others_besides(&admin, &users, &members))
+    }
+}
+
+/// Whether a song is starred or rated, from the admin's marks (None when they could not be
+/// read), how many other listeners there are (None when they could not be counted) and the
+/// marks read for them, one per listener read. Any mark found is Some(true); Some(false) needs
+/// the admin's marks and one read for every other listener, all without a star or a rating;
+/// anything left unread is None.
+pub fn marked_verdict(
+    admin: Option<&SongMarks>,
+    others: Option<usize>,
+    members: &[SongMarks],
+) -> Option<bool> {
+    let marked = |marks: &SongMarks| marks.starred || marks.rating > 0;
+    if admin.is_some_and(marked) || members.iter().any(marked) {
+        return Some(true);
+    }
+    admin?;
+    if members.len() < others? {
+        return None;
+    }
+    Some(false)
 }
 
 /// The real replacement: the resolver finds the song's id, Navidrome's song page says whether it
@@ -137,6 +215,8 @@ pub struct ExecutorSweepReplacer {
     marks: Arc<NavidromePlaylistApi>,
     /// The marks other listeners left, each read with their own sign-in, when they can be read.
     members: Option<Arc<dyn MemberMarks>>,
+    /// Who else could have marked a song.
+    others: Arc<dyn OtherListeners>,
 }
 
 impl ExecutorSweepReplacer {
@@ -145,12 +225,14 @@ impl ExecutorSweepReplacer {
         executor: Arc<LibraryActionExecutor>,
         marks: Arc<NavidromePlaylistApi>,
         members: Option<Arc<dyn MemberMarks>>,
+        others: Arc<dyn OtherListeners>,
     ) -> Self {
         ExecutorSweepReplacer {
             resolver,
             executor,
             marks,
             members,
+            others,
         }
     }
 }
@@ -162,15 +244,19 @@ impl SweepReplacer for ExecutorSweepReplacer {
     }
 
     async fn marked(&self, song_id: &str) -> Option<bool> {
-        let admin = self.marks.song_marks(song_id).await?;
-        if admin.starred || admin.rating > 0 {
-            return Some(true);
+        let admin = self.marks.song_marks(song_id).await;
+        if admin
+            .as_ref()
+            .is_none_or(|marks| marks.starred || marks.rating > 0)
+        {
+            return marked_verdict(admin.as_ref(), Some(0), &[]);
         }
-        let members = match &self.members {
-            Some(members) => members.marks_of(song_id).await,
-            None => Vec::new(),
+        let others = self.others.count().await;
+        let members = match (&self.members, others) {
+            (Some(members), Some(count)) if count > 0 => members.marks_of(song_id).await,
+            _ => Vec::new(),
         };
-        Some(members.iter().any(|marks| marks.starred || marks.rating > 0))
+        marked_verdict(admin.as_ref(), others, &members)
     }
 
     // Spawned, so a host stopping while the sweep waits never cuts the action short.

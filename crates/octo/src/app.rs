@@ -100,8 +100,8 @@ use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyW
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
     DuplicateScanWorker, ExecutorSweepReplacer, FingerprintSweepVerifier, LibraryReviewSweepParts,
-    LibraryReviewSweepWorker, NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker,
-    ReviewSweepStore, UpgradeWorker, UpgradeWorkerParts,
+    LibraryReviewSweepWorker, NavidromeOtherListeners, NoticePlaylistWorker, QualityUpgradeStore,
+    QualityUpgradeWorker, ReviewSweepStore, UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -2295,12 +2295,17 @@ impl LibraryJobs {
                 Clock::system(),
             )
             .with_library_scope(navidrome.library_scope.clone())
-            // Marks are read as the admin sees them; no other listener's are read.
+            // Marks are read as the admin sees them. No other listener's marks are read, so while
+            // anyone else uses the server the sweep asks instead of replacing.
             .with_replacer(Arc::new(ExecutorSweepReplacer::new(
                 navidrome.navidrome_song_path_resolver.clone(),
                 executor.clone(),
                 navidrome.navidrome_playlist_api.clone(),
                 None,
+                Arc::new(NavidromeOtherListeners::new(
+                    navidrome.navidrome_admin.clone(),
+                    stores.family_store.clone(),
+                )),
             ))),
         );
         LibraryJobs {

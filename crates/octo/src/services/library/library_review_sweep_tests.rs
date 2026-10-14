@@ -1741,3 +1741,193 @@ fn the_new_state_fields_are_left_out_until_used_and_read_on_the_old_shape() {
     assert_eq!(back.recheck.as_ref().expect("kept").total, 3);
     assert_eq!(back.today(Utc::now()).replaced, 1);
 }
+
+// ---- whose marks keep a song from being replaced ----------------------------------------------
+
+mod other_listeners {
+    use octo_core::family::abilities::Preset;
+    use octo_core::settings::{AppSettings, SubsonicSettings};
+    use serde_json::{Value, json};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::services::family::family_store::{FamilyStore, Member, SharedLibraries};
+    use crate::services::library::library_action_test_support::{Extras, executor, store};
+    use crate::services::subsonic::navidrome_identity_service::NavidromeIdentityService;
+
+    fn marks(starred: bool, rating: i32) -> SongMarks {
+        SongMarks {
+            starred,
+            rating,
+            plays: 0,
+        }
+    }
+
+    #[test]
+    fn a_song_counts_as_unmarked_only_when_everyone_s_marks_were_read() {
+        let plain = marks(false, 0);
+        // Nobody else: the admin's own marks decide.
+        assert_eq!(marked_verdict(Some(&plain), Some(0), &[]), Some(false));
+        assert_eq!(marked_verdict(Some(&marks(true, 0)), Some(0), &[]), Some(true));
+        assert_eq!(marked_verdict(Some(&marks(false, 3)), Some(0), &[]), Some(true));
+        // The admin's marks unread.
+        assert_eq!(marked_verdict(None, Some(0), &[]), None);
+        // Other listeners whose marks nobody read.
+        assert_eq!(marked_verdict(Some(&plain), Some(2), &[]), None);
+        assert_eq!(marked_verdict(Some(&plain), Some(2), &[plain]), None);
+        // Other listeners who cannot be counted.
+        assert_eq!(marked_verdict(Some(&plain), None, &[]), None);
+        // Every other listener read, none marked it.
+        assert_eq!(
+            marked_verdict(Some(&plain), Some(2), &[plain, plain]),
+            Some(false)
+        );
+        // A mark anyone left is enough, whatever else is unread.
+        assert_eq!(
+            marked_verdict(Some(&plain), Some(3), &[marks(false, 1)]),
+            Some(true)
+        );
+        assert_eq!(marked_verdict(Some(&plain), None, &[marks(true, 0)]), Some(true));
+        assert_eq!(marked_verdict(Some(&marks(true, 0)), None, &[]), Some(true));
+    }
+
+    #[test]
+    fn other_listeners_are_every_other_name_once() {
+        let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            NavidromeOtherListeners::others_besides("admin", &names(&["admin"]), &[]),
+            0
+        );
+        assert_eq!(
+            NavidromeOtherListeners::others_besides(
+                "Admin",
+                &names(&["admin", "kid", " "]),
+                &names(&["KID", "teen"])
+            ),
+            2
+        );
+        assert_eq!(
+            NavidromeOtherListeners::others_besides("admin", &[], &names(&["kid"])),
+            1
+        );
+    }
+
+    struct Navidrome {
+        _server: MockServer,
+        replacer: ExecutorSweepReplacer,
+    }
+
+    /// A Navidrome whose admin left no mark on song nd-1 and whose user list answers `users`
+    /// (None: the list fails), with `members` in Family.
+    async fn navidrome(users: Option<Value>, members: &[&str]) -> Navidrome {
+        let server = MockServer::builder().start().await;
+        let answer = |body: Value| ResponseTemplate::new(200).set_body_json(body);
+        Mock::given(path("/auth/login"))
+            .respond_with(answer(
+                json!({"token": "jwt", "isAdmin": true, "username": "admin"}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/song/nd-1"))
+            .respond_with(answer(
+                json!({"id": "nd-1", "starred": false, "rating": 0, "playCount": 4}),
+            ))
+            .mount(&server)
+            .await;
+        let users = match users {
+            Some(users) => answer(users),
+            None => ResponseTemplate::new(500),
+        };
+        Mock::given(method("GET"))
+            .and(path("/api/user"))
+            .respond_with(users)
+            .mount(&server)
+            .await;
+        let settings = store(AppSettings {
+            subsonic: SubsonicSettings {
+                url: Some(server.uri()),
+                admin_username: Some("admin".into()),
+                admin_password: Some("secret".into()),
+                auto_detect_download_path: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let http = crate::services::http_client_factory::default_client();
+        let identity = NavidromeIdentityService::new(settings.clone(), http.clone());
+        let family = Arc::new(FamilyStore::in_memory());
+        for name in members {
+            family.upsert_member(Member {
+                username: name.to_string(),
+                display_name: String::new(),
+                preset: Preset::Listener,
+                edits: Default::default(),
+                navidrome_user_id: String::new(),
+                navidrome_password: String::new(),
+                personal_library_id: None,
+                shared_libraries: SharedLibraries::All,
+                account_password: String::new(),
+                created: Utc::now(),
+                suspended: false,
+                ntfy_topic: String::new(),
+            });
+        }
+        let replacer = ExecutorSweepReplacer::new(
+            Arc::new(NavidromeSongPathResolver::new(
+                identity.clone(),
+                Arc::new(crate::services::local::test_support::FakeLocalLibrary::default()),
+                http.clone(),
+                settings.clone(),
+            )),
+            executor(&settings, Extras::default()),
+            Arc::new(NavidromePlaylistApi::new(
+                http.clone(),
+                identity.clone(),
+                settings.clone(),
+            )),
+            None,
+            Arc::new(NavidromeOtherListeners::new(
+                Arc::new(NavidromeAdmin::new(identity, http, settings)),
+                family,
+            )),
+        );
+        Navidrome {
+            _server: server,
+            replacer,
+        }
+    }
+
+    /// With nobody else on the server, an unmarked song can be replaced.
+    #[tokio::test]
+    async fn an_unmarked_song_on_a_server_of_one_can_be_replaced() {
+        let n = navidrome(Some(json!([{"id": "u1", "userName": "admin"}])), &[]).await;
+        assert_eq!(n.replacer.marked("nd-1").await, Some(false));
+    }
+
+    /// Another listener's stars and ratings are not read, so their song is asked about.
+    #[tokio::test]
+    async fn another_listener_s_unread_marks_keep_the_song_a_question() {
+        let n = navidrome(
+            Some(json!([{"id": "u1", "userName": "admin"}, {"id": "u2", "userName": "kid"}])),
+            &[],
+        )
+        .await;
+        assert_eq!(n.replacer.marked("nd-1").await, None);
+    }
+
+    /// A Family member counts even before Navidrome lists them.
+    #[tokio::test]
+    async fn a_family_member_s_unread_marks_keep_the_song_a_question() {
+        let n = navidrome(Some(json!([{"id": "u1", "userName": "admin"}])), &["teen"]).await;
+        assert_eq!(n.replacer.marked("nd-1").await, None);
+    }
+
+    /// When the users cannot be listed, nobody can say no one else marked it.
+    #[tokio::test]
+    async fn users_that_cannot_be_listed_keep_the_song_a_question() {
+        let n = navidrome(None, &[]).await;
+        assert_eq!(n.replacer.marked("nd-1").await, None);
+    }
+}

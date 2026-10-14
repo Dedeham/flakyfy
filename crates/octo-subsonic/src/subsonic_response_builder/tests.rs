@@ -1508,7 +1508,9 @@ fn the_places_extension_is_listed_last_only_with_place_data() {
     );
     assert!(!listed(false).contains("octoPlaces"));
     let own = builder()
-        .merge_open_subsonic_extensions_with("xml", None, None, false, false, false, false, false, false, true)
+        .merge_open_subsonic_extensions_with(
+            "xml", None, None, false, false, false, false, false, false, true,
+        )
         .text()
         .to_string();
     assert!(
@@ -1643,8 +1645,9 @@ fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml(
 #[test]
 fn the_stations_extension_is_listed_last_and_only_when_asked() {
     let names = |stations: bool| -> Vec<String> {
-        let reply = builder()
-            .merge_open_subsonic_extensions_with("json", None, None, true, true, true, true, true, stations, false);
+        let reply = builder().merge_open_subsonic_extensions_with(
+            "json", None, None, true, true, true, true, true, stations, false,
+        );
         let answer: Value = serde_json::from_str(&reply.text()).unwrap();
         answer["subsonic-response"]["openSubsonicExtensions"]
             .as_array()

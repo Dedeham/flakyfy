@@ -805,6 +805,14 @@ fn spec_names_the_list_and_says_what_it_is() {
         ("Late Night Jazz", list_kinds::RADIO, "Late Night Jazz", "Station"),
         ("Rock Mix", list_kinds::MIX, "Rock", "Mix"),
         ("1990s Mix", list_kinds::MIX, "1990s", "Mix"),
+        ("1994 Mix", list_kinds::MIX, "1994", "Mix"),
+        ("Radiohead Mix", list_kinds::MIX, "Radiohead", "Mix"),
+        (
+            "Tyler, The Creator Mix",
+            list_kinds::MIX,
+            "Tyler, The Creator",
+            "Mix",
+        ),
         ("Late Night Jazz", list_kinds::MIX, "Late Night Jazz", "Mix"),
     ];
     for (name, kind, title, line) in cases {

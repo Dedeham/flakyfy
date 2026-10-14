@@ -201,6 +201,11 @@ services:
       GeneratedPlaylists__Countries: ${MIX_COUNTRIES:-}
       GeneratedPlaylists__MaxCountryPlaylists: ${MIX_MAX_COUNTRY_PLAYLISTS:-5}
       GeneratedPlaylists__CountryLookupsPerRefresh: ${COUNTRY_LOOKUPS_PER_REFRESH:-200}
+      # A mix per year, counted from the library, and a mix per most played artist.
+      GeneratedPlaylists__Years: ${MIXES_YEARS:-false}
+      GeneratedPlaylists__MaxYearPlaylists: ${MIX_MAX_YEAR_PLAYLISTS:-10}
+      GeneratedPlaylists__Artists: ${MIXES_ARTISTS:-false}
+      GeneratedPlaylists__ArtistCount: ${MIX_ARTIST_COUNT:-5}
       # ----- Made for you: New Releases, Rediscover, Deep Cuts -----
       # Three lists per listener, on whether or not the mixes are, made again
       # every day from their own plays. New Releases asks Deezer (no key).

@@ -663,6 +663,39 @@ async fn subsonic_playlist_list_merges_ready_station_after_successful_authentica
             body.find("Native Playlist").unwrap() < body.find("Your Radio").unwrap(),
             "{format}"
         );
+        // The station's row says it is a station; Navidrome's own playlist says nothing.
+        // Rows are found by the station's id and the playlist's name.
+        let station_id = fixture.station_id();
+        if format == "json" {
+            let document = response.json();
+            let rows = document["subsonic-response"]["playlists"]["playlist"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a playlist list: {body}"));
+            let station = rows
+                .iter()
+                .find(|row| row["id"] == station_id.as_str())
+                .unwrap_or_else(|| panic!("the station's row: {body}"));
+            let native = rows
+                .iter()
+                .find(|row| row["name"] == "Native Playlist")
+                .unwrap_or_else(|| panic!("the playlist's row: {body}"));
+            assert_eq!(station["octoGroup"], "station", "{body}");
+            assert!(native.get("octoGroup").is_none(), "{body}");
+        } else {
+            // A row's attributes, up to the end of its opening tag.
+            let row = |marker: &str| -> &str {
+                body.split("<playlist ")
+                    .skip(1)
+                    .map(|row| row.split('>').next().unwrap_or(row))
+                    .find(|row| row.contains(marker))
+                    .unwrap_or_else(|| panic!("a row with {marker}: {body}"))
+            };
+            assert!(
+                row(&format!(r#"id="{station_id}""#)).contains(r#"octoGroup="station""#),
+                "{body}"
+            );
+            assert!(!row(r#"name="Native Playlist""#).contains("octoGroup"), "{body}");
+        }
     }
 }
 
@@ -683,6 +716,10 @@ async fn subsonic_playlist_detail_is_owned_read_only_stable_and_prewarmed() {
         assert!(body.contains("local-one"), "{format}: {body}");
         assert!(body.contains("readonly"), "{format}");
         assert!(body.contains("validUntil"), "{format}");
+        assert!(
+            body.contains(r#""octoGroup":"station""#) || body.contains(r#"octoGroup="station""#),
+            "{format}: {body}"
+        );
         let metadata = fixture.metadata.clone();
         until("the prewarm", || !metadata.prewarms.lock().is_empty()).await;
         assert_eq!(*fixture.metadata.prewarms.lock(), [8], "{format}");

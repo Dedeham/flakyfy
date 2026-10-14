@@ -190,6 +190,19 @@ async fn settings_list_how_long_search_waits_for_lengths() {
 }
 
 #[tokio::test]
+async fn settings_list_the_year_and_artist_mixes_off_by_default() {
+    let (_, app) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&app, path).await.json();
+        let mixes = &document["GeneratedPlaylists"];
+        assert_eq!(mixes["Years"], false, "{path}");
+        assert_eq!(mixes["MaxYearPlaylists"], 10, "{path}");
+        assert_eq!(mixes["Artists"], false, "{path}");
+        assert_eq!(mixes["ArtistCount"], 5, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn settings_report_restart_pending_as_a_list() {
     let (_, app) = factory();
     let reply = get(&app, "/api/admin/settings").await;
@@ -749,9 +762,13 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // country mixes' four: :CountryMixes, :Countries, :MaxCountryPlaylists and
     // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
     // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
-    // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb and
-    // Subsonic:SizeFlagClients.
-    assert_eq!(rows.len(), 194);
+    // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb,
+    // Subsonic:SizeFlagClients, and the year and artist mixes' four, listed last:
+    // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount.
+    assert_eq!(rows.len(), 198);
+    assert_eq!(rows[194]["Key"], "GeneratedPlaylists:Years");
+    assert_eq!(rows[197]["Key"], "GeneratedPlaylists:ArtistCount");
+    assert_eq!(row("GeneratedPlaylists:ArtistCount")["IsSecret"], false);
     assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("Subsonic:CoverCacheMb")["IsSecret"], false);

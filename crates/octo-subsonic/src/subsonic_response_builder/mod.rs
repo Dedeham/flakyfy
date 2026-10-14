@@ -82,7 +82,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (TOP_SONGS_EXTENSION, &[1, TOP_SONGS_EXTENSION_VERSION]),
     (IMPORTS_EXTENSION, &[1, IMPORTS_EXTENSION_VERSION]),
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
-    (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
+    (LISTS_EXTENSION, &[1, LISTS_EXTENSION_VERSION]),
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
     (STATIONS_EXTENSION, &[STATIONS_EXTENSION_VERSION]),
 ];
@@ -98,9 +98,12 @@ pub const RADIO_SOURCES_EXTENSION: &str = "octoRadioSources";
 pub const RADIO_SOURCES_EXTENSION_VERSION: i32 = 1;
 
 /// octoLists v1: Made for you (New Releases, Rediscover, Deep Cuts) are read-only playlists whose
-/// entry in getPlaylists and getPlaylist carries `octoList`, the list's kind.
+/// entry in getPlaylists and getPlaylist carries `octoList`, the list's kind (and Liked Songs
+/// carries `octoList: "liked"`). Version 2: every Octo list's entry also carries `octoGroup`,
+/// the group it belongs to: `genre`, `decade`, `year`, `country` or `artist` for a mix, `chart`,
+/// `forYou` for Made for you, `liked` and `station`. `octoList` is unchanged.
 pub const LISTS_EXTENSION: &str = "octoLists";
-pub const LISTS_EXTENSION_VERSION: i32 = 1;
+pub const LISTS_EXTENSION_VERSION: i32 = 2;
 
 /// getTransitionProfile: each song's transition profile (where it can blend into the next
 /// song), made by octo-sonic. Listed while Sounds alike runs, since the same reading makes both.
@@ -316,6 +319,11 @@ impl SubsonicResponseBuilder {
         fields.insert("coverArt".into(), station.id.clone().into());
         fields.insert("readonly".into(), true.into());
         fields.insert("validUntil".into(), millis(&station.valid_until_utc).into());
+        // octoLists v2: the group of Octo's lists this row belongs to.
+        fields.insert(
+            "octoGroup".into(),
+            octo_core::library::generated_playlist_service::STATION_GROUP.into(),
+        );
         fields
     }
 

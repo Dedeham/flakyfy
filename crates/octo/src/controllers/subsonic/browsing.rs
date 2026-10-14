@@ -94,7 +94,7 @@ pub async fn get_artist(State(state): State<AppState>, req: Request) -> AppResul
     let id = call.param("id").to_string();
     let format = call.format();
     let builder = &state.subsonic_response_builder;
-    let metadata = &state.music_metadata;
+    let metadata = &state.metadata_service;
 
     if is_blank(&id) {
         return Ok(builder

@@ -41,8 +41,7 @@ pub enum FileReadError {
     InvalidData(String),
 }
 
-/// Lists from files other tools write, for when there is no Spotify sign-in, or a playlist the
-/// sign-in cannot read in full:
+/// Lists from files other tools write, such as an export of a Spotify playlist or library:
 ///
 /// - CSV from Exportify, TuneMyMusic, Soundiiz and the like. Columns are found by their header,
 ///   so any CSV with a title and an artist column works; album, length and ISRC are read when

@@ -7518,7 +7518,7 @@ impEl('imp-trickle-rows')?.addEventListener('click', async event => {
   await loadImports();
 });
 
-// A saved Client ID or redirect URI changes what Connect can do, so the page reads itself again.
+// Saved import settings change what the page shows, so it reads itself again.
 impEl('imports-form')?.addEventListener('submit', () => setTimeout(loadImports, 800));
 
 // ────────────────────────────────────────────────────────────────

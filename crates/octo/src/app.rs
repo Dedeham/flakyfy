@@ -98,9 +98,9 @@ use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
-    DuplicateScanWorker, FingerprintSweepVerifier, LibraryReviewSweepParts, LibraryReviewSweepWorker,
-    NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker, ReviewSweepStore, UpgradeWorker,
-    UpgradeWorkerParts,
+    DuplicateScanWorker, ExecutorSweepReplacer, FingerprintSweepVerifier, LibraryReviewSweepParts,
+    LibraryReviewSweepWorker, NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker,
+    ReviewSweepStore, UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -2290,7 +2290,14 @@ impl LibraryJobs {
                 },
                 Clock::system(),
             )
-            .with_library_scope(navidrome.library_scope.clone()),
+            .with_library_scope(navidrome.library_scope.clone())
+            // Marks are read as the admin sees them; no other listener's are read.
+            .with_replacer(Arc::new(ExecutorSweepReplacer::new(
+                navidrome.navidrome_song_path_resolver.clone(),
+                executor.clone(),
+                navidrome.navidrome_playlist_api.clone(),
+                None,
+            ))),
         );
         LibraryJobs {
             upgrade_worker,

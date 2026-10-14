@@ -231,6 +231,19 @@ pub struct LibraryActionSettings {
     /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_OCTO_DOWNLOADS
     pub review_sweep_octo_downloads: bool,
 
+    /// Let the sweep replace a file that clearly is another song, through Wrong song, instead
+    /// of asking. Off by default. Only a confident AcoustID match, at or above the download
+    /// threshold, to a recording whose title is not the file's own title counts; another take,
+    /// a wrong length and anything AcoustID was unsure of still ask in Review. Respects DryRun
+    /// and the allowlist, and runs as the person the sweep asks.
+    /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE
+    pub review_sweep_auto_replace: bool,
+
+    /// Most files the sweep replaces by itself in a UTC day (1 to 100, default 10). Past it, or
+    /// after three replacements fail in a day, the rest of the day's matches are asked about.
+    /// Environment variable: LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY
+    pub review_sweep_auto_replace_per_day: i32,
+
     /// A "Duplicates" playlist per allowed user: recordings the library holds more than once,
     /// side by side, the copy worth keeping first. Octo only points them out; nothing is removed
     /// unless you remove it (#53).
@@ -288,6 +301,8 @@ impl Default for LibraryActionSettings {
             review_playlist_name: "Review".to_string(),
             review_sweep_per_hour: 0,
             review_sweep_octo_downloads: false,
+            review_sweep_auto_replace: false,
+            review_sweep_auto_replace_per_day: 10,
             duplicates_enabled: false,
             duplicates_playlist_name: "Duplicates".to_string(),
             duplicates_scan_hours: 24,
@@ -317,6 +332,10 @@ impl LibraryActionSettings {
         } else {
             self.review_sweep_per_hour.min(360)
         }
+    }
+
+    pub fn effective_review_sweep_auto_replace_per_day(&self) -> i32 {
+        self.review_sweep_auto_replace_per_day.clamp(1, 100)
     }
 
     pub fn effective_duplicates_scan_interval(&self) -> Duration {

@@ -993,7 +993,7 @@ async fn the_refusals_match_the_baseline() {
     let state = AppState::for_tests(settings);
     let app = app(&state);
     let token = state.browse_sessions.create("admin");
-    let cases: [(Method, &str, Option<Value>, StatusCode, &str); 9] = [
+    let cases: [(Method, &str, Option<Value>, StatusCode, &str); 10] = [
         (
             Method::POST,
             "/api/admin/covers/upgrade",
@@ -1028,6 +1028,13 @@ async fn the_refusals_match_the_baseline() {
             None,
             StatusCode::BAD_REQUEST,
             r#"{"error":"Turn on library actions and Review, and set how many songs an hour to check, first."}"#,
+        ),
+        (
+            Method::POST,
+            "/api/admin/review-sweep/recheck-octo",
+            None,
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"Turn on library actions and Review first."}"#,
         ),
         (
             Method::POST,

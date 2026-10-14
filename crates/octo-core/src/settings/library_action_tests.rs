@@ -441,3 +441,29 @@ fn wrong_lyrics_and_wrong_cover_come_after_keep_unmapped_and_off() {
     }
     assert_eq!(settings.mapped_ratings(), [5]);
 }
+
+/// The sweep replaces nothing by itself unless switched on, and its daily cap stays between 1
+/// and 100.
+#[test]
+fn review_sweep_auto_replace_is_off_by_default_and_its_cap_clamped() {
+    let defaults = LibraryActionSettings::default();
+    assert!(!defaults.review_sweep_auto_replace);
+    assert_eq!(defaults.effective_review_sweep_auto_replace_per_day(), 10);
+
+    let low = LibraryActionSettings {
+        review_sweep_auto_replace_per_day: 0,
+        ..Default::default()
+    };
+    assert_eq!(low.effective_review_sweep_auto_replace_per_day(), 1);
+    let high = LibraryActionSettings {
+        review_sweep_auto_replace_per_day: 5000,
+        ..Default::default()
+    };
+    assert_eq!(high.effective_review_sweep_auto_replace_per_day(), 100);
+
+    let read: LibraryActionSettings =
+        serde_json::from_str(r#"{"ReviewSweepAutoReplace":true,"ReviewSweepAutoReplacePerDay":3}"#)
+            .expect("the keys read");
+    assert!(read.review_sweep_auto_replace);
+    assert_eq!(read.review_sweep_auto_replace_per_day, 3);
+}

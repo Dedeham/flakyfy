@@ -1779,6 +1779,10 @@
               </div>
               <input class="set-input" name="Soulseek.MinMatchScore" type="number" min="50" max="99" />
             </div>
+            <div class="set-row" id="recheck-offer" hidden>
+              <div class="set-info"><div class="set-info-t">Re-check Octo's downloads</div><div class="set-info-d">You changed how sure AcoustID must be. Re-check Octo's downloads?</div></div>
+              <button class="btn btn-ghost" type="button" data-recheck-octo><span>Re-check</span></button>
+            </div>
             <div class="set-row">
               <div class="set-info">
                 <div class="set-info-t"><svg class="icon brand" aria-hidden="true"><use href="#b-musicbrainz"/></svg>Tag from MusicBrainz</div>
@@ -2443,7 +2447,7 @@
               <label class="switch"><input type="checkbox" name="LibraryActions.ReviewEnabled" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
-              <div class="set-info"><div class="set-info-t">Check the library <span class="set-opt">songs an hour</span></div><div class="set-info-d">Also asks about songs that were already there. 0 is off.</div><div class="set-info-more"><p>Only while nothing is downloading, and only the library keeper is asked: the Navidrome admin if they are on the allowlist, otherwise its first name. It stops while 50 of these questions wait for an answer.</p><p>Besides what Review already asks, it asks when AcoustID is sure a song is something else, or when a song runs much longer or shorter than the recording. Nothing is ever acted on by itself.</p></div></div>
+              <div class="set-info"><div class="set-info-t">Check the library <span class="set-opt">songs an hour</span></div><div class="set-info-d">Also asks about songs that were already there. 0 is off.</div><div class="set-info-more"><p>Only while nothing is downloading, and only the library keeper is asked: the Navidrome admin if they are on the allowlist, otherwise its first name. It stops while 50 of these questions wait for an answer.</p><p>Besides what Review already asks, it asks when AcoustID is sure a song is something else, or when a song runs much longer or shorter than the recording. Nothing is acted on by itself unless you turn on replacing below.</p></div></div>
               <input class="set-input" name="LibraryActions.ReviewSweepPerHour" type="number" min="0" max="360" data-number="true" />
             </div>
             <div class="set-row">
@@ -2451,9 +2455,21 @@
               <label class="switch"><input type="checkbox" name="LibraryActions.ReviewSweepOctoDownloads" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
             </div>
             <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Replace a download that clearly is another song</div><div class="set-info-d">Octo fetches the right song through Wrong song instead of asking. Off by default.</div><div class="set-info-more"><p>Only when AcoustID is at least as sure as the minimum match score under Verify downloads, and names a song with another title by another artist, on a file whose artist and title tags are set. Another take or a remaster of the same song, the same artist's song under a title written another way, a file with no tags, a file whose ISRC is also on the song AcoustID heard or cannot be checked, a song you starred or rated, a song of the wrong length, and anything AcoustID is not sure of are still asked about in Review.</p><p>Needs Wrong song on and dry run off. It asks as the library keeper, and Review keeps a note of what Octo heard and how sure it was.</p></div></div>
+              <label class="switch"><input type="checkbox" name="LibraryActions.ReviewSweepAutoReplace" /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">At most <span class="set-opt">a day</span></div><div class="set-info-d">How many songs Octo replaces by itself in a day. The rest wait in Review, as do the rest of a day with three replacements that failed.</div></div>
+              <input class="set-input" name="LibraryActions.ReviewSweepAutoReplacePerDay" type="number" min="1" max="100" data-number="true" />
+            </div>
+            <div class="set-row">
               <div class="set-info"><div class="set-info-t">Library check</div><div class="set-info-d" id="review-sweep-status">Not loaded yet.</div></div>
               <button class="btn btn-ghost" type="button" id="review-sweep-toggle"><span>Pause</span></button>
               <button class="btn btn-ghost" type="button" id="review-sweep-reset"><svg class="icon" aria-hidden="true"><use href="#i-arrow-counter-clockwise"/></svg><span>Start over</span></button>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-info-t">Re-check Octo's downloads</div><div class="set-info-d" id="review-sweep-recheck-status">Checks every song Octo downloaded once more, then stops. Useful after changing the minimum match score.</div><div class="set-info-more">At least 60 songs an hour, even with the library check at 0. Songs already answered in Review are not asked about again.</div></div>
+              <button class="btn btn-ghost" type="button" id="review-sweep-recheck" data-recheck-octo><span>Re-check</span></button>
             </div>
             <details class="set-more">
               <summary>Playlist name and size</summary>

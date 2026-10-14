@@ -190,6 +190,17 @@ async fn settings_list_how_long_search_waits_for_lengths() {
 }
 
 #[tokio::test]
+async fn settings_list_the_sweep_replacing_off_with_ten_a_day() {
+    let (_, app) = factory();
+    for path in ["/api/admin/settings", "/api/admin/raw-config"] {
+        let document = get(&app, path).await.json();
+        let actions = &document["LibraryActions"];
+        assert_eq!(actions["ReviewSweepAutoReplace"], false, "{path}");
+        assert_eq!(actions["ReviewSweepAutoReplacePerDay"], 10, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn settings_list_the_year_and_artist_mixes_off_by_default() {
     let (_, app) = factory();
     for path in ["/api/admin/settings", "/api/admin/raw-config"] {
@@ -763,11 +774,19 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // :CountryLookupsPerRefresh, Lidarr:WebhookSecret, Soulseek:Enabled,
     // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
     // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb,
-    // Subsonic:SizeFlagClients, and the year and artist mixes' four, listed last:
-    // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount.
-    assert_eq!(rows.len(), 198);
+    // Subsonic:SizeFlagClients, the year and artist mixes' four:
+    // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, and the
+    // sweep's replacing two, listed last: LibraryActions:ReviewSweepAutoReplace and
+    // :ReviewSweepAutoReplacePerDay.
+    assert_eq!(rows.len(), 200);
     assert_eq!(rows[194]["Key"], "GeneratedPlaylists:Years");
     assert_eq!(rows[197]["Key"], "GeneratedPlaylists:ArtistCount");
+    assert_eq!(rows[198]["Key"], "LibraryActions:ReviewSweepAutoReplace");
+    assert_eq!(rows[199]["Key"], "LibraryActions:ReviewSweepAutoReplacePerDay");
+    assert_eq!(
+        row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],
+        false
+    );
     assert_eq!(row("GeneratedPlaylists:ArtistCount")["IsSecret"], false);
     assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);

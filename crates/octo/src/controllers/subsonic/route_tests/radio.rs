@@ -807,6 +807,68 @@ async fn playlist_materialization_applies_configured_explicit_filter() {
 }
 
 #[tokio::test]
+async fn playlist_materialization_follows_skip_covers_and_instrumentals_as_it_is_set_now() {
+    let metadata = TestMetadata::answering(|artist, title, duration| {
+        let title = match title {
+            "Song One" => "Song One (Instrumental)",
+            "Song Two" => "Song Two (Karaoke Version)",
+            "Song Four" => "Song Four (Cover)",
+            other => other,
+        };
+        vec![Song {
+            id: format!("ext-{title}"),
+            artist: artist.into(),
+            title: title.into(),
+            album: "Album".into(),
+            duration,
+            is_local: false,
+            ..Default::default()
+        }]
+    });
+    let fixture = RadioFixture::with_metadata(Options::default(), metadata).await;
+    fixture
+        .upstream
+        .return_no_local_matches
+        .store(true, Ordering::SeqCst);
+    fixture.install_station("");
+    let entries = || async {
+        let body = fixture
+            .get(&format!(
+                "/rest/getPlaylist?id={}&u=alice&t=token&s=salt&f=json",
+                fixture.station_id()
+            ))
+            .await
+            .json();
+        body["subsonic-response"]["playlist"]["entry"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|song| song["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let takes = [
+        "ext-Song One (Instrumental)".to_string(),
+        "ext-Song Two (Karaoke Version)".to_string(),
+        "ext-Song Four (Cover)".to_string(),
+    ];
+
+    // On by default.
+    let skipped = entries().await;
+    for take in &takes {
+        assert!(!skipped.contains(take), "{take} in {skipped:?}");
+    }
+    assert!(skipped.contains(&"ext-Song Three".to_string()), "{skipped:?}");
+
+    let mut off = fixture.state.settings.current().as_ref().clone();
+    off.soulseek.skip_covers_and_instrumentals = false;
+    fixture.state.settings.set(off);
+    let listed = entries().await;
+    for take in &takes {
+        assert!(listed.contains(take), "{take} in {listed:?}");
+    }
+}
+
+#[tokio::test]
 async fn kid_station_is_clean() {
     let metadata = TestMetadata::answering(|artist, title, duration| {
         vec![Song {

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use octo_core::common::SongIdentity;
 use octo_core::common::version_variant;
+use octo_core::fingerprint::recording_identity::Takes;
 use octo_core::fingerprint::{AcoustIdLookup, AcoustIdRecording, AcoustIdResult, VerificationVerdict};
 use octo_core::models::domain::Song;
 use octo_core::settings::{AppSettings, DownloadSource, SettingsStore, SoulseekSettings, SubsonicSettings};
@@ -726,7 +727,7 @@ fn the_song_itself_refuses_a_recording_music_brainz_calls_the_radio_edit() {
             0.85,
             true,
             0,
-            false
+            &Takes::Any
         )
         .verdict,
         VerificationVerdict::Mismatch
@@ -743,7 +744,7 @@ fn a_radio_edit_request_keeps_the_recording_music_brainz_lists_plainly() {
             0.85,
             true,
             0,
-            false
+            &Takes::Any
         )
         .verdict,
         VerificationVerdict::Confirmed
@@ -1436,7 +1437,7 @@ fn take_care_lookup(score: f64) -> AcoustIdLookup {
 }
 
 fn take_care_verdict(lookup: &AcoustIdLookup) -> VerificationResult {
-    DownloadVerificationService::decide(lookup, Some("Drake"), Some("Take Care"), 0.85, false, 0, false)
+    DownloadVerificationService::decide(lookup, Some("Drake"), Some("Take Care"), 0.85, false, 0, &Takes::Any)
 }
 
 #[test]

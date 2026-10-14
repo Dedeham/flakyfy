@@ -142,6 +142,21 @@ pub struct VerificationResult {
     /// fingerprint named. None otherwise.
     pub evidence: Option<String>,
 
+    /// The kind of take the recording named in `recording_id` is, when one was named.
+    pub kind: Option<crate::fingerprint::recording_identity::RecordingKind>,
+
+    /// The file's exact length is what chose `recording_id` among takes that share the
+    /// fingerprint. The tagger then tags from that recording and no other.
+    pub by_length: bool,
+
+    /// The take in `kind` is known: the exact length decided it, or every recording that agreed
+    /// with the request is that take.
+    pub kind_certain: bool,
+
+    /// `recording_id` was the only recording of the fingerprint that agreed with the song, so
+    /// no other take could be the file.
+    pub sole: bool,
+
     /// The score an AcoustID answer had to reach to count, in 0..1, as the decision used it.
     /// 0 when no answer was weighed.
     pub threshold: f64,
@@ -387,10 +402,13 @@ impl VerificationResult {
     pub fn describe(&self) -> String {
         let artist = self.matched_artist.as_deref().unwrap_or("");
         let title = self.matched_title.as_deref().unwrap_or("");
-        if artist.is_empty() && title.is_empty() {
-            "a different recording".to_string()
-        } else {
-            format!("'{artist} - {title}'")
+        let take = self
+            .kind
+            .filter(|kind| *kind != crate::fingerprint::recording_identity::RecordingKind::Studio);
+        match take {
+            _ if artist.is_empty() && title.is_empty() => "a different recording".to_string(),
+            Some(kind) => format!("{} of '{artist} - {title}'", kind.described()),
+            None => format!("'{artist} - {title}'"),
         }
     }
 

@@ -2775,6 +2775,72 @@ ready.then(loadReviewSweep);
 // Not while the sign-in screen is up: every refused poll would wait behind it and fire at once after.
 setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadReviewSweep(); }, 30000);
 
+// ---- Tags against the audio: the library tag check ----
+// Its line, found and fixed counts, and a Pause that becomes Start while it is paused.
+// On Library health itself, `here` leaves out where the findings are.
+function tagCheckWords(t, here = false) {
+  const parts = [t.line];
+  if (t.found && !here) parts.push(`${healthPlural(t.found, 'song')} to look at in Library health${t.sure ? `, ${t.sure.toLocaleString()} sure` : ''}.`);
+  if (t.spacesFixed) parts.push(`Stray spaces taken off ${healthPlural(t.spacesFixed, 'song')}.`);
+  if (t.reason && t.state !== 'Done' && !t.paused) parts.push(t.reason);
+  return parts.join(' ');
+}
+
+function showTagCheckButtons(t, toggle) {
+  if (!toggle) return;
+  toggle.dataset.paused = t.paused ? 'true' : 'false';
+  toggle.querySelector('span').textContent = t.paused ? 'Start' : 'Pause';
+  toggle.disabled = t.perHour === 0;
+}
+
+async function loadTagCheck() {
+  const status = document.getElementById('tag-check-status');
+  if (!status) return;
+  try {
+    const response = await api('/api/admin/health/tags', { cache: 'no-store' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    status.textContent = tagCheckWords(body.tagCheck);
+    showTagCheckButtons(body.tagCheck, document.getElementById('tag-check-toggle'));
+  } catch (error) {
+    status.textContent = `Could not read the tag check: ${error.message}`;
+  }
+}
+
+async function tagCheckPost(button, path, message) {
+  button.disabled = true;
+  try {
+    const response = await api(path, { method: 'POST' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    note(button, message);
+  } catch (error) {
+    note(button, error.message, 'error');
+  } finally {
+    button.disabled = false;
+    await loadTagCheck();
+    if (healthPaneOpen()) loadHealth();
+  }
+}
+
+async function tagCheckToggle(button) {
+  const start = button.dataset.paused === 'true';
+  await tagCheckPost(button, `/api/admin/health/tags/${start ? 'start' : 'pause'}`, start ? 'Carrying on.' : 'Paused.');
+}
+
+async function tagCheckReset(button) {
+  if (!(await askConfirm('Check every song again?', 'From the start. What it found is listed again as it finds it.', 'Start over'))) return;
+  await tagCheckPost(button, '/api/admin/health/tags/reset', 'Starting over.');
+}
+
+document.getElementById('tag-check-toggle')?.addEventListener('click', event => tagCheckToggle(event.currentTarget));
+document.getElementById('tag-check-reset')?.addEventListener('click', event => {
+  // Taken before the question: once it is awaited the event no longer says which button it was.
+  tagCheckReset(event.currentTarget);
+});
+ready.then(loadTagCheck);
+setInterval(() => { if (document.visibilityState === 'visible' && !gatePromise) loadTagCheck(); }, 30000);
+
 // octo-sonic's analysis of every song (how it sounds, and its transition profile), on the radio page.
 const sonicStates = { Off: 'Off', Paused: 'Paused', Waiting: 'Waiting', Running: 'Analyzing', Done: 'Up to date' };
 
@@ -7734,6 +7800,7 @@ function healthFixes(check) {
   if (check.check === 'noCover' && can.addCover) all = check.fixAllLabel;
   if (check.check === 'noLength' && can.upgrade) all = check.fixAllLabel;
   if (['noYear', 'noGenre', 'noAlbumArtist'].includes(check.check) && can.edit && check.fixAllLabel) all = check.fixAllLabel;
+  if (check.check === 'tags' && can.edit && check.fixAllLabel) all = check.fixAllLabel;
   return { all, lookUp, busy };
 }
 
@@ -7746,12 +7813,13 @@ function healthWhyNot(check, fixes) {
   if (check.check === 'noCover' && !can.addCover) return 'This server cannot look covers up.';
   if (['noYear', 'noGenre', 'noAlbumArtist'].includes(check.check) && can.edit && !check.fixAllLabel)
     return 'No song here has an album that agrees on it, so they can only be looked up.';
+  if (check.check === 'tags' && can.edit && check.noneSure) return check.noneSure;
   return '';
 }
 
 function healthSection(check) {
   const fixes = healthFixes(check);
-  const fixable = fixes.all || fixes.lookUp;
+  const fixable = fixes.all || fixes.lookUp || (check.check === 'tags' && healthReport.can?.edit);
   const whyNot = healthWhyNot(check, fixes);
   const buttons = [
     fixes.lookUp ? `<button class="btn btn-ghost" type="button" data-health-lookup-all="${check.check}"${fixes.busy ? ' disabled' : ''}>${icon('i-magnifying-glass')}<span>${esc(fixes.lookUp)}</span></button>` : '',
@@ -7774,6 +7842,7 @@ function healthSection(check) {
           </div>
           ${buttons ? `<div class="set-ctrl health-ctrl">${buttons}</div>` : ''}
         </div>
+        ${check.check === 'tags' ? healthTagCheckRow() : ''}
         <div class="set-row stack health-preview" id="health-preview-${check.check}" hidden></div>
       </div>
       ${healthItems(check)}
@@ -7835,6 +7904,7 @@ function healthItems(check) {
     }).join('');
     return `<div class="health-groups">${cards}</div>${healthMore(check.check, check.albums.length)}`;
   }
+  if (check.check === 'tags') return healthTagItems(check);
   const fills = new Map((check.fills || []).map(fill => [fill.id, fill]));
   const rows = check.songs.slice(0, shown).map(id => {
     const song = healthSong(id);
@@ -7849,6 +7919,37 @@ function healthItems(check) {
     return healthRow(song, extra, buttons ? `<div class="health-actions">${buttons}</div>` : '');
   }).join('');
   return `<div class="dl-list health-songs">${rows}</div>${healthMore(check.check, check.songs.length)}`;
+}
+
+// The tag check's line, with Pause and Start over, as the Library actions card shows it.
+function healthTagCheckRow() {
+  const t = healthReport.tagCheck;
+  if (!t) return '';
+  return `<div class="set-row">
+    <div class="set-info"><div class="set-info-t">Tag check</div><div class="set-info-d">${esc(tagCheckWords(t, true))}</div></div>
+    <button class="btn btn-ghost" type="button" data-tag-check="toggle" data-paused="${t.paused ? 'true' : 'false'}"${t.perHour === 0 ? ' disabled' : ''}><span>${t.paused ? 'Start' : 'Pause'}</span></button>
+    <button class="btn btn-ghost" type="button" data-tag-check="reset">${icon('i-arrow-counter-clockwise')}<span>Start over</span></button>
+  </div>`;
+}
+
+// Each song the tag check found: what its audio is, what disagrees, what the fix writes.
+function healthTagItems(check) {
+  const shown = healthShown[check.check] ?? healthPage(check.check);
+  const can = healthReport.can || {};
+  const off = healthReport.run?.state === 'running' ? ' disabled' : '';
+  const rows = check.items.slice(0, shown).map(item => {
+    const song = healthSong(item.id);
+    const heard = item.heard ? `<div class="dl-sub">The audio is ${esc(item.heard)}.</div>` : '';
+    const rules = item.rules.map(rule => `<div class="dl-sub"><strong>${esc(rule.label)}.</strong> ${esc(rule.words)}</div>`).join('');
+    const writes = item.changes.length
+      ? `<div class="dl-sub">Writes ${esc(item.changes.map(change => change.words).join('; '))}.</div>`
+      : '<div class="dl-sub">The audio does not say what to write, so this one waits for you.</div>';
+    const badge = item.sure ? '<span class="dl-badge good">Sure</span>' : '';
+    const use = can.edit && item.changes.length
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-health-tags-use="${esc(item.id)}"${off}>${esc(check.useLabel)}</button>` : '';
+    return healthRow(song, heard + rules + writes, `${badge}${use ? `<div class="health-actions">${use}</div>` : ''}`);
+  }).join('');
+  return `<div class="dl-list health-songs">${rows}</div>${healthMore(check.check, check.items.length)}`;
 }
 
 // A song row, as Fetched songs draws one: its title, who and where, then what can be done.
@@ -8195,6 +8296,9 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
     startHealthRun('/api/admin/health/lookup', { ids: [], check: d.healthLookupAll }, d.healthLookupAll);
     return;
   }
+  if (d.healthTagsUse) { openHealthPreview('tags', { keys: [d.healthTagsUse] }); return; }
+  if (d.tagCheck === 'toggle') { tagCheckToggle(target); return; }
+  if (d.tagCheck === 'reset') { tagCheckReset(target); return; }
   if (d.healthFixSet) { openHealthPreview('duplicates', { keys: [d.healthFixSet] }); return; }
   if (d.healthKeep) { openHealthPreview('duplicates', { keys: [d.healthKeep], keep: d.id }); return; }
   if (d.healthJoin) { openHealthPreview('splitAlbums', { keys: [d.healthJoin] }); return; }

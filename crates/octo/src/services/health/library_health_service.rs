@@ -498,7 +498,8 @@ impl LibraryHealthService {
                 return Some(format!("Unknown change \"{}\".", step.action));
             }
             if step.action == actions::RETAG {
-                let params = step.params();
+                let mut params = step.params();
+                params.shift_remove(actions::FILE_STAMP);
                 if params.is_empty() {
                     return Some(format!("No tags to write for {}.", step.title));
                 }
@@ -935,15 +936,20 @@ impl LibraryHealthService {
         };
         let result: LibraryEditOutcome = match step.action.as_str() {
             actions::RETAG => {
-                let changes: IndexMap<String, Option<String>> = step
-                    .params()
+                let mut params = step.params();
+                let expected_stamp = params
+                    .shift_remove(actions::FILE_STAMP)
+                    .filter(|stamp| !stamp.trim().is_empty());
+                let changes: IndexMap<String, Option<String>> = params
                     .into_iter()
                     .map(|(key, value)| {
                         let tag = song_tag_fields::canonical(&key).map_or(key, str::to_string);
                         (tag, Some(value))
                     })
                     .collect();
-                edits.retag(&step.id, user, changes).await
+                edits
+                    .retag_unchanged(&step.id, user, changes, expected_stamp.as_deref())
+                    .await
             }
             actions::JOIN_ALBUM => {
                 edits

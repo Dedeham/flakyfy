@@ -254,6 +254,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("DownloadTimeoutSeconds", n_num(soulseek.download_timeout_seconds)),
             ("VerifyDownloads", Node::Bool(soulseek.verify_downloads)),
             (
+                "SkipCoversAndInstrumentals",
+                Node::Bool(soulseek.skip_covers_and_instrumentals),
+            ),
+            (
                 "AcoustIdApiKey",
                 n_str(&mask_secret(Some(&soulseek.acoust_id_api_key))),
             ),
@@ -426,6 +430,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
                 "ReviewSweepAutoReplacePerDay",
                 n_num(actions.review_sweep_auto_replace_per_day),
             ),
+            ("TagCheckPerHour", n_num(actions.tag_check_per_hour)),
             ("DuplicatesEnabled", Node::Bool(actions.duplicates_enabled)),
             ("DuplicatesPlaylistName", n_str(&actions.duplicates_playlist_name)),
             ("DuplicatesScanHours", n_num(actions.duplicates_scan_hours)),

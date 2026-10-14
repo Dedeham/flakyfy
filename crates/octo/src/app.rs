@@ -53,6 +53,7 @@ use crate::services::cover_art::{
 use octo_media::cover::CoverArtService;
 
 use crate::services::charts::{AppleMusicPages, ChartsWarmWorker};
+use crate::services::common::IAcquisitionActivity;
 use crate::services::common::TopSongsService;
 use crate::services::cover_art::{ArtworkHints, HintedArtwork};
 use crate::services::family::LibraryWriteGate as FamilyWriteGate;
@@ -99,9 +100,11 @@ use crate::services::library::tidy::worker::ListSongs;
 use crate::services::library::tidy::{TidyJournal, TidyServices, TidyStore, TidyWorker};
 use crate::services::library::{AlbumOwnership, GeneratedPlaylistService, LibrarySnapshot};
 use crate::services::library::{
-    DuplicateScanWorker, ExecutorSweepReplacer, FingerprintSweepVerifier, LibraryReviewSweepParts,
-    LibraryReviewSweepWorker, NavidromeOtherListeners, NoticePlaylistWorker, QualityUpgradeStore,
-    QualityUpgradeWorker, ReviewSweepStore, UpgradeWorker, UpgradeWorkerParts,
+    DuplicateScanWorker, EditServiceSweepEdits, ExecutorSweepReplacer, FingerprintSweepVerifier,
+    IdentitySweepStore, LibraryIdentitySweep, LibraryIdentitySweepParts, LibraryReviewSweepParts,
+    LibraryReviewSweepWorker, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks,
+    NavidromeOtherListeners, NoticePlaylistWorker, QualityUpgradeStore, QualityUpgradeWorker,
+    ReviewSweepStore, SnapshotSweepLibrary, UpgradeWorker, UpgradeWorkerParts,
 };
 use crate::services::library::{
     HeartOwnership, LibraryActionExecutor, LibraryActionExecutorParts, LibraryActionJournal,
@@ -486,6 +489,12 @@ pub struct AppInner {
     pub review_sweep_store: Arc<ReviewSweepStore>,
     /// `LibraryReviewSweepWorker`: the "LibraryReviewSweepWorker" worker.
     pub library_review_sweep_worker: Arc<LibraryReviewSweepWorker>,
+    /// `IdentitySweepStore`: the library tag check's place and answers, `identity-sweep.json`.
+    /// Its 5-second flush is the "IdentitySweepStore" worker.
+    pub identity_sweep_store: Arc<IdentitySweepStore>,
+    /// `LibraryIdentitySweep`: every library song's tags held against its audio, for Library
+    /// health: the "LibraryIdentitySweep" worker.
+    pub library_identity_sweep: Arc<LibraryIdentitySweep>,
     /// `FingerprintSweepVerifier`: the sweep's check, over the download verification service.
     pub fingerprint_sweep_verifier: Arc<FingerprintSweepVerifier>,
     /// `LibraryRescan`: one normal Navidrome scan a few seconds after a run of library changes.
@@ -585,6 +594,40 @@ fn library_health(
             upgrade_sources: Some(Arc::clone(upgrade_sources)),
             keep_marks: Some(keep_marks),
             scope: Some(scope.clone()),
+        },
+        Clock::system(),
+    ))
+}
+
+/// The library tag check: Navidrome's song list from the snapshot, the sweep's fingerprint
+/// check, the edit path stray spaces go through, and MusicBrainz for a release's tracks and what a
+/// recording is.
+#[allow(clippy::too_many_arguments)]
+fn library_identity_sweep(
+    settings: &Arc<SettingsStore>,
+    stores: &Stores,
+    navidrome: &NavidromeServices,
+    music_brainz: &Arc<MusicBrainzClient>,
+    activity: Arc<dyn IAcquisitionActivity>,
+    verifier: Arc<FingerprintSweepVerifier>,
+    snapshot: &Arc<LibrarySnapshot>,
+    edits: &Arc<LibraryEditService>,
+    scope: &ScopeResolver,
+) -> Arc<LibraryIdentitySweep> {
+    Arc::new(LibraryIdentitySweep::new(
+        LibraryIdentitySweepParts {
+            store: stores.identity_sweep_store.clone(),
+            verifier,
+            activity,
+            library: Arc::new(SnapshotSweepLibrary {
+                snapshot: Arc::clone(snapshot),
+                resolver: navidrome.navidrome_song_path_resolver.clone(),
+                scope: Some(scope.clone()),
+            }),
+            edits: Some(Arc::new(EditServiceSweepEdits(Arc::clone(edits)))),
+            releases: Some(Arc::new(MusicBrainzReleaseTracks(Arc::clone(music_brainz)))),
+            recordings: Some(Arc::new(MusicBrainzRecordingFacts(Arc::clone(music_brainz)))),
+            settings: Arc::clone(settings),
         },
         Clock::system(),
     ))
@@ -1177,6 +1220,7 @@ struct Stores {
     quality_upgrade_store: Arc<QualityUpgradeStore>,
     notice_queue: Arc<NoticeQueue>,
     review_sweep_store: Arc<ReviewSweepStore>,
+    identity_sweep_store: Arc<IdentitySweepStore>,
     lidarr_pending: Arc<LidarrPendingAlbums>,
     family_vault: Arc<FamilyVault>,
     family_store: Arc<FamilyStore>,
@@ -1266,6 +1310,9 @@ impl Stores {
             ))),
             notice_queue: Arc::new(NoticeQueue::with_path(Some(config_dir.join("notice-queue.json")))),
             review_sweep_store: Arc::new(ReviewSweepStore::new(Some(config_dir.join("review-sweep.json")))),
+            identity_sweep_store: Arc::new(IdentitySweepStore::new(Some(
+                config_dir.join("identity-sweep.json"),
+            ))),
             lidarr_pending: Arc::new(LidarrPendingAlbums::new(Some(
                 config_dir.join("lidarr-pending.json"),
             ))),
@@ -1303,6 +1350,10 @@ impl Stores {
         workers.register("NoticeQueue", move |token| notices.clone().run_flusher(token));
         let sweep = self.review_sweep_store.clone();
         workers.register("ReviewSweepStore", move |token| sweep.clone().run_flusher(token));
+        let identities = self.identity_sweep_store.clone();
+        workers.register("IdentitySweepStore", move |token| {
+            identities.clone().run_flusher(token)
+        });
     }
 }
 
@@ -2795,6 +2846,21 @@ impl AppState {
                 }
             });
         }
+        let library_identity_sweep = library_identity_sweep(
+            &settings,
+            &stores,
+            &navidrome,
+            &clients.music_brainz,
+            acquisition.acquisition_activity.clone(),
+            library_jobs.fingerprint_sweep_verifier.clone(),
+            &library_snapshot,
+            &library_edits,
+            &family_navidrome.2,
+        );
+        let identity_sweep = library_identity_sweep.clone();
+        workers.register("LibraryIdentitySweep", move |stopping| {
+            identity_sweep.clone().run(stopping)
+        });
         let imports = Imports::build(
             &settings,
             Some(&config_dir),
@@ -2952,6 +3018,8 @@ impl AppState {
             quality_upgrade_worker: library_jobs.quality_upgrade_worker,
             duplicate_scan_worker: library_jobs.duplicate_scan_worker,
             review_sweep_store: stores.review_sweep_store,
+            identity_sweep_store: stores.identity_sweep_store,
+            library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
@@ -3187,6 +3255,17 @@ impl AppState {
             &library_actions.quarantine,
             &family_navidrome.2,
         );
+        let library_identity_sweep = library_identity_sweep(
+            &settings,
+            &stores,
+            &navidrome,
+            &clients.music_brainz,
+            acquisition.acquisition_activity.clone(),
+            library_jobs.fingerprint_sweep_verifier.clone(),
+            &library_snapshot,
+            &library_edits,
+            &family_navidrome.2,
+        );
         // The import's files stay in memory; no worker is run.
         let imports = Imports::build(
             &settings,
@@ -3342,6 +3421,8 @@ impl AppState {
             quality_upgrade_worker: library_jobs.quality_upgrade_worker,
             duplicate_scan_worker: library_jobs.duplicate_scan_worker,
             review_sweep_store: stores.review_sweep_store,
+            identity_sweep_store: stores.identity_sweep_store,
+            library_identity_sweep,
             library_review_sweep_worker: library_jobs.library_review_sweep_worker,
             fingerprint_sweep_verifier: library_jobs.fingerprint_sweep_verifier,
             library_rescan,
@@ -3672,6 +3753,8 @@ mod tests {
             "UpgradeWorker",
             "QualityUpgradeWorker",
             "LibraryReviewSweepWorker",
+            "IdentitySweepStore",
+            "LibraryIdentitySweep",
         ] {
             assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
         }
@@ -3694,6 +3777,12 @@ mod tests {
                 .review_sweep_store
                 .path()
                 .is_some_and(|p| p.ends_with("review-sweep.json"))
+        );
+        assert!(
+            state
+                .identity_sweep_store
+                .path()
+                .is_some_and(|p| p.ends_with("identity-sweep.json"))
         );
         assert!(state.upgrade_queue.snapshot().is_empty());
         assert_eq!(

@@ -112,6 +112,10 @@ services:
       # library. A peer that sends a different recording gets that file remembered
       # and never tried again. Needs the free AcoustID key; inert without one.
       Soulseek__VerifyDownloads: ${SLSKD_VERIFY_DOWNLOADS:-false}
+      # Never download a cover, a karaoke backing track or an instrumental, even
+      # when a title asks for one, and leave such outside songs out of search,
+      # radio, mixes and charts. On by default.
+      Soulseek__SkipCoversAndInstrumentals: ${SKIP_COVERS_AND_INSTRUMENTALS:-true}
       Soulseek__AcoustIdApiKey: ${ACOUSTID_API_KEY:-}
       Soulseek__MinMatchScore: ${SLSKD_MIN_MATCH_SCORE:-85}
       Soulseek__TagFromMusicBrainz: ${SLSKD_TAG_FROM_MUSICBRAINZ:-false}
@@ -260,6 +264,9 @@ services:
       # at most this many a day. Unsure matches and other takes are still asked about.
       LibraryActions__ReviewSweepAutoReplace: ${LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE:-false}
       LibraryActions__ReviewSweepAutoReplacePerDay: ${LIBRARY_ACTIONS_REVIEW_SWEEP_AUTO_REPLACE_PER_DAY:-10}
+      # Check this many library songs an hour against their audio (0 is off). What disagrees
+      # shows in Library health; only stray spaces are taken off by itself.
+      LibraryActions__TagCheckPerHour: ${LIBRARY_ACTIONS_TAG_CHECK_PER_HOUR:-60}
       # Recordings the library holds more than once, side by side, the copy worth keeping first.
       # Octo only points them out; nothing is removed unless you remove it.
       LibraryActions__DuplicatesEnabled: ${LIBRARY_ACTIONS_DUPLICATES:-false}

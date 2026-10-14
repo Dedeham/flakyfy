@@ -17,6 +17,7 @@ pub mod library_action_playlist_worker;
 pub mod library_action_quarantine;
 pub mod library_action_rating_worker;
 pub mod library_edit_service;
+pub mod library_identity_sweep;
 pub mod library_ownership;
 pub mod library_review_sweep_worker;
 pub mod library_snapshot;
@@ -60,6 +61,11 @@ pub use library_action_rating_worker::{
 };
 pub use library_edit_service::{
     LibraryEditOutcome, LibraryEditService, LibraryRescan, SongLookup, TrashedSong,
+};
+pub use library_identity_sweep::{
+    EditServiceSweepEdits, IdentitySweepStatus, IdentitySweepStore, LibraryIdentitySweep,
+    LibraryIdentitySweepParts, MusicBrainzRecordingFacts, MusicBrainzReleaseTracks, SnapshotSweepLibrary,
+    TagFinding,
 };
 pub use library_ownership::{LibraryOwnership, OwnedCopy, OwnedDecision, OwnershipNavidrome};
 pub use library_review_sweep_worker::{

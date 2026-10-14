@@ -131,6 +131,10 @@ pub mod fix_actions {
     pub const ALL: [&str; 8] = [
         REMOVE, RETAG, JOIN_ALBUM, COVER, RESTORE, UNDO, MOVE_SOUND, MOVE_BACK,
     ];
+
+    /// A retag's parameter that is not a tag: the file's size and last write the tags were
+    /// worked out from. The retag is refused once the file is no longer that one.
+    pub const FILE_STAMP: &str = "fileStamp";
 }
 
 use fix_actions as actions;
@@ -621,6 +625,10 @@ pub fn tag_name(tag: &str) -> String {
         fields_of::TRACK => "Track number".to_string(),
         fields_of::DISC => "Disc number".to_string(),
         fields_of::ISRC => "ISRC".to_string(),
+        fields_of::RECORDING_ID => "Recording id".to_string(),
+        fields_of::RELEASE_TRACK_ID => "Release track id".to_string(),
+        fields_of::RELEASE_ID => "Release id".to_string(),
+        fields_of::RELEASE_GROUP_ID => "Release group id".to_string(),
         _ => upper_first(tag),
     }
 }

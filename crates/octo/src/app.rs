@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use octo_core::common::Clock;
+use octo_core::places::PlaceIndex;
 use octo_core::settings::{AppSettings, RestartTracker, SettingsFileWriter, SettingsStore};
 use octo_core::tagging::{CatalogLookup, FingerprintVerifier, ReleaseIdentifier, ReleaseLookup, TagPreview};
 use octo_media::audio::{AudioFingerprinter, ILoudnessMeter, LoudnessMeter, SpectrumAnalyzer};
@@ -427,6 +428,9 @@ pub struct AppInner {
     pub sonic_worker: Arc<SonicAnalysisWorker>,
     /// `GeneratedPlaylistService`: the genre and decade mixes, `generated-playlists.json`.
     pub generated_playlists: Arc<GeneratedPlaylistService>,
+    /// `PlaceIndex`: postal codes and cities as coordinates (getPlace), read from the place data
+    /// a block at a time.
+    pub places: Arc<PlaceIndex>,
     /// `TopSongsService`: an artist's top songs and every chart (Apple Music's pages, Deezer and
     /// Last.fm behind Popular right now).
     pub top_songs: TopSongsService,
@@ -2836,6 +2840,9 @@ impl AppState {
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
             explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
+            places: Arc::new(PlaceIndex::new(
+                crate::controllers::subsonic::places::places_file(&config_dir),
+            )),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,
@@ -3225,6 +3232,7 @@ impl AppState {
             cover_upgrade_worker: genre_cover_jobs.cover_upgrade_worker,
             explicit_backfill: genre_cover_jobs.explicit_backfill,
             update_host: Arc::new(UpdateHost::new(config_dir.join("update"), Clock::system())),
+            places: Arc::new(PlaceIndex::new(config_dir.join("places.bin"))),
             lifetime: CancellationToken::new(),
             download_history: stores.download_history,
             download_concurrency: stores.download_concurrency,

@@ -5102,6 +5102,55 @@
       ],
       "reason": "A re-pin of the dashboard files over both merged branches: index.html has list groups' Which mixes rows, and the Review card adds \"Replace a download that clearly is another song\", \"At most a day\" and a \"Re-check Octo's downloads\" row, and the Verify card a hidden line \"You changed how sure AcoustID must be. Re-check Octo's downloads?\"; admin.js has match scores' AcoustID numbers, and shows the re-check's progress and Done on the Review card, the day's replacements, the offer on the Verify card, and leaves out a score a replaced note already says. admin.css is unchanged. Supersedes dashboard-files-list-groups and dashboard-files-match-scores. Pinned from the files without a parity run; to be confirmed on the first run over this branch.",
       "knownDiff": "Dashboard files, the library check's replacing"
+    },
+    {
+      "id": "dashboard-files-2026-10-13-places",
+      "backlog": "places",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"2AQ527WtSiGEzyKra4TpXIYsj5mKG1i0jKYBoEgwnnE=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ d80439dbb5ad4a2184cf22ab6b84e95c862c8f998a1b58b48ca601a048309e71\\ \\(209920\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"U61pLi7E5kxQgID8F45CQgHARxu7OrT0rmUorsGfGFw=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 53ad692e2ec4e64c508080fc178e424201c0471bbb3ab4f4ae6528aec19f185c\\ \\(415574\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"/jLP2s8geqPFEBaqsZj7uRuGMSJfnP1W49sF\\+WDPocI=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ fe32cfdacf207aa3c51016aab198fbb91b8631225f9cfd56e3db05f960cfa1c2\\ \\(119968\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/209920'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files: index.html gains the About page's Credits card, \"Place data from GeoNames (CC BY 4.0), converted and simplified by Octo.\", for the place data getPlace answers from. admin.js and admin.css are unchanged. Supersedes dashboard-files-2026-10-11.",
+      "knownDiff": "Dashboard files, 2026-10-13 (place data credit)"
     }
   ]
 }

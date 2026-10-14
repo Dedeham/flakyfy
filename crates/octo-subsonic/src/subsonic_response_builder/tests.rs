@@ -1484,6 +1484,45 @@ fn extensions_xml_adds_octos_own_and_reindents() {
 }
 
 #[test]
+fn the_places_extension_is_listed_last_only_with_place_data() {
+    let listed = |places: bool| {
+        builder()
+            .merge_open_subsonic_extensions_with(
+                "json",
+                Some(NAVIDROME_JSON.as_bytes()),
+                Some("application/json"),
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                places,
+            )
+            .text()
+            .to_string()
+    };
+    assert_eq!(
+        listed(true),
+        r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","openSubsonic":true,"openSubsonicExtensions":[{"name":"songLyrics","versions":[1,2]},{"name":"octoLyrics","versions":[1]},{"name":"octoAcquisitions","versions":[1,2,3]},{"name":"octoLibraryActions","versions":[1,2,3]},{"name":"octoImports","versions":[1,2]},{"name":"octoLists","versions":[1,2]},{"name":"octoPlaces","versions":[1]}]}}"#
+    );
+    assert!(!listed(false).contains("octoPlaces"));
+    let own = builder()
+        .merge_open_subsonic_extensions_with("xml", None, None, false, false, false, false, false, false, true)
+        .text()
+        .to_string();
+    assert!(
+        own.ends_with(concat!(
+            "  <openSubsonicExtensions name=\"octoPlaces\">\n",
+            "    <versions>1</versions>\n",
+            "  </openSubsonicExtensions>\n",
+            "</subsonic-response>"
+        )),
+        "{own}"
+    );
+}
+
+#[test]
 fn extensions_it_cannot_read_pass_through_untouched() {
     for (format, body, content_type, want_type) in [
         ("json", "<xml/>", Some("text/xml"), "text/xml"),
@@ -1605,7 +1644,7 @@ fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml(
 fn the_stations_extension_is_listed_last_and_only_when_asked() {
     let names = |stations: bool| -> Vec<String> {
         let reply = builder()
-            .merge_open_subsonic_extensions_with("json", None, None, true, true, true, true, true, stations);
+            .merge_open_subsonic_extensions_with("json", None, None, true, true, true, true, true, stations, false);
         let answer: Value = serde_json::from_str(&reply.text()).unwrap();
         answer["subsonic-response"]["openSubsonicExtensions"]
             .as_array()

@@ -71,9 +71,8 @@ fn assert_golden(reply: SubsonicReply, file: &str, name: &str) {
 }
 
 /// A recorded extensions list with the extensions added since the 2026.10.03.2 recording:
-/// octoImports (versions 1 and 2) and octoLists (versions 1 and 2) after the extensions it lists (Octo 2026.10.05
-/// lists them last), and octoAcquisitions at versions 1, 2 and 3 (the log, the key and Find songs,
-/// then asking before a library song is replaced anyway).
+/// octoImports (versions 1 and 2) and octoLists (versions 1 and 2) after the extensions it
+/// lists, and octoAcquisitions at versions 1, 2 and 3.
 /// These golden tests keep the older recording and add those entries to it.
 fn recorded_with_ported_extensions(file: &str, name: &str) -> Recorded {
     let mut want = recorded(file, name);

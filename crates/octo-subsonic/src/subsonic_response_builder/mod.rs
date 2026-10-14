@@ -11,6 +11,7 @@
 
 mod library_actions;
 mod lyrics;
+mod places;
 mod reply;
 mod top_songs;
 mod transition_profile;
@@ -42,6 +43,7 @@ pub use library_actions::{
     RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
 };
 pub use lyrics::{CueLineOut, CueWord, LYRICS_EXTENSION, LYRICS_EXTENSION_VERSION};
+pub use places::{PLACES_EXTENSION, PLACES_EXTENSION_VERSION};
 pub use reply::{ReplyKind, SubsonicReply};
 pub use top_songs::{
     ChartChoiceRow, POPULAR_COMMENT, RankedRow, TopSongRow, TopSongsHeader, chart_playlist_comment,
@@ -85,6 +87,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (LISTS_EXTENSION, &[1, LISTS_EXTENSION_VERSION]),
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
     (STATIONS_EXTENSION, &[STATIONS_EXTENSION_VERSION]),
+    (PLACES_EXTENSION, &[PLACES_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
@@ -644,7 +647,7 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// octoTopSongs, octoRadioSources, octoTransitions and octoStations are left out;
+    /// octoTopSongs, octoRadioSources, octoTransitions, octoStations and octoPlaces are left out;
     /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
@@ -664,14 +667,16 @@ impl SubsonicResponseBuilder {
             false,
             false,
             false,
+            false,
         )
     }
 
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
     /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`),
-    /// octoTransitions while octo-sonic makes profiles (`transitions`), and octoStations while
-    /// radio stations are served as playlists (`stations`).
+    /// octoTransitions while octo-sonic makes profiles (`transitions`), octoStations while
+    /// radio stations are served as playlists (`stations`), and octoPlaces while the place data
+    /// can be read (`places`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -683,12 +688,13 @@ impl SubsonicResponseBuilder {
         radio_sources: bool,
         transitions: bool,
         stations: bool,
+        places: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
         // "choose lyrics" that can only answer that lookups are off. octoLibraryActions is only
-        // listed while library actions are on, and octoRadioSources while radio can answer, for the
-        // same reason.
+        // listed while library actions are on, octoRadioSources while radio can answer, and
+        // octoPlaces while there is place data to answer from, for the same reason.
         let own: Vec<(&str, &[i32])> = OWN_EXTENSIONS
             .iter()
             .copied()
@@ -698,6 +704,7 @@ impl SubsonicResponseBuilder {
             .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .filter(|(name, _)| transitions || *name != TRANSITIONS_EXTENSION)
             .filter(|(name, _)| stations || *name != STATIONS_EXTENSION)
+            .filter(|(name, _)| places || *name != PLACES_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {

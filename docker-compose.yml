@@ -555,7 +555,12 @@ services:
   # release from compiling anything.
   octo-source:
     image: ghcr.io/winters27/octo:${OCTO_IMAGE_TAG:-2026.10.13}
-    build: .
+    build:
+      context: .
+      args:
+        # The place data is downloaded once per release; a new value downloads it again (after
+        # a build that could not reach GeoNames, say): PLACES_REFRESH=$(date +%F).
+        PLACES_REFRESH: ${PLACES_REFRESH:-}
     profiles: ["source"]
   yt-dlp-shim-source:
     image: ghcr.io/winters27/octo-yt-dlp-shim:${OCTO_IMAGE_TAG:-2026.10.13}

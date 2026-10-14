@@ -172,7 +172,7 @@ Enums:
 | `PlaylistsDirectory` | - | string | `playlists` / `playlists` / - | **Dead:** its only consumer, `PlaylistSyncService`, is never registered in DI (`GetService` returns null). It would be relative to `Library:DownloadPath`, with null falling back to `"playlists"`. | Dead | yes |
 | `DownloadOnStar` | `DOWNLOAD_ON_STAR` | bool | true / `true` / `true` | Feeds only `EffectiveHeartDownloadSources()` when `HeartDownloadSources` is empty. | Live | no |
 | `DownloadAlbumOnStar` | `DOWNLOAD_ALBUM_ON_STAR` | bool | true / `true` / `true` | As above. | Live | no |
-| `DownloadAlbumOnSongStar` | `DOWNLOAD_ALBUM_ON_SONG_STAR` | bool | false / `false` / `false` | Rust only. A star on an outside song also queues its album down the album-heart chain (`controllers/subsonic/stars.rs`), with the album id minted as the song row mints it. Needs a source with album hearts on. | Live | yes |
+| `DownloadAlbumOnSongStar` | `DOWNLOAD_ALBUM_ON_SONG_STAR` | bool | false / `false` / `false` | Rust only. A star on an outside song also queues its album down the album-heart chain (`controllers/subsonic/stars.rs`), with the album id minted as the song row mints it. Needs a source with album hearts on. The song's chain runs first and the album walk waits (at most three minutes) for the song to show in the library (`HeartAcquisitionCoordinator::queue_tracks_then_album_for`); a song Lidarr took brings no walk; a member's album songs are not starred. | Live | yes |
 | `RecordRequestedBy` | `RECORD_REQUESTED_BY` | bool | true / `true` / `true` | - | Live | yes |
 | `StarDownloadsForRequester` | `STAR_DOWNLOADS_FOR_REQUESTER` | bool | false / `false` / `false` | - | Live | yes |
 | `SkipOwnedSongs` | `SKIP_OWNED_SONGS` | bool | true / `true` / `true` | - | Live | yes |

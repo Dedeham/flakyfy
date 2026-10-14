@@ -144,7 +144,21 @@ async fn a_song_heart_also_fetches_the_rest_of_its_album_when_asked() {
     let reply = fixture.star(&fixture.song).await;
 
     assert_eq!(reply["subsonic-response"]["status"], "ok", "{reply}");
-    assert_eq!(fixture.queued().await, vec![fixture.song.clone()]);
+    // The song goes first; the album waits until it is in and shows in the library.
+    let request = next_queued(&fixture.state.track_acquisition_queue)
+        .await
+        .expect("the song is queued");
+    assert_eq!(request.external_id, fixture.song);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(fixture.albums().is_empty(), "the album waits for the song");
+    fixture.state.track_acquisition_queue.release(&request);
+    request
+        .completion
+        .try_set_result(format!("/music/{}.flac", request.external_id));
+    fixture
+        .state
+        .acquisition_tracker
+        .complete("soulseek", &fixture.song, Some("nd-1"));
     until(|| !fixture.albums().is_empty()).await;
     assert_eq!(
         fixture.albums(),

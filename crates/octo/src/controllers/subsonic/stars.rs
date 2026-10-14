@@ -9,7 +9,7 @@ use octo_core::common::playlist_id_helper;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
 use octo_core::models::radio::LastFmRadioPlay;
-use octo_core::settings::LibraryRatingScope;
+use octo_core::settings::{HeartDownloadStep, LibraryRatingScope};
 use octo_core::soulseek::soulseek_metadata_service::{RoutingKind, SoulseekRouting};
 use tracing::{debug, info};
 
@@ -236,38 +236,24 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             routing.as_ref().and_then(|r| r.title.as_deref()),
             routing.as_ref().and_then(|r| r.album.as_deref()),
         );
-        state.heart_acquisition_coordinator.queue_track_for(
-            &provider,
-            &external_id,
-            requester_for(&state, Some(&who)).as_deref(),
-            target.clone(),
-        );
-
-        // DownloadAlbumOnSongStar: the song's album follows it, as an album heart would. The
-        // album walk skips the song itself, which is already in flight.
-        if state.settings.current().subsonic.download_album_on_song_star {
-            match album_of_song(&state, &external_id) {
-                Some(album_id) if sources.iter().any(|step| step.album_enabled == Some(true)) => {
-                    info!(
-                        "Starred song {item_id} with DownloadAlbumOnSongStar on; queueing album {album_id}"
-                    );
-                    state
-                        .acquisition_tracker
-                        .begin_album(&provider, &album_id, Some(&who));
-                    state.heart_acquisition_coordinator.queue_album_for(
-                        &provider,
-                        &album_id,
-                        requester_for(&state, Some(&who)).as_deref(),
-                        target,
-                    );
-                }
-                Some(_) => info!(
-                    "Starred song {item_id} with DownloadAlbumOnSongStar on, but no album-heart source is enabled; only the song is fetched"
-                ),
-                None => info!(
-                    "Starred song {item_id} with DownloadAlbumOnSongStar on, but Octo knows no album for it; only the song is fetched"
-                ),
-            }
+        // DownloadAlbumOnSongStar: the song's album follows it, as an album heart would, once
+        // the song's own chain is done.
+        let requested_by = requester_for(&state, Some(&who));
+        match album_to_follow(&state, &sources, &item_id, &external_id) {
+            Some(album_id) => state.heart_acquisition_coordinator.queue_tracks_then_album_for(
+                &[(provider.clone(), external_id.clone())],
+                &provider,
+                &album_id,
+                requested_by.as_deref(),
+                Some(&who),
+                target,
+            ),
+            None => state.heart_acquisition_coordinator.queue_track_for(
+                &provider,
+                &external_id,
+                requested_by.as_deref(),
+                target,
+            ),
         }
 
         // Return success response immediately
@@ -309,6 +295,33 @@ pub async fn star(State(state): State<AppState>, req: Request) -> AppResult {
             .into_response()),
         Err(other) => Err(other.into()),
     }
+}
+
+/// The album that follows a hearted outside song, when DownloadAlbumOnSongStar is on, the song
+/// names one, and a source takes album hearts.
+fn album_to_follow(
+    state: &AppState,
+    sources: &[HeartDownloadStep],
+    item_id: &str,
+    external_id: &str,
+) -> Option<String> {
+    if !state.settings.current().subsonic.download_album_on_song_star {
+        return None;
+    }
+    let Some(album_id) = album_of_song(state, external_id) else {
+        info!(
+            "Starred song {item_id} with DownloadAlbumOnSongStar on, but Octo knows no album for it; only the song is fetched"
+        );
+        return None;
+    };
+    if !sources.iter().any(|step| step.album_enabled == Some(true)) {
+        info!(
+            "Starred song {item_id} with DownloadAlbumOnSongStar on, but no album-heart source is enabled; only the song is fetched"
+        );
+        return None;
+    }
+    info!("Starred song {item_id} with DownloadAlbumOnSongStar on; album {album_id} follows it");
+    Some(album_id)
 }
 
 /// The album id a client sees beside an outside song, minted the same way the song row mints

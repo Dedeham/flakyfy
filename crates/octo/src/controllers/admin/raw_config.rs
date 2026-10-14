@@ -126,7 +126,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Subsonic:LosslessWaitTimeoutSeconds",
     "Subsonic:DownloadOnPlay",
     "Subsonic:LidarrAlbumOnPlay",
-    "Subsonic:DownloadAlbumOnSongStar",
     "Subsonic:DownloadSource",
     "Subsonic:AutoDetectDownloadPath",
     "Subsonic:LibraryPath",
@@ -310,6 +309,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Subsonic:SearchDurationWaitMs",
     "Subsonic:SearchLastFmWaitMs",
     "Subsonic:SizeFlagClients",
+    "Subsonic:DownloadAlbumOnSongStar",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

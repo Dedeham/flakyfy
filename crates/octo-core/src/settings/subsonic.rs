@@ -282,11 +282,14 @@ pub struct SubsonicSettings {
 
     /// Also fetch the whole album when an outside song is starred (default: false).
     /// Environment variable: DOWNLOAD_ALBUM_ON_SONG_STAR
-    /// The starred song goes first, down the song-heart chain as always. Its album then goes
-    /// down the album-heart chain, exactly as if the album had been starred, so it needs a
-    /// source with album hearts enabled. Songs already in the library are skipped as usual.
-    /// The album is found the way a song row names it: the song's album, or for a single
-    /// with no album name, the album the catalog lists for the song.
+    /// The starred song goes first, down the song-heart chain as always. Once it shows in the
+    /// library (or a few minutes have passed), its album goes down the album-heart chain,
+    /// exactly as if the album had been starred, so it needs a source with album hearts
+    /// enabled. Songs already in the library are skipped as usual. When Lidarr took the song,
+    /// it brings the whole album, so nothing more is fetched. A family member's album songs
+    /// are not starred for them; only the song they hearted is. The album is found the way a
+    /// song row names it: the song's album, or for a single with no album name, the album the
+    /// catalog lists for the song.
     pub download_album_on_song_star: bool,
 
     /// Record which Subsonic user asked for each download (default: true)

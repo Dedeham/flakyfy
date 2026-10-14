@@ -2466,6 +2466,7 @@ const libraryActionLabels = {
   Keep: 'Keep: the track is right, so stop asking. Removes nothing',
   WrongLyrics: 'Wrong lyrics: look for other lyrics, and never show these again',
   WrongCover: 'Wrong cover: look for another cover, and never use this one again',
+  FixDuplicates: 'Fix duplicates: fix every copy of the song, as Library health does. Needs Delete on',
 };
 
 function normalizeLibraryAction(action = {}) {
@@ -7843,11 +7844,27 @@ function healthSection(check) {
           ${buttons ? `<div class="set-ctrl health-ctrl">${buttons}</div>` : ''}
         </div>
         ${check.check === 'tags' ? healthTagCheckRow() : ''}
+        ${healthKeepRatedRow(check)}
         <div class="set-row stack health-preview" id="health-preview-${check.check}" hidden></div>
       </div>
       ${healthItems(check)}
     </div>`;
 }
+
+// The switch beside Fix on the duplicates page, saved as a setting the moment it changes.
+function healthKeepRatedRow(check) {
+  if (check.check !== 'duplicates' || !check.keepRatedLabel || !(healthReport.can || {}).remove) return '';
+  return `<div class="set-row">
+          <div class="set-info">
+            <div class="set-info-t" id="health-keep-rated-label">${esc(check.keepRatedLabel)}</div>
+            <div class="set-info-d" id="health-keep-rated-meaning">${esc(check.keepRatedMeaning)}</div>
+            <div class="set-info-more">${esc(check.keepRatedMore)}</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="health-keep-rated" aria-labelledby="health-keep-rated-label" aria-describedby="health-keep-rated-meaning"${check.keepRated ? ' checked' : ''} /><span class="sw-track"></span><span class="sw-thumb"></span></label>
+        </div>`;
+}
+
+const healthKeepRated = () => !!healthReport?.checks.find(check => check.check === 'duplicates')?.keepRated;
 
 function healthMore(check, total) {
   const shown = healthShown[check] ?? healthPage(check);
@@ -7985,6 +8002,7 @@ function closeHealthPreview(check) {
 async function openHealthPreview(check, request) {
   const holder = healthPreviewHolder(check);
   if (!holder) return;
+  if (check === 'duplicates' && request.keepRated === undefined) request = { ...request, keepRated: healthKeepRated() };
   holder.hidden = false;
   holder.innerHTML = stateBlock('loading', 'Working out what this would change…');
   holder.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -8017,10 +8035,12 @@ function renderHealthPreview(check) {
   let detail = '';
   if (data.sets) {
     const one = data.sets.length === 1;
-    detail = healthLines(data.sets.map(set => `<div class="health-plan">
+    const skipped = data.skippedLine ? `<div class="set-info-d"><strong>${esc(data.skippedLine)}</strong></div>` : '';
+    detail = skipped + healthLines(data.sets.map(set => `<div class="health-plan">
       <div class="set-info-t">${esc(set.heading)}</div>
       <div class="set-info-d">${esc(one ? set.why : set.line)}${set.note ? ` ${esc(set.note)}` : ''}</div>
-      ${one ? healthDuplicateDetail(set, preview.request) : ''}
+      ${healthStaysAndGoes(set)}
+      ${one && !set.skipped ? healthDuplicateDetail(set, preview.request) : ''}
     </div>`));
   } else if (data.albums) {
     detail = healthLines(data.albums.map(album => `<div class="health-plan">
@@ -8044,6 +8064,15 @@ function renderHealthPreview(check) {
     ${why}
     <div class="health-plans">${detail}</div>
     ${healthPreviewButtons(check, data.canFix === false ? null : data.go, steps > 0 || !!data.upgrade)}`;
+}
+
+// Every copy of one set by name, in what stays and what goes to the trash, with who starred or
+// rated it.
+function healthStaysAndGoes(set) {
+  if (!set.kept) return '';
+  const line = copy => `<li><span>${esc(copy.name)}</span>${copy.album ? ` <span class="dl-dash">·</span> ${esc(copy.album)}` : ''}${copy.marks ? ` <span class="dl-badge good">${esc(copy.marks)}</span>` : ''}${copy.soundMovesIn ? ' <span class="dl-badge state">its sound moves into the copy that stays</span>' : ''}</li>`;
+  const list = (title, copies) => `<div class="health-fate"><div class="set-info-d"><strong>${title}</strong></div><ul>${copies.map(line).join('')}</ul></div>`;
+  return list('Stays', set.kept) + (set.removed.length ? list('Goes to the trash', set.removed) : '');
 }
 
 // One set of copies: every tag of every copy side by side, what the kept copy ends with, the
@@ -8317,6 +8346,27 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
     }
     openHealthPreview('duplicates', request);
   }
+});
+
+// "Keep every rated copy" is saved as a setting as soon as it changes; an open preview of the
+// duplicates is worked out again with it.
+document.getElementById('health-body')?.addEventListener('change', async event => {
+  const box = event.target.closest?.('#health-keep-rated');
+  if (!box || !healthReport) return;
+  const on = box.checked;
+  box.disabled = true;
+  const { ok, data } = await healthCall('/api/admin/settings', { LibraryActions: { KeepRatedCopies: on } });
+  box.disabled = false;
+  if (!ok) {
+    box.checked = !on;
+    note(box.closest('.set-row') || box, `Not saved: ${data.error || 'the server said no'}`, 'error');
+    return;
+  }
+  const duplicates = healthReport.checks.find(check => check.check === 'duplicates');
+  if (duplicates) duplicates.keepRated = on;
+  if (currentSettings?.LibraryActions) currentSettings.LibraryActions.KeepRatedCopies = on;
+  const open = healthPreviews.duplicates;
+  if (open?.request) openHealthPreview('duplicates', { ...open.request, keepRated: on });
 });
 
 // The findings menu is one tab stop; the arrow keys, Home and End move along it.

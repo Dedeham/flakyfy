@@ -315,6 +315,7 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "GeneratedPlaylists:ArtistCount",
     "LibraryActions:ReviewSweepAutoReplace",
     "LibraryActions:ReviewSweepAutoReplacePerDay",
+    "LibraryActions:KeepRatedCopies",
 ];
 
 /// Whether a config-sources key names a secret: a password, an API key, a secret, a token

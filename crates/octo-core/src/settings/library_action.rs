@@ -21,11 +21,14 @@ pub enum LibraryAction {
     WrongLyrics,
     /// The song is right but its album's cover is not: put in another, never this one again.
     WrongCover,
+    /// The song is one of several copies: fix them all as Library health does, keeping every
+    /// copy anyone starred or rated while Keep every rated copy is on.
+    FixDuplicates,
 }
 
 impl LibraryAction {
     /// Every action, in declaration order.
-    pub const ALL: [LibraryAction; 7] = [
+    pub const ALL: [LibraryAction; 8] = [
         LibraryAction::Delete,
         LibraryAction::WrongSong,
         LibraryAction::WrongVersion,
@@ -33,6 +36,7 @@ impl LibraryAction {
         LibraryAction::Keep,
         LibraryAction::WrongLyrics,
         LibraryAction::WrongCover,
+        LibraryAction::FixDuplicates,
     ];
 
     /// Whether the action answers about the song's lyrics or cover, leaving its audio alone.
@@ -73,6 +77,9 @@ impl LibraryAction {
             // No star by default: a rating someone already gave must not start asking for these.
             LibraryAction::WrongLyrics => ("Wrong lyrics", 0),
             LibraryAction::WrongCover => ("Wrong cover", 0),
+            // No star by default either: every star already asks for something, and this one
+            // removes files.
+            LibraryAction::FixDuplicates => ("Fix duplicates", 0),
         }
     }
 }
@@ -286,6 +293,11 @@ pub struct LibraryActionSettings {
     /// uses only that one.
     /// Environment variable: LIBRARY_ACTIONS_UPGRADE_SOURCE
     pub upgrade_source: UpgradeSourceChoice,
+
+    /// When Library health fixes duplicates, every copy anyone starred or rated stays, and only
+    /// copies nobody starred or rated go to the trash. Off by default: the fix keeps one copy of
+    /// each song. Set from the switch on the dashboard's Library health page.
+    pub keep_rated_copies: bool,
 }
 
 impl Default for LibraryActionSettings {
@@ -318,6 +330,7 @@ impl Default for LibraryActionSettings {
             ratings_scope: LibraryRatingScope::Auto,
             upgrade_per_week: 0,
             upgrade_source: UpgradeSourceChoice::Auto,
+            keep_rated_copies: false,
         }
     }
 }

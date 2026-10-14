@@ -438,6 +438,7 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ("UpgradeSource", name(actions.upgrade_source)),
             ("NoticeMaxTracks", n_num(actions.notice_max_tracks)),
             ("RatingsScope", name(actions.ratings_scope)),
+            ("KeepRatedCopies", Node::Bool(actions.keep_rated_copies)),
             ("AllowedUsers", n_str_array(&actions.allowed_users)),
             // Effective rather than raw, because the editor needs every action present even
             // when the config names only some of them. Projected so the enum lands as its NAME:
@@ -1297,7 +1298,7 @@ mod tests {
     /// Wrong lyrics and Wrong cover made seven actions. An eighth is a config that does not mean
     /// anything.
     #[test]
-    fn validate_library_actions_accepts_seven_refuses_eight() {
+    fn validate_library_actions_accepts_eight_refuses_nine() {
         fn with_actions(count: usize) -> JsonObject {
             let actions = (0..count)
                 .map(|i| n_obj([("Name", n_str(&format!("a{i}"))), ("Rating", n_num(0))]))
@@ -1308,14 +1309,14 @@ mod tests {
         }
         let current = LibraryActionSettings::default();
         assert_eq!(
-            validate_library_actions(&with_actions(7), &current).unwrap(),
+            validate_library_actions(&with_actions(8), &current).unwrap(),
             None
         );
         assert_eq!(
-            validate_library_actions(&with_actions(8), &current)
+            validate_library_actions(&with_actions(9), &current)
                 .unwrap()
                 .as_deref(),
-            Some("There are only 7 library actions")
+            Some("There are only 8 library actions")
         );
     }
 

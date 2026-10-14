@@ -253,7 +253,12 @@ impl SweepReplacer for ExecutorSweepReplacer {
         }
         let others = self.others.count().await;
         let members = match (&self.members, others) {
-            (Some(members), Some(count)) if count > 0 => members.marks_of(song_id).await,
+            (Some(members), Some(count)) if count > 0 => members
+                .marks_of(song_id)
+                .await
+                .into_iter()
+                .filter_map(|(_, marks)| marks)
+                .collect(),
             _ => Vec::new(),
         };
         marked_verdict(admin.as_ref(), others, &members)

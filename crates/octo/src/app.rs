@@ -71,6 +71,8 @@ use crate::services::fingerprint::{
     MusicBrainzClient,
 };
 use crate::services::health::keep_marks::{KeepMarks, KeepMarksParts};
+use crate::services::health::library_health_service::HealthDuplicateFixer;
+use crate::services::health::member_marks::NavidromeMemberMarks;
 use crate::services::health::{HealthServices, LibraryHealthService};
 use crate::services::http_client_factory;
 use crate::services::i_download_service::IDownloadService;
@@ -572,7 +574,17 @@ fn library_health(
     quarantine: &Arc<LibraryActionQuarantine>,
     scope: &ScopeResolver,
 ) -> Arc<LibraryHealthService> {
-    // Only the admin's marks are read for now; members' marks plug in here.
+    // The admin's marks are read with Octo's admin sign-in, each member's with their own.
+    let members = NavidromeMemberMarks::new(
+        Arc::clone(settings),
+        navidrome.http.clone(),
+        Arc::clone(&stores.family_store),
+        Arc::new(MemberCredentials::new(
+            Arc::clone(&stores.family_store),
+            Arc::clone(&stores.family_vault),
+            Arc::clone(settings),
+        )),
+    );
     let keep_marks = Arc::new(KeepMarks::new(KeepMarksParts {
         api: navidrome.navidrome_playlist_api.clone(),
         resolver: navidrome.navidrome_song_path_resolver.clone(),
@@ -581,10 +593,10 @@ fn library_health(
         library: navidrome.local_library.clone(),
         executor: Arc::clone(executor),
         settings: Arc::clone(settings),
-        members: None,
+        members: Some(Arc::new(members)),
         write_gate: Some(stores.library_write_gate.clone()),
     }));
-    Arc::new(LibraryHealthService::new(
+    let health = Arc::new(LibraryHealthService::new(
         Arc::clone(snapshot),
         Arc::clone(rescan),
         Arc::clone(settings),
@@ -596,7 +608,10 @@ fn library_health(
             scope: Some(scope.clone()),
         },
         Clock::system(),
-    ))
+    ));
+    // Fix duplicates, from a star or its action playlist, runs Library health's duplicate fix.
+    executor.use_duplicate_fixer(Arc::new(HealthDuplicateFixer::new(&health)));
+    health
 }
 
 /// The library tag check: Navidrome's song list from the snapshot, the sweep's fingerprint

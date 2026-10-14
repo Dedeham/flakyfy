@@ -776,10 +776,10 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb,
     // Subsonic:SizeFlagClients, Soulseek:SkipCoversAndInstrumentals and
     // LibraryActions:TagCheckPerHour (in their sections), the year and artist mixes' four:
-    // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, and the
-    // sweep's replacing two, listed last: LibraryActions:ReviewSweepAutoReplace and
-    // :ReviewSweepAutoReplacePerDay.
-    assert_eq!(rows.len(), 200);
+    // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, the sweep's
+    // replacing two: LibraryActions:ReviewSweepAutoReplace and :ReviewSweepAutoReplacePerDay,
+    // and LibraryActions:KeepRatedCopies, listed last.
+    assert_eq!(rows.len(), 201);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -789,6 +789,7 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(rows[197]["Key"], "GeneratedPlaylists:ArtistCount");
     assert_eq!(rows[198]["Key"], "LibraryActions:ReviewSweepAutoReplace");
     assert_eq!(rows[199]["Key"], "LibraryActions:ReviewSweepAutoReplacePerDay");
+    assert_eq!(rows[200]["Key"], "LibraryActions:KeepRatedCopies");
     assert_eq!(
         row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],
         false
@@ -796,6 +797,7 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(row("GeneratedPlaylists:ArtistCount")["IsSecret"], false);
     assert_eq!(row("LibraryActions:TagCheckPerHour")["IsSecret"], false);
     assert_eq!(row("Soulseek:SkipCoversAndInstrumentals")["IsSecret"], false);
+    assert_eq!(row("LibraryActions:KeepRatedCopies")["IsSecret"], false);
     assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("Subsonic:CoverCacheMb")["IsSecret"], false);

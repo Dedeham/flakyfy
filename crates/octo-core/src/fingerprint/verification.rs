@@ -295,7 +295,13 @@ impl VerificationResult {
         let by_acoust_id = self.verdict == VerificationVerdict::Confirmed && self.r#match.is_some();
         let said = match (self.verdict, self.reason) {
             (VerificationVerdict::Mismatch, _) if !self.names_recording() => return None,
-            (VerificationVerdict::Mismatch, _) if self.deny_reason.starts_with("is a live recording") => {
+            // A take `describe` already names is not named twice.
+            (VerificationVerdict::Mismatch, _)
+                if self.deny_reason.starts_with("is a live recording")
+                    && self.kind.is_none_or(|kind| {
+                        kind == crate::fingerprint::recording_identity::RecordingKind::Studio
+                    }) =>
+            {
                 Some(format!(
                     "AcoustID says this is a live recording of {}, {}",
                     self.describe(),

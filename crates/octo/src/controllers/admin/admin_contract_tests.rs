@@ -776,9 +776,9 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb,
     // Subsonic:SizeFlagClients, the year and artist mixes' four:
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, and the
-    // sweep's replacing two, listed last: LibraryActions:ReviewSweepAutoReplace and
-    // :ReviewSweepAutoReplacePerDay.
-    assert_eq!(rows.len(), 198);
+    // sweep's replacing two: LibraryActions:ReviewSweepAutoReplace and
+    // :ReviewSweepAutoReplacePerDay, and Subsonic:DownloadAlbumOnSongStar, listed last.
+    assert_eq!(rows.len(), 199);
     assert!(!rows.iter().any(|r| {
         r["Key"]
             .as_str()
@@ -788,6 +788,8 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     assert_eq!(rows[195]["Key"], "GeneratedPlaylists:ArtistCount");
     assert_eq!(rows[196]["Key"], "LibraryActions:ReviewSweepAutoReplace");
     assert_eq!(rows[197]["Key"], "LibraryActions:ReviewSweepAutoReplacePerDay");
+    assert_eq!(rows[198]["Key"], "Subsonic:DownloadAlbumOnSongStar");
+    assert_eq!(row("Subsonic:DownloadAlbumOnSongStar")["IsSecret"], false);
     assert_eq!(
         row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],
         false

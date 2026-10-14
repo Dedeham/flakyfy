@@ -171,6 +171,10 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
             ),
             ("DownloadOnPlay", Node::Bool(subsonic.download_on_play)),
             ("LidarrAlbumOnPlay", Node::Bool(subsonic.lidarr_album_on_play)),
+            (
+                "DownloadAlbumOnSongStar",
+                Node::Bool(subsonic.download_album_on_song_star),
+            ),
             // These two are rendered by the dashboard but were missing here, so their fields
             // never pre-filled with the saved value.
             ("DownloadSource", name(subsonic.download_source)),

@@ -7,6 +7,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use bytes::Bytes;
 use chrono::{DateTime, SecondsFormat, Utc};
+use octo_core::common::dotnet::is_blank;
 use octo_core::common::playlist_id_helper;
 use octo_core::last_fm::last_fm_radio_refresh_policy;
 use octo_core::last_fm::last_fm_scrobble_service::LastFmTrack;
@@ -286,7 +287,7 @@ impl OutsideHearts<'_> {
             star_outside_album(state, call, self.heart, self.sources, self.who, album).await;
         }
         for song in self.songs {
-            star_outside_song(state, call, self.heart, self.who, song).await;
+            star_outside_song(state, call, self.heart, self.sources, self.who, song).await;
         }
     }
 }
@@ -380,6 +381,7 @@ async fn star_outside_song(
     state: &AppState,
     call: &SubsonicCall,
     heart: &HeartOutcome,
+    sources: &[HeartDownloadStep],
     who: Option<&str>,
     item_id: &str,
 ) {
@@ -435,12 +437,71 @@ async fn star_outside_song(
         routing.as_ref().and_then(|r| r.title.as_deref()),
         routing.as_ref().and_then(|r| r.album.as_deref()),
     );
-    state.heart_acquisition_coordinator.queue_track_for(
-        &provider,
-        &external_id,
-        requester_for(state, Some(who)).as_deref(),
-        target,
-    );
+    // DownloadAlbumOnSongStar: the song's album follows it, as an album heart would, once
+    // the song's own chain is done.
+    let requested_by = requester_for(state, Some(who));
+    match album_to_follow(state, sources, item_id, &external_id) {
+        Some(album_id) => state.heart_acquisition_coordinator.queue_tracks_then_album_for(
+            &[(provider.clone(), external_id.clone())],
+            &provider,
+            &album_id,
+            requested_by.as_deref(),
+            Some(who),
+            target,
+        ),
+        None => state.heart_acquisition_coordinator.queue_track_for(
+            &provider,
+            &external_id,
+            requested_by.as_deref(),
+            target,
+        ),
+    }
+}
+
+/// The album that follows a hearted outside song, when DownloadAlbumOnSongStar is on, the song
+/// names one, and a source takes album hearts.
+fn album_to_follow(
+    state: &AppState,
+    sources: &[HeartDownloadStep],
+    item_id: &str,
+    external_id: &str,
+) -> Option<String> {
+    if !state.settings.current().subsonic.download_album_on_song_star {
+        return None;
+    }
+    let Some(album_id) = album_of_song(state, external_id) else {
+        info!(
+            "Starred song {item_id} with DownloadAlbumOnSongStar on, but Octo knows no album for it; only the song is fetched"
+        );
+        return None;
+    };
+    if !sources.iter().any(|step| step.album_enabled == Some(true)) {
+        info!(
+            "Starred song {item_id} with DownloadAlbumOnSongStar on, but no album-heart source is enabled; only the song is fetched"
+        );
+        return None;
+    }
+    info!("Starred song {item_id} with DownloadAlbumOnSongStar on; album {album_id} follows it");
+    Some(album_id)
+}
+
+/// The album id a client sees beside an outside song, minted the same way the song row mints
+/// it: the song's album, or its title when it has none (a single, which the album lookup then
+/// resolves to the real release). `None` for an id the registry does not know.
+fn album_of_song(state: &AppState, external_id: &str) -> Option<String> {
+    let routing = state.external_id_registry.lookup(external_id)?.snapshot();
+    let artist = routing.artist.filter(|a| !is_blank(a))?;
+    let album = routing
+        .album
+        .filter(|a| !is_blank(a))
+        .or(routing.title)
+        .filter(|a| !is_blank(a))?;
+    Some(state.external_id_registry.register(SoulseekRouting {
+        kind: RoutingKind::Album,
+        artist: Some(artist),
+        album: Some(album),
+        ..Default::default()
+    }))
 }
 
 /// Saves an outside song for a family member as a link (it plays from its source and shows in
@@ -1350,3 +1411,7 @@ mod hearts_tests;
 #[cfg(test)]
 #[path = "family_library_tests.rs"]
 mod family_library_tests;
+
+#[cfg(test)]
+#[path = "stars_album_tests.rs"]
+mod album_tests;

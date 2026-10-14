@@ -6556,48 +6556,83 @@ async function loadUpdate({ check = false } = {}) {
     if (!updateInfo) document.getElementById('update-line').textContent = "Couldn't ask Octo about new releases.";
     return;
   }
+  updatePageRunning ??= updateInfo.running;
+  welcomeFinishedUpdate();
   renderUpdate();
 }
 
+// The version this page's own code came with. Once Octo runs another, the page is reloaded so
+// the dashboard is the new release's too.
+let updatePageRunning = null;
+let updatePollBusy = false;
+const UPDATE_FINISHED_KEY = 'octo.update.finished';
+
+// After the reload that follows an update: the card shows the finished run, and a toast says so.
+function welcomeFinishedUpdate() {
+  let finished = null;
+  try {
+    finished = JSON.parse(sessionStorage.getItem(UPDATE_FINISHED_KEY) || 'null');
+    sessionStorage.removeItem(UPDATE_FINISHED_KEY);
+  } catch { /* nothing to welcome */ }
+  if (!finished || finished.tag !== updateInfo?.running) return;
+  updateRequestId = finished.id ?? null;
+  toast(`Octo now runs ${updateInfo.running}.`, 'ok');
+  // The helper reinstalls itself just after Octo is back, so its version is read again.
+  setTimeout(() => loadUpdate(), 15_000);
+}
+
 // Every 2 seconds while a run is under way. Octo is down while it restarts, so failed polls
-// read as "Restarting" for up to 15 minutes before the page gives up.
-function pollUpdate() {
+// read as "Restarting" for up to 15 minutes before the page gives up. Each ask gives up after
+// 5 seconds: a kept-alive connection to the container that was replaced can hang without ever
+// failing, and the next ask then goes out on a new one.
+function pollUpdate(delay = 2000) {
   clearTimeout(updatePollTimer);
-  updatePollTimer = setTimeout(async () => {
-    const before = updateInfo?.running;
-    try {
-      const response = await api('/api/admin/update', { cache: 'no-store' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      updateInfo = await response.json();
+  updatePollTimer = setTimeout(pollUpdateNow, delay);
+}
+
+async function pollUpdateNow() {
+  updatePollBusy = true;
+  try {
+    const response = await api('/api/admin/update', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    updateInfo = await response.json();
+    updateOutageSince = null;
+  } catch {
+    updatePollBusy = false;
+    updateOutageSince ??= Date.now();
+    if (Date.now() - updateOutageSince > 15 * 60_000) {
+      updatePollTimer = null;
       updateOutageSince = null;
-    } catch {
-      updateOutageSince ??= Date.now();
-      if (Date.now() - updateOutageSince > 15 * 60_000) {
-        updatePollTimer = null;
-        updateOutageSince = null;
-        document.getElementById('update-line').textContent = 'Octo has not come back after the update. "docker compose logs octo" on the host says why.';
-        return;
-      }
-      renderUpdate();
-      pollUpdate();
+      document.getElementById('update-line').textContent = 'Octo has not come back after the update. "docker compose logs octo" on the host says why.';
       return;
     }
-    updatePollTimer = null;
     renderUpdate();
-    if (updateRunActive()) { pollUpdate(); return; }
-    const run = updateInfo.run;
-    if (run?.state === 'done' && before && updateInfo.running !== before) {
-      toast(`Octo now runs ${updateInfo.running}.`, 'ok');
-      await loadSettings();
-      // The helper reinstalls itself just after Octo is back, so its version is read again.
-      setTimeout(() => loadUpdate(), 15_000);
-    } else if (run?.state === 'failed' && run.id === updateRequestId) {
-      toast('The update failed. Octo still runs the old version.', 'error');
-    } else if (updateRequestId && updateInfo.unanswered === updateRequestId) {
-      toast('The update helper did not answer. The command to run is on the About page.', 'error');
-    }
-  }, 2000);
+    pollUpdate();
+    return;
+  }
+  updatePollBusy = false;
+  updatePollTimer = null;
+  const run = updateInfo.run;
+  if (run?.state === 'done' && updatePageRunning && updateInfo.running !== updatePageRunning) {
+    try {
+      sessionStorage.setItem(UPDATE_FINISHED_KEY, JSON.stringify({ id: run.id, tag: updateInfo.running }));
+    } catch { /* the reload still shows the new version */ }
+    location.reload();
+    return;
+  }
+  renderUpdate();
+  if (updateRunActive()) { pollUpdate(); return; }
+  if (run?.state === 'failed' && run.id === updateRequestId) {
+    toast('The update failed. Octo still runs the old version.', 'error');
+  } else if (updateRequestId && updateInfo.unanswered === updateRequestId) {
+    toast('The update helper did not answer. The command to run is on the About page.', 'error');
+  }
 }
+
+// A tab in the background has its timers slowed down; coming back asks at once.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && updatePollTimer && !updatePollBusy) pollUpdate(0);
+});
 
 document.getElementById('update-check')?.addEventListener('click', async event => {
   const btn = event.currentTarget;

@@ -1437,7 +1437,15 @@ fn take_care_lookup(score: f64) -> AcoustIdLookup {
 }
 
 fn take_care_verdict(lookup: &AcoustIdLookup) -> VerificationResult {
-    DownloadVerificationService::decide(lookup, Some("Drake"), Some("Take Care"), 0.85, false, 0, &Takes::Any)
+    DownloadVerificationService::decide(
+        lookup,
+        Some("Drake"),
+        Some("Take Care"),
+        0.85,
+        false,
+        0,
+        &Takes::Any,
+    )
 }
 
 #[test]

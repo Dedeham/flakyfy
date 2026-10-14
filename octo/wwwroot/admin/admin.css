@@ -2380,7 +2380,9 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
   .sidebar-nav-item { width: auto; flex: 0 0 auto; white-space: nowrap; margin-top: 0; height: 40px; padding: 0 12px; }
   .content { padding: var(--s-page) var(--s-xl) 64px; }
   :root { --t-title: 28px; }
-  .set-section { scroll-margin-top: 136px; }
+  /* The sidebar strip stays stuck to the top, so every jump to a spot on the page stops below it.
+   * --strip-h is the strip's measured height, set by admin.js; it grows when its rows wrap. */
+  html { scroll-padding-top: var(--strip-h, 120px); }
   .page-header { flex-wrap: wrap; gap: var(--s-l); }
   .page-header > div { flex-basis: calc(100% - 60px); }
   .page-icon { width: 40px; height: 40px; }
@@ -2496,6 +2498,14 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 }
 .update-command .btn { flex: 0 0 auto; }
 .info-card p.update-fine { font-size: var(--t-meta); color: var(--text-muted); }
+/* The banner's button lands here: the card clears the top of the page and its edge lights up. */
+#update-card { scroll-margin-top: var(--s-xl); }
+#update-card:focus:not(:focus-visible) { outline: none; }
+#update-card.is-pointed { animation: card-pointed 1.8s var(--ease) forwards; }
+@keyframes card-pointed {
+  0%, 45% { outline: 2px solid var(--accent); outline-offset: 4px; }
+  100% { outline: 2px solid transparent; outline-offset: 4px; }
+}
 .info-card .update-helper-old { margin: var(--s-l) 0 0; }
 .info-card .update-helper-old p { font-size: var(--t-meta); color: var(--ink-1); margin-bottom: 0; }
 .update-helper-old .update-command { margin-bottom: 0; }

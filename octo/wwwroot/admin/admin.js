@@ -120,6 +120,15 @@ function icon(name, extraClass = '') {
 const navItems = document.querySelectorAll('.sidebar-nav-item');
 const panes    = document.querySelectorAll('section[data-pane]');
 
+// On a phone the sidebar is a strip stuck to the top, and its height changes as its rows wrap
+// (the signed-in line, Restart). --strip-h keeps jumps to a spot on the page below it.
+const sidebarStrip = document.querySelector('.sidebar');
+if (sidebarStrip && 'ResizeObserver' in window) {
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty('--strip-h', `${sidebarStrip.offsetHeight}px`);
+  }).observe(sidebarStrip);
+}
+
 // focus: true when the user chose the pane, so keyboard and screen-reader focus follows them
 // to its heading instead of being left on a sidebar button that no longer describes the page.
 function activateTab(name, { focus = false } = {}) {
@@ -128,9 +137,14 @@ function activateTab(name, { focus = false } = {}) {
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
-    // On a phone the nav is a sideways strip; keep the current pill in view.
+    // On a phone the nav is a sideways strip; keep the current pill in view. Only the strip
+    // scrolls: the page's scroll padding covers the strip itself, so scrollIntoView would move
+    // the page as well.
     if (on && window.matchMedia('(max-width: 760px)').matches) {
-      b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      const nav = b.closest('.sidebar-nav');
+      const pill = b.getBoundingClientRect();
+      const box = nav?.getBoundingClientRect();
+      if (box) nav.scrollBy({ left: pill.left + pill.width / 2 - (box.left + box.width / 2) });
     }
   });
   panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
@@ -6401,6 +6415,30 @@ function updateRunActive(info = updateInfo) {
   return !!info && (info.pending || (!!info.run && UPDATE_RUNNING.includes(info.run.state)));
 }
 
+// Update now needs a helper on the host, and not one from 2026.10.05 or earlier.
+function updateHelperReady(info = updateInfo) {
+  return !!info?.helper?.installed && !info.helper.outdated;
+}
+
+// Opens About with the update card in view and the keyboard on it, from any page,
+// About included. The card's edge lights up for a moment so the eye finds it.
+function showUpdateCard() {
+  const card = document.getElementById('update-card');
+  if (!card) return;
+  if (!card.closest('section[data-pane]')?.classList.contains('active')) openTab('about');
+  card.focus({ preventScroll: true });
+  card.classList.remove('is-pointed');
+  void card.offsetWidth;
+  card.classList.add('is-pointed');
+  requestAnimationFrame(() => {
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
+  });
+}
+document.getElementById('update-card')?.addEventListener('animationend', event => {
+  if (event.target === event.currentTarget) event.currentTarget.classList.remove('is-pointed');
+});
+
 function renderUpdate() {
   const info = updateInfo;
   if (!info) return;
@@ -6430,7 +6468,7 @@ function renderUpdate() {
   // A helper from 2026.10.05 or earlier would restart the same Octo and call it an update, so it
   // gets reinstalled first. An update reinstalls it as its last step; this shows when that failed.
   const helperOld = !!helper && !!info.helper?.outdated;
-  byId('update-now').hidden = !(info.updateAvailable && helper && !helperOld && !active);
+  byId('update-now').hidden = !(info.updateAvailable && updateHelperReady(info) && !active);
   const old = byId('update-helper-old');
   old.hidden = !helperOld || active;
   if (!old.hidden) {
@@ -6490,7 +6528,11 @@ function renderUpdate() {
   // The banner on every page, and the dot on About.
   const banner = byId('update-banner');
   banner.hidden = !(info.updateAvailable && !active && updateLater() !== latest?.tag);
-  if (!banner.hidden) byId('update-banner-text').textContent = `Octo ${latest.tag} is out. You run ${info.running}.`;
+  if (!banner.hidden) {
+    byId('update-banner-text').textContent = `Octo ${latest.tag} is out. You run ${info.running}.`;
+    // Without a helper that takes the update, the About page shows a command to run instead.
+    byId('update-banner-go').textContent = updateHelperReady(info) ? 'Update' : 'How to update';
+  }
   const about = document.querySelector('.sidebar-nav-item[data-tab="about"]');
   let flag = about?.querySelector('.nav-flag');
   if (about && info.updateAvailable && !flag) {
@@ -6564,7 +6606,7 @@ document.getElementById('update-check')?.addEventListener('click', async event =
   btn.disabled = updateRunActive();
 });
 
-document.getElementById('update-now')?.addEventListener('click', async () => {
+async function startUpdate() {
   const tag = updateInfo?.latest?.tag;
   if (!tag) return;
   const unsavedCards = document.querySelectorAll('form.unsaved').length;
@@ -6584,6 +6626,13 @@ document.getElementById('update-now')?.addEventListener('click', async () => {
   updateRequestId = body.id;
   updateInfo = { ...updateInfo, pending: true, pendingId: body.id };
   renderUpdate();
+}
+
+document.getElementById('update-now')?.addEventListener('click', startUpdate);
+// The banner's button goes to the update card, and starts Update now when the helper can take it.
+document.getElementById('update-banner-go')?.addEventListener('click', () => {
+  showUpdateCard();
+  if (updateHelperReady() && updateInfo?.updateAvailable && !updateRunActive()) startUpdate();
 });
 
 document.getElementById('update-notes')?.addEventListener('click', showReleaseNotes);

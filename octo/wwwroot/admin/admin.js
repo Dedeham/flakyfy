@@ -201,8 +201,8 @@ window.addEventListener('hashchange', followHash);
 // ────────────────────────────────────────────────────────────────
 // Activity: live progress of Octo's background work
 // ────────────────────────────────────────────────────────────────
-// One card per job (a re-tag, a covers or lyrics run, better copies, hearted downloads, a
-// Spotify read, a duplicate scan, an slskd rescan, Navidrome's scan), updated in place from
+// One card per job (a re-tag, a covers or lyrics run, better copies, hearted downloads, an
+// import's downloads, a duplicate scan, an slskd rescan, Navidrome's scan), updated in place from
 // GET /api/admin/activity, on whatever page is open. A card never repeats: a job is one card
 // for as long as it runs, then says how it ended and goes. The page that shows a job in full
 // hides its card, and is refreshed when that job starts or ends, so it is never left stale.
@@ -237,7 +237,7 @@ const ACTIVITY_PAGE_REFRESH = {
 };
 
 // One card per job kind, so a run that becomes the next run, or a running batch that becomes
-// "Added 3 songs", stays the same card. A Spotify read and its trickle are two jobs.
+// "Added 3 songs", stays the same card. An import's downloads are one job.
 function activityKey(item) {
   return item.kind === 'imports' ? item.id.split(':').slice(0, 2).join(':') : item.kind;
 }
@@ -6732,7 +6732,7 @@ document.getElementById('share-rescan')?.addEventListener('click', async event =
 // from there, what the library has of each list, playlists kept in Navidrome, and the trickle
 // that fetches the rest
 // ────────────────────────────────────────────────────────────────
-const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, waitingForPaste: false, services: null, choice: null, busy: false, people: null, forUser: null };
+const imp = { view: null, user: null, open: null, detail: null, picked: new Set(), timer: null, services: null, choice: null, busy: false, people: null, forUser: null };
 const impEl = id => document.getElementById(id);
 const impStateWords = {
   have: 'In your library', missing: 'Missing', queued: 'Queued', downloading: 'Fetching',
@@ -6820,10 +6820,8 @@ impEl('imp-for')?.addEventListener('change', event => {
   imp.open = null;
   imp.detail = null;
   imp.picked.clear();
-  imp.waitingForPaste = false;
   impEl('imp-detail').hidden = true;
   if (!imp.busy) impEl('imp-result').hidden = true;
-  if (imp.forUser && imp.choice === 'spotify') imp.choice = null;
   renderImportFor();
   renderImportServices();
   loadImports();
@@ -6877,8 +6875,6 @@ async function loadImportServices() {
   if (!imp.choice) {
     let kept = null;
     try { kept = localStorage.getItem(IMP_CHOICE_KEY); } catch { /* a blocked store remembers nothing */ }
-    // Spotify connects only for the person signed in, so it is not picked for someone else.
-    if (kept === 'spotify' && imp.forUser) kept = null;
     if (kept && (imp.services.some(s => s.id === kept) || IMP_OTHER.some(o => o.id === kept))) imp.choice = kept;
   }
   renderImportServices();
@@ -6888,18 +6884,12 @@ function renderImportServices() {
   const grid = impEl('imp-services');
   if (!grid || !imp.services) return;
   const tiles = [...imp.services.map(s => ({ id: s.id, name: s.name })), ...IMP_OTHER];
-  // Spotify's sign-in is each person's own: for someone else only files and pasted lists work.
-  const spotifyOff = !!imp.forUser;
   grid.innerHTML = tiles.map(tile => {
     const on = imp.choice === tile.id;
-    const off = spotifyOff && tile.id === 'spotify';
-    return `<button type="button" class="imp-svc${on ? ' selected' : ''}" data-imp-choice="${esc(tile.id)}" aria-pressed="${on}"${off ? ' disabled aria-describedby="imp-svc-note"' : ''}>
+    return `<button type="button" class="imp-svc${on ? ' selected' : ''}" data-imp-choice="${esc(tile.id)}" aria-pressed="${on}">
       ${impLogo(tile.id)}<span class="imp-svc-name">${esc(tile.name)}</span>
       <span class="imp-svc-check" aria-hidden="true">${icon('i-check')}</span></button>`;
   }).join('');
-  const note = impEl('imp-svc-note');
-  note.hidden = !spotifyOff;
-  note.textContent = spotifyOff ? `${impForName()} connects Spotify from their own sign-in.` : '';
   renderImportPanel();
 }
 
@@ -6911,13 +6901,12 @@ function renderImportPanel() {
   const service = imp.services?.find(s => s.id === choice);
   const isSpotify = choice === 'spotify';
   const isPaste = choice === 'paste';
-  const guided = !!service && !isSpotify;
+  const guided = !!service;
 
   impEl('imp-panel-logo').innerHTML = impLogo(choice, 'imp-logo-l');
-  impEl('imp-panel-title').textContent = isSpotify ? 'From Spotify'
-    : service ? `From ${service.name}` : isPaste ? 'Paste a list' : 'From a file';
+  impEl('imp-panel-title').textContent = service ? `From ${service.name}` : isPaste ? 'Paste a list' : 'From a file';
   impEl('imp-panel-sub').textContent = isSpotify
-    ? 'Connect your account to read every playlist and your liked songs, or add one public link. Spotify\'s own Download your data zip works too.'
+    ? 'TuneMyMusic exports your Spotify playlists and liked songs to a file for free, private playlists too. Three steps, then the file comes here. One public playlist or album can also come in by its link.'
     : guided ? `TuneMyMusic exports your ${service.name} playlists and liked songs to a file for free. Three steps, then the file comes here.`
       : isPaste ? 'One song a line, written Artist - Title. Octo reads Title - Artist too when that names more of your library.'
         : 'A CSV from Exportify, Soundiiz or any other tool with a title and an artist column, or a plain list with one Artist - Title a line.';
@@ -6939,7 +6928,7 @@ function renderImportPanel() {
     open.href = impExportUrl(service.exportUrl);
     open.querySelector('span').textContent = `Open TuneMyMusic for ${service.name}`;
   }
-  impEl('imp-drop-hint').textContent = isSpotify ? 'Spotify\'s Download your data zip, or a CSV from Exportify'
+  impEl('imp-drop-hint').textContent = isSpotify ? 'The CSV TuneMyMusic made, Spotify\'s Download your data zip, or a CSV from Exportify'
     : guided ? 'The CSV or TXT file TuneMyMusic made'
       : 'CSV, TXT, JSON, or Spotify\'s zip';
 }
@@ -7165,7 +7154,7 @@ async function loadImports() {
     impEl('imp-lists').innerHTML = stateBlock('error', error.message);
   }
   // Live while something is moving and the page is open.
-  const moving = imp.view && (imp.view.reading?.busy || imp.view.trickle?.queued > 0 || imp.view.trickle?.downloading > 0);
+  const moving = imp.view && (imp.view.trickle?.queued > 0 || imp.view.trickle?.downloading > 0);
   if (moving && document.querySelector('section[data-pane="imports"].active')) imp.timer = setTimeout(loadImports, 3000);
 }
 
@@ -7180,39 +7169,9 @@ function impWhen(utc) {
 function renderImports() {
   const view = imp.view;
   if (!view) return;
-  const spotify = view.spotify;
-
   const problem = impEl('imp-library-problem');
   problem.hidden = !view.libraryProblem;
   if (view.libraryProblem) problem.textContent = view.libraryProblem;
-
-  // The account.
-  impEl('imp-redirect-shown').textContent = spotify.redirectUri;
-  impEl('imp-account-title').textContent = spotify.connected ? `Connected as ${spotify.account}`
-    : spotify.problem ? 'Sign in again' : spotify.configured ? 'Not connected' : 'Not set up yet';
-  let line;
-  if (!spotify.configured) line = 'Octo reads Spotify through a free Spotify app of your own. Setting one up takes a few minutes, once.';
-  else if (spotify.redirectProblem) line = `The redirect URI will not work: ${spotify.redirectProblem}`;
-  else if (spotify.problem) line = spotify.problem;
-  else if (spotify.connected) line = `Spotify ends this sign-in on ${new Date(spotify.endsUtc).toLocaleDateString()}, six months after it was made; connect again then.`;
-  else line = 'Connect opens Spotify in a new tab to allow Octo to read your library.';
-  impEl('imp-account-line').textContent = line;
-  impEl('imp-connect').textContent = spotify.connected ? 'Connect again' : 'Connect Spotify';
-  impEl('imp-connect').hidden = !spotify.configured;
-  impEl('imp-connect').disabled = !!spotify.redirectProblem;
-  impEl('imp-connect').classList.toggle('btn-primary', !spotify.connected);
-  impEl('imp-setup').hidden = spotify.configured;
-  impEl('imp-read').hidden = !spotify.connected;
-  impEl('imp-read').disabled = !!view.reading?.busy;
-  impEl('imp-disconnect').hidden = !spotify.connected && !spotify.problem;
-  impEl('imp-paste-row').hidden = !imp.waitingForPaste || spotify.octoFinishes;
-  impEl('imp-guide').open = !spotify.configured;
-
-  const reading = impEl('imp-reading');
-  const read = view.reading;
-  reading.hidden = !read?.busy && !read?.error;
-  reading.classList.toggle('imp-error', !!read?.error);
-  reading.textContent = read?.busy ? `${read.step}…` : read?.error ?? '';
 
   renderImportLists();
   renderTrickle();
@@ -7224,9 +7183,7 @@ function renderImportLists() {
   if (!lists.length) {
     holder.innerHTML = stateBlock('empty', imp.forUser
       ? `No lists for ${impForName()} yet. Pick where their music is now, above, to bring the first one.`
-      : imp.view.spotify.connected
-        ? 'No lists yet. Read again to look at your Spotify once more.'
-        : 'No lists yet. Pick where your music is now, above, to bring your first one.');
+      : 'No lists yet. Pick where your music is now, above, to bring your first one.');
     return;
   }
   holder.innerHTML = `
@@ -7376,61 +7333,6 @@ function renderTrickle() {
   }
   impEl('imp-trickle-rows').innerHTML = sections.join('');
 }
-
-impEl('imp-connect')?.addEventListener('click', async event => {
-  const button = event.currentTarget;
-  // Opened before the answer, inside the click, so the browser does not block the new tab.
-  const tab = window.open('', '_blank');
-  const { ok, answer } = await impPost('/api/admin/imports/spotify/connect', {}, null);
-  if (!ok || !answer.url) {
-    tab?.close();
-    note(button, answer.message || 'Spotify could not be opened.', 'error');
-    return;
-  }
-  if (tab) tab.location.href = answer.url; else location.href = answer.url;
-  imp.waitingForPaste = !imp.view?.spotify?.octoFinishes;
-  renderImports();
-  if (imp.waitingForPaste) impEl('imp-paste').focus();
-  else imp.timer = setTimeout(loadImports, 4000);
-});
-
-impEl('imp-finish')?.addEventListener('click', async event => {
-  const button = event.currentTarget;
-  const address = impEl('imp-paste').value.trim();
-  if (!address) { note(button, 'Paste the address first.', 'error'); return; }
-  button.disabled = true;
-  const { ok } = await impPost('/api/admin/imports/spotify/finish', { address }, button);
-  button.disabled = false;
-  if (ok) {
-    imp.waitingForPaste = false;
-    impEl('imp-paste').value = '';
-    await loadImports();
-  }
-});
-
-impEl('imp-paste')?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') { event.preventDefault(); impEl('imp-finish').click(); }
-});
-
-impEl('imp-read')?.addEventListener('click', async event => {
-  await impPost('/api/admin/imports/spotify/read', {}, event.currentTarget);
-  await loadImports();
-});
-
-impEl('imp-disconnect')?.addEventListener('click', async event => {
-  const button = event.currentTarget;
-  if (!(await askConfirm('Disconnect Spotify?', 'Your lists, playlists and fetched songs stay. Octo stops reading your Spotify.', 'Disconnect'))) return;
-  await impPost('/api/admin/imports/spotify/disconnect', {}, button);
-  await loadImports();
-});
-
-// Spotify needs an app of the person's own first; its steps and fields are under Import settings.
-impEl('imp-setup')?.addEventListener('click', () => {
-  const settings = impEl('imp-settings');
-  settings.open = true;
-  impEl('imp-guide').open = true;
-  settings.scrollIntoView({ block: 'start', behavior: 'smooth' });
-});
 
 impEl('imp-link-add')?.addEventListener('click', async event => {
   const button = event.currentTarget;

@@ -1,18 +1,15 @@
-//! The dashboard's import page. Connect a Spotify account, add a public link, an exported file
-//! or a pasted list, see what the library has and what it is missing, keep a list as a playlist,
-//! and the trickle that fetches the rest. Lists belong to the Navidrome user signed in on the
-//! page, the same person an Octo app signed in as sees them, so it needs the dashboard's sign-in.
+//! The dashboard's import page. Add a public link, an exported file or a pasted list, see what
+//! the library has and what it is missing, keep a list as a playlist, and the trickle that
+//! fetches the rest. Lists belong to the Navidrome user signed in on the page, the same person an
+//! Octo app signed in as sees them, so it needs the dashboard's sign-in.
 //!
 //! Every endpoint also takes `for=<Navidrome username>` in the query: the import, its lists,
 //! playlists, downloads and status are then that person's, exactly as if they had imported it
-//! themselves. Spotify's sign-in stays each person's own, so its endpoints act only for the
-//! signed-in person.
-//!
-//! Also the page Spotify sends the browser back to when the redirect URI is Octo's own address.
+//! themselves.
 
 use axum::extract::{DefaultBodyLimit, FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use octo_core::common::dotnet::{eq_ignore_case, to_lower_invariant};
 use serde::Deserialize;
@@ -28,17 +25,12 @@ use crate::http::error::{AppError, AppResult, problem};
 use crate::http::routes::RouteSet;
 use crate::services::imports::ImportActionResult;
 use crate::services::imports::import_file_reader::ImportFileReader;
-use crate::services::imports::import_service::CALLBACK_PATH;
 
 pub fn routes() -> RouteSet {
     RouteSet::new()
         .route("/api/admin/imports", get(overview))
         .route("/api/admin/imports/people", get(people))
         .route("/api/admin/imports/lists/{id}", get(list).delete(remove))
-        .route("/api/admin/imports/spotify/connect", post(connect))
-        .route("/api/admin/imports/spotify/finish", post(finish))
-        .route("/api/admin/imports/spotify/disconnect", post(disconnect))
-        .route("/api/admin/imports/spotify/read", post(read))
         .route("/api/admin/imports/link", post(link))
         .route(
             "/api/admin/imports/file",
@@ -55,7 +47,6 @@ pub fn routes() -> RouteSet {
         .route("/api/admin/imports/trickle/retry", post(retry))
         .route("/api/admin/imports/trickle/skip", post(skip))
         .route("/api/admin/imports/trickle/clear", post(clear))
-        .route(CALLBACK_PATH, get(callback))
 }
 
 /// `SignedIn(header)`: `NavidromeUserOf(cookie ?? header)`. Never the recovery code, and the
@@ -113,15 +104,6 @@ async fn whose(state: &AppState, headers: &HeaderMap, uri: &Uri) -> Result<(Stri
     let admin = signed_in(state, headers).ok_or_else(sign_in)?;
     let user = acting_for(state, uri, admin.clone()).await?;
     Ok((admin, user))
-}
-
-/// Spotify's sign-in is each person's own: for anyone else, the refusal that says so.
-fn spotify_refusal(admin: &str, user: &str) -> Option<Response> {
-    (!eq_ignore_case(admin, user)).then(|| {
-        answer(&ImportActionResult::failed(format!(
-            "{user} connects Spotify from their own sign-in."
-        )))
-    })
 }
 
 /// Logs a new import the signed-in person started for someone else.
@@ -231,23 +213,6 @@ impl FromBody for LinkRequest {
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
-struct FinishRequest {
-    address: Option<String>,
-}
-
-impl FromBody for FinishRequest {
-    const SHAPE: &'static Shape = &Shape {
-        name: "Octo.Controllers.ImportsController+FinishRequest",
-        by_constructor: true,
-        members: &[Member {
-            name: "address",
-            kind: Kind::Text,
-        }],
-    };
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
 struct TextRequest {
     name: Option<String>,
     text: Option<String>,
@@ -343,69 +308,6 @@ async fn list(
         Some(detail) => ok(&detail),
         None => error_json(StatusCode::NOT_FOUND, "There is no such list."),
     }
-}
-
-async fn connect(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
-    let (admin, user) = match whose(&state, &headers, &uri).await {
-        Ok(people) => people,
-        Err(refused) => return refused,
-    };
-    if let Some(refused) = spotify_refusal(&admin, &user) {
-        return refused;
-    }
-    answer(&state.imports.begin_spotify(&user, None))
-}
-
-async fn finish(State(state): State<AppState>, request: Request) -> AppResult {
-    let (parts, body) = split(request).await;
-    let request: FinishRequest = match bind_body::<FinishRequest>(&parts.headers, &body, "request") {
-        Ok(request) => request,
-        Err(refused) => return Ok(refused),
-    };
-    let (admin, user) = match whose(&state, &parts.headers, &parts.uri).await {
-        Ok(people) => people,
-        Err(refused) => return Ok(refused),
-    };
-    if let Some(refused) = spotify_refusal(&admin, &user) {
-        return Ok(refused);
-    }
-    let result = state
-        .imports
-        .finish_spotify(
-            Some(request.address.as_deref().unwrap_or("")),
-            None,
-            None,
-            Some(&user),
-        )
-        .await
-        .map_err(app_error)?;
-    Ok(answer(&result))
-}
-
-async fn disconnect(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
-    let (admin, user) = match whose(&state, &headers, &uri).await {
-        Ok(people) => people,
-        Err(refused) => return refused,
-    };
-    if let Some(refused) = spotify_refusal(&admin, &user) {
-        return refused;
-    }
-    answer(&state.imports.disconnect_spotify(&user))
-}
-
-async fn read(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
-    let (admin, user) = match whose(&state, &headers, &uri).await {
-        Ok(people) => people,
-        Err(refused) => return refused,
-    };
-    if let Some(refused) = spotify_refusal(&admin, &user) {
-        return refused;
-    }
-    ok(&ImportActionResult::ok(if state.imports.start_reading(&user) {
-        "Reading your Spotify lists again."
-    } else {
-        "Octo is already reading your Spotify lists."
-    }))
 }
 
 async fn link(State(state): State<AppState>, request: Request) -> AppResult {
@@ -640,73 +542,6 @@ async fn clear(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> R
         Err(refused) => return refused,
     };
     answer(&state.imports.clear_finished(&user))
-}
-
-/// Where Spotify sends the browser when the redirect URI is Octo's own address. The state says
-/// whose sign-in it is, so no dashboard sign-in is needed here, and the PKCE verifier Octo kept
-/// is what makes the code worth anything.
-async fn callback(State(state): State<AppState>, request: Request) -> AppResult {
-    let uri = request.uri().clone();
-    let (code, sign_in_state, error) = (query(&uri, "code"), query(&uri, "state"), query(&uri, "error"));
-    let result = match error {
-        Some(error) => ImportActionResult::failed(if error == "access_denied" {
-            "Spotify says access was not allowed.".to_string()
-        } else {
-            format!("Spotify sent back an error: {error}")
-        }),
-        None => {
-            let imports = state.imports.clone();
-            tokio::spawn(async move {
-                imports
-                    .finish_spotify(None, code.as_deref(), sign_in_state.as_deref(), None)
-                    .await
-            })
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?
-            .map_err(app_error)?
-        }
-    };
-    if !result.ok {
-        info!("Spotify sign-in callback refused: {}", result.message);
-    }
-    let title = if result.ok {
-        "Connected to Spotify"
-    } else {
-        "Spotify sign-in did not finish"
-    };
-    let html = format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n\
-<title>{title}</title><style>body{{font:16px system-ui,sans-serif;background:#0d0f14;color:#e8e8ef;display:grid;place-items:center;min-height:100vh;margin:0}}\n\
-main{{max-width:28rem;padding:2rem}}a{{color:#9db4ff}}</style></head>\n\
-<body><main><h1>{title}</h1><p>{}</p>\n\
-<p>You can close this tab and go back to Octo.</p><p><a href=\"/admin/#imports\">Open the Spotify import page</a></p></main></body></html>",
-        html_encode(&result.message)
-    );
-    let mut response = html.into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/html"),
-    );
-    Ok(response)
-}
-
-/// `WebUtility.HtmlEncode`: the five markup characters, and Latin-1's upper half and anything
-/// past the BMP as numeric references.
-pub(crate) fn html_encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            '&' => out.push_str("&amp;"),
-            '\u{a0}'..='\u{ff}' => out.push_str(&format!("&#{};", c as u32)),
-            c if (c as u32) > 0xFFFF => out.push_str(&format!("&#{};", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

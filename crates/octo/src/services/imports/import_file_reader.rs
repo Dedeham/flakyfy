@@ -7,7 +7,7 @@ use octo_core::common::song_identity::SongIdentity;
 use serde_json::Value;
 
 use super::ImportTrack;
-use super::spotify_web_api::{ImportKeys, str_of};
+use super::import_keys::{ImportKeys, str_of};
 use super::text_list;
 use crate::controllers::admin::json_body::stj_parse_error;
 

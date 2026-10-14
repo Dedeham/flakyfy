@@ -751,7 +751,12 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // RadioSources:ListenBrainzRadioMode, Subsonic:StreamSizeWarmPerMinute,
     // Subsonic:SearchDurationWaitMs, Subsonic:SearchLastFmWaitMs, Subsonic:CoverCacheMb and
     // Subsonic:SizeFlagClients.
-    assert_eq!(rows.len(), 194);
+    assert_eq!(rows.len(), 192);
+    assert!(!rows.iter().any(|r| {
+        r["Key"]
+            .as_str()
+            .is_some_and(|k| k.starts_with("Imports:Spotify"))
+    }));
     assert_eq!(row("Subsonic:SizeFlagClients")["IsSecret"], false);
     assert_eq!(row("Subsonic:StreamSizeWarmPerMinute")["IsSecret"], false);
     assert_eq!(row("Subsonic:CoverCacheMb")["IsSecret"], false);

@@ -86,7 +86,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
 ];
 
-/// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
+/// The OpenSubsonic extension a client checks for before it offers imports (getImports,
 /// getImport, importAction). Version 2: getImportServices, importFile and importText.
 pub const IMPORTS_EXTENSION: &str = "octoImports";
 pub const IMPORTS_EXTENSION_VERSION: i32 = 2;

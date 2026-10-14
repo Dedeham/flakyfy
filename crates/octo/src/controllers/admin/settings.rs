@@ -592,8 +592,6 @@ pub fn effective_document(state: &AppState, raw_config: bool) -> JsonObject {
     doc.insert(
         "Imports".into(),
         n_obj([
-            ("SpotifyClientId", n_str(&imports.spotify_client_id)),
-            ("SpotifyRedirectUri", n_str(&imports.effective_redirect_uri())),
             ("SongsPerHour", n_num(imports.songs_per_hour)),
             ("RefreshHours", n_num(imports.refresh_hours)),
         ]),

@@ -61,9 +61,15 @@ impl Fixture {
     }
 
     async fn star(&self, id: &str) -> serde_json::Value {
+        self.star_all(&[id]).await
+    }
+
+    /// One star carrying every id.
+    async fn star_all(&self, ids: &[&str]) -> serde_json::Value {
+        let ids: String = ids.iter().map(|id| format!("id={id}&")).collect();
         let request = Request::builder()
             .uri(format!(
-                "/rest/star.view?id={id}&u=winters&t=tok&s=salt&v=1.16.1&c=test&f=json"
+                "/rest/star.view?{ids}u=winters&t=tok&s=salt&v=1.16.1&c=test&f=json"
             ))
             .body(Body::empty())
             .expect("a request");
@@ -195,4 +201,70 @@ async fn the_album_is_the_one_the_song_row_names() {
         Some(album_id(&fixture.state, "Unfinished Sympathy"))
     );
     assert_eq!(album_of_song(&fixture.state, "never-registered"), None);
+}
+
+/// Lands a queued song and closes its row, as the worker and the library would.
+fn land(fixture: &Fixture, request: &Arc<AcquisitionRequest>) {
+    fixture.state.track_acquisition_queue.release(request);
+    request
+        .completion
+        .try_set_result(format!("/music/{}.flac", request.external_id));
+    fixture
+        .state
+        .acquisition_tracker
+        .complete("soulseek", &request.external_id, Some("nd-1"));
+}
+
+#[tokio::test]
+async fn songs_of_one_album_hearted_together_bring_the_album_once() {
+    let fixture = Fixture::new(true, true).await;
+    let angel = register_song(&fixture.state, "Angel", Some("Mezzanine"));
+
+    let reply = fixture.star_all(&[&fixture.song, &angel]).await;
+
+    assert_eq!(reply["subsonic-response"]["status"], "ok", "{reply}");
+    let queue = &fixture.state.track_acquisition_queue;
+    let first = next_queued(queue).await.expect("a song is queued");
+    let second = next_queued(queue).await.expect("both songs are queued");
+    let mut songs = vec![first.external_id.clone(), second.external_id.clone()];
+    songs.sort();
+    let mut hearted = vec![fixture.song.clone(), angel.clone()];
+    hearted.sort();
+    assert_eq!(songs, hearted);
+
+    // The album waits for both songs, then is walked once.
+    land(&fixture, &first);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        fixture.albums().is_empty(),
+        "the album waits for every hearted song"
+    );
+    land(&fixture, &second);
+    until(|| !fixture.albums().is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        fixture.albums(),
+        [(
+            "soulseek".to_string(),
+            album_id(&fixture.state, "Mezzanine"),
+            DownloadSource::YouTube
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_song_hearted_with_its_album_brings_the_album_once() {
+    let fixture = Fixture::new(true, true).await;
+    let album = album_id(&fixture.state, "Mezzanine");
+
+    let reply = fixture.star_all(&[&fixture.song, &album]).await;
+
+    assert_eq!(reply["subsonic-response"]["status"], "ok", "{reply}");
+    let request = next_queued(&fixture.state.track_acquisition_queue)
+        .await
+        .expect("the song is queued");
+    land(&fixture, &request);
+    until(|| !fixture.albums().is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(fixture.albums().len(), 1, "{:?}", fixture.albums());
 }

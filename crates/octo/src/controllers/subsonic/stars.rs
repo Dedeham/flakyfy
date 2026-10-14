@@ -281,14 +281,76 @@ struct OutsideHearts<'a> {
 }
 
 impl OutsideHearts<'_> {
-    /// Saves or queues each outside album and song.
+    /// Saves or queues each outside album and song. With DownloadAlbumOnSongStar on, the hearted
+    /// songs of one album go down their chains together and the album follows them once, so a
+    /// request hearting several songs of an album walks it once. An album the request hearted
+    /// itself is already on its way, so no song brings it again.
     async fn queue(&self, state: &AppState, call: &SubsonicCall) {
         for album in self.albums {
             star_outside_album(state, call, self.heart, self.sources, self.who, album).await;
         }
+        let mut ready = Vec::new();
         for song in self.songs {
-            star_outside_song(state, call, self.heart, self.sources, self.who, song).await;
+            if let Some(heart) = star_outside_song(state, call, self.heart, self.who, song).await {
+                ready.push(heart);
+            }
         }
+        let Some(who) = self.who else {
+            return;
+        };
+        let requested_by = requester_for(state, Some(who));
+        let mut follows: Vec<(String, Vec<&SongHeart>)> = Vec::new();
+        for heart in &ready {
+            let album = album_to_follow(state, self.sources, &heart.item_id, &heart.external_id);
+            match album {
+                Some(album) if self.albums.contains(&album) => {
+                    info!(
+                        "Starred song {} with its album {album} in the same request; the album heart fetches it",
+                        heart.item_id
+                    );
+                    heart.queue_alone(state, requested_by.as_deref());
+                }
+                Some(album) => match follows.iter_mut().find(|(id, _)| *id == album) {
+                    Some((_, songs)) => songs.push(heart),
+                    None => follows.push((album, vec![heart])),
+                },
+                None => heart.queue_alone(state, requested_by.as_deref()),
+            }
+        }
+        for (album, songs) in follows {
+            let hearted: Vec<(String, String)> = songs
+                .iter()
+                .map(|heart| (heart.provider.clone(), heart.external_id.clone()))
+                .collect();
+            state.heart_acquisition_coordinator.queue_tracks_then_album_for(
+                &hearted,
+                &songs[0].provider,
+                &album,
+                requested_by.as_deref(),
+                Some(who),
+                songs[0].target.clone(),
+            );
+        }
+    }
+}
+
+/// An outside song heart that is held and has its progress row, ready to go down the song chain.
+struct SongHeart {
+    provider: String,
+    external_id: String,
+    item_id: String,
+    target: AcquisitionTarget,
+}
+
+impl SongHeart {
+    /// Down the song chain, with no album after it.
+    fn queue_alone(&self, state: &AppState, requested_by: Option<&str>) {
+        state.heart_acquisition_coordinator.queue_track_for(
+            &self.provider,
+            &self.external_id,
+            requested_by,
+            self.target.clone(),
+        );
     }
 }
 
@@ -376,15 +438,15 @@ async fn star_outside_album(
 }
 
 /// A heart on an outside song: a saved link for a member, else a permanent download and,
-/// outside Octo's own apps, a favorite once it lands.
+/// outside Octo's own apps, a favorite once it lands. Answers the download, held and tracked,
+/// for the caller to queue; `None` for a saved link or a heart nobody was named for.
 async fn star_outside_song(
     state: &AppState,
     call: &SubsonicCall,
     heart: &HeartOutcome,
-    sources: &[HeartDownloadStep],
     who: Option<&str>,
     item_id: &str,
-) {
+) -> Option<SongHeart> {
     let (_, provider, external_id) = state.local_library.parse_song_id(item_id);
     let provider = provider.unwrap_or_default();
     let external_id = external_id.unwrap_or_default();
@@ -394,11 +456,11 @@ async fn star_outside_song(
         if let Some(full) = request {
             ask_for_copy(state, user, item_id, RequestKind::Song, full).await;
         }
-        return;
+        return None;
     }
     let Some(who) = who else {
         info!("Starred song {item_id} but nobody was named to download it for; ignoring");
-        return;
+        return None;
     };
     let target = match heart {
         HeartOutcome::Download(target) => target.clone(),
@@ -437,25 +499,12 @@ async fn star_outside_song(
         routing.as_ref().and_then(|r| r.title.as_deref()),
         routing.as_ref().and_then(|r| r.album.as_deref()),
     );
-    // DownloadAlbumOnSongStar: the song's album follows it, as an album heart would, once
-    // the song's own chain is done.
-    let requested_by = requester_for(state, Some(who));
-    match album_to_follow(state, sources, item_id, &external_id) {
-        Some(album_id) => state.heart_acquisition_coordinator.queue_tracks_then_album_for(
-            &[(provider.clone(), external_id.clone())],
-            &provider,
-            &album_id,
-            requested_by.as_deref(),
-            Some(who),
-            target,
-        ),
-        None => state.heart_acquisition_coordinator.queue_track_for(
-            &provider,
-            &external_id,
-            requested_by.as_deref(),
-            target,
-        ),
-    }
+    Some(SongHeart {
+        provider,
+        external_id,
+        item_id: item_id.to_string(),
+        target,
+    })
 }
 
 /// The album that follows a hearted outside song, when DownloadAlbumOnSongStar is on, the song

@@ -2951,6 +2951,136 @@
       "reviewed": "Brandon 2026-10-13 (release go)"
     },
     {
+      "id": "dashboard-files-import-redesign",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"fAIAim5V8Ghfxv4aZTUxztSS3fwgc\\+uWQ7mU/zSi\\+yM=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 7c02008a6e55f0685fc6fe1a653531ced492ddfc2073eb9643b994ff34a2fb23\\ \\(210225\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"kAMqF4betgX\\+KWcnFf4Ez8UjuzpD1cFTFB1pfEg0aGs=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 90032a1786deb605fe29672715fe04cfc523bb3a43d5c153141d697c4834686b\\ \\(427717\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"bMDHrYGDzt/DAzSlPVAQjss0a4ISHi/QoEy4FRDxE94=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ 6cc0c7ad8183cedfc30334a53d50108ecb346b82121e2fd0a04cb81510f113de\\ \\(128877\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/210225'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for the Import page redesign: it opens on Where is your music now?, a tile per service in its own badge plus Another file and Paste a list, and shows only the picked way in; a file goes into one drop area with its upload, read and match shown as they happen, and the result shows the songs already in the library, the missing ones, and Get the missing, Keep as playlist and See the songs. Import settings fold away. The On this page section links are gone from every page. A file, link or pasted list that imported no longer leaves the page looking failed (the handlers read event.currentTarget after an await). Pinned to the files as of release 2026.10.13 plus this change. Supersedes dashboard-files-2026-10-11 once reviewed.",
+      "knownDiff": "Dashboard Import page redesign"
+    },
+    {
+      "id": "dashboard-files-import-for",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"L2TRP3cOjLOsxIfIsdiNvcUfb9ELbNSpb0t8YDcwnOE=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ 2f64d13f770e8cb3acc487c8b1d88dbdc51f6fd10b6cd4a96f4b7c6037309ce1\\ \\(210821\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"ItCcuaInby0ClmUQJgIbFOJqBemFDoK1CeDJFs1Cv5c=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ 22d09cb9a2276f2d0296651026021b14e26a05e9850e82b509e0c916cd42bf97\\ \\(432202\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"GomPTbbKwyKBuhCFiRvNmUR\\+5npTkLDZ9zYHQjfwNFU=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ 1a898f4db6cac32281ba1085891bcd99447ee67a5390b0d9f736074237f03455\\ \\(129525\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ (0-9|\\*)/192988'\\]$",
+        "^B:\\ \\['bytes\\ (0-9|\\*)/210821'\\]$"
+      ],
+      "reason": "A re-pin of the dashboard files (index.html, admin.js, admin.css) for Import for (issue #87): the Import page has an Import for select on top, Yourself first and then every Navidrome user from /api/admin/imports/people with Family members marked, kept for the tab; with someone else picked every import call carries for=<username>, so the lists, songs, result card and trickle are that person's, and the Spotify tile is disabled with the sentence that they connect Spotify from their own sign-in. Pinned to the files of dashboard-files-import-redesign plus this change. Supersedes dashboard-files-import-redesign once reviewed.",
+      "knownDiff": "Dashboard Import for"
+    },
+    {
+      "id": "dashboard-icons-import-badges",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-icons",
+        "21-static/static-icons-head",
+        "21-static/static-icons-if-none-match",
+        "21-static/static-icons-range",
+        "21-static/static-icons-with-admin-cookie",
+        "10-static-cors/icons-svg"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"PnushdNDeNFcmvM8eWLiPKsXN7/6MwvHnWnUAviHRSk=\"'\\]$",
+        "^B:\\ \\['\"tUkCxtgqXli/7lPasXydYltcbkkRrejcIYaUKnDHa3M=\"'\\]$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -\\d+,\\d+ \\+\\d+,\\d+ @@$",
+        "^ <symbol id=\"[ib]-[a-z-]+\" viewBox=\"",
+        "^ </svg>$",
+        "^\\+<symbol id=\"i-(clipboard-text|file-arrow-up|file-text|gear-six|link-simple|music-notes)\" viewBox=\"0 0 256 256\" fill=\"currentColor\"><path d=\"",
+        "^\\+<symbol id=\"b-svc-(spotify|apple-music|youtube-music|amazon-music|tidal|deezer|qobuz|soundcloud|pandora|youtube)\" viewBox=\"0 0 48 48\"><rect width=\"48\" height=\"48\" rx=\"11\" fill=\"#[0-9A-F]{6}\"/>",
+        "^A:\\ \\['bytes\\ 0-63/45798'\\]$",
+        "^B:\\ \\['bytes\\ 0-63/60836'\\]$"
+      ],
+      "reason": "The icon sprite gains the Import page's service badges (b-svc-*: Spotify, Apple Music, YouTube Music, Amazon Music, TIDAL, Deezer, Qobuz, SoundCloud, Pandora, YouTube, each the service's own mark on its color; sources in scripts/admin-icons/SOURCES.md) and six Phosphor glyphs the page uses. Every symbol icons.svg had is unchanged.",
+      "knownDiff": "Dashboard Import page redesign"
+    },
+    {
       "id": "outside-download-plays",
       "backlog": "base",
       "requests": [

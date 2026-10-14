@@ -2152,7 +2152,6 @@
           </div>
           <div class="set-card imp-card">
             <div class="imp-svc-grid" id="imp-services" role="group" aria-label="Where your music is now"></div>
-            <p class="set-info-d imp-svc-note" id="imp-svc-note" hidden></p>
 
             <div class="imp-panel" id="imp-panel" hidden>
               <div class="imp-panel-head">
@@ -2160,41 +2159,6 @@
                 <div class="imp-panel-words">
                   <h4 id="imp-panel-title"></h4>
                   <p id="imp-panel-sub"></p>
-                </div>
-              </div>
-
-              <div class="imp-ways" id="imp-spotify" hidden>
-                <div class="imp-way">
-                  <div class="imp-way-text">
-                    <div class="set-info-t" id="imp-account-title">Not connected</div>
-                    <div class="set-info-d" id="imp-account-line">Loading…</div>
-                  </div>
-                  <div class="imp-actions">
-                    <button class="btn" type="button" id="imp-read" hidden>Read again</button>
-                    <button class="btn btn-ghost" type="button" id="imp-disconnect" hidden>Disconnect</button>
-                    <button class="btn" type="button" id="imp-setup" hidden><svg class="icon" aria-hidden="true"><use href="#i-gear-six"/></svg><span>Set up Spotify</span></button>
-                    <button class="btn btn-primary" type="button" id="imp-connect">Connect Spotify</button>
-                  </div>
-                </div>
-                <div class="imp-way stack" id="imp-paste-row" hidden>
-                  <div class="imp-way-text">
-                    <div class="set-info-t">Paste where Spotify sent you</div>
-                    <div class="set-info-d">Once you allow Octo, Spotify sends your browser to an address that will not open. That is expected. Copy the whole address from the address bar and paste it here.</div>
-                  </div>
-                  <div class="lfm-connect-row">
-                    <input class="set-input" id="imp-paste" type="text" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1/callback?code=…" aria-label="The address Spotify sent you to" />
-                    <button class="btn btn-primary" id="imp-finish" type="button">Finish</button>
-                  </div>
-                </div>
-                <div class="imp-way stack">
-                  <div class="imp-way-text">
-                    <div class="set-info-t">Or a public playlist or album</div>
-                    <div class="set-info-d">Share, then Copy link, on Spotify. No sign-in needed, though a link shows Octo only the first 100 songs.</div>
-                  </div>
-                  <div class="lfm-connect-row">
-                    <input class="set-input" id="imp-link" type="url" autocomplete="off" spellcheck="false" placeholder="https://open.spotify.com/playlist/…" aria-label="Spotify playlist or album link" />
-                    <button class="btn" id="imp-link-add" type="button">Add</button>
-                  </div>
                 </div>
               </div>
 
@@ -2229,6 +2193,19 @@
                 </div>
               </div>
 
+              <div class="imp-ways" id="imp-spotify" hidden>
+                <div class="imp-way stack">
+                  <div class="imp-way-text">
+                    <div class="set-info-t">Or a public playlist or album</div>
+                    <div class="set-info-d">Share, then Copy link, on Spotify. No sign-in needed, though a link shows Octo only the first 100 songs.</div>
+                  </div>
+                  <div class="lfm-connect-row">
+                    <input class="set-input" id="imp-link" type="url" autocomplete="off" spellcheck="false" placeholder="https://open.spotify.com/playlist/…" aria-label="Spotify playlist or album link" />
+                    <button class="btn" id="imp-link-add" type="button">Add</button>
+                  </div>
+                </div>
+              </div>
+
               <div class="imp-result" id="imp-result" role="status" aria-live="polite" hidden></div>
             </div>
           </div>
@@ -2240,7 +2217,6 @@
             <p class="set-desc">Open a list to see its songs. <strong>Keep as playlist</strong> makes a Navidrome playlist of it in its own order. <strong>Get missing songs</strong> fetches the songs you do not have yet, and any added to it later.</p>
           </div>
           <div class="set-card imp-card imp-lists-card">
-            <p class="set-info-d imp-reading" id="imp-reading" hidden></p>
             <div id="imp-lists" aria-live="polite"></div>
           </div>
           <div class="set-card imp-card" id="imp-detail" hidden></div>
@@ -2268,37 +2244,8 @@
         </div>
 
         <details class="set-section imp-settings" id="imp-settings">
-          <summary class="imp-settings-summary"><svg class="icon" aria-hidden="true"><use href="#i-gear-six"/></svg><span>Import settings</span><span class="imp-settings-sub">Your Spotify app, and how fast missing songs are fetched</span></summary>
+          <summary class="imp-settings-summary"><svg class="icon" aria-hidden="true"><use href="#i-gear-six"/></svg><span>Import settings</span><span class="imp-settings-sub">How fast missing songs are fetched</span></summary>
           <form data-section="imports" class="set-card" id="imports-form">
-            <details class="set-more" id="imp-guide">
-              <summary>Set up your Spotify app</summary>
-              <div class="set-row stack">
-                <div class="set-info">
-                  <ol class="lfm-steps">
-                    <li>Signed in to Spotify, open the <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer dashboard</a> and choose <strong>Create app</strong>. Spotify asks that the account that owns the app has Premium.</li>
-                    <li>Any name will do, such as Octo. Tick <strong>Web API</strong>.</li>
-                    <li>Under <strong>Redirect URIs</strong>, add exactly <code id="imp-redirect-shown">http://127.0.0.1/callback</code> and save.</li>
-                    <li>Under <strong>User Management</strong>, add the email of every Spotify account that will connect, up to five. Your own account is there already.</li>
-                    <li>Copy the <strong>Client ID</strong> into the field below and save. There is no secret to copy.</li>
-                  </ol>
-                </div>
-              </div>
-            </details>
-            <div class="set-row stack">
-              <div class="set-info">
-                <div class="set-info-t">Client ID</div>
-                <div class="set-info-d">From your Spotify app's settings. Not a secret: Octo signs in with PKCE, which needs none.</div>
-              </div>
-              <input class="set-input" name="Imports.SpotifyClientId" type="text" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers" />
-            </div>
-            <div class="set-row stack">
-              <div class="set-info">
-                <div class="set-info-t">Redirect URI</div>
-                <div class="set-info-d">Exactly as it is on your Spotify app. Spotify takes https, or http on 127.0.0.1, never localhost.</div>
-                <div class="set-info-more">The default, with no port, also lets the Octo apps sign in. If Octo has an https address of its own, use that address followed by <code>/imports/spotify/callback</code>, and Octo finishes the sign-in by itself with nothing to paste.</div>
-              </div>
-              <input class="set-input" name="Imports.SpotifyRedirectUri" type="text" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1/callback" />
-            </div>
             <div class="set-row">
               <div class="set-info">
                 <div class="set-info-t">Songs an hour</div>
@@ -2310,7 +2257,7 @@
             <div class="set-row">
               <div class="set-info">
                 <div class="set-info-t">Read lists again every</div>
-                <div class="set-info-d">Hours. Only lists kept as a playlist or getting their missing songs, so new songs on Spotify reach them. 0 reads them only when you ask.</div>
+                <div class="set-info-d">Hours. Only lists from a link that are kept as a playlist or getting their missing songs, so new songs there reach them. 0 reads them only when you ask.</div>
               </div>
               <input class="set-input imp-num" name="Imports.RefreshHours" type="number" min="0" max="168" step="1" />
             </div>

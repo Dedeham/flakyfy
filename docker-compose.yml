@@ -220,9 +220,7 @@ services:
       GeneratedPlaylists__LikedSongsName: ${LIKED_SONGS_NAME:-Liked Songs}
       GeneratedPlaylists__LikedSongsMax: ${LIKED_SONGS_MAX:-500}
 
-      # ----- Spotify import: lists from Spotify, a link or a file, and the trickle -----
-      Imports__SpotifyClientId: ${IMPORTS_SPOTIFY_CLIENT_ID:-}
-      Imports__SpotifyRedirectUri: ${IMPORTS_SPOTIFY_REDIRECT_URI:-http://127.0.0.1/callback}
+      # ----- Import: lists from a file, a Spotify link or pasted text, and the trickle -----
       Imports__SongsPerHour: ${IMPORTS_SONGS_PER_HOUR:-20}
       Imports__RefreshHours: ${IMPORTS_REFRESH_HOURS:-6}
 

@@ -778,11 +778,16 @@ async fn config_sources_masks_secrets_and_lists_lists_as_empty() {
     // GeneratedPlaylists:Years, :MaxYearPlaylists, :Artists and :ArtistCount, and the
     // sweep's replacing two, listed last: LibraryActions:ReviewSweepAutoReplace and
     // :ReviewSweepAutoReplacePerDay.
-    assert_eq!(rows.len(), 200);
-    assert_eq!(rows[194]["Key"], "GeneratedPlaylists:Years");
-    assert_eq!(rows[197]["Key"], "GeneratedPlaylists:ArtistCount");
-    assert_eq!(rows[198]["Key"], "LibraryActions:ReviewSweepAutoReplace");
-    assert_eq!(rows[199]["Key"], "LibraryActions:ReviewSweepAutoReplacePerDay");
+    assert_eq!(rows.len(), 198);
+    assert!(!rows.iter().any(|r| {
+        r["Key"]
+            .as_str()
+            .is_some_and(|k| k.starts_with("Imports:Spotify"))
+    }));
+    assert_eq!(rows[192]["Key"], "GeneratedPlaylists:Years");
+    assert_eq!(rows[195]["Key"], "GeneratedPlaylists:ArtistCount");
+    assert_eq!(rows[196]["Key"], "LibraryActions:ReviewSweepAutoReplace");
+    assert_eq!(rows[197]["Key"], "LibraryActions:ReviewSweepAutoReplacePerDay");
     assert_eq!(
         row("LibraryActions:ReviewSweepAutoReplacePerDay")["IsSecret"],
         false

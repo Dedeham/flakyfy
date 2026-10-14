@@ -79,7 +79,7 @@ Unless a file says otherwise below, the writer calls `JsonSerializer.Serialize(v
 | `update/request` | yes | `request.tmp` | Update now | `lock` | no pending request | key=value parser skips bad lines |
 | `imports.json` (2026.10.05) | yes | `.tmp` | every change | `lock` | empty | warn, empty |
 | `imports-trickle.json` (2026.10.05) | yes | `.tmp` | every change | `lock` | empty | warn, empty. A job `downloading` at load → `queued` |
-| `spotify-accounts.json` (2026.10.05) | yes, mode 0600 | `.tmp` | every change | `lock` | no sign-ins | warn, no sign-ins |
+| `spotify-accounts.json` (2026.10.05) | yes, mode 0600 | `.tmp` | every change | `lock` | no sign-ins | warn, no sign-ins. Rust: never read or written since the Spotify sign-in went (proposed 2026-10-13); an old file stays on disk untouched |
 | `radio-outcomes.json` (2026.10.05) | yes | `.tmp` | at most every few seconds, plus on shutdown | `_lock` + `_fileLock` | learning starts again | warn, learning starts again; null entries dropped |
 | `sonic-features.json` (2026.10.05) | yes | `.tmp` | at most every few seconds | `_lock` + `_fileLock` | nothing analyzed | warn, start over; null entries dropped |
 | `tag-edits.json` (2026.10.05) | yes | `.tmp` | every edit (a library-wide run every few files) | `lock` | no undo | warn, no undo |
@@ -399,6 +399,7 @@ Map from external id to the local file Octo downloaded. It lives **in the music 
 - **Writer:** `SpotifyAccountStore` (`Services/Imports/SpotifyAccountStore.cs`), Rust `services::imports::spotify_account_store`. Its own file rather than settings.json: the access token changes every hour, and settings.json is watched and shown on the dashboard.
 - **Format:** `{"<user>":{"AccessToken","RefreshToken","ExpiresUtc","ConnectedUtc","SpotifyId"?,"DisplayName"?,"Problem"?}}`; users compared ignoring case. The temporary file is made 0600 before the rename (not on Windows).
 - **Fixture:** [`spotify-accounts.json`](fixtures/state/spotify-accounts.json) (synthetic tokens)
+- **Rust (proposed 2026-10-13):** the Spotify sign-in is gone, so the Rust build neither reads nor writes this file, and an old one stays on disk untouched. Lists that sign-in saved in `imports.json` (`spotifyLiked`, `spotifyPlaylist`) still load, are matched and fetched like any list, and are never read again.
 
 ### 4.29 `radio-outcomes.json` (2026.10.05)
 

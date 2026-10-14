@@ -29,7 +29,7 @@ It runs on [Navidrome](https://www.navidrome.org/), the open-source music server
 - **Search everything.** Your own music comes first, then the songs and albums you don't have yet. Any of it plays straight away, previewed from YouTube.
 - **Radio that learns.** Your Radio, discovery, artist and genre stations grow from what you play, plus optional genre and decade mixes from your own library.
 - **Keep what you love.** Press **+** or heart a song and Octo downloads the best copy it can find from Soulseek or your own Lidarr, FLAC first, catches a "lossless" file that was made from an MP3, tags it, adds the cover and lyrics, and files it in your library. Whole albums work too.
-- **Bring your Spotify.** Import your liked songs and playlists, see what you already have, and let Octo fetch the rest a few songs an hour. See [Spotify import](#spotify-import).
+- **Bring your music.** Import your liked songs and playlists from Spotify or any other service, see what you already have, and let Octo fetch the rest a few songs an hour. See [Importing your music](#importing-your-music).
 - **Apps for every device.** [Octo's own apps](#octos-own-apps) for Windows, Linux and Android, and [any Subsonic app](#compatible-apps) on iPhone, Mac and everywhere else.
 - **Yours to run.** The files are on your disk, everyone in the house gets their own login and their own stations, and there is nothing to pay each month.
 
@@ -775,38 +775,30 @@ They are on by default, whether or not the mixes are. The dashboard's Mixes page
 `trending` and Apple genre numbers, default `new,trending,18,14,6`; empty for none);
 `CHART_COUNTRY` is `auto` or a two-letter country such as `gb`.
 
-### Spotify import
+### Importing your music
 
-The dashboard's **Spotify import** page, and the same view in the Octo apps, shows what your
-library has of your Spotify liked songs and playlists. A list can be kept as a Navidrome
-playlist of the songs you have, in Spotify's order, and filled in as the rest arrive; its
-missing songs can go to the trickle, which fetches them a few an hour through the same chain
-a heart uses (your library first, then each heart download source in order, Soulseek's outage
-hold, Lidarr). It never starts a song while anyone's own download runs, and waits out a Soulseek
-outage instead of taking a YouTube copy. Lists, sign-ins and the trickle live in
-`/app/config/imports.json`, `spotify-accounts.json` and `imports-trickle.json`, so a restart
-carries on.
+The dashboard's **Import** page, and the same view in the Octo apps, shows what your library
+has of the playlists and liked songs you bring from another service. A list can be kept as a
+Navidrome playlist of the songs you have, in the list's order, and filled in as the rest
+arrive; its missing songs can go to the trickle, which fetches them a few an hour through the
+same chain a heart uses (your library first, then each heart download source in order,
+Soulseek's outage hold, Lidarr). It never starts a song while anyone's own download runs, and
+waits out a Soulseek outage instead of taking a YouTube copy. Lists and the trickle live in
+`/app/config/imports.json` and `imports-trickle.json`, so a restart carries on.
 
-Spotify's Web API only works through an app you register yourself, and in 2026 such an app
-in development mode reads for at most five Spotify accounts, needs its owner to have Premium,
-gets no ISRCs, and is shown the songs only of playlists the account made or works on. Octo
-reads the first 100 songs of any other playlist from its public page, and says so.
+No account, app or key is needed. For Spotify, Apple Music, YouTube Music, Amazon Music, TIDAL,
+Deezer, Qobuz, SoundCloud, Pandora and YouTube, the page walks you through TuneMyMusic's free
+export to a file, private playlists and liked songs included, and the file comes back to
+Octo. Octo also reads a public Spotify playlist or album by its link (the first 100 songs), a
+CSV from Exportify or Soundiiz (any CSV with a title and an artist column), the zip from
+Spotify's own **Download your data**, and a plain list of one Artist - Title a line, from a
+file or pasted. `IMPORTS_SONGS_PER_HOUR` (20) paces the trickle and `IMPORTS_REFRESH_HOURS` (6)
+reads lists from a link that are kept or fetching again, so new songs there reach them.
 
-1. At [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), **Create app**,
-   tick **Web API**, and add the redirect URI `http://127.0.0.1/callback` exactly. Spotify takes
-   https or a loopback address, never `localhost`; a loopback one with no port lets the Octo apps
-   sign in on any port.
-2. Under **User Management**, add every Spotify account that will connect.
-3. Put the app's **Client ID** in `IMPORTS_SPOTIFY_CLIENT_ID` or on the page. Octo signs in
-   with PKCE, so there is no secret. After you allow Octo, the dashboard asks for the address
-   the browser ended on; an Octo behind https can register
-   `https://<octo>/imports/spotify/callback` instead and finish by itself.
-
-No sign-in is needed for a public playlist or album link (the first 100 songs), a CSV from
-Exportify, TuneMyMusic or Soundiiz (any CSV with a title and an artist column), or the zip
-from Spotify's own **Download your data**, which holds every playlist whole.
-`IMPORTS_SONGS_PER_HOUR` (20) paces the trickle and `IMPORTS_REFRESH_HOURS` (6) reads lists
-that are kept or fetching again, so new songs on Spotify reach them.
+Lists an earlier version saved from a Spotify account sign-in stay, matched and fetched like any
+other list, but are not read again; import a TuneMyMusic file to bring one up to date, or
+remove it. Old `IMPORTS_SPOTIFY_CLIENT_ID` and `IMPORTS_SPOTIFY_REDIRECT_URI` lines in `.env`
+are ignored and can be deleted.
 
 ### Download path on Windows and manual installs
 
@@ -900,7 +892,7 @@ Octo hijacks these endpoints; everything else proxies to Navidrome unchanged:
 | `getLibraryActions`, `libraryAction`, `getLibraryTrash` | the `octoLibraryActions` extension: what the caller may do to library files, removing one song the way the Delete playlist does, putting it back, and the tag, album and cover fixes of Library health |
 | `getAcquisitions`, `getAcquisition`, `clearAcquisitions` | the `octoAcquisitions` extension: the caller's downloads; version 2 adds each one's log and clearing finished ones |
 | `findSongs`, `getFoundSongs`, `pickFoundSong` | `octoAcquisitions` 2: a song's search run again on the caller's download sources, every copy found, and fetching the one picked |
-| `getImports`, `getImport`, `importAction` | the `octoImports` extension: the caller's Spotify sign-in, imported lists with what the library has of each, and the trickle |
+| `getImports`, `getImport`, `importAction` | the `octoImports` extension: the caller's imported lists with what the library has of each, and the trickle |
 | `getTopSongs` | the standard top songs of an artist (by name, or by id as Navidrome's `topSongsByArtistId`), for every app: ranked as `getArtistTopSongs` ranks them, songs you have as your library's own and the rest as outside songs (only yours while search discovery is off); Navidrome's answer when Octo has none |
 | `getArtistTopSongs`, `getTopChart` | the `octoTopSongs` extension: an artist's most played songs and the chart of the moment, each marked in the caller's library or playable from outside it |
 | `getPlace` | the `octoPlaces` extension, for the apps' Live radio near you: a postal code (`code` and `country`, any case or spacing, `UK` for `GB`; a full UK, Canadian or Dutch code finds the part GeoNames keeps, and a ZIP+4 its five digits), a city (`name`, optional `state` by name or code, and `country`; of the towns with that name, and that state when one is sent, the one with the most postal codes, at the postal code nearest its others) or a coordinate (`latitude` and `longitude` in decimal degrees: the nearest place within 30 km), in that order when several are sent, answered as `place` with `code`, `name`, `state` (when known), `country`, `latitude` and `longitude` (2 decimals). Error 70 for a place Octo does not know, error 10 for missing parameters or coordinates that are not decimal degrees. Answered from GeoNames' postal codes, built into the image; nothing is sent anywhere |

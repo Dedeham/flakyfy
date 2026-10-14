@@ -496,9 +496,8 @@ pub struct AppInner {
     /// `LibraryHealthService`: Library health for the dashboard, the app's checks and fixes run
     /// on the server.
     pub library_health: Arc<LibraryHealthService>,
-    /// `ImportService`, over the import stores (`imports.json`, `imports-trickle.json`,
-    /// `spotify-accounts.json`), the Spotify sign-in and the trickle (`TrickleWorker`): the
-    /// "ImportService" and "TrickleWorker" workers.
+    /// `ImportService`, over the import stores (`imports.json`, `imports-trickle.json`) and the
+    /// trickle (`TrickleWorker`): the "ImportService" and "TrickleWorker" workers.
     pub imports: Arc<crate::services::imports::ImportService>,
     /// `family.key`: seals members' device secrets and hidden Navidrome passwords, and signs
     /// their browser tokens.
@@ -1687,14 +1686,14 @@ impl GenreAndCoverJobs {
     }
 }
 
-/// The Spotify import: the import service and the trickle that downloads into the library.
+/// Imports: the import service and the trickle that downloads into the library.
 struct Imports {
     service: Arc<crate::services::imports::ImportService>,
     trickle: Arc<crate::services::imports::TrickleWorker>,
 }
 
 impl Imports {
-    /// `config_dir`: where the three files live; None keeps them in memory (endpoint tests).
+    /// `config_dir`: where the two files live; None keeps them in memory (endpoint tests).
     fn build(
         settings: &Arc<SettingsStore>,
         config_dir: Option<&Path>,
@@ -1705,8 +1704,7 @@ impl Imports {
     ) -> Imports {
         use crate::services::imports::{
             ImportMatcher, ImportParts, ImportPlaylists, ImportService, ImportStore, NavidromePlaylists,
-            SpotifyAccountStore, SpotifyAuth, SpotifyLinkReader, SpotifyWebApi, TrickleQueue,
-            TrickleServices, TrickleWorker,
+            SpotifyLinkReader, TrickleQueue, TrickleServices, TrickleWorker,
         };
         let file = |name: &str| config_dir.map(|dir| dir.join(name));
         let queue = Arc::new(TrickleQueue::new(file("imports-trickle.json")));
@@ -1734,9 +1732,6 @@ impl Imports {
                 api: navidrome.navidrome_playlist_api.clone(),
                 identity: navidrome.navidrome_identity.clone(),
             })),
-            auth: Arc::new(SpotifyAuth::default()),
-            accounts: Arc::new(SpotifyAccountStore::new(file("spotify-accounts.json"))),
-            spotify: Arc::new(SpotifyWebApi::new(SpotifyWebApi::client())),
             links: Arc::new(SpotifyLinkReader::new(SpotifyLinkReader::client())),
             settings: settings.clone(),
             tracker: Some(acquisition.acquisition_tracker.clone()),

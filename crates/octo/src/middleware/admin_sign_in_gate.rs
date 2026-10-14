@@ -90,7 +90,7 @@ pub const LIBRARY_FILE_ROUTES: &[(&str, bool, &str)] = &[
     ("/api/admin/covers", true, SIGN_IN_FIRST),
     // The Lyrics page (writes lyrics files beside songs).
     ("/api/admin/lyrics", true, SIGN_IN_FIRST),
-    // Imports (Spotify sign-ins, lists, the trickle that downloads into the library).
+    // Imports (lists, the trickle that downloads into the library).
     (
         "/api/admin/imports",
         true,

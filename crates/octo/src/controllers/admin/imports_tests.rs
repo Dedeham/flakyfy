@@ -1,11 +1,10 @@
 //! The import page's endpoints. The dashboard's need its sign-in, the apps' check the caller with
-//! Navidrome, both answer in the shapes the page and the apps read, and Spotify's return to
-//! Octo's own address finishes a sign-in without one.
+//! Navidrome, and both answer in the shapes the page and the apps read.
 
 use axum::body::Body;
 use axum::http::{Method, Request};
 use http_body_util::BodyExt;
-use octo_core::settings::{AppSettings, FamilySettings, ImportSettings, SubsonicSettings};
+use octo_core::settings::{AppSettings, FamilySettings, SubsonicSettings};
 use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -68,12 +67,12 @@ struct Rig {
     app: App,
 }
 
-async fn rig(client_id: &str) -> Rig {
-    rig_with(client_id, false).await
+async fn rig() -> Rig {
+    rig_with(false).await
 }
 
 /// [`rig`] with Family on or off.
-async fn rig_with(client_id: &str, family: bool) -> Rig {
+async fn rig_with(family: bool) -> Rig {
     let server = navidrome().await;
     let state = AppState::for_tests_with(
         AppSettings {
@@ -81,10 +80,6 @@ async fn rig_with(client_id: &str, family: bool) -> Rig {
                 url: Some(server.uri()),
                 admin_username: Some("admin".into()),
                 admin_password: Some("synthetic".into()),
-                ..Default::default()
-            },
-            imports: ImportSettings {
-                spotify_client_id: client_id.into(),
                 ..Default::default()
             },
             family: FamilySettings {
@@ -135,12 +130,10 @@ impl Rig {
 
 #[tokio::test]
 async fn every_dashboard_endpoint_needs_the_sign_in() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let cases = [
         (Method::GET, "/api/admin/imports"),
         (Method::GET, "/api/admin/imports/lists/spotify-liked"),
-        (Method::POST, "/api/admin/imports/spotify/connect"),
-        (Method::POST, "/api/admin/imports/spotify/disconnect"),
         (Method::POST, "/api/admin/imports/link"),
         (Method::POST, "/api/admin/imports/lists/x/fetch"),
         (Method::POST, "/api/admin/imports/trickle/pause"),
@@ -160,7 +153,7 @@ async fn every_dashboard_endpoint_needs_the_sign_in() {
 
 #[tokio::test]
 async fn the_dashboard_shows_the_signed_in_persons_lists_and_adds_a_file() {
-    let rig = rig("client-1").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let upload = rig
         .upload(
@@ -180,9 +173,8 @@ async fn the_dashboard_shows_the_signed_in_persons_lists_and_adds_a_file() {
         .json();
     assert_eq!(page["user"], "alice");
     let overview = &page["overview"];
-    assert_eq!(overview["spotify"]["configured"], true);
-    assert_eq!(overview["spotify"]["connected"], false);
-    assert_eq!(overview["spotify"]["redirectUri"], "http://127.0.0.1/callback");
+    assert!(overview.get("spotify").is_none(), "{overview}");
+    assert!(overview.get("reading").is_none(), "{overview}");
     let lists = overview["lists"].as_array().expect("lists");
     assert_eq!(lists.len(), 1);
     assert_eq!(lists[0]["have"], 1);
@@ -214,25 +206,11 @@ async fn the_dashboard_shows_the_signed_in_persons_lists_and_adds_a_file() {
         .map(|t| t["state"].as_str().unwrap_or_default())
         .collect();
     assert_eq!(states, ["have", "queued"]);
-
-    let connect = send(
-        &rig.app,
-        Method::POST,
-        "/api/admin/imports/spotify/connect",
-        &auth,
-        None,
-    )
-    .await;
-    let url = connect.json()["url"].as_str().unwrap_or_default().to_string();
-    assert!(
-        url.starts_with(crate::services::imports::SpotifyAuth::AUTHORIZE_URL),
-        "{url}"
-    );
 }
 
 #[tokio::test]
 async fn a_write_without_the_admin_header_is_refused() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let reply = send(
         &rig.app,
@@ -246,25 +224,33 @@ async fn a_write_without_the_admin_header_is_refused() {
 }
 
 #[tokio::test]
-async fn spotifys_return_to_octo_with_an_unknown_state_says_so() {
-    let rig = rig("").await;
-    let html = get(&rig.app, "/imports/spotify/callback?code=abc&state=nope").await;
-    assert_eq!(html.header("content-type"), Some("text/html"));
-    assert!(html.text().contains("Spotify sign-in did not finish"));
-    assert!(html.text().contains("too old or was already used"));
-    let denied = get(
-        &rig.app,
-        "/imports/spotify/callback?error=access_denied&state=nope",
-    )
-    .await;
-    assert!(denied.text().contains("access was not allowed"));
+async fn there_is_no_spotify_sign_in() {
+    let rig = rig().await;
+    let token = rig.sign_in("alice");
+    let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
+    for uri in [
+        "/api/admin/imports/spotify/connect",
+        "/api/admin/imports/spotify/finish",
+        "/api/admin/imports/spotify/read",
+        "/api/admin/imports/spotify/disconnect",
+    ] {
+        let reply = send(&rig.app, Method::POST, uri, &auth, Some("{}")).await;
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{uri}: {}", reply.text());
+    }
+    let callback = get(&rig.app, "/imports/spotify/callback?code=abc&state=nope").await;
+    assert_ne!(callback.status, StatusCode::OK, "{}", callback.text());
+    assert!(
+        !callback.text().contains("Spotify sign-in"),
+        "{}",
+        callback.text()
+    );
 }
 
 const AUTH: &str = "u=alice&t=good&s=salt&v=1.16.1&c=Octo&f=json";
 
 #[tokio::test]
 async fn the_apps_see_the_same_lists_as_whoever_they_signed_in_as() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let upload = rig
         .upload(
@@ -308,7 +294,7 @@ async fn the_apps_see_the_same_lists_as_whoever_they_signed_in_as() {
 
 #[tokio::test]
 async fn an_app_action_answers_in_words_and_a_wrong_password_is_refused() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let pause = get(&rig.app, &format!("/rest/importAction?{AUTH}&action=pause"))
         .await
         .json();
@@ -321,18 +307,17 @@ async fn an_app_action_answers_in_words_and_a_wrong_password_is_refused() {
             .starts_with("Paused")
     );
 
-    let connect = get(
-        &rig.app,
-        &format!("/rest/importAction?{AUTH}&action=connect&redirect=http://127.0.0.1:5555/callback"),
-    )
-    .await
-    .json();
-    assert!(
-        connect["subsonic-response"]["importAction"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Client ID")
-    );
+    for action in ["connect", "finish", "read", "disconnect"] {
+        let gone = get(
+            &rig.app,
+            &format!("/rest/importAction?{AUTH}&action={action}&redirect=http://127.0.0.1:5555/callback"),
+        )
+        .await
+        .json();
+        let answer = &gone["subsonic-response"]["importAction"];
+        assert_eq!(answer["ok"], false, "{action}");
+        assert_eq!(answer["message"], format!("Unknown action \"{action}\"."));
+    }
 
     let wrong = get(
         &rig.app,
@@ -345,7 +330,7 @@ async fn an_app_action_answers_in_words_and_a_wrong_password_is_refused() {
 
 #[tokio::test]
 async fn the_apps_are_told_imports_are_here() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let doc = get(
         &rig.app,
         "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Octo",
@@ -365,7 +350,7 @@ async fn the_apps_are_told_imports_are_here() {
 
 #[tokio::test]
 async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let reply = send(
@@ -394,7 +379,7 @@ async fn a_member_of_the_wrong_type_is_refused_with_the_reference_message() {
 
 #[tokio::test]
 async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let json = send(
@@ -409,11 +394,6 @@ async fn a_file_sent_as_json_finds_no_action_and_an_empty_one_is_asked_for() {
     let empty = rig.upload(&token, "Empty.csv", "").await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST);
     assert_eq!(empty.json()["message"], "Choose a file first.");
-}
-
-#[test]
-fn html_is_encoded_as_web_utility_did() {
-    assert_eq!(html_encode("a<b>&\"c' é"), "a&lt;b&gt;&amp;&quot;c&#39; &#233;");
 }
 
 // ---- octoImports version 2 ------------------------------------------------------------------
@@ -460,8 +440,8 @@ impl Rig {
 }
 
 #[tokio::test]
-async fn the_apps_get_the_export_services_and_whether_spotify_can_connect() {
-    let rig = rig("").await;
+async fn the_apps_get_the_export_services() {
+    let rig = rig().await;
     let answer = get(&rig.app, &format!("/rest/getImportServices.view?{AUTH}"))
         .await
         .json();
@@ -478,15 +458,9 @@ async fn the_apps_get_the_export_services_and_whether_spotify_can_connect() {
         "https://www.tunemymusic.com/transfer/tidal-to-file"
     );
     assert_eq!(services[4]["tile"], "TIDAL");
-    assert_eq!(envelope["importServices"]["spotifyConnect"], false);
-
-    let connected = self::rig("client-1").await;
-    let answer = get(&connected.app, &format!("/rest/getImportServices?{AUTH}"))
-        .await
-        .json();
-    assert_eq!(
-        answer["subsonic-response"]["importServices"]["spotifyConnect"],
-        true
+    assert!(
+        envelope["importServices"].get("spotifyConnect").is_none(),
+        "{envelope}"
     );
 
     let wrong = get(
@@ -500,7 +474,7 @@ async fn the_apps_get_the_export_services_and_whether_spotify_can_connect() {
 
 #[tokio::test]
 async fn an_app_pastes_a_list_and_reads_it_back() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let pasted = get(
         &rig.app,
         &format!(
@@ -549,7 +523,7 @@ async fn an_app_pastes_a_list_and_reads_it_back() {
 
 #[tokio::test]
 async fn an_app_uploads_a_file_as_a_multipart_form() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let uri = format!("/rest/importFile.view?{AUTH}");
     let csv = rig
         .post_form(
@@ -620,7 +594,7 @@ async fn an_app_uploads_a_file_as_a_multipart_form() {
 
 #[tokio::test]
 async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = [("X-Octo-Browse-Token", token.as_str()), ("X-Octo-Admin", "1")];
     let pasted = send(
@@ -649,7 +623,7 @@ async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
     assert_eq!(services.status, StatusCode::OK);
     let services = services.json();
     assert_eq!(services["services"].as_array().expect("services").len(), 10);
-    assert_eq!(services["spotifyConnect"], false);
+    assert!(services.get("spotifyConnect").is_none(), "{services}");
 
     for (verb, uri) in [
         (Method::GET, "/api/admin/imports/services"),
@@ -663,7 +637,7 @@ async fn the_dashboard_pastes_a_list_and_lists_the_export_services() {
 
 #[tokio::test]
 async fn the_apps_are_told_imports_are_at_versions_one_and_two() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let doc = get(
         &rig.app,
         "/rest/getOpenSubsonicExtensions.view?f=json&v=1.16.1&c=Octo",
@@ -704,7 +678,7 @@ impl Rig {
 
 #[tokio::test]
 async fn without_for_the_import_is_the_signed_in_persons_own() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = Rig::auth(&token);
     let pasted = send(
@@ -733,7 +707,7 @@ async fn without_for_the_import_is_the_signed_in_persons_own() {
 
 #[tokio::test]
 async fn for_another_user_makes_the_list_its_playlist_and_its_downloads_theirs() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let answer = |body: serde_json::Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(method("POST"))
         .and(path("/api/playlist"))
@@ -823,7 +797,7 @@ async fn for_another_user_makes_the_list_its_playlist_and_its_downloads_theirs()
 
 #[tokio::test]
 async fn a_name_navidrome_does_not_know_is_refused() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = Rig::auth(&token);
     let cases = [
@@ -863,7 +837,7 @@ async fn a_name_navidrome_does_not_know_is_refused() {
 
 #[tokio::test]
 async fn a_file_uploaded_for_someone_else_is_theirs() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let boundary = "octo-test-boundary";
     let body = format!(
@@ -903,7 +877,7 @@ async fn a_file_uploaded_for_someone_else_is_theirs() {
 
 #[tokio::test]
 async fn the_lists_and_their_songs_follow_for() {
-    let rig = rig("").await;
+    let rig = rig().await;
     let token = rig.sign_in("alice");
     let auth = Rig::auth(&token);
     let mine = send(
@@ -986,47 +960,6 @@ async fn the_lists_and_their_songs_follow_for() {
     assert_eq!(rig.list_names("alice"), ["Mine"]);
 }
 
-#[tokio::test]
-async fn spotify_stays_the_signed_in_persons_own() {
-    let rig = rig("client-1").await;
-    let token = rig.sign_in("alice");
-    let auth = Rig::auth(&token);
-    for (uri, body) in [
-        ("/api/admin/imports/spotify/connect?for=bob", None),
-        (
-            "/api/admin/imports/spotify/finish?for=bob",
-            Some(r#"{"address":"http://127.0.0.1/callback?code=a&state=b"}"#),
-        ),
-        ("/api/admin/imports/spotify/read?for=bob", None),
-        ("/api/admin/imports/spotify/disconnect?for=bob", None),
-    ] {
-        let reply = send(&rig.app, Method::POST, uri, &auth, body).await;
-        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{uri}: {}", reply.text());
-        let answer = reply.json();
-        assert_eq!(answer["ok"], false, "{uri}");
-        assert_eq!(
-            answer["message"], "Bob connects Spotify from their own sign-in.",
-            "{uri}"
-        );
-    }
-    // Naming yourself still connects.
-    let own = send(
-        &rig.app,
-        Method::POST,
-        "/api/admin/imports/spotify/connect?for=alice",
-        &auth,
-        None,
-    )
-    .await;
-    assert_eq!(own.status, StatusCode::OK, "{}", own.text());
-    assert!(
-        own.json()["url"]
-            .as_str()
-            .unwrap_or_default()
-            .starts_with(crate::services::imports::SpotifyAuth::AUTHORIZE_URL)
-    );
-}
-
 /// A Family member who adds songs at once.
 fn family_member(name: &str) -> crate::services::family::Member {
     crate::services::family::Member {
@@ -1047,7 +980,7 @@ fn family_member(name: &str) -> crate::services::family::Member {
 
 #[tokio::test]
 async fn a_family_members_import_goes_to_their_own_library() {
-    let rig = rig_with("", true).await;
+    let rig = rig_with(true).await;
     rig.state.family_store.upsert_member(family_member("alex"));
     let token = rig.sign_in("admin");
     let auth = Rig::auth(&token);
@@ -1082,7 +1015,7 @@ async fn a_family_members_import_goes_to_their_own_library() {
 
 #[tokio::test]
 async fn the_page_lists_who_it_can_import_for() {
-    let rig = rig_with("", true).await;
+    let rig = rig_with(true).await;
     rig.state.family_store.upsert_member(family_member("alex"));
     let token = rig.sign_in("alice");
     let auth = Rig::auth(&token);

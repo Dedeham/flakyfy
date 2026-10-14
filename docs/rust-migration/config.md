@@ -452,8 +452,8 @@ Absent from `appsettings.json`; read through `_config.GetSection("Imports").Get<
 
 | JSON key | .env var (→ `Imports__Key`) | Type | Class / appsettings / Compose | Validation, parsing | Reload | Form |
 |---|---|---|---|---|---|---|
-| `SpotifyClientId` | `IMPORTS_SPOTIFY_CLIENT_ID` | string | `""` / - / `""` | Empty: no Spotify sign-in (links and files still work). Not a secret (PKCE). | Live | yes |
-| `SpotifyRedirectUri` | `IMPORTS_SPOTIFY_REDIRECT_URI` | string | `http://127.0.0.1/callback` / - / same | `EffectiveRedirectUri`: the default when blank, else trimmed. GET shows the effective value. | Live | yes |
+| `SpotifyClientId` | `IMPORTS_SPOTIFY_CLIENT_ID` | string | `""` / - / `""` | Empty: no Spotify sign-in (links and files still work). Not a secret (PKCE). Rust: gone with the Spotify sign-in (chore/remove-spotify-connect, proposed 2026-10-13); a value in settings.json or the environment is ignored, and the settings answers no longer list it. | Live | yes |
+| `SpotifyRedirectUri` | `IMPORTS_SPOTIFY_REDIRECT_URI` | string | `http://127.0.0.1/callback` / - / same | `EffectiveRedirectUri`: the default when blank, else trimmed. GET shows the effective value. Rust: gone with `SpotifyClientId`, ignored the same way. | Live | yes |
 | `SongsPerHour` | `IMPORTS_SONGS_PER_HOUR` | int | 20 / - / `20` | `EffectiveSongsPerHour` = `Clamp(0, 600)`; 0 stops the trickle. | Live | yes |
 | `RefreshHours` | `IMPORTS_REFRESH_HOURS` | int | 6 / - / `6` | 0 reads lists again only when asked. | Live | yes |
 

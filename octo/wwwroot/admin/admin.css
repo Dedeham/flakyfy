@@ -1294,11 +1294,6 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-svc.selected,
 .imp-svc.selected:hover { background: var(--accent-fill); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 18px rgba(0, 0, 0, 0.30); color: var(--accent-ink); font-weight: 650; }
 .imp-svc.selected .imp-svc-check { display: inline-flex; }
-/* A way in the person picked under Import for cannot use from here. */
-.imp-svc:disabled,
-.imp-svc:disabled:hover { background: var(--nest); color: var(--ink-3); cursor: not-allowed; opacity: 0.5; transform: none; }
-.imp-svc:disabled .imp-logo { filter: grayscale(1); transform: none; }
-.imp-svc-note { margin: 0; }
 
 /* Import for: whose lists, playlists and fetched songs the page works on. */
 .imp-for-row .set-ctrl select { min-width: 220px; }
@@ -1433,7 +1428,7 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-list-name { display: flex; align-items: center; gap: var(--s-l); min-width: 0; }
 .imp-list-words { display: flex; flex-direction: column; min-width: 0; }
 
-/* Import settings: folded away under the page, opened from Set up Spotify. */
+/* Import settings: folded away under the page. */
 .imp-settings > summary { list-style: none; }
 .imp-settings > summary::-webkit-details-marker { display: none; }
 .imp-settings-summary {
@@ -1469,8 +1464,6 @@ form.set-card.unsaved { border-color: var(--warn-line); box-shadow: var(--glass-
 .imp-card { padding: var(--s-xl); display: flex; flex-direction: column; gap: var(--s-l); }
 .set-card.imp-card > :not([hidden]):not([type="hidden"]) ~ :not([type="hidden"]) { border-top: 0; }
 .imp-card > .set-row { padding: 0; }
-.imp-reading { margin: 0; }
-.imp-reading.imp-error { color: #ff7b72; }
 .imp-row { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.6fr) 92px 104px 136px; gap: var(--s-l); align-items: center; }
 .imp-row.picked, .imp-track.picked { background: var(--accent-selected); }
 .imp-row .key, .imp-track .key, .imp-trickle-row .key { font-family: inherit; color: var(--ink); overflow-wrap: anywhere; }

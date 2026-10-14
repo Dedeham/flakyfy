@@ -300,8 +300,6 @@ const CONFIG_SOURCE_KEYS: &[&str] = &[
     "Notifications:NotifyAlbumCompleted",
     "ListenBrainz:Token",
     "ListenBrainz:SubmitExternalPlays",
-    "Imports:SpotifyClientId",
-    "Imports:SpotifyRedirectUri",
     "Imports:SongsPerHour",
     "Imports:RefreshHours",
     "Subsonic:StreamSizeWarmPerMinute",

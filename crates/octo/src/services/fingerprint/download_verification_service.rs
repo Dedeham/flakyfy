@@ -289,6 +289,7 @@ impl DownloadVerificationService {
                 fingerprint: Some(print),
                 duration_seconds: seconds,
                 lookup: Some(lookup),
+                threshold: settings.effective_min_score_fraction(),
                 ..Default::default()
             };
         }
@@ -333,6 +334,7 @@ impl DownloadVerificationService {
                 tagged_match,
             );
         }
+        verdict.threshold = threshold;
 
         // A confirmation is logged too, not just a refusal. The dominant risk in this feature is
         // that a broken key, a missing binary or a mangled request makes it accept everything
@@ -462,6 +464,7 @@ impl DownloadVerificationService {
                 fingerprint: verdict.fingerprint,
                 duration_seconds: verdict.duration_seconds,
                 lookup: Some(lookup.clone()),
+                threshold: verdict.threshold,
                 evidence: Some(format!(
                     "MusicBrainz lists the requested ISRC {isrc} on '{} - {}'",
                     agreed.artist_credit(),
@@ -500,6 +503,7 @@ impl DownloadVerificationService {
     ) -> VerificationResult {
         VerificationResult {
             lookup: Some(lookup.clone()),
+            threshold,
             ..decide_core(
                 lookup,
                 requested_artist.unwrap_or(""),

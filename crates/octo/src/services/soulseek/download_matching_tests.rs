@@ -1398,16 +1398,103 @@ fn find_songs_refuses_a_live_take_in_place_of_a_library_song() {
 
 #[test]
 fn a_log_says_a_picked_copy_was_kept_on_the_word_of_the_pick_not_of_its_name() {
+    let unasked = VerificationResult::inconclusive();
     assert_eq!(
-        checks_passed_text(false, false, false),
+        checks_passed_text(&unasked, false, false),
         "the right length; AcoustID could not say, so the name and length decide"
     );
     assert_eq!(
-        checks_passed_text(false, false, true),
+        checks_passed_text(&unasked, false, true),
         "the right length; AcoustID could not say, and its name or folder did not fit the song: kept because you picked it"
     );
+    let confirmed = VerificationResult {
+        verdict: VerificationVerdict::Confirmed,
+        ..Default::default()
+    };
     assert!(
-        checks_passed_text(true, true, true).starts_with("the right length; AcoustID: the same recording")
+        checks_passed_text(&confirmed, true, true)
+            .starts_with("the right length; AcoustID: the same recording")
+    );
+}
+
+/// A lookup answering one result for the song asked for, at this score.
+fn take_care_lookup(score: f64) -> AcoustIdLookup {
+    AcoustIdLookup::new(
+        true,
+        None,
+        vec![AcoustIdResult::new(
+            score,
+            vec![AcoustIdRecording::new(
+                "mbid-take-care",
+                "Take Care",
+                ["Drake"],
+                None,
+                None,
+            )],
+        )],
+    )
+}
+
+fn take_care_verdict(lookup: &AcoustIdLookup) -> VerificationResult {
+    DownloadVerificationService::decide(lookup, Some("Drake"), Some("Take Care"), 0.85, false, 0, false)
+}
+
+#[test]
+fn a_log_puts_acoust_id_numbers_on_the_checks_a_file_passed() {
+    assert_eq!(
+        checks_passed_text(&take_care_verdict(&take_care_lookup(0.92)), true, false),
+        "the right length; AcoustID: the same recording, 92% sure (needs 85%); the spectrum: really lossless"
+    );
+    assert_eq!(
+        checks_passed_text(&take_care_verdict(&take_care_lookup(0.61)), false, false),
+        "the right length; AcoustID: no match above 85% (best 61%), so the name and length decide"
+    );
+    assert_eq!(
+        checks_passed_text(&take_care_verdict(&take_care_lookup(0.61)), false, true),
+        "the right length; AcoustID: no match above 85% (best 61%), and its name or folder did not fit the song: kept because you picked it"
+    );
+    let no_entry = VerificationResult {
+        reason: InconclusiveReason::NoEntry,
+        lookup: Some(AcoustIdLookup::new(true, None, Vec::new())),
+        threshold: 0.85,
+        ..Default::default()
+    };
+    assert_eq!(
+        checks_passed_text(&no_entry, false, false),
+        "the right length; AcoustID has no entry for this sound, so the name and length decide"
+    );
+}
+
+#[test]
+fn a_log_names_what_acoust_id_heard_when_it_throws_a_file_away() {
+    let lookup = AcoustIdLookup::new(
+        true,
+        None,
+        vec![AcoustIdResult::new(
+            0.97,
+            vec![AcoustIdRecording::new(
+                "mbid-marvins",
+                "Marvins Room",
+                ["Drake"],
+                None,
+                None,
+            )],
+        )],
+    );
+    let verdict = take_care_verdict(&lookup);
+    assert_eq!(verdict.verdict, VerificationVerdict::Mismatch);
+    assert_eq!(
+        mismatch_text(&verdict),
+        "AcoustID says this is 'Drake - Marvins Room', 97% sure (needs 85%)"
+    );
+    // A file with no audio in it reads as it always has.
+    let undecodable = VerificationResult {
+        verdict: VerificationVerdict::Mismatch,
+        ..Default::default()
+    };
+    assert_eq!(
+        mismatch_text(&undecodable),
+        "AcoustID says this is a different recording"
     );
 }
 

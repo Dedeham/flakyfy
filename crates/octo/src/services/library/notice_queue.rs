@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use octo_core::common::{PathHelper, dotnet};
-use octo_core::fingerprint::verification::{InconclusiveReason, VerificationResult};
+use octo_core::fingerprint::verification::{
+    InconclusiveReason, VerificationResult, threshold_percent, whole_percent,
+};
 use octo_core::json::datetime;
 use octo_core::models::domain::Song;
 use octo_core::settings::NoticeKind;
@@ -202,6 +204,21 @@ pub struct NoticeEntry {
     pub queued_utc: Option<DateTime<Utc>>,
     #[serde(default, with = "datetime::utc_option")]
     pub resolved_utc: Option<DateTime<Utc>>,
+
+    /// How sure AcoustID was, as a whole percent rounded down: of the recording it named, else
+    /// of its best result. None when it gave no score. Left out of the file when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acoust_id_score: Option<i32>,
+    /// The score AcoustID's answer needed to count, as a whole percent, beside a score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<i32>,
+    /// What AcoustID matched, "Artist - Title", when it named a recording.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched: Option<String>,
+    /// The best recording AcoustID heard, "Artist - Title", when it named none: what came
+    /// closest without counting as a match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closest: Option<String>,
 }
 
 impl Default for NoticeEntry {
@@ -231,6 +248,10 @@ impl Default for NoticeEntry {
             created_utc: Utc::now(),
             queued_utc: None,
             resolved_utc: None,
+            acoust_id_score: None,
+            threshold: None,
+            matched: None,
+            closest: None,
         }
     }
 }
@@ -405,6 +426,7 @@ impl NoticeQueue {
                 _ => "Octo could not check this download".to_string(),
             };
             let sweep = origin == NoticeOrigin::LibrarySweep;
+            let score = verdict.shown_score().map(whole_percent);
             entries.set(
                 key.clone(),
                 NoticeEntry {
@@ -429,6 +451,13 @@ impl NoticeQueue {
                     },
                     file_format: Some(dotnet::to_lower_invariant(&extension(local_path))),
                     next_lookup_utc: Utc::now(),
+                    acoust_id_score: score,
+                    threshold: score
+                        .and(Some(verdict.threshold))
+                        .filter(|threshold| *threshold > 0.0)
+                        .map(threshold_percent),
+                    matched: verdict.matched_text(),
+                    closest: verdict.closest_text(),
                     ..Default::default()
                 },
             );

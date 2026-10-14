@@ -537,7 +537,8 @@
         "^B:\\ null$"
       ],
       "reason": "The Spotify account sign-in is gone: /api/admin/imports/spotify/connect, finish, read and disconnect and /imports/spotify/callback answer as routes that do not exist, importAction connect, finish, read and disconnect answer Unknown action, the import overview (dashboard and getImports) has no spotify or reading, and no Spotify account lists are read, so the answers after the corpus connects read without them. spotify-accounts.json is never written. A private playlist link and a link capped at 100 songs point to a TuneMyMusic file instead of the sign-in. Lists an earlier sign-in saved still load, match and fetch, are never read again, and say so in partial. Every other line of these answers is the same as the entries that explained them before (imports-matcher-lookups, keep-as-playlist-navidrome-takes-it).",
-      "knownDiff": "Import: no Spotify sign-in"
+      "knownDiff": "Import: no Spotify sign-in",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "keep-as-playlist-navidrome-takes-it",
@@ -3327,7 +3328,8 @@
         "^B:\\ \\['bytes\\ 0-63/60836'\\]$"
       ],
       "reason": "The icon sprite gains the Import page's service badges (b-svc-*: Spotify, Apple Music, YouTube Music, Amazon Music, TIDAL, Deezer, Qobuz, SoundCloud, Pandora, YouTube, each the service's own mark on its color; sources in scripts/admin-icons/SOURCES.md) and six Phosphor glyphs the page uses. Every symbol icons.svg had is unchanged.",
-      "knownDiff": "Dashboard Import page redesign"
+      "knownDiff": "Dashboard Import page redesign",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "outside-download-plays",
@@ -4032,7 +4034,8 @@
         "^ </subsonic-response>$"
       ],
       "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'.",
-      "knownDiff": "`octoStations` and getStationSongs"
+      "knownDiff": "`octoStations` and getStationSongs",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "station-songs-extension-radio-on",
@@ -4061,7 +4064,8 @@
         "^ </subsonic-response>$"
       ],
       "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'. These answers list one extension more than the others on both sides, so the counts are pinned in an entry of their own.",
-      "knownDiff": "`octoStations` and getStationSongs"
+      "knownDiff": "`octoStations` and getStationSongs",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "station-songs-extension-discovery-off",
@@ -4087,7 +4091,8 @@
         "^ </subsonic-response>$"
       ],
       "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'. With octoTopSongs off both sides list one extension fewer, so the counts are pinned in an entry of their own.",
-      "knownDiff": "`octoStations` and getStationSongs"
+      "knownDiff": "`octoStations` and getStationSongs",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "list-groups-octogroup",
@@ -4215,7 +4220,8 @@
         "^\\$\\.subsonic-response\\.(playlists\\.playlist\\[0\\]|playlist)\\.readonly: false != true$"
       ],
       "reason": "Every Octo list row in getPlaylists and getPlaylist carries octoGroup, the group it belongs to, so apps can group Octo's lists, whose ids are all og or or and a hash: genre, decade, year, country or artist for a mix, chart, forYou (New Releases, Rediscover, Deep Cuts), liked and station. octoList is unchanged (installed apps read it as a Made for you row), and octoLists is listed as versions [1, 2]; the extensions answers' new versions line is the one the earlier extension entries already pin. The octoGroup lines are pinned to the field and its nine values; every other line on these answers is made-list-cover-ids', because one answer is explained by one entry. It supersedes made-list-cover-ids. On the two 12-imports getPlaylists answers, where the Made for you row's octoGroup shows beside an imported playlist, it also carries the lines of keep-as-playlist-navidrome-takes-it, which it supersedes there.",
-      "knownDiff": "Octo list groups (octoGroup)"
+      "knownDiff": "Octo list groups (octoGroup)",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "acoustid-numbers-in-the-log",
@@ -4233,7 +4239,8 @@
         "^.*[Dd]etail:\\ (the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide\\ !=\\ the\\ right\\ length;\\ AcoustID\\ has\\ no\\ entry\\ for\\ this\\ sound,\\ so\\ the\\ name\\ and\\ length\\ decide|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spectrum:\\ really\\ lossless\\ !=\\ the\\ right\\ length;\\ AcoustID\\ has\\ no\\ entry\\ for\\ this\\ sound,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spectrum:\\ really\\ lossless|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide\\ !=\\ the\\ right\\ length;\\ AcoustID\\ was\\ not\\ asked:\\ the\\ file\\ could\\ not\\ be\\ fingerprinted,\\ so\\ the\\ name\\ and\\ length\\ decide|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spectrum:\\ really\\ lossless\\ !=\\ the\\ right\\ length;\\ AcoustID\\ was\\ not\\ asked:\\ the\\ file\\ could\\ not\\ be\\ fingerprinted,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spe\\.\\.\\.|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide\\ !=\\ the\\ right\\ length;\\ AcoustID\\ did\\ not\\ answer,\\ so\\ the\\ name\\ and\\ length\\ decide|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spectrum:\\ really\\ lossless\\ !=\\ the\\ right\\ length;\\ AcoustID\\ did\\ not\\ answer,\\ so\\ the\\ name\\ and\\ length\\ decide;\\ the\\ spectrum:\\ really\\ lossless|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it\\ !=\\ the\\ right\\ length;\\ AcoustID\\ has\\ no\\ entry\\ for\\ this\\ sound,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\.\\.\\.|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it;\\ th\\.\\.\\.\\ !=\\ the\\ right\\ length;\\ AcoustID\\ has\\ no\\ entry\\ for\\ this\\ sound,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\.\\.\\.|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it\\ !=\\ the\\ right\\ length;\\ AcoustID\\ was\\ not\\ asked:\\ the\\ file\\ could\\ not\\ be\\ fingerprinted,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\.\\.\\.|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it;\\ th\\.\\.\\.\\ !=\\ the\\ right\\ length;\\ AcoustID\\ was\\ not\\ asked:\\ the\\ file\\ could\\ not\\ be\\ fingerprinted,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\.\\.\\.|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it\\ !=\\ the\\ right\\ length;\\ AcoustID\\ did\\ not\\ answer,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it|the\\ right\\ length;\\ AcoustID\\ could\\ not\\ say,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it;\\ th\\.\\.\\.\\ !=\\ the\\ right\\ length;\\ AcoustID\\ did\\ not\\ answer,\\ and\\ its\\ name\\ or\\ folder\\ did\\ not\\ fit\\ the\\ song:\\ kept\\ because\\ you\\ picked\\ it;\\ t\\.\\.\\.)$"
       ],
       "reason": "A download log's check step says what AcoustID answered, with its numbers and the threshold in effect: \"AcoustID: the same recording, 97% sure (needs 85%)\" instead of \"AcoustID: the same recording\", and \"AcoustID has no entry for this sound\" (or \"did not answer\", \"was not asked: the file could not be fingerprinted\", \"no match above 85% (best 61%)\") instead of \"AcoustID could not say\". A check line can also carry Heard (the other recordings AcoustID heard, up to 3, with their scores), an optional field left out when empty; the corpus stubs answer one recording or none, so no corpus line carries it. Asked for in issue #87 to follow the matching. Lines pinned from the stub answers (97% for Neon Tide, an empty lookup for lima's copy) without a parity run; to be confirmed on the first run over this branch.",
-      "knownDiff": "AcoustID numbers in the download log"
+      "knownDiff": "AcoustID numbers in the download log",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "dashboard-files-next-update",
@@ -4284,7 +4291,8 @@
         "^B:\\ ef07ff43aca7c8469a7c73aa851ed8685b590a51f96ea56dd4e0d01bce446979\\ \\(443677\\ bytes,\\ text\\)$"
       ],
       "reason": "A re-pin of the dashboard files (index.html, admin.js and admin.css) as the next update leaves them. On top of release 2026.10.13: the update banner (its button opens About, scrolls the update card into view and reads How to update without a ready helper; on a phone jumps stop below the stuck top strip) and the update restart watch (each progress check gives up after 5 seconds and the page reloads on the new version); the Import page redesign, Import for and no Spotify sign-in; the Which mixes card's year and artist mixes; AcoustID's numbers in the download log and the Review questions; the Ratings Octo did not act on card; the library check's replacing and Re-check Octo's downloads; the About page's place data credit; Library health's Tags that disagree with the audio (the tag check's row, Use the audio's tags, Fix all sure ones) and Skip covers, karaoke and instrumentals; the Keep every rated copy switch beside Fix on the duplicates page; and the Heart a song, get its album switch from PR #91. One answer is explained by one entry, so this entry pins the combined files; it supersedes dashboard-files-2026-10-11 and replaces the proposed dashboard-files-update-banner, dashboard-files-issues-87-90 and dashboard-files-prs-91-92.",
-      "knownDiff": "Dashboard files, next update"
+      "knownDiff": "Dashboard files, next update",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "settings-keys-next-update",
@@ -4773,7 +4781,8 @@
         "^\\$\\.Soulseek\\.WebUrl:\\ \\ http://slskd\\.parity\\.test:5030\\ \\ !=\\ http://slskd\\.parity\\.test:5030$"
       ],
       "reason": "settings-keys-2026-10-13 with the next update's keys: every settings answer carries GeneratedPlaylists Years (false), MaxYearPlaylists (10), Artists (false) and ArtistCount (5); LibraryActions TagCheckPerHour (60), ReviewSweepAutoReplace (false), ReviewSweepAutoReplacePerDay (10) and KeepRatedCopies (false), and an eighth library action, Fix duplicates (off, no star); Soulseek SkipCoversAndInstrumentals (true); Subsonic DownloadAlbumOnSongStar (false); and no longer Imports SpotifyClientId and SpotifyRedirectUri (the Spotify account sign-in is gone; a value left in settings.json or the environment is ignored). config-sources lists 202 rows: LibraryActions:TagCheckPerHour and Soulseek:SkipCoversAndInstrumentals sit in their sections, so the rows after each move down one, the Spotify rows are gone, and the other new keys come last. With the new switches off nothing else answers differently. One answer is explained by one entry, so this entry pins the combined diff line by line; it supersedes settings-keys-2026-10-13 and replaces the proposed settings-keys-issues-87-90 and settings-keys-prs-91-92.",
-      "knownDiff": "Settings answers, next update"
+      "knownDiff": "Settings answers, next update",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     },
     {
       "id": "library-health-next-update",
@@ -4964,7 +4973,8 @@
         "^\\$\\[14\\]\\.Path:\\ /music/Aurora\\ Vale/Northern\\ Lights\\ \\(2020\\)/01\\ \\-\\ Café\\ del\\ Mar\\.mp3\\ !=\\ /music/Bjørn\\ Ålund/Ágætis\\ Prófun\\ \\(2018\\)/02\\ \\-\\ Ljós\\ í\\ myrkri\\.mp3$"
       ],
       "reason": "The Library health answers as the next update leaves them. The report carries tagCheck, the library tag check's state (whether it runs, how far it got, how many songs disagree with their audio and how many stray spaces it took off); the duplicates check carries keepRated, keepRatedLabel, keepRatedMeaning and keepRatedMore (the Keep every rated copy switch, off by default); a duplicates preview carries keepRated, skipped, skippedLine and per set skipped, kept, removed and each copy's marks, and every remove step carries into (the copy its stars, ratings and playlist places move to). The lines the reviewed health-lookups-uncapped and duplicates-keep-marks entries pin on these answers are kept: one answer is explained by one entry, so this entry pins the combined diff and supersedes them on these requests. Where the 26-song lookup is still going (lookup-slow) and the tag check's progress, the count is whatever it was when the answer was read.",
-      "knownDiff": "Library health answers, next update"
+      "knownDiff": "Library health answers, next update",
+      "reviewed": "Brandon 2026-10-14 (release go)"
     }
   ]
 }

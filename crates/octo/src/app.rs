@@ -1935,6 +1935,7 @@ impl Radio {
             last_fm: Some(integrations.last_fm.clone()),
             listen_brainz: Some(integrations.listen_brainz.clone()),
             last_fm_scrobbles: Some(integrations.last_fm_scrobbles.clone()),
+            recommendations: Some(recommendations.clone()),
         });
         let warmup = Arc::new(LastFmRadioWarmupService::new(streams.clone(), state.clone()));
         let refresh_worker = Arc::new(LastFmRadioRefreshWorker::new(

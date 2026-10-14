@@ -3618,6 +3618,97 @@
       "reason": "A library cover asked for with a size is fetched from Navidrome once at 1200 px, kept in <config>/cover-cache/ and every size is cut from that copy in Octo (Catmull-Rom, JPEG q85), so the bytes of a small size differ from Navidrome's own resize. Pinned to the exact picture.",
       "knownDiff": "Library covers kept and cut in Octo",
       "reviewed": "Brandon 2026-10-13 (release go)"
+    },
+    {
+      "id": "station-songs-extension",
+      "backlog": "base",
+      "requests": [
+        "16-lists/extensions-json",
+        "16-lists/extensions-xml",
+        "16-lists/extensions-discovery-on-json",
+        "16-lists/extensions-final-json",
+        "01-system/extensions-json",
+        "01-system/extensions-xml",
+        "01-system/extensions-json-noauth",
+        "01-system/extensions-xml-badpass",
+        "13-downloads/extensions-json",
+        "13-downloads/extensions-xml",
+        "20-library-edits/extensions-off-again"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 12 != 13$",
+        "^/subsonic-response: 12 children != 13$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,5 @@$",
+        "^   </openSubsonicExtensions>$",
+        "^\\+  <openSubsonicExtensions name=\"octoStations\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'.",
+      "knownDiff": "`octoStations` and getStationSongs"
+    },
+    {
+      "id": "station-songs-extension-radio-on",
+      "backlog": "base",
+      "requests": [
+        "15-radio/extensions-radio-on-json",
+        "15-radio/extensions-radio-on-xml",
+        "20-library-edits/extensions-on-json",
+        "20-library-edits/extensions-on-xml"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 13 != 14$",
+        "^/subsonic-response: 13 children != 14$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,5 @@$",
+        "^   </openSubsonicExtensions>$",
+        "^\\+  <openSubsonicExtensions name=\"octoStations\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'. These answers list one extension more than the others on both sides, so the counts are pinned in an entry of their own.",
+      "knownDiff": "`octoStations` and getStationSongs"
+    },
+    {
+      "id": "station-songs-extension-discovery-off",
+      "backlog": "base",
+      "requests": [
+        "16-lists/extensions-discovery-off-json"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.subsonic-response\\.openSubsonicExtensions: array length 11 != 12$",
+        "^/subsonic-response: 11 children != 12$",
+        "^--- A$",
+        "^\\+\\+\\+ B$",
+        "^@@ -1 \\+1 @@$",
+        "^[-+]\\{\"subsonic-response\":\\{\"status\":\"ok\",\"version\":\"1\\.16\\.1\",\"type\":\"navidrome\",\"serverVersion\":\"[^\"]*\",\"openSubsonic\":true,\"openSubsonicExtensions\":\\[\\{\"name\":\"transcodeOffset\",\"versions\":\\[1\\]",
+        "^@@ -\\d+,2 \\+\\d+,5 @@$",
+        "^   </openSubsonicExtensions>$",
+        "^\\+  <openSubsonicExtensions name=\"octoStations\">$",
+        "^\\+    <versions>1</versions>$",
+        "^\\+  </openSubsonicExtensions>$",
+        "^ </subsonic-response>$"
+      ],
+      "reason": "octoStations version 1 tells an app that getStationSongs answers a radio station's songs a page at a time and goes on past the station's snapshot with new songs of its kind, so a station is not a fixed list. Listed last, and only while radio is on and stations are served as playlists. An added extension only: apps that do not know it read the list as before. The other lines on these answers are other entries'. With octoTopSongs off both sides list one extension fewer, so the counts are pinned in an entry of their own.",
+      "knownDiff": "`octoStations` and getStationSongs"
     }
   ]
 }

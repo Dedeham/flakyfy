@@ -244,7 +244,7 @@ impl SongRadioService {
         } else {
             // For every other app this order is the radio, so outside songs are placed at random
             // at the radio's own mix: the share of its songs from outside the library, not the
-            // Discovery balance, which is Your Mix's (last_fm_radio_placement). Artists are
+            // Discovery balance, which is Your Radio's (last_fm_radio_placement). Artists are
             // spaced as spread spaces them, with no title gap.
             let outside = songs.iter().filter(|song| !song.is_local).count();
             let share = if songs.is_empty() {

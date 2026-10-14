@@ -858,6 +858,8 @@ fn a_mix_named_mix_reads_as_two_lines_whatever_its_kind() {
         ("Bad Bunny Radio", list_kinds::RADIO, "Bad Bunny", Some("Station")),
         ("Bad Bunny Radio", list_kinds::MIX, "Bad Bunny", Some("Station")),
         ("Your Mix", list_kinds::RADIO, "Your Mix", None),
+        ("Discovery Radio", list_kinds::RADIO, "Discovery", Some("Station")),
+        ("Your Radio", list_kinds::RADIO, "Your Radio", None),
         ("Top 50 Chart", list_kinds::MIX, "Top 50", Some("Chart")),
         // New and Trending stay bound to their kind: a mix named "Something New" keeps its name.
         ("Something New", list_kinds::MIX, "Something New", Some("Mix")),

@@ -1594,3 +1594,90 @@ fn responses_say_explicit_or_clean_for_outside_songs_and_albums_in_json_and_xml(
         Some("explicit")
     );
 }
+
+// ---- getStationSongs ------------------------------------------------------------------------
+
+#[test]
+fn the_stations_extension_is_listed_last_and_only_when_asked() {
+    let names = |stations: bool| -> Vec<String> {
+        let reply = builder()
+            .merge_open_subsonic_extensions_with("json", None, None, true, true, true, true, true, stations);
+        let answer: Value = serde_json::from_str(&reply.text()).unwrap();
+        answer["subsonic-response"]["openSubsonicExtensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|extension| extension["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let listed = names(true);
+    assert_eq!(listed.last().map(String::as_str), Some(STATIONS_EXTENSION));
+    assert_eq!(STATIONS_EXTENSION, "octoStations");
+    assert!(!names(false).iter().any(|name| name == STATIONS_EXTENSION));
+    // The short form never lists it.
+    let short = builder()
+        .merge_open_subsonic_extensions("json", None, None, true, true)
+        .text()
+        .into_owned();
+    assert!(!short.contains("octoStations"), "{short}");
+}
+
+#[test]
+fn station_songs_carry_the_station_and_its_entries_in_both_formats() {
+    let station = LastFmRadioStation {
+        id: "or12345678901234567890".into(),
+        name: "Your Radio".into(),
+        tracks: vec![LastFmRadioTrack::default()],
+        ..Default::default()
+    };
+    let songs = [Song {
+        id: "local-1".into(),
+        title: "Title".into(),
+        artist: "Artist".into(),
+        album: "Album".into(),
+        duration: Some(200),
+        is_local: true,
+        ..Default::default()
+    }];
+    let json: Value = serde_json::from_str(
+        &builder()
+            .create_station_songs_response("json", &station, &songs)
+            .text(),
+    )
+    .unwrap();
+    let answer = &json["subsonic-response"];
+    assert_eq!(answer["status"], "ok");
+    assert_eq!(answer["stationSongs"]["id"], "or12345678901234567890");
+    assert_eq!(answer["stationSongs"]["name"], "Your Radio");
+    // Shaped as any song row; `created` is the clock's now, so it is left out of the comparison.
+    let mut entry = answer["stationSongs"]["entry"][0].clone();
+    let mut row = Value::Object(builder().convert_song_to_json(&songs[0]));
+    for value in [&mut entry, &mut row] {
+        value.as_object_mut().unwrap().remove("created");
+    }
+    assert_eq!(entry, row);
+    let empty: Value = serde_json::from_str(
+        &builder()
+            .create_station_songs_response("json", &station, &[])
+            .text(),
+    )
+    .unwrap();
+    assert_eq!(empty["subsonic-response"]["stationSongs"]["entry"], json!([]));
+
+    let xml = builder()
+        .create_station_songs_response("xml", &station, &songs)
+        .text()
+        .into_owned();
+    let root = XElement::parse(&xml).unwrap();
+    let element = root
+        .elements()
+        .find(|e| e.name == "stationSongs")
+        .expect("stationSongs");
+    assert_eq!(element.attribute("id"), Some("or12345678901234567890"));
+    assert_eq!(element.attribute("name"), Some("Your Radio"));
+    let entries: Vec<&XElement> = element.elements().collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "entry");
+    assert_eq!(entries[0].attribute("id"), Some("local-1"));
+    assert_eq!(entries[0].attribute("title"), Some("Title"));
+}

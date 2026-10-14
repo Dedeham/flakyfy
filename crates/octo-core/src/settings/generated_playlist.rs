@@ -42,7 +42,7 @@ pub struct GeneratedPlaylistSettings {
     /// Environment variable: MIX_REFRESH_HOURS
     pub refresh_hours: i32,
 
-    /// Percent of each mix, and of Discovery Mix, kept for tracks new to the listener: never
+    /// Percent of each mix, and of Discovery Radio, kept for tracks new to the listener: never
     /// played, or added in the last NewDays. 0 draws from everything alike, so the default changes
     /// nothing. Environment variable: MIX_NEW_SHARE
     pub new_share: i32,

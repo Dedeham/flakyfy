@@ -84,6 +84,7 @@ pub const OWN_EXTENSIONS: &[(&str, &[i32])] = &[
     (RADIO_SOURCES_EXTENSION, &[RADIO_SOURCES_EXTENSION_VERSION]),
     (LISTS_EXTENSION, &[LISTS_EXTENSION_VERSION]),
     (TRANSITIONS_EXTENSION, &[TRANSITIONS_EXTENSION_VERSION]),
+    (STATIONS_EXTENSION, &[STATIONS_EXTENSION_VERSION]),
 ];
 
 /// The OpenSubsonic extension a client checks for before it offers Spotify import (getImports,
@@ -105,6 +106,17 @@ pub const LISTS_EXTENSION_VERSION: i32 = 1;
 /// song), made by octo-sonic. Listed while Sounds alike runs, since the same reading makes both.
 pub const TRANSITIONS_EXTENSION: &str = "octoTransitions";
 pub const TRANSITIONS_EXTENSION_VERSION: i32 = 1;
+
+/// getStationSongs: a radio station is not a fixed list. It answers `stationSongs` with the
+/// station's `id`, `name` and `entry` songs (shaped as getPlaylist lists a station's), `count` of
+/// them (1 to 100, 50 when not sent), none of the ids sent as `after` (repeated, the songs already
+/// queued, oldest first; the last 200 are read). The station's own songs come first, then new
+/// songs of its kind, without end. A song the station served the caller in the last 24 hours (here
+/// or on its stream, the newest 1,000) is not served again unless nothing new is left. Error 70
+/// for a station that is not the caller's or not there any more. Listed while radio stations are
+/// served as playlists.
+pub const STATIONS_EXTENSION: &str = "octoStations";
+pub const STATIONS_EXTENSION_VERSION: i32 = 1;
 
 /// Fields only a file in the library can truthfully have.
 pub const FILE_ONLY_FIELDS: &[&str] = &[
@@ -341,6 +353,41 @@ impl SubsonicResponseBuilder {
             playlist.push(self.convert_song_to_xml(song, Some(SUBSONIC_NAMESPACE)));
         }
         SubsonicReply::xml(&envelope("ok").child(playlist))
+    }
+
+    /// getStationSongs's answer: the station's id and name, and its songs as getPlaylist lists a
+    /// station's entries.
+    pub fn create_station_songs_response(
+        &self,
+        format: &str,
+        station: &LastFmRadioStation,
+        songs: &[Song],
+    ) -> SubsonicReply {
+        let mut fields = Fields::new();
+        fields.insert("id".into(), station.id.clone().into());
+        fields.insert("name".into(), station.name.clone().into());
+        if format.eq_ignore_ascii_case("json") {
+            fields.insert(
+                "entry".into(),
+                Value::Array(
+                    songs
+                        .iter()
+                        .map(|song| Value::Object(self.convert_song_to_json(song)))
+                        .collect(),
+                ),
+            );
+            return self.create_json_response(json!({
+                "status": "ok", "version": SUBSONIC_VERSION, "stationSongs": fields,
+            }));
+        }
+        let mut element = subsonic_element("stationSongs");
+        attributes(&mut element, &fields);
+        for song in songs {
+            let mut entry = self.convert_song_to_xml(song, Some(SUBSONIC_NAMESPACE));
+            entry.name = "entry".into();
+            element.push(entry);
+        }
+        SubsonicReply::xml(&envelope("ok").child(element))
     }
 
     /// A playlist whose entries are Navidrome's own songs, passed through as Navidrome
@@ -589,7 +636,7 @@ impl SubsonicResponseBuilder {
     /// Navidrome's getOpenSubsonicExtensions with Octo's own added, in the format asked for.
     /// A failed answer passes through untouched; with no answer at all, Octo lists its own.
     ///
-    /// octoTopSongs, octoRadioSources and octoTransitions are left out;
+    /// octoTopSongs, octoRadioSources, octoTransitions and octoStations are left out;
     /// [`Self::merge_open_subsonic_extensions_with`] lists them.
     pub fn merge_open_subsonic_extensions(
         &self,
@@ -608,13 +655,15 @@ impl SubsonicResponseBuilder {
             false,
             false,
             false,
+            false,
         )
     }
 
     /// [`merge_open_subsonic_extensions`](Self::merge_open_subsonic_extensions) with octoTopSongs
     /// listed while `top_songs` (search discovery) is on, its lists being outside songs that
-    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`), and
-    /// octoTransitions while octo-sonic makes profiles (`transitions`).
+    /// discovery being off hides, octoRadioSources while radio can answer (`radio_sources`),
+    /// octoTransitions while octo-sonic makes profiles (`transitions`), and octoStations while
+    /// radio stations are served as playlists (`stations`).
     pub fn merge_open_subsonic_extensions_with(
         &self,
         format: &str,
@@ -625,6 +674,7 @@ impl SubsonicResponseBuilder {
         top_songs: bool,
         radio_sources: bool,
         transitions: bool,
+        stations: bool,
     ) -> SubsonicReply {
         let json = format.eq_ignore_ascii_case("json");
         // octoLyrics is only listed while its lookups can run, so a client never offers a
@@ -639,6 +689,7 @@ impl SubsonicResponseBuilder {
             .filter(|(name, _)| top_songs || *name != TOP_SONGS_EXTENSION)
             .filter(|(name, _)| radio_sources || *name != RADIO_SOURCES_EXTENSION)
             .filter(|(name, _)| transitions || *name != TRANSITIONS_EXTENSION)
+            .filter(|(name, _)| stations || *name != STATIONS_EXTENSION)
             .collect();
 
         if let Some(upstream) = upstream.filter(|u| !u.is_empty()) {

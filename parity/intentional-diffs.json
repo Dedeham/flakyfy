@@ -5026,6 +5026,72 @@
       ],
       "reason": "A re-pin of the dashboard files: admin.js says how many songs the library tag check took the album artist's other names off by itself (\"Album artist's other names taken off N songs.\", from the tag check's new namesFixed count), beside its stray spaces count. index.html and admin.css are unchanged. One answer is explained by one entry, so this entry pins the combined files and supersedes dashboard-files-next-update.",
       "knownDiff": "Dashboard files, album artist names"
+    },
+    {
+      "id": "dashboard-files-version-check",
+      "backlog": "H",
+      "requests": [
+        "21-static/static-index",
+        "21-static/static-index-head",
+        "21-static/static-index-if-none-match",
+        "21-static/static-index-if-none-match-stale",
+        "21-static/static-js",
+        "21-static/static-js-head",
+        "21-static/static-js-if-none-match",
+        "21-static/static-css",
+        "21-static/static-css-head",
+        "21-static/static-css-if-none-match",
+        "10-static-cors/index-html",
+        "10-static-cors/index-html-head",
+        "10-static-cors/index-html-if-none-match",
+        "10-static-cors/index-html-if-none-match-stale",
+        "10-static-cors/index-html-range",
+        "10-static-cors/index-html-range-unsatisfiable",
+        "10-static-cors/admin-css",
+        "10-static-cors/admin-uppercase-path",
+        "10-static-cors/static-with-origin",
+        "11-signin/alt-admin-index"
+      ],
+      "aspects": [
+        "body",
+        "header:etag",
+        "header:content-range"
+      ],
+      "lines": [
+        "^A:\\ \\['\"rCSuOvK5PJRJeIXi5VhunxhgHCOzATMLMrO2r2noo3M=\"'\\]$",
+        "^B:\\ \\['\"qK\\+OtB8FWQgpS7Nnt10C5A8TjBmEuO9FumqibD5tp7s=\"'\\]$",
+        "^A:\\ ac24ae3af2b93c94497885e2e5586e9f18601c23b301330b32b3b6af69e8a373\\ \\(192988\\ bytes,\\ text\\)$",
+        "^B:\\ a8af8eb41f055908294bb367b75d02e40f138c1984b8ef45ba6aa26c3e6da7bb\\ \\(216955\\ bytes,\\ text\\)$",
+        "^A:\\ \\['bytes\\ 0\\-9/192988'\\]$",
+        "^B:\\ \\['bytes\\ 0\\-9/216955'\\]$",
+        "^A:\\ \\['bytes\\ \\*/192988'\\]$",
+        "^B:\\ \\['bytes\\ \\*/216955'\\]$",
+        "^A:\\ \\['\"uUHWQAFAfJeaJOdc\\+j1TMibZxMvG3IJdU9DGjIo1qRU=\"'\\]$",
+        "^B:\\ \\['\"QMPCqzkhENgW50Ubwjk3EQxNbPTAKDiHL65/SdSmlVs=\"'\\]$",
+        "^A:\\ b941d64001407c979a24e75cfa3d533226d9c4cbc6dc825d53d0c68c8a35a915\\ \\(115536\\ bytes,\\ text\\)$",
+        "^B:\\ 40c3c2ab392110d816e7451bc23937110c4d6cf4c02838872fae7f49d4a6955b\\ \\(131388\\ bytes,\\ text\\)$",
+        "^A:\\ \\['\"dT1y6FP1OgCE/Znshny/pg/IgWFLFgkIE7pG8kr31qs=\"'\\]$",
+        "^B:\\ \\['\"8INXP2xG2s3g/03M68PQzd4tx8Z\\+YIgZi66XAef6uZg=\"'\\]$",
+        "^A:\\ 753d72e853f53a0084fd99ec867cbfa60fc881614b16090813ba46f24af7d6ab\\ \\(370485\\ bytes,\\ text\\)$",
+        "^B:\\ f083573f6c46dacde0ff4dccebc3d0cdde2dc7c67e6088198bae9701e7fab998\\ \\(459943\\ bytes,\\ text\\)$"
+      ],
+      "reason": "A re-pin of the dashboard files: Library health gains the version check's section (Not the version it's tagged as: filters with counts, Select all, Retag as what it is, Replace with the right version, Replace cover, Keep, Check now, Check one song now, and the imported songs that point at another version with Match the import again and Put back), admin.css its filter, picked-songs bar and search styles, and index.html and admin.js the ninth library action, Check version. One answer is explained by one entry, so this entry pins the combined files and supersedes dashboard-files-album-artist-names.",
+      "knownDiff": "Dashboard files, version check"
+    },
+    {
+      "id": "settings-raw-config-roundtrip-check-version",
+      "backlog": "I",
+      "requests": [
+        "14-settings-media/raw-config-put-roundtrip"
+      ],
+      "aspects": [
+        "body"
+      ],
+      "lines": [
+        "^\\$\\.bytes:\\ 7187\\ !=\\ 8395$"
+      ],
+      "reason": "A Raw config save writes back what Raw config read, which now lists the ninth library action, Check version, beside every key the earlier entries pin, so the saved file is 8395 bytes. One answer is explained by one entry, so this entry supersedes the size line of the settings entries for this answer.",
+      "knownDiff": "Raw config round trip, Check version"
     }
   ]
 }

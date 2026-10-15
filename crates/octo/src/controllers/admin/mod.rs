@@ -21,6 +21,7 @@ pub mod downloads;
 pub mod explicit_backfill;
 pub mod genre;
 pub mod health;
+pub mod health_versions;
 pub mod imports;
 pub mod json_body;
 pub mod lastfm;

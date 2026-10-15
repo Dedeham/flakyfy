@@ -628,6 +628,7 @@ fn library_identity_sweep(
     snapshot: &Arc<LibrarySnapshot>,
     edits: &Arc<LibraryEditService>,
     scope: &ScopeResolver,
+    versions: Option<Arc<dyn crate::services::library::version_check::VersionSources>>,
 ) -> Arc<LibraryIdentitySweep> {
     Arc::new(LibraryIdentitySweep::new(
         LibraryIdentitySweepParts {
@@ -642,6 +643,7 @@ fn library_identity_sweep(
             edits: Some(Arc::new(EditServiceSweepEdits(Arc::clone(edits)))),
             releases: Some(Arc::new(MusicBrainzReleaseTracks(Arc::clone(music_brainz)))),
             recordings: Some(Arc::new(MusicBrainzRecordingFacts(Arc::clone(music_brainz)))),
+            versions,
             settings: Arc::clone(settings),
         },
         Clock::system(),
@@ -1767,6 +1769,7 @@ impl Imports {
         navidrome: &NavidromeServices,
         acquisition: &Acquisition,
         soulseek_link: Arc<dyn ISoulseekLink>,
+        music_brainz: Option<Arc<MusicBrainzClient>>,
     ) -> Imports {
         use crate::services::imports::{
             ImportMatcher, ImportParts, ImportPlaylists, ImportService, ImportStore, NavidromePlaylists,
@@ -1790,10 +1793,16 @@ impl Imports {
             store: Arc::new(ImportStore::new(file("imports.json"))),
             queue,
             trickle: trickle.clone(),
-            matcher: Arc::new(
-                ImportMatcher::new(navidrome.navidrome_playlist_api.clone())
-                    .with_library_scope(navidrome.library_scope.clone()),
-            ),
+            matcher: Arc::new({
+                let matcher = ImportMatcher::new(navidrome.navidrome_playlist_api.clone())
+                    .with_library_scope(navidrome.library_scope.clone());
+                match music_brainz {
+                    Some(music_brainz) => matcher.with_isrc_recordings(
+                        crate::services::imports::import_matcher::isrc_recordings_from(music_brainz),
+                    ),
+                    None => matcher,
+                }
+            }),
             playlists: ImportPlaylists::new(Arc::new(NavidromePlaylists {
                 api: navidrome.navidrome_playlist_api.clone(),
                 identity: navidrome.navidrome_identity.clone(),
@@ -2881,7 +2890,24 @@ impl AppState {
             &library_snapshot,
             &library_edits,
             &family_navidrome.2,
+            Some(Arc::new(
+                crate::services::library::version_check::OnlineVersionSources {
+                    http: reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(15))
+                        .build()
+                        .unwrap_or_default(),
+                    music_brainz: clients.music_brainz.clone(),
+                    deezer: Some(clients.deezer_metadata.clone()),
+                    acoust_id: clients.acoust_id.clone(),
+                    fingerprinter: Arc::new(AudioFingerprinter::new()),
+                    settings: settings.clone(),
+                },
+            )),
         );
+        library_actions
+            .executor
+            .use_version_checker(library_identity_sweep.clone()
+                as Arc<dyn crate::services::library::version_check::VersionChecker>);
         let identity_sweep = library_identity_sweep.clone();
         workers.register("LibraryIdentitySweep", move |stopping| {
             identity_sweep.clone().run(stopping)
@@ -2893,6 +2919,7 @@ impl AppState {
             &navidrome,
             &acquisition,
             soulseek.link.clone(),
+            Some(clients.music_brainz.clone()),
         );
         imports.register_workers(&workers);
         let family_requests = FamilyRequests::build(
@@ -3290,7 +3317,12 @@ impl AppState {
             &library_snapshot,
             &library_edits,
             &family_navidrome.2,
+            None,
         );
+        library_actions
+            .executor
+            .use_version_checker(library_identity_sweep.clone()
+                as Arc<dyn crate::services::library::version_check::VersionChecker>);
         // The import's files stay in memory; no worker is run.
         let imports = Imports::build(
             &settings,
@@ -3299,6 +3331,7 @@ impl AppState {
             &navidrome,
             &acquisition,
             soulseek.link.clone(),
+            None,
         );
         let family_requests = FamilyRequests::build(
             &settings,

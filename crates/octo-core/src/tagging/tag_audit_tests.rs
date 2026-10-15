@@ -62,6 +62,7 @@ fn parade() -> FileTags {
         release_id: Some("r-promo".into()),
         release_group_id: Some("g-parade".into()),
         other_album_artists: None,
+        other_names: Vec::new(),
     }
 }
 
@@ -246,6 +247,7 @@ fn a_recording_id_the_fingerprint_does_not_name_is_unknown_not_wrong() {
         release_id: Some("r-parade".into()),
         release_group_id: Some("g-parade".into()),
         other_album_artists: None,
+        other_names: Vec::new(),
     };
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
     studio.on_release = Some(None);
@@ -270,6 +272,7 @@ fn a_recording_id_the_music_database_says_is_another_take_is_replaced_and_the_al
         release_id: Some("r-parade".into()),
         release_group_id: Some("g-parade".into()),
         other_album_artists: None,
+        other_names: Vec::new(),
     };
     let mut studio = heard("rec-studio", RecordingKind::Studio, true, true);
     studio.written = Some(unlisted(RecordingKind::Live, 305_000));
@@ -299,6 +302,7 @@ fn a_renamed_album_takes_the_other_releases_ids_off() {
         release_id: Some("r-instrumentals".into()),
         release_group_id: Some("g-instrumentals".into()),
         other_album_artists: None,
+        other_names: Vec::new(),
     };
     let found = audit(
         &tags,
@@ -504,4 +508,81 @@ fn another_album_artist_under_another_name_waits_for_a_person() {
         AuditRule::parse("albumArtistNames"),
         Some(AuditRule::AlbumArtistNames)
     );
+}
+
+fn track_names(copies: bool) -> OtherNames {
+    OtherNames {
+        field: "track number".into(),
+        own: "2".into(),
+        names: vec!["TRACK".into()],
+        values: vec![if copies { "2" } else { "3" }.into()],
+        copies,
+    }
+}
+
+#[test]
+fn a_track_number_written_again_under_another_name_is_put_right_without_asking() {
+    let tags = FileTags {
+        title: "Don't Start Now".into(),
+        album: "Future Nostalgia".into(),
+        other_names: vec![track_names(true)],
+        ..Default::default()
+    };
+    let alone = audit(&tags, None);
+    assert_eq!(rules(&alone), [AuditRule::OtherNames]);
+    assert_eq!(
+        alone.findings[0].words,
+        "The track number '2' is written again under TRACK, which the library server reads as the track number too."
+    );
+    assert_eq!(change(&alone, "otherNames"), Some(None));
+    assert_eq!(alone.automatic_changes(&tags), alone.changes);
+    assert_eq!(other_names_alone(&tags).changes, alone.changes);
+    assert!(other_names_alone(&tags).sure);
+}
+
+#[test]
+fn another_track_number_under_another_name_waits_for_a_person() {
+    let tags = FileTags {
+        title: "Don't Start Now".into(),
+        album: "Future Nostalgia".into(),
+        other_names: vec![
+            track_names(false),
+            OtherNames {
+                field: "disc number".into(),
+                own: "1".into(),
+                names: vec!["DISC".into()],
+                values: vec!["1".into()],
+                copies: true,
+            },
+        ],
+        ..Default::default()
+    };
+    let found = audit(&tags, Some(&heard("rec", RecordingKind::Studio, true, true)));
+    assert_eq!(rules(&found), [AuditRule::OtherNames, AuditRule::OtherNames]);
+    assert_eq!(
+        found.findings[0].words,
+        "Beside the track number '2', TRACK says '3'. The library server reads them as the track number too and can show that instead. Taking them off keeps '2'."
+    );
+    assert_eq!(change(&found, "otherNames"), Some(None));
+    // One field that says something else holds the copies back with it.
+    assert!(found.automatic_changes(&tags).is_empty());
+    assert!(!found.sure, "never in a fix of the sure ones");
+    assert!(!other_names_alone(&tags).sure);
+    assert_eq!(AuditRule::parse("otherNames"), Some(AuditRule::OtherNames));
+}
+
+#[test]
+fn the_album_artist_and_other_fields_held_alone_go_together() {
+    let tags = FileTags {
+        other_album_artists: Some(other_names(true)),
+        other_names: vec![track_names(true)],
+        ..Default::default()
+    };
+    let alone = other_names_alone(&tags);
+    assert_eq!(
+        rules(&alone),
+        [AuditRule::AlbumArtistNames, AuditRule::OtherNames]
+    );
+    assert!(alone.sure);
+    assert_eq!(alone.automatic_changes(&tags).len(), 2);
 }

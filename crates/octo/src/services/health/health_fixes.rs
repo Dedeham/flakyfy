@@ -689,6 +689,7 @@ pub fn tag_name(tag: &str) -> String {
         fields_of::RELEASE_ID => "Release id".to_string(),
         fields_of::RELEASE_GROUP_ID => "Release group id".to_string(),
         fields_of::ALBUM_ARTIST_NAMES => "Album artist's other names".to_string(),
+        fields_of::OTHER_NAMES => "Tags' other names".to_string(),
         _ => upper_first(tag),
     }
 }

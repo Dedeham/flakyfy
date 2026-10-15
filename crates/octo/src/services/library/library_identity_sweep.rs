@@ -23,10 +23,11 @@ use octo_core::json::datetime;
 use octo_core::library::generated_playlist_service::dotnet_ticks;
 use octo_core::settings::SettingsStore;
 use octo_core::tagging::tag_audit::{
-    self, AuditRule, FileTags, HeardAs, NamedRecording, OtherAlbumArtists, TagAudit, TakeCopy,
+    self, AuditRule, FileTags, HeardAs, NamedRecording, OtherAlbumArtists, OtherNames, TagAudit, TakeCopy,
 };
 use octo_media::tags::TagFile;
 use octo_media::tags::credit_names::StrayAlbumArtists;
+use octo_media::tags::field_names;
 use octo_media::tags::tag_writer_extras::{self as extras, TagFields};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -775,13 +776,14 @@ impl LibraryIdentitySweep {
         }
     }
 
-    /// How many songs checked before the album artist's other names were looked for are read
-    /// again for them in one tick.
+    /// How many songs checked before other names were looked for are read again for them in one
+    /// tick.
     const NAMES_BATCH: usize = 50;
 
-    /// Reads songs checked before the album artist's other names were looked for again, for them
-    /// alone: copies of the album artist are taken off as stray spaces are, the rest join the
-    /// song's findings. A file changed since is left to its own full check.
+    /// Reads songs checked before other names of the album artist, title, album, track and disc
+    /// numbers and ids were looked for again, for them alone: copies of a field's own value are
+    /// taken off as stray spaces are, the rest join the song's findings. A file changed since is
+    /// left to its own full check.
     async fn read_names_again(&self, generation: i32) {
         let pending: Vec<(String, String, String)> = self.store.read(|s| {
             s.songs
@@ -800,12 +802,7 @@ impl LibraryIdentitySweep {
                 .map(|(id, path, stamp)| {
                     let same = !path.is_empty() && stamp_of(&path).is_some_and(|now| now == stamp);
                     let other = same
-                        .then(|| {
-                            TagFile::open(&path)
-                                .ok()
-                                .as_ref()
-                                .and_then(other_album_artists_of)
-                        })
+                        .then(|| TagFile::open(&path).ok().as_ref().and_then(other_names_of))
                         .flatten();
                     (id, stamp, other)
                 })
@@ -814,7 +811,7 @@ impl LibraryIdentitySweep {
         .await
         .unwrap_or_default();
         for (id, stamp, other) in read {
-            let Some(other) = other else {
+            let Some((other_album_artists, other_names)) = other else {
                 self.record(generation, |s| {
                     if let Some(kept) = s.songs.get_mut(&id) {
                         kept.names_checked = true;
@@ -828,30 +825,36 @@ impl LibraryIdentitySweep {
             let tags = FileTags {
                 title: kept.title.trim().to_string(),
                 album: kept.album.trim().to_string(),
-                other_album_artists: Some(other.clone()),
+                other_album_artists,
+                other_names,
                 ..FileTags::default()
             };
-            let found = tag_audit::album_artist_names(&other);
+            let found = tag_audit::other_names_alone(&tags);
             let fixed = self.put_right(&id, &tags, &found, Some(stamp)).await;
-            let written = fixed.as_ref().map(|_| stamp_of(&kept.path).unwrap_or_default());
+            // What was not put right by itself, the names that say something else, waits.
+            let (left, written) = match fixed {
+                Some((now, _)) => (
+                    tag_audit::other_names_alone(&now),
+                    Some(stamp_of(&kept.path).unwrap_or_default()),
+                ),
+                None => (found, None),
+            };
             self.record(generation, |s| {
                 let Some(kept) = s.songs.get_mut(&id) else {
                     return;
                 };
                 kept.names_checked = true;
-                match written {
-                    Some(stamp) => {
-                        kept.stamp = stamp;
-                        s.names_fixed += 1;
-                    }
-                    None => {
-                        kept.findings.extend(found.findings.iter().map(|f| KeptFinding {
-                            rule: f.rule.name().to_string(),
-                            words: f.words.clone(),
-                        }));
-                        kept.changes.extend(found.changes.clone());
-                        kept.sure &= found.sure;
-                    }
+                if let Some(stamp) = written {
+                    kept.stamp = stamp;
+                    s.names_fixed += 1;
+                }
+                kept.findings.extend(left.findings.iter().map(|f| KeptFinding {
+                    rule: f.rule.name().to_string(),
+                    words: f.words.clone(),
+                }));
+                kept.changes.extend(left.changes.clone());
+                if left.found() {
+                    kept.sure &= left.sure;
                 }
             });
         }
@@ -1377,8 +1380,8 @@ impl LibraryIdentitySweep {
 
     /// Puts right what needs no one to decide, through the journaled edit path, when library
     /// actions may change files for the library keeper: stray spaces, and other names of the
-    /// album artist that only name it again. The file's tags afterwards and what was put right,
-    /// or None when nothing was written.
+    /// album artist or another field that only repeat its value. The file's tags afterwards and
+    /// what was put right, or None when nothing was written.
     async fn put_right(
         &self,
         id: &str,
@@ -1425,6 +1428,7 @@ impl LibraryIdentitySweep {
                 tag_audit::audit_fields::TITLE => written.title = value,
                 tag_audit::audit_fields::ALBUM => written.album = value,
                 tag_audit::audit_fields::ALBUM_ARTIST_NAMES => written.other_album_artists = None,
+                tag_audit::audit_fields::OTHER_NAMES => written.other_names.clear(),
                 _ => {}
             }
         }
@@ -1547,10 +1551,16 @@ struct Fixed {
 
 impl Fixed {
     fn of(changes: &IndexMap<String, Option<String>>) -> Fixed {
-        let names = changes.contains_key(tag_audit::audit_fields::ALBUM_ARTIST_NAMES);
+        let names = [
+            tag_audit::audit_fields::ALBUM_ARTIST_NAMES,
+            tag_audit::audit_fields::OTHER_NAMES,
+        ]
+        .into_iter()
+        .filter(|field| changes.contains_key(*field))
+        .count();
         Fixed {
-            spaces: changes.len() > usize::from(names),
-            names,
+            spaces: changes.len() > names,
+            names: names > 0,
         }
     }
 
@@ -1560,8 +1570,8 @@ impl Fixed {
 
     fn words(self) -> &'static str {
         match (self.spaces, self.names) {
-            (true, true) => "the stray spaces and the album artist's other names",
-            (false, true) => "the album artist's other names",
+            (true, true) => "the stray spaces and the tags' other names",
+            (false, true) => "the tags' other names",
             _ => "the stray spaces",
         }
     }
@@ -1653,6 +1663,7 @@ fn read_tags(path: &str) -> Option<(String, FileTags)> {
             release_id: extras::read_text(&file, TagFields::ALBUM_ID),
             release_group_id: extras::read_text(&file, TagFields::RELEASE_GROUP_ID),
             other_album_artists: other_album_artists_of(&file),
+            other_names: other_fields_of(&file),
         },
     ))
 }
@@ -1665,6 +1676,41 @@ fn other_album_artists_of(file: &TagFile) -> Option<OtherAlbumArtists> {
         values: stray.values(),
         copies: stray.copies,
     })
+}
+
+/// The title, album, track and disc numbers and ids written again under other names the library
+/// server reads beside them.
+fn other_fields_of(file: &TagFile) -> Vec<OtherNames> {
+    field_names::strays(file)
+        .into_iter()
+        .map(|stray| {
+            let mut names: Vec<String> = Vec::new();
+            let mut values: Vec<String> = Vec::new();
+            for field in &stray.fields {
+                names.push(field.name.clone());
+                for value in &field.values {
+                    if !values.contains(value) {
+                        values.push(value.clone());
+                    }
+                }
+            }
+            OtherNames {
+                field: stray.words.to_string(),
+                own: stray.own,
+                names,
+                values,
+                copies: stray.copies,
+            }
+        })
+        .collect()
+}
+
+/// Every other name a file holds, of the album artist and of the other fields; None when it
+/// holds none.
+fn other_names_of(file: &TagFile) -> Option<(Option<OtherAlbumArtists>, Vec<OtherNames>)> {
+    let album_artists = other_album_artists_of(file);
+    let fields = other_fields_of(file);
+    (album_artists.is_some() || !fields.is_empty()).then_some((album_artists, fields))
 }
 
 /// The file's size and last write, or None when it is not there.

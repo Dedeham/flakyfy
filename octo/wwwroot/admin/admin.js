@@ -2784,7 +2784,7 @@ function tagCheckWords(t, here = false) {
   const parts = [t.line];
   if (t.found && !here) parts.push(`${healthPlural(t.found, 'song')} to look at in Library health${t.sure ? `, ${t.sure.toLocaleString()} sure` : ''}.`);
   if (t.spacesFixed) parts.push(`Stray spaces taken off ${healthPlural(t.spacesFixed, 'song')}.`);
-  if (t.namesFixed) parts.push(`Album artist's other names taken off ${healthPlural(t.namesFixed, 'song')}.`);
+  if (t.namesFixed) parts.push(`Tags under other names taken off ${healthPlural(t.namesFixed, 'song')}.`);
   if (t.reason && t.state !== 'Done' && !t.paused) parts.push(t.reason);
   return parts.join(' ');
 }

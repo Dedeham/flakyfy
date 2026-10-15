@@ -1153,3 +1153,92 @@ async fn songs_checked_before_the_version_check_are_checked_again() {
             .read(|s| s.songs.values().all(|song| song.version_checked))
     );
 }
+
+/// The song is on track `own`, written again under the other names given.
+fn number_track(path: &Path, own: u32, others: &[(&str, &str)]) {
+    let mut file = TagFile::open(path).expect("opens");
+    file.set_track(own);
+    for (name, value) in others {
+        extras::set_multi_value(&mut file, name, &[value.to_string()]);
+    }
+    file.save().expect("saved");
+}
+
+fn track_keys(path: &Path) -> Vec<(String, Vec<String>)> {
+    let view = KeptIdentityTags::navidrome_view(&TagFile::open(path).expect("opens"));
+    view.into_iter()
+        .filter(|(key, _)| key.starts_with("track") || key == "trck")
+        .collect()
+}
+
+#[tokio::test]
+async fn a_track_number_written_again_under_another_name_is_taken_off_through_the_journal() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "Don't Start Now", "Future Nostalgia", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    number_track(&path, 2, &[("TRACK", "02"), ("TRACKNUMBER", "2/11")]);
+    let sweep = setup.sweep(FakeVerifier::answering(Vec::new()), actions(360));
+    sweep.tick().await;
+
+    let asked = setup.edits.asked.lock().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].2.get("otherNames"), Some(&None));
+    assert!(track_keys(&path).is_empty(), "{:?}", track_keys(&path));
+    assert_eq!(TagFile::open(&path).expect("opens").track(), 2);
+    assert!(sweep.findings().is_empty());
+    assert_eq!(sweep.status().names_fixed, 1);
+    assert_eq!(sweep.tick().await, LibraryIdentitySweep::IDLE_CHECK);
+}
+
+#[tokio::test]
+async fn another_track_number_under_another_name_waits_for_a_person() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "Don't Start Now", "Future Nostalgia", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    number_track(&path, 2, &[("TRACK", "3")]);
+    let sweep = setup.sweep(FakeVerifier::answering(Vec::new()), actions(360));
+    sweep.tick().await;
+
+    assert!(setup.edits.asked.lock().is_empty());
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(rules(&found[0]), [AuditRule::OtherNames]);
+    assert!(!found[0].sure);
+    assert_eq!(found[0].changes.get("otherNames"), Some(&None));
+
+    assert!(library_tag_edits::write(&path, &found[0].changes).changed);
+    assert!(track_keys(&path).is_empty());
+    assert_eq!(TagFile::open(&path).expect("opens").track(), 2);
+}
+
+#[tokio::test]
+async fn a_song_checked_before_loses_its_copies_and_lists_a_track_number_that_says_another() {
+    let setup = Setup::new();
+    setup.song("a.mp3", "industry plant", "industry plant", &[]);
+    let path = setup.dir.path().join("a.mp3");
+    spell_album_artist(&path, "miki", &[("ALBUM ARTIST", "miki")]);
+    number_track(&path, 2, &[("TRACK", "3")]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    checked_before_names(&sweep, &setup, "a.mp3", "industry plant");
+
+    sweep.tick().await;
+    assert!(verifier.asked().is_empty());
+    let asked = setup.edits.asked.lock().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].2.get("albumArtistNames"), Some(&None));
+    assert!(!asked[0].2.contains_key("otherNames"));
+    assert_eq!(
+        album_artist_keys(&path),
+        [("albumartist".to_string(), vec!["miki".to_string()])]
+    );
+    // The track number that says another waits, from the file as written.
+    let found = sweep.findings();
+    assert_eq!(found.len(), 1);
+    assert_eq!(rules(&found[0]), [AuditRule::OtherNames]);
+    assert_eq!(found[0].changes.get("otherNames"), Some(&None));
+    assert_eq!(sweep.status().names_fixed, 1);
+    ticks(&sweep, 2).await;
+    assert!(verifier.asked().is_empty());
+    assert_eq!(setup.edits.asked.lock().len(), 1);
+}

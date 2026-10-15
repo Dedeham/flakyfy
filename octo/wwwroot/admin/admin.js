@@ -6066,9 +6066,19 @@ document.getElementById('lyrics-choices-list')?.addEventListener('click', async 
 // ────────────────────────────────────────────────────────────────
 // Better quality: the library's lossy songs, found again in higher quality
 // ────────────────────────────────────────────────────────────────
-const lossy = { rows: [], picked: new Set(), shown: 200, timer: null, view: null, open: 0 };
+const lossy = {
+  rows: [], picked: new Set(), shown: 200, timer: null, view: null, open: 0,
+  // What one press may send and how many songs may wait at once; the server's answer replaces these.
+  limits: { perPress: 2000, openJobs: 5000 },
+  // Why the last pick stopped short, until the picks change again.
+  note: '',
+};
 const LOSSY_PAGE = 200;
 const LOSSY_RECENT_MS = 28 * 24 * 3600 * 1000;
+const LOSSY_DAY_MS = 24 * 3600 * 1000;
+const lossyFilterIds = ['lossy-q', 'lossy-format', 'lossy-bitrate', 'lossy-match', 'lossy-added', 'lossy-genre', 'lossy-youtube', 'lossy-hide-tried'];
+const lossyNum = n => Number(n).toLocaleString();
+const lossySongs = n => `${lossyNum(n)} ${n === 1 ? 'song' : 'songs'}`;
 const upgradeWords = {
   queued: 'Queued', waiting: 'Waiting for Soulseek', working: 'Looking', upgraded: 'Upgraded',
   notFound: 'No higher quality found', rehearsed: 'Rehearsed', skipped: 'Skipped', failed: 'Failed',
@@ -6094,6 +6104,7 @@ async function loadLossy(refresh = false) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || body.title || `HTTP ${response.status}`);
     lossy.rows = body.songs || [];
+    if (body.limits) lossy.limits = body.limits;
     lossy.shown = LOSSY_PAGE;
     const formats = [...new Set(lossy.rows.map(row => (row.suffix || '').toLowerCase()).filter(Boolean))].sort();
     const select = document.getElementById('lossy-format');
@@ -6101,6 +6112,15 @@ async function loadLossy(refresh = false) {
     select.innerHTML = '<option value="">Every format</option>'
       + formats.map(f => `<option value="${esc(f)}">${esc(f.toUpperCase())}</option>`).join('');
     select.value = formats.includes(current) ? current : '';
+    // Genres by how many of these songs carry them, the commonest first.
+    const genres = new Map();
+    for (const row of lossy.rows) for (const genre of row.genres || []) genres.set(genre, (genres.get(genre) || 0) + 1);
+    const genreSelect = document.getElementById('lossy-genre');
+    const genre = genreSelect.value;
+    const named = [...genres].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    genreSelect.innerHTML = '<option value="">Every genre</option>'
+      + named.map(([name, n]) => `<option value="${esc(name)}">${esc(name)} (${lossyNum(n)})</option>`).join('');
+    genreSelect.value = genres.has(genre) ? genre : '';
     await loadUpgrades();
   } catch (error) {
     list.innerHTML = stateBlock('error', error.message);
@@ -6131,14 +6151,64 @@ async function loadUpgrades() {
 function lossyVisible() {
   const q = document.getElementById('lossy-q').value.trim().toLowerCase();
   const format = document.getElementById('lossy-format').value;
+  const below = Number(document.getElementById('lossy-bitrate').value) || 0;
+  const match = document.getElementById('lossy-match').value;
+  const days = Number(document.getElementById('lossy-added').value) || 0;
+  const genre = document.getElementById('lossy-genre').value;
   const youTubeOnly = document.getElementById('lossy-youtube').checked;
   const hideTried = document.getElementById('lossy-hide-tried').checked;
   const now = Date.now();
+  // A positive count of days is "added since then", a negative one "added before then".
+  const addedOk = row => {
+    if (!days) return true;
+    const added = Date.parse(row.added ?? '');
+    if (Number.isNaN(added)) return false;
+    return days > 0 ? now - added <= days * LOSSY_DAY_MS : now - added > -days * LOSSY_DAY_MS;
+  };
   return lossy.rows.filter(row =>
     (!q || `${row.title} ${row.artist} ${row.album ?? ''}`.toLowerCase().includes(q))
     && (!format || (row.suffix || '').toLowerCase() === format)
+    && (!below || (row.bitRate > 0 && row.bitRate < below))
+    && (!match || (row.match?.state ?? 'unchecked') === match)
+    && addedOk(row)
+    && (!genre || (row.genres || []).includes(genre))
     && (!youTubeOnly || row.fromYouTube)
     && (!hideTried || !row.lastTried || now - Date.parse(row.lastTried.atUtc) > LOSSY_RECENT_MS));
+}
+
+// Whether any filter narrows the list.
+function lossyFiltered() {
+  return lossyFilterIds.some(id => {
+    const input = document.getElementById(id);
+    return input && (input.type === 'checkbox' ? input.checked : input.value.trim() !== '');
+  });
+}
+
+// How many more songs may be picked before one press is full.
+const lossyRoom = () => Math.max(0, lossy.limits.perPress - lossy.picked.size);
+
+// Picks `rows` in order until one press is full; says so when that stopped it.
+function lossyPick(rows) {
+  let added = 0;
+  for (const row of rows) {
+    if (lossy.picked.has(row.id)) continue;
+    if (!lossyRoom()) {
+      lossy.note = `${lossyNum(lossy.limits.perPress)} is the most one press sends; Select again once these are queued.`;
+      return added;
+    }
+    lossy.picked.add(row.id);
+    added += 1;
+  }
+  lossy.note = '';
+  return added;
+}
+
+// The song's AcoustID match in words, when it is worth saying: unsure, with its score.
+function lossyMatchWords(row) {
+  const match = row.match;
+  if (match?.state !== 'unsure') return '';
+  const score = typeof match.score === 'number' ? ` (${match.score}%)` : '';
+  return match.by === 'tagCheck' ? 'tag check unsure' : `AcoustID unsure${score}`;
 }
 
 function lossyGateClosed() {
@@ -6219,27 +6289,53 @@ function renderLossy() {
     document.getElementById('lossy-open-actions')?.addEventListener('click', () => openTab('libraryactions'));
   }
 
+  const shownLine = document.getElementById('lossy-shown');
+  if (shownLine) {
+    const filtered = lossyFiltered();
+    shownLine.hidden = !lossy.rows.length;
+    shownLine.innerHTML = filtered
+      ? `${esc(lossySongs(visible.length))} of ${esc(lossyNum(lossy.rows.length))} match these filters. <button type="button" class="link-btn" id="lossy-unfilter">Clear filters</button>`
+      : `Showing all ${esc(lossySongs(lossy.rows.length))}.`;
+    document.getElementById('lossy-unfilter')?.addEventListener('click', () => {
+      for (const id of lossyFilterIds) {
+        const input = document.getElementById(id);
+        if (!input) continue;
+        if (input.type === 'checkbox') input.checked = false; else input.value = '';
+      }
+      lossy.shown = LOSSY_PAGE;
+      renderLossy();
+    });
+  }
+
   if (!lossy.rows.length) {
     list.innerHTML = stateBlock('empty', 'Every song in your library is lossless.');
   } else if (!visible.length) {
     list.innerHTML = stateBlock('empty', 'No song matches these filters.');
   } else {
     const shown = visible.slice(0, lossy.shown);
+    const added = row => {
+      const at = Date.parse(row.added ?? '');
+      return Number.isNaN(at) ? '' : `Added ${new Date(at).toLocaleDateString()}`;
+    };
     list.innerHTML = `
       <div class="config-table">
         <div class="config-row config-row-head lossy-row">
-          <span><input type="checkbox" class="pick" id="lossy-pick-all" aria-label="Select every song shown" /></span>
+          <span><input type="checkbox" class="pick" id="lossy-pick-all" aria-label="Select the songs on this page" title="Select the songs on this page" /></span>
           <span>Song</span><span>Album</span><span>Format</span><span>Status</span>
         </div>
-        ${shown.map(row => `
+        ${shown.map(row => {
+          const match = lossyMatchWords(row);
+          const albumSub = [added(row), (row.genres || []).join(', ')].filter(Boolean).join(' · ');
+          return `
           <label class="config-row lossy-row${lossy.picked.has(row.id) ? ' picked' : ''}">
             <span><input type="checkbox" class="pick" data-lossy-id="${esc(row.id)}" ${lossy.picked.has(row.id) ? 'checked' : ''}
               ${isOpenJob(row.job) ? 'disabled' : ''} aria-label="Pick ${esc(row.title)}" /></span>
-            <span class="key">${esc(row.title)}<span class="lossy-sub">${esc(row.artist)}${row.fromYouTube ? ' · from YouTube' : ''}</span></span>
-            <span class="value">${esc(row.album ?? '')}</span>
-            <span><span class="dl-badge mp3">${esc((row.suffix || '?').toUpperCase())}</span></span>
+            <span class="key">${esc(row.title)}<span class="lossy-sub">${esc(row.artist)}${row.fromYouTube ? ' · from YouTube' : ''}${match ? ` · <span class="lossy-unsure">${esc(match)}</span>` : ''}</span></span>
+            <span class="value">${esc(row.album ?? '')}${albumSub ? `<span class="lossy-sub">${esc(albumSub)}</span>` : ''}</span>
+            <span><span class="dl-badge mp3">${esc((row.suffix || '?').toUpperCase())}</span>${row.bitRate > 0 ? `<span class="lossy-sub">${esc(lossyNum(row.bitRate))} kbps</span>` : ''}</span>
             <span>${lossyStatus(row)}${lossyFindButton(row)}</span>
-          </label>`).join('')}
+          </label>`;
+        }).join('')}
       </div>
       ${visible.length > shown.length
         ? `<button type="button" class="btn btn-ghost" id="lossy-more">Show ${Math.min(LOSSY_PAGE, visible.length - shown.length)} more of ${visible.length - shown.length}</button>`
@@ -6251,22 +6347,46 @@ function renderLossy() {
   for (const row of lossy.rows) if (isOpenJob(row.job)) lossy.picked.delete(row.id);
   const n = lossy.picked.size;
 
-  // Select all means every song the filters show, drawn or not, that is not already running.
+  // The box in the header is this page's rows; Select is the first songs the filters show,
+  // drawn or not, that are not already running or picked, as many as one press still takes.
   const pickable = visible.filter(row => !isOpenJob(row.job));
-  const pickedShown = pickable.filter(row => lossy.picked.has(row.id)).length;
+  const onPage = visible.slice(0, lossy.shown).filter(row => !isOpenJob(row.job));
+  const pickedOnPage = onPage.filter(row => lossy.picked.has(row.id)).length;
   const all = document.getElementById('lossy-pick-all');
   if (all) {
-    all.checked = pickable.length > 0 && pickedShown === pickable.length;
-    all.indeterminate = pickedShown > 0 && pickedShown < pickable.length;
-    all.disabled = pickable.length === 0;
+    all.checked = onPage.length > 0 && pickedOnPage === onPage.length;
+    all.indeterminate = pickedOnPage > 0 && pickedOnPage < onPage.length;
+    all.disabled = onPage.length === 0;
   }
-  const selectAll = document.getElementById('lossy-all');
-  selectAll.textContent = pickable.length ? `Select all ${pickable.length}` : 'Select all';
-  selectAll.hidden = pickable.length === 0 || pickedShown === pickable.length;
+  const unpicked = pickable.filter(row => !lossy.picked.has(row.id)).length;
+  const offer = Math.min(unpicked, lossyRoom());
+  const amount = document.getElementById('lossy-amount');
+  amount.max = String(Math.max(1, offer));
+  amount.placeholder = String(offer);
+  document.getElementById('lossy-of').textContent = n
+    ? `of the ${lossySongs(unpicked)} shown and not picked yet`
+    : `of the ${lossySongs(unpicked)} shown`;
+  document.getElementById('lossy-amount-group').hidden = offer === 0;
+  document.getElementById('lossy-all').disabled = offer === 0;
   document.getElementById('lossy-none').hidden = n === 0;
-  document.getElementById('lossy-count').textContent = n ? `${n} ${n === 1 ? 'song' : 'songs'} picked` : 'Nothing picked';
+  document.getElementById('lossy-count').textContent = n ? `${lossySongs(n)} picked` : 'Nothing picked';
+  // What pressing Find does with these picks: how many go, how many run at once, and how many
+  // the queue still has room for.
+  const hint = [];
+  if (lossy.note) hint.push(lossy.note);
+  if (n) {
+    const room = Math.max(0, lossy.limits.openJobs - lossy.open);
+    if (n > room) {
+      hint.push(`Only ${lossyNum(room)} fit in the queue now, with ${lossyNum(lossy.open)} already waiting; the rest are left out.`);
+    } else if (typeof view?.parallel === 'number') {
+      hint.push(`${lossyNum(view.parallel)} run at a time.`);
+    }
+  } else if (!lossy.note) {
+    hint.push(`Up to ${lossyNum(lossy.limits.perPress)} songs a press.`);
+  }
+  document.getElementById('lossy-hint').textContent = hint.join(' ');
   const go = document.getElementById('lossy-go');
-  go.textContent = n ? `Find higher quality for ${n} ${n === 1 ? 'song' : 'songs'}` : 'Find higher quality';
+  go.textContent = n ? `Find higher quality for ${lossySongs(n)}` : 'Find higher quality';
   go.disabled = !n || !!closed;
   document.getElementById('lossy-cancel').hidden = !(view?.jobs || []).some(job => ['queued', 'waiting'].includes(job.state));
   renderLossyResults();
@@ -6302,34 +6422,47 @@ function renderLossyResults() {
 
 document.getElementById('lossy-list')?.addEventListener('change', event => {
   if (event.target.id === 'lossy-pick-all') {
-    const pickable = lossyVisible().filter(row => !isOpenJob(row.job));
-    for (const row of pickable) {
-      if (event.target.checked) lossy.picked.add(row.id); else lossy.picked.delete(row.id);
+    const onPage = lossyVisible().slice(0, lossy.shown).filter(row => !isOpenJob(row.job));
+    if (event.target.checked) {
+      lossyPick(onPage);
+    } else {
+      for (const row of onPage) lossy.picked.delete(row.id);
+      lossy.note = '';
     }
     renderLossy();
     return;
   }
   const box = event.target.closest('[data-lossy-id]');
   if (!box) return;
-  if (box.checked) lossy.picked.add(box.dataset.lossyId); else lossy.picked.delete(box.dataset.lossyId);
+  if (box.checked) lossyPick(lossy.rows.filter(row => row.id === box.dataset.lossyId));
+  else { lossy.picked.delete(box.dataset.lossyId); lossy.note = ''; }
   renderLossy();
 });
-for (const id of ['lossy-q', 'lossy-format', 'lossy-youtube', 'lossy-hide-tried']) {
-  document.getElementById(id)?.addEventListener(id === 'lossy-q' ? 'input' : 'change', () => { lossy.shown = LOSSY_PAGE; renderLossy(); });
+for (const id of lossyFilterIds) {
+  const input = document.getElementById(id);
+  input?.addEventListener(id === 'lossy-q' ? 'input' : 'change', () => { lossy.shown = LOSSY_PAGE; renderLossy(); });
 }
 document.getElementById('lossy-refresh')?.addEventListener('click', () => loadLossy(true));
-// Every song the filters show, drawn or not.
+// The first songs the filters show, drawn or not, as many as asked (all that fit when blank).
 document.getElementById('lossy-all')?.addEventListener('click', () => {
-  for (const row of lossyVisible()) if (!isOpenJob(row.job)) lossy.picked.add(row.id);
+  const candidates = lossyVisible().filter(row => !isOpenJob(row.job) && !lossy.picked.has(row.id));
+  const asked = Math.floor(Number(document.getElementById('lossy-amount').value));
+  const wanted = asked > 0 ? asked : candidates.length;
+  lossyPick(candidates.slice(0, wanted));
+  document.getElementById('lossy-amount').value = '';
   renderLossy();
 });
-document.getElementById('lossy-none')?.addEventListener('click', () => { lossy.picked.clear(); renderLossy(); });
+document.getElementById('lossy-amount')?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') { event.preventDefault(); document.getElementById('lossy-all').click(); }
+});
+document.getElementById('lossy-none')?.addEventListener('click', () => { lossy.picked.clear(); lossy.note = ''; renderLossy(); });
 
 document.getElementById('lossy-go')?.addEventListener('click', async () => {
-  const songs = lossy.rows.filter(row => lossy.picked.has(row.id));
+  const songs = lossy.rows.filter(row => lossy.picked.has(row.id)).slice(0, lossy.limits.perPress);
   if (!songs.length) return;
   const n = songs.length;
-  if (!(await askConfirm(`Find higher quality for ${n} ${n === 1 ? 'song' : 'songs'}?`, `Octo looks for a lossless copy of each on ${lossy.view?.source ?? 'the upgrade source'}. Each original is kept in quarantine until its replacement passes the checks.`, 'Find higher quality'))) return;
+  const pace = typeof lossy.view?.parallel === 'number' ? ` ${lossyNum(lossy.view.parallel)} run at a time; the rest wait their turn.` : '';
+  if (!(await askConfirm(`Find higher quality for ${lossySongs(n)}?`, `Octo looks for a lossless copy of each on ${lossy.view?.source ?? 'the upgrade source'}.${pace} Each original is kept in quarantine until its replacement passes the checks.`, 'Find higher quality'))) return;
   const response = await lossyFetch('/api/admin/upgrades', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6341,8 +6474,9 @@ document.getElementById('lossy-go')?.addEventListener('click', async () => {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { toast(body.error || `HTTP ${response.status}`, 'error'); return; }
-  toast(`Looking for higher quality for ${body.queued} ${body.queued === 1 ? 'song' : 'songs'}.${body.refused ? ` ${body.refused}` : ''}`);
+  toast(`Looking for higher quality for ${lossySongs(body.queued)}.${body.refused ? ` ${body.refused}` : ''}`);
   lossy.picked.clear();
+  lossy.note = '';
   await loadUpgrades();
 });
 

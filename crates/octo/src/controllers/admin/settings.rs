@@ -825,7 +825,7 @@ fn untouched_answer_action(definition: &JsonObject) -> bool {
         Some(Node::Number(number)) => number.parse().ok().and_then(LibraryAction::from_index),
         _ => None,
     };
-    let Some(action) = action.filter(|action| action.leaves_the_audio()) else {
+    let Some(action) = action.filter(|action| action.written_once_changed()) else {
         return false;
     };
     let name = string_value(field("Name")).map(str::trim).unwrap_or("");

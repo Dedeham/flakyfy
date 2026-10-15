@@ -11,8 +11,8 @@ use indexmap::IndexMap;
 use octo_core::common::dotnet::{self, is_blank};
 use octo_core::settings::LibraryAction;
 use octo_subsonic::subsonic_response_builder::{
-    COVER_ACTION, COVER_SWAP_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LOOKUP_ACTION, LYRICS_ACTION,
-    REMOVE_ACTION, RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
+    CHECK_VERSION_ACTION, COVER_ACTION, COVER_SWAP_ACTION, EDIT_ACTIONS, JOIN_ALBUM_ACTION, LOOKUP_ACTION,
+    LYRICS_ACTION, REMOVE_ACTION, RETAG_ACTION, UNDO_ACTION, UPGRADE_ACTION,
 };
 use serde_json::Value;
 use tracing::info;
@@ -289,6 +289,7 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
     if let Some((answer, name)) = [
         (LibraryAction::WrongLyrics, LYRICS_ACTION),
         (LibraryAction::WrongCover, COVER_SWAP_ACTION),
+        (LibraryAction::CheckVersion, CHECK_VERSION_ACTION),
     ]
     .into_iter()
     .find(|(_, name)| dotnet::eq_ignore_case(name, &action))
@@ -301,7 +302,7 @@ pub async fn apply_library_action(State(state): State<AppState>, req: Request) -
                 FORMAT,
                 0,
                 &format!(
-                    "Unknown action \"{action}\"; this server knows remove, upgrade, {LYRICS_ACTION}, {COVER_SWAP_ACTION}, {}",
+                    "Unknown action \"{action}\"; this server knows remove, upgrade, {LYRICS_ACTION}, {COVER_SWAP_ACTION}, {CHECK_VERSION_ACTION}, {}",
                     EDIT_ACTIONS.join(", ")
                 ),
             )

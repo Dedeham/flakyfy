@@ -2467,6 +2467,7 @@ const libraryActionLabels = {
   WrongLyrics: 'Wrong lyrics: look for other lyrics, and never show these again',
   WrongCover: 'Wrong cover: look for another cover, and never use this one again',
   FixDuplicates: 'Fix duplicates: fix every copy of the song, as Library health does. Needs Delete on',
+  CheckVersion: 'Check version: check that the file is the version its tags say. Changes nothing',
 };
 
 function normalizeLibraryAction(action = {}) {
@@ -7820,6 +7821,7 @@ function healthWhyNot(check, fixes) {
 }
 
 function healthSection(check) {
+  if (check.check === 'versions') return healthVersionSection(check);
   const fixes = healthFixes(check);
   const fixable = fixes.all || fixes.lookUp || (check.check === 'tags' && healthReport.can?.edit);
   const whyNot = healthWhyNot(check, fixes);
@@ -7937,6 +7939,243 @@ function healthItems(check) {
     return healthRow(song, extra, buttons ? `<div class="health-actions">${buttons}</div>` : '');
   }).join('');
   return `<div class="dl-list health-songs">${rows}</div>${healthMore(check.check, check.songs.length)}`;
+}
+
+// ── the version check ────────────────────────────────────────────
+// Songs whose file is not the version its tags say, and imported songs pointing at another
+// version. Filters with counts, a pick per row and Select all, and per row or for the picked
+// ones: Retag as what it is, Replace with the right version, Keep. Nothing runs by itself.
+let versionFilter = 'all';
+const versionPicked = new Set();
+
+function versionItemsShown(check) {
+  if (versionFilter === 'imports') return [];
+  return (check.items || []).filter(item => versionFilter === 'all' || item.problem === versionFilter);
+}
+
+function versionImportsShown(check) {
+  return versionFilter === 'all' || versionFilter === 'imports' ? (check.imports || []) : [];
+}
+
+function healthVersionSection(check) {
+  const can = healthReport.can || {};
+  const off = healthReport.run?.state === 'running' ? ' disabled' : '';
+  const items = versionItemsShown(check);
+  const imports = versionImportsShown(check);
+  for (const id of [...versionPicked]) if (!items.some(item => item.id === id)) versionPicked.delete(id);
+  const filters = (check.filters || []).filter(f => f.id === 'all' || f.count > 0).map(f => {
+    const on = f.id === versionFilter;
+    return `<button class="btn btn-ghost btn-sm version-filter" type="button" data-version-filter="${esc(f.id)}" aria-pressed="${on}">${on ? icon('i-check') : ''}<span>${esc(f.label)}</span><span class="version-filter-count">${f.count.toLocaleString()}</span></button>`;
+  }).join('');
+  const picked = versionPicked.size;
+  const allPicked = items.length > 0 && items.every(item => versionPicked.has(item.id));
+  const anyRetag = items.some(item => versionPicked.has(item.id) && item.canRetag);
+  const bar = items.length ? `<div class="version-bar" role="group" aria-label="Picked songs">
+      <label class="lossy-check"><input type="checkbox" id="version-pick-all"${allPicked ? ' checked' : ''} /><span>Select all shown (${items.length.toLocaleString()})</span></label>
+      <span class="version-picked" aria-live="polite">${picked ? `${healthPlural(picked, 'song')} picked` : 'None picked'}</span>
+      <div class="health-actions">
+        ${can.edit ? `<button class="btn btn-ghost btn-sm" type="button" data-version-bulk="retag"${picked && anyRetag ? '' : ' disabled'}${off}>${esc(check.retagLabel)}</button>` : ''}
+        ${can.edit ? `<button class="btn btn-ghost btn-sm" type="button" data-version-bulk="replace"${picked ? '' : ' disabled'}${off}>${esc(check.replaceLabel)}</button>` : ''}
+        <button class="btn btn-ghost btn-sm" type="button" data-version-bulk="keep"${picked ? '' : ' disabled'}>${esc(check.keepLabel)}</button>
+      </div>
+    </div>` : '';
+  const shown = healthShown.versions ?? healthPage('versions');
+  const rows = items.slice(0, shown).map(item => {
+    const song = healthSong(item.id);
+    const lines = [
+      `<div class="dl-sub"><strong>${esc(item.problemLabel)}.</strong> ${esc(item.words)}</div>`,
+      item.is ? `<div class="dl-sub">It is <strong>${esc(item.is)}</strong>.</div>` : '',
+      item.cover ? '<div class="dl-sub">Replace cover puts in the album\'s own cover by its artist, or Octo\'s drawn cover when there is none. Undo puts this one back.</div>'
+        : item.retag?.length ? `<div class="dl-sub">Retag writes ${esc(item.retag.map(change => change.words).join('; '))}.</div>` : '<div class="dl-sub">Nothing says what it really is, so it can be replaced or kept.</div>',
+    ].join('');
+    const pick = `<label class="lossy-check version-pick-label"><input type="checkbox" class="pick version-pick" data-id="${esc(item.id)}"${versionPicked.has(item.id) ? ' checked' : ''} aria-label="Pick ${esc(song.title)}" /><span>Pick</span></label>`;
+    const badge = `<span class="dl-badge ${item.heard ? 'good' : 'warn'}">${esc(item.sureLabel)}</span>`;
+    const buttons = item.cover ? [
+      can.edit ? `<button class="btn btn-ghost btn-sm" type="button" data-version-cover="${esc(item.id)}"${off}>${esc(check.replaceCoverLabel)}</button>` : '',
+      `<button class="btn btn-ghost btn-sm" type="button" data-version-keep-cover="${esc(item.id)}">${esc(check.keepLabel)}</button>`,
+    ].join('') : [
+      can.edit && item.canRetag ? `<button class="btn btn-ghost btn-sm" type="button" data-version-retag="${esc(item.id)}"${off}>${esc(check.retagLabel)}</button>` : '',
+      can.edit ? `<button class="btn btn-ghost btn-sm" type="button" data-version-replace="${esc(item.id)}"${off}>${esc(check.replaceLabel)}</button>` : '',
+      `<button class="btn btn-ghost btn-sm" type="button" data-version-keep="${esc(item.id)}">${esc(check.keepLabel)}</button>`,
+      `<button class="btn btn-ghost btn-sm" type="button" data-version-check="${esc(item.id)}">${esc(check.checkNowLabel)}</button>`,
+    ].join('');
+    return healthRow(song, lines, `${badge}${pick}<div class="health-actions">${buttons}</div>`);
+  }).join('');
+  const importRows = imports.map(item => {
+    const right = item.right
+      ? `<div class="dl-sub">The right version: <strong>${esc(item.right.title)}</strong>${item.right.album ? ` on ${esc(item.right.album)}` : ''}${item.right.where === 'removed' ? ', in Recently removed' : ', in the library'}.</div>`
+      : '<div class="dl-sub">The library has no file of that version, so matching again leaves it missing; turn on Get missing songs for the list to fetch it.</div>';
+    const buttons = [
+      item.right?.where === 'removed' && can.edit ? `<button class="btn btn-ghost btn-sm" type="button" data-version-putback="${esc(item.right.id)}" data-owner="${esc(item.owner)}">${esc(check.putBackLabel)}</button>` : '',
+      `<button class="btn btn-ghost btn-sm" type="button" data-version-rematch="${esc(item.owner)}">${esc(check.rematchLabel)}</button>`,
+    ].join('');
+    const by = [item.artist, item.album].filter(Boolean).map(esc).join(' <span class="dl-dash">·</span> ');
+    return `<div class="dl-item health-item">
+      <div class="dl-main">
+        <div class="dl-title">${esc(item.title)}</div>
+        ${by ? `<div class="dl-by">${by}</div>` : ''}
+        <div class="dl-sub">In ${esc(item.listName)}${item.owner ? ` (${esc(item.owner)})` : ''}. ${esc(item.words)}</div>
+        ${right}
+      </div>
+      <div class="dl-side"><div class="health-actions">${buttons}</div></div>
+    </div>`;
+  }).join('');
+  const importBlock = imports.length ? `<div class="version-imports">
+      <h4 class="set-info-t">${esc(check.importsTitle)}</h4>
+      <p class="set-info-d">${esc(check.importsMeaning)}</p>
+      <div class="dl-list health-songs">${importRows}</div>
+    </div>` : '';
+  return `
+    <div class="set-section health-check" data-check="versions">
+      <div class="set-head">
+        <h3 class="set-title">${esc(check.title)}</h3>
+        <p class="set-desc"><strong class="health-count">${esc(check.countLabel)}.</strong> ${esc(check.meaning)}</p>
+      </div>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-info">
+            <div class="set-info-t">What to do</div>
+            <div class="set-info-d">${esc(check.advice)}</div>
+            <div class="set-info-more">Retag goes through the same undoable edits as the other fixes. Replace finds the version the tags name through the download checks; the old file waits in Recently removed.</div>
+          </div>
+        </div>
+        ${healthTagCheckRow()}
+        ${healthVersionFindRow()}
+        <div class="set-row stack health-preview" id="health-preview-versions" hidden></div>
+      </div>
+      <div class="version-filters" role="group" aria-label="Show">${filters}</div>
+      ${bar}
+      ${items.length ? `<div class="dl-list health-songs">${rows}</div>${healthMore('versions', items.length)}` : ''}
+      ${importBlock}
+    </div>`;
+}
+
+// Check one song now: find it by its title or artist, then check it.
+function healthVersionFindRow() {
+  return `<div class="set-row stack version-find">
+    <div class="set-info">
+      <div class="set-info-t" id="version-find-label">Check one song now</div>
+      <div class="set-info-d">Its tags and its version, whatever the pace above. Takes a few seconds.</div>
+    </div>
+    <form class="version-find-form" data-version-find-form>
+      <input type="search" id="version-find-q" aria-labelledby="version-find-label" placeholder="Title or artist" autocomplete="off" />
+      <button class="btn btn-ghost" type="submit">${icon('i-magnifying-glass')}<span>Find</span></button>
+    </form>
+    <div id="version-find-results" aria-live="polite"></div>
+  </div>`;
+}
+
+async function versionPost(path, body, where) {
+  const { ok, data } = await healthCall(path, body);
+  if (!ok) {
+    if (where) note(where, data.error || 'That did not work.', 'error');
+    else showHealthResult(data.error || 'That did not work.', false);
+  }
+  return { ok, data };
+}
+
+async function versionFind(query) {
+  const box = document.getElementById('version-find-results');
+  if (!box) return;
+  if (!query.trim()) { box.innerHTML = ''; return; }
+  box.innerHTML = stateBlock('loading', 'Looking in your library…');
+  const { ok, data } = await healthCall('/api/admin/health/versions/find', { id: query.trim() });
+  if (!ok) { box.innerHTML = stateBlock('error', data.error || 'The library could not be searched.'); return; }
+  if (!data.songs?.length) { box.innerHTML = '<p class="set-info-d">No song in the library matches that.</p>'; return; }
+  box.innerHTML = `<div class="dl-list">${data.songs.map(song => healthRow(song, '', `<div class="health-actions"><button class="btn btn-ghost btn-sm" type="button" data-version-check="${esc(song.id)}">Check now</button></div>`)).join('')}</div>`;
+}
+
+async function versionCheckNow(id, button) {
+  const label = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = 'Checking…'; }
+  const { ok, data } = await versionPost('/api/admin/health/versions/check', { id }, button?.closest('.dl-item'));
+  if (!ok) { if (button) { button.disabled = false; button.textContent = label; } return; }
+  showHealthResult(`${data.title}: ${data.words}`, false);
+  loadHealth();
+}
+
+function versionReplaceAsk(ids) {
+  const holder = healthPreviewHolder('versions');
+  if (!holder) return;
+  holder.hidden = false;
+  holder.innerHTML = `<div class="set-info">
+      <div class="set-info-t">Replace ${esc(healthPlural(ids.length, 'song'))} with the version the tags name?</div>
+      <div class="set-info-d">Octo looks for each one through its download checks and refuses another take. The file there now goes to Recently removed, where Put back undoes it.</div>
+    </div>
+    <div class="form-actions health-preview-actions">
+      <button class="btn btn-ghost" type="button" data-health-cancel="versions">Cancel</button>
+      <button class="btn btn-primary" type="button" data-version-replace-go="${esc(ids.join(','))}">${icon('i-check')}<span>Replace ${esc(healthPlural(ids.length, 'song'))}</span></button>
+    </div>`;
+  holder.scrollIntoView({ block: 'nearest' });
+}
+
+async function versionReplace(ids, button) {
+  if (button) button.disabled = true;
+  const { ok, data } = await versionPost('/api/admin/health/versions/replace', { ids }, button?.closest('.health-preview'));
+  if (!ok) { if (button) button.disabled = false; return; }
+  closeHealthPreview('versions');
+  ids.forEach(id => versionPicked.delete(id));
+  showHealthResult(data.words, false);
+}
+
+async function versionKeep(ids) {
+  const check = healthReport?.checks.find(entry => entry.check === 'versions');
+  const covers = new Set((check?.items || []).filter(item => item.cover).map(item => item.id));
+  const coverIds = ids.filter(id => covers.has(id));
+  const songIds = ids.filter(id => !covers.has(id));
+  let kept = 0;
+  if (coverIds.length) {
+    const answer = await versionPost('/api/admin/health/versions/keepcover', { ids: coverIds });
+    if (!answer.ok) return;
+    kept += answer.data.kept;
+  }
+  const { ok, data } = songIds.length ? await versionPost('/api/admin/health/versions/keep', { ids: songIds }) : { ok: true, data: { kept: 0 } };
+  if (!ok) return;
+  data.kept += kept;
+  ids.forEach(id => versionPicked.delete(id));
+  showHealthResult(`Kept ${healthPlural(data.kept, 'song')} as ${data.kept === 1 ? 'it is' : 'they are'}. ${data.kept === 1 ? 'It is' : 'They are'} asked about again only if the file changes.`, false);
+  loadHealth();
+}
+
+function versionHandle(target, d) {
+  if (d.versionFilter) { versionFilter = d.versionFilter; healthShown.versions = undefined; renderHealth(); return true; }
+  if (d.versionRetag) { openHealthPreview('versions', { keys: [d.versionRetag] }); return true; }
+  if (d.versionReplace) { versionReplaceAsk([d.versionReplace]); return true; }
+  if (d.versionReplaceGo) { versionReplace(d.versionReplaceGo.split(','), target); return true; }
+  if (d.versionKeep) { versionKeep([d.versionKeep]); return true; }
+  if (d.versionKeepCover) { versionKeep([d.versionKeepCover]); return true; }
+  if (d.versionCover) {
+    target.disabled = true;
+    target.textContent = 'Replacing…';
+    versionPost('/api/admin/health/versions/cover', { ids: [d.versionCover] }, target.closest('.dl-item'))
+      .then(({ ok, data }) => { if (ok) { showHealthResult(data.words, false); loadHealth(); } else { target.disabled = false; target.textContent = 'Replace cover'; } });
+    return true;
+  }
+  if (d.versionCheck) { versionCheckNow(d.versionCheck, target); return true; }
+  if (d.versionBulk) {
+    const ids = [...versionPicked];
+    if (!ids.length) return true;
+    const check = healthReport.checks.find(entry => entry.check === 'versions');
+    const covers = new Set((check?.items || []).filter(item => item.cover).map(item => item.id));
+    const songs = ids.filter(id => !covers.has(id));
+    if (d.versionBulk === 'retag' && songs.length) openHealthPreview('versions', { keys: songs });
+    if (d.versionBulk === 'replace' && songs.length) versionReplaceAsk(songs);
+    if (d.versionBulk === 'keep') versionKeep(ids);
+    return true;
+  }
+  if (d.versionPutback) {
+    target.disabled = true;
+    versionPost('/api/admin/health/versions/putback', { id: d.versionPutback, owner: d.owner || null }, target.closest('.dl-item'))
+      .then(({ ok, data }) => { if (ok) { showHealthResult(data.words, false); loadHealth(); } else target.disabled = false; });
+    return true;
+  }
+  if (d.versionRematch !== undefined) {
+    target.disabled = true;
+    versionPost('/api/admin/health/versions/rematch', { owner: d.versionRematch || null }, target.closest('.dl-item'))
+      .then(({ ok, data }) => { if (ok) { showHealthResult(data.words, false); loadHealth(); } else target.disabled = false; });
+    return true;
+  }
+  return false;
 }
 
 // The tag check's line, with Pause and Start over, as the Library actions card shows it.
@@ -8327,6 +8566,7 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
     return;
   }
   if (d.healthTagsUse) { openHealthPreview('tags', { keys: [d.healthTagsUse] }); return; }
+  if (target.type !== 'checkbox' && versionHandle(target, d)) return;
   if (d.tagCheck === 'toggle') { tagCheckToggle(target); return; }
   if (d.tagCheck === 'reset') { tagCheckReset(target); return; }
   if (d.healthFixSet) { openHealthPreview('duplicates', { keys: [d.healthFixSet] }); return; }
@@ -8351,6 +8591,31 @@ document.querySelector('section[data-pane="health"]')?.addEventListener('click',
 
 // "Keep every rated copy" is saved as a setting as soon as it changes; an open preview of the
 // duplicates is worked out again with it.
+// A pick on the version check's songs, or Select all of the ones shown.
+document.getElementById('health-body')?.addEventListener('change', event => {
+  const box = event.target;
+  if (!healthReport || !(box instanceof HTMLInputElement)) return;
+  if (box.classList.contains('version-pick')) {
+    if (box.checked) versionPicked.add(box.dataset.id); else versionPicked.delete(box.dataset.id);
+    renderHealth();
+    document.querySelector(`.version-pick[data-id="${CSS.escape(box.dataset.id)}"]`)?.focus();
+    return;
+  }
+  if (box.id === 'version-pick-all') {
+    const check = healthReport.checks.find(entry => entry.check === 'versions');
+    const shown = check ? versionItemsShown(check) : [];
+    shown.forEach(item => { if (box.checked) versionPicked.add(item.id); else versionPicked.delete(item.id); });
+    renderHealth();
+    document.getElementById('version-pick-all')?.focus();
+  }
+});
+document.getElementById('health-body')?.addEventListener('submit', event => {
+  const form = event.target.closest?.('[data-version-find-form]');
+  if (!form) return;
+  event.preventDefault();
+  versionFind(document.getElementById('version-find-q')?.value || '');
+});
+
 document.getElementById('health-body')?.addEventListener('change', async event => {
   const box = event.target.closest?.('#health-keep-rated');
   if (!box || !healthReport) return;

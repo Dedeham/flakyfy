@@ -223,6 +223,7 @@ struct Setup {
     library: Arc<FakeLibrary>,
     edits: Arc<FakeEdits>,
     activity: Arc<FakeActivity>,
+    versions: Option<Arc<dyn VersionSources>>,
 }
 
 impl Setup {
@@ -239,6 +240,7 @@ impl Setup {
                 asked: Mutex::new(Vec::new()),
             }),
             activity: Arc::new(FakeActivity::default()),
+            versions: None,
             dir,
         }
     }
@@ -292,6 +294,7 @@ impl Setup {
                 edits: Some(self.edits.clone()),
                 releases: None,
                 recordings: None,
+                versions: self.versions.clone(),
                 settings,
             },
             Clock::system(),
@@ -1024,4 +1027,129 @@ async fn in_rehearsal_a_song_checked_before_lists_its_album_artists_other_names(
     // Read once: the next tick does not add it again.
     sweep.tick().await;
     assert_eq!(rules(&sweep.findings()[0]), [AuditRule::AlbumArtistNames]);
+}
+
+// ---- the version check ----------------------------------------------------------------------
+
+/// The music database's recordings of "Teenagers", every version.
+struct TeenagersCatalog;
+
+#[async_trait]
+impl VersionSources for TeenagersCatalog {
+    async fn song_recordings(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Option<Vec<octo_core::tagging::version_audit::KnownRecording>> {
+        Some(vec![
+            octo_core::tagging::version_audit::KnownRecording::new("teen", "Teenagers", Some(161_000)),
+            octo_core::tagging::version_audit::KnownRecording::new(
+                "robot",
+                "Teenagers (Robot remix)",
+                Some(203_000),
+            ),
+        ])
+    }
+
+    async fn isrc_entry(&self, _: &str) -> Option<octo_core::tagging::version_audit::IsrcEntry> {
+        None
+    }
+
+    async fn recording(&self, _: &str) -> Option<octo_core::tagging::version_audit::KnownRecording> {
+        None
+    }
+
+    async fn tracks_of(&self, _: &str) -> Option<Vec<String>> {
+        Some(Vec::new())
+    }
+
+    async fn resampled_lookup(&self, _: &str, _: f64) -> Option<AcoustIdLookup> {
+        None
+    }
+}
+
+#[tokio::test]
+async fn the_version_check_lists_a_remix_tagged_as_the_song_and_keep_puts_it_away() {
+    let mut setup = Setup::new();
+    setup.versions = Some(Arc::new(TeenagersCatalog));
+    setup.song("a-teenagers.mp3", "Teenagers", "The Black Parade", &[]);
+    setup.song("b-fine.mp3", "Mama", "The Black Parade", &[]);
+    let robot = recording("robot", "Teenagers (Robot remix)", 203_000, Vec::new());
+    let heard = confirmed("robot", RecordingKind::Remix, false, true, vec![robot]);
+    let verifier = FakeVerifier::answering(vec![("a-teenagers.mp3", heard)]);
+    let sweep = setup.sweep(verifier, actions(360));
+
+    ticks(&sweep, 3).await;
+
+    let rows = sweep.version_findings();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.id, "a-teenagers.mp3");
+    assert!(row.version.heard);
+    assert_eq!(row.version.is_id.as_deref(), Some("robot"));
+    assert_eq!(
+        row.version.words,
+        "Tagged as 'Teenagers', but the fingerprint is 'Teenagers (Robot remix)' (3:23.00)."
+    );
+    assert_eq!(
+        row.version.retag.get("title"),
+        Some(&Some("Teenagers (Robot remix)".to_string()))
+    );
+    // Every song checked has the version check behind it.
+    assert!(
+        sweep
+            .store()
+            .read(|s| s.songs.values().all(|song| song.version_checked))
+    );
+
+    // Checked again now, the same file says the same thing.
+    let again = sweep.check_now("a-teenagers.mp3").await.expect("checked");
+    assert_eq!(
+        again.version.as_ref().map(|v| v.words.as_str()),
+        Some(row.version.words.as_str())
+    );
+
+    assert_eq!(sweep.keep_versions(&["a-teenagers.mp3".to_string()]), 1);
+    assert!(sweep.version_findings().is_empty());
+    // Kept stays kept while it is the same file and the same finding.
+    sweep.check_now("a-teenagers.mp3").await.expect("checked");
+    assert!(sweep.version_findings().is_empty());
+
+    let found = sweep.find_songs("teen", 10).await.expect("listed");
+    assert_eq!(
+        found.iter().map(|song| song.id.as_str()).collect::<Vec<_>>(),
+        ["a-teenagers.mp3"]
+    );
+}
+
+#[tokio::test]
+async fn songs_checked_before_the_version_check_are_checked_again() {
+    let setup = Setup::new();
+    setup.song("a-teenagers.mp3", "Teenagers", "The Black Parade", &[]);
+    let verifier = FakeVerifier::answering(Vec::new());
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    ticks(&sweep, 2).await;
+    assert_eq!(verifier.asked().len(), 1);
+    assert!(
+        sweep
+            .store()
+            .read(|s| s.songs.values().all(|song| !song.version_checked))
+    );
+    drop(sweep);
+
+    let mut setup = setup;
+    setup.versions = Some(Arc::new(TeenagersCatalog));
+    let sweep = setup.sweep(verifier.clone(), actions(360));
+    sweep.store().update(|s| s.next_pass_utc = datetime::min_value());
+    ticks(&sweep, 2).await;
+    assert_eq!(
+        verifier.asked().len(),
+        2,
+        "checked again once the version check is on"
+    );
+    assert!(
+        sweep
+            .store()
+            .read(|s| s.songs.values().all(|song| song.version_checked))
+    );
 }

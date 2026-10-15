@@ -39,6 +39,7 @@ use super::library_snapshot::LibrarySnapshot;
 use super::navidrome_song_path_resolver::{Candidate, NavidromeSongPathResolver, PathSource};
 use super::notice_queue::set_aside;
 use super::quality_upgrade_worker::compare_ordinal;
+use super::version_check::{self, KeptCover, KeptVersion, VersionInput, VersionSources};
 use crate::services::common::IAcquisitionActivity;
 use crate::services::family::library_index::row_full_path;
 use crate::services::family::{LibraryScope, ScopeResolver};
@@ -253,6 +254,12 @@ pub struct CheckedSong {
     /// The album artist's other names were looked for. A song checked before they were is read
     /// again for them alone, without its audio.
     pub names_checked: bool,
+    /// What the version check found: the file is not the version of its song its tags say.
+    pub version: Option<KeptVersion>,
+    /// The version check ran on this file. A song checked before it existed is checked again.
+    pub version_checked: bool,
+    /// What the version check found of the file's cover: another artist's release's.
+    pub cover: Option<KeptCover>,
     #[serde(with = "datetime::utc_option")]
     pub checked_utc: Option<DateTime<Utc>>,
 }
@@ -468,6 +475,31 @@ pub struct TagFinding {
     pub heard: Option<String>,
 }
 
+/// One song the version check found is not the version its tags say, for Library health.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionRow {
+    pub id: String,
+    pub artist: String,
+    pub title: String,
+    pub album: String,
+    pub path: String,
+    /// The file's size and last write when checked; a retag is refused once it differs.
+    pub stamp: String,
+    pub version: KeptVersion,
+}
+
+/// One song whose cover the version check found is another artist's release's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverRow {
+    pub id: String,
+    pub artist: String,
+    pub title: String,
+    pub album: String,
+    pub path: String,
+    pub stamp: String,
+    pub cover: KeptCover,
+}
+
 /// What the dashboard shows of the check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentitySweepStatus {
@@ -498,6 +530,9 @@ pub struct LibraryIdentitySweepParts {
     pub releases: Option<Arc<dyn ReleaseTracks>>,
     /// What a recording is, asked only for one a file's ids name that the fingerprint does not.
     pub recordings: Option<Arc<dyn RecordingFactsLookup>>,
+    /// What the version check asks of the music database, the catalog and AcoustID; None
+    /// leaves the version check off.
+    pub versions: Option<Arc<dyn VersionSources>>,
     /// The library action and Subsonic settings, read at use.
     pub settings: Arc<SettingsStore>,
 }
@@ -513,6 +548,7 @@ pub struct LibraryIdentitySweep {
     edits: Option<Arc<dyn IdentitySweepEdits>>,
     releases: Option<Arc<dyn ReleaseTracks>>,
     recordings: Option<Arc<dyn RecordingFactsLookup>>,
+    versions: Option<Arc<dyn VersionSources>>,
     settings: Arc<SettingsStore>,
     clock: Clock,
 
@@ -552,6 +588,7 @@ impl LibraryIdentitySweep {
             edits: parts.edits,
             releases: parts.releases,
             recordings: parts.recordings,
+            versions: parts.versions,
             settings: parts.settings,
             clock,
             songs: Mutex::new(None),
@@ -677,10 +714,15 @@ impl LibraryIdentitySweep {
                 continue;
             };
             let stamp = stamp_of(&path);
+            let versions_on = self.versions.is_some();
             let seen = self.store.read(|s| {
-                s.songs
-                    .get(&song.id)
-                    .map(|kept| (kept.stamp.clone(), kept.path.clone(), kept.retry))
+                s.songs.get(&song.id).map(|kept| {
+                    (
+                        kept.stamp.clone(),
+                        kept.path.clone(),
+                        kept.retry || (versions_on && !kept.version_checked),
+                    )
+                })
             });
             let unchanged = matches!((&stamp, &seen), (Some(stamp), Some((seen, _, false))) if stamp == seen);
             if stamp.is_none() || unchanged {
@@ -904,6 +946,9 @@ impl LibraryIdentitySweep {
             found = tag_audit::audit(&tags, heard.as_ref());
             fixed = now;
         }
+        let (version, cover) = self
+            .check_version(id, &path, &artist, &tags, &verdict, read_stamp.as_deref())
+            .await;
         let kept = CheckedSong {
             // The file whose tags were read; after the check's own write, the file as written, so
             // the next pass sees it as checked. A file replaced meanwhile is not the one these
@@ -937,7 +982,16 @@ impl LibraryIdentitySweep {
             },
             checked_utc: Some(now),
             names_checked: true,
+            version_checked: self.versions.is_some(),
+            version,
+            cover,
         };
+        if let Some(version) = &kept.version {
+            info!(
+                "Version check: '{} - {}' {}",
+                kept.artist, kept.title, version.words
+            );
+        }
         if found.found() {
             info!(
                 "Library tag check: '{} - {}' {}",
@@ -956,6 +1010,238 @@ impl LibraryIdentitySweep {
         // picked first again and again; marked, so the next pass does not take it as done.
         self.finish(generation, id, kept, in_order, fixed);
         Checked::Done
+    }
+
+    /// The version check on one file whose tags were just read, when it is on. A file kept as it
+    /// is stays kept while it is the same file and the same thing is found.
+    async fn check_version(
+        &self,
+        id: &str,
+        path: &str,
+        artist: &str,
+        tags: &FileTags,
+        verdict: &VerificationResult,
+        read_stamp: Option<&str>,
+    ) -> (Option<KeptVersion>, Option<KeptCover>) {
+        let Some(sources) = self.versions.as_ref() else {
+            return (None, None);
+        };
+        let input = {
+            let (path, artist, title, album, recording) = (
+                path.to_string(),
+                artist.to_string(),
+                tags.title.trim().to_string(),
+                tags.album.trim().to_string(),
+                tags.recording_id.clone(),
+            );
+            match tokio::task::spawn_blocking(move || {
+                VersionInput::read(&path, &artist, &title, &album, recording)
+            })
+            .await
+            {
+                Ok(input) => input,
+                Err(_) => return (None, None),
+            }
+        };
+        let threshold = if verdict.threshold > 0.0 {
+            verdict.threshold
+        } else {
+            self.settings.current().soulseek.effective_min_score_fraction()
+        };
+        let facts = version_check::gather(sources.as_ref(), &input, verdict, threshold).await;
+        let mut found = octo_core::tagging::version_audit::judge(&facts)
+            .map(|finding| version_check::kept_of(&finding, &input));
+        let mut cover = version_check::check_cover(sources.as_ref(), &input).await;
+        let before = self.store.read(|s| s.songs.get(id).cloned());
+        if let Some(before) = before
+            && read_stamp.is_some_and(|stamp| stamp == before.stamp)
+        {
+            if let Some(found) = found.as_mut()
+                && before
+                    .version
+                    .as_ref()
+                    .is_some_and(|v| v.kept && v.words == found.words)
+            {
+                found.kept = true;
+            }
+            if let Some(cover) = cover.as_mut()
+                && before
+                    .cover
+                    .as_ref()
+                    .is_some_and(|c| c.kept && c.words == cover.words)
+            {
+                cover.kept = true;
+            }
+        }
+        (found, cover)
+    }
+
+    /// The songs whose cover is another artist's release's, as the version check last found
+    /// them, left out once kept or once their file changed.
+    pub fn cover_findings(&self) -> Vec<CoverRow> {
+        let mut rows: Vec<CoverRow> = self.store.read(|s| {
+            s.songs
+                .iter()
+                .filter_map(|(id, song)| {
+                    let cover = song.cover.clone().filter(|c| !c.kept)?;
+                    Some(CoverRow {
+                        id: id.clone(),
+                        artist: song.artist.clone(),
+                        title: song.title.clone(),
+                        album: song.album.clone(),
+                        path: song.path.clone(),
+                        stamp: song.stamp.clone(),
+                        cover,
+                    })
+                })
+                .collect()
+        });
+        rows.retain(|row| stamp_of(&row.path).is_some_and(|stamp| stamp == row.stamp));
+        rows.sort_by(|a, b| {
+            compare_ordinal(&sort_key(&a.artist), &sort_key(&b.artist))
+                .then_with(|| compare_ordinal(&sort_key(&a.title), &sort_key(&b.title)))
+        });
+        rows
+    }
+
+    /// Keeps these songs' covers as they are until their files change. Answers how many.
+    pub fn keep_covers(&self, ids: &[String]) -> usize {
+        let mut kept = 0;
+        self.store.update(|s| {
+            for id in ids {
+                if let Some(cover) = s.songs.get_mut(id).and_then(|song| song.cover.as_mut())
+                    && !cover.kept
+                {
+                    cover.kept = true;
+                    kept += 1;
+                }
+            }
+        });
+        self.store.flush();
+        kept
+    }
+
+    /// Checks one song now, whatever the pace, for "Check now" from the dashboard or an app:
+    /// its tags against its audio and its version. The song as it was found, or why it could not
+    /// be checked.
+    pub async fn check_now(&self, id: &str) -> Result<CheckedSong, String> {
+        if !self.verifier.is_ready() {
+            return Err("AcoustID is not set up: turn on download verification and add a key.".to_string());
+        }
+        let listed = match self.songs.lock().clone() {
+            Some(songs) => songs.iter().find(|song| song.id == id).cloned(),
+            None => None,
+        };
+        let song = match listed {
+            Some(song) => Some(song),
+            None => self
+                .library
+                .songs()
+                .await
+                .ok_or_else(|| "Octo could not read your library from Navidrome.".to_string())?
+                .into_iter()
+                .find(|song| song.id == id),
+        };
+        let song = song.ok_or_else(|| "That song is not in the library.".to_string())?;
+        let path = self
+            .library
+            .locate(&song)
+            .ok_or_else(|| "Octo could not find that song's file.".to_string())?;
+        let generation = self.generation.load(Ordering::SeqCst);
+        let located = SweepSong { path, ..song };
+        if self.check(generation, id, &located, false).await == Checked::Again {
+            return Err("AcoustID did not answer; try again in a minute.".to_string());
+        }
+        self.store
+            .read(|s| s.songs.get(id).cloned())
+            .ok_or_else(|| "The check was started over meanwhile.".to_string())
+    }
+
+    /// The library songs a search names, for Check one song now: the one with this id, or every
+    /// song whose title and artist hold each word of the search, ignoring case and accents. None
+    /// when Navidrome cannot be read.
+    pub async fn find_songs(&self, query: &str, limit: usize) -> Option<Vec<SweepSong>> {
+        let cached = self.songs.lock().clone();
+        let songs = match cached {
+            Some(songs) => songs.as_ref().clone(),
+            None => self.library.songs().await?,
+        };
+        if let Some(exact) = songs.iter().find(|song| song.id == query.trim()) {
+            return Some(vec![exact.clone()]);
+        }
+        let words: Vec<String> = query
+            .split_whitespace()
+            .map(octo_core::common::SongIdentity::key)
+            .filter(|word| !word.is_empty())
+            .collect();
+        if words.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut found: Vec<SweepSong> = songs
+            .into_iter()
+            .filter(|song| {
+                let text = octo_core::common::SongIdentity::key(&format!("{} {}", song.title, song.artist));
+                words.iter().all(|word| text.contains(word.as_str()))
+            })
+            .collect();
+        found.sort_by(|a, b| {
+            compare_ordinal(&sort_key(&a.artist), &sort_key(&b.artist))
+                .then_with(|| compare_ordinal(&sort_key(&a.title), &sort_key(&b.title)))
+        });
+        found.truncate(limit);
+        Some(found)
+    }
+
+    /// Keeps these songs as they are: their version findings are not shown again until their
+    /// files change. Answers how many were kept.
+    pub fn keep_versions(&self, ids: &[String]) -> usize {
+        let mut kept = 0;
+        self.store.update(|s| {
+            for id in ids {
+                if let Some(version) = s.songs.get_mut(id).and_then(|song| song.version.as_mut())
+                    && !version.kept
+                {
+                    version.kept = true;
+                    kept += 1;
+                }
+            }
+        });
+        self.store.flush();
+        kept
+    }
+
+    /// The songs that are not the version their tags say, as the version check last found them,
+    /// left out once kept or once their file changed.
+    pub fn version_findings(&self) -> Vec<VersionRow> {
+        let mut rows: Vec<VersionRow> = self.store.read(|s| {
+            s.songs
+                .iter()
+                .filter_map(|(id, song)| {
+                    let version = song.version.clone().filter(|v| !v.kept)?;
+                    Some(VersionRow {
+                        id: id.clone(),
+                        artist: song.artist.clone(),
+                        title: song.title.clone(),
+                        album: song.album.clone(),
+                        path: song.path.clone(),
+                        stamp: song.stamp.clone(),
+                        version,
+                    })
+                })
+                .collect()
+        });
+        rows.retain(|row| stamp_of(&row.path).is_some_and(|stamp| stamp == row.stamp));
+        rows.sort_by(|a, b| {
+            compare_ordinal(&sort_key(&a.artist), &sort_key(&b.artist))
+                .then_with(|| compare_ordinal(&sort_key(&a.title), &sort_key(&b.title)))
+                .then_with(|| compare_ordinal(&a.id, &b.id))
+        });
+        rows
+    }
+
+    /// Whether the version check is on.
+    pub fn checks_versions(&self) -> bool {
+        self.versions.is_some()
     }
 
     fn finish(&self, generation: i32, id: &str, kept: CheckedSong, in_order: bool, fixed: Fixed) {
@@ -1232,6 +1518,22 @@ impl LibraryIdentitySweep {
             per_hour: settings.library_actions.effective_tag_check_per_hour(),
             last_checked_utc: s.last_checked_utc,
             pass_finished_utc: s.pass_finished_utc,
+        })
+    }
+}
+
+impl version_check::VersionChecker for LibraryIdentitySweep {
+    fn check<'a>(&'a self, navidrome_id: &'a str) -> futures::future::BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            if !self.checks_versions() {
+                return Err("The version check is not set up on this server.".to_string());
+            }
+            let song = self.check_now(navidrome_id).await?;
+            let name = format!("'{} - {}'", song.artist, song.title);
+            Ok(match song.version.as_ref().filter(|version| !version.kept) {
+                Some(version) => format!("{name}: {}", version.words),
+                None => format!("{name} is the version its tags say."),
+            })
         })
     }
 }
